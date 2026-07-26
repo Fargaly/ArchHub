@@ -407,3 +407,84 @@ Implemented on 2026-07-26 in the existing `NativeAuthorizationBroker`:
 This closes pending-secret resource bounding only. Authentication freshness,
 provider assurance negotiation, nonce-key custody, replay-evidence retention,
 public transport, pairing, recovery, and deployment remain separate gates.
+
+## 11. Linux cloud nonce-key custody
+
+### 11.1 What and why
+
+The DPoP resource server issues short-lived nonces that bind an access token,
+audience, time window, and server-generated entropy. On the local Windows
+runtime, the existing gateway may use Windows DPAPI for the nonce HMAC key. A
+Linux cloud process cannot use that provider.
+
+At commit `6bd5b26d997073e9b0b8443e76e11e723f2c827a`, the cloud bootstrap
+admits only `archhub.local.relationship-authority` and
+`archhub.local.court-attestation`. The cloud factory does not pass an admitted
+nonce provider into the sole application owner. If a cloud gateway is enabled,
+the existing default attempts Windows DPAPI. This fails closed, but makes the
+Linux cloud boundary unusable and leaves nonce custody outside the exact
+provider contract.
+
+### 11.2 How, who, when, and where
+
+The smallest repair keeps one graph, one process owner, and one physical KMS
+provider:
+
+1. The exact cloud key map contains only the relationship, court-attestation,
+   and DPoP-nonce logical authorities.
+2. Each logical authority maps reviewed integer versions to exact AWS KMS key
+   ARNs.
+3. CloudFormation creates and retains one `HMAC_256`,
+   `GENERATE_VERIFY_MAC` key per authority and version.
+4. The Fly runtime role may call only `kms:GenerateMac` and `kms:VerifyMac`,
+   with `kms:MacAlgorithm` equal to `HMAC_SHA_256`, on those exact ARNs.
+   Only the current version may generate; retained historical versions may
+   verify only.
+5. The cloud bootstrap constructs one `AwsKmsHmacSigningKeyProvider` and passes
+   that same provider to graph build/restore and the existing nonce-broker
+   parameter of the sole application server.
+6. Before the witness, journal, `CellStore`, or server is constructed, the
+   bootstrap generates and verifies one domain-separated admission MAC with
+   each current authority.
+7. Missing, extra, duplicated, version-mismatched, malformed, unavailable, or
+   unauthorized key authority fails before the runtime starts or opens a cloud
+   listener.
+
+The founder or released provisioning service approves physical creation and
+promotion. The infrastructure renderer handles only non-secret ARNs and role
+identity. The Universal runtime can request MAC generation or verification but
+cannot export HMAC bytes. This contract applies whenever the Linux cloud
+runtime is constructed; it does not claim that a cloud gateway, TLS
+certificate, or real provider deployment is released.
+
+### 11.3 Red acceptance courts
+
+1. Configuration rejects a missing nonce authority and any extra logical
+   authority.
+2. Infrastructure creates the retained nonce key and alias for every reviewed
+   version.
+3. The runtime role grants the nonce key only the exact MAC operations and
+   algorithm already granted to the other two authorities.
+4. The output renderer requires same-version relationship, court, and nonce
+   ARNs and emits exactly those three maps.
+5. The cloud factory passes the same admitted KMS provider to graph
+   build/restore and the existing nonce-provider server parameter.
+6. Existing secret-redaction, one-CellStore, runtime-fence, entrypoint, and
+   no-listener construction courts remain green.
+
+### 11.4 Primary evidence
+
+Reviewed on 2026-07-26:
+
+- AWS KMS HMAC keys:
+  https://docs.aws.amazon.com/kms/latest/developerguide/hmac.html
+- AWS KMS `GenerateMac`:
+  https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateMac.html
+- AWS KMS `VerifyMac`:
+  https://docs.aws.amazon.com/kms/latest/APIReference/API_VerifyMac.html
+
+AWS documents that HMAC key material remains in KMS, HMAC keys use
+`GenerateMac` and `VerifyMac`, and the operation requires a compatible
+`GENERATE_VERIFY_MAC` key and MAC algorithm. These sources inform the physical
+adapter; the Universal Cell graph and ArchHub courts remain semantic
+authority.

@@ -144,18 +144,29 @@ def test_manual_rotation_adds_new_keys_without_discarding_old_versions():
         "RelationshipAuthorityKeyV2",
         "CourtAttestationKeyV1",
         "CourtAttestationKeyV2",
+        "UniversalCloudDpopNonceKeyV1",
+        "UniversalCloudDpopNonceKeyV2",
     ):
         resource = template["Resources"][logical_id]
         assert resource["DeletionPolicy"] == "Retain"
         assert resource["UpdateReplacePolicy"] == "Retain"
-    key_statement = _runtime_role(template)["Policies"][0][
+    key_statements = _runtime_role(template)["Policies"][0][
         "PolicyDocument"
-    ]["Statement"][0]
-    assert key_statement["Resource"] == [
-        {"Fn::GetAtt": ["RelationshipAuthorityKeyV1", "Arn"]},
-        {"Fn::GetAtt": ["CourtAttestationKeyV1", "Arn"]},
+    ]["Statement"][:2]
+    assert key_statements[0]["Action"] == ["kms:GenerateMac"]
+    assert key_statements[0]["Resource"] == [
         {"Fn::GetAtt": ["RelationshipAuthorityKeyV2", "Arn"]},
         {"Fn::GetAtt": ["CourtAttestationKeyV2", "Arn"]},
+        {"Fn::GetAtt": ["UniversalCloudDpopNonceKeyV2", "Arn"]},
+    ]
+    assert key_statements[1]["Action"] == ["kms:VerifyMac"]
+    assert key_statements[1]["Resource"] == [
+        {"Fn::GetAtt": ["RelationshipAuthorityKeyV1", "Arn"]},
+        {"Fn::GetAtt": ["CourtAttestationKeyV1", "Arn"]},
+        {"Fn::GetAtt": ["UniversalCloudDpopNonceKeyV1", "Arn"]},
+        {"Fn::GetAtt": ["RelationshipAuthorityKeyV2", "Arn"]},
+        {"Fn::GetAtt": ["CourtAttestationKeyV2", "Arn"]},
+        {"Fn::GetAtt": ["UniversalCloudDpopNonceKeyV2", "Arn"]},
     ]
 
 
@@ -195,12 +206,28 @@ def test_runtime_role_has_only_exact_kms_and_witness_permissions():
     statements = policies[0]["PolicyDocument"]["Statement"]
     assert statements == [
         {
-            "Sid": "UseExactArchHubHmacKeys",
+            "Sid": "GenerateCurrentArchHubHmacs",
             "Effect": "Allow",
-            "Action": ["kms:GenerateMac", "kms:VerifyMac"],
+            "Action": ["kms:GenerateMac"],
             "Resource": [
                 {"Fn::GetAtt": ["RelationshipAuthorityKeyV1", "Arn"]},
                 {"Fn::GetAtt": ["CourtAttestationKeyV1", "Arn"]},
+                {"Fn::GetAtt": ["UniversalCloudDpopNonceKeyV1", "Arn"]},
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "kms:MacAlgorithm": "HMAC_SHA_256",
+                }
+            },
+        },
+        {
+            "Sid": "VerifyRetainedArchHubHmacs",
+            "Effect": "Allow",
+            "Action": ["kms:VerifyMac"],
+            "Resource": [
+                {"Fn::GetAtt": ["RelationshipAuthorityKeyV1", "Arn"]},
+                {"Fn::GetAtt": ["CourtAttestationKeyV1", "Arn"]},
+                {"Fn::GetAtt": ["UniversalCloudDpopNonceKeyV1", "Arn"]},
             ],
             "Condition": {
                 "StringEquals": {
@@ -235,6 +262,7 @@ def test_hmac_keys_are_nonexporting_retained_and_manually_versioned():
     for logical_id in (
         "RelationshipAuthorityKeyV1",
         "CourtAttestationKeyV1",
+        "UniversalCloudDpopNonceKeyV1",
     ):
         resource = template["Resources"][logical_id]
         assert resource["Type"] == "AWS::KMS::Key"
@@ -293,6 +321,7 @@ def test_template_outputs_only_nonsecret_runtime_capabilities():
         "AwsRegion",
         "CourtAttestationKeyArnV1",
         "RelationshipAuthorityKeyArnV1",
+        "UniversalCloudDpopNonceKeyArnV1",
         "RevisionWitnessTableName",
         "RuntimeRoleArn",
     }
@@ -328,6 +357,10 @@ def test_renderer_builds_only_nonsecret_fly_environment_from_exact_outputs():
             "arn:aws:kms:me-central-1:111122223333:"
             "key/11111111-1111-1111-1111-111111111111"
         ),
+        "UniversalCloudDpopNonceKeyArnV1": (
+            "arn:aws:kms:me-central-1:111122223333:"
+            "key/33333333-3333-3333-3333-333333333333"
+        ),
         "RevisionWitnessTableName": "archhub-production-witness",
         "RuntimeRoleArn": (
             "arn:aws:iam::111122223333:role/archhub-production-runtime"
@@ -346,6 +379,9 @@ def test_renderer_builds_only_nonsecret_fly_environment_from_exact_outputs():
                 },
                 "archhub.local.relationship-authority": {
                     "1": outputs["RelationshipAuthorityKeyArnV1"],
+                },
+                "archhub.local.universal-cloud-dpop-nonce": {
+                    "1": outputs["UniversalCloudDpopNonceKeyArnV1"],
                 },
             },
             separators=(",", ":"),
@@ -378,6 +414,10 @@ def test_renderer_rejects_partial_extra_or_secret_bearing_outputs():
             "arn:aws:kms:me-central-1:111122223333:"
             "key/11111111-1111-1111-1111-111111111111"
         ),
+        "UniversalCloudDpopNonceKeyArnV1": (
+            "arn:aws:kms:me-central-1:111122223333:"
+            "key/33333333-3333-3333-3333-333333333333"
+        ),
         "RevisionWitnessTableName": "archhub-production-witness",
         "RuntimeRoleArn": (
             "arn:aws:iam::111122223333:role/archhub-production-runtime"
@@ -407,6 +447,20 @@ def test_renderer_rejects_partial_extra_or_secret_bearing_outputs():
         pass
     else:
         raise AssertionError("extra secret-bearing output was admitted")
+
+    candidate = dict(valid)
+    candidate["UniversalCloudDpopNonceKeyArnV1"] = (
+        candidate["CourtAttestationKeyArnV1"]
+    )
+    try:
+        module.render_environment(
+            candidate,
+            authority_id="archhub-production",
+        )
+    except module.ProvisioningContractError:
+        pass
+    else:
+        raise AssertionError("one KMS key was reused across logical authorities")
 
 
 def test_renderer_extracts_exact_single_stack_outputs_and_rejects_ambiguity():

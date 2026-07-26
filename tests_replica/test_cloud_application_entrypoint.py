@@ -15,6 +15,10 @@ _COURT_ARN = (
     "arn:aws:kms:me-central-1:111122223333:"
     "key/22222222-2222-2222-2222-222222222222"
 )
+_NONCE_ARN = (
+    "arn:aws:kms:me-central-1:111122223333:"
+    "key/33333333-3333-3333-3333-333333333333"
+)
 _SECRET_DSN = "postgresql://fixture.invalid/archhub?marker=never-log"
 
 
@@ -29,6 +33,9 @@ def _environment() -> dict[str, str]:
                 },
                 "archhub.local.court-attestation": {
                     "1": _COURT_ARN,
+                },
+                "archhub.local.universal-cloud-dpop-nonce": {
+                    "1": _NONCE_ARN,
                 },
             }
         ),

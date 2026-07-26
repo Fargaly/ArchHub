@@ -27,6 +27,9 @@ _RELATIONSHIP_OUTPUT = re.compile(
 _COURT_OUTPUT = re.compile(
     r"^CourtAttestationKeyArnV([1-9][0-9]{0,3})$"
 )
+_NONCE_OUTPUT = re.compile(
+    r"^UniversalCloudDpopNonceKeyArnV([1-9][0-9]{0,3})$"
+)
 _BASE_OUTPUTS = frozenset(
     (
         "AwsRegion",
@@ -74,7 +77,8 @@ def render_environment(
 
     relationship = _key_versions(normalized, _RELATIONSHIP_OUTPUT)
     court = _key_versions(normalized, _COURT_OUTPUT)
-    if set(relationship) != set(court):
+    nonce = _key_versions(normalized, _NONCE_OUTPUT)
+    if not set(relationship) == set(court) == set(nonce):
         raise ProvisioningContractError("KMS key versions do not match")
     expected = set(_BASE_OUTPUTS)
     expected.update(
@@ -84,6 +88,10 @@ def render_environment(
     expected.update(
         f"CourtAttestationKeyArnV{version}"
         for version in court
+    )
+    expected.update(
+        f"UniversalCloudDpopNonceKeyArnV{version}"
+        for version in nonce
     )
     if set(normalized) != expected:
         raise ProvisioningContractError("stack outputs are not exact")
@@ -97,7 +105,16 @@ def render_environment(
         or _TABLE_NAME.fullmatch(table) is None
     ):
         raise ProvisioningContractError("stack output identity is invalid")
-    for key_arn in (*relationship.values(), *court.values()):
+    key_arns = (
+        *relationship.values(),
+        *court.values(),
+        *nonce.values(),
+    )
+    if len(key_arns) != len(set(key_arns)):
+        raise ProvisioningContractError(
+            "KMS logical authorities require distinct keys"
+        )
+    for key_arn in key_arns:
         match = _KMS_ARN.fullmatch(key_arn)
         if match is None or match.group(1) != region:
             raise ProvisioningContractError("KMS key output is invalid")
@@ -109,6 +126,9 @@ def render_environment(
         "archhub.local.relationship-authority": {
             str(version): relationship[version]
             for version in sorted(relationship)
+        },
+        "archhub.local.universal-cloud-dpop-nonce": {
+            str(version): nonce[version] for version in sorted(nonce)
         },
     }
     return {

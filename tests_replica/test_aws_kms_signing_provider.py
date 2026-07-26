@@ -12,6 +12,7 @@ from nodelang.cell_secret_keys import SigningKeyError
 
 
 _KEY_ID = "archhub.local.relationship-authority"
+_NONCE_KEY_ID = "archhub.local.universal-cloud-dpop-nonce"
 _ARN_V1 = (
     "arn:aws:kms:me-central-1:111122223333:"
     "key/11111111-1111-1111-1111-111111111111"
@@ -149,3 +150,34 @@ def test_real_aws_kms_hmac_round_trip_through_workload_identity():
 
     assert provider.verify(_KEY_ID, 1, payload, signature) is True
     assert provider.verify(_KEY_ID, 1, payload + b"x", signature) is False
+
+
+@pytest.mark.skipif(
+    not os.environ.get("ARCHHUB_TEST_AWS_KMS_DPOP_NONCE_KEY_ARN"),
+    reason=(
+        "real AWS KMS DPoP nonce key ARN and workload identity "
+        "are not configured"
+    ),
+)
+def test_real_aws_kms_mints_and_verifies_the_cloud_dpop_nonce():
+    from nodelang.cell_dpop_nonce import ResourceServerNonceBroker
+
+    key_arn = os.environ["ARCHHUB_TEST_AWS_KMS_DPOP_NONCE_KEY_ARN"]
+    provider = _provider_type()({_NONCE_KEY_ID: {1: key_arn}})
+    broker = ResourceServerNonceBroker(
+        key_provider=provider,
+        key_id=_NONCE_KEY_ID,
+        audience="https://gateway.archhub.test",
+        lifetime_seconds=60,
+    )
+
+    nonce = broker.mint("controlled-real-provider-token", now=1000)
+
+    assert (
+        broker.verify(
+            nonce,
+            "controlled-real-provider-token",
+            now=1001,
+        )
+        == nonce
+    )

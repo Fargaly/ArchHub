@@ -18,6 +18,14 @@ _COURT_ARN = (
     "arn:aws:kms:me-central-1:111122223333:"
     "key/22222222-2222-2222-2222-222222222222"
 )
+_NONCE_ARN = (
+    "arn:aws:kms:me-central-1:111122223333:"
+    "key/33333333-3333-3333-3333-333333333333"
+)
+_NONCE_ARN_V2 = (
+    "arn:aws:kms:me-central-1:111122223333:"
+    "key/44444444-4444-4444-4444-444444444444"
+)
 
 
 def _module():
@@ -37,6 +45,9 @@ def _environment():
                 },
                 "archhub.local.court-attestation": {
                     "1": _COURT_ARN,
+                },
+                "archhub.local.universal-cloud-dpop-nonce": {
+                    "1": _NONCE_ARN,
                 },
             }
         ),
@@ -61,6 +72,11 @@ def test_cloud_configuration_is_complete_bounded_and_secret_safe():
     assert configuration.kms_keys[
         "archhub.local.relationship-authority"
     ][1] == _RELATIONSHIP_ARN
+    assert set(configuration.kms_keys) == {
+        "archhub.local.relationship-authority",
+        "archhub.local.court-attestation",
+        "archhub.local.universal-cloud-dpop-nonce",
+    }
     assert "never-render" not in repr(configuration)
     assert configuration.postgres_dsn not in repr(configuration)
 
@@ -91,6 +107,38 @@ def test_cloud_configuration_rejects_partial_or_extra_key_authority():
     with pytest.raises(SigningKeyError, match="required logical"):
         module.load_cloud_runtime_configuration(environment)
 
+    environment = _environment()
+    key_map = json.loads(environment["ARCHHUB_AWS_KMS_HMAC_KEYS"])
+    del key_map["archhub.local.universal-cloud-dpop-nonce"]
+    environment["ARCHHUB_AWS_KMS_HMAC_KEYS"] = json.dumps(key_map)
+    with pytest.raises(SigningKeyError, match="required logical"):
+        module.load_cloud_runtime_configuration(environment)
+
+    environment = _environment()
+    key_map = json.loads(environment["ARCHHUB_AWS_KMS_HMAC_KEYS"])
+    key_map["archhub.local.undeclared-authority"] = {
+        "1": _NONCE_ARN,
+    }
+    environment["ARCHHUB_AWS_KMS_HMAC_KEYS"] = json.dumps(key_map)
+    with pytest.raises(SigningKeyError, match="exact logical"):
+        module.load_cloud_runtime_configuration(environment)
+
+    environment = _environment()
+    key_map = json.loads(environment["ARCHHUB_AWS_KMS_HMAC_KEYS"])
+    key_map["archhub.local.universal-cloud-dpop-nonce"] = {
+        "2": _NONCE_ARN_V2,
+    }
+    environment["ARCHHUB_AWS_KMS_HMAC_KEYS"] = json.dumps(key_map)
+    with pytest.raises(SigningKeyError, match="versions"):
+        module.load_cloud_runtime_configuration(environment)
+
+    environment = _environment()
+    key_map = json.loads(environment["ARCHHUB_AWS_KMS_HMAC_KEYS"])
+    key_map["archhub.local.universal-cloud-dpop-nonce"]["1"] = _COURT_ARN
+    environment["ARCHHUB_AWS_KMS_HMAC_KEYS"] = json.dumps(key_map)
+    with pytest.raises(SigningKeyError, match="distinct"):
+        module.load_cloud_runtime_configuration(environment)
+
 
 def test_cloud_server_factory_preserves_kms_store_fence_server_order(
     monkeypatch,
@@ -101,7 +149,21 @@ def test_cloud_server_factory_preserves_kms_store_fence_server_order(
 
     class Kms:
         def __init__(self, keys, *, client=None):
-            events.append(("kms", keys, client))
+            events.append(("kms", self, keys, client))
+
+        def current_reference(self, key_id):
+            events.append(("kms-current", key_id))
+            return type("Reference", (), {"key_id": key_id, "version": 1})()
+
+        def sign(self, key_id, version, payload):
+            events.append(("kms-sign", key_id, version, payload))
+            return "a" * 64
+
+        def verify(self, key_id, version, payload, signature):
+            events.append(
+                ("kms-verify", key_id, version, payload, signature)
+            )
+            return True
 
     class Journal:
         def __init__(
@@ -178,6 +240,15 @@ def test_cloud_server_factory_preserves_kms_store_fence_server_order(
     assert result == "server"
     assert [event[0] for event in events] == [
         "kms",
+        "kms-current",
+        "kms-sign",
+        "kms-verify",
+        "kms-current",
+        "kms-sign",
+        "kms-verify",
+        "kms-current",
+        "kms-sign",
+        "kms-verify",
         "witness-provider",
         "journal",
         "witnessed-journal",
@@ -185,12 +256,49 @@ def test_cloud_server_factory_preserves_kms_store_fence_server_order(
         "prepare",
         "server",
     ]
+    prepare_event = next(event for event in events if event[0] == "prepare")
+    assert prepare_event[2]["key_provider"] is events[0][1]
     assert events[-1] == (
         "server",
         "0.0.0.0",
         8482,
         {
+            "cloud_nonce_key_provider": events[0][1],
             "live_watch": False,
             "universal_workspace_root": "court-root",
         },
     )
+
+
+def test_cloud_server_factory_denies_unusable_kms_before_physical_store(
+    monkeypatch,
+):
+    module = _module()
+    configuration = module.load_cloud_runtime_configuration(_environment())
+    events = []
+
+    class Kms:
+        def __init__(self, keys, *, client=None):
+            del keys, client
+            events.append("kms")
+
+        def current_reference(self, key_id):
+            return type("Reference", (), {"key_id": key_id, "version": 1})()
+
+        def sign(self, key_id, version, payload):
+            del key_id, version, payload
+            return "a" * 64
+
+        def verify(self, key_id, version, payload, signature):
+            del key_id, version, payload, signature
+            return False
+
+    monkeypatch.setattr(module, "AwsKmsHmacSigningKeyProvider", Kms)
+
+    with pytest.raises(SigningKeyError, match="admission failed"):
+        module.create_cloud_application_server(
+            configuration,
+            kms_client="kms-client",
+        )
+
+    assert events == ["kms"]

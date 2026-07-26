@@ -13,7 +13,8 @@ The boundary has four physical parts:
 
 1. one Fly OpenID Connect provider in AWS;
 2. one short-lived AWS role restricted to one Fly organization and app;
-3. versioned AWS KMS HMAC keys for the two existing signing authorities; and
+3. versioned AWS KMS HMAC keys for the three existing physical signing
+   authorities; and
 4. one protected DynamoDB table that witnesses the PostgreSQL revision chain.
 
 The PostgreSQL Cell journal remains the only semantic authority. KMS stores key
@@ -26,7 +27,7 @@ At the micro level:
 | Part | Input | Output | Forbidden meaning |
 |---|---|---|---|
 | OIDC trust | Fly issuer, `aud`, `sub` | short-lived role session | user or graph identity |
-| HMAC key | bounded digest, exact key ARN | MAC or verification result | semantic rule or release decision |
+| HMAC key | bounded digest, exact key ARN | relationship, court, or DPoP nonce MAC result | semantic rule or release decision |
 | witness table | authority id, revision, digest, token | conditional physical head | second CellStore |
 | PostgreSQL | exact Cell revision transaction | durable graph snapshot | disposable cache |
 
@@ -70,7 +71,7 @@ CloudFormation output set and emits only:
 
 - the AWS role and region;
 - the DynamoDB witness table name;
-- the two versioned KMS key maps; and
+- the three versioned KMS key maps; and
 - the stable PostgreSQL authority id.
 
 It deliberately omits `ARCHHUB_UNIVERSAL_POSTGRES_DSN`. The DSN is attached
@@ -90,8 +91,9 @@ history, a Cell atom, or this renderer.
 
 The CloudFormation account-root KMS statement enables account policy
 administration, as required by the KMS key-policy model. Runtime access remains
-limited by an identity policy to two exact key ARNs, `GenerateMac`,
-`VerifyMac`, and `HMAC_SHA_256`.
+limited by identity policy to `GenerateMac` on the three current key ARNs and
+`VerifyMac` on retained current and historical ARNs, always with
+`HMAC_SHA_256`.
 
 ## When
 
@@ -189,9 +191,10 @@ python infrastructure/aws/build_cloud_authority_template.py `
 ```
 
 HMAC keys require manual rotation. The source-controlled version manifest is an
-additive ratchet: the old key remains retained and enabled while historical
-evidence still references its version. Removing a version requires a separate
-proof that no retained evidence, release, backup, or recovery path needs it.
+additive ratchet: the old key remains retained and verify-capable while
+historical evidence still references its version, but it cannot mint new MACs.
+Removing a version requires a separate proof that no retained evidence,
+release, backup, or recovery path needs it.
 
 ## Evidence
 
@@ -208,6 +211,9 @@ Static source courts prove:
 - no RDS, S3, second database, or semantic store is created by this stack.
 
 These are source courts, not provider integration evidence.
+The opt-in real-provider suite separately requires
+`ARCHHUB_TEST_AWS_KMS_DPOP_NONCE_KEY_ARN` and mints and verifies one bounded
+resource-server nonce. A skip is an open deployment gate, not a pass.
 
 Primary references reviewed on 2026-07-26:
 
@@ -251,7 +257,7 @@ observable, replaceable resource use:
 
 - one active application owner, with disposable runners created per Work lease;
 - one managed PostgreSQL cluster sized to measured load;
-- two HMAC keys per active key version;
+- three HMAC keys per active key version;
 - one small on-demand witness table; and
 - budget alerts and lease expiry before autonomous scale-up.
 

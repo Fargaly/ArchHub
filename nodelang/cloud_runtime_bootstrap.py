@@ -27,12 +27,13 @@ from .postgres_cell_journal import (
 from .universal_cell import CellStore, InvalidCell
 
 
-_REQUIRED_KMS_KEYS = frozenset(
-    (
-        "archhub.local.relationship-authority",
-        "archhub.local.court-attestation",
-    )
+_REQUIRED_KMS_KEYS = (
+    "archhub.local.relationship-authority",
+    "archhub.local.court-attestation",
+    "archhub.local.universal-cloud-dpop-nonce",
 )
+_REQUIRED_KMS_KEY_SET = frozenset(_REQUIRED_KMS_KEYS)
+_KMS_ADMISSION_CONTEXT = b"ArchHub/cloud-runtime-kms-admission/v1\x00"
 _KEY_MAP_LIMIT = 65_536
 _DSN_LIMIT = 8_192
 
@@ -90,13 +91,68 @@ def _parse_key_map(raw: str) -> Mapping[str, Mapping[int, str]]:
                 raise SigningKeyError("AWS KMS key map version is ambiguous")
             admitted_versions[version] = key_arn
         normalized[key_id] = MappingProxyType(admitted_versions)
-    missing = _REQUIRED_KMS_KEYS.difference(normalized)
+    missing = _REQUIRED_KMS_KEY_SET.difference(normalized)
     if missing:
         raise SigningKeyError(
             "AWS KMS key map lacks a required logical authority"
         )
+    if set(normalized) != _REQUIRED_KMS_KEY_SET:
+        raise SigningKeyError(
+            "AWS KMS key map is not the exact logical authority set"
+        )
+    version_sets = {
+        frozenset(versions)
+        for versions in normalized.values()
+    }
+    if len(version_sets) != 1:
+        raise SigningKeyError(
+            "AWS KMS logical authority versions do not match"
+        )
+    key_arns = [
+        key_arn
+        for versions in normalized.values()
+        for key_arn in versions.values()
+    ]
+    if len(key_arns) != len(set(key_arns)):
+        raise SigningKeyError(
+            "AWS KMS logical authorities require distinct key ARNs"
+        )
     AwsKmsHmacSigningKeyProvider(normalized, client=object())
     return MappingProxyType(normalized)
+
+
+def _admit_kms_provider(provider) -> None:
+    """Prove current GenerateMac/VerifyMac custody before physical startup."""
+    for key_id in _REQUIRED_KMS_KEYS:
+        try:
+            reference = provider.current_reference(key_id)
+            if reference.key_id != key_id or reference.version < 1:
+                raise SigningKeyError("AWS KMS key admission failed")
+            payload = (
+                _KMS_ADMISSION_CONTEXT
+                + key_id.encode("ascii")
+                + b"\x00"
+                + str(reference.version).encode("ascii")
+            )
+            signature = provider.sign(
+                reference.key_id,
+                reference.version,
+                payload,
+            )
+            if not provider.verify(
+                reference.key_id,
+                reference.version,
+                payload,
+                signature,
+            ):
+                raise SigningKeyError("AWS KMS key admission failed")
+        except SigningKeyError:
+            raise
+        except Exception as exc:
+            raise SigningKeyError(
+                "AWS KMS key admission failed (%s)"
+                % type(exc).__name__
+            ) from None
 
 
 def load_cloud_runtime_configuration(
@@ -172,6 +228,7 @@ def create_cloud_application_server(
         configuration.kms_keys,
         client=kms_client,
     )
+    _admit_kms_provider(key_provider)
     witness_provider = DynamoDbRevisionWitnessProvider(
         configuration.revision_witness_table,
         client=dynamodb_client,
@@ -200,6 +257,7 @@ def create_cloud_application_server(
         runtime_compliance_runner=runtime_compliance_runner,
     )
     server_kwargs = {
+        "cloud_nonce_key_provider": key_provider,
         "live_watch": False,
     }
     if court_workspace_root is not None:

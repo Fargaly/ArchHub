@@ -217,7 +217,8 @@ def build_template(
             },
         },
     }
-    key_arns = []
+    generate_key_arns = []
+    verify_key_arns = []
     outputs: dict[str, dict] = {
         "AwsRegion": {
             "Description": "AWS region containing the physical capabilities.",
@@ -231,6 +232,7 @@ def build_template(
     for version in versions:
         relationship_key = f"RelationshipAuthorityKeyV{version}"
         court_key = f"CourtAttestationKeyV{version}"
+        nonce_key = f"UniversalCloudDpopNonceKeyV{version}"
         resources[relationship_key] = _hmac_key(
             purpose="relationship-authority",
             environment_name=environment_name,
@@ -253,11 +255,26 @@ def build_template(
             environment_name=environment_name,
             version=version,
         )
+        resources[nonce_key] = _hmac_key(
+            purpose="universal-cloud-dpop-nonce",
+            environment_name=environment_name,
+            version=version,
+        )
+        resources[f"UniversalCloudDpopNonceAliasV{version}"] = _alias(
+            target=nonce_key,
+            purpose="universal-cloud-dpop-nonce",
+            environment_name=environment_name,
+            version=version,
+        )
         relationship_arn = {
             "Fn::GetAtt": [relationship_key, "Arn"],
         }
         court_arn = {"Fn::GetAtt": [court_key, "Arn"]}
-        key_arns.extend((relationship_arn, court_arn))
+        nonce_arn = {"Fn::GetAtt": [nonce_key, "Arn"]}
+        version_arns = (relationship_arn, court_arn, nonce_arn)
+        verify_key_arns.extend(version_arns)
+        if version == versions[-1]:
+            generate_key_arns.extend(version_arns)
         outputs[f"RelationshipAuthorityKeyArnV{version}"] = {
             "Description": (
                 "Relationship-authority KMS key ARN."
@@ -267,6 +284,10 @@ def build_template(
         outputs[f"CourtAttestationKeyArnV{version}"] = {
             "Description": "Court-attestation KMS key ARN.",
             "Value": court_arn,
+        }
+        outputs[f"UniversalCloudDpopNonceKeyArnV{version}"] = {
+            "Description": "Universal-cloud DPoP nonce KMS key ARN.",
+            "Value": nonce_arn,
         }
 
     resources["ArchHubRuntimeRole"] = {
@@ -304,13 +325,23 @@ def build_template(
                         "Version": "2012-10-17",
                         "Statement": [
                             {
-                                "Sid": "UseExactArchHubHmacKeys",
+                                "Sid": "GenerateCurrentArchHubHmacs",
                                 "Effect": "Allow",
-                                "Action": [
-                                    "kms:GenerateMac",
-                                    "kms:VerifyMac",
-                                ],
-                                "Resource": key_arns,
+                                "Action": ["kms:GenerateMac"],
+                                "Resource": generate_key_arns,
+                                "Condition": {
+                                    "StringEquals": {
+                                        "kms:MacAlgorithm": (
+                                            "HMAC_SHA_256"
+                                        ),
+                                    }
+                                },
+                            },
+                            {
+                                "Sid": "VerifyRetainedArchHubHmacs",
+                                "Effect": "Allow",
+                                "Action": ["kms:VerifyMac"],
+                                "Resource": verify_key_arns,
                                 "Condition": {
                                     "StringEquals": {
                                         "kms:MacAlgorithm": (

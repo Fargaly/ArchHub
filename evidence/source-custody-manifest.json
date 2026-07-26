@@ -1,6 +1,6 @@
 {
   "authority": "evidence-only",
-  "byte_count": 12263104,
+  "byte_count": 12278623,
   "custody": "T0_PUBLIC",
   "file_count": 466,
   "files": [
@@ -31,8 +31,8 @@
     },
     {
       "path": "CLOUD-PROVIDER-PROVISIONING.md",
-      "sha256": "ddc10f74d1895e7514526365fff19f2e3a8206d95ab7f005e63eb19fabd76065",
-      "size": 12179
+      "sha256": "8e498db65a802bc60abc87914deceec548bd2c6f4d04a377bd55077dd6bccc0b",
+      "size": 12508
     },
     {
       "path": "CLOUD-RUNTIME-PACKAGING.md",
@@ -66,8 +66,8 @@
     },
     {
       "path": "REMOTE-DEVICE-SESSION-AUTHORITY.md",
-      "sha256": "a820f7a03a408e51d8de129d0128cbe53b1108536488304510dfa658e85f0646",
-      "size": 19794
+      "sha256": "4242312da0ab707a790ceae69ab26177d6e163fbb0378fa7aa8e8254d39435e5",
+      "size": 23604
     },
     {
       "path": "RESEARCH-UNIVERSAL-CELL.md",
@@ -141,8 +141,8 @@
     },
     {
       "path": "infrastructure/aws/build_cloud_authority_template.py",
-      "sha256": "376ecc58dea2493918556eedff08d214dec698954aa3f82b2afc47c74ce4d59f",
-      "size": 13587
+      "sha256": "cb61e1fed013972750c39f0636c85f5b05df744f583e7687df81fda1d339505e",
+      "size": 14998
     },
     {
       "path": "infrastructure/aws/hmac-key-versions.json",
@@ -161,8 +161,8 @@
     },
     {
       "path": "infrastructure/render_fly_runtime_environment.py",
-      "sha256": "20b4fe1345f9afd45fe85aeaa0216e960047b97d7e811e7f6a5efed366a1a96e",
-      "size": 5823
+      "sha256": "822f53e4c8befa02ce1f7584d2c658cb3ac16dad1d4c587cf8a2645270670012",
+      "size": 6450
     },
     {
       "path": "leaf_ai_proposal_node.py",
@@ -921,8 +921,8 @@
     },
     {
       "path": "nodelang/cloud_runtime_bootstrap.py",
-      "sha256": "50b79a89c85b9d82f1f3f7ebf03a136d4cddb4759e0634151e600d79d21182c1",
-      "size": 6959
+      "sha256": "910e38c6649323450cdaf909b175a5835c28d46a41885db53decd125c5fa3744",
+      "size": 9056
     },
     {
       "path": "nodelang/core.py",
@@ -1476,8 +1476,8 @@
     },
     {
       "path": "tests_replica/test_aws_kms_signing_provider.py",
-      "sha256": "a9e35f940a1e8a38c08f819a5822e1ec1db685a09404f9fbf9d5b73ee0382cdd",
-      "size": 4697
+      "sha256": "016ca4c1bd03ce8cb2300ba4b27ba1028c3e220ab8b748bad9f37b21b9344403",
+      "size": 5637
     },
     {
       "path": "tests_replica/test_baboom_companion_placement.py",
@@ -1941,18 +1941,18 @@
     },
     {
       "path": "tests_replica/test_cloud_application_entrypoint.py",
-      "sha256": "40b445270c295e76c3571474210245ad7d1e33ba7daa898a3a3e6ca3188aee88",
-      "size": 5544
+      "sha256": "4b713cb8ff544779982151445dd7d61e8fada4a6d87e63d1474494a771a26d74",
+      "size": 5771
     },
     {
       "path": "tests_replica/test_cloud_provider_infrastructure.py",
-      "sha256": "a40cb1478d5ad57380a17b74572d8312423dbf43a85bbcee8706d2d7a5b6d01a",
-      "size": 15577
+      "sha256": "ba7056951e5e0a7e2e236f4611ed7e03a8d9608b39808e6596c3b60aca4cdb74",
+      "size": 17725
     },
     {
       "path": "tests_replica/test_cloud_runtime_bootstrap.py",
-      "sha256": "9bf0bd242fe3cddc395e0abcde1dcdc10a5e81e43ec0915206aec26735744006",
-      "size": 5676
+      "sha256": "46d608d4c0beb1f9734cb307286827b514fe5a6d3548837bc8d934d04e47f9ba",
+      "size": 9606
     },
     {
       "path": "tests_replica/test_cloud_runtime_packaging.py",
@@ -2336,5 +2336,5 @@
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "a92e43c05f2dee28676aeb25d9304c26ae2acb5883de18ba8c4acdf18ebadffe"
+  "tree_sha256": "ed4e8526c188cfbd61a49050ccf4a8dde3b70c60d0c1b423f630f2c7604e4d69"
 }

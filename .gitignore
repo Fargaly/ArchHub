@@ -9,6 +9,7 @@ build/
 __pycache__/
 *.py[cod]
 test-results/
+infrastructure/generated/
 public_site/.git/
 domain_sessions/
 evidence/build_current_evidence.py

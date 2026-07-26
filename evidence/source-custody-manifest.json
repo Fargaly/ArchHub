@@ -1,8 +1,8 @@
 {
   "authority": "evidence-only",
-  "byte_count": 12094972,
+  "byte_count": 12142546,
   "custody": "T0_PUBLIC",
-  "file_count": 450,
+  "file_count": 455,
   "files": [
     {
       "path": ".claude/launch.json",
@@ -16,8 +16,8 @@
     },
     {
       "path": ".gitignore",
-      "sha256": "2571d7862deeacaeb33d142be32a7f9fa320f5b2d34aa6add6de9deef737bfb9",
-      "size": 336
+      "sha256": "1701ac88e4e3745ff9694e63aa672d942cb511710764b6b471d5f615ef04d6d0",
+      "size": 362
     },
     {
       "path": "AUTHORITY.md",
@@ -28,6 +28,11 @@
       "path": "BABOOM.md",
       "sha256": "d6e933403d3f653919b187212e7fc3763e7f4b94f9889fdd6185bcc1ae440ec4",
       "size": 5131
+    },
+    {
+      "path": "CLOUD-PROVIDER-PROVISIONING.md",
+      "sha256": "ddc10f74d1895e7514526365fff19f2e3a8206d95ab7f005e63eb19fabd76065",
+      "size": 12179
     },
     {
       "path": "EXTERNAL-REVISION-WITNESS.md",
@@ -51,8 +56,8 @@
     },
     {
       "path": "POSTGRES-CELL-AUTHORITY.md",
-      "sha256": "d862c2b9ca4f3c326fb8096c0681a9b046369c6ef02013f92f2c6abffe26d682",
-      "size": 12661
+      "sha256": "74ed2bd25440e1e28eb36b2f0650acc5465928f6ee219ee786ccffeea38dc993",
+      "size": 12965
     },
     {
       "path": "RESEARCH-UNIVERSAL-CELL.md",
@@ -123,6 +128,21 @@
       "path": "index.html",
       "sha256": "3bf3801c2a8a54a3310641f483dd033b675cf6cbb5fbf949b602bea5bbe5d147",
       "size": 8387
+    },
+    {
+      "path": "infrastructure/aws/build_cloud_authority_template.py",
+      "sha256": "376ecc58dea2493918556eedff08d214dec698954aa3f82b2afc47c74ce4d59f",
+      "size": 13587
+    },
+    {
+      "path": "infrastructure/aws/hmac-key-versions.json",
+      "sha256": "d44746d43e73277c08dc3824d9db2fdcb3580cfd146609e9b71fc6f75c6ade71",
+      "size": 78
+    },
+    {
+      "path": "infrastructure/render_fly_runtime_environment.py",
+      "sha256": "20b4fe1345f9afd45fe85aeaa0216e960047b97d7e811e7f6a5efed366a1a96e",
+      "size": 5823
     },
     {
       "path": "leaf_ai_proposal_node.py",
@@ -1880,6 +1900,11 @@
       "size": 9039
     },
     {
+      "path": "tests_replica/test_cloud_provider_infrastructure.py",
+      "sha256": "a40cb1478d5ad57380a17b74572d8312423dbf43a85bbcee8706d2d7a5b6d01a",
+      "size": 15577
+    },
+    {
       "path": "tests_replica/test_cloud_runtime_bootstrap.py",
       "sha256": "9bf0bd242fe3cddc395e0abcde1dcdc10a5e81e43ec0915206aec26735744006",
       "size": 5676
@@ -2256,5 +2281,5 @@
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "d2c7ba5ba449b46ae0ba697adc3a802a9bfdcb388f78494880d342d177b4428a"
+  "tree_sha256": "71010763da6972ab1bebd40ab407740e43440a1c443fb3ebac120865b4771ed2"
 }

@@ -262,6 +262,11 @@ missing witness. It is intentionally not selected by `application_server.main`;
 activation remains blocked on real PostgreSQL, DynamoDB/PITR, KMS/OIDC,
 recovery, authenticated entry, and deployment courts.
 
+The reviewed provider template, additive HMAC version manifest, secret-free
+environment renderer, operating roles, recovery sequence, cost boundary, and
+activation gates are defined in `CLOUD-PROVIDER-PROVISIONING.md`. Their static
+courts prove source shape only; no provider resource has been applied.
+
 This is a target boundary, not a deployed claim. Fly organization access, AWS
 account/key creation, managed database provisioning, DNS/TLS, recovery drills,
 and external security acceptance remain outside the current evidence.

@@ -13,12 +13,13 @@ Per AgDR-0044 Slice 1:
                             which MCPs / CLIs / models are on this device.
 
 Transports:
-  - stdio    (default; launched per-process by each client)
+  - stdio    (default; proxies to the singleton HTTP daemon)
   - http     (Streamable HTTP; one daemon serves all remote clients)
 
 Run:
-  python -m personal_brain.server              # stdio
+  python -m personal_brain.server              # stdio proxy to singleton
   python -m personal_brain.server --http 8473  # streamable HTTP
+  python -m personal_brain.server --local-stdio  # explicit local stdio
 """
 from __future__ import annotations
 
@@ -4515,7 +4516,26 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Default owner_user when clients don't pass one. "
              "Default: $BRAIN_OWNER_USER / $USER / 'founder'.",
     )
+    parser.add_argument(
+        "--local-stdio",
+        "--standalone-stdio",
+        dest="local_stdio",
+        action="store_true",
+        help=(
+            "Run a local stdio Brain instead of proxying to the singleton. "
+            "Use only for explicitly isolated/manual maintenance."
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.http is not None and args.local_stdio:
+        parser.error("--local-stdio cannot be combined with --http")
+
+    if args.http is None and not args.local_stdio:
+        # No-arg stdio is the cached-client compatibility path. It must never
+        # construct a second full Brain silently; it either reuses the healthy
+        # singleton HTTP daemon or exits nonzero.
+        _run_stdio_singleton_proxy_if_available()
+        return
 
     # Provision the independent Court's signing capability before accepting
     # work. Only the reference and availability metadata are logged; the key
@@ -4659,9 +4679,27 @@ def main(argv: Optional[list[str]] = None) -> None:
     server.run(transport="stdio")
 
 
+def _run_stdio_singleton_proxy_if_available() -> bool:
+    try:
+        from .stdio_http_proxy import (
+            run_stdio_proxy_if_healthy,
+        )
+
+        if run_stdio_proxy_if_healthy():
+            return True
+        raise RuntimeError("singleton proxy disabled for default stdio launch")
+    except Exception as ex:
+        print(
+            "[brain] stdio singleton guard FAIL-CLOSED"
+            f" - {type(ex).__name__}: {ex}",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise SystemExit(2) from ex
+
+
 def main_stdio(argv: Optional[list[str]] = None) -> None:
-    """Explicit stdio entrypoint for client configs that expect a no-arg
-    command."""
+    """No-arg stdio entrypoint for client configs; proxies to the singleton."""
     main(argv=[] if argv is None else argv)
 
 

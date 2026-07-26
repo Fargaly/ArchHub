@@ -1,0 +1,8 @@
+PyInstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.0
+PyQt6-WebEngine==6.11.0
+PyQt6-WebEngine-Qt6==6.11.0
+cryptography==48.0.1
+pywin32==311

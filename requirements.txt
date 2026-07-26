@@ -1,10 +1,14 @@
-PyQt6>=6.11.0,<7
-anthropic>=0.111.0,<1
-openai>=1.50,<2
-google-generativeai>=0.8.6,<1
-keyring>=25.7.0,<27
-requests>=2.34.2,<3
-# Telemetry + crash reporting (opt-in; clients are no-op until the
-# user grants consent in the first-run dialog).
-posthog>=7.16.3,<8
-sentry-sdk>=2.63.0,<3
+# JOSE verification for RFC 9449 DPoP and OIDC adapters. 1.4.2 fixed
+# GHSA-frfh-8v73-gjg4; the upper bound forces an explicit major-version court.
+joserfc>=1.4.2,<2
+# The cloud boundary is a thin FastAPI adapter over graph-defined routes.
+# Keep the major capped; route-wrapper behavior is covered by integration tests.
+fastapi>=0.136.1,<1
+httpx>=0.28.1,<1
+# Local asymmetric signing courts and provider-neutral KMS contract tests.
+# Cloud adapters remain optional integrations behind the same contract.
+cryptography>=48,<49
+# Shared Universal Cell authority. Credentials remain outside source and atoms.
+psycopg>=3.3,<4
+# Fly OIDC supplies short-lived AWS credentials; HMAC key bytes stay in KMS.
+boto3>=1.43,<2

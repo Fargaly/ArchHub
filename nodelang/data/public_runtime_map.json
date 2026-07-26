@@ -1,0 +1,767 @@
+[
+  {
+    "key": "ui",
+    "nodes": [
+      {
+        "id": "ui_public_authority",
+        "title": "ui public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "ui"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "ui_runtime_contract",
+        "title": "ui runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "ui_public_authority",
+        "ui_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "canvas",
+    "nodes": [
+      {
+        "id": "canvas_public_authority",
+        "title": "canvas public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "canvas"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "canvas_runtime_contract",
+        "title": "canvas runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "canvas_public_authority",
+        "canvas_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "nodes",
+    "nodes": [
+      {
+        "id": "nodes_public_authority",
+        "title": "nodes public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "nodes"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "nodes_runtime_contract",
+        "title": "nodes runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "nodes_public_authority",
+        "nodes_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "models",
+    "nodes": [
+      {
+        "id": "models_public_authority",
+        "title": "models public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "models"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "models_runtime_contract",
+        "title": "models runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "models_public_authority",
+        "models_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "brain",
+    "nodes": [
+      {
+        "id": "brain_public_authority",
+        "title": "brain public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "brain"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "brain_runtime_contract",
+        "title": "brain runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "brain_public_authority",
+        "brain_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "connectors",
+    "nodes": [
+      {
+        "id": "connectors_public_authority",
+        "title": "connectors public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "connectors"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "connectors_runtime_contract",
+        "title": "connectors runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "connectors_public_authority",
+        "connectors_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "sessions",
+    "nodes": [
+      {
+        "id": "sessions_public_authority",
+        "title": "sessions public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "sessions"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "sessions_runtime_contract",
+        "title": "sessions runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "sessions_public_authority",
+        "sessions_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "selfext",
+    "nodes": [
+      {
+        "id": "selfext_public_authority",
+        "title": "selfext public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "selfext"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "selfext_runtime_contract",
+        "title": "selfext runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "selfext_public_authority",
+        "selfext_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "website",
+    "nodes": [
+      {
+        "id": "website_public_authority",
+        "title": "website public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "website"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "website_runtime_contract",
+        "title": "website runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "website_public_authority",
+        "website_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "users",
+    "nodes": [
+      {
+        "id": "users_public_authority",
+        "title": "users public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "users"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "users_runtime_contract",
+        "title": "users runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "users_public_authority",
+        "users_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "monetization",
+    "nodes": [
+      {
+        "id": "monetization_public_authority",
+        "title": "monetization public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "monetization"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "monetization_runtime_contract",
+        "title": "monetization runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "monetization_public_authority",
+        "monetization_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "cockpit",
+    "nodes": [
+      {
+        "id": "cockpit_public_authority",
+        "title": "cockpit public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "cockpit"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "cockpit_runtime_contract",
+        "title": "cockpit runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "cockpit_public_authority",
+        "cockpit_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "cloud",
+    "nodes": [
+      {
+        "id": "cloud_public_authority",
+        "title": "cloud public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "cloud"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "cloud_runtime_contract",
+        "title": "cloud runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "cloud_public_authority",
+        "cloud_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "community",
+    "nodes": [
+      {
+        "id": "community_public_authority",
+        "title": "community public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "community"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "community_runtime_contract",
+        "title": "community runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "community_public_authority",
+        "community_runtime_contract"
+      ]
+    ]
+  },
+  {
+    "key": "orchestration",
+    "nodes": [
+      {
+        "id": "orchestration_public_authority",
+        "title": "orchestration public authority",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "scope",
+            "v": "orchestration"
+          },
+          {
+            "k": "source",
+            "v": "bundled-runtime-seed"
+          }
+        ],
+        "evidence_ref": ""
+      },
+      {
+        "id": "orchestration_runtime_contract",
+        "title": "orchestration runtime contract",
+        "status": "partial",
+        "params": [
+          {
+            "k": "classification",
+            "v": "T0 PUBLIC"
+          },
+          {
+            "k": "role",
+            "v": "runtime-contract"
+          },
+          {
+            "k": "evidence",
+            "v": "required"
+          }
+        ],
+        "evidence_ref": ""
+      }
+    ],
+    "wires": [
+      [
+        "orchestration_public_authority",
+        "orchestration_runtime_contract"
+      ]
+    ]
+  }
+]

@@ -1,6 +1,0 @@
-node_modules
-dist
-.astro
-npm-debug.log
-*.log
-.DS_Store

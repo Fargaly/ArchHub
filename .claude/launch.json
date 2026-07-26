@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nodelang-canvas",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "nodelang.serve_canvas"],
+      "port": 8478
+    }
+  ]
+}

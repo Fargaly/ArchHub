@@ -1,0 +1,13 @@
+{
+  "format": "archhub-windows-package-v2",
+  "product": "ArchHub",
+  "publisher": "ArchHub",
+  "product_version": "0.1.0",
+  "runtime": "universal-cell",
+  "universal_application_schema_version": "universal-cell-v1",
+  "architecture": "x64",
+  "install_scope": "per-user",
+  "state_path": "%LOCALAPPDATA%\\ArchHub\\node-native-wip.json.gz",
+  "bundle_format": "pyinstaller-onedir",
+  "installer_format": "inno-setup-6"
+}

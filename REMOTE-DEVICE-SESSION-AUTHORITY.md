@@ -342,3 +342,68 @@ As of 2026-07-26:
 - no controlled second-device deployment court has passed.
 
 The product is therefore not yet remotely usable or release eligible.
+
+## 10. Bounded ephemeral authorization custody
+
+### 10.1 Measured pre-change state
+
+At commit `2f78bb8888ccd78dccda121a50dee410e366002e`,
+`NativeAuthorizationBroker` owns pending state, nonce, and PKCE verifier values
+in one process-local dictionary. Entries leave that dictionary after successful
+completion, failed graph commit, or an attempted callback that discovers
+expiry. Repeated starts without callbacks have no global or per-device bound,
+and ordinary expiry does not proactively release their secret custody.
+
+This is not presently an Internet-reachable exploit because the public login
+transport is still absent. It is a release blocker: an admitted device or a
+future exposed adapter could otherwise create unbounded pending process state
+and graph transactions.
+
+### 10.2 Smallest authority-preserving repair
+
+The existing broker remains the only owner of ephemeral authorization secrets.
+It receives fixed positive global and per-device custody bounds. Under its
+existing lock, each start:
+
+1. removes expired entries that are not currently completing;
+2. counts all remaining pending entries and entries for the exact device;
+3. denies capacity exhaustion before graph commit;
+4. reserves one entry atomically;
+5. removes that entry if the canonical graph commit fails.
+
+Expiry pruning deletes only disposable process-held secrets. It does not delete
+or rewrite the graph transaction; the graph continues to expose the expired
+transaction and its evidence. No store, schema, route, session authority, or
+semantic cache is added.
+
+### 10.3 Red acceptance courts
+
+1. A device cannot exceed its pending authorization custody bound.
+2. Different devices cannot exceed the broker-wide custody bound.
+3. An expired, non-completing entry releases its process slot before the next
+   start while its graph transaction remains inspectable as expired.
+4. Invalid zero, negative, or per-device-greater-than-global bounds fail at
+   broker construction.
+5. Existing commit-failure, completion-race, one-use, secret-absence, and
+   returning-device courts remain unchanged and green.
+
+### 10.4 Implementation evidence
+
+Implemented on 2026-07-26 in the existing `NativeAuthorizationBroker`:
+
+- default process-custody bounds are 128 pending transactions globally and 4
+  per device, with smaller positive bounds injectable by the owning
+  composition;
+- admission, expiry pruning, per-device counting, and reservation occur under
+  the broker's existing lock;
+- an expired entry releases only its ephemeral secret custody and leaves its
+  Cell transaction inspectable as expired;
+- a graph commit failure removes the reservation, and a completing entry is
+  never pruned out from under its completion;
+- 8 focused capacity/configuration/concurrency courts pass;
+- the unchanged combined device, native authorization, OIDC, identity, cloud
+  gateway, bootstrap, entrypoint, and primitive-floor suite passes 119 courts.
+
+This closes pending-secret resource bounding only. Authentication freshness,
+provider assurance negotiation, nonce-key custody, replay-evidence retention,
+public transport, pairing, recovery, and deployment remain separate gates.

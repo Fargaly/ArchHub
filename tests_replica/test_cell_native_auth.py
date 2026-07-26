@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import threading
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -166,6 +168,169 @@ def _start():
         now=NOW,
     )
     return (*world, broker, started)
+
+
+def _add_test_device(store: CellStore, thumbprint: str) -> str:
+    root = device_root_for_thumbprint(thumbprint)
+    store.commit(
+        store.revision,
+        create=(
+            Cell(
+                root,
+                NULL_CELL_ID,
+                NULL_CELL_ID,
+                ("device-proof-key-thumbprint:" + thumbprint).encode("ascii"),
+            ),
+        ),
+    )
+    return root
+
+
+def test_pending_authorization_custody_has_global_and_per_device_bounds():
+    world = _world()
+    store, protocol, registration, verifier = world[:4]
+    broker = NativeAuthorizationBroker(
+        verifier,
+        max_pending_transactions=2,
+        max_pending_per_device=1,
+    )
+    broker.start(
+        store,
+        protocol,
+        registration,
+        redirect_port=49170,
+        device_thumbprint=DEVICE_THUMBPRINT,
+        now=NOW,
+    )
+    with pytest.raises(
+        NativeAuthenticationDenied,
+        match="device pending authorization capacity",
+    ):
+        broker.start(
+            store,
+            protocol,
+            registration,
+            redirect_port=49171,
+            device_thumbprint=DEVICE_THUMBPRINT,
+            now=NOW,
+        )
+
+    second_thumbprint = "B" * 43
+    _add_test_device(store, second_thumbprint)
+    broker.start(
+        store,
+        protocol,
+        registration,
+        redirect_port=49172,
+        device_thumbprint=second_thumbprint,
+        now=NOW,
+    )
+    third_thumbprint = "C" * 43
+    _add_test_device(store, third_thumbprint)
+    with pytest.raises(
+        NativeAuthenticationDenied,
+        match="pending authorization capacity",
+    ):
+        broker.start(
+            store,
+            protocol,
+            registration,
+            redirect_port=49173,
+            device_thumbprint=third_thumbprint,
+            now=NOW,
+        )
+
+
+def test_expired_pending_custody_releases_slot_without_deleting_graph_evidence():
+    world = _world()
+    store, protocol, registration, verifier = world[:4]
+    broker = NativeAuthorizationBroker(
+        verifier,
+        max_pending_transactions=1,
+        max_pending_per_device=1,
+    )
+    first = broker.start(
+        store,
+        protocol,
+        registration,
+        redirect_port=49174,
+        device_thumbprint=DEVICE_THUMBPRINT,
+        lifetime_seconds=1,
+        now=NOW,
+    )
+    second = broker.start(
+        store,
+        protocol,
+        registration,
+        redirect_port=49175,
+        device_thumbprint=DEVICE_THUMBPRINT,
+        lifetime_seconds=1,
+        now=NOW + 2,
+    )
+    assert native_authorization_status(
+        store.snapshot(), protocol, first.transaction_root, now=NOW + 2
+    ) == "expired"
+    assert native_authorization_status(
+        store.snapshot(), protocol, second.transaction_root, now=NOW + 2
+    ) == "pending"
+
+
+def test_concurrent_pending_starts_cannot_oversubscribe_device_bound():
+    world = _world()
+    store, protocol, registration, verifier = world[:4]
+    broker = NativeAuthorizationBroker(
+        verifier,
+        max_pending_transactions=1,
+        max_pending_per_device=1,
+    )
+    barrier = threading.Barrier(2)
+
+    def start(port):
+        barrier.wait()
+        try:
+            return broker.start(
+                store,
+                protocol,
+                registration,
+                redirect_port=port,
+                device_thumbprint=DEVICE_THUMBPRINT,
+                now=NOW,
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(pool.map(start, (49176, 49177)))
+    accepted = tuple(
+        result
+        for result in results
+        if isinstance(result, cell_native_auth.StartedNativeAuthorization)
+    )
+    denied = tuple(
+        result
+        for result in results
+        if isinstance(result, NativeAuthenticationDenied)
+    )
+    assert len(accepted) == 1
+    assert len(denied) == 1
+    assert "capacity" in str(denied[0])
+
+
+@pytest.mark.parametrize(
+    ("maximum", "per_device"),
+    ((0, 1), (1, 0), (-1, 1), (1, -1), (1, 2)),
+)
+def test_pending_authorization_custody_bounds_must_be_valid(
+    maximum,
+    per_device,
+):
+    verifier = _world()[3]
+    with pytest.raises(ValueError, match="pending authorization bounds"):
+        NativeAuthorizationBroker(
+            verifier,
+            max_pending_transactions=maximum,
+            max_pending_per_device=per_device,
+        )
 
 
 def test_native_client_and_transaction_are_open_relations_without_secrets():

@@ -50,6 +50,8 @@ from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
 MAX_TOKEN_RESPONSE_BYTES = 1024 * 1024
 MAX_ID_TOKEN_BYTES = 256 * 1024
+DEFAULT_MAX_PENDING_TRANSACTIONS = 128
+DEFAULT_MAX_PENDING_PER_DEVICE = 4
 
 ROLE_NAMES = (
     "vocabulary-member",
@@ -921,13 +923,57 @@ class NativeAuthorizationBroker:
     """Own transaction secrets while graph relations own public authority."""
 
     def __init__(
-        self, client_admission_verifier: NativeClientAdmissionVerifier
+        self,
+        client_admission_verifier: NativeClientAdmissionVerifier,
+        *,
+        max_pending_transactions: int = DEFAULT_MAX_PENDING_TRANSACTIONS,
+        max_pending_per_device: int = DEFAULT_MAX_PENDING_PER_DEVICE,
     ) -> None:
         if not hasattr(client_admission_verifier, "verify"):
             raise TypeError("native client admission verifier is required")
+        if (
+            type(max_pending_transactions) is not int
+            or type(max_pending_per_device) is not int
+            or max_pending_transactions <= 0
+            or max_pending_per_device <= 0
+            or max_pending_per_device > max_pending_transactions
+        ):
+            raise ValueError("native pending authorization bounds are invalid")
         self._client_admission_verifier = client_admission_verifier
+        self._max_pending_transactions = max_pending_transactions
+        self._max_pending_per_device = max_pending_per_device
         self._pending: dict[str, _PendingAuthorization] = {}
         self._lock = threading.RLock()
+
+    def _reserve_pending(
+        self,
+        pending: _PendingAuthorization,
+        *,
+        now: float,
+    ) -> None:
+        with self._lock:
+            expired = tuple(
+                root
+                for root, candidate in self._pending.items()
+                if not candidate.completing and now >= candidate.expires_at
+            )
+            for root in expired:
+                self._pending.pop(root, None)
+            if pending.transaction_root in self._pending:
+                raise RuntimeError("native authorization identity collision")
+            if len(self._pending) >= self._max_pending_transactions:
+                raise NativeAuthenticationDenied(
+                    "native pending authorization capacity is exhausted"
+                )
+            device_count = sum(
+                candidate.device_thumbprint == pending.device_thumbprint
+                for candidate in self._pending.values()
+            )
+            if device_count >= self._max_pending_per_device:
+                raise NativeAuthenticationDenied(
+                    "native device pending authorization capacity is exhausted"
+                )
+            self._pending[pending.transaction_root] = pending
 
     def start(
         self,
@@ -1044,10 +1090,8 @@ class NativeAuthorizationBroker:
             transaction_root,
             budget=100_000,
         )
-        with self._lock:
-            if transaction_root in self._pending:
-                raise RuntimeError("native authorization identity collision")
-            self._pending[transaction_root] = _PendingAuthorization(
+        self._reserve_pending(
+            _PendingAuthorization(
                 transaction_root,
                 registration_root,
                 state,
@@ -1059,7 +1103,9 @@ class NativeAuthorizationBroker:
                 admission.audience_root,
                 admission.relationship_root,
                 expires_at,
-            )
+            ),
+            now=current,
+        )
         try:
             store.commit(
                 snapshot.revision,
@@ -1428,6 +1474,8 @@ def issue_native_cloud_session(
 
 
 __all__ = [
+    "DEFAULT_MAX_PENDING_PER_DEVICE",
+    "DEFAULT_MAX_PENDING_TRANSACTIONS",
     "MAX_ID_TOKEN_BYTES",
     "MAX_TOKEN_RESPONSE_BYTES",
     "NativeAuthenticationDenied",

@@ -1,6 +1,6 @@
 {
   "authority": "evidence-only",
-  "byte_count": 12253545,
+  "byte_count": 12263104,
   "custody": "T0_PUBLIC",
   "file_count": 466,
   "files": [
@@ -66,8 +66,8 @@
     },
     {
       "path": "REMOTE-DEVICE-SESSION-AUTHORITY.md",
-      "sha256": "fd904cf4e2cf81e12e696f03adcac002eba8f5a007a4f60bb736552d11444595",
-      "size": 16642
+      "sha256": "a820f7a03a408e51d8de129d0128cbe53b1108536488304510dfa658e85f0646",
+      "size": 19794
     },
     {
       "path": "RESEARCH-UNIVERSAL-CELL.md",
@@ -726,8 +726,8 @@
     },
     {
       "path": "nodelang/cell_native_auth.py",
-      "sha256": "f34d7734738c9b6f2887d45cafb8f2257d4bbb6f0ddb67b296a5b9fd86aaccb2",
-      "size": 51448
+      "sha256": "c8ef634d3b996699ff94d798955ab915803b45d07adf322d0181918e200e6f75",
+      "size": 53362
     },
     {
       "path": "nodelang/cell_oidc.py",
@@ -1806,8 +1806,8 @@
     },
     {
       "path": "tests_replica/test_cell_native_auth.py",
-      "sha256": "403762aada82ac577030102f3a81c3379d18d6025fbc3cfbfaf14132fd8c0840",
-      "size": 20410
+      "sha256": "9228c19e81d324062ebd8b3dd554d1311a0ae42c24df9ad1dfc8fd1feea1b4b3",
+      "size": 24903
     },
     {
       "path": "tests_replica/test_cell_oidc.py",
@@ -2336,5 +2336,5 @@
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "753952604e649bdff65350650c384c5fefa8d8fd14da7e61e5c99eb83d59218d"
+  "tree_sha256": "a92e43c05f2dee28676aeb25d9304c26ae2acb5883de18ba8c4acdf18ebadffe"
 }

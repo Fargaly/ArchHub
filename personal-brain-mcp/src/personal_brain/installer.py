@@ -734,14 +734,13 @@ def _detect_codex() -> bool:
 #   UserPromptSubmit → brainwrap context   Stop → brainwrap stop
 # The MCP server is still registered in config.toml so Codex can call brain
 # tools directly; the hooks.json is what auto-fires context + the stop-gate.
-_CODEX_BRAIN_BLOCK = """
+CODEX_BRAIN_MCP_URL = "http://127.0.0.1:8473/mcp"
+
+
+_CODEX_BRAIN_BLOCK = f"""
 # personal-brain-mcp (managed by `personal-brain-mcp installer`)
 [mcp_servers.brain]
-command = "personal-brain"
-args = []
-
-[mcp_servers.brain.env]
-BRAIN_OWNER_USER = "${USER}"
+url = "{CODEX_BRAIN_MCP_URL}"
 
 # Pre-prompt context inject + stop-gate are AUTO-FIRED by ~/.codex/hooks.json
 # (UserPromptSubmit + Stop → brainwrap). If you ever disable that file, the
@@ -750,6 +749,86 @@ BRAIN_OWNER_USER = "${USER}"
 #   stop / anti-laziness gate:  python tools/brainwrap.py stop --vendor generic
 # /personal-brain-mcp
 """
+
+
+def _replace_codex_brain_block(existing: str) -> tuple[str, bool]:
+    """Converge Codex Brain MCP config to the singleton HTTP daemon.
+
+    A `command = ... personal_brain.server` MCP entry lets every Codex task
+    spawn a private Brain child. The managed Codex block must therefore be URL
+    transport only. Marker-bounded migrations replace only the Brain tables and
+    preserve unrelated MCP tables that may have drifted inside the markers.
+    """
+    start_marker = "# personal-brain-mcp"
+    end_marker = "# /personal-brain-mcp"
+    start = existing.find(start_marker)
+    end = existing.find(end_marker)
+    if (start >= 0) != (end >= 0) or (start >= 0 and end < start):
+        raise ValueError(
+            "refusing to modify malformed Codex brain block markers"
+        )
+    if start >= 0:
+        start_line_start = existing.rfind("\n", 0, start) + 1
+        if existing[start_line_start:start].strip():
+            raise ValueError(
+                "refusing to modify malformed Codex brain block markers"
+            )
+        start_line_end = _line_end_including_newline(existing, start)
+        end_line_start = existing.rfind("\n", 0, end) + 1
+        if existing[end_line_start:end].strip():
+            raise ValueError(
+                "refusing to modify malformed Codex brain block markers"
+            )
+        end_line_end = _line_end_including_newline(existing, end)
+        newline = "\r\n" if "\r\n" in existing else "\n"
+        before = existing[:start_line_start].rstrip()
+        span = existing[start_line_end:end_line_start]
+        after = _strip_outer_blank_lines(existing[end_line_end:])
+        preserved = _strip_outer_blank_lines(_remove_codex_brain_tables(span))
+        managed = _CODEX_BRAIN_BLOCK.strip().replace("\n", newline)
+        if preserved:
+            managed = managed + newline + newline + preserved
+        parts = [p for p in (before, managed, after) if p]
+        new_text = (newline + newline).join(parts) + newline
+        return new_text, new_text != existing
+
+    new_content = existing + (
+        "\n" if existing and not existing.endswith("\n") else ""
+    ) + _CODEX_BRAIN_BLOCK.strip() + "\n"
+    return new_content, True
+
+
+def _line_end_including_newline(text: str, index: int) -> int:
+    newline = text.find("\n", index)
+    if newline < 0:
+        return len(text)
+    return newline + 1
+
+
+def _strip_outer_blank_lines(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "".join(lines).strip("\r\n")
+
+
+def _remove_codex_brain_tables(toml_text: str) -> str:
+    """Remove only [mcp_servers.brain] and [mcp_servers.brain.env] tables."""
+    kept: list[str] = []
+    skipping = False
+    for line in toml_text.splitlines(keepends=True):
+        stripped = line.strip()
+        is_table = stripped.startswith("[") and stripped.endswith("]")
+        if stripped in ("[mcp_servers.brain]", "[mcp_servers.brain.env]"):
+            skipping = True
+            continue
+        if is_table:
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "".join(kept)
 
 
 def _codex_hooks_block() -> dict[str, Any]:
@@ -794,7 +873,11 @@ def _codex_hook_is_managed(entry: Any) -> bool:
         if not isinstance(h, dict):
             continue
         command = str(h.get("command", ""))
-        if "brainwrap" in command or "pretooluse_validate.py" in command:
+        if (
+            "brainwrap" in command
+            or "agent_scope_gate.py" in command
+            or "pretooluse_validate.py" in command
+        ):
             return True
     return False
 
@@ -841,13 +924,8 @@ def _remove_codex_hooks(
 def _install_codex(dry_run: bool) -> dict[str, Any]:
     path = _codex_path()
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    new_content, mcp_change = _replace_codex_brain_block(existing)
     mcp_present = "personal-brain-mcp" in existing
-    if not mcp_present:
-        new_content = existing + (
-            "\n" if existing and not existing.endswith("\n") else ""
-        ) + _CODEX_BRAIN_BLOCK
-    else:
-        new_content = existing
 
     # Codex hooks.json — UserPromptSubmit + Stop → brainwrap (Confirmed real).
     hooks_path = _codex_hooks_path()
@@ -857,27 +935,29 @@ def _install_codex(dry_run: bool) -> dict[str, Any]:
 
     notes: list[str] = []
     if mcp_present:
-        notes.append("mcp_servers.brain already present")
+        notes.append(
+            "mcp_servers.brain already present; enforced HTTP singleton block"
+        )
     notes += hook_notes
 
     if dry_run:
         return {"client": "codex", "path": str(path),
                 "hooks_path": str(hooks_path),
-                "would_change": (not mcp_present) or hooks_change,
+                "would_change": mcp_change or hooks_change,
                 "notes": (notes or [])
-                + (["would append brain block"] if not mcp_present else [])
+                + (["would write singleton URL brain block"] if mcp_change else [])
                 + (["would write hooks.json (PreToolUse + UserPromptSubmit + Stop)"]
                    if hooks_change else ["hooks.json already up to date"])}
 
-    if not mcp_present:
+    if mcp_change:
         _backup(path)
         _atomic_write(path, new_content)
-        notes.append("appended brain block to config.toml")
+        notes.append("wrote singleton URL brain block to config.toml")
     if hooks_change:
         _backup(hooks_path)
         _save_json(hooks_path, hooks_after)
         notes.append("wrote hooks.json (PreToolUse scope gate + UserPromptSubmit/Stop brainwrap)")
-    changed = (not mcp_present) or hooks_change
+    changed = mcp_change or hooks_change
     return {"client": "codex", "path": str(path),
             "hooks_path": str(hooks_path), "changed": changed,
             "notes": notes or ["already up to date"]}

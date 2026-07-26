@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -185,18 +186,104 @@ def test_codex_install_appends_brain_block(fake_home):
     (fake_home / ".codex").mkdir()
     cfg_path = installer._codex_path()
     cfg_path.write_text("# existing\n[some.other]\nkey = 'val'\n")
-    installer.install_all(only=["codex"])
+    first_result = installer.install_all(only=["codex"])[0]
     text = cfg_path.read_text()
+    assert first_result["changed"] is True
     assert "[some.other]" in text  # preserved
     assert "[mcp_servers.brain]" in text
     assert "personal-brain-mcp" in text
+    data = tomllib.loads(text)
+    brain = data["mcp_servers"]["brain"]
+    assert brain["url"] == installer.CODEX_BRAIN_MCP_URL
+    assert "command" not in brain
+    assert "args" not in brain
+    assert "env" not in brain
+
+
+def test_codex_install_migrates_legacy_command_block_preserving_unrelated_mcp(
+    fake_home,
+):
+    (fake_home / ".codex").mkdir()
+    cfg_path = installer._codex_path()
+    higsfield_block = (
+        "[mcp_servers.higsfield]\n"
+        "enabled = true\n"
+        'url = "https://mcp.higgsfield.ai/mcp"'
+    )
+    cfg_path.write_text(
+        "# existing\n"
+        "[some.other]\n"
+        "key = 'val'\n"
+        "\n"
+        "# personal-brain-mcp (managed by `personal-brain-mcp installer`)\n"
+        "[mcp_servers.brain]\n"
+        "command = 'C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe'\n"
+        'args = ["-m", "personal_brain.server"]\n'
+        "startup_timeout_sec = 120\n"
+        "\n"
+        "[mcp_servers.brain.env]\n"
+        'BRAIN_OWNER_USER = "${USER}"\n'
+        "PYTHONPATH = 'C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\personal-brain-mcp\\src'\n"
+        "\n"
+        f"{higsfield_block}\n"
+        "# /personal-brain-mcp\n"
+        "\n"
+        "[after]\n"
+        "keep = true\n"
+    )
+
+    first_result = installer.install_all(only=["codex"])[0]
+    text = cfg_path.read_text()
+
+    tomllib.loads(text)
+    assert higsfield_block in text
+    data = tomllib.loads(text)
+    brain = data["mcp_servers"]["brain"]
+    assert brain == {"url": installer.CODEX_BRAIN_MCP_URL}
+    assert data["mcp_servers"]["higsfield"] == {
+        "enabled": True,
+        "url": "https://mcp.higgsfield.ai/mcp",
+    }
+    assert data["after"]["keep"] is True
+    assert text.count("[mcp_servers.brain]") == 1
+    assert "[mcp_servers.brain.env]" not in text
+    assert "personal_brain.server" not in text
+
+    second_result = installer.install_all(only=["codex"])[0]
+    assert first_result["changed"] is True
+    assert second_result["changed"] is False
+    assert cfg_path.read_text() == text
+
+
+def test_codex_install_fails_closed_on_missing_end_marker_without_duplicate(
+    fake_home,
+):
+    (fake_home / ".codex").mkdir()
+    cfg_path = installer._codex_path()
+    original = (
+        "# personal-brain-mcp (managed by `personal-brain-mcp installer`)\n"
+        "[mcp_servers.brain]\n"
+        'command = "personal-brain"\n'
+    )
+    cfg_path.write_text(original)
+
+    result = installer.install_all(only=["codex"])[0]
+
+    assert "malformed Codex brain block markers" in result["error"]
+    assert cfg_path.read_text() == original
+    assert cfg_path.read_text().count("[mcp_servers.brain]") == 1
+    assert installer.CODEX_BRAIN_MCP_URL not in cfg_path.read_text()
 
 
 def test_codex_install_idempotent(fake_home):
     (fake_home / ".codex").mkdir()
-    installer.install_all(only=["codex"])
-    installer.install_all(only=["codex"])  # second time
+    first_result = installer.install_all(only=["codex"])[0]
+    first = installer._codex_path().read_text()
+    second_result = installer.install_all(only=["codex"])[0]
     text = installer._codex_path().read_text()
+    assert first_result["changed"] is True
+    assert second_result["changed"] is False
+    assert text == first
     # Should only contain ONE brain block
     assert text.count("[mcp_servers.brain]") == 1
 

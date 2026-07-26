@@ -539,6 +539,38 @@ def _text_has(path: Path, *markers: str) -> tuple[bool, str]:
     return False, f"{path.name}: missing {' + '.join(markers)}"
 
 
+def _codex_has_singleton_brain_mcp(path: Path) -> tuple[bool, str]:
+    if not path.exists():
+        return False, f"missing {path.name}"
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception as ex:
+        return False, f"{path.name}: invalid TOML: {type(ex).__name__}: {ex}"
+    servers = data.get("mcp_servers")
+    if not isinstance(servers, dict):
+        return False, f"{path.name}: missing mcp_servers table"
+    brain = servers.get("brain")
+    if not isinstance(brain, dict):
+        return False, f"{path.name}: missing mcp_servers.brain table"
+    url = brain.get("url")
+    if url != installer.CODEX_BRAIN_MCP_URL:
+        return (
+            False,
+            f"{path.name}: mcp_servers.brain.url must be "
+            f"{installer.CODEX_BRAIN_MCP_URL}",
+        )
+    forbidden = sorted(key for key in ("command", "args", "env") if key in brain)
+    if forbidden:
+        return (
+            False,
+            f"{path.name}: mcp_servers.brain must not declare "
+            + ", ".join(forbidden),
+        )
+    if brain.get("enabled") is False:
+        return False, f"{path.name}: mcp_servers.brain must not be disabled"
+    return True, f"{path}:mcp_servers.brain.url singleton"
+
+
 def _client_paths(client: str) -> list[Path]:
     if client == "claude-code":
         return [installer._claude_code_path()]
@@ -592,7 +624,7 @@ def _checks_for(client: str) -> tuple[list[tuple[bool, str]], dict[str, tuple[bo
         cfg_path = installer._codex_path()
         hooks_path = installer._codex_hooks_path()
         return (
-            [_text_has(cfg_path, "mcp_servers.brain", "personal-brain-mcp")],
+            [_codex_has_singleton_brain_mcp(cfg_path)],
             {
                 "scope_gate": _json_event_has(
                     hooks_path, "PreToolUse", "agent_scope_gate.py", "--vendor codex"

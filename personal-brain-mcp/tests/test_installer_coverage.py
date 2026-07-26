@@ -32,6 +32,7 @@ import io
 import json
 import os
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -316,6 +317,9 @@ def test_codex_keeps_config_toml_mcp_block(fake_home):
     text = installer._codex_path().read_text()
     assert "[mcp_servers.brain]" in text
     assert "personal-brain-mcp" in text
+    data = tomllib.loads(text)
+    brain = data["mcp_servers"]["brain"]
+    assert brain == {"url": installer.CODEX_BRAIN_MCP_URL}
 
 
 def test_codex_hooks_idempotent(fake_home):

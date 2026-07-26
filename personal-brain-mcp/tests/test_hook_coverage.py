@@ -249,6 +249,57 @@ def test_audit_persists_installed_hook_coverage_in_brain_meta(fake_home, store):
     assert codex.touchpoints["post_tool_write"].state == installer.PER_TURN
 
 
+@pytest.mark.parametrize(
+    ("brain_table", "expected_issue"),
+    [
+        (
+            'command = "personal-brain"\n'
+            "args = []\n"
+            "\n"
+            "[mcp_servers.brain.env]\n"
+            'BRAIN_OWNER_USER = "${USER}"',
+            "mcp_servers.brain.url must be",
+        ),
+        (
+            f'url = "{installer.CODEX_BRAIN_MCP_URL}"\n'
+            'command = "personal-brain"\n'
+            "args = []\n"
+            "\n"
+            "[mcp_servers.brain.env]\n"
+            'BRAIN_OWNER_USER = "${USER}"',
+            "mcp_servers.brain must not declare",
+        ),
+        (
+            f'url = "{installer.CODEX_BRAIN_MCP_URL}"\n'
+            "enabled = false",
+            "mcp_servers.brain must not be disabled",
+        ),
+    ],
+)
+def test_hook_coverage_rejects_unsafe_codex_brain_mcp_config(
+    fake_home,
+    store,
+    brain_table,
+    expected_issue,
+):
+    (fake_home / ".codex").mkdir()
+    installer.install_all(only=["codex"])
+    path = installer._codex_path()
+    path.write_text(
+        path.read_text().replace(
+            f'url = "{installer.CODEX_BRAIN_MCP_URL}"',
+            brain_table,
+        )
+    )
+
+    report = hc.audit(store, only=["codex"], owner_user="founder")
+
+    codex = report.clients["codex"]
+    assert codex.installed is False
+    assert codex.status == "red"
+    assert any(expected_issue in issue for issue in codex.issues)
+
+
 def test_runtime_compliance_observer_is_read_only_and_covers_exact_court_checks(
     fake_home,
 ):

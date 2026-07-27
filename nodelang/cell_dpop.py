@@ -80,7 +80,7 @@ class JoseRfc9449ProofVerifier:
         self,
         *,
         allowed_algorithms: tuple[str, ...] = ("ES256", "PS256", "EdDSA"),
-        max_age_seconds: float = 60.0,
+        max_age_seconds: float = 10.0,
         future_skew_seconds: float = 5.0,
     ) -> None:
         if not allowed_algorithms:
@@ -95,6 +95,11 @@ class JoseRfc9449ProofVerifier:
         self._allowed_algorithms = tuple(dict.fromkeys(allowed_algorithms))
         self._max_age_seconds = max_age_seconds
         self._future_skew_seconds = future_skew_seconds
+
+    @property
+    def replay_retention_seconds(self) -> float:
+        """Return the full period during which an admitted proof may replay."""
+        return self._max_age_seconds + self._future_skew_seconds
 
     def verify(
         self,

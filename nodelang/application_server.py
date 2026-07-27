@@ -48,6 +48,9 @@ from .cell_device_custody import (
 )
 from .cell_cloud_sessions import CloudSessionBroker, device_root_for_thumbprint
 from .cell_dpop import JoseRfc9449ProofVerifier
+from .cell_replay_policy_authority import (
+    PublishedProofReplayPolicyVerifier,
+)
 from .cell_dpop_nonce import ResourceServerNonceBroker
 from .cell_tenant_authority import PublishedTenantAdmissionVerifier
 from .cell_runtime_presence import renew_runtime_presence
@@ -8465,6 +8468,19 @@ class ApplicationServer:
             relationship_broker=authorization.relationship_broker,
             authentication_broker=authorization.broker,
             request_proof_verifier=JoseRfc9449ProofVerifier(),
+            replay_policy_authority_verifier=(
+                PublishedProofReplayPolicyVerifier(
+                    registry.assembly_protocol,
+                    registry.standard_library.lifecycle_protocol,
+                    registry.attestation_protocol,
+                    registry.attestation_broker,
+                    registry.resource_lifecycle_court_root,
+                    (
+                        registry.cloud_session_protocol
+                        .proof_replay_policy_lifecycle_root
+                    ),
+                )
+            ),
             tenant_admission_verifier=PublishedTenantAdmissionVerifier(
                 registry.tenant_configuration_protocol,
                 registry.assembly_protocol,

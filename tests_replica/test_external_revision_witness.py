@@ -13,12 +13,15 @@ from nodelang.external_revision_witness import (
     ExternalRevisionWitnessDenied,
     ExternalRevisionWitnessState,
     WitnessedCellJournal,
+    revision_history_chain_digest,
 )
 from nodelang.universal_cell import (
     NULL_CELL_ID,
     Cell,
     CellStore,
     InvalidCell,
+    LoadedJournalHead,
+    _SqliteJournal,
 )
 
 
@@ -77,6 +80,74 @@ class FakeJournal:
 
     def acquire_runtime_fence(self, resource_id):
         return lambda: None
+
+
+class HeadBoundFakeHistory:
+    def __init__(self, versions, head_revision):
+        self._versions = {
+            revision: tuple(changed)
+            for revision, changed in versions.items()
+            if revision <= head_revision
+        }
+        self._head_revision = head_revision
+        self._head_digest = revision_history_chain_digest(
+            self._versions,
+            target_revision=head_revision,
+        )
+
+    @property
+    def head_revision(self):
+        return self._head_revision
+
+    @property
+    def head_digest(self):
+        return self._head_digest
+
+    def chain_digest(self, revision):
+        if revision > self._head_revision:
+            raise InvalidCell("history read exceeds captured head")
+        return revision_history_chain_digest(
+            self._versions,
+            target_revision=revision,
+        )
+
+
+def _head_from_versions(versions, head_revision):
+    current = {}
+    for revision in range(head_revision + 1):
+        for cell in versions[revision]:
+            current[cell.id] = cell
+    history = HeadBoundFakeHistory(versions, head_revision)
+    return LoadedJournalHead(
+        cells=MappingProxyType(current),
+        revision=head_revision,
+        revision_chain_digest=history.head_digest,
+        history=history,
+    )
+
+
+class HeadBoundFakeJournal(FakeJournal):
+    backend = "sqlite"
+    exclusive_owner = True
+    shared_writers = False
+
+    def __init__(self, events=None):
+        super().__init__(events)
+        self.eager_load_calls = 0
+        self.load_head_calls = 0
+        self.next_head_override = None
+
+    def load(self):
+        self.eager_load_calls += 1
+        raise AssertionError("built-in witnessed journal used eager load")
+
+    def load_head(self):
+        self.load_head_calls += 1
+        if self.next_head_override is not None:
+            loaded = self.next_head_override
+            self.next_head_override = None
+            return loaded
+        return _head_from_versions(self.versions, self.revision)
 
 
 class FakeWitness:
@@ -174,6 +245,144 @@ def _wrapped(delegate=None, provider=None, *, provision=True, events=None):
         provision_genesis=provision,
     )
     return wrapper, delegate, provider
+
+
+def test_witnessed_builtin_loads_and_reconciles_one_head_bound_digest():
+    delegate = HeadBoundFakeJournal()
+    provider = FakeWitness()
+    wrapper = WitnessedCellJournal(
+        delegate,
+        provider,
+        authority_id="archhub-court",
+        provision_genesis=True,
+    )
+
+    loaded = wrapper.load_head()
+
+    assert loaded.revision == 0
+    assert loaded.revision_chain_digest == loaded.history.head_digest
+    assert (
+        loaded.revision_chain_digest
+        == loaded.history.chain_digest(loaded.revision)
+    )
+    assert provider.state.confirmed_revision == loaded.revision
+    assert provider.state.confirmed_digest == loaded.revision_chain_digest
+    assert delegate.load_head_calls == 1
+    assert delegate.eager_load_calls == 0
+
+
+def test_witnessed_builtin_path_denies_eager_load_fallback():
+    delegate = HeadBoundFakeJournal()
+    wrapper = WitnessedCellJournal(
+        delegate,
+        FakeWitness(),
+        authority_id="archhub-court",
+        provision_genesis=True,
+    )
+
+    with pytest.raises(ExternalRevisionWitnessDenied, match="eager"):
+        wrapper.load()
+
+    assert delegate.eager_load_calls == 0
+
+
+def test_ambiguous_append_reconciles_the_same_head_bound_commit():
+    delegate = HeadBoundFakeJournal()
+    provider = FakeWitness()
+    wrapper = WitnessedCellJournal(
+        delegate,
+        provider,
+        authority_id="archhub-court",
+        provision_genesis=True,
+    )
+    wrapper.load_head()
+    delegate.fault = "after"
+
+    with pytest.raises(ExternalRevisionWitnessDenied, match="restart"):
+        wrapper.append(0, 1, (_leaf("root", b"one"),))
+
+    assert delegate.revision == 1
+    assert provider.state.confirmed_revision == 1
+    assert provider.state.pending_token is None
+    assert delegate.load_head_calls == 2
+    assert delegate.eager_load_calls == 0
+
+
+@pytest.mark.parametrize("divergence", ("rollback", "split"))
+def test_ambiguous_append_keeps_rollback_and_split_history_denied(divergence):
+    delegate = HeadBoundFakeJournal()
+    delegate.append(0, 1, (_leaf("root", b"one"),))
+    accepted = _head_from_versions(delegate.versions, delegate.revision)
+    provider = FakeWitness()
+    provider.state = ExternalRevisionWitnessState(
+        authority_id="archhub-court",
+        confirmed_revision=accepted.revision,
+        confirmed_digest=accepted.revision_chain_digest,
+    )
+    wrapper = WitnessedCellJournal(
+        delegate,
+        provider,
+        authority_id="archhub-court",
+    )
+    wrapper.load_head()
+
+    if divergence == "rollback":
+        delegate.next_head_override = _head_from_versions(
+            delegate.versions,
+            0,
+        )
+    else:
+        alternate = dict(delegate.versions)
+        alternate[2] = (_leaf("root", b"split"),)
+        delegate.next_head_override = _head_from_versions(alternate, 2)
+    delegate.fault = "after"
+
+    with pytest.raises(ExternalRevisionWitnessDenied):
+        wrapper.append(1, 2, (_leaf("root", b"two"),))
+
+    assert provider.state.confirmed_revision == 1
+    assert provider.state.pending_revision == 2
+    assert provider.state.pending_token is not None
+    assert delegate.load_head_calls == 2
+    assert delegate.eager_load_calls == 0
+
+
+def test_witnessed_sqlite_reopens_with_lazy_history_and_exact_old_revision(
+    tmp_path,
+):
+    path = tmp_path / "witnessed-lazy.sqlite3"
+    provider = FakeWitness()
+    first = CellStore(
+        journal=WitnessedCellJournal(
+            _SqliteJournal(path, None),
+            provider,
+            authority_id="archhub-sqlite-court",
+            provision_genesis=True,
+        )
+    )
+    first.commit(0, create=(_leaf("root", b"before"),))
+    first_revision = first.revision
+    first.commit(first_revision, replace=(_leaf("root", b"after"),))
+    expected_digest = first.revision_chain_digest()
+    first.close()
+
+    reopened = CellStore(
+        journal=WitnessedCellJournal(
+            _SqliteJournal(path, None),
+            provider,
+            authority_id="archhub-sqlite-court",
+        )
+    )
+    try:
+        assert reopened.read("root").atom == b"after"
+        assert reopened.at(first_revision).cells["root"].atom == b"before"
+        assert reopened.revision_chain_digest() == expected_digest
+        assert reopened.retention_stats()[
+            "resident_history_version_cell_count"
+        ] == 0
+        assert not reopened._versions
+    finally:
+        reopened.close()
 
 
 def test_witness_digest_matches_canonical_chain_and_orders_commit():

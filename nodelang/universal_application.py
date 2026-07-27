@@ -273,7 +273,9 @@ from .cell_cloud_routes import (
 )
 from .cell_cloud_sessions import (
     CloudSessionProtocol,
+    bind_proof_replay_policy_lifecycle,
     bootstrap_cloud_session_protocol,
+    ensure_cloud_session_protocol,
     project_cloud_session_protocol,
 )
 from .cell_website import (
@@ -746,6 +748,7 @@ from .browser_publish_court import (
     BrowserPublishCourt,
 )
 from .cell_lifecycle import (
+    append_wip_graph_revision,
     append_wip_revision,
     graph_content_bytes,
     lifecycle_history,
@@ -3871,6 +3874,84 @@ def _promote_tenant_authority_revision(
         evidence_roots=(evidence_root,),
         evidence_receipts=(receipt,),
         attestation_broker=broker,
+    )
+
+
+def _ensure_replay_policy_lifecycle(
+    store: CellStore,
+    assembly: AssemblyProtocol,
+    standard_library: StandardLibraryBuild,
+    cloud_protocol: CloudSessionProtocol,
+    actor_root: str,
+) -> CloudSessionProtocol:
+    """Stage and wire replay policy without self-approving its release."""
+    lifecycle = standard_library.lifecycle_protocol
+    token = "app-cloud-session-proof-replay-policy"
+    instance_root = "assembly-instance:" + token
+    snapshot = store.snapshot()
+    if instance_root not in snapshot.cells:
+        composed = compose_catalog_instance(
+            snapshot,
+            assembly,
+            standard_library.catalog_root,
+            standard_library.definition_roots[2],
+            token=token,
+        )
+        store.commit(snapshot.revision, create=composed.cells)
+    instance = read_lifecycle_instance(
+        store.snapshot(), assembly, lifecycle, instance_root
+    )
+
+    def heads(state_name: str) -> tuple[str, ...]:
+        snapshot = store.snapshot()
+        return state_heads(
+            snapshot,
+            lifecycle,
+            instance.state_pointers[lifecycle.states[state_name]],
+        )
+
+    published_heads = heads("published")
+    if len(published_heads) > 1:
+        raise InvalidCell("replay policy has multiple Published heads")
+    if published_heads:
+        published = read_revision(
+            store.snapshot(), lifecycle, published_heads[0]
+        )
+        if published.content_root != cloud_protocol.proof_replay_policy_root:
+            raise InvalidCell("Published replay policy points elsewhere")
+        return bind_proof_replay_policy_lifecycle(
+            store, cloud_protocol, instance_root
+        )
+
+    shared_heads = heads("shared")
+    if len(shared_heads) > 1:
+        raise InvalidCell("replay policy has multiple Shared heads")
+    if shared_heads:
+        shared = read_revision(store.snapshot(), lifecycle, shared_heads[0])
+        if shared.content_root != cloud_protocol.proof_replay_policy_root:
+            raise InvalidCell("Shared replay policy points elsewhere")
+        return bind_proof_replay_policy_lifecycle(
+            store, cloud_protocol, instance_root
+        )
+
+    wip_heads = heads("wip")
+    if len(wip_heads) != 1:
+        raise InvalidCell("replay policy requires one WIP head")
+    current_wip = read_revision(
+        store.snapshot(), lifecycle, wip_heads[0]
+    )
+    if current_wip.content_root != cloud_protocol.proof_replay_policy_root:
+        append_wip_graph_revision(
+            store,
+            assembly,
+            lifecycle,
+            instance_root,
+            content_root=cloud_protocol.proof_replay_policy_root,
+            actor_root=actor_root,
+            reason="stage proof replay policy for explicit release",
+        )
+    return bind_proof_replay_policy_lifecycle(
+        store, cloud_protocol, instance_root
     )
 
 
@@ -11316,6 +11397,13 @@ def build_universal_application(
         runtime_compliance_court.root_id,
         runtime_compliance_runner or _unavailable_runtime_compliance_runner,
     )
+    cloud_session_protocol = _ensure_replay_policy_lifecycle(
+        store,
+        assembly_protocol,
+        standard_library,
+        cloud_session_protocol,
+        authorization.subject_root,
+    )
     tenant_shared_revision = _promote_tenant_authority_revision(
         store,
         assembly_protocol,
@@ -13875,6 +13963,10 @@ def restore_universal_application(
         for key, root in projected_routes.items()
         if key not in _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
     }
+    ensure_cloud_session_protocol(
+        store, prefix="app:cloud-session-protocol"
+    )
+    snapshot = store.snapshot()
     cloud_session_protocol = project_cloud_session_protocol(
         snapshot, prefix="app:cloud-session-protocol"
     )
@@ -14685,6 +14777,14 @@ def restore_universal_application(
         theme_publish_court_root,
         browser_publish_court.run,
     )
+    cloud_session_protocol = _ensure_replay_policy_lifecycle(
+        store,
+        assembly,
+        standard_library,
+        cloud_session_protocol,
+        authorization.subject_root,
+    )
+    snapshot = store.snapshot()
 
     canvas_root = "app:canvas"
     core_values = _ensure_core_values_authority_current(

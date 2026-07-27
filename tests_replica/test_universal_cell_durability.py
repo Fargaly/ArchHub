@@ -270,3 +270,126 @@ def test_failure_after_sql_commit_recovers_complete_new_snapshot(tmp_path: Path)
     assert reopened.revision == 1
     assert reopened.read("root") == _root()
     reopened.close()
+
+
+def test_durable_history_is_exact_without_a_resident_version_archive(
+    tmp_path: Path,
+):
+    path = tmp_path / "lazy-history.sqlite3"
+    memory = CellStore()
+    durable = CellStore(path)
+    try:
+        for store in (memory, durable):
+            store.commit(store.revision, create=[_root(b"version-000")])
+            for index in range(1, 101):
+                store.commit(
+                    store.revision,
+                    replace=[_root(("version-%03d" % index).encode("ascii"))],
+                )
+        expected_digest = memory.revision_chain_digest()
+        expected_revisions = memory.revisions()
+        expected_changes = {
+            revision: memory.revision_changes(revision)
+            for revision in expected_revisions
+        }
+    finally:
+        durable.close()
+
+    reopened = CellStore(path)
+    try:
+        assert reopened.revision == memory.revision == 101
+        assert reopened.read("root").atom == b"version-100"
+        assert reopened.revisions() == expected_revisions
+        assert reopened.revision_chain_digest() == expected_digest
+        assert {
+            revision: reopened.revision_changes(revision)
+            for revision in expected_revisions
+        } == expected_changes
+        for revision in (1, 2, 50, 100):
+            assert reopened.at(revision) == memory.at(revision)
+            assert reopened.cells_at(revision, ("root",)) == (
+                memory.cells_at(revision, ("root",))
+            )
+        assert reopened.cell_created_revision("root") == 1
+        stats = reopened.retention_stats()
+        assert stats["revision_count"] == 102
+        assert stats["version_cell_count"] == 102
+        assert stats["resident_history_version_cell_count"] == 0
+        assert stats["historical_snapshot_count"] <= 2
+        assert not reopened._versions
+        assert reopened._cell_history_index is None
+    finally:
+        reopened.close()
+        memory.close()
+
+
+def test_sqlite_uses_the_head_bound_reader_not_the_eager_adapter(
+    tmp_path: Path,
+    monkeypatch,
+):
+    path = tmp_path / "head-reader.sqlite3"
+    created = CellStore(path)
+    created.commit(created.revision, create=[_root()])
+    created.close()
+
+    def forbidden_eager_load(_journal):
+        raise AssertionError("built-in SQLite must not materialize durable history")
+
+    monkeypatch.setattr(
+        "nodelang.universal_cell._SqliteJournal.load",
+        forbidden_eager_load,
+    )
+    reopened = CellStore(path)
+    try:
+        assert reopened.revision == 1
+        assert reopened.read("root") == _root()
+        assert reopened.at(0).cells[NULL_CELL_ID].id == NULL_CELL_ID
+    finally:
+        reopened.close()
+
+
+def test_durable_append_advances_the_bound_reader_without_resident_history(
+    tmp_path: Path,
+):
+    store = CellStore(tmp_path / "advance-head.sqlite3")
+    try:
+        initial = store.revision_chain_digest()
+        store.commit(store.revision, create=[_root(b"first")])
+        first = store.revision_chain_digest()
+        store.commit(store.revision, replace=[_root(b"second")])
+        second = store.revision_chain_digest()
+
+        assert len({initial, first, second}) == 3
+        assert store.at(1).cells["root"].atom == b"first"
+        assert store.cells_at(1, ("root",))["root"].atom == b"first"
+        assert store.revision_changes(2) == ("root",)
+        assert store.retention_stats()["resident_history_version_cell_count"] == 0
+        assert not store._versions
+    finally:
+        store.close()
+
+
+def test_forged_sqlite_genesis_is_denied_without_leaking_the_owner_fence(
+    tmp_path: Path,
+):
+    path = tmp_path / "forged-genesis.sqlite3"
+    created = CellStore(path)
+    created.close()
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "UPDATE cell_versions SET atom=? WHERE revision=0 AND cell_id=?",
+            (b"forged", NULL_CELL_ID),
+        )
+        connection.execute(
+            "UPDATE current_cells SET atom=? WHERE revision=0 AND cell_id=?",
+            (b"forged", NULL_CELL_ID),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(InvalidCell, match="genesis"):
+        CellStore(path)
+    with pytest.raises(InvalidCell, match="genesis"):
+        CellStore(path)

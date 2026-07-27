@@ -6,13 +6,18 @@ existing physical revision-chain digest and wraps one admitted CellJournal.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import hmac
 import re
 import secrets
 from typing import Callable, Iterable, Mapping, Protocol
 
-from .universal_cell import Cell, CellJournal, InvalidCell
+from .universal_cell import (
+    Cell,
+    CellJournal,
+    InvalidCell,
+    LoadedJournalHead,
+    revision_chain_digest_step,
+)
 
 
 class ExternalRevisionWitnessDenied(InvalidCell):
@@ -490,36 +495,10 @@ def _advance_chain_digest(
     revision: int,
     changed: Iterable[Cell],
 ) -> bytes:
-    changed_by_id: dict[str, Cell] = {}
-    for cell in changed:
-        if cell.id in changed_by_id:
-            raise ExternalRevisionWitnessDenied(
-                "Cell revision contains duplicate identities"
-            )
-        changed_by_id[cell.id] = cell
-    if not changed_by_id:
-        raise ExternalRevisionWitnessDenied(
-            "Cell revision contains no changed Cells"
-        )
-    digest = hashlib.sha256()
-    raw_domain = b"ArchHub/universal-cell-revision-chain/v1"
-    digest.update(len(raw_domain).to_bytes(8, "big"))
-    digest.update(raw_domain)
-    digest.update(previous)
-    raw_revision = str(revision).encode("ascii")
-    digest.update(len(raw_revision).to_bytes(8, "big"))
-    digest.update(raw_revision)
-    for cell_id in sorted(changed_by_id):
-        cell = changed_by_id[cell_id]
-        for raw in (
-            cell.id.encode("utf-8"),
-            cell.link0.encode("utf-8"),
-            cell.link1.encode("utf-8"),
-            cell.atom,
-        ):
-            digest.update(len(raw).to_bytes(8, "big"))
-            digest.update(raw)
-    return digest.digest()
+    try:
+        return revision_chain_digest_step(previous, revision, changed)
+    except InvalidCell as exc:
+        raise ExternalRevisionWitnessDenied(str(exc)) from exc
 
 
 def revision_history_chain_digest(
@@ -599,6 +578,10 @@ class WitnessedCellJournal:
     @property
     def shared_writers(self) -> bool:
         return self._journal.shared_writers
+
+    @property
+    def supports_lazy_history(self) -> bool:
+        return callable(getattr(self._journal, "load_head", None))
 
     def _require_usable(self) -> None:
         if self._faulted:
@@ -705,6 +688,10 @@ class WitnessedCellJournal:
         return state
 
     def load(self):
+        if self.supports_lazy_history:
+            raise ExternalRevisionWitnessDenied(
+                "eager durable history loading is forbidden"
+            )
         self._require_usable()
         loaded = self._journal.load()
         _cells, revision, versions, _changes = loaded
@@ -712,6 +699,54 @@ class WitnessedCellJournal:
             versions,
             target_revision=revision,
         )
+        state = self._provider_call("read", self._authority_id)
+        if state is None:
+            if not self._provision_genesis:
+                raise ExternalRevisionWitnessDenied(
+                    "external revision witness is missing"
+                )
+            if revision != 0:
+                raise ExternalRevisionWitnessDenied(
+                    "an established Cell authority has no external witness"
+                )
+            state = self._provider_call(
+                "initialize",
+                self._authority_id,
+                revision,
+                digest,
+            )
+            self._provision_genesis = False
+        state = self._reconcile(state, revision, digest)
+        self._head_revision = state.confirmed_revision
+        self._head_digest = state.confirmed_digest
+        self._loaded = True
+        return loaded
+
+    def load_head(self) -> LoadedJournalHead:
+        """Reconcile one same-head lazy journal view with its witness."""
+        self._require_usable()
+        if not self.supports_lazy_history:
+            raise ExternalRevisionWitnessDenied(
+                "head-bound durable history is unavailable"
+            )
+        loaded = self._journal.load_head()
+        if type(loaded) is not LoadedJournalHead:
+            raise ExternalRevisionWitnessDenied(
+                "head-bound durable history shape is invalid"
+            )
+        revision = loaded.revision
+        digest = loaded.revision_chain_digest
+        if (
+            loaded.history.head_revision != revision
+            or not _same_digest(loaded.history.head_digest, digest)
+            or not _same_digest(
+                loaded.history.chain_digest(revision),
+                digest,
+            )
+        ):
+            raise ExternalRevisionWitnessDenied(
+                "head-bound durable history digest is inconsistent"
+            )
         state = self._provider_call("read", self._authority_id)
         if state is None:
             if not self._provision_genesis:
@@ -745,12 +780,31 @@ class WitnessedCellJournal:
         original: Exception,
     ) -> None:
         try:
-            loaded = self._journal.load()
-            _cells, actual_revision, versions, _changes = loaded
-            actual_digest = revision_history_chain_digest(
-                versions,
-                target_revision=actual_revision,
-            )
+            if self.supports_lazy_history:
+                loaded = self._journal.load_head()
+                if type(loaded) is not LoadedJournalHead:
+                    raise ExternalRevisionWitnessDenied(
+                        "head-bound durable history shape is invalid"
+                    )
+                actual_revision = loaded.revision
+                actual_digest = loaded.revision_chain_digest
+                if (
+                    loaded.history.head_revision != actual_revision
+                    or not _same_digest(
+                        loaded.history.chain_digest(actual_revision),
+                        actual_digest,
+                    )
+                ):
+                    raise ExternalRevisionWitnessDenied(
+                        "head-bound durable history digest is inconsistent"
+                    )
+            else:
+                loaded = self._journal.load()
+                _cells, actual_revision, versions, _changes = loaded
+                actual_digest = revision_history_chain_digest(
+                    versions,
+                    target_revision=actual_revision,
+                )
             if (
                 actual_revision == expected_revision
                 and _same_digest(actual_digest, expected_digest)

@@ -81,6 +81,9 @@ from nodelang.cell_identity import (
 	verify_authority_relationship,
 )
 from nodelang.cell_attestations import read_court_attestation
+from nodelang.cell_replay_policy_authority import (
+	PublishedProofReplayPolicyVerifier,
+)
 from nodelang.cell_lifecycle import (
 	read_lifecycle_instance,
 	read_revision,
@@ -206,6 +209,49 @@ def test_application_canvas_and_map_are_compositions_in_one_uniform_store(applic
 	assert registry.canvas_root in store.snapshot().cells
 	assert registry.properties_lens_root in store.snapshot().cells
 	assert all(type(cell) is Cell for cell in store.snapshot().cells.values())
+
+
+def test_application_stages_replay_policy_without_self_publishing(application):
+	store, registry = application
+	protocol = registry.cloud_session_protocol
+	assert protocol.proof_replay_policy_lifecycle_root is not None
+	lifecycle = registry.standard_library.lifecycle_protocol
+	instance = read_lifecycle_instance(
+		store.snapshot(),
+		registry.assembly_protocol,
+		lifecycle,
+		protocol.proof_replay_policy_lifecycle_root,
+	)
+	wip_heads = state_heads(
+		store.snapshot(),
+		lifecycle,
+		instance.state_pointers[lifecycle.states["wip"]],
+	)
+	assert len(wip_heads) == 1
+	assert (
+		read_revision(store.snapshot(), lifecycle, wip_heads[0]).content_root
+		== protocol.proof_replay_policy_root
+	)
+	assert state_heads(
+		store.snapshot(),
+		lifecycle,
+		instance.state_pointers[lifecycle.states["shared"]],
+	) == ()
+	assert state_heads(
+		store.snapshot(),
+		lifecycle,
+		instance.state_pointers[lifecycle.states["published"]],
+	) == ()
+	verifier = PublishedProofReplayPolicyVerifier(
+		registry.assembly_protocol,
+		lifecycle,
+		registry.attestation_protocol,
+		registry.attestation_broker,
+		registry.resource_lifecycle_court_root,
+		protocol.proof_replay_policy_lifecycle_root,
+	)
+	with pytest.raises(InvalidCell, match="one Published revision"):
+		verifier.verify(store.snapshot(), protocol)
 
 
 def test_canvas_move_undo_and_redo_are_session_scoped_cell_transactions():

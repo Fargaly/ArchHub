@@ -488,3 +488,250 @@ AWS documents that HMAC key material remains in KMS, HMAC keys use
 `GENERATE_VERIFY_MAC` key and MAC algorithm. These sources inform the physical
 adapter; the Universal Cell graph and ArchHub courts remain semantic
 authority.
+
+## 12. Bounded DPoP replay evidence
+
+### 12.1 What and why
+
+Every accepted DPoP request must carry a unique proof identifier. ArchHub hashes
+that identifier and records its use so the same proof cannot be accepted twice.
+At commit `9d09f278cc37361c4d859b3ce8654881629b2917`, one accepted request:
+
+- creates one proof-use relation and four scalar evidence Cells;
+- appends the proof-use root to the shared cloud-session protocol relation;
+- increases the current graph by 16 Cells;
+- increases retained Cell versions by 17 records;
+- traverses the shared protocol relation with a `100000`-Cell budget.
+
+There is no admitted request-rate boundary ahead of that commit. Repeated valid
+requests therefore grow both the current graph and one shared relation without a
+fixed limit. The replay check is durable, but the storage shape is not safe for
+an Internet-facing service.
+
+RFC 9449 Section 11.1 requires proofs to be accepted only for a limited time,
+permits the server to retain each `jti` during that acceptance window, and
+recommends hashing identifiers to reduce memory-exhaustion risk. A bounded
+window must not evict an identifier while the same proof could still be
+accepted. Capacity exhaustion therefore denies new proofs until a slot expires;
+it never overwrites live replay evidence.
+
+### 12.2 How
+
+The Cloud Session protocol contains one wired replay-policy composition.
+Session issuance is denied until an authenticated resource-lifecycle action
+has promoted that exact composition through Shared to Published. Each session
+issued after that release copies its capacity and retention into exactly one
+replay-window relation. The session manifest commits to the window root and
+those fixed policy values. Each slot is an openable relation containing:
+
+1. the hashed proof identifier;
+2. the verified HTTP method;
+3. the verified target-URI digest;
+4. the observation time.
+
+Session issuance creates only the empty window and its policy wiring. A slot is
+created lazily in the same accepted revision as its first proof and appended to
+that session's window, never to the shared protocol relation. Slot identities
+are deterministic and contiguous, and the window cannot contain more slots than
+its policy capacity. Once capacity is reached, no proof creates another current
+Cell.
+
+For each verified request, the broker reads the latest accepted snapshot,
+re-verifies the session manifest, device custody, tenant release, membership,
+and requested action, then:
+
+1. rejects a matching digest in any unexpired slot;
+2. selects the oldest expired or unused slot;
+3. creates the next deterministic slot when capacity remains;
+4. denies without a graph mutation when every slot is unexpired and the window
+   is at capacity;
+5. otherwise atomically replaces only an expired slot's four scalar Cells;
+6. retries from a fresh snapshot after a commit conflict.
+
+The current graph grows only until the admitted slot limit and is fixed
+afterwards. Historical slot values remain addressable through the Cell journal
+revision APIs. Immutable proof evidence identity is therefore the slot root plus
+the accepted revision, never the reusable slot root alone. There is no Python
+replay set, second database, semantic cache, deletion, or hidden JSON record.
+
+### 12.3 Who, when, and where
+
+The Published Cloud Session protocol policy owns capacity and retention
+values. Startup may stage the candidate WIP policy, but cannot publish it. The
+Cloud Session broker reads only a released graph contract and performs the
+atomic rewrite. The JOSE verifier declares its accepted proof-time envelope;
+session issuance denies a draft policy or a policy shorter than that envelope.
+
+The window is used after signature, method, target, nonce, token hash, key, and
+time verification but before request authentication is minted. It lives in the
+same `CellStore`, session manifest, journal, and accepted revision as the rest of
+the cloud authority. A caller may inspect the current slots through the
+authorised Govern or Floor lens and inspect older values by exact revision.
+
+### 12.4 Red acceptance courts
+
+1. Session issuance creates one empty fixed-capacity replay window and commits
+   its policy into the session manifest without preallocating slots.
+2. Accepted proofs create at most the policy number of slots; repeated accepted
+   proofs do not increase the current Cell count after capacity is reached.
+3. A repeated proof in the active window is denied.
+4. A full unexpired window denies without changing the revision or graph.
+5. An expired slot can be reused, while its prior values remain readable at the
+   earlier revision.
+6. Reopening the journal preserves active replay denial and slot history.
+7. Concurrent writers cannot overwrite an unexpired proof after a conflict.
+8. Session, token, action, tenant, membership, and device custody are
+   revalidated in the exact snapshot used for the slot rewrite.
+9. No successful request appends a `proof-use-member` to the shared protocol
+   relation.
+10. Zero, negative, non-finite, excessive, verifier-shorter retention, invalid
+    capacity, or foreign policy/value wiring fail before authority is used.
+11. Eight unrelated global graph revisions cannot exhaust the bounded replay
+    conflict policy, and no retry bypasses revalidation.
+12. Pre-window sessions are intentionally denied and require explicit
+    reauthentication; they are not silently presented as migrated.
+
+### 12.5 Primary evidence
+
+Reviewed on 2026-07-26:
+
+- RFC 9449, especially Sections 4.2, 4.3, and 11.1:
+  https://www.rfc-editor.org/rfc/rfc9449.html
+- Current Cell journal revision and selected historical-value APIs:
+  `nodelang/universal_cell.py`
+- Current Cloud Session and proof-use authority:
+  `nodelang/cell_cloud_sessions.py`
+
+RFC 9449 is external protocol lineage, not ArchHub semantic authority. The
+session composition and its passing courts remain the executable ArchHub
+contract.
+
+### 12.6 Implementation evidence and remaining boundary
+
+Implemented on 2026-07-26 in the existing Cloud Session composition:
+
+- fresh protocols contain the seven replay-policy/window roles and do not create the
+  retired `proof-use-member` role;
+- a legacy journal may retain that retired role and its historical relations,
+  but migration adds only the seven new roles and rejects any other missing,
+  duplicated, extended, or drifted vocabulary;
+- the default and admitted maximum are 1,024 slots, and the default JOSE
+  verifier accepts a proof for at most 10 seconds with 5 seconds of future
+  clock skew, publishing a 15-second retention envelope;
+- issuance creates no slots; one measured first request created 14 current
+  slot/wiring Cells, 15 historical versions, and one revision, while a reused
+  expired slot changes zero current Cells and four historical versions;
+- source-light capacity diagnostics accepted 256 proofs in 0.740 seconds
+  (2.892 ms mean), 512 in 2.465 seconds (4.815 ms mean), and 1,024 in 8.454
+  seconds (8.255 ms mean) through the canonical in-memory request path;
+- the candidate capacity-to-retention ratio is 68.27 accepted proof
+  identifiers per second, and a court exercises a 64-request-per-second logical window
+  before proving that a 1,025th unexpired proof fails without mutation;
+- those timings and the logical-window court are diagnostic source-light
+  evidence, not real PostgreSQL, provider, network, or deployed cloud latency
+  acceptance;
+- fixed-window, replay, exhaustion, reuse, history, reopen, contention,
+  ownership-tampering, retention, capacity, and legacy-migration courts pass
+  with the unchanged identity/session suite.
+
+This repair bounds current replay topology and removes the shared per-request
+relation append. The immutable journal still gains 15 Cell versions while a
+new slot is created and four versions when an expired slot is reused. Durable
+history residency is now governed separately by
+`DURABLE-HISTORY-RESIDENCY-AUTHORITY.md`: SQLite, PostgreSQL, and witnessed
+journals use the same head-bound append-only history while process-resident
+version archives remain absent. Real PostgreSQL/provider execution, archive,
+partitioning, recovery drills, and deployed retention operations remain part
+of the cloud release gate; they cannot be represented as completed by this
+local replay-window mechanism. No live process, remote deployment, or real AWS
+KMS court was changed or claimed by this local repair.
+
+### 12.7 Replay-policy release authority
+
+#### What
+
+Replay capacity and retention are security configuration, not startup defaults
+that become authoritative merely because their Cells are structurally valid.
+The replay policy therefore uses the existing Versioned Asset lifecycle:
+
+1. the policy relation is the WIP graph content;
+2. an authenticated and authorised resource-lifecycle action requests Shared;
+3. a second authenticated and authorised action requests Published;
+4. each action receives exact-content court evidence and records its actor;
+5. the Cloud Session protocol is explicitly wired to that lifecycle instance;
+6. every issued session binds the exact Published revision as evidence.
+
+#### Why
+
+Without that chain, startup or migration can create a valid-looking policy and
+silently change the security envelope for future sessions. NIST SP 800-53
+Revision 5 CM-3 requires configuration-controlled changes to be reviewed,
+approved or disapproved with security impact considered, documented,
+implemented only after approval, and retained. NIST SP 800-218 PS.3 and PW.1.2
+require release provenance and tracked security requirements, risks, and design
+decisions. RFC 9449 Section 11.1 requires a proof identifier to remain tracked
+for the whole interval in which that proof remains acceptable.
+
+#### How
+
+The implementation must preserve one CellStore and reuse the generic lifecycle
+and court machinery. A released-policy verifier must prove all of the following
+from one accepted snapshot:
+
+- one protocol wire identifies one lifecycle instance;
+- that instance has one Published head;
+- the Published revision points to the replay-policy relation;
+- its predecessor chain includes the court-evidenced Shared and WIP revisions;
+- the graph-content digest still matches capacity and retention;
+- the exact Published revision is present in both the session manifest and the
+  signed session authority evidence;
+- a changed, missing, unbound, draft-only, Shared-only, forged, or stale release
+  fails closed and requires a newly issued session.
+
+The startup and restore paths may create or migrate WIP graph vocabulary and
+wire its lifecycle instance. They do not promote it. A broker may be
+constructed, but session issuance and request admission fail closed until
+explicit authenticated lifecycle actions and the admitted court have
+Published the exact policy graph.
+
+#### Who
+
+The application authority actor proposes the WIP policy revision. An
+authenticated user with exact `share` or `publish` authority makes each
+promotion decision through the existing resource-lifecycle action; startup
+cannot impersonate that action. The admitted resource-lifecycle court supplies
+exact-content evidence. The Cloud Session broker only reads the resulting
+Published authority and cannot promote it.
+
+#### When
+
+The check runs at session issuance and again for every request. A policy release
+change invalidates the old session evidence instead of silently applying new
+values to an existing session.
+
+#### Where
+
+- policy graph and replay window: `nodelang/cell_cloud_sessions.py`;
+- generic WIP/Shared/Published history: `nodelang/cell_lifecycle.py`;
+- application composition and restore: `nodelang/universal_application.py`;
+- request admission: `nodelang/application_server.py`;
+- executable courts: `tests_replica/test_cell_federated_identity.py` and
+  `tests_replica/test_universal_application.py`.
+
+#### Evidence and release boundary
+
+Primary references reviewed on 2026-07-26:
+
+- RFC 9449 Section 11.1:
+  https://www.rfc-editor.org/rfc/rfc9449.html#section-11.1
+- NIST SP 800-53 Revision 5, CM-3:
+  https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final
+- NIST SP 800-218 Secure Software Development Framework:
+  https://csrc.nist.gov/pubs/sp/800/218/final
+
+These sources are research lineage, not ArchHub semantic authority. The
+controlling requirements remain `SPEC.md`, this WIP design record, and
+revision-bound passing courts. This record does not release the candidate
+policy. Real PostgreSQL and deployed-provider execution remain mandatory cloud
+release evidence and cannot be inferred from local SQLite or fake-driver
+courts.

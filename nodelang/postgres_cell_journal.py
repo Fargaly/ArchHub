@@ -11,15 +11,19 @@ import hashlib
 import re
 import threading
 from types import MappingProxyType
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 from .universal_cell import (
     NULL_CELL_ID,
     Cell,
+    CellHistoryReader,
     Conflict,
     DatabaseOwnerConflict,
     InvalidCell,
+    LoadedJournalHead,
+    Snapshot,
     _validate_cell,
+    revision_chain_digest_step,
 )
 
 
@@ -71,6 +75,14 @@ _DDL = (
     """,
 )
 
+_HISTORY_INDEX_NAME = "archhub_cell_versions_cell_revision_idx"
+_HISTORY_INDEX_DDL = (
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+    + _HISTORY_INDEX_NAME
+    + " "
+    "ON archhub_cell_versions(authority_id, cell_id, revision DESC)"
+)
+
 
 class PostgresAuthorityUnavailable(InvalidCell):
     """The admitted PostgreSQL physical authority cannot be reached."""
@@ -113,6 +125,7 @@ class PostgresCellJournal:
     local_path = None
     exclusive_owner = False
     shared_writers = True
+    supports_lazy_history = True
 
     def __init__(
         self,
@@ -134,6 +147,7 @@ class PostgresCellJournal:
             factory = connection_factory or self._default_connection_factory()
             self._connection = factory(dsn)
             self._ensure_schema()
+            self._ensure_history_index()
             self._ensure_genesis()
         except (InvalidCell, Conflict):
             self.close()
@@ -201,6 +215,57 @@ class PostgresCellJournal:
                 raise
             finally:
                 cursor.close()
+
+    def _ensure_history_index(self) -> None:
+        """Create the disposable as-of lookup index outside a transaction."""
+        with self._connection_lock:
+            self._connection.commit()
+            previous_autocommit = bool(
+                getattr(self._connection, "autocommit", False)
+            )
+            cursor = None
+            try:
+                self._connection.autocommit = True
+                cursor = self._connection.cursor()
+                cursor.execute(_HISTORY_INDEX_DDL)
+                cursor.execute(
+                    "SELECT physical.indisvalid, physical.indisready, "
+                    "pg_get_indexdef(index_table.oid) "
+                    "FROM pg_class AS index_table "
+                    "JOIN pg_index AS physical "
+                    "ON physical.indexrelid=index_table.oid "
+                    "JOIN pg_class AS source_table "
+                    "ON source_table.oid=physical.indrelid "
+                    "WHERE index_table.relname=%s "
+                    "AND source_table.relname='archhub_cell_versions' "
+                    "AND pg_table_is_visible(index_table.oid)",
+                    (_HISTORY_INDEX_NAME,),
+                )
+                row = cursor.fetchone()
+                definition = (
+                    str(row[2]).replace('"', "")
+                    if row is not None and len(row) == 3
+                    else ""
+                )
+                if (
+                    row is None
+                    or row[0] is not True
+                    or row[1] is not True
+                    or re.search(
+                        r"\(\s*authority_id\s*,\s*cell_id\s*,\s*"
+                        r"revision\s+DESC\s*\)\s*$",
+                        definition,
+                        re.IGNORECASE,
+                    )
+                    is None
+                ):
+                    raise InvalidCell(
+                        "PostgreSQL Cell history index is invalid"
+                    )
+            finally:
+                if cursor is not None:
+                    cursor.close()
+                self._connection.autocommit = previous_autocommit
 
     def _ensure_genesis(self) -> None:
         null = Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
@@ -362,6 +427,163 @@ class PostgresCellJournal:
                 revision: tuple(changes[revision])
                 for revision in revisions
             },
+        )
+
+    def load_head(self) -> LoadedJournalHead:
+        """Stream one validated PostgreSQL head without retaining history."""
+        try:
+            with self._transaction("REPEATABLE READ", read_only=True) as cursor:
+                cursor.execute(
+                    "SELECT current_revision FROM archhub_cell_authorities "
+                    "WHERE authority_id=%s",
+                    (self._authority_id,),
+                )
+                head = cursor.fetchone()
+                if head is None:
+                    raise InvalidCell(
+                        "PostgreSQL Cell authority head is missing"
+                    )
+                latest = int(head[0])
+                cursor.execute(
+                    "SELECT COUNT(*), MIN(revision), MAX(revision) "
+                    "FROM archhub_cell_revisions WHERE authority_id=%s",
+                    (self._authority_id,),
+                )
+                count, first, last = cursor.fetchone()
+                if (
+                    type(count) is not int
+                    or int(count) < 1
+                    or int(first) != 0
+                    or int(last) != latest
+                    or int(count) != latest + 1
+                ):
+                    raise InvalidCell(
+                        "PostgreSQL Cell revision history is discontinuous"
+                    )
+
+                current: dict[str, Cell] = {}
+                current_revisions: dict[str, int] = {}
+                previous = b"\x00" * 32
+                active_revision = -1
+                changed: list[Cell] = []
+
+                def accept_revision() -> None:
+                    nonlocal previous
+                    if not changed:
+                        raise InvalidCell(
+                            "PostgreSQL revision %s has no changed Cells"
+                            % active_revision
+                        )
+                    if active_revision == 0 and changed != [
+                        Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
+                    ]:
+                        raise InvalidCell(
+                            "PostgreSQL Cell genesis revision is invalid"
+                        )
+                    for cell in changed:
+                        current[cell.id] = cell
+                        current_revisions[cell.id] = active_revision
+                    for cell in changed:
+                        if (
+                            cell.link0 not in current
+                            or cell.link1 not in current
+                        ):
+                            raise InvalidCell(
+                                "PostgreSQL revision %s has dangling incidence"
+                                % active_revision
+                            )
+                    previous = revision_chain_digest_step(
+                        previous,
+                        active_revision,
+                        changed,
+                    )
+
+                history_cursor = self._connection.cursor(
+                    name="archhub_load_head_history"
+                )
+                try:
+                    history_cursor.itersize = 1_000
+                    history_cursor.execute(
+                        "SELECT revision, cell_id, link0, link1, atom "
+                        "FROM archhub_cell_versions WHERE authority_id=%s "
+                        "ORDER BY revision, cell_id",
+                        (self._authority_id,),
+                    )
+                    for revision, cell_id, link0, link1, atom in history_cursor:
+                        revision = int(revision)
+                        if revision != active_revision:
+                            if active_revision >= 0:
+                                accept_revision()
+                            if revision != active_revision + 1:
+                                raise InvalidCell(
+                                    "PostgreSQL Cell revision history is "
+                                    "discontinuous"
+                                )
+                            active_revision = revision
+                            changed = []
+                        cell = Cell(
+                            str(cell_id),
+                            str(link0),
+                            str(link1),
+                            bytes(atom),
+                        )
+                        _validate_cell(cell)
+                        changed.append(cell)
+                finally:
+                    history_cursor.close()
+                if active_revision >= 0:
+                    accept_revision()
+                if active_revision != latest:
+                    raise InvalidCell(
+                        "PostgreSQL Cell journal has no complete head"
+                    )
+
+                cursor.execute(
+                    "SELECT cell_id, revision, link0, link1, atom "
+                    "FROM archhub_current_cells WHERE authority_id=%s "
+                    "ORDER BY cell_id",
+                    (self._authority_id,),
+                )
+                indexed = {
+                    str(cell_id): (
+                        int(revision),
+                        str(link0),
+                        str(link1),
+                        bytes(atom),
+                    )
+                    for cell_id, revision, link0, link1, atom in cursor
+                }
+                expected = {
+                    cell_id: (
+                        current_revisions[cell_id],
+                        cell.link0,
+                        cell.link1,
+                        cell.atom,
+                    )
+                    for cell_id, cell in current.items()
+                }
+                if indexed != expected:
+                    raise InvalidCell(
+                        "PostgreSQL current Cell index is inconsistent"
+                    )
+        except InvalidCell:
+            raise
+        except Exception as exc:
+            raise PostgresAuthorityUnavailable(
+                "PostgreSQL Cell authority read failed (%s)"
+                % type(exc).__name__
+            ) from None
+
+        history = _PostgresHistoryReader(
+            self,
+            latest,
+            previous.hex(),
+        )
+        return LoadedJournalHead(
+            cells=MappingProxyType(current),
+            revision=latest,
+            revision_chain_digest=previous.hex(),
+            history=history,
         )
 
     def append(
@@ -550,7 +772,267 @@ class PostgresCellJournal:
                     self._runtime_fences.clear()
 
 
+class _PostgresHistoryReader:
+    """PostgreSQL history reads capped at one accepted authority head."""
+
+    def __init__(
+        self,
+        journal: PostgresCellJournal,
+        head_revision: int,
+        head_digest: str,
+    ) -> None:
+        self._journal = journal
+        self._head_revision = head_revision
+        self._head_digest = head_digest
+
+    @property
+    def head_revision(self) -> int:
+        return self._head_revision
+
+    @property
+    def head_digest(self) -> str:
+        return self._head_digest
+
+    def _admit_revision(self, revision: int) -> int:
+        if (
+            type(revision) is not int
+            or revision < 0
+            or revision > self._head_revision
+        ):
+            raise InvalidCell("unknown revision %r" % revision)
+        return revision
+
+    def revision_cells(self, revision: int) -> tuple[Cell, ...]:
+        target = self._admit_revision(revision)
+        with self._journal._transaction(
+            "REPEATABLE READ",
+            read_only=True,
+        ) as cursor:
+            cursor.execute(
+                "SELECT cell_id, link0, link1, atom "
+                "FROM archhub_cell_versions WHERE authority_id=%s "
+                "AND revision=%s ORDER BY cell_id",
+                (self._journal._authority_id, target),
+            )
+            cells = tuple(
+                Cell(
+                    str(cell_id),
+                    str(link0),
+                    str(link1),
+                    bytes(atom),
+                )
+                for cell_id, link0, link1, atom in cursor
+            )
+        if not cells:
+            raise InvalidCell("unknown revision %r" % revision)
+        for cell in cells:
+            _validate_cell(cell)
+        return cells
+
+    def snapshot_at(self, revision: int) -> Snapshot:
+        target = self._admit_revision(revision)
+        with self._journal._transaction(
+            "REPEATABLE READ",
+            read_only=True,
+        ) as cursor:
+            cursor.execute(
+                "SELECT versions.cell_id, versions.link0, versions.link1, "
+                "versions.atom FROM archhub_cell_versions AS versions JOIN ("
+                "SELECT cell_id, MAX(revision) AS revision "
+                "FROM archhub_cell_versions WHERE authority_id=%s "
+                "AND revision<=%s GROUP BY cell_id"
+                ") AS selected ON selected.cell_id=versions.cell_id "
+                "AND selected.revision=versions.revision "
+                "WHERE versions.authority_id=%s ORDER BY versions.cell_id",
+                (
+                    self._journal._authority_id,
+                    target,
+                    self._journal._authority_id,
+                ),
+            )
+            cells = {}
+            for cell_id, link0, link1, atom in cursor:
+                cell = Cell(
+                    str(cell_id),
+                    str(link0),
+                    str(link1),
+                    bytes(atom),
+                )
+                _validate_cell(cell)
+                cells[cell.id] = cell
+        if NULL_CELL_ID not in cells:
+            raise InvalidCell(
+                "revision %s has no distinguished null Cell" % target
+            )
+        if any(
+            cell.link0 not in cells or cell.link1 not in cells
+            for cell in cells.values()
+        ):
+            raise InvalidCell("revision %s has dangling incidence" % target)
+        return Snapshot(target, MappingProxyType(cells))
+
+    def cells_at(
+        self,
+        revision: int,
+        cell_ids: Iterable[str],
+    ) -> Mapping[str, Cell]:
+        target = self._admit_revision(revision)
+        requested = tuple(dict.fromkeys(cell_ids))
+        if not requested:
+            return MappingProxyType({})
+        out: dict[str, Cell] = {}
+        for start in range(0, len(requested), 500):
+            selected = requested[start:start + 500]
+            placeholders = ",".join("%s" for _ in selected)
+            with self._journal._transaction(
+                "REPEATABLE READ",
+                read_only=True,
+            ) as cursor:
+                cursor.execute(
+                    "SELECT versions.cell_id, versions.link0, versions.link1, "
+                    "versions.atom FROM archhub_cell_versions AS versions "
+                    "JOIN (SELECT cell_id, MAX(revision) AS revision "
+                    "FROM archhub_cell_versions WHERE authority_id=%s "
+                    "AND revision<=%s AND cell_id IN ("
+                    + placeholders
+                    + ") GROUP BY cell_id) AS selected "
+                    "ON selected.cell_id=versions.cell_id "
+                    "AND selected.revision=versions.revision "
+                    "WHERE versions.authority_id=%s "
+                    "ORDER BY versions.cell_id",
+                    (
+                        self._journal._authority_id,
+                        target,
+                        *selected,
+                        self._journal._authority_id,
+                    ),
+                )
+                for cell_id, link0, link1, atom in cursor:
+                    cell = Cell(
+                        str(cell_id),
+                        str(link0),
+                        str(link1),
+                        bytes(atom),
+                    )
+                    _validate_cell(cell)
+                    out[cell.id] = cell
+        for cell_id in requested:
+            if cell_id not in out:
+                raise InvalidCell(
+                    "cell %r did not exist at revision %r"
+                    % (cell_id, target)
+                )
+        return MappingProxyType({
+            cell_id: out[cell_id]
+            for cell_id in requested
+        })
+
+    def created_revision(self, cell_id: str) -> int:
+        if not isinstance(cell_id, str) or not cell_id:
+            raise InvalidCell("Cell identity is invalid")
+        with self._journal._transaction(
+            "REPEATABLE READ",
+            read_only=True,
+        ) as cursor:
+            cursor.execute(
+                "SELECT MIN(revision) FROM archhub_cell_versions "
+                "WHERE authority_id=%s AND cell_id=%s AND revision<=%s",
+                (
+                    self._journal._authority_id,
+                    cell_id,
+                    self._head_revision,
+                ),
+            )
+            row = cursor.fetchone()
+        if row is None or row[0] is None:
+            raise InvalidCell("unknown cell %r" % cell_id)
+        return int(row[0])
+
+    def chain_digest(self, revision: int) -> str:
+        target = self._admit_revision(revision)
+        if target == self._head_revision:
+            return self._head_digest
+        previous = b"\x00" * 32
+        active_revision = -1
+        changed: list[Cell] = []
+        with self._journal._transaction(
+            "REPEATABLE READ",
+            read_only=True,
+        ):
+            cursor = self._journal._connection.cursor(
+                name="archhub_history_digest"
+            )
+            try:
+                cursor.itersize = 1_000
+                cursor.execute(
+                    "SELECT revision, cell_id, link0, link1, atom "
+                    "FROM archhub_cell_versions WHERE authority_id=%s "
+                    "AND revision<=%s ORDER BY revision, cell_id",
+                    (self._journal._authority_id, target),
+                )
+                for revision, cell_id, link0, link1, atom in cursor:
+                    revision = int(revision)
+                    if revision != active_revision:
+                        if active_revision >= 0:
+                            previous = revision_chain_digest_step(
+                                previous,
+                                active_revision,
+                                changed,
+                            )
+                        if revision != active_revision + 1:
+                            raise InvalidCell(
+                                "PostgreSQL Cell revision history is "
+                                "discontinuous"
+                            )
+                        active_revision = revision
+                        changed = []
+                    changed.append(
+                        Cell(
+                            str(cell_id),
+                            str(link0),
+                            str(link1),
+                            bytes(atom),
+                        )
+                    )
+            finally:
+                cursor.close()
+        if active_revision >= 0:
+            previous = revision_chain_digest_step(
+                previous,
+                active_revision,
+                changed,
+            )
+        if active_revision != target:
+            raise InvalidCell("unknown revision %r" % target)
+        return previous.hex()
+
+    def version_count(self) -> int:
+        with self._journal._transaction(
+            "REPEATABLE READ",
+            read_only=True,
+        ) as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM archhub_cell_versions "
+                "WHERE authority_id=%s AND revision<=%s",
+                (self._journal._authority_id, self._head_revision),
+            )
+            row = cursor.fetchone()
+        return int(row[0])
+
+    def advance(self, revision: int, changed: Iterable[Cell]) -> None:
+        changed = tuple(changed)
+        if revision != self._head_revision + 1:
+            raise InvalidCell("durable history reader head changed")
+        self._head_digest = revision_chain_digest_step(
+            bytes.fromhex(self._head_digest),
+            revision,
+            changed,
+        ).hex()
+        self._head_revision = revision
+
+
 __all__ = [
+    "_HISTORY_INDEX_DDL",
     "PostgresAuthorityUnavailable",
     "PostgresCellJournal",
     "postgres_authority_identity",

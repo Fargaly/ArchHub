@@ -62,6 +62,7 @@ def test_real_es256_dpop_verifies_exact_request_and_rfc7638_key():
     now = time.time()
     key = jwk.ECKey.generate_key("P-256")
     verifier = JoseRfc9449ProofVerifier()
+    assert verifier.replay_retention_seconds == 15.0
     proof = _proof(
         key,
         now=now,

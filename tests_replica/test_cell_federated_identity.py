@@ -5,18 +5,23 @@ import hmac
 import json
 import time
 import base64
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import MISSING, fields, replace
+import threading
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from joserfc import jwk
 
+import nodelang.cell_cloud_sessions as cloud_sessions
 from nodelang.cell_attestations import (
     CourtAttestationBroker,
     CourtInvocation,
     CourtResult,
     bootstrap_attestation_protocol,
     build_court_definition,
+    read_court_attestation,
 )
 from nodelang.cell_authorization import (
     AuthenticationBroker,
@@ -26,6 +31,11 @@ from nodelang.cell_authorization import (
     build_authorization_policy,
     build_authorization_rule,
     release_authorization_policy,
+)
+from nodelang.cell_catalog import (
+    bootstrap_assembly_protocol,
+    instantiate_catalog_definition,
+    project_catalog,
 )
 from nodelang.cell_cloud_gate import CloudRequestGate
 from nodelang.cell_cloud_sessions import (
@@ -62,6 +72,7 @@ from nodelang.cell_identity import (
     grant_authority_relationship,
     restore_relationship_authority_history,
     revoke_authority_relationship,
+    verify_authority_relationship,
 )
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.cell_registry_projection import project_identity_protocol
@@ -76,14 +87,32 @@ from nodelang.cell_native_auth import (
     issue_native_cloud_session,
 )
 from nodelang.cell_oidc_discovery import OidcDiscoveryKeyResolver
-from nodelang.cell_protocols import read_relation
+from nodelang.cell_protocols import (
+    CellBatch,
+    prepare_append_relation_member,
+    read_relation,
+    remove_relation_member,
+)
+from nodelang.cell_lifecycle import (
+    append_wip_graph_revision,
+    graph_content_bytes,
+    promote_revision,
+    read_lifecycle_instance,
+    read_revision,
+    restore_revision_as_wip,
+    state_heads,
+)
+from nodelang.cell_replay_policy_authority import (
+    PublishedProofReplayPolicyVerifier,
+)
 from nodelang.native_cloud_login import NativeCloudLogin, NativeCloudLoginDenied
 from nodelang.remote_native_cloud_login import (
     RemoteNativeCloudLoginBroker,
     ReturningDeviceAdmissionDenied,
     ReturningDeviceAdmissionVerifier,
 )
-from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore
+from nodelang.cell_standard_library import build_standard_library_v0
+from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 
 
 ISSUER = "https://identity.example.test"
@@ -131,6 +160,31 @@ class _TestDeviceCustodyVerifier:
         if device_root not in snapshot.cells:
             raise PermissionError("test device is absent")
         return device_root
+
+
+class _TestReplayPolicyAuthorityVerifier:
+    def verify(self, snapshot, protocol):
+        policy = cloud_sessions.read_proof_replay_policy(
+            snapshot, protocol
+        )
+        lifecycle_root = protocol.proof_replay_policy_lifecycle_root
+        if lifecycle_root is None:
+            raise PermissionError("test replay policy is not released")
+        roots = {
+            name: lifecycle_root + ":" + name
+            for name in ("wip", "shared", "published")
+        }
+        if any(root not in snapshot.cells for root in roots.values()):
+            raise PermissionError("test replay release evidence is absent")
+        return cloud_sessions.ProofReplayPolicyReleaseEvidence(
+            policy_root=policy.root_id,
+            lifecycle_instance_root=lifecycle_root,
+            wip_revision_root=roots["wip"],
+            shared_revision_root=roots["shared"],
+            published_revision_root=roots["published"],
+            capacity=policy.capacity,
+            retention_seconds=policy.retention_seconds,
+        )
 
 
 def _canonical(value: object) -> bytes:
@@ -446,6 +500,10 @@ def _request_proof(
 
 
 class _RequestProofVerifier:
+    @property
+    def replay_retention_seconds(self) -> float:
+        return 10.0
+
     def verify(
         self,
         proof: bytes,
@@ -485,6 +543,9 @@ def _session_world(
     store: CellStore | None = None,
     relationship_key_provider: MemorySigningKeyProvider | None = None,
     action_root: str | None = None,
+    proof_replay_capacity: int | None = None,
+    request_proof_verifier=None,
+    real_replay_policy_authority: bool = False,
 ):
     world = world or _world(
         store=store,
@@ -515,15 +576,49 @@ def _session_world(
         reason="user enrolled this proof-of-possession device",
         now=now,
     )
+    verifier = request_proof_verifier or _RequestProofVerifier()
     protocol = bootstrap_cloud_session_protocol(
-        world["store"], prefix="test:cloud-session"
+        world["store"],
+        prefix="test:cloud-session",
+        proof_replay_capacity=(
+            cloud_sessions.DEFAULT_PROOF_REPLAY_CAPACITY
+            if proof_replay_capacity is None else proof_replay_capacity
+        ),
+        proof_replay_retention_seconds=verifier.replay_retention_seconds,
     )
+    if real_replay_policy_authority:
+        (
+            protocol,
+            replay_policy_verifier,
+            replay_policy_revision_roots,
+        ) = _released_replay_policy_authority(
+            world["store"], protocol
+        )
+    else:
+        replay_lifecycle_root = (
+            protocol.root_id + ":test-proof-replay-policy-lifecycle"
+        )
+        world["store"].commit(
+            world["store"].revision,
+            create=(
+                _cell(replay_lifecycle_root, "test lifecycle"),
+                _cell(replay_lifecycle_root + ":wip", "WIP"),
+                _cell(replay_lifecycle_root + ":shared", "Shared"),
+                _cell(replay_lifecycle_root + ":published", "Published"),
+            ),
+        )
+        protocol = cloud_sessions.bind_proof_replay_policy_lifecycle(
+            world["store"], protocol, replay_lifecycle_root
+        )
+        replay_policy_verifier = _TestReplayPolicyAuthorityVerifier()
+        replay_policy_revision_roots = ()
     broker = CloudSessionBroker(
         session_protocol=protocol,
         identity_protocol=world["identity"],
         relationship_broker=world["relationship_broker"],
         authentication_broker=world["authentication_broker"],
-        request_proof_verifier=_RequestProofVerifier(),
+        request_proof_verifier=verifier,
+        replay_policy_authority_verifier=replay_policy_verifier,
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
         device_custody_verifier=_TestDeviceCustodyVerifier(),
         session_issuer_root=roots["administrator"],
@@ -541,6 +636,8 @@ def _session_world(
         "issued_session": issued,
         "action_root": action_root,
         "device_binding_root": device_binding_root,
+        "replay_policy_authority_verifier": replay_policy_verifier,
+        "replay_policy_revision_roots": replay_policy_revision_roots,
     })
     return world
 
@@ -559,6 +656,214 @@ def _authenticate_request(world, proof: bytes, *, now: float, **changes):
         proof,
         now=now,
         **values,
+    )
+
+
+def _released_replay_policy_authority(
+    store: CellStore,
+    protocol,
+    *,
+    actor_root: str = "test:replay-policy:actor",
+    release_to: str = "published",
+):
+    if release_to not in {"wip", "shared", "published"}:
+        raise ValueError("unknown replay-policy fixture release state")
+    assembly = bootstrap_assembly_protocol(
+        store, prefix="test:replay-policy:assembly"
+    )
+    library = build_standard_library_v0(
+        store,
+        assembly,
+        prefix="test:replay-policy:library",
+        catalog_id="test:replay-policy:catalog",
+    )
+    store.commit(
+        store.revision,
+        create=(_cell(actor_root, "Replay policy approver"),),
+    )
+    instance = instantiate_catalog_definition(
+        store,
+        assembly,
+        library.catalog_root,
+        library.definition_roots[2],
+    )
+    wip = append_wip_graph_revision(
+        store,
+        assembly,
+        library.lifecycle_protocol,
+        instance.root_id,
+        content_root=protocol.proof_replay_policy_root,
+        actor_root=actor_root,
+        reason="govern replay policy",
+    )
+    attestation = bootstrap_attestation_protocol(
+        store, prefix="test:replay-policy:attestation"
+    )
+    court = build_court_definition(
+        store,
+        attestation,
+        court_id="test:court:replay-policy-lifecycle",
+        name="Replay policy lifecycle",
+        builder_id="test:replay-policy-court",
+        runner_version="1",
+        policy_digest=hashlib.sha256(
+            b"replay policy lifecycle court"
+        ).hexdigest(),
+        checks=("graph-digest", "target-state"),
+    )
+
+    def runner(invocation: CourtInvocation) -> CourtResult:
+        checks = {
+            "graph-digest": hashlib.sha256(
+                invocation.subject_content
+            ).hexdigest() == invocation.subject_digest,
+            "target-state": invocation.external_parameters.get(
+                "targetState"
+            ) in (
+                library.lifecycle_protocol.states["shared"],
+                library.lifecycle_protocol.states["published"],
+            ),
+        }
+        return CourtResult(
+            all(checks.values()),
+            checks,
+            {"court": "replay-policy-lifecycle"},
+        )
+
+    broker = CourtAttestationBroker()
+    broker.admit_court(
+        store.snapshot(), attestation, court.root_id, runner
+    )
+
+    def promote(source_root: str, target_root: str) -> str:
+        snapshot = store.snapshot()
+        source = read_revision(
+            snapshot, library.lifecycle_protocol, source_root
+        )
+        parameters = {
+            "asset": instance.root_id,
+            "targetState": target_root,
+        }
+        evidence_root = broker.run(
+            store,
+            attestation,
+            court.root_id,
+            subject_name=source_root,
+            subject_content=graph_content_bytes(
+                snapshot, source.content_root
+            ),
+            external_parameters=parameters,
+        )
+        receipt = broker.consume(
+            store.snapshot(),
+            attestation,
+            evidence_root,
+            purpose="promote:%s:%s" % (instance.root_id, target_root),
+            expected_court_root=court.root_id,
+            expected_subject_name=source_root,
+            expected_subject_digest=store.read(
+                source.content_digest_root
+            ).atom.decode("ascii"),
+            expected_parameters=parameters,
+        )
+        return promote_revision(
+            store,
+            assembly,
+            library.lifecycle_protocol,
+            instance.root_id,
+            target_state_root=target_root,
+            source_revision_root=source_root,
+            actor_root=actor_root,
+            evidence_roots=(evidence_root,),
+            evidence_receipts=(receipt,),
+            attestation_broker=broker,
+        )
+
+    revisions = [wip]
+    if release_to in {"shared", "published"}:
+        shared = promote(wip, library.lifecycle_protocol.states["shared"])
+        revisions.append(shared)
+    if release_to == "published":
+        published = promote(
+            revisions[-1], library.lifecycle_protocol.states["published"]
+        )
+        revisions.append(published)
+    protocol = cloud_sessions.bind_proof_replay_policy_lifecycle(
+        store, protocol, instance.root_id
+    )
+    verifier = PublishedProofReplayPolicyVerifier(
+        assembly,
+        library.lifecycle_protocol,
+        attestation,
+        broker,
+        court.root_id,
+        instance.root_id,
+    )
+    return protocol, verifier, tuple(revisions)
+
+
+def _replay_policy_verifier_fixture(*, release_to: str):
+    store = CellStore()
+    protocol = bootstrap_cloud_session_protocol(
+        store, prefix="test:replay-policy:cloud-session"
+    )
+    protocol, verifier, revisions = _released_replay_policy_authority(
+        store,
+        protocol,
+        release_to=release_to,
+    )
+    return store, protocol, verifier, revisions
+
+
+def _promote_replay_policy_fixture(
+    store: CellStore,
+    verifier: PublishedProofReplayPolicyVerifier,
+    instance_root: str,
+    source_root: str,
+    target_root: str,
+    actor_root: str,
+) -> str:
+    snapshot = store.snapshot()
+    source = read_revision(
+        snapshot, verifier._lifecycle, source_root
+    )
+    parameters = {
+        "asset": instance_root,
+        "targetState": target_root,
+    }
+    evidence_root = verifier._attestation_broker.run(
+        store,
+        verifier._attestation,
+        verifier._promotion_court_root,
+        subject_name=source_root,
+        subject_content=graph_content_bytes(
+            snapshot, source.content_root
+        ),
+        external_parameters=parameters,
+    )
+    receipt = verifier._attestation_broker.consume(
+        store.snapshot(),
+        verifier._attestation,
+        evidence_root,
+        purpose="promote:%s:%s" % (instance_root, target_root),
+        expected_court_root=verifier._promotion_court_root,
+        expected_subject_name=source_root,
+        expected_subject_digest=store.read(
+            source.content_digest_root
+        ).atom.decode("ascii"),
+        expected_parameters=parameters,
+    )
+    return promote_revision(
+        store,
+        verifier._assembly,
+        verifier._lifecycle,
+        instance_root,
+        target_state_root=target_root,
+        source_revision_root=source_root,
+        actor_root=actor_root,
+        evidence_roots=(evidence_root,),
+        evidence_receipts=(receipt,),
+        attestation_broker=verifier._attestation_broker,
     )
 
 
@@ -582,6 +887,272 @@ def test_device_bound_session_is_visible_but_token_secret_is_not_stored():
     ).hexdigest().encode("ascii") in joined
 
 
+def test_cloud_session_binds_one_real_published_replay_policy_revision():
+    now = time.time()
+    world = _session_world(
+        now=now,
+        proof_replay_capacity=2,
+        real_replay_policy_authority=True,
+    )
+    _wip, _shared, published = world["replay_policy_revision_roots"]
+    session = verify_cloud_session_manifest(
+        world["store"].snapshot(),
+        world["session_protocol"],
+        world["issued_session"].session_root,
+    )
+    relationship = verify_authority_relationship(
+        world["store"].snapshot(),
+        world["identity"],
+        world["relationship_broker"],
+        world["issued_session"].authority_relationship_root,
+        now=now + 1,
+    )
+    assert session.proof_replay_policy_release_root == published
+    assert published in session.evidence_roots
+    assert published in relationship.evidence_roots
+
+    policy = cloud_sessions.read_proof_replay_policy(
+        world["store"].snapshot(), world["session_protocol"]
+    )
+    capacity_cell = world["store"].read(policy.capacity_root)
+    world["store"].commit(
+        world["store"].revision,
+        replace=(Cell(
+            capacity_cell.id,
+            capacity_cell.link0,
+            capacity_cell.link1,
+            b"1",
+        ),),
+    )
+    proof = _request_proof(
+        access_token=world["issued_session"].access_token,
+        now=now + 1,
+        proof_id="released-policy-drift-proof",
+    )
+    with pytest.raises(
+        CloudSessionDenied,
+        match="no active Published release",
+    ):
+        _authenticate_request(world, proof, now=now + 1)
+
+
+def test_real_replay_policy_verifier_denies_unbound_and_unreleased_states():
+    store, protocol, verifier, _revisions = (
+        _replay_policy_verifier_fixture(release_to="published")
+    )
+    with pytest.raises(InvalidCell, match="no lifecycle authority wire"):
+        verifier.verify(
+            store.snapshot(),
+            replace(protocol, proof_replay_policy_lifecycle_root=None),
+        )
+    with pytest.raises(InvalidCell):
+        verifier.verify(
+            store.snapshot(),
+            replace(
+                protocol,
+                proof_replay_policy_lifecycle_root=(
+                    protocol.proof_replay_policy_root
+                ),
+            ),
+        )
+    definition_root = next(
+        item["id"]
+        for item in project_catalog(
+            store.snapshot(),
+            verifier._assembly,
+            "test:replay-policy:catalog",
+        )
+        if item["name"] == "Versioned Asset"
+    )
+    other_instance = instantiate_catalog_definition(
+        store,
+        verifier._assembly,
+        "test:replay-policy:catalog",
+        definition_root,
+    )
+    read_lifecycle_instance(
+        store.snapshot(),
+        verifier._assembly,
+        verifier._lifecycle,
+        other_instance.root_id,
+    )
+    with pytest.raises(InvalidCell, match="wire was substituted"):
+        verifier.verify(
+            store.snapshot(),
+            replace(
+                protocol,
+                proof_replay_policy_lifecycle_root=other_instance.root_id,
+            ),
+        )
+
+    for release_to in ("wip", "shared"):
+        draft_store, draft_protocol, draft_verifier, _ = (
+            _replay_policy_verifier_fixture(release_to=release_to)
+        )
+        with pytest.raises(InvalidCell, match="one Published revision"):
+            draft_verifier.verify(
+                draft_store.snapshot(), draft_protocol
+            )
+
+
+def test_real_replay_policy_verifier_denies_multiple_published_heads():
+    store, protocol, verifier, _revisions = (
+        _replay_policy_verifier_fixture(release_to="published")
+    )
+    lifecycle = verifier._lifecycle
+    instance = read_lifecycle_instance(
+        store.snapshot(),
+        verifier._assembly,
+        lifecycle,
+        protocol.proof_replay_policy_lifecycle_root,
+    )
+    pointer_root = instance.state_pointers[lifecycle.states["published"]]
+    fake_revision_root = "test:replay-policy:forged-published-head"
+    snapshot = store.snapshot()
+    patch = prepare_append_relation_member(
+        snapshot,
+        pointer_root,
+        lifecycle.role("revision"),
+        fake_revision_root,
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision,
+        create=(
+            Cell(
+                fake_revision_root,
+                NULL_CELL_ID,
+                NULL_CELL_ID,
+                b"forged published head",
+            ),
+            *patch.create,
+        ),
+        replace=patch.replace,
+    )
+    with pytest.raises(InvalidCell, match="one Published revision"):
+        verifier.verify(store.snapshot(), protocol)
+
+
+def test_real_replay_policy_verifier_denies_forged_court_evidence():
+    store, protocol, verifier, revisions = (
+        _replay_policy_verifier_fixture(release_to="published")
+    )
+    published = read_revision(
+        store.snapshot(), verifier._lifecycle, revisions[-1]
+    )
+    evidence = read_court_attestation(
+        store.snapshot(),
+        verifier._attestation,
+        published.evidence_roots[0],
+    )
+    signature = store.read(evidence.signature_root)
+    store.commit(
+        store.revision,
+        replace=(Cell(
+            signature.id,
+            signature.link0,
+            signature.link1,
+            b"forged-signature",
+        ),),
+    )
+    with pytest.raises(InvalidCell, match="no admitted court evidence"):
+        verifier.verify(store.snapshot(), protocol)
+
+
+def test_real_replay_policy_verifier_denies_wrong_predecessor_evidence():
+    store, protocol, verifier, revisions = (
+        _replay_policy_verifier_fixture(release_to="published")
+    )
+    wip, _shared, published_root = revisions
+    published_members = read_relation(
+        store.snapshot(), published_root, budget=1024
+    )
+    predecessor_members = tuple(
+        member
+        for member in published_members
+        if member.role_id == verifier._lifecycle.role("predecessor")
+    )
+    assert len(predecessor_members) == 1
+    incidence = store.read(predecessor_members[0].incidence_id)
+    store.commit(
+        store.revision,
+        replace=(Cell(
+            incidence.id,
+            incidence.link0,
+            wip,
+            incidence.atom,
+        ),),
+    )
+    with pytest.raises(InvalidCell, match="no admitted court evidence"):
+        verifier.verify(store.snapshot(), protocol)
+
+
+def test_replacement_published_policy_invalidates_an_issued_session():
+    now = time.time()
+    world = _session_world(
+        now=now,
+        proof_replay_capacity=2,
+        real_replay_policy_authority=True,
+    )
+    wip, _shared, published = world["replay_policy_revision_roots"]
+    verifier = world["replay_policy_authority_verifier"]
+    protocol = world["session_protocol"]
+    actor_root = "test:replay-policy:actor"
+    published_revision = read_revision(
+        world["store"].snapshot(),
+        verifier._lifecycle,
+        published,
+    )
+    replacement_wip = restore_revision_as_wip(
+        world["store"],
+        verifier._assembly,
+        verifier._lifecycle,
+        protocol.proof_replay_policy_lifecycle_root,
+        published,
+        actor_root=actor_root,
+        base_revision_root=wip,
+        branch_root=published_revision.branch_root,
+    )
+    replacement_shared = _promote_replay_policy_fixture(
+        world["store"],
+        verifier,
+        protocol.proof_replay_policy_lifecycle_root,
+        replacement_wip,
+        verifier._lifecycle.states["shared"],
+        actor_root,
+    )
+    _promote_replay_policy_fixture(
+        world["store"],
+        verifier,
+        protocol.proof_replay_policy_lifecycle_root,
+        replacement_shared,
+        verifier._lifecycle.states["published"],
+        actor_root,
+    )
+    instance = read_lifecycle_instance(
+        world["store"].snapshot(),
+        verifier._assembly,
+        verifier._lifecycle,
+        protocol.proof_replay_policy_lifecycle_root,
+    )
+    assert len(state_heads(
+        world["store"].snapshot(),
+        verifier._lifecycle,
+        instance.state_pointers[verifier._lifecycle.states["published"]],
+    )) == 2
+
+    proof = _request_proof(
+        access_token=world["issued_session"].access_token,
+        now=now + 1,
+        proof_id="replacement-policy-invalidates-session",
+    )
+    with pytest.raises(
+        CloudSessionDenied,
+        match="no active Published release",
+    ):
+        _authenticate_request(world, proof, now=now + 1)
+
+
 def test_request_proof_mints_one_request_context_and_records_replay_identity():
     now = time.time()
     world = _session_world(now=now)
@@ -595,6 +1166,734 @@ def test_request_proof_mints_one_request_context_and_records_replay_identity():
     assert request_auth.proof_use_root in world["store"].snapshot().cells
     with pytest.raises(CloudSessionDenied, match="replayed"):
         _authenticate_request(world, proof, now=now + 2)
+
+
+def test_dpop_replay_window_grows_only_to_capacity_and_fails_closed_when_full():
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=2)
+    assert (
+        cloud_sessions.LEGACY_PROOF_USE_ROLE_NAME
+        not in world["session_protocol"].roles
+    )
+    session = verify_cloud_session_manifest(
+        world["store"].snapshot(),
+        world["session_protocol"],
+        world["issued_session"].session_root,
+    )
+    window = cloud_sessions.read_proof_replay_window(
+        world["store"].snapshot(),
+        world["session_protocol"],
+        session.proof_replay_window_root,
+    )
+    assert window.capacity == 2
+    assert window.retention_seconds == 10.0
+    assert window.slot_roots == ()
+    policy = cloud_sessions.read_proof_replay_policy(
+        world["store"].snapshot(), world["session_protocol"]
+    )
+    assert policy.capacity == 2
+    assert policy.retention_seconds == 10.0
+    baseline = world["store"].retention_stats()
+    protocol_members_before = read_relation(
+        world["store"].snapshot(),
+        world["session_protocol"].root_id,
+        budget=100_000,
+    )
+
+    token = world["issued_session"].access_token
+    first = _request_proof(
+        access_token=token, now=now + 1, proof_id="fixed-window-proof-1"
+    )
+    second = _request_proof(
+        access_token=token, now=now + 2, proof_id="fixed-window-proof-2"
+    )
+    first_auth = _authenticate_request(world, first, now=now + 1)
+    _authenticate_request(world, second, now=now + 2)
+    assert (
+        world["store"].retention_stats()["current_cell_count"]
+        == baseline["current_cell_count"] + 28
+    )
+    assert (
+        world["store"].retention_stats()["version_cell_count"]
+        == baseline["version_cell_count"] + 30
+    )
+    filled_window = cloud_sessions.read_proof_replay_window(
+        world["store"].snapshot(),
+        world["session_protocol"],
+        session.proof_replay_window_root,
+    )
+    assert len(filled_window.slot_roots) == 2
+    assert first_auth.proof_use_root in filled_window.slot_roots
+    assert first_auth.proof_use_revision <= world["store"].revision
+    assert first_auth.proof_use_evidence == (
+        first_auth.proof_use_root,
+        first_auth.proof_use_revision,
+    )
+    protocol_members_after = read_relation(
+        world["store"].snapshot(),
+        world["session_protocol"].root_id,
+        budget=100_000,
+    )
+    assert protocol_members_after == protocol_members_before
+
+    with pytest.raises(CloudSessionDenied, match="replayed"):
+        _authenticate_request(world, first, now=now + 3)
+    third = _request_proof(
+        access_token=token, now=now + 3, proof_id="fixed-window-proof-3"
+    )
+    full_revision = world["store"].revision
+    full_cells = world["store"].snapshot().cells
+    with pytest.raises(CloudSessionDenied, match="replay window is full"):
+        _authenticate_request(world, third, now=now + 3)
+    assert world["store"].revision == full_revision
+    assert world["store"].snapshot().cells == full_cells
+
+
+def test_candidate_replay_policy_admits_a_64_request_per_second_window():
+    class ProductionEnvelopeVerifier(_RequestProofVerifier):
+        @property
+        def replay_retention_seconds(self) -> float:
+            return cloud_sessions.DEFAULT_PROOF_REPLAY_RETENTION_SECONDS
+
+    now = float(int(time.time()))
+    world = _session_world(
+        now=now,
+        request_proof_verifier=ProductionEnvelopeVerifier(),
+    )
+    policy = cloud_sessions.read_proof_replay_policy(
+        world["store"].snapshot(), world["session_protocol"]
+    )
+    assert policy.capacity == 1024
+    assert policy.retention_seconds == 15.0
+    assert policy.capacity / policy.retention_seconds >= 64.0
+
+    token = world["issued_session"].access_token
+    started = time.perf_counter()
+    for index in range(policy.capacity):
+        observed_at = now + 1 + index / policy.capacity
+        proof = _request_proof(
+            access_token=token,
+            now=observed_at,
+            proof_id="released-capacity-proof-%04d" % index,
+        )
+        _authenticate_request(world, proof, now=observed_at)
+    assert time.perf_counter() - started < 30.0
+
+    revision = world["store"].revision
+    cells = world["store"].snapshot().cells
+    overflow = _request_proof(
+        access_token=token,
+        now=now + 2.1,
+        proof_id="released-capacity-overflow",
+    )
+    with pytest.raises(CloudSessionDenied, match="replay window is full"):
+        _authenticate_request(world, overflow, now=now + 2.1)
+    assert world["store"].revision == revision
+    assert world["store"].snapshot().cells == cells
+
+
+def test_dpop_replay_window_reuses_expired_slot_and_preserves_history():
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=1)
+    token = world["issued_session"].access_token
+    first = _request_proof(
+        access_token=token, now=now + 1, proof_id="historical-proof-1"
+    )
+    first_auth = _authenticate_request(world, first, now=now + 1)
+    first_slot = cloud_sessions.read_proof_replay_slot(
+        world["store"].at(first_auth.proof_use_revision),
+        world["session_protocol"],
+        first_auth.proof_use_root,
+    )
+    first_digest = hashlib.sha256(
+        b"historical-proof-1"
+    ).hexdigest()
+    assert first_slot.proof_id_digest == first_digest
+
+    second = _request_proof(
+        access_token=token, now=now + 12, proof_id="historical-proof-2"
+    )
+    second_auth = _authenticate_request(world, second, now=now + 12)
+    assert second_auth.proof_use_root == first_auth.proof_use_root
+    current_slot = cloud_sessions.read_proof_replay_slot(
+        world["store"].snapshot(),
+        world["session_protocol"],
+        second_auth.proof_use_root,
+    )
+    assert current_slot.proof_id_digest == hashlib.sha256(
+        b"historical-proof-2"
+    ).hexdigest()
+    historical_slot = cloud_sessions.read_proof_replay_slot(
+        world["store"].at(first_auth.proof_use_revision),
+        world["session_protocol"],
+        first_auth.proof_use_root,
+    )
+    assert historical_slot.proof_id_digest == first_digest
+
+
+def test_dpop_replay_window_keeps_the_exact_expiry_boundary_closed():
+    now = float(int(time.time()))
+    world = _session_world(now=now, proof_replay_capacity=1)
+    token = world["issued_session"].access_token
+    first = _request_proof(
+        access_token=token,
+        now=now + 1,
+        proof_id="exact-boundary-proof",
+    )
+    first_auth = _authenticate_request(world, first, now=now + 1)
+
+    boundary_replay = _request_proof(
+        access_token=token,
+        now=now + 11,
+        proof_id="exact-boundary-proof",
+    )
+    with pytest.raises(CloudSessionDenied, match="replayed"):
+        _authenticate_request(world, boundary_replay, now=now + 11)
+
+    after_boundary = _request_proof(
+        access_token=token,
+        now=now + 11.001,
+        proof_id="after-boundary-proof",
+    )
+    after_auth = _authenticate_request(
+        world,
+        after_boundary,
+        now=now + 11.001,
+    )
+    assert after_auth.proof_use_root == first_auth.proof_use_root
+    assert isinstance(after_auth.proof_use_revision, int)
+    assert after_auth.proof_use_evidence == (
+        after_auth.proof_use_root,
+        after_auth.proof_use_revision,
+    )
+
+
+def test_dpop_replay_window_preserves_fractional_expiry_precision():
+    now = float(int(time.time()))
+    world = _session_world(now=now, proof_replay_capacity=1)
+    token = world["issued_session"].access_token
+    first_observed_at = now + 1.0000004
+    first = _request_proof(
+        access_token=token,
+        now=first_observed_at,
+        proof_id="fractional-boundary-proof",
+    )
+    _authenticate_request(world, first, now=first_observed_at)
+
+    before_exact_expiry = now + 11.0000003
+    replay = _request_proof(
+        access_token=token,
+        now=before_exact_expiry,
+        proof_id="fractional-boundary-proof",
+    )
+    with pytest.raises(CloudSessionDenied, match="replayed"):
+        _authenticate_request(world, replay, now=before_exact_expiry)
+
+    after_exact_expiry = first_observed_at + 10.000001
+    replacement = _request_proof(
+        access_token=token,
+        now=after_exact_expiry,
+        proof_id="fractional-boundary-replacement",
+    )
+    _authenticate_request(
+        world,
+        replacement,
+        now=after_exact_expiry,
+    )
+
+
+def test_accepted_cloud_request_requires_revision_bound_proof_evidence():
+    proof_revision_field = next(
+        field
+        for field in fields(cloud_sessions.CloudRequestAuthentication)
+        if field.name == "proof_use_revision"
+    )
+    assert proof_revision_field.default is MISSING
+    assert proof_revision_field.default_factory is MISSING
+
+
+def test_dpop_replay_slot_reuse_stays_bounded_across_sqlite_reopen(tmp_path):
+    now = time.time()
+    path = tmp_path / "bounded-replay-history.sqlite3"
+    key_provider = MemorySigningKeyProvider(
+        "test:relationship-key",
+        b"bounded-replay-relationship-key-material",
+    )
+    world = _session_world(
+        now=now,
+        store=CellStore(path),
+        relationship_key_provider=key_provider,
+        proof_replay_capacity=1,
+    )
+    issued = world["issued_session"]
+    first_evidence = None
+    fixed_current_count = None
+    first_version_count = None
+
+    for index in range(8):
+        if index:
+            store = CellStore(path)
+            identity = project_identity_protocol(
+                store.snapshot(),
+                "test:identity",
+            )
+            relationship_broker = RelationshipAuthorityBroker(
+                (world["roots"]["administrator"],),
+                key_provider=key_provider,
+                key_id="test:relationship-key",
+            )
+            restore_relationship_authority_history(
+                store,
+                identity,
+                relationship_broker,
+            )
+            broker = CloudSessionBroker(
+                session_protocol=project_cloud_session_protocol(
+                    store.snapshot(),
+                    prefix="test:cloud-session",
+                ),
+                identity_protocol=identity,
+                relationship_broker=relationship_broker,
+                authentication_broker=AuthenticationBroker(),
+                request_proof_verifier=_RequestProofVerifier(),
+                replay_policy_authority_verifier=(
+                    _TestReplayPolicyAuthorityVerifier()
+                ),
+                tenant_admission_verifier=_TestTenantAdmissionVerifier(),
+                device_custody_verifier=_TestDeviceCustodyVerifier(),
+                session_issuer_root=world["roots"]["administrator"],
+            )
+        else:
+            store = world["store"]
+            broker = world["session_broker"]
+
+        proof_now = now + 1 + (index * 12)
+        proof_id = "durable-reused-proof-%02d" % index
+        proof = _request_proof(
+            access_token=issued.access_token,
+            now=proof_now,
+            proof_id=proof_id,
+        )
+        accepted = broker.authenticate_request(
+            store,
+            issued.access_token,
+            proof,
+            requested_action_root=world["action_root"],
+            http_method="GET",
+            target_uri=RESOURCE_URI,
+            expected_nonce="server-request-nonce",
+            now=proof_now,
+        )
+        stats = store.retention_stats()
+        if first_evidence is None:
+            first_evidence = accepted.proof_use_evidence
+            fixed_current_count = stats["current_cell_count"]
+            first_version_count = stats["version_cell_count"]
+        else:
+            assert accepted.proof_use_root == first_evidence[0]
+            assert stats["current_cell_count"] == fixed_current_count
+            assert stats["version_cell_count"] > first_version_count
+        assert stats["resident_history_version_cell_count"] == 0
+        store.close()
+
+    final_store = CellStore(path)
+    try:
+        assert final_store.retention_stats()["current_cell_count"] == (
+            fixed_current_count
+        )
+        assert final_store.retention_stats()[
+            "resident_history_version_cell_count"
+        ] == 0
+        first_slot = cloud_sessions.read_proof_replay_slot(
+            final_store.at(first_evidence[1]),
+            project_cloud_session_protocol(
+                final_store.snapshot(),
+                prefix="test:cloud-session",
+            ),
+            first_evidence[0],
+        )
+        assert first_slot.proof_id_digest == hashlib.sha256(
+            b"durable-reused-proof-00"
+        ).hexdigest()
+    finally:
+        final_store.close()
+
+
+@pytest.mark.parametrize("capacity", [0, -1, True, 1025])
+def test_dpop_replay_window_rejects_invalid_capacity(capacity):
+    now = time.time()
+    with pytest.raises((TypeError, ValueError), match="replay capacity"):
+        _session_world(now=now, proof_replay_capacity=capacity)
+
+
+@pytest.mark.parametrize("retention", [0.0, float("nan"), float("inf"), 3601.0])
+def test_dpop_replay_window_rejects_invalid_verifier_retention(retention):
+    class InvalidRetentionVerifier(_RequestProofVerifier):
+        @property
+        def replay_retention_seconds(self) -> float:
+            return retention
+
+    with pytest.raises(ValueError, match="replay retention"):
+        _session_world(
+            now=time.time(),
+            request_proof_verifier=InvalidRetentionVerifier(),
+        )
+
+
+def test_dpop_replay_window_denies_a_longer_verifier_than_session_policy():
+    class LongerRetentionVerifier(_RequestProofVerifier):
+        @property
+        def replay_retention_seconds(self) -> float:
+            return 20.0
+
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=1)
+    world["session_broker"] = CloudSessionBroker(
+        session_protocol=world["session_protocol"],
+        identity_protocol=world["identity"],
+        relationship_broker=world["relationship_broker"],
+        authentication_broker=world["authentication_broker"],
+        request_proof_verifier=LongerRetentionVerifier(),
+        replay_policy_authority_verifier=(
+            world["replay_policy_authority_verifier"]
+        ),
+        tenant_admission_verifier=_TestTenantAdmissionVerifier(),
+        device_custody_verifier=_TestDeviceCustodyVerifier(),
+        session_issuer_root=world["roots"]["administrator"],
+    )
+    proof = _request_proof(
+        access_token=world["issued_session"].access_token,
+        now=now + 1,
+        proof_id="retention-mismatch-proof",
+    )
+    with pytest.raises(
+        CloudSessionDenied, match="shorter than verification"
+    ):
+        _authenticate_request(world, proof, now=now + 1)
+
+
+def test_legacy_proof_verifier_uses_an_explicit_retention_adapter():
+    class LegacyVerifier:
+        def verify(self, *arguments, **keywords):
+            return _RequestProofVerifier().verify(*arguments, **keywords)
+
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=1)
+    world["session_broker"] = CloudSessionBroker(
+        session_protocol=world["session_protocol"],
+        identity_protocol=world["identity"],
+        relationship_broker=world["relationship_broker"],
+        authentication_broker=world["authentication_broker"],
+        request_proof_verifier=LegacyVerifier(),
+        replay_policy_authority_verifier=(
+            world["replay_policy_authority_verifier"]
+        ),
+        tenant_admission_verifier=_TestTenantAdmissionVerifier(),
+        device_custody_verifier=_TestDeviceCustodyVerifier(),
+        session_issuer_root=world["roots"]["administrator"],
+        proof_replay_retention_seconds=10.0,
+    )
+    proof = _request_proof(
+        access_token=world["issued_session"].access_token,
+        now=now + 1,
+        proof_id="legacy-verifier-adapter",
+    )
+    accepted = _authenticate_request(world, proof, now=now + 1)
+    assert isinstance(accepted.proof_use_revision, int)
+
+
+def test_pre_window_cloud_session_requires_explicit_reauthentication():
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=1)
+    snapshot = world["store"].snapshot()
+    session_root = world["issued_session"].session_root
+    replay_incidence = next(
+        member.incidence_id
+        for member in read_relation(snapshot, session_root, budget=256)
+        if member.role_id
+        == world["session_protocol"].role("proof-replay-window")
+    )
+    remove_relation_member(
+        world["store"], session_root, replay_incidence, budget=256
+    )
+    with pytest.raises(InvalidCell, match="proof replay window"):
+        verify_cloud_session_manifest(
+            world["store"].snapshot(),
+            world["session_protocol"],
+            session_root,
+        )
+    proof = _request_proof(
+        access_token=world["issued_session"].access_token,
+        now=now + 1,
+        proof_id="legacy-session-proof",
+    )
+    with pytest.raises(
+        CloudSessionDenied, match="no unique active session"
+    ):
+        _authenticate_request(world, proof, now=now + 1)
+
+
+def test_dpop_replay_window_rejects_foreign_policy_and_slot_value_roots():
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=1)
+    snapshot = world["store"].snapshot()
+    session = verify_cloud_session_manifest(
+        snapshot,
+        world["session_protocol"],
+        world["issued_session"].session_root,
+    )
+    window = cloud_sessions.read_proof_replay_window(
+        snapshot,
+        world["session_protocol"],
+        session.proof_replay_window_root,
+    )
+    capacity_member = next(
+        member for member in read_relation(snapshot, window.root_id, budget=8)
+        if member.role_id
+        == world["session_protocol"].role("proof-replay-capacity")
+    )
+    foreign_capacity = _cell("test:foreign:replay-capacity", "1")
+    incidence = snapshot.cells[capacity_member.incidence_id]
+    world["store"].commit(
+        snapshot.revision,
+        create=(foreign_capacity,),
+        replace=(Cell(
+            incidence.id,
+            incidence.link0,
+            foreign_capacity.id,
+            incidence.atom,
+        ),),
+    )
+    with pytest.raises(InvalidCell, match="replay capacity"):
+        verify_cloud_session_manifest(
+            world["store"].snapshot(),
+            world["session_protocol"],
+            world["issued_session"].session_root,
+        )
+
+    clean = _session_world(now=now + 2, proof_replay_capacity=1)
+    clean_snapshot = clean["store"].snapshot()
+    clean_session = verify_cloud_session_manifest(
+        clean_snapshot,
+        clean["session_protocol"],
+        clean["issued_session"].session_root,
+    )
+    clean_window = cloud_sessions.read_proof_replay_window(
+        clean_snapshot,
+        clean["session_protocol"],
+        clean_session.proof_replay_window_root,
+    )
+    initial = _request_proof(
+        access_token=clean["issued_session"].access_token,
+        now=now + 3,
+        proof_id="slot-to-tamper",
+    )
+    _authenticate_request(clean, initial, now=now + 3)
+    clean_snapshot = clean["store"].snapshot()
+    clean_window = cloud_sessions.read_proof_replay_window(
+        clean_snapshot,
+        clean["session_protocol"],
+        clean_session.proof_replay_window_root,
+    )
+    slot_member = next(
+        member for member in read_relation(
+            clean_snapshot, clean_window.slot_roots[0], budget=8
+        )
+        if member.role_id
+        == clean["session_protocol"].role("proof-id-digest")
+    )
+    foreign_digest = _cell(
+        "test:foreign:proof-digest",
+        hashlib.sha256(b"foreign").hexdigest(),
+    )
+    slot_incidence = clean_snapshot.cells[slot_member.incidence_id]
+    clean["store"].commit(
+        clean_snapshot.revision,
+        create=(foreign_digest,),
+        replace=(Cell(
+            slot_incidence.id,
+            slot_incidence.link0,
+            foreign_digest.id,
+            slot_incidence.atom,
+        ),),
+    )
+    proof = _request_proof(
+        access_token=clean["issued_session"].access_token,
+        now=now + 4,
+        proof_id="foreign-slot-proof",
+    )
+    with pytest.raises(CloudSessionDenied, match="replay window drifted"):
+        _authenticate_request(clean, proof, now=now + 4)
+
+
+def test_dpop_replay_window_conflict_never_overwrites_an_unexpired_proof(
+    monkeypatch,
+):
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=1)
+    token = world["issued_session"].access_token
+    proofs = tuple(
+        _request_proof(
+            access_token=token,
+            now=now + 1,
+            proof_id="contended-proof-%s" % index,
+        )
+        for index in range(2)
+    )
+    barrier = threading.Barrier(2)
+    original_commit = CellStore.commit
+
+    def synchronized_commit(store, expected_revision, **arguments):
+        replace = tuple(arguments.get("replace", ()))
+        create = tuple(arguments.get("create", ()))
+        if any(
+            ":proof-replay-window:slot:" in cell.id
+            for cell in (*create, *replace)
+        ):
+            barrier.wait(timeout=5)
+        return original_commit(store, expected_revision, **arguments)
+
+    monkeypatch.setattr(CellStore, "commit", synchronized_commit)
+
+    def attempt(proof):
+        try:
+            return _authenticate_request(world, proof, now=now + 1)
+        except CloudSessionDenied as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(attempt, proofs))
+    accepted = tuple(
+        outcome for outcome in outcomes
+        if not isinstance(outcome, Exception)
+    )
+    denied = tuple(
+        outcome for outcome in outcomes if isinstance(outcome, Exception)
+    )
+    assert len(accepted) == 1
+    assert len(denied) == 1
+    assert "replay window is full" in str(denied[0])
+    slot = cloud_sessions.read_proof_replay_slot(
+        world["store"].snapshot(),
+        world["session_protocol"],
+        accepted[0].proof_use_root,
+    )
+    assert slot.proof_id_digest in {
+        hashlib.sha256(b"contended-proof-0").hexdigest(),
+        hashlib.sha256(b"contended-proof-1").hexdigest(),
+    }
+
+
+def test_dpop_replay_window_survives_unrelated_global_revision_conflicts(
+    monkeypatch,
+):
+    now = time.time()
+    world = _session_world(now=now, proof_replay_capacity=1)
+    counter_root = "test:unrelated:commit-counter"
+    snapshot = world["store"].snapshot()
+    world["store"].commit(
+        snapshot.revision, create=(_cell(counter_root, "0"),)
+    )
+    original_commit = CellStore.commit
+    injected = 0
+
+    def interfering_commit(store, expected_revision, **arguments):
+        nonlocal injected
+        create = tuple(arguments.get("create", ()))
+        replace = tuple(arguments.get("replace", ()))
+        is_replay = any(
+            ":proof-replay-window:slot:" in cell.id
+            for cell in (*create, *replace)
+        )
+        if is_replay and injected < 8:
+            injected += 1
+            current = store.snapshot()
+            original_commit(
+                store,
+                current.revision,
+                replace=(_cell(counter_root, str(injected)),),
+            )
+        return original_commit(store, expected_revision, **arguments)
+
+    monkeypatch.setattr(CellStore, "commit", interfering_commit)
+    proof = _request_proof(
+        access_token=world["issued_session"].access_token,
+        now=now + 1,
+        proof_id="survives-global-contention",
+    )
+    accepted = _authenticate_request(world, proof, now=now + 1)
+    assert injected == 8
+    assert accepted.proof_use_root in world["store"].snapshot().cells
+    assert world["store"].read(counter_root).atom == b"8"
+
+
+def test_cloud_session_protocol_migrates_only_missing_replay_vocabulary():
+    store = CellStore()
+    prefix = "test:legacy-cloud-session"
+    new_names = set(cloud_sessions.PROOF_REPLAY_ROLE_NAMES)
+    legacy_names = (
+        *tuple(
+            name for name in cloud_sessions.ROLE_NAMES
+            if name not in new_names
+        ),
+        cloud_sessions.LEGACY_PROOF_USE_ROLE_NAME,
+    )
+    roles = {
+        name: "%s:role:%s" % (prefix, name)
+        for name in legacy_names
+    }
+    batch = CellBatch(store)
+    for name, root in roles.items():
+        batch.add(_cell(root, name))
+    batch.relation(
+        (
+            (roles["vocabulary-member"], root)
+            for root in roles.values()
+        ),
+        relation_id=prefix + ":root",
+    )
+    batch.commit()
+    revision_before = store.revision
+
+    protocol = cloud_sessions.ensure_cloud_session_protocol(
+        store, prefix=prefix
+    )
+    assert store.revision == revision_before + 1
+    assert set(protocol.roles) == set(cloud_sessions.ROLE_NAMES)
+    assert cloud_sessions.project_cloud_session_protocol(
+        store.snapshot(), prefix=prefix
+    ) == protocol
+
+
+def test_cloud_session_protocol_migration_rejects_missing_legacy_vocabulary():
+    store = CellStore()
+    prefix = "test:damaged-cloud-session"
+    legacy_names = (
+        *tuple(
+            name for name in cloud_sessions.ROLE_NAMES
+            if name not in cloud_sessions.PROOF_REPLAY_ROLE_NAMES
+            and name != "subject"
+        ),
+        cloud_sessions.LEGACY_PROOF_USE_ROLE_NAME,
+    )
+    roles = {
+        name: "%s:role:%s" % (prefix, name)
+        for name in legacy_names
+    }
+    batch = CellBatch(store)
+    for name, root in roles.items():
+        batch.add(_cell(root, name))
+    batch.relation(
+        (
+            (roles["vocabulary-member"], root)
+            for root in roles.values()
+        ),
+        relation_id=prefix + ":root",
+    )
+    batch.commit()
+
+    with pytest.raises(InvalidCell, match="legacy protocol vocabulary"):
+        cloud_sessions.ensure_cloud_session_protocol(store, prefix=prefix)
 
 
 @pytest.mark.parametrize("proof_change", [
@@ -696,6 +1995,9 @@ def test_session_authority_revocation_and_proof_replay_survive_reopen(tmp_path):
         relationship_broker=relationship_broker,
         authentication_broker=authentication_broker,
         request_proof_verifier=_RequestProofVerifier(),
+        replay_policy_authority_verifier=(
+            _TestReplayPolicyAuthorityVerifier()
+        ),
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
         device_custody_verifier=_TestDeviceCustodyVerifier(),
         session_issuer_root=world["roots"]["administrator"],
@@ -753,6 +2055,9 @@ def test_session_authority_revocation_and_proof_replay_survive_reopen(tmp_path):
         relationship_broker=final_relationship_broker,
         authentication_broker=AuthenticationBroker(),
         request_proof_verifier=_RequestProofVerifier(),
+        replay_policy_authority_verifier=(
+            _TestReplayPolicyAuthorityVerifier()
+        ),
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
         device_custody_verifier=_TestDeviceCustodyVerifier(),
         session_issuer_root=world["roots"]["administrator"],
@@ -942,12 +2247,33 @@ def _native_cloud_login_world(
     cloud_protocol = bootstrap_cloud_session_protocol(
         store, prefix="test:native-cloud-session"
     )
+    native_replay_lifecycle_root = (
+        cloud_protocol.root_id + ":test-proof-replay-policy-lifecycle"
+    )
+    store.commit(
+        store.revision,
+        create=(
+            _cell(native_replay_lifecycle_root, "test lifecycle"),
+            _cell(native_replay_lifecycle_root + ":wip", "WIP"),
+            _cell(native_replay_lifecycle_root + ":shared", "Shared"),
+            _cell(
+                native_replay_lifecycle_root + ":published",
+                "Published",
+            ),
+        ),
+    )
+    cloud_protocol = cloud_sessions.bind_proof_replay_policy_lifecycle(
+        store, cloud_protocol, native_replay_lifecycle_root
+    )
     cloud_broker = CloudSessionBroker(
         session_protocol=cloud_protocol,
         identity_protocol=world["identity"],
         relationship_broker=world["relationship_broker"],
         authentication_broker=world["authentication_broker"],
         request_proof_verifier=_RequestProofVerifier(),
+        replay_policy_authority_verifier=(
+            _TestReplayPolicyAuthorityVerifier()
+        ),
         tenant_admission_verifier=_TestTenantAdmissionVerifier(),
         device_custody_verifier=(
             ActiveDeviceCustodyVerifier(device_custody_protocol)

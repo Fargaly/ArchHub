@@ -168,6 +168,42 @@ class CellJournal(Protocol):
     ) -> Callable[[], None]: ...
 
 
+class CellHistoryReader(Protocol):
+    """Exact physical history reads bound to one accepted journal head."""
+
+    @property
+    def head_revision(self) -> int: ...
+
+    @property
+    def head_digest(self) -> str: ...
+
+    def revision_cells(self, revision: int) -> tuple[Cell, ...]: ...
+
+    def snapshot_at(self, revision: int) -> Snapshot: ...
+
+    def cells_at(
+        self, revision: int, cell_ids: Iterable[str]
+    ) -> Mapping[str, Cell]: ...
+
+    def created_revision(self, cell_id: str) -> int: ...
+
+    def chain_digest(self, revision: int) -> str: ...
+
+    def version_count(self) -> int: ...
+
+    def advance(self, revision: int, changed: Iterable[Cell]) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedJournalHead:
+    """One current graph and its same-head physical history reader."""
+
+    cells: Mapping[str, Cell]
+    revision: int
+    revision_chain_digest: str
+    history: CellHistoryReader
+
+
 def _frozen_cells(cells: Mapping[str, Cell]) -> Mapping[str, Cell]:
     return MappingProxyType(dict(cells))
 
@@ -291,6 +327,45 @@ def _validate_cell(cell: Cell) -> None:
         raise InvalidCell("terminal atom must be opaque bytes")
 
 
+def revision_chain_digest_step(
+    previous: bytes,
+    revision: int,
+    changed: Iterable[Cell],
+) -> bytes:
+    """Return the canonical digest after one exact physical revision."""
+    if not isinstance(previous, bytes) or len(previous) != 32:
+        raise InvalidCell("Cell revision digest predecessor is invalid")
+    if type(revision) is not int or revision < 0:
+        raise InvalidCell("Cell revision digest number is invalid")
+    by_id: dict[str, Cell] = {}
+    for cell in changed:
+        _validate_cell(cell)
+        if cell.id in by_id:
+            raise InvalidCell("Cell revision contains duplicate identities")
+        by_id[cell.id] = cell
+    if not by_id:
+        raise InvalidCell("Cell revision contains no changed Cells")
+    digest = hashlib.sha256()
+    domain = b"ArchHub/universal-cell-revision-chain/v1"
+    digest.update(len(domain).to_bytes(8, "big"))
+    digest.update(domain)
+    digest.update(previous)
+    raw_revision = str(revision).encode("ascii")
+    digest.update(len(raw_revision).to_bytes(8, "big"))
+    digest.update(raw_revision)
+    for cell_id in sorted(by_id):
+        cell = by_id[cell_id]
+        for raw in (
+            cell.id.encode("utf-8"),
+            cell.link0.encode("utf-8"),
+            cell.link1.encode("utf-8"),
+            cell.atom,
+        ):
+            digest.update(len(raw).to_bytes(8, "big"))
+            digest.update(raw)
+    return digest.digest()
+
+
 class _DatabaseOwnerFence:
     """Process-fatal-safe exclusive ownership of one SQLite authority."""
 
@@ -386,6 +461,8 @@ class _DatabaseOwnerFence:
 class _SqliteJournal:
     """Durable implementation machinery; rows contain only Cell versions."""
 
+    supports_lazy_history = True
+
     def __init__(
         self,
         path: str | os.PathLike[str],
@@ -421,6 +498,11 @@ class _SqliteJournal:
                 "cell_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, "
                 "link0 TEXT NOT NULL, link1 TEXT NOT NULL, atom BLOB NOT NULL, "
                 "FOREIGN KEY (revision) REFERENCES revisions(revision))"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS "
+                "idx_cell_versions_cell_revision "
+                "ON cell_versions(cell_id, revision DESC)"
             )
             count = self._connection.execute(
                 "SELECT COUNT(*) FROM revisions"
@@ -528,6 +610,120 @@ class _SqliteJournal:
         latest = max(versions)
         return MappingProxyType(current), latest, versions, changes
 
+    def load_head(self) -> LoadedJournalHead:
+        """Read one same-transaction head and bounded history reader."""
+        self._connection.execute("BEGIN")
+        try:
+            loaded = self._load_head_in_transaction()
+            self._connection.commit()
+            return loaded
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def _load_head_in_transaction(self) -> LoadedJournalHead:
+        """Stream and validate history while retaining only the current graph."""
+        current: dict[str, Cell] = {}
+        current_revisions: dict[str, int] = {}
+        revision_count, first_revision, latest = self._connection.execute(
+            "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
+        ).fetchone()
+        if (
+            type(revision_count) is not int
+            or type(first_revision) is not int
+            or type(latest) is not int
+            or revision_count < 1
+            or first_revision != 0
+            or latest != revision_count - 1
+        ):
+            raise InvalidCell("durable Cell revision history is discontinuous")
+
+        previous = b"\x00" * 32
+        active_revision = -1
+        changed: list[Cell] = []
+
+        def accept_revision() -> None:
+            nonlocal previous
+            if not changed:
+                raise InvalidCell(
+                    "durable revision %s has no changed Cells"
+                    % active_revision
+                )
+            if active_revision == 0 and changed != [
+                Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
+            ]:
+                raise InvalidCell("durable Cell genesis revision is invalid")
+            for cell in changed:
+                current[cell.id] = cell
+                current_revisions[cell.id] = active_revision
+            for cell in changed:
+                if cell.link0 not in current or cell.link1 not in current:
+                    raise InvalidCell(
+                        "durable revision %s has dangling incidence"
+                        % active_revision
+                    )
+            previous = revision_chain_digest_step(
+                previous,
+                active_revision,
+                changed,
+            )
+
+        rows = self._connection.execute(
+            "SELECT revision, cell_id, link0, link1, atom "
+            "FROM cell_versions ORDER BY revision, cell_id"
+        )
+        for row_revision, cell_id, link0, link1, atom in rows:
+            if type(row_revision) is not int:
+                raise InvalidCell("durable Cell revision is invalid")
+            if row_revision != active_revision:
+                if active_revision >= 0:
+                    accept_revision()
+                if row_revision != active_revision + 1:
+                    raise InvalidCell(
+                        "durable Cell revision history is discontinuous"
+                    )
+                active_revision = row_revision
+                changed = []
+            cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            _validate_cell(cell)
+            changed.append(cell)
+        if active_revision >= 0:
+            accept_revision()
+        if active_revision != latest:
+            raise InvalidCell("durable Cell journal has no complete head")
+
+        indexed = {
+            str(cell_id): (
+                int(revision),
+                str(link0),
+                str(link1),
+                bytes(atom),
+            )
+            for cell_id, revision, link0, link1, atom
+            in self._connection.execute(
+                "SELECT cell_id, revision, link0, link1, atom "
+                "FROM current_cells ORDER BY cell_id"
+            )
+        }
+        expected = {
+            cell_id: (
+                current_revisions[cell_id],
+                cell.link0,
+                cell.link1,
+                cell.atom,
+            )
+            for cell_id, cell in current.items()
+        }
+        if indexed != expected:
+            raise InvalidCell("durable current Cell index is inconsistent")
+        history = _SqliteHistoryReader(self, latest, previous.hex())
+        return LoadedJournalHead(
+            cells=MappingProxyType(current),
+            revision=latest,
+            revision_chain_digest=previous.hex(),
+            history=history,
+        )
+
     def append(
         self,
         expected_revision: int,
@@ -626,6 +822,187 @@ class _SqliteJournal:
             return None
 
         return release
+
+
+class _SqliteHistoryReader:
+    """Exact SQLite history queries capped at one accepted Store head."""
+
+    def __init__(
+        self,
+        journal: _SqliteJournal,
+        head_revision: int,
+        head_digest: str,
+    ) -> None:
+        self._journal = journal
+        self._head_revision = head_revision
+        self._head_digest = head_digest
+
+    @property
+    def head_revision(self) -> int:
+        return self._head_revision
+
+    @property
+    def head_digest(self) -> str:
+        return self._head_digest
+
+    def _admit_revision(self, revision: int) -> int:
+        if (
+            type(revision) is not int
+            or revision < 0
+            or revision > self._head_revision
+        ):
+            raise InvalidCell("unknown revision %r" % revision)
+        return revision
+
+    def revision_cells(self, revision: int) -> tuple[Cell, ...]:
+        target = self._admit_revision(revision)
+        rows = self._journal._connection.execute(
+            "SELECT cell_id, link0, link1, atom FROM cell_versions "
+            "WHERE revision=? ORDER BY cell_id",
+            (target,),
+        )
+        cells = tuple(
+            Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            for cell_id, link0, link1, atom in rows
+        )
+        if not cells:
+            raise InvalidCell("unknown revision %r" % revision)
+        for cell in cells:
+            _validate_cell(cell)
+        return cells
+
+    def snapshot_at(self, revision: int) -> Snapshot:
+        target = self._admit_revision(revision)
+        rows = self._journal._connection.execute(
+            "SELECT versions.cell_id, versions.link0, versions.link1, "
+            "versions.atom FROM cell_versions AS versions JOIN ("
+            "SELECT cell_id, MAX(revision) AS revision FROM cell_versions "
+            "WHERE revision<=? GROUP BY cell_id"
+            ") AS selected ON selected.cell_id=versions.cell_id "
+            "AND selected.revision=versions.revision ORDER BY versions.cell_id",
+            (target,),
+        )
+        cells: dict[str, Cell] = {}
+        for cell_id, link0, link1, atom in rows:
+            cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            _validate_cell(cell)
+            cells[cell.id] = cell
+        if NULL_CELL_ID not in cells:
+            raise InvalidCell("revision %s has no distinguished null Cell" % target)
+        if any(
+            cell.link0 not in cells or cell.link1 not in cells
+            for cell in cells.values()
+        ):
+            raise InvalidCell("revision %s has dangling incidence" % target)
+        return Snapshot(target, MappingProxyType(cells))
+
+    def cells_at(
+        self,
+        revision: int,
+        cell_ids: Iterable[str],
+    ) -> Mapping[str, Cell]:
+        target = self._admit_revision(revision)
+        requested = tuple(dict.fromkeys(cell_ids))
+        if not requested:
+            return MappingProxyType({})
+        out: dict[str, Cell] = {}
+        for start in range(0, len(requested), 500):
+            selected_ids = requested[start:start + 500]
+            placeholders = ",".join("?" for _ in selected_ids)
+            rows = self._journal._connection.execute(
+                "SELECT versions.cell_id, versions.link0, versions.link1, "
+                "versions.atom FROM cell_versions AS versions JOIN ("
+                "SELECT cell_id, MAX(revision) AS revision FROM cell_versions "
+                "WHERE revision<=? AND cell_id IN (" + placeholders + ") "
+                "GROUP BY cell_id"
+                ") AS selected ON selected.cell_id=versions.cell_id "
+                "AND selected.revision=versions.revision",
+                (target, *selected_ids),
+            )
+            for cell_id, link0, link1, atom in rows:
+                cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+                _validate_cell(cell)
+                out[cell.id] = cell
+        for cell_id in requested:
+            if cell_id not in out:
+                raise InvalidCell(
+                    "cell %r did not exist at revision %r"
+                    % (cell_id, target)
+                )
+        return MappingProxyType({
+            cell_id: out[cell_id]
+            for cell_id in requested
+        })
+
+    def created_revision(self, cell_id: str) -> int:
+        if not isinstance(cell_id, str) or not cell_id:
+            raise InvalidCell("Cell identity is invalid")
+        row = self._journal._connection.execute(
+            "SELECT MIN(revision) FROM cell_versions "
+            "WHERE cell_id=? AND revision<=?",
+            (cell_id, self._head_revision),
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise InvalidCell("unknown cell %r" % cell_id)
+        return int(row[0])
+
+    def chain_digest(self, revision: int) -> str:
+        target = self._admit_revision(revision)
+        if target == self._head_revision:
+            return self._head_digest
+        previous = b"\x00" * 32
+        active_revision = -1
+        changed: list[Cell] = []
+        rows = self._journal._connection.execute(
+            "SELECT revision, cell_id, link0, link1, atom "
+            "FROM cell_versions WHERE revision<=? ORDER BY revision, cell_id",
+            (target,),
+        )
+        for row_revision, cell_id, link0, link1, atom in rows:
+            row_revision = int(row_revision)
+            if row_revision != active_revision:
+                if active_revision >= 0:
+                    previous = revision_chain_digest_step(
+                        previous,
+                        active_revision,
+                        changed,
+                    )
+                if row_revision != active_revision + 1:
+                    raise InvalidCell(
+                        "durable Cell revision history is discontinuous"
+                    )
+                active_revision = row_revision
+                changed = []
+            changed.append(
+                Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            )
+        if active_revision >= 0:
+            previous = revision_chain_digest_step(
+                previous,
+                active_revision,
+                changed,
+            )
+        if active_revision != target:
+            raise InvalidCell("unknown revision %r" % target)
+        return previous.hex()
+
+    def version_count(self) -> int:
+        value = self._journal._connection.execute(
+            "SELECT COUNT(*) FROM cell_versions WHERE revision<=?",
+            (self._head_revision,),
+        ).fetchone()[0]
+        return int(value)
+
+    def advance(self, revision: int, changed: Iterable[Cell]) -> None:
+        changed = tuple(changed)
+        if revision != self._head_revision + 1:
+            raise InvalidCell("durable history reader head changed")
+        self._head_digest = revision_chain_digest_step(
+            bytes.fromhex(self._head_digest),
+            revision,
+            changed,
+        ).hex()
+        self._head_revision = revision
 
 
 def inspect_read_only_cell_journal(
@@ -882,7 +1259,7 @@ def read_only_revision_chain_digest(
             )
         previous = b"\x00" * 32
         current_revision = -1
-        digest = None
+        changed: list[Cell] = []
         rows = connection.execute(
             "SELECT revision, cell_id, link0, link1, atom FROM cell_versions "
             "WHERE revision<=? ORDER BY revision, cell_id",
@@ -896,30 +1273,30 @@ def read_only_revision_chain_digest(
                     raise ReadOnlyJournalError(
                         "read-only journal revision history is incomplete"
                     )
-                if digest is not None:
-                    previous = digest.digest()
-                digest = hashlib.sha256()
-                domain = b"ArchHub/universal-cell-revision-chain/v1"
-                digest.update(len(domain).to_bytes(8, "big"))
-                digest.update(domain)
-                digest.update(previous)
-                raw_revision = str(row_revision).encode("ascii")
-                digest.update(len(raw_revision).to_bytes(8, "big"))
-                digest.update(raw_revision)
+                if current_revision >= 0:
+                    previous = revision_chain_digest_step(
+                        previous,
+                        current_revision,
+                        changed,
+                    )
                 current_revision = row_revision
-            for raw in (
-                str(cell_id).encode("utf-8"),
-                str(link0).encode("utf-8"),
-                str(link1).encode("utf-8"),
-                bytes(atom),
-            ):
-                digest.update(len(raw).to_bytes(8, "big"))
-                digest.update(raw)
-        if digest is None or current_revision != revision:
+                changed = []
+            changed.append(
+                Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+            )
+        if current_revision != revision:
             raise ReadOnlyJournalError("read-only journal revision is missing")
-        return digest.digest().hex()
+        return revision_chain_digest_step(
+            previous,
+            current_revision,
+            changed,
+        ).hex()
     except ReadOnlyJournalError:
         raise
+    except InvalidCell as exc:
+        raise ReadOnlyJournalError(
+            "read-only journal Cell history is invalid"
+        ) from exc
     except (OSError, TypeError, ValueError, sqlite3.Error) as exc:
         raise ReadOnlyJournalError("read-only digest is unavailable") from exc
     finally:
@@ -1019,6 +1396,7 @@ class CellStore:
             )
         self._lock = threading.RLock()
         self._journal: CellJournal | None = journal
+        self._history_reader: CellHistoryReader | None = None
         if self._journal is None and database_path is not None:
             self._journal = _SqliteJournal(database_path, fault_injector)
         if self._journal is None:
@@ -1030,12 +1408,30 @@ class CellStore:
                 0: (NULL_CELL_ID,),
             }
         else:
-            (
-                self._cells,
-                self._revision,
-                self._versions,
-                self._changes,
-            ) = self._journal.load()
+            try:
+                load_head = getattr(self._journal, "load_head", None)
+                if (
+                    getattr(self._journal, "supports_lazy_history", False)
+                    and callable(load_head)
+                ):
+                    loaded = load_head()
+                    self._validate_loaded_head(loaded)
+                    self._cells = loaded.cells
+                    self._revision = loaded.revision
+                    self._history_reader = loaded.history
+                    self._versions = {}
+                    self._changes = {}
+                else:
+                    (
+                        self._cells,
+                        self._revision,
+                        self._versions,
+                        self._changes,
+                    ) = self._journal.load()
+            except Exception:
+                self._journal.close()
+                self._journal = None
+                raise
         self._authority_identity = (
             self._journal.identity
             if self._journal is not None
@@ -1111,20 +1507,30 @@ class CellStore:
 
     def _adopt_journal_state(
         self,
-        loaded: tuple[
-            Mapping[str, Cell],
-            int,
-            dict[int, tuple[Cell, ...]],
-            dict[int, tuple[str, ...]],
-        ],
+        loaded: LoadedJournalHead | tuple[
+                Mapping[str, Cell],
+                int,
+                dict[int, tuple[Cell, ...]],
+                dict[int, tuple[str, ...]],
+            ],
     ) -> None:
-        cells, revision, versions, changes = loaded
+        if type(loaded) is LoadedJournalHead:
+            self._validate_loaded_head(loaded)
+            cells = loaded.cells
+            revision = loaded.revision
+            versions: dict[int, tuple[Cell, ...]] = {}
+            changes: dict[int, tuple[str, ...]] = {}
+            history_reader: CellHistoryReader | None = loaded.history
+        else:
+            cells, revision, versions, changes = loaded
+            history_reader = None
         if revision < self._revision:
             raise InvalidCell("durable Cell authority moved backwards")
         self._cells = cells
         self._revision = revision
         self._versions = versions
         self._changes = changes
+        self._history_reader = history_reader
         self._historical_snapshots.clear()
         self._dense_snapshot_cache = None
         self._cell_history_index = None
@@ -1133,12 +1539,51 @@ class CellStore:
         self._fingerprint_compute_counts.clear()
         self._revision_chain_digests.clear()
 
+    @staticmethod
+    def _validate_loaded_head(loaded: LoadedJournalHead) -> None:
+        if type(loaded) is not LoadedJournalHead:
+            raise InvalidCell("durable journal head shape is invalid")
+        if (
+            type(loaded.revision) is not int
+            or loaded.revision < 0
+            or loaded.history.head_revision != loaded.revision
+            or not hmac.compare_digest(
+                loaded.history.head_digest,
+                loaded.revision_chain_digest,
+            )
+            or not hmac.compare_digest(
+                loaded.history.chain_digest(loaded.revision),
+                loaded.revision_chain_digest,
+            )
+        ):
+            raise InvalidCell("durable journal head evidence is inconsistent")
+
+    def _load_journal_state(
+        self,
+    ) -> LoadedJournalHead | tuple[
+        Mapping[str, Cell],
+        int,
+        dict[int, tuple[Cell, ...]],
+        dict[int, tuple[str, ...]],
+    ]:
+        if self._journal is None:
+            raise InvalidCell("durable Cell journal is unavailable")
+        load_head = getattr(self._journal, "load_head", None)
+        if (
+            getattr(self._journal, "supports_lazy_history", False)
+            and callable(load_head)
+        ):
+            loaded = load_head()
+            self._validate_loaded_head(loaded)
+            return loaded
+        return self._journal.load()
+
     def refresh(self) -> int:
         """Adopt the latest accepted revision from a shared authority."""
         with self._lock:
             if self._journal is None:
                 return self._revision
-            self._adopt_journal_state(self._journal.load())
+            self._adopt_journal_state(self._load_journal_state())
             return self._revision
 
     def acquire_runtime_fence(
@@ -1230,6 +1675,15 @@ class CellStore:
             if cached is not None:
                 self._historical_snapshots.move_to_end(revision)
                 return cached
+            if self._history_reader is not None:
+                snapshot = self._history_reader.snapshot_at(revision)
+                self._historical_snapshots[revision] = snapshot
+                while (
+                    len(self._historical_snapshots)
+                    > self._HISTORICAL_CACHE_SIZE
+                ):
+                    self._historical_snapshots.popitem(last=False)
+                return snapshot
             if revision not in self._versions:
                 raise InvalidCell("unknown revision %r" % revision)
             previous_cached_revision = None
@@ -1278,11 +1732,18 @@ class CellStore:
     def revisions(self) -> tuple[int, ...]:
         """Return every retained immutable revision in journal order."""
         with self._lock:
+            if self._history_reader is not None:
+                return tuple(range(self._revision + 1))
             return tuple(sorted(self._versions))
 
     def revision_changes(self, revision: int) -> tuple[str, ...]:
         """Return the exact Cell identities changed by one retained revision."""
         with self._lock:
+            if self._history_reader is not None:
+                return tuple(
+                    cell.id
+                    for cell in self._history_reader.revision_cells(revision)
+                )
             try:
                 return self._changes[revision]
             except KeyError as exc:
@@ -1302,6 +1763,8 @@ class CellStore:
                     })
                 except KeyError as exc:
                     raise InvalidCell("unknown cell %r" % (exc.args[0],)) from exc
+            if self._history_reader is not None:
+                return self._history_reader.cells_at(revision, requested)
             if revision not in self._versions:
                 raise InvalidCell("unknown revision %r" % revision)
             if self._cell_history_index is None:
@@ -1333,6 +1796,8 @@ class CellStore:
         with self._lock:
             if cell_id not in self._cells:
                 raise InvalidCell("unknown cell %r" % cell_id)
+            if self._history_reader is not None:
+                return self._history_reader.created_revision(cell_id)
             for revision in sorted(self._versions):
                 if any(
                     cell.id == cell_id
@@ -1344,10 +1809,24 @@ class CellStore:
     def retention_stats(self) -> Mapping[str, int]:
         """Expose bounded physical retention without interpreting the graph."""
         with self._lock:
+            version_count = (
+                self._history_reader.version_count()
+                if self._history_reader is not None
+                else sum(
+                    len(changed)
+                    for changed in self._versions.values()
+                )
+            )
+            revision_count = (
+                self._revision + 1
+                if self._history_reader is not None
+                else len(self._versions)
+            )
             return MappingProxyType({
-                "revision_count": len(self._versions),
+                "revision_count": revision_count,
                 "current_cell_count": len(self._cells),
-                "version_cell_count": sum(
+                "version_cell_count": version_count,
+                "resident_history_version_cell_count": sum(
                     len(changed) for changed in self._versions.values()
                 ),
                 "historical_snapshot_count": len(
@@ -1363,6 +1842,8 @@ class CellStore:
         """Commit to every changed Cell record from genesis through revision."""
         with self._lock:
             target = self._revision if revision is None else revision
+            if self._history_reader is not None:
+                return self._history_reader.chain_digest(target)
             if target not in self._versions:
                 raise InvalidCell("unknown revision %r" % target)
             previous = b"\x00" * 32
@@ -1375,28 +1856,18 @@ class CellStore:
                 previous = self._revision_chain_digests[last]
                 start = last + 1
             for current_revision in range(start, target + 1):
-                digest = hashlib.sha256()
-                raw_domain = b"ArchHub/universal-cell-revision-chain/v1"
-                digest.update(len(raw_domain).to_bytes(8, "big"))
-                digest.update(raw_domain)
-                digest.update(previous)
-                raw_revision = str(current_revision).encode("ascii")
-                digest.update(len(raw_revision).to_bytes(8, "big"))
-                digest.update(raw_revision)
                 changed = {
                     cell.id: cell for cell in self._versions[current_revision]
                 }
-                for root_id in sorted(self._changes[current_revision]):
-                    cell = changed[root_id]
-                    for raw in (
-                        cell.id.encode("utf-8"),
-                        cell.link0.encode("utf-8"),
-                        cell.link1.encode("utf-8"),
-                        cell.atom,
-                    ):
-                        digest.update(len(raw).to_bytes(8, "big"))
-                        digest.update(raw)
-                previous = digest.digest()
+                ordered = tuple(
+                    changed[root_id]
+                    for root_id in self._changes[current_revision]
+                )
+                previous = revision_chain_digest_step(
+                    previous,
+                    current_revision,
+                    ordered,
+                )
                 self._revision_chain_digests[current_revision] = previous
             return previous.hex()
 
@@ -1498,13 +1969,17 @@ class CellStore:
                         tuple(created) + tuple(replaced),
                     )
                 except Conflict:
-                    self._adopt_journal_state(self._journal.load())
+                    self._adopt_journal_state(self._load_journal_state())
                     raise
             self._cells = published
             self._revision = next_revision
             self._dense_snapshot_cache = None
-            self._versions[next_revision] = tuple(created) + tuple(replaced)
-            self._changes[next_revision] = tuple(sorted(touched))
+            changed = tuple(created) + tuple(replaced)
+            if self._history_reader is not None:
+                self._history_reader.advance(next_revision, changed)
+            else:
+                self._versions[next_revision] = changed
+                self._changes[next_revision] = tuple(sorted(touched))
             self._cell_history_index = None
             for cache_key, dependencies in tuple(
                 self._fingerprint_dependencies.items()
@@ -1960,6 +2435,8 @@ __all__ = [
     "CommitEvent",
     "CellHistoryMigrationEvidence",
     "CellJournal",
+    "CellHistoryReader",
+    "LoadedJournalHead",
     "RuntimeFenceLease",
     "CellStore",
     "CellKernelError",
@@ -1973,5 +2450,6 @@ __all__ = [
     "inspect_read_only_cell_journal",
     "load_bounded_read_only_cell_snapshot",
     "read_only_revision_chain_digest",
+    "revision_chain_digest_step",
     "migrate_cell_history",
 ]

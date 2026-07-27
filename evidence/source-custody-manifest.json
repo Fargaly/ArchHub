@@ -1,8 +1,8 @@
 {
   "authority": "evidence-only",
-  "byte_count": 12278623,
+  "byte_count": 12457918,
   "custody": "T0_PUBLIC",
-  "file_count": 466,
+  "file_count": 470,
   "files": [
     {
       "path": ".claude/launch.json",
@@ -40,6 +40,11 @@
       "size": 8674
     },
     {
+      "path": "DURABLE-HISTORY-RESIDENCY-AUTHORITY.md",
+      "sha256": "8f53a259dc73a84d0a242a7b709a91c6a946c30d2e0f050b2bac8671ffd7ce85",
+      "size": 10674
+    },
+    {
       "path": "EXTERNAL-REVISION-WITNESS.md",
       "sha256": "7abb9448d2404a14c187ba41d0c111d9468908c5489ca6ef0ab52a8c5f63a7e5",
       "size": 9034
@@ -66,8 +71,8 @@
     },
     {
       "path": "REMOTE-DEVICE-SESSION-AUTHORITY.md",
-      "sha256": "4242312da0ab707a790ceae69ab26177d6e163fbb0378fa7aa8e8254d39435e5",
-      "size": 23604
+      "sha256": "93c085c553009ae395c8b72b64ce65eefb0c958953495e5639365e49fa335f8c",
+      "size": 36152
     },
     {
       "path": "RESEARCH-UNIVERSAL-CELL.md",
@@ -266,8 +271,8 @@
     },
     {
       "path": "nodelang/application_server.py",
-      "sha256": "96424ba8773b4d1ba894b0decf1f7f0a2d5436a70a31a3d7136f1535c5d70e9b",
-      "size": 408461
+      "sha256": "9908a4c8ece4f1ca77eea906eded396ef941496fb4e902e9e9724e99252300dc",
+      "size": 409114
     },
     {
       "path": "nodelang/artifact_verification_court.py",
@@ -501,8 +506,8 @@
     },
     {
       "path": "nodelang/cell_cloud_sessions.py",
-      "sha256": "2958da579570092529ecbb0438177b4e2220c78fc81e9930a45fbf220291be30",
-      "size": 35873
+      "sha256": "9667ff59604733b7a0257ab239763dff47da2228121c3cb4c8152f11c78e85ef",
+      "size": 66574
     },
     {
       "path": "nodelang/cell_compliance.py",
@@ -576,8 +581,8 @@
     },
     {
       "path": "nodelang/cell_dpop.py",
-      "sha256": "bdc6f662e199a57544fde795b430d04121df1dda42e70f86fc1573ba9021ffa7",
-      "size": 7751
+      "sha256": "5f54941240ea0b5927d254783007f7f31cf06094863a76fac42aa462ec8efb83",
+      "size": 7960
     },
     {
       "path": "nodelang/cell_dpop_nonce.py",
@@ -810,6 +815,11 @@
       "size": 43432
     },
     {
+      "path": "nodelang/cell_replay_policy_authority.py",
+      "sha256": "1c713aaebd2a90866e61b8b39f7fbf6d9bf1a2df867ba1118dbd8d07fcffecdb",
+      "size": 5909
+    },
+    {
       "path": "nodelang/cell_revision_checkpoint.py",
       "sha256": "8e14ca5298232156498013a21daa4c1fb12af52787482d84ce133c079ff1abc6",
       "size": 16302
@@ -1016,8 +1026,8 @@
     },
     {
       "path": "nodelang/external_revision_witness.py",
-      "sha256": "ccc8e50f9ab5b47c61d374a08d9f3bb41790581396c57436bb2050cfba44f48c",
-      "size": 31033
+      "sha256": "db7b13233801f08ad7fc1d02c5c5c278b5d14654a78abf6a16e542aded6ce8fd",
+      "size": 33226
     },
     {
       "path": "nodelang/governance_policy.py",
@@ -1096,8 +1106,8 @@
     },
     {
       "path": "nodelang/postgres_cell_journal.py",
-      "sha256": "8e33e68cd8baaa695aa6aa85a3f4dcfe807ca455926722c5e981381051a6638f",
-      "size": 20514
+      "sha256": "560b6c4ab3b6887a730c6d7ac477daeae4e23cdd8fd0aa3228b92a373668b620",
+      "size": 39191
     },
     {
       "path": "nodelang/remote_native_cloud_login.py",
@@ -1146,13 +1156,13 @@
     },
     {
       "path": "nodelang/universal_application.py",
-      "sha256": "3ad00140e4002dac0af5a771eadd9d1da011a62c6d09453121de8083353cc165",
-      "size": 1656217
+      "sha256": "bddf2fd2648bb2f5d66d6ae9edc9af46ccf828179dee043b233cc2e6ef56b504",
+      "size": 1659753
     },
     {
       "path": "nodelang/universal_cell.py",
-      "sha256": "72ca65ab3c2d95db0d3519ed1625d439d520186af29cc7c45e26a98beb202c6e",
-      "size": 75165
+      "sha256": "7d0666b8b7020423fbebcb8a18fc319a7509fd3ece5671b014d8cc25b812cc68",
+      "size": 92863
     },
     {
       "path": "nodelang/universal_cloud_gateway.py",
@@ -1701,8 +1711,8 @@
     },
     {
       "path": "tests_replica/test_cell_dpop.py",
-      "sha256": "75a81c5e3859deac6abc825e4430844c39fca9bd5c6366a7e0a6c6dab46f3614",
-      "size": 3491
+      "sha256": "feca4c3f1181aa1f2c1e13644f7568f9b0b3eab3e0b3ff00ce87263641de397e",
+      "size": 3544
     },
     {
       "path": "tests_replica/test_cell_dpop_nonce.py",
@@ -1741,8 +1751,8 @@
     },
     {
       "path": "tests_replica/test_cell_federated_identity.py",
-      "sha256": "a4f73b86b2bfcef00e88dc8c188ed5fdf3386649a16bec22f7c365e670363fc4",
-      "size": 56168
+      "sha256": "838680132de447763dd6c8c13c16be926b538f0a7dc7be00055d4378556d7cd3",
+      "size": 101443
     },
     {
       "path": "tests_replica/test_cell_floor_boundaries.py",
@@ -1970,14 +1980,19 @@
       "size": 8486
     },
     {
+      "path": "tests_replica/test_durable_history_residency_authority.py",
+      "sha256": "7c80b137b8416cbb8929c5d7ec2126518b6f968df4387d511b103ee58f12d55c",
+      "size": 1718
+    },
+    {
       "path": "tests_replica/test_engine_gaps.py",
       "sha256": "966530e8dbad3e8e6daa7674b05911061b1245e6a97e89c8faa8d727bded99c1",
       "size": 17679
     },
     {
       "path": "tests_replica/test_external_revision_witness.py",
-      "sha256": "975f0dacf7221e8fa01af318992b1bbd89166d56a85ed1f7168fccd7c9584028",
-      "size": 21380
+      "sha256": "e9c2fc8fd939b529484da105c08b89d34260671b4028d4df9f449c0f688da739",
+      "size": 27880
     },
     {
       "path": "tests_replica/test_forcing_one_table.py",
@@ -2071,8 +2086,8 @@
     },
     {
       "path": "tests_replica/test_postgres_cell_journal.py",
-      "sha256": "f7f1433da6cf28b08fda929ba6a1fcba275dba8b6a54222acb714094434114bf",
-      "size": 8619
+      "sha256": "06aaa20e3e2f3d3fcaa82b95a45d11cea1a5476c59edc97c223791d603459af7",
+      "size": 24571
     },
     {
       "path": "tests_replica/test_projection_delta.py",
@@ -2108,6 +2123,11 @@
       "path": "tests_replica/test_relation_topology_editor.py",
       "sha256": "3b418e8c986d3ce47957c001334199f1dfb90d40f37b386a57edc49c07e9861d",
       "size": 4559
+    },
+    {
+      "path": "tests_replica/test_remote_device_session_authority.py",
+      "sha256": "d81f790c3588cb837b2797dd1754e1c8d677f4ad2abc67f63d2b4a2c50f303a3",
+      "size": 1337
     },
     {
       "path": "tests_replica/test_remote_native_cloud_login.py",
@@ -2161,8 +2181,8 @@
     },
     {
       "path": "tests_replica/test_universal_application.py",
-      "sha256": "0dd34dc95ec94e659b593b92735627922644ca5c1ff77ca4e2f9dcfcd052309d",
-      "size": 171832
+      "sha256": "38ee37d13bdd24361e5b2e9dd55db651162c3319a5ada2972fe6ed2787862f43",
+      "size": 173216
     },
     {
       "path": "tests_replica/test_universal_application_durability.py",
@@ -2201,8 +2221,8 @@
     },
     {
       "path": "tests_replica/test_universal_cell_durability.py",
-      "sha256": "c9515d7b567ad1e8be0ef37ca494b4c384650264f574f24f48e72e5ab7ee379b",
-      "size": 9196
+      "sha256": "7dd85eb46d1a29ac28bb24045c36873ada82774a75bb4be276e515289636c3d9",
+      "size": 13474
     },
     {
       "path": "tests_replica/test_universal_cell_incremental.py",
@@ -2336,5 +2356,5 @@
     }
   ],
   "schema": "archhub.source-custody-manifest.v1",
-  "tree_sha256": "ed4e8526c188cfbd61a49050ccf4a8dde3b70c60d0c1b423f630f2c7604e4d69"
+  "tree_sha256": "4578fbbc1d588bb73e842da75ddbe3f589a616eb47282a188cc6f287bf11fc8a"
 }

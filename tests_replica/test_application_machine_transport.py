@@ -5,6 +5,7 @@ import hmac
 import json
 import threading
 import time
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 
@@ -13,12 +14,14 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 import nodelang.application_server as application_server_module
+import nodelang.application_machine_transport as transport_module
 import nodelang.universal_application as universal_application_module
 from nodelang.application_machine_transport import (
     BABOOM_NATIVE_FRAME_PROJECTION,
     MachineTransportError,
     UniversalRuntimeClient,
     UniversalRuntimeTransport,
+    _default_machine_response_timeout,
     inspect_runtime_descriptor,
     inspect_stopped_runtime_durable_journal,
     inspect_stopped_runtime_offline_activity,
@@ -75,6 +78,151 @@ def _red_runtime_compliance(_invocation):
         "workshop-authority": True,
     }
     return CourtResult(False, checks, {"adapter": "test-runtime-auditor"})
+
+
+def test_transport_listener_survives_one_transient_accept_error():
+    served = threading.Event()
+
+    class Connection:
+        def close(self):
+            return None
+
+    class Listener:
+        def __init__(self, stop):
+            self.calls = 0
+            self.stop = stop
+
+        def accept(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("transient accept failure")
+            if self.calls == 2:
+                return Connection()
+            assert served.wait(1.0)
+            self.stop.set()
+            raise OSError("listener closed for test")
+
+    transport = object.__new__(UniversalRuntimeTransport)
+    transport._stop = threading.Event()
+    transport._listener = Listener(transport._stop)
+    transport._serve_connection_and_close = lambda _connection: served.set()
+
+    transport._run()
+
+    assert transport._listener.calls == 3
+    assert served.is_set()
+
+
+def test_transport_listener_publishes_failure_after_bounded_accept_errors(
+    monkeypatch, tmp_path,
+):
+    class Listener:
+        calls = 0
+
+        def accept(self):
+            self.calls += 1
+            raise OSError("persistent accept failure")
+
+    published = []
+    transport = object.__new__(UniversalRuntimeTransport)
+    transport._stop = threading.Event()
+    transport._listener = Listener()
+    transport._last_accept_error = ""
+    transport.descriptor_path = tmp_path / "runtime.json"
+    transport._descriptor = lambda status, stopped_at="": type(
+        "Descriptor",
+        (),
+        {
+            "document": lambda _self: {
+                "status": status,
+                "stopped_at": stopped_at,
+            }
+        },
+    )()
+    monkeypatch.setattr(
+        transport_module,
+        "_atomic_json",
+        lambda path, document: published.append((path, document)),
+    )
+
+    transport._run()
+
+    assert transport._listener.calls == 8
+    assert transport._last_accept_error == "OSError"
+    assert published[0][0] == transport.descriptor_path
+    assert published[0][1]["status"] == "failed"
+
+
+def test_agent_session_enrollment_keeps_the_long_graph_receipt_wait():
+    assert _default_machine_response_timeout(
+        "POST", "/api/universal/agent-session"
+    ) == 240.0
+    assert _default_machine_response_timeout(
+        "POST", "/api/universal/assembly"
+    ) == 180.0
+    assert _default_machine_response_timeout(
+        "POST", "/api/universal/deliberation"
+    ) == 180.0
+    assert _default_machine_response_timeout(
+        "POST", "/api/universal/work-court"
+    ) == 660.0
+    assert _default_machine_response_timeout(
+        "GET", "/api/universal/work"
+    ) == 180.0
+
+
+def test_machine_transport_enrollment_retry_reuses_the_exact_graph_session(
+    monkeypatch,
+):
+    entry = SimpleNamespace(
+        root_id="catalog:codex",
+        control_root="control:codex",
+        credential_mode="machine-transport",
+        device_custody_roots=(),
+    )
+    session = SimpleNamespace(root_id="session:codex", state_root="active")
+    server = object.__new__(ApplicationServer)
+    server.universal_store = SimpleNamespace(snapshot=lambda: object())
+    server.universal_registry = SimpleNamespace(
+        roles={"member": "member"},
+        agent_body=SimpleNamespace(
+            protocol=SimpleNamespace(state=lambda label: label)
+        ),
+        authorization=SimpleNamespace(protocol=object()),
+    )
+    server._machine_session_surface_values = lambda _snapshot, _root: {
+        "runtime": "codex",
+        "session fingerprint": "a" * 64,
+    }
+    monkeypatch.setattr(
+        application_server_module,
+        "read_relation",
+        lambda *_args, **_kwargs: (
+            SimpleNamespace(
+                role_id="member",
+                participant_id="app:agent-session:runtime:existing",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "read_agent_session",
+        lambda *_args, **_kwargs: session,
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "_agent_body_catalog_entry_for_session",
+        lambda *_args, **_kwargs: entry,
+    )
+
+    continued = server._continuable_machine_agent_session(
+        entry=entry,
+        runtime="codex",
+        external_session_fingerprint="a" * 64,
+        custody_root=None,
+    )
+
+    assert continued is session
 
 
 class _RecordedModelBroker:
@@ -1818,6 +1966,82 @@ def test_machine_projection_prewarm_primes_read_caches(tmp_path, monkeypatch):
         assert context["context_lens"] == "app:baboom-context:v3"
         assert calls["count"] == 1
         assert server.universal_machine_projection_prewarm_status()["ok"] is True
+    finally:
+        server.close()
+
+
+def test_projection_prewarm_retries_failures_until_one_revision_is_warm():
+    class Store:
+        revision = 7
+
+    class Stop:
+        waits = 0
+
+        def is_set(self):
+            return self.waits >= 3
+
+        def wait(self, _seconds):
+            self.waits += 1
+            return False
+
+    server = object.__new__(ApplicationServer)
+    server.universal_store = Store()
+    server._projection_prewarm_stop = Stop()
+    calls = []
+
+    def prewarm():
+        calls.append(server.universal_store.revision)
+        server.universal_store.revision = 8
+        return {
+            "ok": False,
+            "status": "stale",
+            "requested_revision": 7,
+            "revision": 8,
+        }
+
+    server.prewarm_universal_machine_read_projections = prewarm
+
+    server._projection_prewarm_loop()
+
+    assert calls == [7, 8, 8]
+
+
+def test_work_only_prewarm_does_not_build_canvas_or_baboom(
+    tmp_path,
+    monkeypatch,
+):
+    descriptor_path = tmp_path / "work-only-prewarm-runtime.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"w" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+        machine_projection_prewarm_targets=("work",),
+    ).start()
+    monkeypatch.setattr(
+        server,
+        "_project_universal_machine_canvas",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("work-only prewarm must not build the canvas")
+        ),
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "project_universal_baboom_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("work-only prewarm must not build BABOOM")
+        ),
+    )
+    try:
+        status = server.prewarm_universal_machine_read_projections()
+
+        assert status["ok"] is True
+        assert status["targets"] == ["work"]
+        assert status["work_total"] == 0
+        assert "canvas_roots" not in status
+        assert "baboom_lens" not in status
     finally:
         server.close()
 

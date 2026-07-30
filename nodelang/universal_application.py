@@ -9723,6 +9723,10 @@ def migrate_legacy_baboom_execution_body(
         raise AuthorizationDenied(
             "legacy BABOOM body migration requires explicit founder approval"
         )
+    if authentication_context is None:
+        raise AuthorizationDenied(
+            "legacy BABOOM body migration requires a live authenticated context"
+        )
     authority = registry.authorization
     context = _active_authentication_context(authority, authentication_context)
     identity = authority.broker.resolve(context)
@@ -9911,20 +9915,11 @@ def migrate_legacy_baboom_execution_body(
     )
 
 
-def _project_legacy_baboom_execution_catalog_entry(
-    snapshot: Snapshot,
-) -> AgentBodyCatalogEntry | None:
-    """Return only the recognized retired BABOOM execution binding.
-
-    This deliberately operates before a full application restore.  A normal
-    restore has other compatibility migrations, so it must not be permitted to
-    write around a second BABOOM authority before this exact binding is known.
-    """
-    if (
-        _AGENT_BODY_CATALOG_PREFIX + ":root"
-        not in snapshot.cells
-    ):
-        return None
+def legacy_baboom_execution_migration_state(snapshot: Snapshot) -> str:
+    """Classify the exact BABOOM execution catalogue binding without writes."""
+    root = _AGENT_BODY_CATALOG_PREFIX + ":root"
+    if root not in snapshot.cells:
+        return "absent"
     protocol = project_agent_body_catalog_protocol(
         snapshot, prefix=_AGENT_BODY_CATALOG_PREFIX
     )
@@ -9934,30 +9929,76 @@ def _project_legacy_baboom_execution_catalog_entry(
     }
     entry = entries.get(_AGENT_BODY_CATALOG_BABOOM_EXECUTION_ENTRY_ROOT)
     if entry is None:
-        return None
+        return "absent"
+    actual = (entry.body_root, entry.policy_root, entry.control_root)
     current = (
         _AGENT_BODY_BABOOM_ROOT,
         _AGENT_BODY_BABOOM_POLICY_ROOT,
         _AGENT_CAPABILITY_BABOOM_EXECUTION_CONTROL_ROOT,
     )
-    actual = (entry.body_root, entry.policy_root, entry.control_root)
     if actual == current:
-        return None
+        return "current"
     legacy = (
         _LEGACY_AGENT_BODY_BABOOM_EXECUTION_ROOT,
         _LEGACY_AGENT_BODY_BABOOM_EXECUTION_POLICY_ROOT,
         _LEGACY_AGENT_CONTROL_BABOOM_EXECUTION_ROOT,
     )
     if actual == legacy:
-        return entry
+        return "legacy"
     raise InvalidCell(
         "BABOOM execution catalog binding is unrecognized and requires "
         "controlled graph repair"
     )
 
 
-def _clone_cell_store_history(source: CellStore) -> CellStore:
-    """Clone an authority graph in memory without flattening its revisions."""
+def _project_legacy_baboom_execution_catalog_entry(
+    snapshot: Snapshot,
+) -> AgentBodyCatalogEntry | None:
+    """Return only the recognized retired BABOOM execution binding.
+
+    This deliberately operates before a full application restore.  A normal
+    restore has other compatibility migrations, so it must not be permitted to
+    write around a second BABOOM authority before this exact binding is known.
+    """
+    state = legacy_baboom_execution_migration_state(snapshot)
+    if state in {"absent", "current"}:
+        return None
+    protocol = project_agent_body_catalog_protocol(
+        snapshot, prefix=_AGENT_BODY_CATALOG_PREFIX
+    )
+    entries = {
+        entry.root_id: entry
+        for entry in list_agent_body_catalog_entries(snapshot, protocol)
+    }
+    entry = entries.get(_AGENT_BODY_CATALOG_BABOOM_EXECUTION_ENTRY_ROOT)
+    if entry is None:  # pragma: no cover - classified above
+        raise InvalidCell("BABOOM execution catalog entry disappeared")
+    return entry
+
+
+def _clone_cell_store_history(
+    source: CellStore,
+    *,
+    staging_path: str | Path | None = None,
+) -> CellStore:
+    """Clone an authority graph without flattening its revisions.
+
+    A durable staging path uses the CellStore's transactionally consistent
+    SQLite backup instead of duplicating a large graph in process memory.
+    """
+    if staging_path is not None:
+        target = Path(staging_path).expanduser().resolve()
+        source.backup_to(target)
+        staging = CellStore(target)
+        if (
+            staging.revision != source.revision
+            or staging.revision_chain_digest(staging.revision)
+            != source.revision_chain_digest(source.revision)
+        ):
+            staging.close()
+            raise InvalidCell("durable CellStore staging authority drifted")
+        return staging
+
     revisions = source.revisions()
     if not revisions or revisions[0] != 0:
         raise InvalidCell("CellStore revision history must begin at zero")
@@ -10009,6 +10050,7 @@ def stage_legacy_baboom_execution_migration(
     *,
     key_provider: SigningKeyProvider,
     court_workspace_root: str | Path | None = None,
+    staging_path: str | Path | None = None,
 ) -> LegacyBaboomExecutionMigrationStaging:
     """Build an isolated registry for a deliberate durable graph repair.
 
@@ -10031,87 +10073,103 @@ def stage_legacy_baboom_execution_migration(
             % ", ".join(missing_targets)
         )
 
-    staging_store = _clone_cell_store_history(store)
-    staging_snapshot = staging_store.snapshot()
-    staged_legacy = _project_legacy_baboom_execution_catalog_entry(
-        staging_snapshot
+    staging_store = _clone_cell_store_history(
+        store,
+        staging_path=staging_path,
     )
-    if staged_legacy != legacy:
-        raise InvalidCell("legacy BABOOM staging authority drifted")
-    catalog = project_agent_body_catalog_protocol(
-        staging_snapshot, prefix=_AGENT_BODY_CATALOG_PREFIX
-    )
-    members = read_relation(
-        staging_snapshot,
-        _AGENT_BODY_CATALOG_BABOOM_EXECUTION_ENTRY_ROOT,
-        budget=100_000,
-    )
-    creates = []
-    replacements = []
-    for role_root, old_root, new_root in (
-        (catalog.role("body"), legacy.body_root, _AGENT_BODY_BABOOM_ROOT),
-        (
-            catalog.role("policy"),
-            legacy.policy_root,
-            _AGENT_BODY_BABOOM_POLICY_ROOT,
-        ),
-        (
-            catalog.role("control"),
-            legacy.control_root,
-            _AGENT_CAPABILITY_BABOOM_EXECUTION_CONTROL_ROOT,
-        ),
-    ):
-        matches = tuple(
-            member for member in members
-            if member.role_id == role_root and member.participant_id == old_root
+    try:
+        staging_snapshot = staging_store.snapshot()
+        staged_legacy = _project_legacy_baboom_execution_catalog_entry(
+            staging_snapshot
         )
-        if len(matches) != 1:
-            raise InvalidCell("legacy BABOOM catalog staging binding is ambiguous")
-        incidence = staging_snapshot.cells[matches[0].incidence_id]
-        replacements.append(Cell(
-            incidence.id, incidence.link0, new_root, incidence.atom
-        ))
-    if _AGENT_CAPABILITY_BABOOM_EXECUTION_CONTROL_ROOT not in staging_snapshot.cells:
-        legacy_control_members = read_relation(
-            staging_snapshot, legacy.control_root, budget=100_000
+        if staged_legacy != legacy:
+            raise InvalidCell("legacy BABOOM staging authority drifted")
+        catalog = project_agent_body_catalog_protocol(
+            staging_snapshot, prefix=_AGENT_BODY_CATALOG_PREFIX
         )
-        rewritten_control_members = []
-        for member in legacy_control_members:
-            participant = member.participant_id
-            if participant == legacy.body_root:
-                participant = _AGENT_BODY_BABOOM_ROOT
-            elif participant == legacy.policy_root:
-                participant = _AGENT_BODY_BABOOM_POLICY_ROOT
-            rewritten_control_members.append((member.role_id, participant))
-        control = compose_relation_cells(
-            tuple(sorted(rewritten_control_members)),
-            relation_id=_AGENT_CAPABILITY_BABOOM_EXECUTION_CONTROL_ROOT,
+        members = read_relation(
+            staging_snapshot,
+            _AGENT_BODY_CATALOG_BABOOM_EXECUTION_ENTRY_ROOT,
+            budget=100_000,
         )
-        creates.extend(control.cells)
-    staging_store.commit(
-        staging_snapshot.revision,
-        create=tuple(creates),
-        replace=replacements,
-    )
-    _, registry = restore_universal_application(
-        map_path,
-        staging_store,
-        key_provider=key_provider,
-        court_workspace_root=court_workspace_root,
-    )
+        creates = []
+        replacements = []
+        for role_root, old_root, new_root in (
+            (catalog.role("body"), legacy.body_root, _AGENT_BODY_BABOOM_ROOT),
+            (
+                catalog.role("policy"),
+                legacy.policy_root,
+                _AGENT_BODY_BABOOM_POLICY_ROOT,
+            ),
+            (
+                catalog.role("control"),
+                legacy.control_root,
+                _AGENT_CAPABILITY_BABOOM_EXECUTION_CONTROL_ROOT,
+            ),
+        ):
+            matches = tuple(
+                member for member in members
+                if member.role_id == role_root and member.participant_id == old_root
+            )
+            if len(matches) != 1:
+                raise InvalidCell(
+                    "legacy BABOOM catalog staging binding is ambiguous"
+                )
+            incidence = staging_snapshot.cells[matches[0].incidence_id]
+            replacements.append(Cell(
+                incidence.id, incidence.link0, new_root, incidence.atom
+            ))
+        if (
+            _AGENT_CAPABILITY_BABOOM_EXECUTION_CONTROL_ROOT
+            not in staging_snapshot.cells
+        ):
+            legacy_control_members = read_relation(
+                staging_snapshot, legacy.control_root, budget=100_000
+            )
+            rewritten_control_members = []
+            for member in legacy_control_members:
+                participant = member.participant_id
+                if participant == legacy.body_root:
+                    participant = _AGENT_BODY_BABOOM_ROOT
+                elif participant == legacy.policy_root:
+                    participant = _AGENT_BODY_BABOOM_POLICY_ROOT
+                rewritten_control_members.append((member.role_id, participant))
+            control = compose_relation_cells(
+                tuple(sorted(rewritten_control_members)),
+                relation_id=_AGENT_CAPABILITY_BABOOM_EXECUTION_CONTROL_ROOT,
+            )
+            creates.extend(control.cells)
+        staging_store.commit(
+            staging_snapshot.revision,
+            create=tuple(creates),
+            replace=replacements,
+        )
+        _, registry = restore_universal_application(
+            map_path,
+            staging_store,
+            key_provider=key_provider,
+            court_workspace_root=court_workspace_root,
+        )
 
-    current = store.snapshot()
-    if current.revision != source.revision:
-        raise Conflict("durable BABOOM authority changed while migration was staged")
-    preflight = inspect_legacy_baboom_execution_migration(current, registry)
-    if not preflight.required:
-        raise InvalidCell("legacy BABOOM migration staging lost its source binding")
-    return LegacyBaboomExecutionMigrationStaging(
-        source.revision,
-        staging_store.revision,
-        preflight,
-        registry,
-    )
+        current = store.snapshot()
+        if current.revision != source.revision:
+            raise Conflict(
+                "durable BABOOM authority changed while migration was staged"
+            )
+        preflight = inspect_legacy_baboom_execution_migration(current, registry)
+        if not preflight.required:
+            raise InvalidCell(
+                "legacy BABOOM migration staging lost its source binding"
+            )
+        return LegacyBaboomExecutionMigrationStaging(
+            source.revision,
+            staging_store.revision,
+            preflight,
+            registry,
+        )
+    finally:
+        if staging_path is not None:
+            staging_store.close()
 
 
 def migrate_legacy_baboom_execution_from_durable_store(
@@ -10120,21 +10178,42 @@ def migrate_legacy_baboom_execution_from_durable_store(
     *,
     key_provider: SigningKeyProvider,
     founder_approval: str,
+    authorizing_registry: UniversalApplicationRegistry,
     authentication_context: object | None = None,
     court_workspace_root: str | Path | None = None,
+    staging_path: str | Path | None = None,
 ) -> LegacyBaboomExecutionMigrationResult:
     """Perform the founder-approved repair without allowing normal startup."""
+    if authentication_context is None:
+        raise AuthorizationDenied(
+            "durable BABOOM migration requires a live authenticated context"
+        )
+    authorizing_identity = (
+        authorizing_registry.authorization.broker.resolve(
+            authentication_context
+        )
+    )
+    if (
+        authorizing_identity.subject_root
+        != authorizing_registry.authorization.subject_root
+    ):
+        raise AuthorizationDenied(
+            "only the live founder session may authorize durable migration"
+        )
     staging = stage_legacy_baboom_execution_migration(
         map_path,
         store,
         key_provider=key_provider,
         court_workspace_root=court_workspace_root,
+        staging_path=staging_path,
     )
     return migrate_legacy_baboom_execution_body(
         store,
         staging.registry,
         founder_approval=founder_approval,
-        authentication_context=authentication_context,
+        authentication_context=(
+            staging.registry.authorization.session.context()
+        ),
     )
 
 

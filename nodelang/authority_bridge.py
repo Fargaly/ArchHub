@@ -124,6 +124,7 @@ def _build_server(
         live_watch=False,
         enable_machine_transport=True,
         enable_machine_projection_prewarm=True,
+        machine_projection_prewarm_targets=("work",),
         machine_descriptor_path=descriptor_path,
         browser_session_credentials=credentials,
         runtime_compliance_runner=_runtime_compliance_runner,
@@ -264,11 +265,9 @@ def _bridge_runtime_status(
     proof: dict[str, object],
     prewarm: dict[str, object],
 ) -> str:
-    return (
-        "active"
-        if proof.get("ok") is True and prewarm.get("ok") is True
-        else "degraded"
-    )
+    # Prewarm is a disposable projection optimization. The signed transport
+    # proof owns runtime liveness; cache status must never demote that authority.
+    return "active" if proof.get("ok") is True else "degraded"
 
 
 def run_bridge(

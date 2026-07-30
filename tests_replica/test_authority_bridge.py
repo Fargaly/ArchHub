@@ -5,6 +5,8 @@ from pathlib import Path
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 import nodelang.authority_bridge as authority_bridge
 from nodelang.authority_bridge import main, run_bridge
 
@@ -59,7 +61,7 @@ def test_authority_bridge_cli_probe_prints_machine_transport_payload(
     assert output["prewarm"]["status"] in {"not-run", "warming", "warm"}
 
 
-def test_authority_bridge_reports_background_prewarm_without_blocking_proof(
+def test_authority_bridge_keeps_runtime_active_while_background_prewarm_runs(
     monkeypatch,
     tmp_path,
 ):
@@ -109,7 +111,7 @@ def test_authority_bridge_reports_background_prewarm_without_blocking_proof(
 
     assert order == ["start", "prewarm-status", "proof"]
     assert closed == [True]
-    assert result["status"] == "degraded"
+    assert result["status"] == "active"
     assert result["prewarm"]["status"] == "warming"
 
 
@@ -125,6 +127,342 @@ def test_authority_bridge_cli_refuses_implicit_persistent_ownership(
 
     assert main([]) == 2
     assert invoked == []
+
+
+def test_authority_bridge_exposes_no_offline_baboom_repair_authority():
+    assert not hasattr(authority_bridge, "repair_legacy_baboom_authority")
+    with pytest.raises(SystemExit):
+        main(["--repair-legacy-baboom-authority", "--founder-approved"])
+
+
+def _retired_offline_baboom_repair_is_checkpointed_backed_up_and_cleans_staging(
+    monkeypatch,
+    tmp_path,
+):
+    state_path = tmp_path / "authority.json.gz"
+    database_path = tmp_path / "authority.json.gz.universal.sqlite3"
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    backup_path = recovery / "pre-repair.sqlite3"
+    staging_path = recovery / "staging.sqlite3"
+    database_path.write_bytes(b"authority")
+    order = []
+
+    class FakeKeyProvider:
+        @staticmethod
+        def default_path():
+            return tmp_path / "keys.dpapi"
+
+        def __init__(self, path):
+            order.append(("key-provider", path))
+
+    class FakeStore:
+        revision = 13
+
+        def __init__(self, path):
+            assert Path(path) == database_path.resolve()
+            order.append("store-open")
+
+        def snapshot(self):
+            order.append("snapshot")
+            return SimpleNamespace(revision=12)
+
+        def backup_to(self, path):
+            order.append("backup")
+            Path(path).write_bytes(b"backup")
+
+        def close(self):
+            order.append("store-close")
+
+    class FakeGuard:
+        @staticmethod
+        def default_path(path):
+            assert Path(path) == database_path.resolve()
+            return tmp_path / "checkpoint.json"
+
+        def __init__(self, *_args, **_kwargs):
+            order.append("guard-open")
+
+        def verify_trusted_prefix(self, _store):
+            order.append("checkpoint-verify")
+
+        def bind(self, _store):
+            order.append("checkpoint-bind")
+
+        def require_healthy(self):
+            order.append("checkpoint-healthy")
+
+        def close(self):
+            order.append("guard-close")
+
+    signing_store = SimpleNamespace(close=lambda: order.append("signing-close"))
+    signing_authority = SimpleNamespace(store=signing_store)
+    def migrate(*_args, **kwargs):
+        order.append("migrate")
+        assert kwargs["staging_path"] == staging_path.resolve()
+        assert kwargs["authentication_context"] is authentication_context
+        staging_path.write_bytes(b"disposable")
+        Path(str(staging_path) + ".owner.lock").write_bytes(b"1")
+        return SimpleNamespace(
+            migrated=True,
+            revision=13,
+            receipt_root="receipt:baboom-repair",
+        )
+
+    monkeypatch.setattr(
+        authority_bridge, "WindowsDpapiSigningKeyProvider", FakeKeyProvider
+    )
+    monkeypatch.setattr(authority_bridge, "CellStore", FakeStore)
+    monkeypatch.setattr(authority_bridge, "RevisionCheckpointGuard", FakeGuard)
+    monkeypatch.setattr(
+        authority_bridge,
+        "provision_windows_revision_checkpoint_authority",
+        lambda path: (
+            order.append(("provision", Path(path))),
+            signing_authority,
+        )[1],
+    )
+    monkeypatch.setattr(
+        authority_bridge,
+        "migrate_legacy_baboom_execution_from_durable_store",
+        migrate,
+    )
+    states = iter(("legacy", "current"))
+    monkeypatch.setattr(
+        authority_bridge,
+        "legacy_baboom_execution_migration_state",
+        lambda _snapshot: next(states),
+    )
+
+    authentication_context = object()
+    result = authority_bridge.repair_legacy_baboom_authority(
+        state_path=state_path,
+        backup_path=backup_path,
+        staging_path=staging_path,
+        authentication_context=authentication_context,
+    )
+
+    assert result["status"] == "repaired"
+    assert result["before_revision"] == 12
+    assert result["after_revision"] == 13
+    assert result["receipt_root"] == "receipt:baboom-repair"
+    assert result["checkpoint_healthy"] is True
+    assert backup_path.read_bytes() == b"backup"
+    assert not staging_path.exists()
+    assert not Path(str(staging_path) + ".owner.lock").exists()
+    assert order == [
+        ("key-provider", tmp_path / "keys.dpapi"),
+        ("provision", database_path.resolve()),
+        "store-open",
+        "guard-open",
+        "snapshot",
+        "checkpoint-verify",
+        "backup",
+        "checkpoint-bind",
+        "migrate",
+        "snapshot",
+        "checkpoint-healthy",
+        "guard-close",
+        "store-close",
+        "signing-close",
+    ]
+
+
+def _retired_offline_baboom_repair_refuses_missing_authenticated_context(tmp_path):
+    try:
+        authority_bridge.repair_legacy_baboom_authority(
+            state_path=tmp_path / "authority.json.gz",
+            authentication_context=None,
+        )
+    except PermissionError as exc:
+        assert "authenticated graph context" in str(exc)
+    else:  # pragma: no cover - this court requires the denial
+        raise AssertionError("BABOOM authority repair must require graph authority")
+
+
+def _retired_offline_baboom_repair_accepts_an_already_current_single_authority(
+    monkeypatch,
+    tmp_path,
+):
+    state_path = tmp_path / "authority.json.gz"
+    database_path = tmp_path / "authority.json.gz.universal.sqlite3"
+    recovery = tmp_path / "recovery"
+    recovery.mkdir()
+    backup_path = recovery / "pre-repair.sqlite3"
+    database_path.write_bytes(b"authority")
+
+    class Store:
+        revision = 23
+
+        def __init__(self, _path):
+            return None
+
+        def snapshot(self):
+            return SimpleNamespace(revision=23)
+
+        def backup_to(self, path):
+            Path(path).write_bytes(b"backup")
+
+        def close(self):
+            return None
+
+    class Guard:
+        @staticmethod
+        def default_path(_path):
+            return tmp_path / "checkpoint.json"
+
+        def __init__(self, *_args, **_kwargs):
+            return None
+
+        def verify_trusted_prefix(self, _store):
+            return None
+
+        def bind(self, _store):
+            return None
+
+        def require_healthy(self):
+            return None
+
+        def close(self):
+            return None
+
+    class KeyProvider:
+        @staticmethod
+        def default_path():
+            return tmp_path / "keys.dpapi"
+
+        def __init__(self, _path):
+            return None
+
+    signing_authority = SimpleNamespace(
+        store=SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(authority_bridge, "CellStore", Store)
+    monkeypatch.setattr(authority_bridge, "RevisionCheckpointGuard", Guard)
+    monkeypatch.setattr(
+        authority_bridge, "WindowsDpapiSigningKeyProvider", KeyProvider
+    )
+    monkeypatch.setattr(
+        authority_bridge,
+        "provision_windows_revision_checkpoint_authority",
+        lambda _path: signing_authority,
+    )
+    monkeypatch.setattr(
+        authority_bridge,
+        "legacy_baboom_execution_migration_state",
+        lambda _snapshot: "current",
+    )
+    monkeypatch.setattr(
+        authority_bridge,
+        "migrate_legacy_baboom_execution_from_durable_store",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("current authority must not be migrated")
+        ),
+    )
+    result = authority_bridge.repair_legacy_baboom_authority(
+        state_path=state_path,
+        backup_path=backup_path,
+        authentication_context=object(),
+    )
+
+    assert result["status"] == "already-current"
+    assert result["catalog_state_before"] == "current"
+    assert result["migration_revision"] == 23
+    assert result["receipt_root"] is None
+    assert result["before_revision"] == result["after_revision"] == 23
+    assert not backup_path.exists()
+
+
+def _retired_offline_baboom_repair_rejects_artifacts_outside_recovery_root(
+    tmp_path,
+):
+    state_path = tmp_path / "authority.json.gz"
+    database_path = tmp_path / "authority.json.gz.universal.sqlite3"
+    database_path.write_bytes(b"authority")
+
+    with pytest.raises(ValueError, match="dedicated ArchHub recovery"):
+        authority_bridge.repair_legacy_baboom_authority(
+            state_path=state_path,
+            backup_path=tmp_path / "outside.sqlite3",
+            authentication_context=object(),
+        )
+
+
+def _retired_existing_recovery_backup_requires_exact_revision_chain(
+    monkeypatch,
+    tmp_path,
+):
+    backup_path = tmp_path / "backup.sqlite3"
+    backup_path.write_bytes(b"backup")
+    store = SimpleNamespace(
+        revision=31,
+        revision_chain_digest=lambda revision: (
+            "source-digest" if revision == 31 else ""
+        ),
+    )
+    monkeypatch.setattr(
+        authority_bridge,
+        "inspect_read_only_cell_journal",
+        lambda path: (
+            SimpleNamespace(revision=31)
+            if Path(path) == backup_path
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        authority_bridge,
+        "read_only_revision_chain_digest",
+        lambda path, revision: (
+            "source-digest"
+            if Path(path) == backup_path and revision == 31
+            else ""
+        ),
+    )
+
+    authority_bridge._require_matching_recovery_backup(store, backup_path)
+
+    monkeypatch.setattr(
+        authority_bridge,
+        "read_only_revision_chain_digest",
+        lambda _path, _revision: "different-digest",
+    )
+    try:
+        authority_bridge._require_matching_recovery_backup(store, backup_path)
+    except RuntimeError as exc:
+        assert "digest does not match" in str(exc)
+    else:  # pragma: no cover - this court requires the denial
+        raise AssertionError("mismatched recovery backup must be denied")
+
+
+def test_headless_bridge_prewarms_only_the_work_index(monkeypatch, tmp_path):
+    captured = {}
+
+    class Credentials:
+        token = "t" * 43
+        csrf_token = "c" * 43
+        custody_id = "custody:test"
+
+    class Vault:
+        def __init__(self, _path):
+            return None
+
+        def load_or_create(self):
+            return Credentials()
+
+    class Server:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(authority_bridge, "BrowserCredentialVault", Vault)
+    monkeypatch.setattr(authority_bridge, "ApplicationServer", Server)
+
+    authority_bridge._build_server(
+        state_path=tmp_path / "authority.json.gz",
+        descriptor_path=tmp_path / "runtime.json",
+    )
+
+    assert captured["enable_machine_projection_prewarm"] is True
+    assert captured["machine_projection_prewarm_targets"] == ("work",)
 
 
 def test_bridge_proof_is_bounded_and_proof_failures_are_safe_status(monkeypatch, tmp_path):

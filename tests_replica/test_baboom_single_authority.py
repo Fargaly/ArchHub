@@ -39,6 +39,7 @@ from nodelang.universal_application import (
     create_universal_governed_work,
     execute_universal_baboom_utterance,
     inspect_legacy_baboom_execution_migration,
+    legacy_baboom_execution_migration_state,
     migrate_legacy_baboom_execution_body,
     migrate_legacy_baboom_execution_from_durable_store,
     project_universal_baboom_companion_directive,
@@ -189,6 +190,7 @@ def test_baboom_presence_and_action_profiles_share_one_agent_body():
     assert action.work_events == ("claim", "submit", "block", "resume", "release")
     assert "app:agent-body:baboom-execution" not in store.snapshot().cells
     assert "app:agent-body:baboom-execution-policy" not in store.snapshot().cells
+    assert legacy_baboom_execution_migration_state(store.snapshot()) == "current"
 
 
 def test_legacy_duplicate_baboom_body_requires_explicit_graph_migration():
@@ -197,6 +199,7 @@ def test_legacy_duplicate_baboom_body_requires_explicit_graph_migration():
 
     preflight = inspect_legacy_baboom_execution_migration(before, registry)
 
+    assert legacy_baboom_execution_migration_state(before) == "legacy"
     assert preflight.required is True
     assert preflight.legacy_body_root == _LEGACY_AGENT_BODY_BABOOM_EXECUTION_ROOT
     assert preflight.legacy_policy_root == _LEGACY_AGENT_BODY_BABOOM_EXECUTION_POLICY_ROOT
@@ -271,6 +274,7 @@ def test_legacy_duplicate_baboom_body_requires_explicit_graph_migration():
     assert inspect_legacy_baboom_execution_migration(
         snapshot, registry
     ).required is False
+    assert legacy_baboom_execution_migration_state(snapshot) == "current"
 
 
 def test_legacy_duplicate_baboom_body_refuses_active_session_without_contract():
@@ -319,7 +323,7 @@ def test_legacy_duplicate_baboom_body_refuses_active_session_without_contract():
 
 def test_durable_legacy_baboom_repair_stages_before_the_only_write(tmp_path):
     provider = _durable_provider()
-    store, _registry, _context = _legacy_duplicate_execution_graph(
+    store, registry, context = _legacy_duplicate_execution_graph(
         CellStore(tmp_path / "legacy-baboom.sqlite3"), provider
     )
     before = store.snapshot()
@@ -331,18 +335,26 @@ def test_durable_legacy_baboom_repair_stages_before_the_only_write(tmp_path):
     assert store.snapshot().revision == before.revision
 
     staging = stage_legacy_baboom_execution_migration(
-        resolve_map_path(), store, key_provider=provider
+        resolve_map_path(),
+        store,
+        key_provider=provider,
+        staging_path=tmp_path / "legacy-baboom-staging.sqlite3",
     )
     assert staging.source_revision == before.revision
     assert staging.preflight.required is True
     assert staging.preflight.blockers == ()
     assert store.snapshot().revision == before.revision
+    with CellStore(tmp_path / "legacy-baboom-staging.sqlite3") as staged_store:
+        assert staged_store.revision == staging.staging_revision
 
     result = migrate_legacy_baboom_execution_from_durable_store(
         resolve_map_path(),
         store,
         key_provider=provider,
         founder_approval=_BABOOM_LEGACY_MIGRATION_APPROVAL,
+        authorizing_registry=registry,
+        authentication_context=context,
+        staging_path=tmp_path / "legacy-baboom-commit-staging.sqlite3",
     )
     assert result.migrated is True
     assert result.receipt_root is not None

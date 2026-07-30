@@ -13,6 +13,8 @@ from .application_machine_transport import (
     MachineTransportError,
     UniversalRuntimeClient,
     default_runtime_descriptor_path,
+    inspect_runtime_descriptor,
+    stopped_runtime_restart_database,
 )
 from .application_server import ApplicationServer
 from .persistence import default_state_path
@@ -40,22 +42,68 @@ class DesktopRuntime:
             else Path(state_path).with_name("browser-session-v1.dpapi")
         )
         credentials = BrowserCredentialVault(vault_path).load_or_create()
-        if state_path is None and self._healthy(preferred_url, credentials.token):
-            self._url = preferred_url
-        elif state_path is None and self._attach_machine_authority():
+        restart_database = None
+        if state_path is None and self._attach_machine_authority():
             pass
         elif state_path is None and self._active_machine_authority_present():
             raise RuntimeError(
-                "active Universal authority bridge is present but does not "
-                "support visible browser handoff; restart the bridge through "
-                "the authority path before opening a new normal-window session"
+                "a signed Universal authority exists but cannot provide a "
+                "visible browser handoff; recover or restart that authority "
+                "before opening a new normal-window session"
             )
-        elif state_path is None and self._endpoint_is_listening(preferred_url):
-            raise RuntimeError(
-                "the visible ArchHub endpoint is occupied by an unverified or "
-                "legacy host; complete a controlled authority handoff before "
-                "starting a second node-native owner"
+        elif state_path is None:
+            restart_database = self._stopped_machine_authority_database()
+            if (
+                restart_database is None
+                and self._machine_authority_descriptor_present()
+            ):
+                raise RuntimeError(
+                    "a Universal authority descriptor exists but is invalid, "
+                    "failed, or lacks a trusted stopped checkpoint"
+                )
+            if restart_database is None and self._endpoint_is_listening(
+                preferred_url
+            ):
+                raise RuntimeError(
+                    "the visible ArchHub endpoint is occupied by an unverified "
+                    "or legacy host; complete a controlled authority handoff "
+                    "before starting a second node-native owner"
+                )
+            self._server_kwargs = dict(
+                host='127.0.0.1',
+                port=0,
+                state_path=None,
+                universal_state_path=(
+                    restart_database
+                    if restart_database is not None
+                    else default_state_path().with_name(
+                        default_state_path().name + ".universal.sqlite3"
+                    )
+                ),
+                live_watch=True,
+                enable_machine_transport=True,
+                machine_descriptor_path=default_runtime_descriptor_path(),
+                browser_session_credentials=credentials,
             )
+            self.server = self._new_server()
+            parsed = urlsplit(preferred_url)
+            gateway_port = int(parsed.port or 0)
+            try:
+                self.gateway = RuntimeGateway(
+                    host='127.0.0.1',
+                    port=gateway_port,
+                    admission_timeout=120.0,
+                    backend_timeout=60.0,
+                    activation_verifier=self._verify_gateway_activation,
+                )
+            except OSError:
+                self.gateway = RuntimeGateway(
+                    host='127.0.0.1',
+                    port=0,
+                    admission_timeout=120.0,
+                    backend_timeout=60.0,
+                    activation_verifier=self._verify_gateway_activation,
+                )
         else:
             machine_descriptor_path = (
                 Path(state_path).with_name("active-universal-runtime.json")
@@ -162,21 +210,39 @@ class DesktopRuntime:
     @staticmethod
     def _active_machine_authority_present():
         try:
-            client = UniversalRuntimeClient(
+            provider = WindowsDpapiSigningKeyProvider(
+                WindowsDpapiSigningKeyProvider.default_path()
+            )
+            inspection = inspect_runtime_descriptor(
                 default_runtime_descriptor_path(),
-                WindowsDpapiSigningKeyProvider(
-                    WindowsDpapiSigningKeyProvider.default_path()
-                ),
+                provider,
             )
-            state = client.request(
-                'GET', '/api/universal/work', {'projection': 'index'}
-            )
-        except (MachineTransportError, OSError, ValueError):
+        except (OSError, ValueError):
             return False
         return (
-            state.get('application') == 'app:archhub'
-            and state.get('registry') == 'app:governed-work-registry'
+            inspection.get('verified') is True
+            and inspection.get('active') is True
         )
+
+    @staticmethod
+    def _stopped_machine_authority_database():
+        provider = WindowsDpapiSigningKeyProvider(
+            WindowsDpapiSigningKeyProvider.default_path()
+        )
+        try:
+            return stopped_runtime_restart_database(
+                default_runtime_descriptor_path(),
+                provider,
+            )
+        except MachineTransportError as exc:
+            raise RuntimeError(
+                "the signed stopped Universal authority cannot be restarted "
+                "from its trusted checkpoint"
+            ) from exc
+
+    @staticmethod
+    def _machine_authority_descriptor_present():
+        return default_runtime_descriptor_path().exists()
 
     @staticmethod
     def read_state(url, token=None):

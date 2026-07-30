@@ -763,6 +763,9 @@ class ApplicationServer:
                  machine_key_provider=None,
                  machine_session_lifetime_seconds=900.0,
                  enable_machine_projection_prewarm=False,
+                 machine_projection_prewarm_targets=(
+                     "work", "canvas", "baboom"
+                 ),
                  universal_workspace_root=None,
                  browser_session_credentials: BrowserSessionCredentials | None = None,
                  runtime_compliance_runner=None,
@@ -848,6 +851,21 @@ class ApplicationServer:
         self.enable_machine_projection_prewarm = bool(
             enable_machine_projection_prewarm
         )
+        if (
+            not isinstance(machine_projection_prewarm_targets, (tuple, list))
+            or any(
+                type(target) is not str
+                for target in machine_projection_prewarm_targets
+            )
+        ):
+            raise ValueError("machine projection prewarm targets are invalid")
+        prewarm_targets = tuple(machine_projection_prewarm_targets)
+        if (
+            len(set(prewarm_targets)) != len(prewarm_targets)
+            or set(prewarm_targets) - {"work", "canvas", "baboom"}
+        ):
+            raise ValueError("machine projection prewarm targets are invalid")
+        self.machine_projection_prewarm_targets = prewarm_targets
         map_path = resolve_map_path()
         default_workspace_root = map_path.parents[3]
         self.universal_workspace_root = Path(
@@ -3303,18 +3321,22 @@ class ApplicationServer:
         external_session_fingerprint: str,
         custody_root: str | None,
     ):
-        """Find one re-provable BABOOM execution identity after transport loss.
+        """Find one exact re-provable graph identity after transport loss.
 
-        Continuation is deliberately unavailable for a multi-device execution
-        body. Device handoff is the released cross-device path; this routine
-        only restores one exact, locally proofed graph identity.
+        Device-proof bodies require one exact custody root. Machine-transport
+        bodies may continue only across the same authenticated local pipe and
+        exact external-session fingerprint. Other credential modes are denied.
         """
-        if entry.credential_mode != "device-proof":
-            return None
-        if (
-            type(custody_root) is not str
-            or tuple(entry.device_custody_roots) != (custody_root,)
-        ):
+        if entry.credential_mode == "device-proof":
+            if (
+                type(custody_root) is not str
+                or tuple(entry.device_custody_roots) != (custody_root,)
+            ):
+                return None
+        elif entry.credential_mode == "machine-transport":
+            if custody_root is not None:
+                return None
+        else:
             return None
         snapshot = self.universal_store.snapshot()
         candidates = []
@@ -3695,14 +3717,11 @@ class ApplicationServer:
             raise AuthorizationDenied(
                 "runtime Agent Session identity is already bound; renew it instead"
             )
-        session = (
-            self._continuable_machine_agent_session(
-                entry=entry,
-                runtime=runtime,
-                external_session_fingerprint=fingerprint,
-                custody_root=custody_root,
-            )
-            if runtime in {"baboom", "baboom-execution"} else None
+        session = self._continuable_machine_agent_session(
+            entry=entry,
+            runtime=runtime,
+            external_session_fingerprint=fingerprint,
+            custody_root=custody_root,
         )
         continued = session is not None
         if session is None:
@@ -8353,12 +8372,14 @@ class ApplicationServer:
         """Build revision-bound machine read caches from the Cell authority."""
         context = self.universal_registry.authorization.session.context()
         revision = self.universal_store.revision
+        targets = self.machine_projection_prewarm_targets
         with self._projection_prewarm_status_lock:
             self._projection_prewarm_status = {
                 "ok": False,
                 "revision": revision,
                 "requested_revision": revision,
                 "status": "warming",
+                "targets": list(targets),
                 "observed_at": time.time(),
             }
         try:
@@ -8372,22 +8393,28 @@ class ApplicationServer:
                 self.require_universal_http_route(
                     "GET", path, authentication_context=context
                 )
-            work_index = self._project_universal_machine_work_index(
-                authentication_context=context
-            )
-            canvas = self._project_universal_machine_canvas(
-                request_agent_session=(
-                    self.universal_registry.agent_body.session.root_id
-                ),
-                authentication_context=context,
-            )
-            baboom = project_universal_baboom_context(
-                self.universal_store,
-                self.universal_registry,
-                runtime_presence=self._machine_agent_runtime_presence(),
-                authentication_context=context,
-                work_index=work_index,
-            )
+            work_index = None
+            if "work" in targets or "baboom" in targets:
+                work_index = self._project_universal_machine_work_index(
+                    authentication_context=context
+                )
+            canvas = None
+            if "canvas" in targets:
+                canvas = self._project_universal_machine_canvas(
+                    request_agent_session=(
+                        self.universal_registry.agent_body.session.root_id
+                    ),
+                    authentication_context=context,
+                )
+            baboom = None
+            if "baboom" in targets:
+                baboom = project_universal_baboom_context(
+                    self.universal_store,
+                    self.universal_registry,
+                    runtime_presence=self._machine_agent_runtime_presence(),
+                    authentication_context=context,
+                    work_index=work_index,
+                )
             warmed_revision = self.universal_store.revision
             ok = warmed_revision == revision
             status = {
@@ -8395,17 +8422,22 @@ class ApplicationServer:
                 "revision": warmed_revision,
                 "requested_revision": revision,
                 "status": "warm" if ok else "stale",
-                "work_total": work_index["total"],
-                "canvas_roots": len(canvas["nodes"]),
-                "baboom_lens": baboom["context_lens"],
+                "targets": list(targets),
                 "observed_at": time.time(),
             }
+            if work_index is not None:
+                status["work_total"] = work_index["total"]
+            if canvas is not None:
+                status["canvas_roots"] = len(canvas["nodes"])
+            if baboom is not None:
+                status["baboom_lens"] = baboom["context_lens"]
         except Exception as exc:
             status = {
                 "ok": False,
                 "revision": self.universal_store.revision,
                 "requested_revision": revision,
                 "status": "failed",
+                "targets": list(targets),
                 "reason": "machine read projection prewarm failed",
                 "error_type": type(exc).__name__,
                 "observed_at": time.time(),
@@ -8427,7 +8459,14 @@ class ApplicationServer:
                 continue
             status = self.prewarm_universal_machine_read_projections()
             if status.get("ok") is True:
-                next_revision = int(status.get("revision", revision))
+                status_revision = status.get(
+                    "revision", self.universal_store.revision
+                )
+                next_revision = (
+                    status_revision
+                    if type(status_revision) is int
+                    else self.universal_store.revision
+                )
                 self._projection_prewarm_stop.wait(0.5)
             else:
                 self._projection_prewarm_stop.wait(5.0)

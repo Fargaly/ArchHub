@@ -50,6 +50,16 @@ _FORMAT = "archhub.universal-runtime"
 _FORMAT_VERSION = 1
 _MAX_MESSAGE_BYTES = 256 * 1024
 _REQUEST_ID = re.compile(r"^[A-Fa-f0-9]{32}$")
+def _default_machine_response_timeout(method: str, path: str) -> float:
+    """Bound long graph receipts without stalling every machine request."""
+    route = (method.upper(), path)
+    if route == ("POST", "/api/universal/work-court"):
+        return 660.0
+    if route == ("POST", "/api/universal/agent-session"):
+        return 240.0
+    return 180.0
+
+
 _RUNTIME_ID = re.compile(r"^[A-Fa-f0-9]{32}$")
 _NULL_CELL_ID = "00000000-0000-0000-0000-000000000000"
 BABOOM_NATIVE_FRAME_PROJECTION = "app:baboom-native-frame:v2"
@@ -537,7 +547,7 @@ def _read_descriptor(
         raise MachineTransportError("runtime descriptor values are invalid") from exc
     if (
         not _RUNTIME_ID.fullmatch(descriptor.runtime_id)
-        or descriptor.status not in {"active", "stopped"}
+        or descriptor.status not in {"active", "failed", "stopped"}
         or not descriptor.pipe.startswith(r"\\.\pipe\ArchHub-Universal-")
         or descriptor.process_id <= 0
         or descriptor.key_version < 1
@@ -711,6 +721,50 @@ def inspect_stopped_runtime_trusted_checkpoint(
         "revision": revision,
         "authorizes_handoff": False,
     }
+
+
+def stopped_runtime_restart_database(
+    path: str | os.PathLike[str],
+    key_provider: ExportableSigningKeyProvider,
+) -> Path | None:
+    """Resolve the one durable database released by a clean stopped owner.
+
+    A signed stopped descriptor is the former owner's release. Restart is
+    admitted only when its CNG-backed checkpoint verifies the exact current
+    journal head and the database remains in ArchHub's local authority root.
+    """
+    descriptor_path = Path(path).expanduser().resolve()
+    if not descriptor_path.exists():
+        return None
+    descriptor = _read_descriptor(descriptor_path, key_provider)
+    if descriptor.status != "stopped":
+        return None
+    trusted = inspect_stopped_runtime_trusted_checkpoint(
+        descriptor_path, key_provider
+    )
+    if trusted.get("available") is not True:
+        raise MachineTransportError(
+            "stopped Universal authority has no trusted checkpoint"
+        )
+    try:
+        database = Path(descriptor.database).expanduser().resolve(strict=True)
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        authority_root = (
+            Path(local_app_data).expanduser().resolve() / "ArchHub"
+            if local_app_data
+            else (Path.home() / "AppData" / "Local" / "ArchHub").resolve()
+        )
+        database.relative_to(authority_root)
+        journal = inspect_read_only_cell_journal(database)
+    except (OSError, ReadOnlyJournalError, ValueError) as exc:
+        raise MachineTransportError(
+            "stopped Universal authority database is not restartable"
+        ) from exc
+    if journal.revision != trusted.get("revision"):
+        raise MachineTransportError(
+            "stopped Universal authority advanced beyond its trusted checkpoint"
+        )
+    return database
 
 
 _STOPPED_RUNTIME_ACTIVITY_SQL = """
@@ -1077,6 +1131,7 @@ class UniversalRuntimeTransport:
         self._seen_order: deque[str] = deque()
         self._seen_lock = threading.Lock()
         self.pipe_security_sddl = ""
+        self._last_accept_error = ""
 
     def _descriptor(self, status: str, *, stopped_at: str = "") -> RuntimeDescriptor:
         unsigned = RuntimeDescriptor(
@@ -1203,13 +1258,30 @@ class UniversalRuntimeTransport:
         listener = self._listener
         if listener is None:
             return
+        consecutive_accept_failures = 0
         while not self._stop.is_set():
             try:
                 connection = listener.accept()
             except AuthenticationError:
                 continue
-            except (EOFError, OSError):
-                break
+            except (EOFError, OSError) as exc:
+                if self._stop.is_set():
+                    break
+                consecutive_accept_failures += 1
+                self._last_accept_error = type(exc).__name__
+                if consecutive_accept_failures >= 8:
+                    _atomic_json(
+                        self.descriptor_path,
+                        self._descriptor(
+                            "failed",
+                            stopped_at=datetime.now(timezone.utc).isoformat(),
+                        ).document(),
+                    )
+                    break
+                self._stop.wait(0.05)
+                continue
+            consecutive_accept_failures = 0
+            self._last_accept_error = ""
             if self._stop.is_set():
                 connection.close()
                 continue
@@ -2445,7 +2517,7 @@ class UniversalRuntimeClient:
             raise MachineTransportError("universal runtime pipe is unavailable") from exc
         try:
             connection.send_bytes(raw)
-            default_timeout = 660.0 if path == "/api/universal/work-court" else 180.0
+            default_timeout = _default_machine_response_timeout(method, path)
             if response_timeout_seconds is None:
                 response_timeout = default_timeout
             elif (
@@ -2495,6 +2567,7 @@ __all__ = [
     "inspect_stopped_runtime_offline_activity",
     "inspect_stopped_runtime_recovery_activity",
     "inspect_stopped_runtime_trusted_checkpoint",
+    "stopped_runtime_restart_database",
     "runtime_device_proof_payload",
     "session_proof_payload",
     "validate_baboom_native_frame_payload",

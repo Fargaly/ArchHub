@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from types import SimpleNamespace
 import urllib.request
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nodelang.desktop import DesktopRuntime, runtime_lock_path  # noqa: E402
+import nodelang.desktop as desktop_module  # noqa: E402
 from nodelang.universal_application import (  # noqa: E402
     UNIVERSAL_APPLICATION_SCHEMA_VERSION,
 )
@@ -156,7 +158,7 @@ def test_desktop_attaches_to_machine_authority_when_preferred_host_is_not_author
     monkeypatch.setattr(
         DesktopRuntime,
         '_healthy',
-        staticmethod(lambda _url, _token: False),
+        staticmethod(lambda _url, _token: True),
     )
     monkeypatch.setattr(
         DesktopRuntime,
@@ -196,7 +198,35 @@ def test_desktop_refuses_second_owner_when_bridge_lacks_browser_handoff(
         staticmethod(lambda: True),
     )
 
-    with pytest.raises(RuntimeError, match='visible browser handoff'):
+    with pytest.raises(RuntimeError, match='signed Universal authority'):
+        DesktopRuntime()
+
+
+def test_desktop_refuses_stale_signed_authority_instead_of_starting_old_graph(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_healthy',
+        staticmethod(lambda _url, _token: False),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_attach_machine_authority',
+        lambda _self: False,
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_active_machine_authority_present',
+        staticmethod(lambda: True),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_endpoint_is_listening',
+        staticmethod(lambda _url: False),
+    )
+
+    with pytest.raises(RuntimeError, match='recover or restart'):
         DesktopRuntime()
 
 
@@ -220,12 +250,65 @@ def test_desktop_refuses_a_legacy_visible_endpoint_before_starting_a_sidecar(
     )
     monkeypatch.setattr(
         DesktopRuntime,
+        '_stopped_machine_authority_database',
+        staticmethod(lambda: None),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_machine_authority_descriptor_present',
+        staticmethod(lambda: False),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
         '_endpoint_is_listening',
         staticmethod(lambda _url: True),
     )
 
     with pytest.raises(RuntimeError, match='controlled authority handoff'):
         DesktopRuntime()
+
+
+def test_desktop_restarts_only_the_signed_stopped_authority_database(
+    monkeypatch, tmp_path,
+):
+    database = tmp_path / "released-universal.sqlite3"
+    database.write_bytes(b"released")
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_attach_machine_authority',
+        lambda _self: False,
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_active_machine_authority_present',
+        staticmethod(lambda: False),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_stopped_machine_authority_database',
+        staticmethod(lambda: database),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_endpoint_is_listening',
+        staticmethod(lambda _url: False),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_new_server',
+        lambda _self: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        desktop_module,
+        'RuntimeGateway',
+        lambda **kwargs: SimpleNamespace(kwargs=kwargs),
+    )
+
+    runtime = DesktopRuntime()
+
+    assert runtime._server_kwargs["state_path"] is None
+    assert runtime._server_kwargs["universal_state_path"] == database
+    assert runtime._server_kwargs["machine_descriptor_path"] is not None
 
 
 def test_desktop_lock_and_state_live_outside_the_repository():

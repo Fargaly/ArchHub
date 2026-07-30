@@ -3,6 +3,8 @@ from pathlib import Path
 import inspect
 import sys
 
+import pytest
+
 
 WORKSPACE = Path(__file__).resolve().parents[4]
 NODE_LANGUAGE = WORKSPACE / "10.PRODUCT" / "13.NODE-LANGUAGE"
@@ -134,6 +136,90 @@ def test_manager_reused_enrollment_uses_compact_work_index():
     assert second["reused"] is True
     assert second["revision"] == 2
     assert bridges[0].index_calls == 1
+
+
+def test_manager_reenrolls_after_runtime_replacement_invalidates_session():
+    class FakeBridge:
+        def __init__(self, index):
+            self.index = index
+            self.agent_session_root = (
+                f"app:agent-session:runtime:bridge-{index}"
+            )
+
+        def bind_agent_session(self, *, runtime, external_session_id):
+            return {
+                "agent_session": self.agent_session_root,
+                "runtime": runtime,
+                "revision": self.index,
+                "expires_at": "soon",
+            }
+
+        def work_index(self):
+            if self.index == 1:
+                raise UniversalRuntimeUnavailable(
+                    "runtime Agent Session is unknown"
+                )
+            return {"revision": self.index, "items": ()}
+
+    bridges = []
+
+    def factory():
+        bridge = FakeBridge(len(bridges) + 1)
+        bridges.append(bridge)
+        return bridge
+
+    manager = UniversalRuntimeSessionManager(factory)
+    first = manager.enroll(
+        runtime="codex", external_session_id="vendor-session-1"
+    )
+    second = manager.enroll(
+        runtime="codex", external_session_id="vendor-session-1"
+    )
+
+    assert first["agent_session"].endswith("bridge-1")
+    assert second["agent_session"].endswith("bridge-2")
+    assert second["reused"] is False
+    assert second["reconnected"] is True
+    assert len(bridges) == 2
+
+
+def test_manager_keeps_binding_on_transient_runtime_unavailability():
+    class FakeBridge:
+        agent_session_root = "app:agent-session:runtime:bridge-1"
+
+        def bind_agent_session(self, *, runtime, external_session_id):
+            return {
+                "agent_session": self.agent_session_root,
+                "runtime": runtime,
+                "revision": 1,
+                "expires_at": "soon",
+            }
+
+        def work_index(self):
+            raise UniversalRuntimeUnavailable(
+                "universal runtime pipe is unavailable"
+            )
+
+    bridges = []
+
+    def factory():
+        bridge = FakeBridge()
+        bridges.append(bridge)
+        return bridge
+
+    manager = UniversalRuntimeSessionManager(factory)
+    manager.enroll(
+        runtime="codex", external_session_id="vendor-session-1"
+    )
+    with pytest.raises(
+        UniversalRuntimeUnavailable,
+        match="pipe is unavailable",
+    ):
+        manager.enroll(
+            runtime="codex", external_session_id="vendor-session-1"
+        )
+
+    assert len(bridges) == 1
 
 
 def test_manager_work_status_falls_back_to_compact_index_when_full_is_too_large():

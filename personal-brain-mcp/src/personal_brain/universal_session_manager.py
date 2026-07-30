@@ -48,19 +48,38 @@ class UniversalRuntimeSessionManager:
         self, *, runtime: str, external_session_id: str
     ) -> dict[str, object]:
         key = _binding_key(runtime, external_session_id)
+        normalized_runtime = runtime.strip()
         with self._lock:
             bridge = self._bindings.get(key)
             if bridge is not None:
-                state = bridge.work_index()
+                try:
+                    state = bridge.work_index()
+                except UniversalRuntimeUnavailable as exc:
+                    if "agent session is unknown" not in str(exc).casefold():
+                        raise
+                    replacement = self._bridge_factory()
+                    enrolled = replacement.bind_agent_session(
+                        runtime=normalized_runtime,
+                        external_session_id=external_session_id,
+                    )
+                    self._bindings[key] = replacement
+                    return {
+                        "agent_session": enrolled["agent_session"],
+                        "runtime": enrolled["runtime"],
+                        "reused": False,
+                        "reconnected": True,
+                        "revision": enrolled["revision"],
+                        "expires_at": enrolled["expires_at"],
+                    }
                 return {
                     "agent_session": bridge.agent_session_root,
-                    "runtime": runtime.strip(),
+                    "runtime": normalized_runtime,
                     "reused": True,
                     "revision": state["revision"],
                 }
             bridge = self._bridge_factory()
             enrolled = bridge.bind_agent_session(
-                runtime=runtime.strip(),
+                runtime=normalized_runtime,
                 external_session_id=external_session_id,
             )
             self._bindings[key] = bridge

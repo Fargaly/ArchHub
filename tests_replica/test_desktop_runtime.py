@@ -153,6 +153,7 @@ def test_desktop_attaches_to_machine_authority_when_preferred_host_is_not_author
         runtime._external_bootstrap_url = (
             'http://127.0.0.1:61663/?bootstrap=handoff'
         )
+        runtime._external_schema_version = 'schema-a'
         return True
 
     monkeypatch.setattr(
@@ -171,6 +172,7 @@ def test_desktop_attaches_to_machine_authority_when_preferred_host_is_not_author
     assert runtime.server is None
     assert runtime.gateway is None
     assert runtime.url == 'http://127.0.0.1:61663'
+    assert runtime.schema_version == 'schema-a'
     assert runtime.document_url_for('schema-a') == (
         'http://127.0.0.1:61663/?bootstrap=handoff&schema=schema-a'
     )
@@ -197,6 +199,11 @@ def test_desktop_refuses_second_owner_when_bridge_lacks_browser_handoff(
         '_active_machine_authority_present',
         staticmethod(lambda: True),
     )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_recover_stale_machine_authority',
+        staticmethod(lambda: False),
+    )
 
     with pytest.raises(RuntimeError, match='signed Universal authority'):
         DesktopRuntime()
@@ -219,6 +226,11 @@ def test_desktop_refuses_stale_signed_authority_instead_of_starting_old_graph(
         DesktopRuntime,
         '_active_machine_authority_present',
         staticmethod(lambda: True),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_recover_stale_machine_authority',
+        staticmethod(lambda: False),
     )
     monkeypatch.setattr(
         DesktopRuntime,
@@ -246,6 +258,11 @@ def test_desktop_refuses_a_legacy_visible_endpoint_before_starting_a_sidecar(
     monkeypatch.setattr(
         DesktopRuntime,
         '_active_machine_authority_present',
+        staticmethod(lambda: False),
+    )
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_recover_stale_machine_authority',
         staticmethod(lambda: False),
     )
     monkeypatch.setattr(
@@ -283,6 +300,12 @@ def test_desktop_restarts_only_the_signed_stopped_authority_database(
         '_active_machine_authority_present',
         staticmethod(lambda: False),
     )
+    recovered = []
+    monkeypatch.setattr(
+        DesktopRuntime,
+        '_recover_stale_machine_authority',
+        staticmethod(lambda: recovered.append(True) or True),
+    )
     monkeypatch.setattr(
         DesktopRuntime,
         '_stopped_machine_authority_database',
@@ -309,9 +332,55 @@ def test_desktop_restarts_only_the_signed_stopped_authority_database(
     assert runtime._server_kwargs["state_path"] is None
     assert runtime._server_kwargs["universal_state_path"] == database
     assert runtime._server_kwargs["machine_descriptor_path"] is not None
+    assert recovered == [True]
     assert runtime._server_kwargs["runtime_compliance_runner"] is (
         desktop_module.run_physical_runtime_compliance_court
     )
+
+
+def test_desktop_recovers_only_a_verified_active_dead_authority(monkeypatch):
+    calls = []
+
+    class Provider:
+        @staticmethod
+        def default_path():
+            return Path("signing-keys.json")
+
+        def __init__(self, path):
+            self.path = path
+
+    monkeypatch.setattr(desktop_module, "WindowsDpapiSigningKeyProvider", Provider)
+    monkeypatch.setattr(
+        desktop_module,
+        "inspect_runtime_descriptor",
+        lambda path, provider: {
+            "verified": True,
+            "active": True,
+            "owner_alive": False,
+        },
+    )
+    monkeypatch.setattr(
+        desktop_module,
+        "recover_stale_runtime_descriptor",
+        lambda path, provider: calls.append((path, provider.path)),
+    )
+
+    assert DesktopRuntime._recover_stale_machine_authority() is True
+    assert calls == [
+        (desktop_module.default_runtime_descriptor_path(), Path("signing-keys.json"))
+    ]
+
+    monkeypatch.setattr(
+        desktop_module,
+        "inspect_runtime_descriptor",
+        lambda path, provider: {
+            "verified": True,
+            "active": True,
+            "owner_alive": True,
+        },
+    )
+    assert DesktopRuntime._recover_stale_machine_authority() is False
+    assert len(calls) == 1
 
 
 def test_desktop_lock_and_state_live_outside_the_repository():

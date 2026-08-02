@@ -14,6 +14,7 @@ from .application_machine_transport import (
     UniversalRuntimeClient,
     default_runtime_descriptor_path,
     inspect_runtime_descriptor,
+    recover_stale_runtime_descriptor,
     stopped_runtime_restart_database,
 )
 from .application_server import ApplicationServer
@@ -35,6 +36,7 @@ class DesktopRuntime:
         self.gateway = None
         self._url = None
         self._external_bootstrap_url = None
+        self._external_schema_version = None
         self._activation_candidate = None
         self._server_kwargs = None
         vault_path = (
@@ -46,13 +48,14 @@ class DesktopRuntime:
         restart_database = None
         if state_path is None and self._attach_machine_authority():
             pass
-        elif state_path is None and self._active_machine_authority_present():
-            raise RuntimeError(
-                "a signed Universal authority exists but cannot provide a "
-                "visible browser handoff; recover or restart that authority "
-                "before opening a new normal-window session"
-            )
         elif state_path is None:
+            self._recover_stale_machine_authority()
+            if self._active_machine_authority_present():
+                raise RuntimeError(
+                    "a signed Universal authority exists but cannot provide a "
+                    "visible browser handoff; recover or restart that authority "
+                    "before opening a new normal-window session"
+                )
             restart_database = self._stopped_machine_authority_database()
             if (
                 restart_database is None
@@ -200,6 +203,7 @@ class DesktopRuntime:
             handoff.get('application') != 'app:archhub'
             or type(handoff.get('server_url')) is not str
             or type(handoff.get('document_url')) is not str
+            or type(handoff.get('schema_version')) is not str
             or '?bootstrap=' not in handoff['document_url']
         ):
             return False
@@ -208,6 +212,7 @@ class DesktopRuntime:
             return False
         self._url = handoff['server_url']
         self._external_bootstrap_url = handoff['document_url']
+        self._external_schema_version = handoff['schema_version']
         return True
 
     @staticmethod
@@ -226,6 +231,30 @@ class DesktopRuntime:
             inspection.get('verified') is True
             and inspection.get('active') is True
         )
+
+    @staticmethod
+    def _recover_stale_machine_authority():
+        provider = WindowsDpapiSigningKeyProvider(
+            WindowsDpapiSigningKeyProvider.default_path()
+        )
+        try:
+            inspection = inspect_runtime_descriptor(
+                default_runtime_descriptor_path(),
+                provider,
+            )
+            if not (
+                inspection.get('verified') is True
+                and inspection.get('active') is True
+                and inspection.get('owner_alive') is False
+            ):
+                return False
+            recover_stale_runtime_descriptor(
+                default_runtime_descriptor_path(),
+                provider,
+            )
+            return True
+        except (MachineTransportError, OSError, ValueError):
+            return False
 
     @staticmethod
     def _stopped_machine_authority_database():
@@ -302,6 +331,18 @@ class DesktopRuntime:
             schema = None
         return self.document_url_for(
             schema or UNIVERSAL_APPLICATION_SCHEMA_VERSION
+        )
+
+    @property
+    def schema_version(self):
+        if self._external_schema_version is not None:
+            return self._external_schema_version
+        token = (
+            self.server.browser_session_token
+            if self.server is not None else None
+        )
+        return self.read_state(self.url, token=token).get(
+            'schema_version', UNIVERSAL_APPLICATION_SCHEMA_VERSION
         )
 
     def document_url_for(self, schema):
@@ -418,8 +459,7 @@ def main():
         candidate.page().renderProcessTerminated.connect(terminated)
         candidate.load(QUrl(runtime.document_url_for(schema)))
 
-    initial_schema = runtime.read_state(runtime.url).get(
-        'schema_version', UNIVERSAL_APPLICATION_SCHEMA_VERSION)
+    initial_schema = runtime.schema_version
     stage_schema(initial_schema)
 
     schema_timer = QTimer(window)
@@ -427,7 +467,7 @@ def main():
 
     def refresh_schema():
         try:
-            schema = runtime.read_state(runtime.url).get('schema_version')
+            schema = runtime.schema_version
         except Exception:
             return
         if schema and schema != loaded_schema['value']:
@@ -449,4 +489,14 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        from .desktop_supervisor import write_lifecycle
+
+        write_lifecycle(
+            'failed',
+            exit_code=1,
+            detail=f'{type(exc).__name__}: {exc}',
+        )
+        raise

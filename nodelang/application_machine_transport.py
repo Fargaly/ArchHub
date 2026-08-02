@@ -49,6 +49,9 @@ from .windows_cng_signing_provider import WindowsCngSigningAuthorityProvider
 _FORMAT = "archhub.universal-runtime"
 _FORMAT_VERSION = 1
 _MAX_MESSAGE_BYTES = 256 * 1024
+_MAX_CHECKPOINT_AUTHORITY_REVISIONS = 10_000
+_MAX_CHECKPOINT_AUTHORITY_CELLS = 500_000
+_MAX_CHECKPOINT_REVISION_CELLS = 10_000_000
 _REQUEST_ID = re.compile(r"^[A-Fa-f0-9]{32}$")
 def _default_machine_response_timeout(method: str, path: str) -> float:
     """Bound long graph receipts without stalling every machine request."""
@@ -592,6 +595,67 @@ def inspect_runtime_descriptor(
     }
 
 
+def recover_stale_runtime_descriptor(
+    path: str | os.PathLike[str],
+    key_provider: ExportableSigningKeyProvider,
+) -> RuntimeDescriptor:
+    """Release one signed active descriptor whose physical owner is gone."""
+    descriptor_path = Path(path).expanduser().resolve()
+    descriptor = _read_descriptor(descriptor_path, key_provider)
+    if descriptor.status != "active":
+        raise MachineTransportError("runtime descriptor is not an active owner")
+    if _windows_process_is_active(descriptor.process_id):
+        raise MachineTransportError("runtime descriptor owner is still active")
+    try:
+        inspect_read_only_cell_journal(descriptor.database)
+    except ReadOnlyJournalError as exc:
+        raise MachineTransportError(
+            "stale runtime durable journal is unavailable"
+        ) from exc
+    unsigned = RuntimeDescriptor(
+        descriptor.runtime_id,
+        "stopped",
+        descriptor.pipe,
+        descriptor.process_id,
+        descriptor.started_at,
+        datetime.now(timezone.utc).isoformat(),
+        descriptor.application_root,
+        descriptor.agent_session_root,
+        descriptor.workshop_root,
+        descriptor.work_registry_root,
+        descriptor.database,
+        descriptor.key_id,
+        descriptor.key_version,
+        "",
+    )
+    signature = key_provider.sign(
+        unsigned.key_id,
+        unsigned.key_version,
+        _canonical(unsigned.unsigned()),
+    )
+    recovered = RuntimeDescriptor(
+        unsigned.runtime_id,
+        unsigned.status,
+        unsigned.pipe,
+        unsigned.process_id,
+        unsigned.started_at,
+        unsigned.stopped_at,
+        unsigned.application_root,
+        unsigned.agent_session_root,
+        unsigned.workshop_root,
+        unsigned.work_registry_root,
+        unsigned.database,
+        unsigned.key_id,
+        unsigned.key_version,
+        signature,
+    )
+    _atomic_json(descriptor_path, recovered.document())
+    verified = _read_descriptor(descriptor_path, key_provider)
+    if verified != recovered:
+        raise MachineTransportError("stale runtime recovery did not verify")
+    return verified
+
+
 def inspect_stopped_runtime_durable_journal(
     path: str | os.PathLike[str],
     key_provider: ExportableSigningKeyProvider,
@@ -671,9 +735,9 @@ def inspect_stopped_runtime_trusted_checkpoint(
         datetime.fromisoformat(issued_at[:-1] + "+00:00")
         authority_snapshot = load_bounded_read_only_cell_snapshot(
             default_checkpoint_authority_path(database),
-            max_revisions=5_000,
-            max_current_cells=200_000,
-            max_version_cells=200_000,
+            max_revisions=_MAX_CHECKPOINT_AUTHORITY_REVISIONS,
+            max_current_cells=_MAX_CHECKPOINT_AUTHORITY_CELLS,
+            max_version_cells=_MAX_CHECKPOINT_AUTHORITY_CELLS,
         )
         prefix_identity = hashlib.sha256(
             str(database).casefold().encode("utf-8")
@@ -710,7 +774,9 @@ def inspect_stopped_runtime_trusted_checkpoint(
         if envelope.values["key-descriptor"] != descriptor_root:
             raise ValueError("checkpoint signing descriptor is invalid")
         actual_digest = read_only_revision_chain_digest(
-            database, revision, max_revision_cells=3_000_000
+            database,
+            revision,
+            max_revision_cells=_MAX_CHECKPOINT_REVISION_CELLS,
         )
         if not hmac.compare_digest(actual_digest, digest):
             raise ValueError("checkpoint digest is invalid")
@@ -2705,6 +2771,7 @@ __all__ = [
     "UniversalRuntimeTransport",
     "default_runtime_descriptor_path",
     "inspect_runtime_descriptor",
+    "recover_stale_runtime_descriptor",
     "inspect_stopped_runtime_durable_journal",
     "inspect_stopped_runtime_offline_activity",
     "inspect_stopped_runtime_recovery_activity",

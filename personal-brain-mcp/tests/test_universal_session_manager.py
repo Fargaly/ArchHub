@@ -193,6 +193,7 @@ def test_manager_reused_enrollment_uses_compact_work_index():
     (
         "runtime Agent Session is unknown",
         "runtime Agent Session capability expired",
+        "runtime Agent Session proof is invalid",
     ),
 )
 def test_manager_reenrolls_after_runtime_invalidates_session(failure):
@@ -277,7 +278,7 @@ def test_manager_keeps_binding_on_transient_runtime_unavailability():
     assert len(bridges) == 1
 
 
-def test_manager_work_status_falls_back_to_compact_index_when_full_is_too_large():
+def test_manager_work_status_uses_compact_index_without_full_projection():
     class FakeBridge:
         agent_session_root = "app:agent-session:fake"
 
@@ -289,8 +290,8 @@ def test_manager_work_status_falls_back_to_compact_index_when_full_is_too_large(
                 "expires_at": "soon",
             }
 
-        def work_list(self):
-            raise UniversalRuntimeUnavailable("machine response exceeds its size limit")
+        def work_list(self):  # pragma: no cover - assertion path
+            raise AssertionError("agent status must not request the full Work graph")
 
         def work_index(self):
             return {
@@ -316,8 +317,8 @@ def test_manager_work_status_falls_back_to_compact_index_when_full_is_too_large(
     )
 
     assert status["projection"] == "index"
-    assert status["full_projection_unavailable"] is True
-    assert "size limit" in status["full_projection_error"]
+    assert "full_projection_unavailable" not in status
+    assert "full_projection_error" not in status
     assert status["items"] == [{
         "root": "work:one",
         "interfaces": {

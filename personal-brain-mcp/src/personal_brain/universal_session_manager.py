@@ -59,6 +59,7 @@ class UniversalRuntimeSessionManager:
                     renewable = (
                         "agent session is unknown",
                         "agent session capability expired",
+                        "agent session proof is invalid",
                     )
                     if not any(message in failure for message in renewable):
                         raise
@@ -126,23 +127,12 @@ class UniversalRuntimeSessionManager:
         self, *, runtime: str, external_session_id: str
     ) -> dict[str, object]:
         bridge = self._require(runtime, external_session_id)
-        compact_fallback_reason = ""
-        try:
-            state = bridge.work_list()
-            projection = "full"
-        except UniversalRuntimeUnavailable as exc:
-            state = bridge.work_index()
-            projection = "index"
-            compact_fallback_reason = str(exc)
+        state = bridge.work_index()
         projected: list[dict[str, object]] = []
         for item in state.get("items") or []:
             if isinstance(item, Mapping):
                 projected.append(self._resolve_work_references(bridge, item))
-        result = {**state, "items": projected, "projection": projection}
-        if compact_fallback_reason:
-            result["full_projection_unavailable"] = True
-            result["full_projection_error"] = compact_fallback_reason
-        return result
+        return {**state, "items": projected, "projection": "index"}
 
     def claim_next(
         self, *, runtime: str, external_session_id: str

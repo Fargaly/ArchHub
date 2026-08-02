@@ -26,6 +26,7 @@ from nodelang.application_machine_transport import (
     inspect_stopped_runtime_durable_journal,
     inspect_stopped_runtime_offline_activity,
     inspect_stopped_runtime_trusted_checkpoint,
+    recover_stale_runtime_descriptor,
     runtime_device_proof_payload,
     session_proof_payload,
     validate_baboom_native_frame_payload,
@@ -52,12 +53,18 @@ from nodelang.cell_identity import (
 )
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.cell_signing_authority import LocalEd25519KmsProvider
-from nodelang.cell_protocols import prepare_append_relation_member, read_relation
+from nodelang.cell_protocols import (
+    append_relation_member,
+    prepare_append_relation_member,
+    read_relation,
+    remove_relation_member,
+)
 from nodelang.cell_roma_requirements import roma_node_root, roma_tree_root
 from nodelang.cell_value_graph import read_value_graph
 from nodelang.cell_work_claim_transfer import read_work_claim_transfer
 from nodelang.cell_work_handoff import read_work_handoff
 from nodelang.model_execution_broker import ModelExecutionResult
+from nodelang.map_import import resolve_map_path
 from nodelang.universal_application import (
     bind_universal_runtime_agent_body_device_custody,
     create_universal_governed_work,
@@ -178,6 +185,321 @@ def test_agent_session_enrollment_keeps_the_long_graph_receipt_wait():
     assert _default_machine_response_timeout(
         "GET", "/api/universal/work"
     ) == 180.0
+
+
+def test_brain_receipts_move_into_brain_scope_without_raising_composer_limit():
+    server = ApplicationServer()
+    registry = server.universal_registry
+    context = registry.authorization.session.context()
+    definition = registry.standard_library.governed_domains.definitions[
+        "knowledge-branch"
+    ]
+    receipt_roots = []
+    try:
+        for index in range(2):
+            root, _revision = (
+                universal_application_module.instantiate_universal_definition(
+                    server.universal_store,
+                    registry,
+                    definition.definition_root,
+                    x=320 + (index * 240),
+                    y=240,
+                    authentication_context=context,
+                    interface_values={
+                        "source": "brain-control:wiring:court-%s" % index,
+                        "scope": "founder/brain-control/wiring",
+                        "claims": json.dumps({"index": index}),
+                        "provenance": "personal_brain.server:wiring_announce",
+                    },
+                    mutation_route="/api/universal/assembly",
+                )
+            )
+            receipt_roots.append(root)
+        user_root, _revision = (
+            universal_application_module.instantiate_universal_definition(
+                server.universal_store,
+                registry,
+                definition.definition_root,
+                x=800,
+                y=240,
+                authentication_context=context,
+                interface_values={
+                    "source": "founder:design-study",
+                    "scope": "founder/project/design-study",
+                    "claims": "user-authored branch",
+                    "provenance": "founder:visual-composer",
+                },
+                mutation_route="/api/universal/assembly",
+            )
+        )
+        before = server.universal_store.snapshot()
+        before_ids = frozenset(before.cells)
+        canvas_members = read_relation(
+            before, registry.canvas_root, budget=100_000
+        )
+        receipt_properties = frozenset(
+            member.participant_id
+            for member in canvas_members
+            if member.role_id == registry.roles["property"]
+            and any(
+                property_member.role_id == registry.roles["owner"]
+                and property_member.participant_id in receipt_roots
+                for property_member in read_relation(
+                    before, member.participant_id, budget=32
+                )
+            )
+        )
+        assert len(receipt_properties) == 12
+
+        moved = (
+            universal_application_module
+            ._migrate_brain_control_receipts_into_brain_scope(
+                server.universal_store,
+                registry.assembly_protocol,
+                registry.roles,
+                registry.authorization,
+                application_root=registry.application_root,
+                canvas_root=registry.canvas_root,
+                brain_root=registry.map.domains["brain"],
+                knowledge_branch_definition_root=definition.definition_root,
+            )
+        )
+
+        after = server.universal_store.snapshot()
+        assert moved == 2
+        assert before_ids.issubset(after.cells)
+        canvas_members = read_relation(
+            after, registry.canvas_root, budget=100_000
+        )
+        canvas_roots = {
+            member.participant_id for member in canvas_members
+            if member.role_id == registry.roles["member"]
+        }
+        canvas_properties = {
+            member.participant_id for member in canvas_members
+            if member.role_id == registry.roles["property"]
+        }
+        assert not set(receipt_roots).intersection(canvas_roots)
+        assert not receipt_properties.intersection(canvas_properties)
+        assert user_root in canvas_roots
+
+        brain_members = read_relation(
+            after, registry.map.domains["brain"], budget=100_000
+        )
+        assert set(receipt_roots).issubset({
+            member.participant_id for member in brain_members
+            if member.role_id == registry.roles["member"]
+        })
+        assert receipt_properties.issubset({
+            member.participant_id for member in brain_members
+            if member.role_id == registry.roles["property"]
+        })
+
+        session = next(iter(registry.view_sessions.values()))
+        for relation_root in (
+            session.visibility_root,
+            session.selection_state_root,
+            session.properties_lens_root,
+        ):
+            projected = read_relation(after, relation_root, budget=100_000)
+            assert not set(receipt_roots).intersection(
+                member.participant_id for member in projected
+            )
+            assert not receipt_properties.intersection(
+                member.participant_id for member in projected
+            )
+        scoped_roots = universal_application_module._session_canvas_roots(
+            after, registry, session
+        )[0]
+        assert not set(receipt_roots).intersection(scoped_roots)
+        composer = universal_application_module.verify_composer_authority(
+            after,
+            registry.composer_protocol,
+            registry.assembly_protocol,
+            registry.adapter_protocol,
+            registry.composer_authority.root_id,
+        )
+        assert composer.limits["max-instances"] == 256
+        assert (
+            universal_application_module
+            ._migrate_brain_control_receipts_into_brain_scope(
+                server.universal_store,
+                registry.assembly_protocol,
+                registry.roles,
+                registry.authorization,
+                application_root=registry.application_root,
+                canvas_root=registry.canvas_root,
+                brain_root=registry.map.domains["brain"],
+                knowledge_branch_definition_root=definition.definition_root,
+            )
+        ) == 0
+    finally:
+        server.close()
+
+
+def test_restore_moves_brain_receipts_into_the_brain_composition(tmp_path):
+    path = tmp_path / "brain-receipt-scope-migration.sqlite3"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.relationship-authority", b"r" * 32
+    )
+    provider.add_key("archhub.local.court-attestation", b"c" * 32)
+    store, registry = universal_application_module.build_universal_application(
+        resolve_map_path(), CellStore(path), key_provider=provider
+    )
+    definition = registry.standard_library.governed_domains.definitions[
+        "knowledge-branch"
+    ]
+    receipt_root, _revision = (
+        universal_application_module.instantiate_universal_definition(
+            store,
+            registry,
+            definition.definition_root,
+            x=320,
+            y=240,
+            authentication_context=registry.authorization.session.context(),
+            interface_values={
+                "source": "brain-control:wiring:restore-court",
+                "scope": "founder/brain-control/wiring",
+                "claims": "restore migration",
+                "provenance": "personal_brain.server:wiring_announce",
+            },
+            mutation_route="/api/universal/assembly",
+        )
+    )
+    store.close()
+
+    reopened, restored = universal_application_module.restore_universal_application(
+        resolve_map_path(), CellStore(path), key_provider=provider
+    )
+    try:
+        snapshot = reopened.snapshot()
+        top_level = {
+            member.participant_id
+            for member in read_relation(
+                snapshot, restored.canvas_root, budget=100_000
+            )
+            if member.role_id == restored.roles["member"]
+        }
+        brain_members = {
+            member.participant_id
+            for member in read_relation(
+                snapshot, restored.map.domains["brain"], budget=100_000
+            )
+            if member.role_id == restored.roles["member"]
+        }
+        assert receipt_root not in top_level
+        assert receipt_root in brain_members
+        assert receipt_root in snapshot.cells
+    finally:
+        reopened.close()
+
+
+def test_restore_repairs_grants_after_receipts_are_already_nested():
+    server = ApplicationServer()
+    registry = server.universal_registry
+    definition = registry.standard_library.governed_domains.definitions[
+        "knowledge-branch"
+    ]
+    try:
+        receipt_root, _revision = (
+            universal_application_module.instantiate_universal_definition(
+                server.universal_store,
+                registry,
+                definition.definition_root,
+                x=320,
+                y=240,
+                authentication_context=registry.authorization.session.context(),
+                interface_values={
+                    "source": "brain-control:wiring:partial-restore-court",
+                    "scope": "founder/brain-control/wiring",
+                    "claims": "partially migrated receipt",
+                    "provenance": "personal_brain.server:wiring_announce",
+                },
+                mutation_route="/api/universal/assembly",
+            )
+        )
+        snapshot = server.universal_store.snapshot()
+        canvas_members = read_relation(
+            snapshot, registry.canvas_root, budget=100_000
+        )
+        receipt_member = next(
+            member for member in canvas_members
+            if member.role_id == registry.roles["member"]
+            and member.participant_id == receipt_root
+        )
+        property_members = tuple(
+            member for member in canvas_members
+            if member.role_id == registry.roles["property"]
+            and any(
+                item.role_id == registry.roles["owner"]
+                and item.participant_id == receipt_root
+                for item in read_relation(
+                    snapshot, member.participant_id, budget=32
+                )
+            )
+        )
+        for member in (receipt_member, *property_members):
+            remove_relation_member(
+                server.universal_store,
+                registry.canvas_root,
+                member.incidence_id,
+                budget=100_000,
+            )
+            append_relation_member(
+                server.universal_store,
+                registry.map.domains["brain"],
+                member.role_id,
+                member.participant_id,
+                budget=100_000,
+            )
+        session = next(iter(registry.view_sessions.values()))
+        receipt_properties = {
+            member.participant_id for member in property_members
+        }
+        for lens_root in (
+            session.visibility_root,
+            session.selection_state_root,
+            session.properties_lens_root,
+        ):
+            for member in read_relation(
+                server.universal_store.snapshot(), lens_root, budget=100_000
+            ):
+                if member.participant_id == receipt_root or (
+                    member.role_id == registry.roles["scope"]
+                    and member.participant_id in receipt_properties
+                ):
+                    remove_relation_member(
+                        server.universal_store,
+                        lens_root,
+                        member.incidence_id,
+                        budget=100_000,
+                    )
+        with pytest.raises(
+            InvalidCell, match="view visibility differs from signed projection grants"
+        ):
+            universal_application_module._session_canvas_roots(
+                server.universal_store.snapshot(), registry, session
+            )
+
+        assert (
+            universal_application_module
+            ._migrate_brain_control_receipts_into_brain_scope(
+                server.universal_store,
+                registry.assembly_protocol,
+                registry.roles,
+                registry.authorization,
+                application_root=registry.application_root,
+                canvas_root=registry.canvas_root,
+                brain_root=registry.map.domains["brain"],
+                knowledge_branch_definition_root=definition.definition_root,
+            )
+        ) == 0
+        scoped = universal_application_module._session_canvas_roots(
+            server.universal_store.snapshot(), registry, session
+        )[0]
+        assert receipt_root not in scoped
+    finally:
+        server.close()
 
 
 def test_machine_transport_enrollment_retry_reuses_the_exact_graph_session(
@@ -1076,6 +1398,97 @@ def test_deliberation_category_filter_precedes_payload_projection(
         server.close()
 
 
+def test_deliberation_read_bounds_one_large_payload_without_losing_identity(
+    tmp_path, monkeypatch,
+):
+    descriptor_path = tmp_path / "brain-control-bounded-payload.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"g" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+    ).start()
+    client = UniversalRuntimeClient(descriptor_path, provider)
+    try:
+        ledger = server.universal_registry.brain_control_ledger_root
+        run_report = server.universal_registry.brain_control_category_roots[
+            "run-report"
+        ]
+        created = client.request("POST", "/api/universal/deliberation", {
+            "space": ledger,
+            "category": run_report,
+            "summary": "Large run-report payload.",
+            "payload": {"owner_user": "founder", "leaf_id": "leaf-1"},
+            "idempotency_key": "court:bounded-run-report",
+            "created_at": "2026-08-02T00:00:00+00:00",
+        })
+        original_read = application_server_module.read_value_graph
+
+        def large_report(snapshot, protocol, root_id):
+            if root_id == created["payload_root"]:
+                return {
+                    "owner_user": "founder",
+                    "leaf_id": "leaf-1",
+                    "report": {"details": "x" * 400_000},
+                }
+            return original_read(snapshot, protocol, root_id)
+
+        monkeypatch.setattr(
+            application_server_module, "read_value_graph", large_report
+        )
+
+        listed = client.request("GET", "/api/universal/deliberation", {
+            "space": ledger,
+            "category": run_report,
+            "limit": 1,
+        })
+
+        entry = listed["entries"][0]
+        assert entry["payload_truncated"] is True
+        assert entry["payload"]["owner_user"] == "founder"
+        assert entry["payload"]["leaf_id"] == "leaf-1"
+        assert entry["payload"]["report"]["truncated"] is True
+        assert entry["payload"]["report"]["bytes"] > 256 * 1024
+        assert len(json.dumps(listed).encode("utf-8")) < 256 * 1024
+    finally:
+        server.close()
+
+
+def test_deliberation_response_reports_pre_transport_size_evidence():
+    entry = {
+        "root": "entry-1",
+        "actor": "actor-1",
+        "category_root": "category-1",
+        "summary": "summary",
+        "reference_roots": ["payload-1"],
+        "payload": {"details": "x" * 60_000},
+        "created_at": "2026-08-02T00:00:00+00:00",
+        "sequence": 1,
+        "idempotency_key": "court:oversize-response",
+    }
+    result = {
+        "ok": True,
+        "application": "app:archhub",
+        "space": "ledger-1",
+        "total": 4,
+        "entries": [dict(entry, root="entry-%s" % index) for index in range(4)],
+        "revision": 1,
+    }
+
+    with pytest.raises(
+        InvalidCell,
+        match=(
+            r"machine deliberation projection exceeds its response budget "
+            r"\(bytes=\d+, entries=4, largest_entry_bytes=\d+\)"
+        ),
+    ):
+        application_server_module._validated_machine_deliberation_response(
+            result
+        )
+
+
 def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
@@ -1191,6 +1604,86 @@ def test_runtime_descriptor_inspection_reports_a_stale_signed_owner(
         }
     finally:
         transport.close()
+
+
+def test_stale_runtime_recovery_requires_a_dead_owner_and_readable_journal(
+    tmp_path,
+):
+    descriptor_path = tmp_path / "stale-runtime.json"
+    database_path = tmp_path / "stale-runtime.sqlite3"
+    store = CellStore(database_path)
+    store.commit(store.revision, create=(
+        Cell("test:durable-journal", NULL_CELL_ID, NULL_CELL_ID, b"ready"),
+    ))
+    store.close()
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"z" * 32
+    )
+    material = provider.current_reference(
+        "archhub.local.universal-runtime-pipe"
+    )
+
+    def signed_active(process_id):
+        unsigned = transport_module.RuntimeDescriptor(
+            "a" * 32,
+            "active",
+            r"\\.\pipe\ArchHub-Universal-" + ("a" * 32),
+            process_id,
+            "2026-08-02T00:00:00+00:00",
+            "",
+            "app:archhub",
+            "app:agent-session:founder",
+            "app:workshop",
+            "app:governed-work-registry",
+            str(database_path),
+            material.key_id,
+            material.version,
+            "",
+        )
+        return transport_module.RuntimeDescriptor(
+            unsigned.runtime_id,
+            unsigned.status,
+            unsigned.pipe,
+            unsigned.process_id,
+            unsigned.started_at,
+            unsigned.stopped_at,
+            unsigned.application_root,
+            unsigned.agent_session_root,
+            unsigned.workshop_root,
+            unsigned.work_registry_root,
+            unsigned.database,
+            unsigned.key_id,
+            unsigned.key_version,
+            provider.sign(
+                unsigned.key_id,
+                unsigned.key_version,
+                transport_module._canonical(unsigned.unsigned()),
+            ),
+        )
+
+    live = signed_active(transport_module.os.getpid())
+    descriptor_path.write_text(
+        json.dumps(live.document(), sort_keys=True), encoding="ascii"
+    )
+    with pytest.raises(MachineTransportError, match="still active"):
+        recover_stale_runtime_descriptor(descriptor_path, provider)
+
+    stale = signed_active(2_147_483_000)
+    descriptor_path.write_text(
+        json.dumps(stale.document(), sort_keys=True), encoding="ascii"
+    )
+    recovered = recover_stale_runtime_descriptor(descriptor_path, provider)
+    assert recovered.status == "stopped"
+    assert recovered.runtime_id == stale.runtime_id
+    assert recovered.database == stale.database
+    assert recovered.process_id == stale.process_id
+    assert recovered.stopped_at
+    assert inspect_runtime_descriptor(descriptor_path, provider) == {
+        "verified": True,
+        "active": False,
+        "owner_alive": False,
+        "application": "app:archhub",
+    }
 
 
 def test_stopped_runtime_durable_probe_hides_database_and_never_starts_an_owner(

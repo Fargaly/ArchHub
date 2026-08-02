@@ -13803,6 +13803,273 @@ def _migrate_canvas_current_level(
     return mutations
 
 
+def _migrate_brain_control_receipts_into_brain_scope(
+    store: CellStore,
+    assembly: AssemblyProtocol,
+    roles: Mapping[str, str],
+    authorization: ApplicationAuthorization,
+    *,
+    application_root: str,
+    canvas_root: str,
+    brain_root: str,
+    knowledge_branch_definition_root: str,
+) -> int:
+    """Move legacy Brain receipt assemblies under the Brain composition.
+
+    The legacy machine assembly route projected every Brain receipt as a peer on
+    the application canvas.  Receipts remain immutable graph evidence, but they
+    belong inside the Brain scope.  This migration changes relation heads in one
+    commit; it never deletes a receipt, property, grant, or historical revision.
+    """
+    snapshot = store.snapshot()
+    canvas_members = read_relation(snapshot, canvas_root, budget=100_000)
+    brain_members = read_relation(snapshot, brain_root, budget=100_000)
+    part_role = assembly.role("part")
+    provenance_role = assembly.role("provenance")
+
+    receipt_roots = set()
+    candidate_roots = dict.fromkeys(
+        member.participant_id
+        for member in (*canvas_members, *brain_members)
+        if member.role_id == roles["member"]
+    )
+    for candidate_root in candidate_roots:
+        try:
+            instance_members = read_relation(
+                snapshot, candidate_root, budget=100_000
+            )
+        except InvalidCell:
+            continue
+        provenance = tuple(
+            item.participant_id for item in instance_members
+            if item.role_id == provenance_role
+        )
+        if provenance != (knowledge_branch_definition_root,):
+            continue
+        part_values = tuple(
+            _text(snapshot, item.participant_id)
+            for item in instance_members
+            if item.role_id == part_role
+            and snapshot.cells[item.participant_id].atom
+        )
+        if (
+            any(value.startswith("brain-control:") for value in part_values)
+            and any(
+                value.startswith("founder/brain-control/")
+                for value in part_values
+            )
+            and any(
+                value.startswith("personal_brain.server")
+                for value in part_values
+            )
+        ):
+            receipt_roots.add(candidate_root)
+    receipt_roots = frozenset(receipt_roots)
+    if not receipt_roots:
+        return 0
+
+    receipt_members = tuple(
+        member for member in canvas_members
+        if member.role_id == roles["member"]
+        and member.participant_id in receipt_roots
+    )
+    all_property_members = []
+    for member in (*canvas_members, *brain_members):
+        if member.role_id != roles["property"]:
+            continue
+        property_relation = read_relation(
+            snapshot, member.participant_id, budget=32
+        )
+        if any(
+            item.role_id == roles["owner"]
+            and item.participant_id in receipt_roots
+            for item in property_relation
+        ):
+            all_property_members.append(member)
+    property_roots = frozenset(
+        member.participant_id for member in all_property_members
+    )
+    property_members = tuple(
+        member for member in canvas_members
+        if member.role_id == roles["property"]
+        and member.participant_id in property_roots
+    )
+
+    existing_brain_members = {
+        (member.role_id, member.participant_id) for member in brain_members
+    }
+    brain_additions = (
+        *(
+            (roles["member"], root)
+            for root in sorted(receipt_roots)
+            if (roles["member"], root) not in existing_brain_members
+        ),
+        *(
+            (roles["property"], root)
+            for root in sorted(property_roots)
+            if (roles["property"], root) not in existing_brain_members
+        ),
+    )
+    patches = []
+    canvas_removals = (
+            *(member.incidence_id for member in receipt_members),
+            *(member.incidence_id for member in property_members),
+    )
+    if canvas_removals:
+        patches.append(prepare_remove_relation_members(
+            snapshot,
+            canvas_root,
+            canvas_removals,
+            budget=100_000,
+        ))
+    if brain_additions:
+        patches.append(prepare_append_relation_members(
+            snapshot, brain_root, brain_additions, budget=100_000
+        ))
+
+    incidence_replacements: dict[str, Cell] = {}
+    view_evidence: set[tuple[str, str]] = set()
+    for application_member in read_relation(
+        snapshot, application_root, budget=100_000
+    ):
+        if application_member.role_id != roles["member"]:
+            continue
+        session_root = application_member.participant_id
+        try:
+            session_members = read_relation(
+                snapshot, session_root, budget=100_000
+            )
+        except InvalidCell:
+            continue
+        if not _is_application_view_session(
+            snapshot, roles, authorization, session_root
+        ):
+            continue
+        lens_roots = tuple(
+            item.participant_id for item in session_members
+            if item.role_id == roles["lens"]
+        )
+        subject_root = _one_for_role(
+            session_members, authorization.session_owner_role_root
+        )
+        visibility_root = next(
+            root for root in lens_roots if root.endswith("visibility")
+        )
+        assert subject_root is not None
+        view_evidence.add((subject_root, visibility_root))
+        for lens_root in lens_roots:
+            lens_members = read_relation(snapshot, lens_root, budget=100_000)
+            removals = tuple(
+                item.incidence_id for item in lens_members
+                if (
+                    item.participant_id in receipt_roots
+                    and item.role_id in (
+                        roles["visible"], roles["selected"], roles["available"]
+                    )
+                ) or (
+                    item.participant_id in property_roots
+                    and item.role_id == roles["scope"]
+                )
+            )
+            if removals:
+                patches.append(prepare_remove_relation_members(
+                    snapshot, lens_root, removals, budget=100_000
+                ))
+            for item in lens_members:
+                if (
+                    item.role_id == roles["focus"]
+                    and item.participant_id in receipt_roots
+                ):
+                    incidence = snapshot.cells[item.incidence_id]
+                    incidence_replacements[incidence.id] = Cell(
+                        incidence.id,
+                        incidence.link0,
+                        brain_root,
+                        incidence.atom,
+                    )
+            removed_selected = any(
+                item.role_id == roles["selected"]
+                and item.participant_id in receipt_roots
+                for item in lens_members
+            )
+            remaining_selectable = tuple(
+                item for item in lens_members
+                if item.incidence_id not in removals
+                and item.role_id in (roles["selected"], roles["available"])
+            )
+            if removed_selected and remaining_selectable and not any(
+                item.role_id == roles["selected"]
+                for item in remaining_selectable
+            ):
+                replacement = next((
+                    item for item in remaining_selectable
+                    if item.participant_id == brain_root
+                ), remaining_selectable[0])
+                incidence = snapshot.cells[replacement.incidence_id]
+                incidence_replacements[incidence.id] = Cell(
+                    incidence.id,
+                    roles["selected"],
+                    incidence.link1,
+                    incidence.atom,
+                )
+
+    replacements: dict[str, Cell] = dict(incidence_replacements)
+    creates = []
+    for patch in patches:
+        creates.extend(getattr(patch, "create", ()))
+        for replacement in patch.replace:
+            previous = replacements.setdefault(replacement.id, replacement)
+            if previous != replacement:
+                raise InvalidCell(
+                    "Brain receipt scope migration patches conflict"
+                )
+    if creates or replacements:
+        store.commit(
+            snapshot.revision,
+            create=tuple(creates),
+            replace=tuple(replacements.values()),
+        )
+
+    verified = verify_relationship_authority_snapshot(
+        store.snapshot(),
+        authorization.identity_protocol,
+        authorization.relationship_broker,
+    )
+    read_root = authorization.protocol.actions["read"]
+    obsolete_grants = tuple(
+        relationship.root_id
+        for relationship in verified.active_relationships
+        if relationship.source_root
+        == authorization.resource_reader_principal_root
+        and relationship.kind_root
+        == authorization.identity_protocol.kinds["delegation"]
+        and relationship.tenant_root == authorization.tenant_root
+        and relationship.scope_root in receipt_roots
+        and relationship.action_roots == (read_root,)
+        and any(
+            relationship.target_root == subject_root
+            and visibility_root in relationship.evidence_roots
+            for subject_root, visibility_root in view_evidence
+        )
+    )
+    for relationship_root in obsolete_grants:
+        revoke_authority_relationship(
+            store,
+            authorization.identity_protocol,
+            authorization.relationship_broker,
+            authorization.relationship_broker.mint_from_trusted_administrator(
+                authorization.subject_root
+            ),
+            relationship_root,
+            administrator_root=authorization.subject_root,
+            reason=(
+                "Brain receipt remains available inside the Brain composition, "
+                "not as a peer view resource"
+            ),
+        )
+    return len(receipt_members)
+
+
 def restore_universal_application(
     map_path: str | Path,
     store: CellStore,
@@ -15039,6 +15306,20 @@ def restore_universal_application(
         application_root=application_root,
         library_root="app:node-library",
         canvas_root=canvas_root,
+    )
+    _migrate_brain_control_receipts_into_brain_scope(
+        store,
+        assembly,
+        roles,
+        authorization,
+        application_root=application_root,
+        canvas_root=canvas_root,
+        brain_root=map_registry.domains["brain"],
+        knowledge_branch_definition_root=(
+            standard_library.governed_domains.definitions[
+                "knowledge-branch"
+            ].definition_root
+        ),
     )
     snapshot = store.snapshot()
     canvas_members = read_relation(snapshot, canvas_root, budget=100_000)

@@ -323,6 +323,8 @@ _INTERACTION_DELTA_MODE = "interaction-delta-v1"
 _TOPOLOGY_DELTA_MODE = "topology-delta-v1"
 _RECEIPT_MODE = "receipt-v1"
 _MACHINE_WORKSHOP_ENTRY_LIMIT = 50
+_MACHINE_DELIBERATION_PAYLOAD_BYTES = 64 * 1024
+_MACHINE_DELIBERATION_RESPONSE_BYTES = 192 * 1024
 _TOPOLOGY_DELTA_FIELDS = (
     "authorization",
     "catalog",
@@ -350,6 +352,81 @@ _INTERACTION_DELTA_FIELDS = (
     "canvas_heading_descriptor",
     "canvas_signature",
 )
+
+
+def _bounded_machine_deliberation_payload(payload):
+    """Project one large Cell value without changing its graph authority."""
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if len(raw) <= _MACHINE_DELIBERATION_PAYLOAD_BYTES:
+        return payload, False
+
+    def marker(value_raw, value):
+        return {
+            "truncated": True,
+            "type": type(value).__name__,
+            "bytes": len(value_raw),
+            "sha256": hashlib.sha256(value_raw).hexdigest(),
+        }
+
+    if not isinstance(payload, dict):
+        return marker(raw, payload), True
+
+    projected = {}
+    for key, value in payload.items():
+        value_raw = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        if len(value_raw) <= 8 * 1024:
+            projected[key] = value
+        else:
+            projected[key] = marker(value_raw, value)
+    projected_raw = json.dumps(
+        projected,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if len(projected_raw) > _MACHINE_DELIBERATION_PAYLOAD_BYTES:
+        return marker(raw, payload), True
+    return projected, True
+
+
+def _validated_machine_deliberation_response(result):
+    """Fail before transport when the complete bounded projection is too large."""
+    raw = json.dumps(
+        result,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if len(raw) <= _MACHINE_DELIBERATION_RESPONSE_BYTES:
+        return result
+    entries = result.get("entries") if isinstance(result, dict) else None
+    entry_sizes = tuple(
+        len(json.dumps(
+            entry,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8"))
+        for entry in entries
+    ) if isinstance(entries, list) else ()
+    raise InvalidCell(
+        "machine deliberation projection exceeds its response budget "
+        "(bytes=%s, entries=%s, largest_entry_bytes=%s)" % (
+            len(raw),
+            len(entry_sizes),
+            max(entry_sizes, default=0),
+        )
+    )
 _CONFIGURATION_DELTA_FIELDS = (
     "actor",
     "asset",
@@ -5384,6 +5461,7 @@ class ApplicationServer:
             projected = []
             for entry in entries[-limit:]:
                 payload = None
+                payload_truncated = False
                 if len(entry.reference_roots) == 1:
                     try:
                         payload = read_value_graph(
@@ -5391,9 +5469,12 @@ class ApplicationServer:
                             self.universal_registry.value_graph_protocol,
                             entry.reference_roots[0],
                         )
+                        payload, payload_truncated = (
+                            _bounded_machine_deliberation_payload(payload)
+                        )
                     except InvalidCell:
                         payload = None
-                projected.append({
+                item = {
                     "root": entry.root_id,
                     "actor": entry.actor_root,
                     "category_root": entry.category_root,
@@ -5403,15 +5484,18 @@ class ApplicationServer:
                     "created_at": entry.created_at,
                     "sequence": entry.sequence,
                     "idempotency_key": entry.idempotency_key,
-                })
-            return {
+                }
+                if payload_truncated:
+                    item["payload_truncated"] = True
+                projected.append(item)
+            return _validated_machine_deliberation_response({
                 "ok": True,
                 "application": self.universal_registry.application_root,
                 "space": space_root,
                 "total": len(entries),
                 "entries": projected,
                 "revision": snapshot.revision,
-            }
+            })
         if method == "GET" and path == "/api/universal/workshop-assignments":
             if body:
                 raise InvalidCell(

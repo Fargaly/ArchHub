@@ -55,7 +55,12 @@ class UniversalRuntimeSessionManager:
                 try:
                     state = bridge.work_index()
                 except UniversalRuntimeUnavailable as exc:
-                    if "agent session is unknown" not in str(exc).casefold():
+                    failure = str(exc).casefold()
+                    renewable = (
+                        "agent session is unknown",
+                        "agent session capability expired",
+                    )
+                    if not any(message in failure for message in renewable):
                         raise
                     replacement = self._bridge_factory()
                     enrolled = replacement.bind_agent_session(
@@ -152,6 +157,35 @@ class UniversalRuntimeSessionManager:
             "work": self._resolve_work_references(bridge, work),
         }
 
+    def claim_exact(
+        self,
+        *,
+        runtime: str,
+        external_session_id: str,
+        root_id: str,
+    ) -> dict[str, object]:
+        """Claim one named Work without scanning the global work frontier."""
+        if type(root_id) is not str or not root_id:
+            raise ValueError("exact work root is required")
+        bridge = self._require(runtime, external_session_id)
+        assignment = bridge._request(
+            "POST",
+            "/api/universal/work-transition",
+            {
+                "root": root_id,
+                "event": "claim",
+                "evidence": "",
+                "projection": "receipt-v1",
+            },
+        )
+        work = assignment.get("work")
+        if not isinstance(work, Mapping):
+            return assignment
+        return {
+            **assignment,
+            "work": self._resolve_work_references(bridge, work),
+        }
+
     def create(
         self,
         *,
@@ -173,6 +207,8 @@ class UniversalRuntimeSessionManager:
             external_key=external_key,
             references=references,
             structured_references=structured_references,
+            compact_references=True,
+            select_created=False,
         )
 
     def value_read(
@@ -180,6 +216,48 @@ class UniversalRuntimeSessionManager:
     ) -> object:
         bridge = self._require(runtime, external_session_id)
         return bridge.value_read(root_id)
+
+    def issue_cde_write_permit(
+        self,
+        *,
+        runtime: str,
+        external_session_id: str,
+        operation: str,
+        path: str,
+        content_digest: str,
+        request_id: str,
+        nonce: str,
+    ) -> dict[str, object]:
+        """Issue one permit from the Session's exact graph-held Work claim."""
+        bridge = self._require(runtime, external_session_id)
+        return bridge._client.issue_cde_write_permit(
+            operation=operation,
+            path=path,
+            content_digest=content_digest,
+            request_id=request_id,
+            nonce=nonce,
+        )
+
+    def consume_cde_write_permit(
+        self,
+        *,
+        runtime: str,
+        external_session_id: str,
+        permit: str,
+        operation: str,
+        path: str,
+        content_digest: str,
+        request_id: str,
+    ) -> dict[str, object]:
+        """Settle one exact graph-held permit after its governed write."""
+        bridge = self._require(runtime, external_session_id)
+        return bridge._client.consume_cde_write_permit(
+            permit=permit,
+            operation=operation,
+            path=path,
+            content_digest=content_digest,
+            request_id=request_id,
+        )
 
     def migrate_legacy_work(self, store) -> dict[str, object]:
         """Read legacy evidence once and write only through the graph route."""

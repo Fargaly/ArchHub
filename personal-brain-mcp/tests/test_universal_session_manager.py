@@ -19,7 +19,11 @@ from personal_brain.universal_runtime import UniversalRuntimeUnavailable  # noqa
 from personal_brain.universal_session_manager import (  # noqa: E402
     UniversalRuntimeSessionManager,
 )
-from personal_brain.server import build_server  # noqa: E402
+from personal_brain.server import (  # noqa: E402
+    WiringAnnounceRequest,
+    announce_session_wiring_cell_first,
+    build_server,
+)
 from personal_brain.storage import BrainStore  # noqa: E402
 
 
@@ -95,6 +99,52 @@ def test_manager_reuses_one_graph_session_and_never_owns_a_store(tmp_path):
     assert "sqlite3" not in source
 
 
+def test_unchanged_session_wiring_reuses_one_cell_identity(monkeypatch):
+    class FakeBridge:
+        def __init__(self):
+            self.calls = []
+
+        def deliberation_append(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"root": "app:brain-control-ledger:v1:entry:wiring"}
+
+    from personal_brain import universal_runtime as ur
+
+    bridge = FakeBridge()
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    store = BrainStore.open(":memory:")
+    request = WiringAnnounceRequest(
+        device_id="codex-session-stable",
+        entries=[],
+        secret_refs=[],
+        cwd=str(WORKSPACE),
+        git_remote=None,
+    )
+    try:
+        first = announce_session_wiring_cell_first(
+            store=store, req=request, owner_user="founder"
+        )
+        second = announce_session_wiring_cell_first(
+            store=store, req=request, owner_user="founder"
+        )
+    finally:
+        store.close()
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert len(bridge.calls) == 2
+    assert bridge.calls[0]["space"] == "app:brain-control-ledger:v1"
+    assert bridge.calls[0]["category"] \
+        == "app:brain-control-ledger:v1:category:compliance-event"
+    assert bridge.calls[0]["idempotency_key"] \
+        == bridge.calls[1]["idempotency_key"]
+    assert bridge.calls[0]["idempotency_key"].startswith(
+        "brain-control:session-wiring:v2:"
+    )
+    assert bridge.calls[0]["payload"] == bridge.calls[1]["payload"]
+    assert "recorded_at" not in bridge.calls[0]["payload"]
+
+
 def test_manager_reused_enrollment_uses_compact_work_index():
     class FakeBridge:
         agent_session_root = "app:agent-session:fake"
@@ -138,7 +188,14 @@ def test_manager_reused_enrollment_uses_compact_work_index():
     assert bridges[0].index_calls == 1
 
 
-def test_manager_reenrolls_after_runtime_replacement_invalidates_session():
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "runtime Agent Session is unknown",
+        "runtime Agent Session capability expired",
+    ),
+)
+def test_manager_reenrolls_after_runtime_invalidates_session(failure):
     class FakeBridge:
         def __init__(self, index):
             self.index = index
@@ -156,9 +213,7 @@ def test_manager_reenrolls_after_runtime_replacement_invalidates_session():
 
         def work_index(self):
             if self.index == 1:
-                raise UniversalRuntimeUnavailable(
-                    "runtime Agent Session is unknown"
-                )
+                raise UniversalRuntimeUnavailable(failure)
             return {"revision": self.index, "items": ()}
 
     bridges = []
@@ -272,6 +327,137 @@ def test_manager_work_status_falls_back_to_compact_index_when_full_is_too_large(
     }]
 
 
+def test_manager_creates_compact_work_without_changing_ui_selection():
+    class FakeBridge:
+        agent_session_root = "app:agent-session:runtime:bridge-1"
+
+        def bind_agent_session(self, *, runtime, external_session_id):
+            return {
+                "agent_session": self.agent_session_root,
+                "runtime": runtime,
+                "revision": 1,
+                "expires_at": "soon",
+            }
+
+        def work_create(self, **kwargs):
+            self.create_kwargs = kwargs
+            return {"created_root": "work:created", "revision": 2}
+
+    bridge = FakeBridge()
+    manager = UniversalRuntimeSessionManager(lambda: bridge)
+    manager.enroll(runtime="codex-desktop", external_session_id="session-1")
+
+    created = manager.create(
+        runtime="codex-desktop",
+        external_session_id="session-1",
+        title="Bounded repair",
+        external_key="repair:bounded",
+        structured_references={"cde-container": {"tier": "T1"}},
+    )
+
+    assert created == {"created_root": "work:created", "revision": 2}
+    assert bridge.create_kwargs["compact_references"] is True
+    assert bridge.create_kwargs["select_created"] is False
+
+
+def test_manager_claims_one_exact_work_without_global_queue_projection():
+    class FakeBridge:
+        agent_session_root = "app:agent-session:runtime:bridge-1"
+
+        def bind_agent_session(self, *, runtime, external_session_id):
+            return {
+                "agent_session": self.agent_session_root,
+                "runtime": runtime,
+                "revision": 1,
+                "expires_at": "soon",
+            }
+
+        def _request(self, method, path, body):
+            self.request = (method, path, body)
+            return {
+                "claimed": True,
+                "work": {"root": body["root"]},
+                "revision": 2,
+            }
+
+        def work_next(self):  # pragma: no cover - assertion path
+            raise AssertionError("exact claim must not scan the global queue")
+
+    bridge = FakeBridge()
+    manager = UniversalRuntimeSessionManager(lambda: bridge)
+    manager.enroll(runtime="codex-desktop", external_session_id="session-1")
+
+    claimed = manager.claim_exact(
+        runtime="codex-desktop",
+        external_session_id="session-1",
+        root_id="work:exact",
+    )
+
+    assert claimed["work"]["root"] == "work:exact"
+    assert bridge.request == (
+        "POST",
+        "/api/universal/work-transition",
+        {
+            "root": "work:exact",
+            "event": "claim",
+            "evidence": "",
+            "projection": "receipt-v1",
+        },
+    )
+
+
+def test_manager_delegates_cde_permit_and_receipt_to_bound_runtime_client():
+    class FakeClient:
+        def issue_cde_write_permit(self, **kwargs):
+            self.issued = kwargs
+            return {"permit": "permit:1", **kwargs}
+
+        def consume_cde_write_permit(self, **kwargs):
+            self.consumed = kwargs
+            return {"receipt": "receipt:1", **kwargs}
+
+    class FakeBridge:
+        agent_session_root = "app:agent-session:runtime:bridge-1"
+
+        def __init__(self):
+            self._client = FakeClient()
+
+        def bind_agent_session(self, *, runtime, external_session_id):
+            return {
+                "agent_session": self.agent_session_root,
+                "runtime": runtime,
+                "revision": 1,
+                "expires_at": "soon",
+            }
+
+    bridge = FakeBridge()
+    manager = UniversalRuntimeSessionManager(lambda: bridge)
+    manager.enroll(runtime="codex", external_session_id="session-1")
+    permit = manager.issue_cde_write_permit(
+        runtime="codex",
+        external_session_id="session-1",
+        operation="apply_patch",
+        path="00.GOVERNANCE/hooks/pretooluse_validate.py",
+        content_digest="a" * 64,
+        request_id="request-1",
+        nonce="nonce-1",
+    )
+    receipt = manager.consume_cde_write_permit(
+        runtime="codex",
+        external_session_id="session-1",
+        permit=permit["permit"],
+        operation="apply_patch",
+        path="00.GOVERNANCE/hooks/pretooluse_validate.py",
+        content_digest="a" * 64,
+        request_id="request-1",
+    )
+
+    assert permit["permit"] == "permit:1"
+    assert receipt["receipt"] == "receipt:1"
+    assert bridge._client.issued["nonce"] == "nonce-1"
+    assert bridge._client.consumed["permit"] == "permit:1"
+
+
 def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkeypatch):
     class FakeManager:
         def __init__(self):
@@ -292,6 +478,22 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
             self.calls.append(("next", kwargs))
             return {"revision": 8, "claimed": False, "work": None}
 
+        def claim_exact(self, **kwargs):
+            self.calls.append(("claim-exact", kwargs))
+            return {
+                "revision": 8,
+                "claimed": True,
+                "work": {"root": kwargs["root_id"]},
+            }
+
+        def issue_cde_write_permit(self, **kwargs):
+            self.calls.append(("cde-permit", kwargs))
+            return {"permit": "permit:test", "revision": 10}
+
+        def consume_cde_write_permit(self, **kwargs):
+            self.calls.append(("cde-receipt", kwargs))
+            return {"receipt": "receipt:test", "revision": 11}
+
         def create(self, **kwargs):
             self.calls.append(("create", kwargs))
             return {"revision": 8, "root": "work:created"}
@@ -308,22 +510,16 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
         def __init__(self):
             self.created = []
 
-        def assembly_create(
+        def deliberation_append(
             self,
-            *,
-            definition_key,
-            fields,
-            idempotency_field=None,
-            x=0.0,
-            y=0.0,
+            **kwargs,
         ):
             record = {
-                "created_root": (
-                    f"assembly-instance:session-{len(self.created) + 1}"
+                "root": (
+                    "app:brain-control-ledger:v1:entry:session-%s"
+                    % (len(self.created) + 1)
                 ),
-                "definition_key": definition_key,
-                "fields": dict(fields or {}),
-                "idempotency_field": idempotency_field,
+                **kwargs,
             }
             self.created.append(record)
             return record
@@ -343,7 +539,8 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
         )
         assert started["cell_first"] is True
         assert started["brain_written"] is True
-        assert started["cell_record_root"] == "assembly-instance:session-1"
+        assert started["cell_record_root"] \
+            == "app:brain-control-ledger:v1:entry:session-1"
         assert started["universal_runtime_connected"] is True
         assert started["universal_agent_session"] \
             == "app:agent-session:runtime:test"
@@ -355,6 +552,32 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
             session_id="claude-session-7", vendor="claude-code"
         )
         assert next_work["claimed"] is False
+        exact = mcp._tools["brain.universal_work_claim"].handler(
+            session_id="claude-session-7",
+            vendor="claude-code",
+            work_root="work:exact",
+        )
+        assert exact["work"]["root"] == "work:exact"
+        permit = mcp._tools["brain.universal_cde_write_permit"].handler(
+            session_id="claude-session-7",
+            vendor="claude-code",
+            operation="apply_patch",
+            path="00.GOVERNANCE/hooks/pretooluse_validate.py",
+            content_digest="a" * 64,
+            request_id="request-7",
+            nonce="nonce-7",
+        )
+        assert permit["permit"] == "permit:test"
+        receipt = mcp._tools["brain.universal_cde_write_receipt"].handler(
+            session_id="claude-session-7",
+            vendor="claude-code",
+            permit="permit:test",
+            operation="apply_patch",
+            path="00.GOVERNANCE/hooks/pretooluse_validate.py",
+            content_digest="a" * 64,
+            request_id="request-7",
+        )
+        assert receipt["receipt"] == "receipt:test"
         created = mcp._tools["brain.universal_work_create"].handler(
             session_id="claude-session-7",
             vendor="claude-code",
@@ -403,6 +626,38 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
                 },
             ),
             (
+                "claim-exact",
+                {
+                    "runtime": "claude-code",
+                    "external_session_id": "claude-session-7",
+                    "root_id": "work:exact",
+                },
+            ),
+            (
+                "cde-permit",
+                {
+                    "runtime": "claude-code",
+                    "external_session_id": "claude-session-7",
+                    "operation": "apply_patch",
+                    "path": "00.GOVERNANCE/hooks/pretooluse_validate.py",
+                    "content_digest": "a" * 64,
+                    "request_id": "request-7",
+                    "nonce": "nonce-7",
+                },
+            ),
+            (
+                "cde-receipt",
+                {
+                    "runtime": "claude-code",
+                    "external_session_id": "claude-session-7",
+                    "permit": "permit:test",
+                    "operation": "apply_patch",
+                    "path": "00.GOVERNANCE/hooks/pretooluse_validate.py",
+                    "content_digest": "a" * 64,
+                    "request_id": "request-7",
+                },
+            ),
+            (
                 "create",
                 {
                     "runtime": "claude-code",
@@ -448,7 +703,7 @@ def test_brain_session_hook_cell_failure_does_not_enroll(monkeypatch):
             return {"agent_session": "should-not-exist", "reused": False}
 
     class FailingCellBridge:
-        def assembly_create(self, **_kwargs):
+        def deliberation_append(self, **_kwargs):
             raise RuntimeError("cell unavailable")
 
     from personal_brain import universal_runtime as ur

@@ -486,8 +486,12 @@ def announce_wiring_cell_first(
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
     basis = json.dumps(claims, sort_keys=True)
+    identity_basis = json.dumps(
+        {key: value for key, value in claims.items() if key != "recorded_at"},
+        sort_keys=True,
+    )
     source = "brain-control:wiring:%s" % (
-        hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+        hashlib.sha256(identity_basis.encode("utf-8")).hexdigest()[:16]
     )
     try:
         from .universal_runtime import UniversalRuntimeBridge
@@ -522,6 +526,82 @@ def announce_wiring_cell_first(
     out["cell_record"] = cell_record
     out["cell_record_root"] = str(cell_record["created_root"])
     out["cell_record_source"] = source
+    return out
+
+
+def announce_session_wiring_cell_first(
+    *,
+    store: BrainStore,
+    req: WiringAnnounceRequest,
+    owner_user: str,
+) -> dict[str, Any]:
+    """Append one idempotent SessionStart receipt to the graph control ledger."""
+    entry_summaries = [
+        {
+            "name": entry.name,
+            "kind": entry.kind,
+            "endpoint_sha256": hashlib.sha256(
+                str(entry.endpoint or "").encode("utf-8")
+            ).hexdigest(),
+            "device_id": entry.device_id or req.device_id,
+        }
+        for entry in req.entries
+    ]
+    recorded_at = datetime.now(timezone.utc).isoformat()
+    claims = {
+        "operation": "brain.hook_session_start",
+        "owner_user": owner_user,
+        "device_id": req.device_id,
+        "entry_count": len(req.entries),
+        "entries": entry_summaries,
+        "secret_ref_count": len(req.secret_refs),
+        "secret_ref_hashes": [
+            hashlib.sha256(str(ref.ref).encode("utf-8")).hexdigest()
+            for ref in req.secret_refs
+        ],
+        "cwd_sha256": hashlib.sha256(
+            str(req.cwd or "").encode("utf-8")
+        ).hexdigest(),
+        "git_remote_sha256": hashlib.sha256(
+            str(req.git_remote or "").encode("utf-8")
+        ).hexdigest(),
+    }
+    source = "brain-control:session-wiring:v2:%s" % hashlib.sha256(
+        json.dumps(claims, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    try:
+        from .universal_runtime import UniversalRuntimeBridge
+
+        runtime = UniversalRuntimeBridge()
+        cell_record = runtime.deliberation_append(
+            space="app:brain-control-ledger:v1",
+            category="app:brain-control-ledger:v1:category:compliance-event",
+            summary="Session wiring: %s" % req.device_id,
+            payload=claims,
+            idempotency_key=source,
+            created_at=recorded_at,
+        )
+    except Exception as cell_error:
+        return {
+            "ok": False,
+            "registered": 0,
+            "skipped": len(req.entries),
+            "cell_first": True,
+            "brain_written": False,
+            "cell_record_source": source,
+            "error": f"{type(cell_error).__name__}: {cell_error}",
+        }
+
+    resp = announce_wiring(store=store, req=req, owner_user=owner_user)
+    out = resp.model_dump(mode="json")
+    out.update({
+        "ok": True,
+        "cell_first": True,
+        "brain_written": True,
+        "cell_record": cell_record,
+        "cell_record_root": str(cell_record["root"]),
+        "cell_record_source": source,
+    })
     return out
 
 
@@ -1672,7 +1752,7 @@ def build_server(
                 cwd=cwd,
                 git_remote=None,
             )
-            out = announce_wiring_cell_first(
+            out = announce_session_wiring_cell_first(
                 store=store,
                 req=req,
                 owner_user=owner,
@@ -1735,6 +1815,77 @@ def build_server(
     ) -> dict[str, Any]:
         return runtime_session_manager.claim_next(
             runtime=vendor, external_session_id=session_id
+        )
+
+    @mcp.tool(
+        name="brain.universal_work_claim",
+        description=(
+            "Atomically claim one exact open Cell-native Work as the exact "
+            "enrolled Agent Session without scanning the global work frontier."
+        ),
+    )
+    def brain_universal_work_claim(
+        session_id: str,
+        vendor: str,
+        work_root: str,
+    ) -> dict[str, Any]:
+        return runtime_session_manager.claim_exact(
+            runtime=vendor,
+            external_session_id=session_id,
+            root_id=work_root,
+        )
+
+    @mcp.tool(
+        name="brain.universal_cde_write_permit",
+        description=(
+            "Issue one short-lived Cell-native CDE write permit from the exact "
+            "enrolled Agent Session and its claimed Work. The caller supplies "
+            "only the write intent; Work, scope, claim, and policy are derived."
+        ),
+    )
+    def brain_universal_cde_write_permit(
+        session_id: str,
+        vendor: str,
+        operation: str,
+        path: str,
+        content_digest: str,
+        request_id: str,
+        nonce: str,
+    ) -> dict[str, Any]:
+        return runtime_session_manager.issue_cde_write_permit(
+            runtime=vendor,
+            external_session_id=session_id,
+            operation=operation,
+            path=path,
+            content_digest=content_digest,
+            request_id=request_id,
+            nonce=nonce,
+        )
+
+    @mcp.tool(
+        name="brain.universal_cde_write_receipt",
+        description=(
+            "Consume one Cell-native CDE write permit after the exact governed "
+            "write. Reuse, drift, expiry, and foreign Session settlement fail closed."
+        ),
+    )
+    def brain_universal_cde_write_receipt(
+        session_id: str,
+        vendor: str,
+        permit: str,
+        operation: str,
+        path: str,
+        content_digest: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        return runtime_session_manager.consume_cde_write_permit(
+            runtime=vendor,
+            external_session_id=session_id,
+            permit=permit,
+            operation=operation,
+            path=path,
+            content_digest=content_digest,
+            request_id=request_id,
         )
 
     @mcp.tool(

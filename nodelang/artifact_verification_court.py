@@ -99,8 +99,8 @@ class ArtifactVerificationCourt:
     @staticmethod
     def _subprocess_environment() -> dict[str, str]:
         admitted = {
-            "PATH", "PATHEXT", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "TMP",
-            "USERPROFILE", "WINDIR",
+            "LOCALAPPDATA", "PATH", "PATHEXT", "SYSTEMDRIVE", "SYSTEMROOT",
+            "TEMP", "TMP", "USERPROFILE", "WINDIR",
         }
         environment = {
             key: value for key, value in os.environ.items()

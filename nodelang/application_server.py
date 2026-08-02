@@ -77,6 +77,7 @@ from .universal_application import (
     assign_universal_workshop_work,
     assign_released_universal_theme,
     assign_released_universal_theme_to_audience,
+    authorize_universal_cde_write,
     build_universal_application,
     begin_universal_runtime_agent_session,
     bind_universal_runtime_agent_body_device_custody,
@@ -174,7 +175,7 @@ from .universal_application import (
     resume_universal_baboom_connector_execution_failure,
     settle_universal_baboom_connector_execution,
     request_universal_baboom_model_execution,
-    read_universal_baboom_current_claimed_work,
+    read_universal_current_claimed_work,
     read_universal_baboom_work_plan,
     record_universal_device_handoff_receipt,
     initiate_universal_baboom_work_claim_transfer,
@@ -202,8 +203,22 @@ from .cell_revision_checkpoint import (
     RevisionCheckpointGuard,
     RevisionCheckpointSigningAuthority,
 )
-from .cell_signing_authority import read_signing_key_descriptor
+from .cell_signing_authority import (
+    SigningAuthorityDenied,
+    build_signing_key_descriptor,
+    read_signing_key_descriptor,
+    verify_signing_key_descriptor,
+)
+from .cell_cde_authority import (
+    consume_cde_write_permit,
+    issue_cde_write_permit,
+)
 from .cell_external_graph_binding import bind_external_signing_authority
+from .windows_cng_signing_provider import (
+    PLATFORM_PROVIDER_ID,
+    SOFTWARE_PROVIDER_ID,
+    WindowsCngSigningAuthorityProvider,
+)
 
 
 def _legacy_application_module():
@@ -246,6 +261,7 @@ from .cell_identity import (
 )
 from .cell_protocols import prepare_append_relation_member, read_relation
 from .cell_state_machine import (
+    machine_history,
     read_instance_state_machine,
     read_transition,
     transition_machine_with_new_evidence,
@@ -288,6 +304,7 @@ from .runtime_credentials import (
     BrowserCredentialVault,
     BrowserSessionCredentials,
 )
+from .runtime_compliance_adapter import run_physical_runtime_compliance_court
 from .runtime_gateway import BackendGeneration
 from .universal_cloud_gateway import (
     UniversalCloudGateway,
@@ -305,6 +322,11 @@ MAX_REQUEST_BODY_BYTES = 1_048_576
 _INTERACTION_DELTA_MODE = "interaction-delta-v1"
 _TOPOLOGY_DELTA_MODE = "topology-delta-v1"
 _RECEIPT_MODE = "receipt-v1"
+_MACHINE_WORKSHOP_ENTRY_LIMIT = 50
+_TOPOLOGY_DELTA_FIELDS = (
+    "authorization",
+    "catalog",
+)
 _INTERACTION_DELTA_FIELDS = (
     "revision",
     "selected",
@@ -312,8 +334,6 @@ _INTERACTION_DELTA_FIELDS = (
     "selected_title",
     "focus",
     "obligations",
-    "authorization",
-    "catalog",
     "scope",
     "authoring",
     "inspector",
@@ -343,6 +363,11 @@ _CONFIGURATION_DELTA_FIELDS = (
     "history",
     "parents",
     "personal_asset",
+    "pinned",
+    "project",
+    "project_title",
+    "session",
+    "workspace",
     "personal_wip_heads",
     "preview_revision",
     "published_revision",
@@ -468,13 +493,15 @@ def _interaction_canvas_delta(
             "control_catalog"
         ],
         "configuration_state": {
-            field: configuration.get(field)
+            field: configuration[field]
             for field in _CONFIGURATION_DELTA_FIELDS
+            if field in configuration
         },
     }
     delta.update({
-        field: projection.get(field)
+        field: projection[field]
         for field in _INTERACTION_DELTA_FIELDS
+        if field in projection and projection[field] is not None
     })
     return delta
 
@@ -492,6 +519,7 @@ def _topology_canvas_delta(
         previous_projection=previous_projection,
     )
     delta["projection_mode"] = _TOPOLOGY_DELTA_MODE
+    delta.update({field: projection[field] for field in _TOPOLOGY_DELTA_FIELDS})
     if (
         previous_projection is None
         or previous_projection.get("revision") != base_revision
@@ -733,6 +761,115 @@ def _take_universal_runtime_fence(
     if prepared_lease is not None:
         return prepared_lease.consume(store, application_root)
     return store.acquire_runtime_fence(application_root)
+
+
+_CDE_WRITE_SIGNING_DESCRIPTOR_ROOT = "app:cde-write-signing-key:v1"
+
+
+def _cde_write_key_name(database_identity) -> str:
+    identity = hashlib.sha256(
+        str(Path(database_identity).expanduser().resolve()).encode("utf-8")
+    ).hexdigest()
+    return "ArchHub.CdeWrite.%s.v1" % identity[:32]
+
+
+def _open_cde_write_signing_provider(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    database_identity,
+):
+    snapshot = store.snapshot()
+    key_name = _cde_write_key_name(database_identity)
+    if _CDE_WRITE_SIGNING_DESCRIPTOR_ROOT in snapshot.cells:
+        descriptor = read_signing_key_descriptor(
+            snapshot,
+            registry.cde_signing_protocol,
+            _CDE_WRITE_SIGNING_DESCRIPTOR_ROOT,
+        )
+        provider_ids = (descriptor.values["provider-id"],)
+        create = False
+    else:
+        provider_ids = (PLATFORM_PROVIDER_ID, SOFTWARE_PROVIDER_ID)
+        create = True
+    failures = []
+    for provider_id in provider_ids:
+        try:
+            return WindowsCngSigningAuthorityProvider(
+                provider_id=provider_id,
+                key_name=key_name,
+                create=create,
+            )
+        except SigningAuthorityDenied as exc:
+            failures.append(exc)
+    raise SigningAuthorityDenied(
+        "no admitted CDE write signing provider is available"
+    ) from failures[-1]
+
+
+def _ensure_cde_write_signing_authority(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    provider,
+    *,
+    descriptor_root: str = _CDE_WRITE_SIGNING_DESCRIPTOR_ROOT,
+):
+    snapshot = store.snapshot()
+    authorization_root = registry.authorization.policy_root
+    release_root = registry.runtime_ownership_court_root
+    if descriptor_root not in snapshot.cells:
+        build_signing_key_descriptor(
+            store,
+            registry.cde_signing_protocol,
+            provider,
+            descriptor_id=descriptor_root,
+            resource_version=provider.current_resource,
+            authority_id="archhub.local.cde-write",
+            purpose="cde-write-permit",
+            authorization_evidence=authorization_root,
+            release_evidence=release_root,
+        )
+        snapshot = store.snapshot()
+    descriptor = verify_signing_key_descriptor(
+        snapshot,
+        registry.cde_signing_protocol,
+        provider,
+        descriptor_root,
+        require_signing=True,
+    )
+    expected = {
+        "authority-id": "archhub.local.cde-write",
+        "purpose": "cde-write-permit",
+        "authorization-evidence": authorization_root,
+        "release-evidence": release_root,
+    }
+    for name, value in expected.items():
+        if not hmac.compare_digest(descriptor.values[name], value):
+            raise SigningAuthorityDenied(
+                "CDE write signing descriptor %s mismatched" % name
+            )
+    members = [
+        member for member in read_relation(
+            snapshot, registry.application_root, budget=100_000
+        )
+        if member.role_id == registry.roles["member"]
+        and member.participant_id == descriptor_root
+    ]
+    if not members:
+        patch = prepare_append_relation_member(
+            snapshot,
+            registry.application_root,
+            registry.roles["member"],
+            descriptor_root,
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=patch.create,
+            replace=patch.replace,
+        )
+    elif len(members) != 1:
+        raise InvalidCell("CDE write signing authority membership drifted")
+    return descriptor_root
 
 
 class ApplicationServer:
@@ -1162,6 +1299,8 @@ class ApplicationServer:
         self._runtime_holder_root = "app:runtime-holder:" + uuid.uuid4().hex
         self._runtime_ownership_root = None
         self._runtime_fence_release = None
+        self.cde_write_signing_provider = None
+        self.cde_write_signing_descriptor_root = None
         try:
             self._runtime_fence_release = _take_universal_runtime_fence(
                 self.universal_store,
@@ -1169,6 +1308,21 @@ class ApplicationServer:
                 universal_runtime_fence_lease,
             )
             self._claim_runtime_ownership()
+            if self.universal_state_path is not None:
+                self.cde_write_signing_provider = (
+                    _open_cde_write_signing_provider(
+                        self.universal_store,
+                        self.universal_registry,
+                        self.universal_state_path,
+                    )
+                )
+                self.cde_write_signing_descriptor_root = (
+                    _ensure_cde_write_signing_authority(
+                        self.universal_store,
+                        self.universal_registry,
+                        self.cde_write_signing_provider,
+                    )
+                )
         except Exception:
             if self._runtime_fence_release is not None:
                 self._runtime_fence_release()
@@ -1653,9 +1807,13 @@ class ApplicationServer:
                                     )
                                 },
                             },
-                            'legacy_parallel_runtime': True,
+                            'legacy_parallel_runtime': (
+                                owner.legacy_runtime_enabled
+                            ),
                             'legacy_runtime_status': (
                                 'migration-only; not product authority'
+                                if owner.legacy_runtime_enabled
+                                else 'not instantiated'
                             ),
                         }
                     self._json(200, payload)
@@ -3313,6 +3471,257 @@ class ApplicationServer:
                 values[label] = value
         return values
 
+    @staticmethod
+    def _machine_agent_session_identity_binding_root(
+        *,
+        entry,
+        runtime: str,
+        external_session_fingerprint: str,
+        custody_root: str | None,
+    ) -> str:
+        """Derive one collision-resistant relationship identity."""
+        digest = hashlib.sha256()
+        for value in (
+            "archhub-runtime-session-binding-v1",
+            entry.root_id,
+            entry.control_root,
+            runtime,
+            external_session_fingerprint,
+            custody_root or "",
+        ):
+            encoded = value.encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+        return "app:authority:runtime-session:%s" % digest.hexdigest()
+
+    def _machine_session_claim_evidence_is_valid(
+        self,
+        snapshot,
+        *,
+        session_root: str,
+        evidence_root: str,
+    ) -> bool:
+        """Verify historical claim provenance without making it live authority."""
+        roles = self.universal_registry.governed_work_claim_binding_roles
+        if evidence_root not in {
+            member.participant_id
+            for member in read_relation(
+                snapshot,
+                self.universal_registry.governed_work_claim_binding_registry_root,
+                budget=100_000,
+            )
+            if member.role_id == roles["binding-member"]
+        }:
+            return False
+        members = read_relation(snapshot, evidence_root, budget=32)
+        values: dict[str, str] = {}
+        admitted_roles = {
+            roles["work"],
+            roles["agent-session"],
+            roles["agent-body"],
+            roles["transition"],
+        }
+        if any(member.role_id not in admitted_roles for member in members):
+            return False
+        for member in members:
+            if member.role_id in values:
+                return False
+            values[member.role_id] = member.participant_id
+        if set(values) != admitted_roles:
+            return False
+        session = read_agent_session(
+            snapshot,
+            self.universal_registry.agent_body.protocol,
+            self.universal_registry.authorization.protocol,
+            session_root,
+        )
+        if (
+            values[roles["agent-session"]] != session_root
+            or values[roles["agent-body"]] != session.body_root
+        ):
+            return False
+        machine = read_instance_state_machine(
+            snapshot,
+            self.universal_registry.assembly_protocol,
+            self.universal_registry.standard_library.state_machine_protocol,
+            values[roles["work"]],
+        )
+        return any(
+            event.event_root == values[roles["transition"]]
+            and evidence_root in event.context_roots
+            and session_root in event.context_roots
+            for event in machine_history(
+                snapshot,
+                self.universal_registry.standard_library.state_machine_protocol,
+                machine.root_id,
+            )
+        )
+
+    def _bound_machine_agent_session_identity(
+        self,
+        *,
+        entry,
+        runtime: str,
+        external_session_fingerprint: str,
+        custody_root: str | None,
+    ):
+        """Resolve one signed external identity binding from canonical Cells."""
+        relationship_root = self._machine_agent_session_identity_binding_root(
+            entry=entry,
+            runtime=runtime,
+            external_session_fingerprint=external_session_fingerprint,
+            custody_root=custody_root,
+        )
+        snapshot = self.universal_store.snapshot()
+        if relationship_root not in snapshot.cells:
+            return None
+        authority = self.universal_registry.authorization
+        relationship = verify_authority_relationship(
+            snapshot,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            relationship_root,
+        )
+        if (
+            relationship.source_root != entry.root_id
+            or relationship.kind_root
+            != authority.identity_protocol.kinds["membership"]
+            or relationship.tenant_root != authority.tenant_root
+            or relationship.scope_root != entry.control_root
+            or relationship.action_roots
+        ):
+            raise AuthorizationDenied(
+                "runtime Agent Session identity binding drifted"
+            )
+        evidence = set(relationship.evidence_roots)
+        if custody_root is not None:
+            if custody_root not in evidence:
+                raise AuthorizationDenied(
+                    "runtime Agent Session identity custody drifted"
+                )
+            evidence.remove(custody_root)
+        elif any(root in entry.device_custody_roots for root in evidence):
+            raise AuthorizationDenied(
+                "runtime Agent Session identity credential mode drifted"
+            )
+        if len(evidence) > 1 or any(
+            not self._machine_session_claim_evidence_is_valid(
+                snapshot,
+                session_root=relationship.target_root,
+                evidence_root=root,
+            )
+            for root in evidence
+        ):
+            raise AuthorizationDenied(
+                "runtime Agent Session identity evidence drifted"
+            )
+        session = read_agent_session(
+            snapshot,
+            self.universal_registry.agent_body.protocol,
+            authority.protocol,
+            relationship.target_root,
+        )
+        if (
+            session.state_root
+            != self.universal_registry.agent_body.protocol.state("active")
+        ):
+            raise AuthorizationDenied(
+                "runtime Agent Session identity is not active"
+            )
+        session_entry = _agent_body_catalog_entry_for_session(
+            snapshot, self.universal_registry, session
+        )
+        surface = self._machine_session_surface_values(snapshot, session.root_id)
+        if (
+            session_entry.root_id != entry.root_id
+            or surface.get("runtime") != runtime
+            or surface.get("session fingerprint")
+            != external_session_fingerprint
+        ):
+            raise AuthorizationDenied(
+                "runtime Agent Session identity target drifted"
+            )
+        return session
+
+    def _bind_machine_agent_session_identity(
+        self,
+        *,
+        entry,
+        runtime: str,
+        external_session_fingerprint: str,
+        custody_root: str | None,
+        session,
+        evidence_roots: tuple[str, ...],
+    ) -> str:
+        """Mint or verify the durable signed identity-to-session relationship."""
+        relationship_root = self._machine_agent_session_identity_binding_root(
+            entry=entry,
+            runtime=runtime,
+            external_session_fingerprint=external_session_fingerprint,
+            custody_root=custody_root,
+        )
+        expected_evidence = tuple(dict.fromkeys((
+            *((custody_root,) if custody_root is not None else ()),
+            *evidence_roots,
+        )))
+        snapshot = self.universal_store.snapshot()
+        if relationship_root in snapshot.cells:
+            bound = self._bound_machine_agent_session_identity(
+                entry=entry,
+                runtime=runtime,
+                external_session_fingerprint=external_session_fingerprint,
+                custody_root=custody_root,
+            )
+            relationship = verify_authority_relationship(
+                self.universal_store.snapshot(),
+                self.universal_registry.authorization.identity_protocol,
+                self.universal_registry.authorization.relationship_broker,
+                relationship_root,
+            )
+            if (
+                bound is None
+                or bound.root_id != session.root_id
+                or set(relationship.evidence_roots) != set(expected_evidence)
+            ):
+                raise AuthorizationDenied(
+                    "runtime Agent Session identity is already bound differently"
+                )
+            return relationship_root
+        surface = self._machine_session_surface_values(snapshot, session.root_id)
+        if (
+            surface.get("runtime") != runtime
+            or surface.get("session fingerprint")
+            != external_session_fingerprint
+        ):
+            raise AuthorizationDenied(
+                "runtime Agent Session identity target drifted"
+            )
+        issue_universal_authority_relationship(
+            self.universal_store,
+            self.universal_registry,
+            source_root=entry.root_id,
+            target_root=session.root_id,
+            kind="membership",
+            scope_root=entry.control_root,
+            reason="bind one admitted external runtime identity to its canonical Agent Session",
+            evidence_roots=expected_evidence,
+            relationship_root=relationship_root,
+            authentication_context=(
+                self.universal_registry.authorization.session.context()
+            ),
+        )
+        bound = self._bound_machine_agent_session_identity(
+            entry=entry,
+            runtime=runtime,
+            external_session_fingerprint=external_session_fingerprint,
+            custody_root=custody_root,
+        )
+        if bound is None or bound.root_id != session.root_id:
+            raise AuthorizationDenied(
+                "runtime Agent Session identity binding did not verify"
+            )
+        return relationship_root
+
     def _continuable_machine_agent_session(
         self,
         *,
@@ -3338,6 +3747,14 @@ class ApplicationServer:
                 return None
         else:
             return None
+        bound = self._bound_machine_agent_session_identity(
+            entry=entry,
+            runtime=runtime,
+            external_session_fingerprint=external_session_fingerprint,
+            custody_root=custody_root,
+        )
+        if bound is not None:
+            return bound
         snapshot = self.universal_store.snapshot()
         candidates = []
         for member in read_relation(
@@ -3377,11 +3794,54 @@ class ApplicationServer:
                 == external_session_fingerprint
             ):
                 candidates.append(session)
+        if not candidates:
+            return None
+        evidence_roots: tuple[str, ...] = ()
+        selected = candidates[0]
         if len(candidates) > 1:
-            raise AuthorizationDenied(
-                "runtime Agent Session continuation is ambiguous"
-            )
-        return candidates[0] if candidates else None
+            claimed = []
+            for candidate in candidates:
+                work, _revision = read_universal_current_claimed_work(
+                    self.universal_store,
+                    self.universal_registry,
+                    agent_session_root=candidate.root_id,
+                    authentication_context=(
+                        self.universal_registry.authorization.session.context()
+                    ),
+                )
+                if work is None:
+                    continue
+                claim_binding = work.get("claim_binding")
+                if type(claim_binding) is not str or not claim_binding:
+                    raise InvalidCell(
+                        "runtime Agent Session claim evidence is incomplete"
+                    )
+                claimed.append((
+                    self.universal_store.cell_created_revision(claim_binding),
+                    claim_binding,
+                    candidate,
+                ))
+            if not claimed:
+                raise AuthorizationDenied(
+                    "runtime Agent Session continuation is ambiguous"
+                )
+            latest_revision = max(item[0] for item in claimed)
+            latest = tuple(item for item in claimed if item[0] == latest_revision)
+            if len(latest) != 1:
+                raise AuthorizationDenied(
+                    "runtime Agent Session continuation is ambiguous"
+                )
+            _created_revision, claim_binding, selected = latest[0]
+            evidence_roots = (claim_binding,)
+        self._bind_machine_agent_session_identity(
+            entry=entry,
+            runtime=runtime,
+            external_session_fingerprint=external_session_fingerprint,
+            custody_root=custody_root,
+            session=selected,
+            evidence_roots=evidence_roots,
+        )
+        return selected
 
     def _machine_agent_identity_is_currently_bound(
         self,
@@ -3706,40 +4166,48 @@ class ApplicationServer:
             external_session_id.encode("utf-8")
         ).hexdigest()
         runtime = runtime.strip()
-        if runtime in {"baboom", "baboom-execution"} and (
-            self._machine_agent_identity_is_currently_bound(
-                runtime=runtime,
-                catalog_entry_root=entry.root_id,
-                custody_root=custody_root,
-                external_session_fingerprint=fingerprint,
-            )
-        ):
-            raise AuthorizationDenied(
-                "runtime Agent Session identity is already bound; renew it instead"
-            )
-        session = self._continuable_machine_agent_session(
-            entry=entry,
-            runtime=runtime,
-            external_session_fingerprint=fingerprint,
-            custody_root=custody_root,
-        )
-        continued = session is not None
-        if session is None:
-            session, revision = begin_universal_runtime_agent_session(
-                self.universal_store,
-                self.universal_registry,
-                session_root=session_root,
-                runtime=runtime,
-                external_session_fingerprint=fingerprint,
-                catalog_entry_root=entry.root_id,
-                authentication_context=(
-                    self.universal_registry.authorization.session.context()
-                ),
-            )
-        else:
-            revision = self.universal_store.revision
-        session_root = session.root_id
         with self._machine_agent_session_lock:
+            if runtime in {"baboom", "baboom-execution"} and (
+                self._machine_agent_identity_is_currently_bound(
+                    runtime=runtime,
+                    catalog_entry_root=entry.root_id,
+                    custody_root=custody_root,
+                    external_session_fingerprint=fingerprint,
+                )
+            ):
+                raise AuthorizationDenied(
+                    "runtime Agent Session identity is already bound; renew it instead"
+                )
+            session = self._continuable_machine_agent_session(
+                entry=entry,
+                runtime=runtime,
+                external_session_fingerprint=fingerprint,
+                custody_root=custody_root,
+            )
+            continued = session is not None
+            if session is None:
+                session, revision = begin_universal_runtime_agent_session(
+                    self.universal_store,
+                    self.universal_registry,
+                    session_root=session_root,
+                    runtime=runtime,
+                    external_session_fingerprint=fingerprint,
+                    catalog_entry_root=entry.root_id,
+                    authentication_context=(
+                        self.universal_registry.authorization.session.context()
+                    ),
+                )
+                self._bind_machine_agent_session_identity(
+                    entry=entry,
+                    runtime=runtime,
+                    external_session_fingerprint=fingerprint,
+                    custody_root=custody_root,
+                    session=session,
+                    evidence_roots=(),
+                )
+            else:
+                revision = self.universal_store.revision
+            session_root = session.root_id
             self._machine_agent_sessions[session_root] = {
                 "token": token,
                 "runtime": runtime.strip(),
@@ -4146,6 +4614,7 @@ class ApplicationServer:
             "application": self.universal_registry.application_root,
             "workshop": self.universal_registry.workshop_root,
             "revision": snapshot.revision,
+            "total": len(entries),
             "categories": dict(self.universal_registry.workshop_category_roots),
             "phases": dict(self.universal_registry.workshop_phase_roots),
             "requirements": list(
@@ -4168,7 +4637,7 @@ class ApplicationServer:
                     "text": entry.content,
                     "created_at": entry.created_at,
                 }
-                for entry in entries
+                for entry in entries[-_MACHINE_WORKSHOP_ENTRY_LIMIT:]
             ],
         }
         with self._work_index_cache_ready:
@@ -4270,6 +4739,8 @@ class ApplicationServer:
             ("POST", "/api/universal/work-next"),
             ("POST", "/api/universal/work-claim"),
             ("POST", "/api/universal/work-claim-recover"),
+            ("POST", "/api/universal/cde-write-permit"),
+            ("POST", "/api/universal/cde-write-receipt"),
             ("POST", "/api/universal/value"),
             ("POST", "/api/universal/agent-session-challenge"),
             ("POST", "/api/universal/agent-session"),
@@ -4419,15 +4890,46 @@ class ApplicationServer:
             agent_session_root = self._resolve_universal_machine_agent_session(
                 request
             )
-            work, revision = read_universal_baboom_current_claimed_work(
+            work, revision = read_universal_current_claimed_work(
                 self.universal_store,
                 self.universal_registry,
                 agent_session_root=agent_session_root,
                 authentication_context=context,
             )
+            projected_work = None
+            if work is not None:
+                interfaces = work.get("interfaces")
+                title_interfaces = tuple(
+                    interface for interface in interfaces
+                    if (
+                        isinstance(interface, dict)
+                        and interface.get("name") == "title"
+                    )
+                ) if isinstance(interfaces, (list, tuple)) else ()
+                title_interface = (
+                    title_interfaces[0]
+                    if len(title_interfaces) == 1
+                    else None
+                )
+                title = (
+                    title_interface.get("value")
+                    if isinstance(title_interface, dict)
+                    else None
+                )
+                root = work.get("root")
+                if (
+                    type(root) is not str
+                    or not root
+                    or type(title) is not str
+                    or not title.strip()
+                ):
+                    raise InvalidCell(
+                        "current Work projection is malformed"
+                    )
+                projected_work = {"root": root, "title": title}
             return {
                 "agent_session": agent_session_root,
-                "work": work,
+                "work": projected_work,
                 "revision": revision,
             }
         if method == "GET" and path == "/api/universal/grand-map-work":
@@ -4831,12 +5333,24 @@ class ApplicationServer:
                 "revision": self.universal_store.revision,
             }
         if method == "GET" and path == "/api/universal/deliberation":
-            if set(body) != {"space", "limit"}:
+            if set(body) not in (
+                {"space", "limit"},
+                {"space", "category", "limit"},
+            ):
                 raise InvalidCell("deliberation read request shape is invalid")
             space_root = body["space"]
+            category_root = body.get("category")
             limit = body["limit"]
             if (
                 type(space_root) is not str
+                or (
+                    category_root is not None
+                    and (
+                        type(category_root) is not str
+                        or not category_root
+                        or len(category_root.encode("utf-8")) > 4_096
+                    )
+                )
                 or type(limit) is not int
                 or not 1 <= limit <= 500
             ):
@@ -4846,8 +5360,9 @@ class ApplicationServer:
             self.require_universal_http_route(
                 method, path, authentication_context=context
             )
+            snapshot = self.universal_store.snapshot()
             entries = read_authorized_deliberation_entries(
-                self.universal_store.snapshot(),
+                snapshot,
                 self.universal_registry.deliberation_protocol,
                 space_root=space_root,
                 read_action_root=(
@@ -4861,13 +5376,18 @@ class ApplicationServer:
                 ),
                 authentication_context=context,
             )
+            if category_root is not None:
+                entries = tuple(
+                    entry for entry in entries
+                    if entry.category_root == category_root
+                )
             projected = []
             for entry in entries[-limit:]:
                 payload = None
                 if len(entry.reference_roots) == 1:
                     try:
                         payload = read_value_graph(
-                            self.universal_store.snapshot(),
+                            snapshot,
                             self.universal_registry.value_graph_protocol,
                             entry.reference_roots[0],
                         )
@@ -4888,8 +5408,9 @@ class ApplicationServer:
                 "ok": True,
                 "application": self.universal_registry.application_root,
                 "space": space_root,
+                "total": len(entries),
                 "entries": projected,
-                "revision": self.universal_store.revision,
+                "revision": snapshot.revision,
             }
         if method == "GET" and path == "/api/universal/workshop-assignments":
             if body:
@@ -5459,6 +5980,85 @@ class ApplicationServer:
                     "device_ref": device_ref,
                     "state": "revoked",
                     "reason_code": body["reason_code"],
+                    "revision": revision,
+                }
+            if path == "/api/universal/cde-write-receipt":
+                expected = {
+                    "permit", "operation", "path", "content_digest",
+                    "request_id",
+                }
+                if direct or set(body) != expected:
+                    raise AuthorizationDenied(
+                        "CDE receipt requires one bound exact write result"
+                    )
+                if (
+                    self.cde_write_signing_provider is None
+                    or self.cde_write_signing_descriptor_root is None
+                ):
+                    raise AuthorizationDenied(
+                        "CDE signing authority is unavailable"
+                    )
+                if self.universal_checkpoint_guard is not None:
+                    self.universal_checkpoint_guard.require_healthy()
+                self.require_universal_http_route(
+                    "POST",
+                    path,
+                    authentication_context=context,
+                )
+                agent_session_root = (
+                    self._resolve_universal_machine_agent_session(request)
+                )
+                admission = authorize_universal_cde_write(
+                    self.universal_store,
+                    self.universal_registry,
+                    agent_session_root=agent_session_root,
+                    operation=body["operation"],
+                    path=body["path"],
+                    authentication_context=context,
+                )
+                snapshot = self.universal_store.snapshot()
+                if snapshot.revision != admission.authority_revision:
+                    raise AuthorizationDenied(
+                        "CDE receipt admission revision drifted"
+                    )
+                session = read_agent_session(
+                    snapshot,
+                    self.universal_registry.agent_body.protocol,
+                    self.universal_registry.authorization.protocol,
+                    agent_session_root,
+                )
+                runtime = _agent_body_catalog_entry_for_session(
+                    snapshot, self.universal_registry, session
+                ).runtime
+                receipt, revision = consume_cde_write_permit(
+                    self.universal_store,
+                    self.universal_registry.cde_write_authority_protocol,
+                    self.universal_registry.cde_signing_protocol,
+                    self.cde_write_signing_provider,
+                    body["permit"],
+                    runtime=runtime,
+                    agent_session_root=agent_session_root,
+                    work_root=admission.work_root,
+                    container_root=admission.container_root,
+                    container_id=admission.container_id,
+                    container_digest=admission.container_digest,
+                    operation=admission.operation,
+                    path=admission.path,
+                    content_digest=body["content_digest"],
+                    request_id=body["request_id"],
+                    authorization_evidence=admission.claim_binding_root,
+                    authority_revision=admission.authority_revision,
+                    now=time.time(),
+                )
+                return {
+                    "receipt": receipt.root_id,
+                    "permit": receipt.permit_root,
+                    "kind": "consumed",
+                    "receipt_digest": receipt.digest,
+                    "agent_session": agent_session_root,
+                    "work": admission.work_root,
+                    "claim_binding": admission.claim_binding_root,
+                    "container_root": admission.container_root,
                     "revision": revision,
                 }
             if path == "/api/universal/model-delegation":
@@ -6601,6 +7201,92 @@ class ApplicationServer:
                     "compliance_evidence": compliance_evidence_root,
                     **result,
                 }
+            if path == "/api/universal/cde-write-permit":
+                expected = {
+                    "operation", "path", "content_digest", "request_id", "nonce"
+                }
+                if direct or set(body) != expected:
+                    raise AuthorizationDenied(
+                        "CDE permit requires one bound exact write request"
+                    )
+                if (
+                    self.cde_write_signing_provider is None
+                    or self.cde_write_signing_descriptor_root is None
+                ):
+                    raise AuthorizationDenied(
+                        "CDE signing authority is unavailable"
+                    )
+                if self.universal_checkpoint_guard is not None:
+                    self.universal_checkpoint_guard.require_healthy()
+                self.require_universal_http_route(
+                    "POST",
+                    path,
+                    authentication_context=context,
+                )
+                agent_session_root = (
+                    self._resolve_universal_machine_agent_session(request)
+                )
+                admission = authorize_universal_cde_write(
+                    self.universal_store,
+                    self.universal_registry,
+                    agent_session_root=agent_session_root,
+                    operation=body["operation"],
+                    path=body["path"],
+                    authentication_context=context,
+                )
+                snapshot = self.universal_store.snapshot()
+                if snapshot.revision != admission.authority_revision:
+                    raise AuthorizationDenied(
+                        "CDE permit admission revision drifted"
+                    )
+                session = read_agent_session(
+                    snapshot,
+                    self.universal_registry.agent_body.protocol,
+                    self.universal_registry.authorization.protocol,
+                    agent_session_root,
+                )
+                runtime = _agent_body_catalog_entry_for_session(
+                    snapshot, self.universal_registry, session
+                ).runtime
+                now = time.time()
+                permit, revision = issue_cde_write_permit(
+                    self.universal_store,
+                    self.universal_registry.cde_write_authority_protocol,
+                    self.universal_registry.cde_signing_protocol,
+                    self.cde_write_signing_provider,
+                    self.cde_write_signing_descriptor_root,
+                    permit_id="app:cde-write-permit:" + uuid.uuid4().hex,
+                    runtime=runtime,
+                    agent_session_root=agent_session_root,
+                    work_root=admission.work_root,
+                    container_root=admission.container_root,
+                    container_id=admission.container_id,
+                    container_digest=admission.container_digest,
+                    operation=admission.operation,
+                    path=admission.path,
+                    content_digest=body["content_digest"],
+                    request_id=body["request_id"],
+                    nonce=body["nonce"],
+                    issued_at=now,
+                    expires_at=now + 60.0,
+                    authorization_evidence=admission.claim_binding_root,
+                )
+                return {
+                    "permit": permit.root_id,
+                    "agent_session": permit.agent_session_root,
+                    "work": permit.work_root,
+                    "claim_binding": admission.claim_binding_root,
+                    "container_root": permit.container_root,
+                    "container_id": permit.container_id,
+                    "container_digest": permit.container_digest,
+                    "operation": permit.operation,
+                    "path": permit.path,
+                    "content_digest": permit.content_digest,
+                    "request_id": permit.request_id,
+                    "authority_revision": permit.authority_revision,
+                    "expires_at": permit.expires_at,
+                    "revision": revision,
+                }
             if path == "/api/universal/work-claim-transfer-claim":
                 if direct or set(body) != {"transfer_key"}:
                     raise AuthorizationDenied(
@@ -7305,10 +7991,12 @@ class ApplicationServer:
             ):
                 raise InvalidCell("work transition request shape is invalid")
             compact_projection = False
+            receipt_projection = False
             if "projection" in body:
-                if body["projection"] != "index":
+                if body["projection"] not in {"index", "receipt-v1"}:
                     raise InvalidCell("work transition projection is invalid")
-                compact_projection = True
+                compact_projection = body["projection"] == "index"
+                receipt_projection = body["projection"] == "receipt-v1"
             if direct:
                 raise AuthorizationDenied(
                     "work transition requires a bound runtime Agent Session"
@@ -7353,6 +8041,17 @@ class ApplicationServer:
                 evidence_payload=body["evidence"],
                 authentication_context=context,
             )
+            if receipt_projection:
+                return {
+                    "history_root": history_root,
+                    "compliance_observation": compliance_observation_root,
+                    "compliance_evidence": compliance_evidence_root,
+                    "projection": "receipt-v1",
+                    "revision": revision,
+                    "work_root": body["root"],
+                    "event": body["event"],
+                    "agent_session": agent_session_root,
+                }
             status = (
                 self._project_universal_machine_work_index(
                     authentication_context=context,
@@ -8771,9 +9470,13 @@ def main(argv=None):
                                cloud_tls_private_key_file=(
                                    args.cloud_tls_private_key_file
                                ),
-                               machine_descriptor_path=(
-                                   args.machine_descriptor_path or None
-                               )).start()
+                                machine_descriptor_path=(
+                                    args.machine_descriptor_path or None
+                                ),
+                                runtime_compliance_runner=(
+                                    run_physical_runtime_compliance_court
+                                    if args.machine_transport else None
+                                )).start()
     # The unauthenticated root is deliberately denied. Hand the launcher the
     # one-use bootstrap URL instead of advertising an unusable bare address.
     print('Node-native ArchHub: %s' % server.bootstrap_url, flush=True)

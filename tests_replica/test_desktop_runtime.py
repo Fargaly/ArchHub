@@ -309,6 +309,9 @@ def test_desktop_restarts_only_the_signed_stopped_authority_database(
     assert runtime._server_kwargs["state_path"] is None
     assert runtime._server_kwargs["universal_state_path"] == database
     assert runtime._server_kwargs["machine_descriptor_path"] is not None
+    assert runtime._server_kwargs["runtime_compliance_runner"] is (
+        desktop_module.run_physical_runtime_compliance_court
+    )
 
 
 def test_desktop_lock_and_state_live_outside_the_repository():

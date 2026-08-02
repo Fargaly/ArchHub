@@ -86,29 +86,17 @@ def test_snapshot_round_trip_keeps_the_single_graph_and_focus(tmp_path):
 def test_server_mutations_survive_a_real_server_restart(
     tmp_path, cng_checkpoint_court
 ):
-    path = tmp_path / 'archhub-state.json.gz'
-    store, registry = build_archhub_application()
-    selected = list(registry['cards'])[5]
+    path = tmp_path / 'archhub-universal.sqlite3'
     server = ApplicationServer(
-        store=store, registry=registry, state_path=path,
+        universal_state_path=path,
         universal_checkpoint_path=cng_checkpoint_court['checkpoint'],
         universal_checkpoint_authority_path=cng_checkpoint_court['authority'],
         universal_checkpoint_key_name=cng_checkpoint_court['key_name'],
         universal_checkpoint_provider_id=cng.SOFTWARE_PROVIDER_ID,
-        allow_legacy_mutations=True,
     ).start()
     try:
         checkpoint_binding = server.universal_checkpoint_binding_root
         assert checkpoint_binding in server.universal_store.snapshot().cells
-        request = urllib.request.Request(
-            server.url + '/api/activate', method='POST',
-            headers={
-                'Content-Type': 'application/json',
-                'X-ArchHub-Session': server.browser_session_token,
-            },
-            data=json.dumps({'ui_id': registry['cards'][selected]}).encode('utf-8'))
-        response = json.loads(urllib.request.urlopen(request, timeout=10).read())
-        assert response['ok'] is True
         gesture = urllib.request.Request(
             server.url + '/api/universal/gesture', method='POST',
             headers={
@@ -117,6 +105,7 @@ def test_server_mutations_survive_a_real_server_restart(
             },
             data=json.dumps({
                 'viewport': {'pan_x': 73, 'pan_y': -21, 'zoom': 1.4},
+                'projection': False,
             }).encode('utf-8'),
         )
         universal_response = json.loads(
@@ -131,11 +120,11 @@ def test_server_mutations_survive_a_real_server_restart(
         cloud_health = json.loads(urllib.request.urlopen(
             health_request, timeout=10).read())
         assert cloud_health['ok'] is True
-        assert cloud_health['legacy_parallel_runtime'] is True
         assert cloud_health['core_values']['root'] == 'app:core-values:v1'
         assert cloud_health['core_values']['lifecycle'] == 'WIP'
         assert set(cloud_health['core_values']['coverage'].values()) == {'partial'}
         assert cloud_health['checkpoint_binding'] == checkpoint_binding
+        assert cloud_health['legacy_parallel_runtime'] is False
         browser_session_root = server.browser_session_root
         runtime_ownership_root = server._runtime_ownership_root
     finally:
@@ -160,12 +149,11 @@ def test_server_mutations_survive_a_real_server_restart(
     )
 
     restarted = ApplicationServer(
-        state_path=path,
+        universal_state_path=path,
         universal_checkpoint_path=cng_checkpoint_court['checkpoint'],
         universal_checkpoint_authority_path=cng_checkpoint_court['authority'],
         universal_checkpoint_key_name=cng_checkpoint_court['key_name'],
         universal_checkpoint_provider_id=cng.SOFTWARE_PROVIDER_ID,
-        allow_legacy_mutations=True,
     ).start()
     try:
         state_request = urllib.request.Request(
@@ -181,7 +169,6 @@ def test_server_mutations_survive_a_real_server_restart(
         website_response = urllib.request.urlopen(
             restarted.url + '/website', timeout=10)
         website = website_response.read().decode('utf-8')
-        assert state['legacy']['focus'] == selected
         assert state['persistent'] is True
         assert state['universal_persistent'] is True
         assert state['universal_checkpoint'] == 'anchored'
@@ -242,30 +229,12 @@ def test_server_mutations_survive_a_real_server_restart(
         assert cloud_health['core_values']['lifecycle'] == 'WIP'
         assert set(cloud_health['core_values']['coverage'].values()) == {'partial'}
         assert cloud_health['checkpoint_binding'] == checkpoint_binding
-        assert cloud_health['legacy_parallel_runtime'] is True
+        assert cloud_health['legacy_parallel_runtime'] is False
         assert 'class="archhub-app"' in page
         assert 'class="site-shell"' in website
         assert website_response.headers['X-ArchHub-Graph-Root'] == (
             restarted.universal_registry.website.root_id
         )
-
-        secret_command = 'read api_key=must-never-survive-restart'
-        request = urllib.request.Request(
-            restarted.url + '/api/activate', method='POST',
-            headers={
-                'Content-Type': 'application/json',
-                'X-ArchHub-Session': restarted.browser_session_token,
-            },
-            data=json.dumps({
-                'ui_id': registry['cockpit_command_submit'],
-                'input_value': secret_command,
-            }).encode('utf-8'))
-        response = json.loads(urllib.request.urlopen(request, timeout=10).read())
-        assert response['ok'] is True
-        assert restarted.store.pull(
-            restarted.registry['cockpit_domain']['command']
-        ) == '[REDACTED BY COCKPIT POLICY]'
-        assert secret_command not in repr(restarted.store.nodes)
     finally:
         restarted.close()
 

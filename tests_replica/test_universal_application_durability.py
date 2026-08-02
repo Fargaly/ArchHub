@@ -19,6 +19,11 @@ from nodelang.map_import import resolve_map_path
 from nodelang.universal_application import (
     assign_released_universal_theme,
     build_universal_application,
+    connect_universal_roots,
+    create_universal_property,
+    edit_universal_property,
+    group_universal_selection,
+    instantiate_universal_definition,
     preview_universal_presentation_color,
     preview_universal_theme,
     promote_universal_theme_to_shared,
@@ -29,7 +34,10 @@ from nodelang.universal_application import (
     restore_universal_application,
     revoke_universal_authority_relationship,
     select_universal_root,
+    set_universal_scope,
+    set_universal_selection,
     set_universal_viewport,
+    ungroup_universal_composition,
 )
 from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore
 
@@ -176,6 +184,212 @@ def test_generic_canvas_interface_reopens_as_connected_exact_history(tmp_path):
         assert exact is not None
         assert exact["previous_roots"] == [legacy_root]
     reopened.close()
+
+
+def test_complete_authoring_path_reopens_from_one_exact_cell_graph(tmp_path):
+    path = tmp_path / "complete-authoring-path.sqlite3"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.relationship-authority", b"i" * 32
+    )
+    provider.add_key("archhub.local.court-attestation", b"j" * 32)
+    store, registry = build_universal_application(
+        resolve_map_path(), CellStore(path), key_provider=provider
+    )
+
+    list_root, _ = instantiate_universal_definition(
+        store,
+        registry,
+        registry.standard_library.definition_roots[0],
+        x=420,
+        y=180,
+    )
+    watcher_root, _ = instantiate_universal_definition(
+        store,
+        registry,
+        registry.standard_library.definition_roots[1],
+        x=700,
+        y=180,
+    )
+    property_root, _ = create_universal_property(
+        store, registry, watcher_root, "refresh_seconds", "15"
+    )
+    property_value_root = edit_universal_property(
+        store, registry, property_root, "30"
+    )
+
+    projected = project_universal_canvas(store, registry)
+    source_root = registry.map.domains["ui"]
+    source_node = next(
+        node for node in projected["nodes"] if node["id"] == source_root
+    )
+    source_interface = next(
+        port["id"] for port in source_node["ports"]
+        if port["side"] == "source" and port["connectable"]
+    )
+    watcher_node = next(
+        node for node in projected["nodes"] if node["id"] == watcher_root
+    )
+    target_interface = next(
+        port["id"] for port in watcher_node["ports"]
+        if port["side"] == "target" and port["connectable"]
+    )
+    wire_root, _ = connect_universal_roots(
+        store,
+        registry,
+        source_root,
+        watcher_root,
+        source_interface=source_interface,
+        target_interface=target_interface,
+    )
+    connected = project_universal_canvas(store, registry)
+    original_wire = next(
+        wire for wire in connected["wires"] if wire["id"] == wire_root
+    )
+    original_wire_identity = (
+        original_wire["source_incidence"],
+        original_wire["target_incidence"],
+        original_wire["source_interface"],
+        original_wire["target_interface"],
+    )
+
+    set_universal_selection(
+        store,
+        registry,
+        (list_root, watcher_root),
+        focus_root=watcher_root,
+    )
+    first_group, _ = group_universal_selection(
+        store, registry, title="Authoring flow"
+    )
+    set_universal_scope(store, registry, first_group)
+    nested = project_universal_canvas(store, registry)
+    assert nested["scope"]["current"] == first_group
+    assert tuple(node["id"] for node in nested["nodes"]) == (
+        list_root,
+        watcher_root,
+    )
+
+    set_universal_scope(store, registry, registry.canvas_root)
+    ungroup_universal_composition(store, registry, first_group)
+    ungrouped = project_universal_canvas(store, registry)
+    assert {list_root, watcher_root}.issubset(
+        node["id"] for node in ungrouped["nodes"]
+    )
+    assert next(
+        wire for wire in ungrouped["wires"] if wire["id"] == wire_root
+    )["target"] == watcher_root
+
+    persisted_group, _ = group_universal_selection(
+        store, registry, title="Persistent authoring flow"
+    )
+    set_universal_scope(store, registry, persisted_group)
+    select_universal_root(store, registry, watcher_root)
+    before_close = project_universal_canvas(store, registry)
+    assert before_close["scope"]["current"] == persisted_group
+    assert before_close["selection"] == [watcher_root]
+    assert tuple(node["id"] for node in before_close["nodes"]) == (
+        list_root,
+        watcher_root,
+    )
+    property_row = next(
+        row for row in before_close["properties"]
+        if row["relation"] == property_root
+    )
+    assert property_row["label"] == "refresh_seconds"
+    assert property_row["value"] == "30"
+    authored_revision = store.revision
+    authored_digest = store.revision_chain_digest(authored_revision)
+    store.close()
+
+    reopened = CellStore(path)
+    assert reopened.revision == authored_revision
+    assert reopened.revision_chain_digest() == authored_digest
+    reopened, restored = restore_universal_application(
+        resolve_map_path(), reopened, key_provider=provider
+    )
+    try:
+        recovered = project_universal_canvas(reopened, restored)
+        assert recovered["scope"]["current"] == persisted_group
+        assert recovered["selection"] == [watcher_root]
+        assert tuple(node["id"] for node in recovered["nodes"]) == (
+            list_root,
+            watcher_root,
+        )
+        assert reopened.read(property_value_root).atom == b"30"
+        recovered_property = next(
+            row for row in recovered["properties"]
+            if row["relation"] == property_root
+        )
+        assert recovered_property["label"] == "refresh_seconds"
+        assert recovered_property["value"] == "30"
+
+        wire_members = read_relation(
+            reopened.snapshot(), wire_root, budget=256
+        )
+        assert {
+            member.role_id: member.participant_id
+            for member in wire_members
+        } == {
+            restored.roles["source"]: source_interface,
+            restored.roles["target"]: target_interface,
+            restored.roles["scope"]: restored.canvas_root,
+        }
+        composition_members = read_relation(
+            reopened.snapshot(), persisted_group, budget=100_000
+        )
+        assert {
+            member.participant_id for member in composition_members
+            if member.role_id == restored.roles["member"]
+        } == {list_root, watcher_root}
+
+        history_root = restored.view_sessions[
+            restored.authorization.subject_root
+        ].composition_history_root
+        history = read_relation(
+            reopened.snapshot(), history_root, budget=100_000
+        )
+        assert [
+            reopened.read(next(
+                member.participant_id for member in read_relation(
+                    reopened.snapshot(), item.participant_id, budget=32
+                ) if member.role_id == restored.roles["why"]
+            )).atom.decode("ascii")
+            for item in history
+        ] == ["group", "ungroup", "group"]
+
+        set_universal_scope(reopened, restored, restored.canvas_root)
+        parent = project_universal_canvas(reopened, restored)
+        group_node = next(
+            node for node in parent["nodes"]
+            if node["id"] == persisted_group
+        )
+        boundary_interfaces = {
+            port["id"] for port in group_node["ports"] if port["derived"]
+        }
+        grouped_wire = next(
+            wire for wire in parent["wires"] if wire["id"] == wire_root
+        )
+        assert grouped_wire["source"] == source_root
+        assert grouped_wire["target"] == persisted_group
+        assert grouped_wire["target_interface"] in boundary_interfaces
+
+        ungroup_universal_composition(reopened, restored, persisted_group)
+        final = project_universal_canvas(reopened, restored)
+        final_wire = next(
+            wire for wire in final["wires"] if wire["id"] == wire_root
+        )
+        assert final_wire["target"] == watcher_root
+        assert (
+            final_wire["source_incidence"],
+            final_wire["target_incidence"],
+            final_wire["source_interface"],
+            final_wire["target_interface"],
+        ) == original_wire_identity
+        assert {list_root, watcher_root}.issubset(
+            node["id"] for node in final["nodes"]
+        )
+    finally:
+        reopened.close()
 
 
 def test_restore_appends_new_protected_routes_without_deleting_old_graph(

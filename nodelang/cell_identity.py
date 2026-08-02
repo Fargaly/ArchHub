@@ -1069,14 +1069,18 @@ def _verify_signed_relationship_material(
     protocol: IdentityProtocol,
     broker: RelationshipAuthorityBroker,
     relationship_root: str,
+    *,
+    registered_roots: frozenset[str] | None = None,
 ) -> tuple[AuthorityRelationship, int]:
     """Verify graph shape, digest, and signature without trusting RAM state."""
-    registered = {
-        member.participant_id for member in read_relation(
-            snapshot, protocol.root_id, budget=100_000
+    registered = registered_roots
+    if registered is None:
+        registered = frozenset(
+            member.participant_id for member in read_relation(
+                snapshot, protocol.root_id, budget=100_000
+            )
+            if member.role_id == protocol.roles["relationship-member"]
         )
-        if member.role_id == protocol.roles["relationship-member"]
-    }
     if relationship_root not in registered:
         raise InvalidCell("authority relationship is not protocol-registered")
     relationship = read_authority_relationship(
@@ -1239,13 +1243,18 @@ def verify_relationship_authority_snapshot(
         )
         if member.role_id == protocol.roles["relationship-member"]
     )
+    registered_roots = frozenset(registered)
     relationships: dict[str, AuthorityRelationship] = {}
     expired_roots: set[str] = set()
     invalid_reasons: dict[str, str] = {}
     for relationship_root in registered:
         try:
             relationship, generation = _verify_signed_relationship_material(
-                snapshot, protocol, broker, relationship_root
+                snapshot,
+                protocol,
+                broker,
+                relationship_root,
+                registered_roots=registered_roots,
             )
             if not broker.verify_generation(relationship_root, generation):
                 raise RelationshipAuthorityDenied(

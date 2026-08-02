@@ -164,6 +164,9 @@ def test_headless_bridge_prewarms_only_the_work_index(monkeypatch, tmp_path):
 
     assert captured["enable_machine_projection_prewarm"] is True
     assert captured["machine_projection_prewarm_targets"] == ("work",)
+    assert captured["runtime_compliance_runner"] is (
+        authority_bridge.run_physical_runtime_compliance_court
+    )
 
 
 def test_bridge_proof_is_bounded_and_proof_failures_are_safe_status(monkeypatch, tmp_path):

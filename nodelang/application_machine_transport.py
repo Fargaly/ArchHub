@@ -2317,6 +2317,148 @@ class UniversalRuntimeClient:
             raise MachineTransportError("current Work response is invalid")
         return {"root": work["root"], "title": work["title"]}
 
+    def issue_cde_write_permit(
+        self,
+        *,
+        operation: str,
+        path: str,
+        content_digest: str,
+        request_id: str,
+        nonce: str,
+    ) -> dict[str, object]:
+        """Request one short-lived permit derived from this session's Work."""
+        if not self.agent_session_root:
+            raise MachineTransportError(
+                "CDE write permit requires a bound runtime Agent Session"
+            )
+        if any(
+            type(value) is not str or not value
+            for value in (operation, path, request_id, nonce)
+        ):
+            raise MachineTransportError("CDE write permit request is invalid")
+        if (
+            type(content_digest) is not str
+            or len(content_digest) != 64
+            or any(character not in "0123456789abcdef" for character in content_digest)
+        ):
+            raise MachineTransportError(
+                "CDE write permit content digest is invalid"
+            )
+        result = self.request(
+            "POST",
+            "/api/universal/cde-write-permit",
+            {
+                "operation": operation,
+                "path": path,
+                "content_digest": content_digest,
+                "request_id": request_id,
+                "nonce": nonce,
+            },
+        )
+        expected = {
+            "permit", "agent_session", "work", "claim_binding",
+            "container_root", "container_id", "container_digest",
+            "operation", "path", "content_digest", "request_id",
+            "authority_revision", "expires_at", "revision",
+        }
+        if (
+            not isinstance(result, dict)
+            or set(result) != expected
+            or result["agent_session"] != self.agent_session_root
+            or result["operation"] != operation
+            or result["path"] != path.replace("\\", "/")
+            or result["content_digest"] != content_digest
+            or result["request_id"] != request_id
+            or any(
+                type(result[name]) is not str or not result[name]
+                for name in (
+                    "permit", "work", "claim_binding", "container_root",
+                    "container_id", "container_digest",
+                )
+            )
+            or len(result["container_digest"]) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in result["container_digest"]
+            )
+            or type(result["authority_revision"]) is not int
+            or type(result["revision"]) is not int
+            or result["authority_revision"] != result["revision"]
+            or type(result["expires_at"]) not in (int, float)
+        ):
+            raise MachineTransportError(
+                "CDE write permit response is invalid"
+            )
+        return result
+
+    def consume_cde_write_permit(
+        self,
+        *,
+        permit: str,
+        operation: str,
+        path: str,
+        content_digest: str,
+        request_id: str,
+    ) -> dict[str, object]:
+        """Record one exact write result against its graph-held permit."""
+        if not self.agent_session_root:
+            raise MachineTransportError(
+                "CDE write receipt requires a bound runtime Agent Session"
+            )
+        if any(
+            type(value) is not str or not value
+            for value in (permit, operation, path, request_id)
+        ):
+            raise MachineTransportError("CDE write receipt request is invalid")
+        if (
+            type(content_digest) is not str
+            or len(content_digest) != 64
+            or any(character not in "0123456789abcdef" for character in content_digest)
+        ):
+            raise MachineTransportError(
+                "CDE write receipt content digest is invalid"
+            )
+        result = self.request(
+            "POST",
+            "/api/universal/cde-write-receipt",
+            {
+                "permit": permit,
+                "operation": operation,
+                "path": path,
+                "content_digest": content_digest,
+                "request_id": request_id,
+            },
+        )
+        expected = {
+            "receipt", "permit", "kind", "receipt_digest",
+            "agent_session", "work", "claim_binding", "container_root",
+            "revision",
+        }
+        if (
+            not isinstance(result, dict)
+            or set(result) != expected
+            or result["permit"] != permit
+            or result["kind"] != "consumed"
+            or result["agent_session"] != self.agent_session_root
+            or any(
+                type(result[name]) is not str or not result[name]
+                for name in (
+                    "receipt", "work", "claim_binding", "container_root"
+                )
+            )
+            or type(result["receipt_digest"]) is not str
+            or len(result["receipt_digest"]) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in result["receipt_digest"]
+            )
+            or type(result["revision"]) is not int
+        ):
+            raise MachineTransportError(
+                "CDE write receipt response is invalid"
+            )
+        return result
+
     def claim_work(self, work_root: str) -> dict[str, object]:
         """Claim one exact open governed Work under this Agent Session."""
         if not self.agent_session_root:

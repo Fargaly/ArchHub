@@ -2966,8 +2966,17 @@ def test_nested_scope_reads_only_declared_relations_and_owner_properties(
             root_id, ()
         )
     }
+    interface_role = universal_registry.assembly_protocol.role("interface")
+    owner_interfaces = {
+        member.participant_id
+        for root_id in visible_roots
+        for member in read_relation(snapshot, root_id, budget=100_000)
+        if member.role_id == interface_role
+    }
     allowed = {
         target_root,
+        *visible_roots,
+        *owner_interfaces,
         *declared_relations,
         *owner_properties,
     }

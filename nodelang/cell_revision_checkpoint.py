@@ -100,6 +100,9 @@ class RevisionCheckpointGuard:
         self._initialized = False
         self._fault: str | None = None
         self._unsubscribe = None
+        self._verified_store: CellStore | None = None
+        self._verified_revision: int | None = None
+        self._verified_digest: str | None = None
 
     @staticmethod
     def default_path(database_path: str | os.PathLike[str]) -> Path:
@@ -318,6 +321,7 @@ class RevisionCheckpointGuard:
             if self._signing_authority is not None
             else self._write_legacy(store, snapshot)
         )
+        record = json.loads(encoded)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(
             ".%s.%s.tmp" % (self.path.name, secrets.token_hex(8))
@@ -333,6 +337,9 @@ class RevisionCheckpointGuard:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, self.path)
+            self._verified_store = store
+            self._verified_revision = int(record["revision"])
+            self._verified_digest = str(record["digest"])
         finally:
             try:
                 temporary.unlink()
@@ -371,18 +378,28 @@ class RevisionCheckpointGuard:
             raise RevisionCheckpointDenied(
                 "durable Cell database was rolled back behind its checkpoint"
             )
-        try:
-            store.at(anchored_revision)
-        except Exception as exc:
-            raise RevisionCheckpointDenied(
-                "checkpointed Cell revision is missing"
-            ) from exc
-        if not hmac.compare_digest(
-            store.revision_chain_digest(anchored_revision), anchored_digest
-        ):
-            raise RevisionCheckpointDenied(
-                "checkpointed Cell revision digest does not match"
-            )
+        same_verified_prefix = (
+            self._verified_store is store
+            and self._verified_revision == anchored_revision
+            and self._verified_digest is not None
+            and hmac.compare_digest(self._verified_digest, anchored_digest)
+        )
+        if not same_verified_prefix:
+            try:
+                store.at(anchored_revision)
+            except Exception as exc:
+                raise RevisionCheckpointDenied(
+                    "checkpointed Cell revision is missing"
+                ) from exc
+            if not hmac.compare_digest(
+                store.revision_chain_digest(anchored_revision), anchored_digest
+            ):
+                raise RevisionCheckpointDenied(
+                    "checkpointed Cell revision digest does not match"
+                )
+            self._verified_store = store
+            self._verified_revision = anchored_revision
+            self._verified_digest = anchored_digest
         return anchored_revision, anchored_digest
 
     def verify_trusted_prefix(self, store: CellStore) -> None:

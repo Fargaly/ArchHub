@@ -2403,14 +2403,28 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const changedWires=new Set(patch.upsert_wires.filter(wire =>
       previousWireRoots.has(wire.id+':'+wire.segment)
     ).map(wire => wire.id+':'+wire.segment));
-    const changedNodes=new Set(patch.upsert_nodes.map(node => node.id));
+    const previousNodes=new Map(previous.nodes.map(node => [node.id,node]));
+    const candidateNodes=new Set(patch.upsert_nodes.map(node => node.id));
     addedWires.forEach(wire => {
-      if (wire.source) changedNodes.add(wire.source);
-      if (wire.target) changedNodes.add(wire.target);
+      if (wire.source) candidateNodes.add(wire.source);
+      if (wire.target) candidateNodes.add(wire.target);
     });
-    if (previous.selected) changedNodes.add(previous.selected);
-    if (projection.selected) changedNodes.add(projection.selected);
-    return {addedWires,changedNodes,changedWires};
+    if (previous.selected) candidateNodes.add(previous.selected);
+    if (projection.selected) candidateNodes.add(projection.selected);
+    const nextNodes=new Map(projection.nodes.map(node => [node.id,node]));
+    const changedNodes=new Set();
+    const stateNodes=new Set();
+    candidateNodes.forEach(root => {
+      const before=previousNodes.get(root);
+      const after=nextNodes.get(root);
+      if (
+        before && after
+        && before.x === after.x && before.y === after.y
+        && sameCanvasNodeStructure(before,after)
+      ) stateNodes.add(root);
+      else changedNodes.add(root);
+    });
+    return {addedWires,changedNodes,changedWires,stateNodes};
   }
   function canvasWireElements(wire) {
     const relationAttributes={
@@ -2584,6 +2598,15 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
     const nodes=new Map(projection.nodes.map(node => [node.id,node]));
     const mountedNodes=index.nodes;
+    (plan.stateNodes || new Set()).forEach(root => {
+      const item=nodes.get(root);
+      const current=mountedNodes.get(root);
+      if (!item || !current) return;
+      current.dataset.selected=item.selected ? 'True' : 'False';
+      current.dataset.focused=(
+        item.id === projection.selected ? 'True' : 'False'
+      );
+    });
     plan.changedNodes.forEach(root => {
       const item=nodes.get(root);
       if (!item) return;
@@ -3191,6 +3214,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       requireUniqueProjectionIdentities(projection);
     }
     const previous=lastProjection;
+    const inspectorChanged=!sameProjectedRegion(
+      previous?.inspector,projection.inspector);
+    const toolbarChanged=!sameProjectedRegion(
+      previous?.toolbar_descriptor,projection.toolbar_descriptor);
     const redrawSegments=projection.__topologyPatch
       ? topologyPatchRedrawSegments(previous,projection.__topologyPatch)
       : topologyRedrawSegments(previous,projection);
@@ -3203,8 +3230,12 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const appended=appendPlan
       && renderAppendedTopology(projection,appendPlan,redrawSegments);
     if (!appended) renderCanvas(projection,redrawSegments);
-    renderInspector(projection);
-    renderToolbar(projection);
+    if (inspectorChanged) renderInspector(projection);
+    else {
+      const inspector=document.querySelector('.inspector');
+      if (inspector) inspector.dataset.inspectedNode=projection.selected || '';
+    }
+    if (toolbarChanged) renderToolbar(projection);
     clearInteractionStatus();
   }
   function reconcileStableProjection(projection) {

@@ -617,8 +617,8 @@ def _receipt_digest(response: ProviderSignResponse) -> str:
     return _digest(fields, domain="ArchHub/provider-sign-receipt/v2")
 
 
-def sign_statement(
-    store: CellStore,
+def prepare_signature_envelope(
+    snapshot: Snapshot,
     protocol: SigningAuthorityProtocol,
     provider: SigningAuthorityProvider,
     descriptor_root: str,
@@ -630,8 +630,8 @@ def sign_statement(
     authorization_evidence: str,
     issued_at: str | None = None,
     request_id: str | None = None,
-) -> str:
-    snapshot = store.snapshot()
+) -> tuple[Cell, ...]:
+    """Prepare one signed envelope for a caller-owned atomic graph commit."""
     if envelope_id in snapshot.cells:
         raise InvalidCell("signature envelope already exists")
     descriptor = verify_signing_key_descriptor(
@@ -691,7 +691,38 @@ def sign_statement(
         ),
         relation_id=envelope_id,
     )
-    store.commit(store.revision, create=(*scalar_cells, *relation.cells))
+    return (*scalar_cells, *relation.cells)
+
+
+def sign_statement(
+    store: CellStore,
+    protocol: SigningAuthorityProtocol,
+    provider: SigningAuthorityProvider,
+    descriptor_root: str,
+    *,
+    envelope_id: str,
+    statement_protocol: str,
+    context: str,
+    payload: bytes,
+    authorization_evidence: str,
+    issued_at: str | None = None,
+    request_id: str | None = None,
+) -> str:
+    snapshot = store.snapshot()
+    cells = prepare_signature_envelope(
+        snapshot,
+        protocol,
+        provider,
+        descriptor_root,
+        envelope_id=envelope_id,
+        statement_protocol=statement_protocol,
+        context=context,
+        payload=payload,
+        authorization_evidence=authorization_evidence,
+        issued_at=issued_at,
+        request_id=request_id,
+    )
+    store.commit(snapshot.revision, create=cells)
     return envelope_id
 
 
@@ -971,6 +1002,7 @@ __all__ = [
     "bootstrap_signing_authority_protocol",
     "build_signing_key_descriptor",
     "project_signing_authority_protocol",
+    "prepare_signature_envelope",
     "read_signature_envelope",
     "read_signing_key_descriptor",
     "sign_statement",

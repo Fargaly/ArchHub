@@ -262,6 +262,17 @@ from .cell_identity import (
     verify_relationship_authority_snapshot,
 )
 from .cell_secret_keys import SigningKeyProvider
+from .cell_signing_authority import (
+    SigningAuthorityProtocol,
+    bootstrap_signing_authority_protocol,
+    project_signing_authority_protocol,
+)
+from .cell_cde_authority import (
+    CdeWriteAuthorityProtocol,
+    authorize_cde_container_write,
+    bootstrap_cde_write_authority_protocol,
+    project_cde_write_authority_protocol,
+)
 from .cell_cloud_routes import (
     CloudRouteProtocol,
     build_cloud_route,
@@ -1143,6 +1154,21 @@ class WorkshopAssignmentProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class UniversalCdeWriteAdmission:
+    """Exact claimed-Work authority for one proposed CDE write."""
+
+    agent_session_root: str
+    work_root: str
+    claim_binding_root: str
+    container_root: str
+    container_id: str
+    container_digest: str
+    operation: str
+    path: str
+    authority_revision: int
+
+
+@dataclass(frozen=True, slots=True)
 class UniversalApplicationRegistry:
     roles: Mapping[str, str]
     map: UniversalMapRegistry
@@ -1197,6 +1223,8 @@ class UniversalApplicationRegistry:
     baboom_meeting_note_publication_protocol: BaboomMeetingNotePublicationProtocol
     work_handoff_protocol: WorkHandoffProtocol
     work_claim_transfer_protocol: WorkClaimTransferProtocol
+    cde_signing_protocol: SigningAuthorityProtocol
+    cde_write_authority_protocol: CdeWriteAuthorityProtocol
     native_authentication_protocol: NativeAuthenticationProtocol
     attention_protocol: AttentionProtocol
     attention_policy_root: str
@@ -3304,6 +3332,8 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/work-next", "execute"),
     ("POST", "/api/universal/work-claim", "execute"),
     ("POST", "/api/universal/work-claim-recover", "execute"),
+    ("POST", "/api/universal/cde-write-permit", "execute"),
+    ("POST", "/api/universal/cde-write-receipt", "execute"),
     ("POST", "/api/universal/work-transition", "execute"),
     ("POST", "/api/universal/work-court", "execute"),
     ("POST", "/api/universal/work-court-recover", "execute"),
@@ -11266,6 +11296,12 @@ def build_universal_application(
     work_claim_transfer_protocol = bootstrap_work_claim_transfer_protocol(
         store, prefix="app:work-claim-transfer-protocol"
     )
+    cde_signing_protocol = bootstrap_signing_authority_protocol(
+        store, prefix="app:cde-signing-authority-protocol"
+    )
+    cde_write_authority_protocol = bootstrap_cde_write_authority_protocol(
+        store, prefix="app:cde-write-authority-protocol"
+    )
     native_authentication_protocol = bootstrap_native_authentication_protocol(
         store, prefix="app:native-authentication-protocol"
     )
@@ -12004,6 +12040,8 @@ def build_universal_application(
         (roles["member"], compliance_protocol.registry_root),
         (roles["member"], work_handoff_protocol.root_id),
         (roles["member"], work_claim_transfer_protocol.root_id),
+        (roles["member"], cde_signing_protocol.root_id),
+        (roles["member"], cde_write_authority_protocol.root_id),
         (roles["member"], native_authentication_protocol.root_id),
         (roles["member"], attention_protocol.root_id),
         (roles["member"], attention_policy_root),
@@ -12554,6 +12592,8 @@ def build_universal_application(
         ),
         work_handoff_protocol=work_handoff_protocol,
         work_claim_transfer_protocol=work_claim_transfer_protocol,
+        cde_signing_protocol=cde_signing_protocol,
+        cde_write_authority_protocol=cde_write_authority_protocol,
         native_authentication_protocol=native_authentication_protocol,
         attention_protocol=attention_protocol,
         attention_policy_root=attention_policy_root,
@@ -14457,6 +14497,63 @@ def restore_universal_application(
         raise InvalidCell(
             "persisted work-claim-transfer protocol membership drifted"
         )
+    cde_signing_prefix = "app:cde-signing-authority-protocol"
+    cde_signing_root = cde_signing_prefix + ":root"
+    if cde_signing_root in snapshot.cells:
+        cde_signing_protocol = project_signing_authority_protocol(
+            snapshot, prefix=cde_signing_prefix
+        )
+    else:
+        cde_signing_protocol = bootstrap_signing_authority_protocol(
+            store, prefix=cde_signing_prefix
+        )
+        snapshot = store.snapshot()
+    cde_write_prefix = "app:cde-write-authority-protocol"
+    cde_write_root = cde_write_prefix + ":root"
+    if cde_write_root in snapshot.cells:
+        cde_write_authority_protocol = project_cde_write_authority_protocol(
+            snapshot, prefix=cde_write_prefix
+        )
+    else:
+        cde_write_authority_protocol = bootstrap_cde_write_authority_protocol(
+            store, prefix=cde_write_prefix
+        )
+        snapshot = store.snapshot()
+    cde_authority_roots = {
+        cde_signing_protocol.root_id,
+        cde_write_authority_protocol.root_id,
+    }
+    application_cde_authority_members = [
+        member.participant_id for member in read_relation(
+            snapshot, application_root, budget=100_000
+        )
+        if member.role_id == roles["member"]
+        and member.participant_id in cde_authority_roots
+    ]
+    if len(application_cde_authority_members) != len(
+        set(application_cde_authority_members)
+    ):
+        raise InvalidCell("persisted CDE authority membership is duplicated")
+    missing_cde_authority_roots = tuple(
+        root for root in cde_authority_roots
+        if root not in application_cde_authority_members
+    )
+    if missing_cde_authority_roots:
+        cde_authority_patch = prepare_append_relation_members(
+            snapshot,
+            application_root,
+            (
+                (roles["member"], root)
+                for root in sorted(missing_cde_authority_roots)
+            ),
+            budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=cde_authority_patch.create,
+            replace=cde_authority_patch.replace,
+        )
+        snapshot = store.snapshot()
     native_authentication_protocol = project_native_authentication_protocol(
         snapshot, prefix="app:native-authentication-protocol"
     )
@@ -15493,6 +15590,8 @@ def restore_universal_application(
         ),
         work_handoff_protocol=work_handoff_protocol,
         work_claim_transfer_protocol=work_claim_transfer_protocol,
+        cde_signing_protocol=cde_signing_protocol,
+        cde_write_authority_protocol=cde_write_authority_protocol,
         native_authentication_protocol=native_authentication_protocol,
         attention_protocol=attention_protocol,
         attention_policy_root=attention_policy_root,
@@ -17255,19 +17354,11 @@ def _canvas_endpoint(
         if member.role_id == registry.roles["target"]
         else None
     )
-    interface = project(member.participant_id)
-    if interface is not None:
-        if expected_side is not None and interface["side"] != expected_side:
-            raise InvalidCell("canvas interface is wired on the wrong side")
-        if not owner_roots or interface["owner"] in owner_roots:
-            return interface["owner"], interface
+
+    def composition_boundary():
         for owner_root in owner_roots:
             owner_members = _relation_members_or_none(snapshot, owner_root)
-            if not owner_members or not any(
-                owner_member.role_id == registry.roles["member"]
-                and owner_member.participant_id == interface["owner"]
-                for owner_member in owner_members
-            ):
+            if not owner_members:
                 continue
             boundary_roots = tuple(
                 owner_member.participant_id
@@ -17298,6 +17389,17 @@ def _canvas_endpoint(
                 if boundary is None or boundary["side"] != expected_side:
                     raise InvalidCell("composition boundary interface drifted")
                 return owner_root, boundary
+        return None
+
+    interface = project(member.participant_id)
+    if interface is not None:
+        if expected_side is not None and interface["side"] != expected_side:
+            raise InvalidCell("canvas interface is wired on the wrong side")
+        if not owner_roots or interface["owner"] in owner_roots:
+            return interface["owner"], interface
+        boundary = composition_boundary()
+        if boundary is not None:
+            return boundary
         return interface["owner"], interface
     interface_role = registry.assembly_protocol.role("interface")
     for owner_root in owner_roots:
@@ -17325,6 +17427,9 @@ def _canvas_endpoint(
             "side": expected_side or "target",
             "name": _text(snapshot, name_root) if name_root else "Interface",
         }
+    boundary = composition_boundary()
+    if boundary is not None:
+        return boundary
     return member.participant_id, None
 
 
@@ -34329,26 +34434,21 @@ def project_universal_founder_attention_briefing(
     }
 
 
-def read_universal_baboom_current_claimed_work(
+def read_universal_current_claimed_work(
     store: CellStore,
     registry: UniversalApplicationRegistry,
     *,
     agent_session_root: str,
     authentication_context: object | None = None,
 ) -> tuple[Mapping[str, object] | None, int]:
-    """Read the exact claimed Work for BABOOM's execution session.
+    """Read one exact claimed Work from an authenticated Agent Session.
 
     The assignment remains a relationship in the governed Work graph. This
-    bounded projection exists so a restarted BABOOM body can re-derive its
-    current claim instead of treating process memory as task authority.
+    bounded projection lets every runtime re-derive its current claim instead
+    of treating process memory, a prompt, or a local file as task authority.
     """
     snapshot = store.snapshot()
     session = _runtime_agent_session(snapshot, registry, agent_session_root)
-    entry = _agent_body_catalog_entry_for_session(snapshot, registry, session)
-    if entry.runtime != "baboom-execution":
-        raise AuthorizationDenied(
-            "current BABOOM Work requires the receipt-bound action capability"
-        )
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
@@ -34358,22 +34458,149 @@ def read_universal_baboom_current_claimed_work(
         or view_session.subject_root != session.subject_root
     ):
         raise AuthorizationDenied("runtime Agent Session view scope drifted")
-    status = project_universal_governed_work_status(
-        store, registry, authentication_context=context
+    _require_application_authorization(
+        snapshot,
+        registry,
+        "read",
+        registry.governed_work_registry_root,
+        authentication_context=context,
     )
-    owned = [
-        item for item in status["items"]
-        if item.get("claimant_session") == session.root_id
-        and str(item["operational"]["current_state_label"]).casefold()
-        == "claimed"
-    ]
+    owned = []
+    for binding_root in _governed_work_claim_binding_roots(snapshot, registry):
+        binding = _read_governed_work_claim_binding(
+            snapshot, registry, binding_root
+        )
+        if binding["session"] != session.root_id:
+            continue
+        work_root = binding["work"]
+        claimant = _governed_work_claimant_binding(
+            snapshot, registry, work_root
+        )
+        if claimant is None or claimant[2] != binding_root:
+            continue
+        machine = read_instance_state_machine(
+            snapshot,
+            registry.assembly_protocol,
+            registry.standard_library.state_machine_protocol,
+            work_root,
+        )
+        if _text(snapshot, machine.current_state_root).casefold() != "claimed":
+            continue
+        work = _instance_projection(snapshot, registry, work_root)
+        if work is None:
+            raise InvalidCell("claimed Work is not a projectable assembly")
+        owned.append({
+            **work,
+            "root": work_root,
+            "claimant_session": claimant[0],
+            "claimant_agent_body": claimant[1],
+            "claim_binding": claimant[2],
+        })
     if len(owned) > 1:
         raise InvalidCell(
             "Agent Session owns multiple active governed-work assignments"
         )
     if not owned:
-        return None, int(status["revision"])
-    work = owned[0]
+        return None, snapshot.revision
+    return owned[0], snapshot.revision
+
+
+def authorize_universal_cde_write(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    operation: str,
+    path: str,
+    authentication_context: object | None = None,
+) -> UniversalCdeWriteAdmission:
+    """Resolve one write solely from the session's claimed Work and CDE node."""
+    work, authority_revision = read_universal_current_claimed_work(
+        store,
+        registry,
+        agent_session_root=agent_session_root,
+        authentication_context=authentication_context,
+    )
+    if work is None:
+        raise AuthorizationDenied(
+            "CDE write requires one claimed governed Work"
+        )
+    work_root = work.get("root")
+    claim_binding = work.get("claim_binding")
+    if any(
+        type(root) is not str or not root
+        for root in (work_root, claim_binding)
+    ):
+        raise InvalidCell(
+            "claimed Work CDE authority is incomplete"
+        )
+    snapshot = store.snapshot()
+    if snapshot.revision != authority_revision:
+        raise AuthorizationDenied(
+            "claimed Work CDE authority revision drifted"
+        )
+    assembly = _instance_projection(snapshot, registry, str(work_root))
+    if assembly is None:
+        raise InvalidCell("claimed Work is not a projectable assembly")
+    cde_interfaces = tuple(
+        item for item in assembly["interfaces"]
+        if item.get("name") == "cde-container"
+    )
+    if len(cde_interfaces) != 1:
+        raise InvalidCell(
+            "claimed Work CDE authority is incomplete"
+        )
+    container_root = cde_interfaces[0].get("target")
+    if type(container_root) is not str or not container_root:
+        raise InvalidCell(
+            "claimed Work CDE authority is incomplete"
+        )
+    container = read_value_graph(
+        snapshot,
+        registry.value_graph_protocol,
+        str(container_root),
+    )
+    container_id, container_digest = authorize_cde_container_write(
+        container,
+        operation=operation,
+        path=path,
+    )
+    return UniversalCdeWriteAdmission(
+        agent_session_root,
+        str(work_root),
+        str(claim_binding),
+        str(container_root),
+        container_id,
+        container_digest,
+        operation,
+        path.replace("\\", "/"),
+        authority_revision,
+    )
+
+
+def read_universal_baboom_current_claimed_work(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    authentication_context: object | None = None,
+) -> tuple[Mapping[str, object] | None, int]:
+    """Read the exact claimed Work for BABOOM's execution session."""
+    snapshot = store.snapshot()
+    session = _runtime_agent_session(snapshot, registry, agent_session_root)
+    entry = _agent_body_catalog_entry_for_session(snapshot, registry, session)
+    if entry.runtime != "baboom-execution":
+        raise AuthorizationDenied(
+            "current BABOOM Work requires the receipt-bound action capability"
+        )
+    work, revision = read_universal_current_claimed_work(
+        store,
+        registry,
+        agent_session_root=agent_session_root,
+        authentication_context=authentication_context,
+    )
+    if work is None:
+        return None, revision
     interfaces = work.get("interfaces")
     title = (interfaces.get("title") or {}).get("value") if isinstance(
         interfaces, Mapping
@@ -34384,7 +34611,7 @@ def read_universal_baboom_current_claimed_work(
     return {
         "root": root,
         "title": _bounded_baboom_plan_text(title, "title", 512),
-    }, int(status["revision"])
+    }, revision
 
 
 def claim_next_universal_governed_work(

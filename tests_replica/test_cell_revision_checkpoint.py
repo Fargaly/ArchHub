@@ -103,6 +103,42 @@ def test_checkpoint_follows_durable_commits_and_survives_key_rotation(tmp_path):
     reopened.close()
 
 
+def test_bound_checkpoint_reuses_only_the_verified_same_store_prefix(
+    tmp_path, monkeypatch,
+):
+    database = tmp_path / "incremental-cells.sqlite3"
+    checkpoint = tmp_path / "incremental-checkpoint.json"
+    store = CellStore(database)
+    guard = RevisionCheckpointGuard(
+        checkpoint,
+        database_identity="incremental-checkpoint-database",
+        key_provider=_provider(),
+    )
+    guard.bind(store)
+    history = store._history_reader
+    assert history is not None
+    original_chain_digest = history.chain_digest
+
+    def no_historical_snapshot(_revision):
+        raise AssertionError("bound checkpoint replayed a historical snapshot")
+
+    def current_head_digest_only(revision):
+        if revision != history.head_revision:
+            raise AssertionError("bound checkpoint replayed historical versions")
+        return original_chain_digest(revision)
+
+    monkeypatch.setattr(store, "at", no_historical_snapshot)
+    monkeypatch.setattr(history, "chain_digest", current_head_digest_only)
+
+    store.commit(store.revision, create=(_cell(b"incremental"),))
+
+    guard.require_healthy()
+    record = json.loads(checkpoint.read_text(encoding="ascii"))
+    assert record["revision"] == store.revision == 1
+    guard.close()
+    store.close()
+
+
 def test_checkpoint_rejects_database_rollback_and_same_revision_tampering(tmp_path):
     checkpoint = tmp_path / "checkpoint.json"
     provider = _provider()

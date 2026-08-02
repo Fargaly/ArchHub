@@ -20,6 +20,7 @@ from .application_server import ApplicationServer
 from .persistence import default_state_path
 from .universal_application import UNIVERSAL_APPLICATION_SCHEMA_VERSION
 from .runtime_credentials import BrowserCredentialVault
+from .runtime_compliance_adapter import run_physical_runtime_compliance_court
 from .cell_secret_keys import WindowsDpapiSigningKeyProvider
 from .runtime_gateway import GatewayError, RuntimeGateway
 
@@ -84,6 +85,7 @@ class DesktopRuntime:
                 enable_machine_transport=True,
                 machine_descriptor_path=default_runtime_descriptor_path(),
                 browser_session_credentials=credentials,
+                runtime_compliance_runner=run_physical_runtime_compliance_court,
             )
             self.server = self._new_server()
             parsed = urlsplit(preferred_url)
@@ -115,6 +117,7 @@ class DesktopRuntime:
                 enable_machine_transport=True,
                 machine_descriptor_path=machine_descriptor_path,
                 browser_session_credentials=credentials,
+                runtime_compliance_runner=run_physical_runtime_compliance_court,
             )
             self.server = self._new_server()
             parsed = urlsplit(preferred_url)

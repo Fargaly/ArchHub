@@ -1900,9 +1900,17 @@ if (input.scenario === 'duplicate_projection') {
     runtimeErrors.push(String(error.message || error));
   }
 } else if (input.scenario === 'click_payload') {
-  pointer(cards[0], 'pointerdown');
-  pointer(cards[0], 'pointerup');
+  pointer(cards[1], 'pointerdown', { clientX: 350, clientY: 130 });
+  pointer(cards[1], 'pointerup', { clientX: 350, clientY: 130 });
+  await new Promise(resolve => window.setTimeout(resolve, 250));
+  await waitUntil(() => gestureResponseDelivered >= 1);
+  pointer(cards[0], 'pointerdown', { clientX: 170, clientY: 130 });
+  pointer(cards[0], 'pointerup', { clientX: 170, clientY: 130 });
+  await new Promise(resolve => window.setTimeout(resolve, 250));
+  await waitUntil(() => gestureResponseDelivered >= 2);
   await settle();
+
+
 } else if (input.scenario === 'interface_click_payload') {
   if (!initialFirstSocket) throw new Error('no universal interface rendered');
   initialFirstSocket.click();
@@ -2002,8 +2010,13 @@ if (input.scenario === 'duplicate_projection') {
   await settle(2);
   liveMarquee = selectionBoxSnapshot();
   pointer(canvas, 'pointerup', { clientX: 300, clientY: 220 });
+  await waitUntil(() => gestureResponseDelivered > 0);
   await settle();
 } else if (input.scenario === 'marquee_scroll') {
+  pointer(cards[1], 'pointerdown', { clientX: 350, clientY: 130 });
+  pointer(cards[1], 'pointerup', { clientX: 350, clientY: 130 });
+  await new Promise(resolve => window.setTimeout(resolve, 250));
+  await waitUntil(() => gestureResponseDelivered >= 1);
   canvas.scrollLeft = 137;
   canvas.scrollTop = 251;
   Object.defineProperty(document.querySelector('.selection-box'), 'offsetParent', {
@@ -2015,7 +2028,13 @@ if (input.scenario === 'duplicate_projection') {
   await settle(2);
   liveMarquee = selectionBoxSnapshot();
   pointer(canvas, 'pointerup', { clientX: 300, clientY: 220 });
+  await waitUntil(() => gestureResponseDelivered >= 2);
   await settle();
+
+
+
+
+
 } else if (input.scenario === 'marquee_viewport') {
   const first = geometry.bounds[0];
   const start = { x: first.left - 10, y: first.top - 10 };
@@ -2092,15 +2111,19 @@ if (input.scenario === 'duplicate_projection') {
 } else if (input.scenario === 'rejected_gesture') {
   pointer(cards[1], 'pointerdown', { clientX: 350, clientY: 130 });
   pointer(cards[1], 'pointerup', { clientX: 350, clientY: 130 });
+  await waitUntil(() => requests.some(item => item.route.endsWith('/gesture')));
   await settle();
 } else if (input.scenario === 'rejected_then_success') {
   pointer(cards[1], 'pointerdown', { clientX: 350, clientY: 130 });
   pointer(cards[1], 'pointerup', { clientX: 350, clientY: 130 });
+  await waitUntil(() => requests.some(item => item.route.endsWith('/gesture')));
   await settle();
   pointer(cards[2], 'pointerdown', { clientX: 550, clientY: 130 });
   pointer(cards[2], 'pointerup', { clientX: 550, clientY: 130 });
   await waitUntil(() => gestureResponseDelivered > 0);
   await settle();
+
+
 } else if (input.scenario === 'rapid_queued_gestures') {
   pointer(cards[1], 'pointerdown', {clientX:350,clientY:130});
   pointer(cards[1], 'pointerup', {clientX:350,clientY:130});
@@ -2148,15 +2171,13 @@ if (input.scenario === 'duplicate_projection') {
   if (!output) throw new Error('dense wire-preview source did not render');
   const started=performance.now();
   pointer(output,'pointerdown',{clientX:420,clientY:240});
-  await waitUntil(() => (
-    document.querySelectorAll('.universal-wire-preview').length === 1
-    && document.querySelectorAll(
-      '[data-universal-input].wire-target-ready').length === 250
-  ));
   wirePreviewMs=performance.now()-started;
   wirePreviewCount=document.querySelectorAll('.universal-wire-preview').length;
   wireTargetReadyCount=document.querySelectorAll(
     '[data-universal-input].wire-target-ready').length;
+  if (wirePreviewCount !== 1 || wireTargetReadyCount !== 250) {
+    throw new Error('dense wire-preview feedback was not synchronous');
+  }
   pointer(output,'pointercancel',{clientX:420,clientY:240});
   await settle(2);
 } else if (input.scenario === 'performance_drag_250') {

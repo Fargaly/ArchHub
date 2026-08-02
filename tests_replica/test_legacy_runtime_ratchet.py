@@ -50,11 +50,22 @@ def _dependencies() -> Counter[tuple[str, str]]:
             continue
         current = node
         function = "<module>"
+        owner_class = None
         while current in parents:
             current = parents[current]
-            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (
+                function == "<module>"
+                and isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ):
                 function = current.name
+            elif (
+                isinstance(current, ast.ClassDef)
+                and current.name == "ApplicationServer"
+            ):
+                owner_class = current.name
                 break
+        if owner_class != "ApplicationServer":
+            continue
         result[("%s.%s" % (node.value.id, node.attr), function)] += 1
     return result
 

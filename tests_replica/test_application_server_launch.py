@@ -57,6 +57,9 @@ def test_primary_server_cli_can_own_signed_machine_transport(tmp_path, monkeypat
 
     assert captured["kwargs"]["enable_machine_transport"] is True
     assert captured["kwargs"]["machine_descriptor_path"] == str(descriptor)
+    assert captured["kwargs"]["runtime_compliance_runner"] is (
+        application_server.run_physical_runtime_compliance_court
+    )
     assert captured["closed"] is True
 
 

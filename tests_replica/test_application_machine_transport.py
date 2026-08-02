@@ -39,11 +39,20 @@ from nodelang.cell_attestations import CourtResult
 from nodelang.cell_authorization import AuthorizationDenied
 from nodelang.cell_cloud_sessions import device_root_for_thumbprint
 from nodelang.cell_compliance import list_compliance_observations
+from nodelang.cell_cde_authority import (
+    project_cde_write_authority_protocol,
+    read_cde_write_permit,
+)
 from nodelang.cell_deliberation import read_deliberation_space
 from nodelang.cell_device_custody import register_device_custody, revoke_device_custody
 from nodelang.cell_device_keys import DeviceProofKeyReference, PLATFORM_PROVIDER
+from nodelang.cell_identity import (
+    RelationshipAuthorityDenied,
+    verify_authority_relationship,
+)
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
-from nodelang.cell_protocols import read_relation
+from nodelang.cell_signing_authority import LocalEd25519KmsProvider
+from nodelang.cell_protocols import prepare_append_relation_member, read_relation
 from nodelang.cell_roma_requirements import roma_node_root, roma_tree_root
 from nodelang.cell_value_graph import read_value_graph
 from nodelang.cell_work_claim_transfer import read_work_claim_transfer
@@ -53,7 +62,7 @@ from nodelang.universal_application import (
     bind_universal_runtime_agent_body_device_custody,
     create_universal_governed_work,
 )
-from nodelang.universal_cell import Cell, CellStore, NULL_CELL_ID
+from nodelang.universal_cell import Cell, CellStore, InvalidCell, NULL_CELL_ID
 
 
 def _green_runtime_compliance(_invocation):
@@ -188,12 +197,20 @@ def test_machine_transport_enrollment_retry_reuses_the_exact_graph_session(
         agent_body=SimpleNamespace(
             protocol=SimpleNamespace(state=lambda label: label)
         ),
-        authorization=SimpleNamespace(protocol=object()),
+        authorization=SimpleNamespace(
+            protocol=object(),
+            session=SimpleNamespace(context=lambda: object()),
+        ),
     )
     server._machine_session_surface_values = lambda _snapshot, _root: {
         "runtime": "codex",
         "session fingerprint": "a" * 64,
     }
+    server._bound_machine_agent_session_identity = lambda **_kwargs: None
+    bound = []
+    server._bind_machine_agent_session_identity = lambda **kwargs: bound.append(
+        kwargs
+    )
     monkeypatch.setattr(
         application_server_module,
         "read_relation",
@@ -223,6 +240,435 @@ def test_machine_transport_enrollment_retry_reuses_the_exact_graph_session(
     )
 
     assert continued is session
+    assert bound == [{
+        "entry": entry,
+        "runtime": "codex",
+        "external_session_fingerprint": "a" * 64,
+        "custody_root": None,
+        "session": session,
+        "evidence_roots": (),
+    }]
+
+
+def test_ambiguous_machine_sessions_bind_only_the_latest_active_claim(monkeypatch):
+    entry = SimpleNamespace(
+        root_id="catalog:codex",
+        control_root="control:codex",
+        credential_mode="machine-transport",
+        device_custody_roots=(),
+    )
+    older = SimpleNamespace(
+        root_id="app:agent-session:runtime:older", state_root="active"
+    )
+    current = SimpleNamespace(
+        root_id="app:agent-session:runtime:current", state_root="active"
+    )
+    sessions = {older.root_id: older, current.root_id: current}
+    created_revisions = {"claim:older": 10, "claim:current": 20}
+    server = object.__new__(ApplicationServer)
+    server.universal_store = SimpleNamespace(
+        snapshot=lambda: object(),
+        cell_created_revision=lambda root: created_revisions[root],
+    )
+    server.universal_registry = SimpleNamespace(
+        roles={"member": "member"},
+        agent_body=SimpleNamespace(
+            protocol=SimpleNamespace(state=lambda label: label)
+        ),
+        authorization=SimpleNamespace(
+            protocol=object(),
+            session=SimpleNamespace(context=lambda: object()),
+        ),
+    )
+    server._machine_session_surface_values = lambda _snapshot, _root: {
+        "runtime": "codex",
+        "session fingerprint": "b" * 64,
+    }
+    server._bound_machine_agent_session_identity = lambda **_kwargs: None
+    bound = []
+    server._bind_machine_agent_session_identity = lambda **kwargs: bound.append(
+        kwargs
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "read_relation",
+        lambda *_args, **_kwargs: tuple(
+            SimpleNamespace(role_id="member", participant_id=root)
+            for root in sessions
+        ),
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "read_agent_session",
+        lambda _snapshot, _agent_protocol, _authorization_protocol, root: (
+            sessions[root]
+        ),
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "_agent_body_catalog_entry_for_session",
+        lambda *_args, **_kwargs: entry,
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "read_universal_current_claimed_work",
+        lambda _store, _registry, *, agent_session_root,
+        authentication_context: (
+            {"claim_binding": (
+                "claim:older"
+                if agent_session_root == older.root_id
+                else "claim:current"
+            )},
+            20,
+        ),
+    )
+
+    continued = server._continuable_machine_agent_session(
+        entry=entry,
+        runtime="codex",
+        external_session_fingerprint="b" * 64,
+        custody_root=None,
+    )
+
+    assert continued is current
+    assert bound == [{
+        "entry": entry,
+        "runtime": "codex",
+        "external_session_fingerprint": "b" * 64,
+        "custody_root": None,
+        "session": current,
+        "evidence_roots": ("claim:current",),
+    }]
+
+
+def test_ambiguous_machine_sessions_without_unique_claim_stay_denied(monkeypatch):
+    entry = SimpleNamespace(
+        root_id="catalog:codex",
+        control_root="control:codex",
+        credential_mode="machine-transport",
+        device_custody_roots=(),
+    )
+    sessions = {
+        root: SimpleNamespace(root_id=root, state_root="active")
+        for root in (
+            "app:agent-session:runtime:a",
+            "app:agent-session:runtime:b",
+        )
+    }
+    server = object.__new__(ApplicationServer)
+    server.universal_store = SimpleNamespace(snapshot=lambda: object())
+    server.universal_registry = SimpleNamespace(
+        roles={"member": "member"},
+        agent_body=SimpleNamespace(
+            protocol=SimpleNamespace(state=lambda label: label)
+        ),
+        authorization=SimpleNamespace(
+            protocol=object(),
+            session=SimpleNamespace(context=lambda: object()),
+        ),
+    )
+    server._machine_session_surface_values = lambda _snapshot, _root: {
+        "runtime": "codex",
+        "session fingerprint": "c" * 64,
+    }
+    server._bound_machine_agent_session_identity = lambda **_kwargs: None
+    server._bind_machine_agent_session_identity = lambda **_kwargs: pytest.fail(
+        "ambiguous sessions must not mint a binding"
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "read_relation",
+        lambda *_args, **_kwargs: tuple(
+            SimpleNamespace(role_id="member", participant_id=root)
+            for root in sessions
+        ),
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "read_agent_session",
+        lambda _snapshot, _agent_protocol, _authorization_protocol, root: (
+            sessions[root]
+        ),
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "_agent_body_catalog_entry_for_session",
+        lambda *_args, **_kwargs: entry,
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "read_universal_current_claimed_work",
+        lambda *_args, **_kwargs: (None, 1),
+    )
+
+    with pytest.raises(
+        AuthorizationDenied,
+        match="runtime Agent Session continuation is ambiguous",
+    ):
+        server._continuable_machine_agent_session(
+            entry=entry,
+            runtime="codex",
+            external_session_fingerprint="c" * 64,
+            custody_root=None,
+        )
+
+
+def test_machine_session_identity_binding_is_signed_reused_and_tamper_evident():
+    server = ApplicationServer()
+    body = {
+        "runtime": "codex",
+        "external_session_id": "signed-identity-binding-court",
+    }
+    try:
+        entry = application_server_module._agent_body_catalog_entry_for_runtime(
+            server.universal_store.snapshot(),
+            server.universal_registry,
+            "codex",
+        )
+        fingerprint = hashlib.sha256(
+            body["external_session_id"].encode("utf-8")
+        ).hexdigest()
+        session_root = "app:agent-session:runtime:crash-gap-court"
+        orphaned, _revision = (
+            universal_application_module.begin_universal_runtime_agent_session(
+                server.universal_store,
+                server.universal_registry,
+                session_root=session_root,
+                runtime="codex",
+                external_session_fingerprint=fingerprint,
+                catalog_entry_root=entry.root_id,
+                authentication_context=(
+                    server.universal_registry.authorization.session.context()
+                ),
+            )
+        )
+        assert orphaned.root_id == session_root
+        enrolled = server._enroll_universal_machine_agent_session(
+            body, runtime_id="court-runtime-a"
+        )
+        assert enrolled["continued"] is True
+        assert enrolled["agent_session"] == session_root
+        relationship_root = (
+            server._machine_agent_session_identity_binding_root(
+                entry=entry,
+                runtime="codex",
+                external_session_fingerprint=fingerprint,
+                custody_root=None,
+            )
+        )
+        authority = server.universal_registry.authorization
+        relationship = verify_authority_relationship(
+            server.universal_store.snapshot(),
+            authority.identity_protocol,
+            authority.relationship_broker,
+            relationship_root,
+        )
+        assert relationship.source_root == entry.root_id
+        assert relationship.target_root == session_root
+        assert relationship.scope_root == entry.control_root
+        assert relationship.action_roots == ()
+
+        with server._machine_agent_session_lock:
+            server._machine_agent_sessions.clear()
+        continued = server._enroll_universal_machine_agent_session(
+            body, runtime_id="court-runtime-b"
+        )
+        assert continued["continued"] is True
+        assert continued["agent_session"] == session_root
+        assert continued["session_token"] != enrolled["session_token"]
+        assert body["external_session_id"].encode("utf-8") not in {
+            cell.atom for cell in server.universal_store.snapshot().cells.values()
+        }
+
+        snapshot = server.universal_store.snapshot()
+        signature = snapshot.cells[relationship.signature_root]
+        server.universal_store.commit(
+            snapshot.revision,
+            replace=(Cell(
+                signature.id,
+                signature.link0,
+                signature.link1,
+                b"tampered-signature",
+            ),),
+        )
+        with server._machine_agent_session_lock:
+            server._machine_agent_sessions.clear()
+        with pytest.raises(RelationshipAuthorityDenied, match="signature"):
+            server._enroll_universal_machine_agent_session(
+                body, runtime_id="court-runtime-c"
+            )
+    finally:
+        server.close()
+
+
+def test_legacy_duplicate_sessions_use_one_latest_claim_as_signed_provenance():
+    server = ApplicationServer()
+    fingerprint = hashlib.sha256(
+        b"legacy-duplicate-identity-court"
+    ).hexdigest()
+    context = server.universal_registry.authorization.session.context()
+    entry = application_server_module._agent_body_catalog_entry_for_runtime(
+        server.universal_store.snapshot(), server.universal_registry, "codex"
+    )
+    session_roots = (
+        "app:agent-session:runtime:legacy-older-court",
+        "app:agent-session:runtime:legacy-current-court",
+    )
+    claims = []
+    work_roots = []
+    try:
+        for index, session_root in enumerate(session_roots):
+            universal_application_module.begin_universal_runtime_agent_session(
+                server.universal_store,
+                server.universal_registry,
+                session_root=session_root,
+                runtime="codex",
+                external_session_fingerprint=fingerprint,
+                catalog_entry_root=entry.root_id,
+                authentication_context=context,
+            )
+            work_root, _wire, _revision = create_universal_governed_work(
+                server.universal_store,
+                server.universal_registry,
+                title="Legacy identity claim %s" % index,
+                external_key="court:legacy-identity-claim:%s" % index,
+                x=320 + (index * 240),
+                y=240,
+                authentication_context=context,
+            )
+            work_roots.append(work_root)
+            universal_application_module.transition_universal_governed_work(
+                server.universal_store,
+                server.universal_registry,
+                work_root,
+                "claim",
+                agent_session_root=session_root,
+                authentication_context=context,
+            )
+            work, _revision = (
+                universal_application_module.read_universal_current_claimed_work(
+                    server.universal_store,
+                    server.universal_registry,
+                    agent_session_root=session_root,
+                    authentication_context=context,
+                )
+            )
+            claims.append(work["claim_binding"])
+
+        assert server.universal_store.cell_created_revision(claims[0]) < (
+            server.universal_store.cell_created_revision(claims[1])
+        )
+        selected = server._continuable_machine_agent_session(
+            entry=entry,
+            runtime="codex",
+            external_session_fingerprint=fingerprint,
+            custody_root=None,
+        )
+        assert selected.root_id == session_roots[1]
+        relationship_root = (
+            server._machine_agent_session_identity_binding_root(
+                entry=entry,
+                runtime="codex",
+                external_session_fingerprint=fingerprint,
+                custody_root=None,
+            )
+        )
+        relationship = verify_authority_relationship(
+            server.universal_store.snapshot(),
+            server.universal_registry.authorization.identity_protocol,
+            server.universal_registry.authorization.relationship_broker,
+            relationship_root,
+        )
+        assert relationship.target_root == session_roots[1]
+        assert relationship.evidence_roots == (claims[1],)
+        universal_application_module.transition_universal_governed_work(
+            server.universal_store,
+            server.universal_registry,
+            work_roots[1],
+            "release",
+            agent_session_root=session_roots[1],
+            authentication_context=context,
+        )
+        released_work, _revision = (
+            universal_application_module.read_universal_current_claimed_work(
+                server.universal_store,
+                server.universal_registry,
+                agent_session_root=session_roots[1],
+                authentication_context=context,
+            )
+        )
+        assert released_work is None
+        continued = server._continuable_machine_agent_session(
+            entry=entry,
+            runtime="codex",
+            external_session_fingerprint=fingerprint,
+            custody_root=None,
+        )
+        assert continued.root_id == session_roots[1]
+    finally:
+        server.close()
+
+
+def test_concurrent_machine_enrollment_mints_one_graph_session():
+    server = ApplicationServer()
+    server._ensure_universal_workshop_participant = lambda _root: None
+    body = {
+        "runtime": "codex",
+        "external_session_id": "concurrent-identity-binding-court",
+    }
+    barrier = threading.Barrier(2)
+    results = []
+    failures = []
+
+    def enroll(runtime_id):
+        try:
+            barrier.wait(timeout=5)
+            results.append(server._enroll_universal_machine_agent_session(
+                body, runtime_id=runtime_id
+            ))
+        except Exception as exc:  # the assertion below reports the exact failure
+            failures.append(exc)
+
+    threads = tuple(
+        threading.Thread(target=enroll, args=("court-runtime-%s" % index,))
+        for index in range(2)
+    )
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert not any(thread.is_alive() for thread in threads)
+        assert failures == []
+        assert len(results) == 2
+        assert len({result["agent_session"] for result in results}) == 1
+        assert sorted(result["continued"] for result in results) == [False, True]
+
+        entry = application_server_module._agent_body_catalog_entry_for_runtime(
+            server.universal_store.snapshot(),
+            server.universal_registry,
+            "codex",
+        )
+        fingerprint = hashlib.sha256(
+            body["external_session_id"].encode("utf-8")
+        ).hexdigest()
+        relationship_root = (
+            server._machine_agent_session_identity_binding_root(
+                entry=entry,
+                runtime="codex",
+                external_session_fingerprint=fingerprint,
+                custody_root=None,
+            )
+        )
+        relationship = verify_authority_relationship(
+            server.universal_store.snapshot(),
+            server.universal_registry.authorization.identity_protocol,
+            server.universal_registry.authorization.relationship_broker,
+            relationship_root,
+        )
+        assert relationship.target_root == results[0]["agent_session"]
+    finally:
+        server.close()
 
 
 class _RecordedModelBroker:
@@ -318,6 +764,195 @@ def test_machine_work_claim_fails_closed_on_red_runtime_compliance(tmp_path):
         server.close()
 
 
+def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
+    tmp_path, monkeypatch,
+):
+    descriptor_path = tmp_path / "cde-permit-runtime.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"c" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+        runtime_compliance_runner=_green_runtime_compliance,
+    ).start()
+    agent = UniversalRuntimeClient(descriptor_path, provider)
+    try:
+        cde_provider = LocalEd25519KmsProvider(
+            provider_id="court.cde-permit",
+            authority_id="court-cde-permit",
+        )
+        descriptor_root = application_server_module._ensure_cde_write_signing_authority(
+            server.universal_store,
+            server.universal_registry,
+            cde_provider,
+            descriptor_root="court:cde-write-signing-key:v1",
+        )
+        server.cde_write_signing_provider = cde_provider
+        server.cde_write_signing_descriptor_root = descriptor_root
+        target = (
+            "10.PRODUCT/13.NODE-LANGUAGE/"
+            "nodelang/cell_cde_authority.py"
+        )
+        container = {
+            "container_id": "GM.nodes.cde-authority",
+            "source_requirement": "court:machine-cde-permit",
+            "domain": "nodes",
+            "tier": "T1",
+            "lifecycle_state": "WIP",
+            "suitability_status": "S0",
+            "revision": "P01",
+            "owner": "founder",
+            "checker": "court",
+            "allowed_paths": [target],
+            "gate_kind": "pytest",
+            "gate_spec": {
+                "path": (
+                    "10.PRODUCT/13.NODE-LANGUAGE/"
+                    "tests_replica/test_cell_cde_authority.py"
+                )
+            },
+            "write_grants": [{
+                "path": target,
+                "scope": "exact",
+                "operations": ["apply_patch"],
+            }],
+        }
+        work_root, _wire, _revision = create_universal_governed_work(
+            server.universal_store,
+            server.universal_registry,
+            title="Exercise one graph-derived CDE permit",
+            description="The caller may name an operation and path, not authority.",
+            priority=100,
+            external_key="court:machine-cde-permit",
+            structured_references={"cde-container": container},
+            x=320,
+            y=240,
+        )
+        agent.bind_agent_session(
+            runtime="codex",
+            external_session_id="court-machine-cde-permit",
+        )
+        agent.request("POST", "/api/universal/workshop", {
+            "category": "plan",
+            "text": "Exercise the exact CDE permit path.",
+            "refs": [work_root],
+            "evidence": [],
+            "recipients": [],
+            "reply_to": None,
+            "idempotency_key": "court:machine-cde-permit:plan",
+            "created_at": "2026-07-31T00:00:00+00:00",
+        })
+        claimed = agent.claim_work(work_root)
+        claim_binding = claimed["work"]["claim_binding"]
+        current = agent.current_claimed_work()
+        assert current == {
+            "root": work_root,
+            "title": "Exercise one graph-derived CDE permit",
+        }
+
+        def global_work_projection_must_not_run(*_args, **_kwargs):
+            raise AssertionError(
+                "one CDE permit rebuilt the global governed Work index"
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "project_universal_governed_work_index",
+            global_work_projection_must_not_run,
+        )
+        content_digest = hashlib.sha256(b"bounded patch").hexdigest()
+        issued = agent.issue_cde_write_permit(
+            operation="apply_patch",
+            path=target,
+            content_digest=content_digest,
+            request_id="court-machine-cde-permit-request",
+            nonce="court-machine-cde-permit-nonce",
+        )
+
+        assert issued["agent_session"] == agent.agent_session_root
+        assert issued["work"] == work_root
+        assert issued["claim_binding"] == claim_binding
+        permit = read_cde_write_permit(
+            server.universal_store.snapshot(),
+            server.universal_registry.cde_write_authority_protocol,
+            issued["permit"],
+        )
+        restored_protocol = project_cde_write_authority_protocol(
+            server.universal_store.snapshot(),
+            prefix="app:cde-write-authority-protocol",
+        )
+        assert restored_protocol.root_id == (
+            server.universal_registry.cde_write_authority_protocol.root_id
+        )
+        assert permit.work_root == work_root
+        assert permit.path == target
+        assert permit.content_digest == content_digest
+        assert permit.authority_revision == issued["revision"]
+
+        consumed = agent.consume_cde_write_permit(
+            permit=issued["permit"],
+            operation="apply_patch",
+            path=target,
+            content_digest=content_digest,
+            request_id="court-machine-cde-permit-request",
+        )
+        assert consumed["permit"] == issued["permit"]
+        assert consumed["kind"] == "consumed"
+        assert consumed["work"] == work_root
+        assert consumed["claim_binding"] == claim_binding
+        assert consumed["revision"] == issued["revision"] + 1
+        with pytest.raises(MachineTransportError, match="already consumed"):
+            agent.consume_cde_write_permit(
+                permit=issued["permit"],
+                operation="apply_patch",
+                path=target,
+                content_digest=content_digest,
+                request_id="court-machine-cde-permit-request",
+            )
+
+        with pytest.raises(
+            MachineTransportError,
+            match="requires one bound exact write request",
+        ):
+            agent.request("POST", "/api/universal/cde-write-permit", {
+                "operation": "apply_patch",
+                "path": target,
+                "content_digest": content_digest,
+                "request_id": "court-forged-authority-request",
+                "nonce": "court-forged-authority-nonce",
+                "work": "app:governed-work:forged",
+            })
+
+        snapshot = server.universal_store.snapshot()
+        unknown_role = "court:cde-write-authority:role:undeclared"
+        unknown_member = "court:cde-write-authority:member:undeclared"
+        append = prepare_append_relation_member(
+            snapshot,
+            server.universal_registry.cde_write_authority_protocol.root_id,
+            unknown_role,
+            unknown_member,
+            budget=100_000,
+        )
+        server.universal_store.commit(
+            snapshot.revision,
+            create=(
+                Cell(unknown_role, NULL_CELL_ID, NULL_CELL_ID, b"undeclared"),
+                Cell(unknown_member, NULL_CELL_ID, NULL_CELL_ID, b"undeclared"),
+                *append.create,
+            ),
+            replace=append.replace,
+        )
+        with pytest.raises(InvalidCell, match="vocabulary drifted"):
+            project_cde_write_authority_protocol(
+                server.universal_store.snapshot(),
+                prefix="app:cde-write-authority-protocol",
+            )
+    finally:
+        server.close()
+
+
 def test_generic_deliberation_route_writes_an_openable_cell_payload(tmp_path):
     descriptor_path = tmp_path / "brain-control-ledger.json"
     provider = MemorySigningKeyProvider(
@@ -370,6 +1005,73 @@ def test_generic_deliberation_route_writes_an_openable_cell_payload(tmp_path):
             "sequence": 1,
             "idempotency_key": "court:brain-control:1",
         }]
+    finally:
+        server.close()
+
+
+def test_deliberation_category_filter_precedes_payload_projection(
+    tmp_path, monkeypatch,
+):
+    descriptor_path = tmp_path / "brain-control-category-filter.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"f" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+    ).start()
+    client = UniversalRuntimeClient(descriptor_path, provider)
+    try:
+        ledger = server.universal_registry.brain_control_ledger_root
+        compliance = server.universal_registry.brain_control_category_roots[
+            "compliance-event"
+        ]
+        run_report = server.universal_registry.brain_control_category_roots[
+            "run-report"
+        ]
+        foreign = client.request("POST", "/api/universal/deliberation", {
+            "space": ledger,
+            "category": compliance,
+            "summary": "Foreign compliance payload.",
+            "payload": {"kind": "compliance"},
+            "idempotency_key": "court:category-filter:compliance",
+            "created_at": "2026-08-01T00:00:00+00:00",
+        })
+        admitted = client.request("POST", "/api/universal/deliberation", {
+            "space": ledger,
+            "category": run_report,
+            "summary": "Selected run-report payload.",
+            "payload": {"kind": "run-report"},
+            "idempotency_key": "court:category-filter:run-report",
+            "created_at": "2026-08-01T00:00:01+00:00",
+        })
+        original_read = application_server_module.read_value_graph
+
+        def read_only_the_selected_payload(snapshot, protocol, root_id):
+            if root_id == foreign["payload_root"]:
+                raise AssertionError(
+                    "a foreign deliberation category expanded its payload"
+                )
+            return original_read(snapshot, protocol, root_id)
+
+        monkeypatch.setattr(
+            application_server_module,
+            "read_value_graph",
+            read_only_the_selected_payload,
+        )
+
+        listed = client.request("GET", "/api/universal/deliberation", {
+            "space": ledger,
+            "category": run_report,
+            "limit": 1,
+        })
+
+        assert listed["total"] == 1
+        assert [entry["root"] for entry in listed["entries"]] == [
+            admitted["root"]
+        ]
+        assert listed["entries"][0]["payload"] == {"kind": "run-report"}
     finally:
         server.close()
 
@@ -1876,6 +2578,49 @@ def test_machine_workshop_read_is_cached_per_cell_revision(tmp_path, monkeypatch
         server.close()
 
 
+def test_machine_workshop_read_bounds_entries_before_transport(tmp_path, monkeypatch):
+    descriptor_path = tmp_path / "bounded-workshop-runtime.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"b" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+    ).start()
+    category_root = server.universal_registry.workshop_category_roots["finding"]
+    entries = tuple(
+        SimpleNamespace(
+            root_id="test:workshop-entry:%04d" % sequence,
+            sequence=sequence,
+            actor_root="app:identity:founder",
+            category_root=category_root,
+            recipient_roots=(),
+            reference_roots=(),
+            evidence_roots=(),
+            reply_to_root=NULL_CELL_ID,
+            content=("entry-%04d " % sequence) + ("x" * 4_096),
+            created_at="2026-08-02T00:00:00Z",
+        )
+        for sequence in range(300)
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "list_deliberation_entries",
+        lambda *_args, **_kwargs: entries,
+    )
+    try:
+        result = UniversalRuntimeClient(
+            descriptor_path, provider
+        ).request("GET", "/api/universal/workshop")
+        assert result["total"] == 300
+        assert len(result["entries"]) == 50
+        assert result["entries"][0]["sequence"] == 250
+        assert result["entries"][-1]["sequence"] == 299
+    finally:
+        server.close()
+
+
 def test_machine_work_index_is_cached_per_cell_revision(tmp_path, monkeypatch):
     descriptor_path = tmp_path / "cached-universal-runtime.json"
     provider = MemorySigningKeyProvider(
@@ -2362,6 +3107,78 @@ def test_stale_work_claim_recovery_requires_dead_capability(tmp_path):
             if item["root"] == work_root
         )
         assert completed_item["operational"]["current_state_label"] == "COMPLETE"
+    finally:
+        server.close()
+
+
+def test_work_claim_receipt_commits_without_projecting_global_work(tmp_path):
+    descriptor_path = tmp_path / "active-universal-runtime.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"q" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+        universal_workspace_root=tmp_path,
+        runtime_compliance_runner=_green_runtime_compliance,
+    ).start()
+    client = UniversalRuntimeClient(descriptor_path, provider)
+    try:
+        work_root, _membership_wire, _revision = create_universal_governed_work(
+            server.universal_store,
+            server.universal_registry,
+            title="Return one committed claim receipt",
+            description="Exact claims must not rebuild the global Work index.",
+            priority=10,
+            external_key="court:claim:receipt-v1",
+            structured_references={
+                "requirements": {
+                    "gate": {
+                        "kind": "file_exists",
+                        "spec": {"path": "green.flag"},
+                    },
+                },
+                "cde-container": {
+                    "container_id": "court-test",
+                    "allowed_paths": ["."],
+                },
+            },
+            x=320,
+            y=240,
+        )
+        (tmp_path / "green.flag").write_text("green", encoding="utf-8")
+        session = client.bind_agent_session(
+            runtime="codex",
+            external_session_id="court-claim-receipt",
+        )["agent_session"]
+
+        def global_projection_must_not_run(**_kwargs):
+            raise AssertionError("receipt claim rebuilt the global Work index")
+
+        server._project_universal_machine_work_index = global_projection_must_not_run
+        receipt = client.request(
+            "POST",
+            "/api/universal/work-transition",
+            {
+                "root": work_root,
+                "event": "claim",
+                "evidence": "",
+                "projection": "receipt-v1",
+            },
+        )
+
+        assert receipt["projection"] == "receipt-v1"
+        assert receipt["work_root"] == work_root
+        assert receipt["event"] == "claim"
+        assert receipt["agent_session"] == session
+        assert receipt["history_root"].startswith("state-event:")
+        assert receipt["revision"] == server.universal_store.revision
+        assert receipt["compliance_observation"].startswith(
+            "compliance-observation:"
+        )
+        assert receipt["compliance_evidence"].startswith("attestation:evidence:")
+        assert "status" not in receipt
     finally:
         server.close()
 

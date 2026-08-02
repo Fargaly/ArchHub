@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+import nodelang.cell_identity as cell_identity_module
 from nodelang.cell_authorization import (
     AuthenticationBroker,
     AuthorizationDenied,
@@ -387,6 +388,75 @@ def test_verified_authority_snapshot_is_revision_bound_and_revocation_wins(
             context,
             request,
             resolver_state=after_verified,
+        )
+
+
+def test_authority_snapshot_reads_the_protocol_registry_once(
+    graph_authority,
+    monkeypatch,
+):
+    store, _, identity, broker = graph_authority
+    for index in range(3):
+        _grant(
+            store,
+            identity,
+            broker,
+            f"membership:alice:group:{index}",
+            "alice",
+            "architects",
+        )
+
+    protocol_reads = 0
+    original_read_relation = cell_identity_module.read_relation
+
+    def counted_read_relation(snapshot, relation_id, *, budget):
+        nonlocal protocol_reads
+        if relation_id == identity.root_id:
+            protocol_reads += 1
+        return original_read_relation(snapshot, relation_id, budget=budget)
+
+    monkeypatch.setattr(
+        cell_identity_module,
+        "read_relation",
+        counted_read_relation,
+    )
+
+    verified = verify_relationship_authority_snapshot(
+        store.snapshot(),
+        identity,
+        broker,
+    )
+
+    assert len(verified.relationships) == 3
+    assert protocol_reads == 1
+
+
+def test_direct_relationship_verification_rejects_signed_unregistered_material(
+    graph_authority,
+):
+    store, _, identity, broker = graph_authority
+    snapshot = store.snapshot()
+    prepared = prepare_authority_relationship_grant(
+        snapshot,
+        identity,
+        broker,
+        broker.mint_from_trusted_administrator("admin"),
+        relationship_id="membership:unregistered",
+        source_root="alice",
+        target_root="architects",
+        kind="membership",
+        tenant_root="tenant-a",
+        administrator_root="admin",
+    )
+    store.commit(snapshot.revision, create=prepared.cells)
+    broker.record_generation(prepared.root_id, prepared.generation)
+
+    with pytest.raises(InvalidCell, match="not protocol-registered"):
+        verify_authority_relationship(
+            store.snapshot(),
+            identity,
+            broker,
+            prepared.root_id,
         )
 
 

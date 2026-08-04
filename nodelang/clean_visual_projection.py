@@ -141,7 +141,12 @@ def _property_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     # describing the thing it claims to describe.
     return [
         {
-            "relation": row["relation"],
+            "relation": row.get("property_root") or row["relation"],
+            "owner": row.get("owner_root") or row["relation"],
+            "property_root": row.get("property_root"),
+            "name_root": row.get("name_root"),
+            "value_root": row.get("value_root"),
+            "presentation_root": row.get("presentation_root"),
             "label": row["name"],
             "value": row["value"],
             "editor": row.get("editor"),
@@ -220,6 +225,11 @@ def project_clean_visual_canvas(
                     "value": row["value"],
                     "editor": row["editor"],
                     "constraints": row["constraints"],
+                    "property_root": row["property_root"],
+                    "owner_root": row["owner_root"],
+                    "name_root": row["name_root"],
+                    "value_root": row["value_root"],
+                    "presentation_root": item.get("presentation_root"),
                 }
                 for row in item["properties"]
             ]),
@@ -349,6 +359,11 @@ def project_clean_visual_canvas(
                 "value": row["value"],
                 "editor": row["editor"],
                 "constraints": row["constraints"],
+                "property_root": row["property_root"],
+                "owner_root": row["owner_root"],
+                "name_root": row["name_root"],
+                "value_root": row["value_root"],
+                "presentation_root": selected.get("presentation_root"),
             }
             for row in selected["properties"]
         ])

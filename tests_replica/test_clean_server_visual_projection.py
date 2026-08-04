@@ -1337,9 +1337,32 @@ def test_clean_visual_projection_requires_graph_held_property_identity_and_publi
 ):
     built, _provider = _provision_clean_runtime(tmp_path)
     try:
-        before, lens_before, _snapshot_before, _snapshot_after = _project_current_visual(
-            built
+        # The rail describes what is focused. This court reads a property row
+        # and then proves its identity survives an edit, so it focuses the
+        # node that owns the row first. With nothing focused the rail is
+        # correctly empty, which test_..._selection_presence already pins.
+        issued = _issue_visual_session(built, prefix="property-identity")
+        seed, seed_lens, seed_before, _seed_after = (
+            _project_current_visual_for_session(built, issued)
         )
+        focus_target = seed_lens["nodes"][0]["root_id"]
+        focus_command = _focus_command()
+        assert callable(focus_command)
+        focus_command(
+            built.location.authority,
+            built.browser,
+            issued.root_id,
+            scope_root=built.grand_map.root_id,
+            selected_roots=(focus_target,),
+            primary_root=focus_target,
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+            expected_revision=seed_before.revision,
+        )
+        before, lens_before, _snapshot_before, _snapshot_after = (
+            _project_current_visual_for_session(built, issued)
+        )
+        assert lens_before["selected_root"] == focus_target
         instance_root = lens_before["nodes"][0]["root_id"]
         row_before = before["properties"][0]
         property_name = row_before["label"]
@@ -1357,8 +1380,8 @@ def test_clean_visual_projection_requires_graph_held_property_identity_and_publi
             command_id=str(uuid.uuid4()),
             expected_revision=lens_before["revision"],
         )
-        after, lens_after, _snapshot_before, _snapshot_after = _project_current_visual(
-            built
+        after, lens_after, _snapshot_before, _snapshot_after = (
+            _project_current_visual_for_session(built, issued)
         )
         row_after = _projected_property_row(after, property_name)
         assert after["graph_id"] == lens_after["graph_id"] == before["graph_id"]

@@ -7,6 +7,7 @@ from typing import Mapping
 
 from .cell_attention import active_focus, open_attention_protocol
 from .unified_authority import (
+    property_identities,
     CallerCommandCapability,
     DefinitionProjection,
     UnifiedAuthority,
@@ -24,6 +25,13 @@ class LensProperty:
     value: object
     editor: object
     constraints: Mapping[str, object]
+    # Identity of the cells this row was read from. Without them a rendered
+    # value cannot be traced back to the graph that produced it, so the
+    # visual layer can show a value but not prove it.
+    property_root: str | None = None
+    owner_root: str | None = None
+    name_root: str | None = None
+    value_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +56,9 @@ class LensNode:
     properties: tuple[LensProperty, ...]
     ports: tuple[LensPort, ...]
     openable: bool
+    # Root of the definition's presentation contract, so a rendered node can
+    # name the cell its appearance was declared in.
+    presentation_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +135,7 @@ def _catalogue(
 def _properties(
     definition: DefinitionProjection,
     values: Mapping[str, object],
+    identities: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[LensProperty, ...]:
     projected: list[LensProperty] = []
     for name, raw in sorted(definition.contracts["parameters"].items()):
@@ -131,11 +143,16 @@ def _properties(
             raise InvalidCell("definition parameter presentation is invalid")
         metadata = dict(raw)
         editor = metadata.pop("editor", None)
+        identity = (identities or {}).get(name) or {}
         projected.append(LensProperty(
             name,
             values.get(name),
             editor,
             MappingProxyType(dict(sorted(metadata.items()))),
+            identity.get("property_root"),
+            identity.get("owner"),
+            identity.get("name_root"),
+            identity.get("value_root"),
         ))
     return tuple(projected)
 
@@ -249,9 +266,16 @@ def project_unified_scope(
             state_parameter,
             None if state_parameter is None else values.get(state_parameter),
             _text_tuple(presentation.get("panels"), "definition panel"),
-            _properties(definition, values),
+            _properties(
+                definition,
+                values,
+                property_identities(
+                    authority, authority.store.snapshot(), root
+                ),
+            ),
             tuple(sorted(ports[root], key=lambda item: item.relation_root)),
             True,
+            definition.contract_roots.get("presentation"),
         ))
     return UnifiedScopeLens(
         authority.manifest.graph_id,

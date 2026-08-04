@@ -1979,6 +1979,9 @@ class DefinitionProjection:
     content_digest: str
     contracts: Mapping[str, Mapping[str, object]]
     evidence_roots: tuple[str, ...]
+    # Root of each contract relation, kept so a consumer can name the cell a
+    # contract was read from rather than only its decoded content.
+    contract_roots: Mapping[str, str] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -2409,10 +2412,12 @@ def read_definition(
     if lifecycle is None:
         raise InvalidCell("definition lifecycle is outside the protocol")
     contracts: dict[str, Mapping[str, object]] = {}
+    contract_roots: dict[str, str] = {}
     for contract_name in CONTRACT_NAMES:
         contract_root = _single_member(
             snapshot, revision_root, authority.role(contract_name)
         )
+        contract_roots[contract_name] = contract_root
         contracts[contract_name] = MappingProxyType(
             _property_values(authority, snapshot, contract_root)
         )
@@ -2439,6 +2444,7 @@ def read_definition(
         digest,
         MappingProxyType(contracts),
         evidence_roots,
+        MappingProxyType(contract_roots),
     )
 
 

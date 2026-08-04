@@ -200,6 +200,16 @@ def project_clean_visual_canvas(
             "selected": item["root_id"] in selected_roots,
             "focused": item["root_id"] == selected_root,
             "color": _node_color(item),
+            # Each node carries its own graph-held property rows so the rail
+            # and the node agree without a second projection pass.
+            "properties": _property_rows([
+                {
+                    "relation": item["root_id"],
+                    "name": row["name"],
+                    "value": row["value"],
+                }
+                for row in item["properties"]
+            ]),
             "ports": [],
         }
         for index, port in enumerate(item["ports"]):

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import urllib.request
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from typing import Type
@@ -14,7 +16,7 @@ from .clean_coordination_host import (
 )
 from .runtime_caller_capability import WindowsDpapiCallerKeyStore
 from .unified_authority_runtime import default_runtime_root, open_current_authority
-from .universal_cell import InvalidCell
+from .universal_cell import DatabaseOwnerConflict, InvalidCell
 
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -151,21 +153,53 @@ def build_bound_service(
     return _CoordinationServer((host, port), handler, graph_host)
 
 
-def main() -> None:
+def _healthy_owner_is_serving(host: str, port: int) -> bool:
+    """True when a live instance already answers /health on this address."""
+    try:
+        with urllib.request.urlopen(
+            "http://%s:%d/health" % (host, port), timeout=3
+        ) as response:
+            return json.loads(response.read().decode("utf-8")).get("ok") is True
+    except Exception:
+        return False
+
+
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8474)
     args = parser.parse_args()
-    service, location = build_service(args.host, args.port)
+    # A supervisor restarts this unconditionally. Without these two exits a
+    # second instance starts, blocks forever on the generation owner lock the
+    # first one holds, and never binds: a live process serving nothing, which
+    # is worse than no process because /health cannot report it.
+    if _healthy_owner_is_serving(args.host, args.port):
+        print(
+            "clean coordination service already serving on %s:%d"
+            % (args.host, args.port),
+            file=sys.stderr,
+        )
+        return 0
+    try:
+        service, location = build_service(args.host, args.port)
+    except DatabaseOwnerConflict as exc:
+        print("clean coordination service cannot own the graph: %s" % exc,
+              file=sys.stderr)
+        return 75
+    except OSError as exc:
+        print("clean coordination service cannot bind %s:%d: %s"
+              % (args.host, args.port, exc), file=sys.stderr)
+        return 76
     try:
         service.serve_forever(poll_interval=0.25)
     finally:
         service.server_close()
         location.authority.store.close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
 
 
 __all__ = [

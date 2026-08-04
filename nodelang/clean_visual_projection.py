@@ -106,6 +106,9 @@ def _catalog_projection(items: list[dict[str, object]]) -> list[dict[str, object
             "name": item["name"],
             "version": item["version"],
             "kind": item["kind"],
+            "parameters": item["parameters"],
+            "interfaces": item["interfaces"],
+            "presentation": item["presentation"],
             "category": "Definitions",
             "description": "%s / %s" % (item["name"], item["version"]),
             "search_text": "%s %s %s" % (
@@ -113,8 +116,11 @@ def _catalog_projection(items: list[dict[str, object]]) -> list[dict[str, object
                 item["version"],
                 item["kind"],
             ),
+            # "parts" and the interface count are presentation summaries.
+            # The interface contract itself is carried above, straight from
+            # the definition, so it is not restated here as a constant.
             "parts": 1,
-            "interfaces": 0,
+            "interface_count": len(item["interfaces"]),
             "composition_contract": {"root": item["id"]},
             "control": {
                 "owner": "control:place:%s" % item["id"],
@@ -130,12 +136,17 @@ def _catalog_projection(items: list[dict[str, object]]) -> list[dict[str, object
 
 
 def _property_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    # The editor and its constraints are declared by the definition in the
+    # graph. Dropping them here and hardcoding a default is how a rail stops
+    # describing the thing it claims to describe.
     return [
         {
             "relation": row["relation"],
             "label": row["name"],
             "value": row["value"],
-            "editable": False,
+            "editor": row.get("editor"),
+            "constraints": dict(row.get("constraints") or {}),
+            "editable": row.get("editor") is not None,
             "control": None,
             "event_fact_input": None,
         }
@@ -207,6 +218,8 @@ def project_clean_visual_canvas(
                     "relation": item["root_id"],
                     "name": row["name"],
                     "value": row["value"],
+                    "editor": row["editor"],
+                    "constraints": row["constraints"],
                 }
                 for row in item["properties"]
             ]),
@@ -282,6 +295,9 @@ def project_clean_visual_canvas(
             "name": item["name"],
             "version": item["version"],
             "kind": item["lifecycle"],
+            "parameters": item["parameters"],
+            "interfaces": item["interfaces"],
+            "presentation": item["presentation"],
         }
         for item in lens["catalogue"]
     ])
@@ -331,6 +347,8 @@ def project_clean_visual_canvas(
                 "relation": selected_root,
                 "name": row["name"],
                 "value": row["value"],
+                "editor": row["editor"],
+                "constraints": row["constraints"],
             }
             for row in selected["properties"]
         ])

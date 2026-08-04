@@ -511,9 +511,34 @@ def test_clean_visual_projection_uses_graph_held_panels_properties_and_catalogue
 ):
     built, _provider = _provision_clean_runtime(tmp_path)
     try:
-        before, lens_before, _snapshot_before, _snapshot_after = _project_current_visual(
-            built
+        # The inspector describes what is focused. This court revises a
+        # definition and then reads panels, properties and catalogue
+        # contracts, so it focuses the node that definition belongs to
+        # first; with nothing focused the correct projection is an empty
+        # rail, which test_..._graph_held_selection_without_first_node_
+        # fallback already pins.
+        issued = _issue_visual_session(built, prefix="visual-contracts")
+        seed, seed_lens, seed_before, _seed_after = (
+            _project_current_visual_for_session(built, issued)
         )
+        focus_target = seed_lens["nodes"][0]["root_id"]
+        focus_command = _focus_command()
+        assert callable(focus_command)
+        focus_command(
+            built.location.authority,
+            built.browser,
+            issued.root_id,
+            scope_root=built.grand_map.root_id,
+            selected_roots=(focus_target,),
+            primary_root=focus_target,
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+            expected_revision=seed_before.revision,
+        )
+        before, lens_before, _snapshot_before, _snapshot_after = (
+            _project_current_visual_for_session(built, issued)
+        )
+        assert lens_before["selected_root"] == focus_target
         definition_root = lens_before["nodes"][0]["definition_root"]
         assert isinstance(definition_root, str)
         revised_parameters = {
@@ -546,7 +571,9 @@ def test_clean_visual_projection_uses_graph_held_panels_properties_and_catalogue
             interfaces=revised_interfaces,
             presentation=revised_presentation,
         )
-        after, lens_after, _, _ = _project_current_visual(built)
+        after, lens_after, _, _ = _project_current_visual_for_session(
+            built, issued
+        )
         panels = after["inspector"]["presentation"]["panels"]
         assert [panel["label"] for panel in panels] == revised_presentation["panels"]
         assert [panel["label"] for panel in before["inspector"]["presentation"]["panels"]] != [

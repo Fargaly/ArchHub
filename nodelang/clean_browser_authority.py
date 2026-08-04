@@ -46,16 +46,16 @@ from .unified_authority import (
     CallerCommandCapability,
     CommandResult,
     UnifiedAuthority,
-    _append_relation_member,
-    _build_value,
-    _commit_with_receipt,
-    _decode_value,
-    _digest,
-    _find_receipt,
-    _new_id,
-    _relation_cells,
-    _typed_relation_cells,
-    _validate_command_participants,
+    append_relation_member,
+    build_value,
+    commit_with_receipt,
+    decode_value,
+    digest,
+    find_receipt,
+    new_id,
+    relation_cells,
+    typed_relation_cells,
+    validate_command_participants,
     composition_root,
     read_scope_level,
     validate_composition,
@@ -133,16 +133,16 @@ def _entry_cells(
     label: str,
     target_root: str,
 ) -> tuple[str, tuple[Cell, ...]]:
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         label,
         shape_root=authority.shape("value"),
     )
-    entry_root = _new_id()
+    entry_root = new_id()
     return entry_root, (
         *label_cells,
-        *_typed_relation_cells(
+        *typed_relation_cells(
             entry_root,
             authority.role("conforms-to"),
             authority.shape("composition"),
@@ -181,7 +181,7 @@ def _read_entry(
         authority.role("body"),
         "entry target",
     )
-    label = _decode_value(authority, snapshot, label_root)
+    label = decode_value(authority, snapshot, label_root)
     if type(label) is not str or not label or target_root not in snapshot.cells:
         raise InvalidCell("browser authority entry is invalid")
     return label, target_root
@@ -239,7 +239,7 @@ def _read_authority(
         authority.role("content-digest"),
         "source digest",
     )
-    source_digest = _decode_value(authority, snapshot, digest_root)
+    source_digest = decode_value(authority, snapshot, digest_root)
     if (
         type(source_digest) is not str
         or len(source_digest) != 64
@@ -325,14 +325,14 @@ def install_clean_browser_authority(
         command_id=str(uuid.uuid5(uuid.UUID(command_id), "attention-protocol")),
     )
     source_digest = _source_digest()
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "install-clean-browser-authority",
         "source-digest": source_digest,
         "version": BROWSER_AUTHORITY_VERSION,
     })
     snapshot = authority.store.snapshot()
     interface_root = composition_root(authority, "Interface", caller=caller)
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -343,7 +343,7 @@ def install_clean_browser_authority(
         scope_root=interface_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -397,20 +397,20 @@ def install_clean_browser_authority(
             entries.append(entry_root)
             cells.extend(entry_cells)
 
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         BROWSER_AUTHORITY_LABEL,
         shape_root=authority.shape("value"),
     )
-    digest_root, digest_cells = _build_value(
+    digest_root, digest_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         source_digest,
         shape_root=authority.shape("value"),
     )
-    root_id = _new_id()
-    root_cells = _typed_relation_cells(
+    root_id = new_id()
+    root_cells = typed_relation_cells(
         root_id,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -421,13 +421,13 @@ def install_clean_browser_authority(
             *((authority.role("item"), entry) for entry in entries),
         ),
     )
-    interface_patch = _append_relation_member(
+    interface_patch = append_relation_member(
         snapshot,
         interface_root,
         authority.role("composition"),
         root_id,
     )
-    result = _commit_with_receipt(
+    result = commit_with_receipt(
         authority,
         snapshot,
         resource_create=(
@@ -507,7 +507,7 @@ def _credential_digest(value: str, label: str) -> str:
 
 
 def _plain_value(value: str) -> tuple[str, Cell]:
-    root_id = _new_id()
+    root_id = new_id()
     return root_id, Cell(
         root_id,
         NULL_CELL_ID,
@@ -595,14 +595,14 @@ def issue_clean_browser_session(
     snapshot = authority.store.snapshot()
     current = _current_browser(authority, current, snapshot)
     interface_root = composition_root(authority, "Interface", caller=caller)
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "issue-clean-browser-session",
         "browser-authority": current.root_id,
         "token-digest": token_digest,
         "csrf-digest": csrf_digest,
         "lifetime-seconds": lifetime,
     })
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -613,7 +613,7 @@ def issue_clean_browser_session(
         scope_root=interface_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -641,8 +641,8 @@ def issue_clean_browser_session(
         "token-digest": _plain_value(token_digest),
         "csrf-digest": _plain_value(csrf_digest),
     }
-    session_root = _new_id()
-    session_cells = _relation_cells(
+    session_root = new_id()
+    session_cells = relation_cells(
         session_root,
         (
             (current.protocol.role("subject"), authenticated.actor_root),
@@ -668,13 +668,13 @@ def issue_clean_browser_session(
             ),
         ),
     )
-    registry_patch = _append_relation_member(
+    registry_patch = append_relation_member(
         snapshot,
         current.protocol.root_id,
         current.protocol.role("session-member"),
         session_root,
     )
-    result = _commit_with_receipt(
+    result = commit_with_receipt(
         authority,
         snapshot,
         resource_create=(
@@ -744,13 +744,13 @@ def revoke_clean_browser_session(
     snapshot = authority.store.snapshot()
     current = _current_browser(authority, current, snapshot)
     interface_root = composition_root(authority, "Interface", caller=caller)
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "revoke-clean-browser-session",
         "browser-authority": current.root_id,
         "session": session_root,
         "reason": normalized_reason,
     })
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -761,7 +761,7 @@ def revoke_clean_browser_session(
         scope_root=interface_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -789,7 +789,7 @@ def revoke_clean_browser_session(
     if session.state_root != current.protocol.states["active"]:
         raise BrowserSessionDenied("browser session is already revoked")
     reason_root, reason_cell = _plain_value(normalized_reason)
-    reason_patch = _append_relation_member(
+    reason_patch = append_relation_member(
         snapshot,
         session_root,
         current.protocol.role("revocation-reason"),
@@ -797,7 +797,7 @@ def revoke_clean_browser_session(
         budget=256,
     )
     state_incidence = snapshot.cells[session.state_incidence]
-    result = _commit_with_receipt(
+    result = commit_with_receipt(
         authority,
         snapshot,
         resource_create=(reason_cell, *reason_patch.create),
@@ -852,9 +852,9 @@ def revise_clean_browser_focus(
     }
     if expected_revision is not None:
         request["expected_revision"] = expected_revision
-    request_digest = _digest(request)
+    request_digest = digest(request)
     snapshot = authority.store.snapshot()
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -865,7 +865,7 @@ def revise_clean_browser_focus(
         scope_root=scope_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -931,7 +931,7 @@ def revise_clean_browser_focus(
         and current_focus.primary_root == primary_root
         and current_focus.state_root == protocol.state("active")
     ):
-        return _commit_with_receipt(
+        return commit_with_receipt(
             authority,
             snapshot,
             resource_create=(),
@@ -943,7 +943,7 @@ def revise_clean_browser_focus(
     transition = prepare_accepted_focus_transition(
         snapshot,
         protocol,
-        focus_id=_new_id(),
+        focus_id=new_id(),
         actor_root=session.subject_root,
         session_root=session.view_root,
         scope_root=scope_root,
@@ -956,7 +956,7 @@ def revise_clean_browser_focus(
         consent_evidence_root=browser_session_root,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
-    return _commit_with_receipt(
+    return commit_with_receipt(
         authority,
         snapshot,
         resource_create=transition.create,

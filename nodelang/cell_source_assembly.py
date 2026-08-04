@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .cell_protocols import compose_relation_cells
-from .unified_authority import _new_id
+from .unified_authority import new_id
 from .universal_cell import NULL_CELL_ID, Cell, InvalidCell
 
 
@@ -50,7 +50,7 @@ def remap_source_cells(
         for linked in (cell.link0, cell.link1):
             if linked != NULL_CELL_ID and linked not in source_ids:
                 raise InvalidCell("source assembly has an external graph link")
-    identities = {source_id: _new_id() for source_id in source_ids}
+    identities = {source_id: new_id() for source_id in source_ids}
     mapped = tuple(
         Cell(
             identities[cell.id],

@@ -16,17 +16,17 @@ from .unified_authority import (
     CallerCommandCapability,
     CommandResult,
     UnifiedAuthority,
-    _append_relation_members,
-    _build_definition_revision,
-    _build_property,
-    _build_value,
-    _commit_with_receipt,
-    _definition_spec,
-    _digest,
-    _find_receipt,
-    _new_id,
-    _typed_relation_cells,
-    _validate_command_participants,
+    append_relation_members,
+    build_definition_revision,
+    build_property,
+    build_value,
+    commit_with_receipt,
+    definition_spec,
+    digest,
+    find_receipt,
+    new_id,
+    typed_relation_cells,
+    validate_command_participants,
     composition_root,
     read_contained_scope,
     relation_members,
@@ -433,12 +433,12 @@ def _definition_cells(
     evidence_root: str,
     source_digest: str,
 ) -> tuple[str, str, tuple]:
-    definition_root = _new_id()
+    definition_root = new_id()
     parameters = {
         field: {"editor": "structured" if field == "parameters" else "text"}
         for field in fields
     }
-    spec = _definition_spec(
+    spec = definition_spec(
         name,
         "accepted-" + source_digest[:12],
         "published",
@@ -451,8 +451,8 @@ def _definition_cells(
         {"source-digest": source_digest},
         (evidence_root,),
     )
-    revision_root, _, revision_cells = _build_definition_revision(authority, spec)
-    definition_cells = _typed_relation_cells(
+    revision_root, _, revision_cells = build_definition_revision(authority, spec)
+    definition_cells = typed_relation_cells(
         definition_root,
         authority.role("conforms-to"),
         authority.shape("definition"),
@@ -469,20 +469,20 @@ def _instance_cells(
     values: Mapping[str, object],
     children: Iterable[tuple[str, str]] = (),
 ) -> tuple[str, tuple]:
-    root = _new_id()
+    root = new_id()
     cells: list = []
     members: list[tuple[str, str]] = [
         (authority.role("definition"), definition_root),
         (authority.role("definition-revision"), revision_root),
     ]
     for key in sorted(values):
-        property_root, property_cells = _build_property(
+        property_root, property_cells = build_property(
             authority, key, values[key], owner_root=root
         )
         cells.extend(property_cells)
         members.append((authority.role("override"), property_root))
     members.extend(children)
-    cells.extend(_typed_relation_cells(
+    cells.extend(typed_relation_cells(
         root,
         authority.role("conforms-to"),
         authority.shape("instance"),
@@ -498,19 +498,19 @@ def _relation_cells_for_import(
     target_root: str,
     properties: Mapping[str, object],
 ) -> tuple[str, tuple]:
-    root = _new_id()
+    root = new_id()
     cells: list = []
     members: list[tuple[str, str]] = [
         (authority.role("source"), source_root),
         (authority.role("target"), target_root),
     ]
     for key in sorted(properties):
-        property_root, property_cells = _build_property(
+        property_root, property_cells = build_property(
             authority, key, properties[key], owner_root=root
         )
         cells.extend(property_cells)
         members.append((authority.role("property"), property_root))
-    cells.extend(_typed_relation_cells(
+    cells.extend(typed_relation_cells(
         root,
         authority.role("conforms-to"),
         authority.shape("relation"),
@@ -584,13 +584,13 @@ def import_requirement_graph(
     if source_digest != expected_sha256.lower():
         raise InvalidCell("accepted requirement source digest does not match")
     domains = _validated_source(source_bytes)
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "import-requirement-graph",
         "source-digest": source_digest,
     })
     snapshot = authority.store.snapshot()
     grand_map_root = composition_root(authority, "Grand Map", caller=caller)
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -601,7 +601,7 @@ def import_requirement_graph(
         scope_root=grand_map_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -627,22 +627,22 @@ def import_requirement_graph(
         )
 
     cells: list = []
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         "Accepted requirement source " + source_digest[:12],
         shape_root=authority.shape("value"),
     )
-    digest_root, digest_cells = _build_value(
+    digest_root, digest_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         source_digest,
         shape_root=authority.shape("value"),
     )
-    evidence_root = _new_id()
+    evidence_root = new_id()
     cells.extend(label_cells)
     cells.extend(digest_cells)
-    cells.extend(_typed_relation_cells(
+    cells.extend(typed_relation_cells(
         evidence_root,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -676,7 +676,7 @@ def import_requirement_graph(
     domain_children: dict[str, list[tuple[str, str]]] = {}
     for domain in domains:
         domain_key = str(domain["key"])
-        domain_root = _new_id()
+        domain_root = new_id()
         domain_roots[domain_key] = domain_root
         domain_cells[domain_key] = []
         domain_children[domain_key] = []
@@ -743,7 +743,7 @@ def import_requirement_graph(
             cells.extend(relation_cells)
             cross_relations.append((authority.role("relation"), relation_root))
 
-    import_root = _new_id()
+    import_root = new_id()
     import_members: list[tuple[str, str]] = [
         (authority.role("label"), label_root),
         (authority.role("evidence"), evidence_root),
@@ -777,14 +777,14 @@ def import_requirement_graph(
         cells.extend(rewritten)
         import_members.append((authority.role("composition"), domain_root))
     import_members.extend(cross_relations)
-    cells.extend(_typed_relation_cells(
+    cells.extend(typed_relation_cells(
         import_root,
         authority.role("conforms-to"),
         authority.shape("composition"),
         import_members,
     ))
 
-    catalogue_patch = _append_relation_members(
+    catalogue_patch = append_relation_members(
         snapshot,
         authority.manifest.catalogue_root,
         (
@@ -792,12 +792,12 @@ def import_requirement_graph(
             (authority.role("definition"), requirement_definition),
         ),
     )
-    grand_map_patch = _append_relation_members(
+    grand_map_patch = append_relation_members(
         snapshot,
         grand_map_root,
         ((authority.role("composition"), import_root),),
     )
-    result = _commit_with_receipt(
+    result = commit_with_receipt(
         authority,
         snapshot,
         resource_create=(
@@ -894,13 +894,13 @@ def import_specification_graph(
     if source_digest != expected_sha256.lower():
         raise InvalidCell("accepted specification source digest does not match")
     title, sections = _validated_specification_source(source_bytes)
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "import-specification-graph",
         "source-digest": source_digest,
     })
     snapshot = authority.store.snapshot()
     governance_root = composition_root(authority, "Governance", caller=caller)
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -911,7 +911,7 @@ def import_specification_graph(
         scope_root=governance_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -937,21 +937,21 @@ def import_specification_graph(
         )
 
     cells: list = []
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         title,
         shape_root=authority.shape("value"),
     )
-    digest_root, digest_cells = _build_value(
+    digest_root, digest_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         source_digest,
         shape_root=authority.shape("value"),
     )
-    evidence_root = _new_id()
+    evidence_root = new_id()
     cells.extend((*label_cells, *digest_cells))
-    cells.extend(_typed_relation_cells(
+    cells.extend(typed_relation_cells(
         evidence_root,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -1046,8 +1046,8 @@ def import_specification_graph(
         relation_roots.append(relation_root)
         section_relation_roots.append(relation_root)
 
-    import_root = _new_id()
-    cells.extend(_typed_relation_cells(
+    import_root = new_id()
+    cells.extend(typed_relation_cells(
         import_root,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -1060,7 +1060,7 @@ def import_specification_graph(
             *((authority.role("relation"), root) for root in section_relation_roots),
         ),
     ))
-    catalogue_patch = _append_relation_members(
+    catalogue_patch = append_relation_members(
         snapshot,
         authority.manifest.catalogue_root,
         (
@@ -1068,12 +1068,12 @@ def import_specification_graph(
             (authority.role("definition"), requirement_definition),
         ),
     )
-    governance_patch = _append_relation_members(
+    governance_patch = append_relation_members(
         snapshot,
         governance_root,
         ((authority.role("composition"), import_root),),
     )
-    result = _commit_with_receipt(
+    result = commit_with_receipt(
         authority,
         snapshot,
         resource_create=(

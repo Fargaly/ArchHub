@@ -55,15 +55,15 @@ from .unified_authority import (
     CallerCommandCapability,
     CommandResult,
     UnifiedAuthority,
-    _append_relation_member,
-    _build_value,
-    _commit_with_receipt,
-    _decode_value,
-    _digest,
-    _find_receipt,
-    _new_id,
-    _typed_relation_cells,
-    _validate_command_participants,
+    append_relation_member,
+    build_value,
+    commit_with_receipt,
+    decode_value,
+    digest,
+    find_receipt,
+    new_id,
+    typed_relation_cells,
+    validate_command_participants,
     composition_root,
     read_scope_level,
     validate_composition,
@@ -272,14 +272,14 @@ def _entry_cells(
     label: str,
     target_root: str,
 ) -> tuple[str, tuple[Cell, ...]]:
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         label,
         shape_root=authority.shape("value"),
     )
-    entry_root = _new_id()
-    cells = _typed_relation_cells(
+    entry_root = new_id()
+    cells = typed_relation_cells(
         entry_root,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -314,7 +314,7 @@ def _read_entry(
     members = read_relation(snapshot, entry_root, budget=256)
     label_root = _one_member(members, authority.role("label"), "entry label")
     target_root = _one_member(members, authority.role("body"), "entry target")
-    label = _decode_value(authority, snapshot, label_root)
+    label = decode_value(authority, snapshot, label_root)
     if type(label) is not str or not label:
         raise InvalidCell("visual system entry label is invalid")
     if target_root not in snapshot.cells:
@@ -342,7 +342,7 @@ def _read_visual_system(
         authority.role("content-digest"),
         "source digest",
     )
-    source_digest = _decode_value(authority, snapshot, digest_root)
+    source_digest = decode_value(authority, snapshot, digest_root)
     if (
         type(source_digest) is not str
         or len(source_digest) != 64
@@ -435,14 +435,14 @@ def install_clean_visual_system(
 ) -> CleanVisualSystem:
     """Install one opaque, signed instance of the existing visual assemblies."""
     source_digest = _visual_source_digest()
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "install-clean-visual-system",
         "source-digest": source_digest,
         "version": VISUAL_SYSTEM_VERSION,
     })
     snapshot = authority.store.snapshot()
     interface_root = composition_root(authority, "Interface", caller=caller)
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -453,7 +453,7 @@ def install_clean_visual_system(
         scope_root=interface_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -507,20 +507,20 @@ def install_clean_visual_system(
             entries.append(entry_root)
             cells.extend(entry_cells)
 
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         VISUAL_SYSTEM_LABEL,
         shape_root=authority.shape("value"),
     )
-    digest_root, digest_cells = _build_value(
+    digest_root, digest_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         source_digest,
         shape_root=authority.shape("value"),
     )
-    system_root = _new_id()
-    system_cells = _typed_relation_cells(
+    system_root = new_id()
+    system_cells = typed_relation_cells(
         system_root,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -531,13 +531,13 @@ def install_clean_visual_system(
             *((authority.role("item"), entry) for entry in entries),
         ),
     )
-    interface_patch = _append_relation_member(
+    interface_patch = append_relation_member(
         snapshot,
         interface_root,
         authority.role("composition"),
         system_root,
     )
-    result = _commit_with_receipt(
+    result = commit_with_receipt(
         authority,
         snapshot,
         resource_create=(

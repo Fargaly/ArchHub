@@ -5147,7 +5147,53 @@ def relation_members(snapshot: Snapshot, root_id: str) -> tuple[RelationMember, 
     return read_relation(snapshot, root_id, budget=100_000)
 
 
+
+
+# ---------------------------------------------------------------------
+# Authority seam.
+#
+# These operations are shared by the modules that build on this authority
+# (requirement import, browser authority, scope interactions, visual
+# authority, attention, scope state). They were reached through their
+# private names, which left no declared contract between the authority and
+# its consumers: any rename here broke them silently, and each new consumer
+# copied the same reach. That is the growth path that produced the 46k-line
+# legacy application module.
+#
+# The public names below are the supported seam. The private names remain
+# for use inside this module.
+# ---------------------------------------------------------------------
+commit_with_receipt = _commit_with_receipt
+find_receipt = _find_receipt
+validate_command_participants = _validate_command_participants
+digest = _digest
+new_id = _new_id
+typed_relation_cells = _typed_relation_cells
+build_value = _build_value
+append_relation_member = _append_relation_member
+append_relation_members = _append_relation_members
+decode_value = _decode_value
+relation_cells = _relation_cells
+build_definition_revision = _build_definition_revision
+build_property = _build_property
+definition_spec = _definition_spec
+
+
 __all__ = [
+    "commit_with_receipt",
+    "find_receipt",
+    "validate_command_participants",
+    "digest",
+    "new_id",
+    "typed_relation_cells",
+    "build_value",
+    "append_relation_member",
+    "append_relation_members",
+    "decode_value",
+    "relation_cells",
+    "build_definition_revision",
+    "build_property",
+    "definition_spec",
     "audit_authority_history",
     "BootstrapManifest",
     "CallerCommandCapability",

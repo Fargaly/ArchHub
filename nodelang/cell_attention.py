@@ -444,18 +444,18 @@ def install_attention_protocol(
     """Install the attention protocol through the signed authority history."""
     from .unified_authority import (
         COMMAND_BUDGET,
-        _commit_with_receipt,
-        _digest,
-        _find_receipt,
-        _validate_command_participants,
+        commit_with_receipt,
+        digest,
+        find_receipt,
+        validate_command_participants,
     )
 
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "install-attention-protocol",
         "prefix": prefix,
     })
     snapshot = authority.store.snapshot()
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -466,7 +466,7 @@ def install_attention_protocol(
         scope_root=authority.manifest.application_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -508,7 +508,7 @@ def install_attention_protocol(
         ],
         relation_id=protocol.root_id,
     ).cells)
-    _commit_with_receipt(
+    commit_with_receipt(
         authority,
         snapshot,
         resource_create=tuple(cells),

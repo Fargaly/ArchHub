@@ -6,7 +6,7 @@ import json
 from .cell_protocols import read_relation
 from .unified_authority import (
     UnifiedAuthority,
-    _typed_relation_cells,
+    typed_relation_cells,
     validate_composition,
 )
 from .universal_cell import NULL_CELL_ID, Cell, InvalidCell
@@ -67,7 +67,7 @@ def write_clean_browser_scope(
                 NULL_CELL_ID,
                 json.dumps(_SCOPE_LABEL, separators=(",", ":")).encode("utf-8"),
             ))
-        create.extend(_typed_relation_cells(
+        create.extend(typed_relation_cells(
             root_id,
             authority.role("conforms-to"),
             authority.shape("composition"),

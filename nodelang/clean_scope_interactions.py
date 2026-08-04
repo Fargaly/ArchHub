@@ -32,15 +32,15 @@ from .unified_authority import (
     CallerCommandCapability,
     CommandResult,
     UnifiedAuthority,
-    _append_relation_member,
-    _build_value,
-    _commit_with_receipt,
-    _decode_value,
-    _digest,
-    _find_receipt,
-    _new_id,
-    _typed_relation_cells,
-    _validate_command_participants,
+    append_relation_member,
+    build_value,
+    commit_with_receipt,
+    decode_value,
+    digest,
+    find_receipt,
+    new_id,
+    typed_relation_cells,
+    validate_command_participants,
     audit_authority_history,
     verify_exact_authority_head,
     composition_root,
@@ -118,14 +118,14 @@ def _entry_cells(
     label: str,
     target_root: str,
 ) -> tuple[str, tuple[Cell, ...]]:
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         label,
         shape_root=authority.shape("value"),
     )
-    entry_root = _new_id()
-    cells = _typed_relation_cells(
+    entry_root = new_id()
+    cells = typed_relation_cells(
         entry_root,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -155,7 +155,7 @@ def _read_entry(
     members = read_relation(snapshot, entry_root, budget=256)
     label_root = _one_member(members, authority.role("label"), "entry label")
     target_root = _one_member(members, authority.role("body"), "entry target")
-    label = _decode_value(authority, snapshot, label_root)
+    label = decode_value(authority, snapshot, label_root)
     if type(label) is not str or not label:
         raise InvalidCell("clean scope interaction entry label is invalid")
     if target_root not in snapshot.cells:
@@ -197,7 +197,7 @@ def _source_digest(binding_specs: tuple[tuple[str, str, str], ...]) -> str:
         CLEAN_SCOPE_INTERACTIONS_VERSION,
         (sys.modules[__name__], cell_interactions),
     )
-    return _digest({
+    return digest({
         "module-digest": module_digest,
         "bindings": binding_specs,
         "event": _EVENT_LABEL,
@@ -237,14 +237,14 @@ def _read_scope_interactions(
         return None
     members = composition.members
     label_root = _one_member(members, authority.role("label"), "label")
-    label = _decode_value(authority, snapshot, label_root)
+    label = decode_value(authority, snapshot, label_root)
     if label != CLEAN_SCOPE_INTERACTIONS_LABEL:
         return None
     digest_root = _one_member(members, authority.role("content-digest"), "digest")
     protocol_root = _one_member(
         members, authority.role("protocol-definition"), "protocol definition"
     )
-    source_digest = _decode_value(authority, snapshot, digest_root)
+    source_digest = decode_value(authority, snapshot, digest_root)
     if type(source_digest) is not str or len(source_digest) != 64:
         raise InvalidCell("clean scope interaction source digest is invalid")
     protocol = project_interaction_protocol(snapshot, protocol_root, budget=1024)
@@ -311,7 +311,7 @@ def install_clean_scope_interactions(
     """Install one signed clean interaction set for all reachable open scopes."""
     binding_specs = _binding_specs(authority, scope_root, caller)
     source_digest = _source_digest(binding_specs)
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "install-clean-scope-interactions",
         "scope-root": scope_root,
         "source-digest": source_digest,
@@ -319,7 +319,7 @@ def install_clean_scope_interactions(
     })
     snapshot = authority.store.snapshot()
     interface_root = composition_root(authority, "Interface", caller=caller)
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -330,7 +330,7 @@ def install_clean_scope_interactions(
         scope_root=interface_root,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -375,12 +375,12 @@ def install_clean_scope_interactions(
         )
 
     protocol_cells, protocol = _compile_protocol_source()
-    event_root = _new_id()
+    event_root = new_id()
     event_cell = Cell(event_root, NULL_CELL_ID, NULL_CELL_ID, _EVENT_LABEL.encode("utf-8"))
     interaction_batch = SourceCellBatch()
     bindings: dict[str, dict[str, ScopeOpenBinding]] = {}
     for current_scope, control_root, target_root in binding_specs:
-        interaction_root = _new_id()
+        interaction_root = new_id()
         build_interaction(
             authority.store,
             protocol,
@@ -443,20 +443,20 @@ def install_clean_scope_interactions(
             )
             entries.append(entry_root)
             cells.extend(entry_cells)
-    label_root, label_cells = _build_value(
+    label_root, label_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         CLEAN_SCOPE_INTERACTIONS_LABEL,
         shape_root=authority.shape("value"),
     )
-    digest_root, digest_cells = _build_value(
+    digest_root, digest_cells = build_value(
         authority.roles,
         authority.codecs[CODEC_NAME],
         source_digest,
         shape_root=authority.shape("value"),
     )
-    root_id = _new_id()
-    root_cells = _typed_relation_cells(
+    root_id = new_id()
+    root_cells = typed_relation_cells(
         root_id,
         authority.role("conforms-to"),
         authority.shape("composition"),
@@ -467,13 +467,13 @@ def install_clean_scope_interactions(
             *((authority.role("item"), entry) for entry in entries),
         ),
     )
-    interface_patch = _append_relation_member(
+    interface_patch = append_relation_member(
         snapshot,
         interface_root,
         authority.role("composition"),
         root_id,
     )
-    result = _commit_with_receipt(
+    result = commit_with_receipt(
         authority,
         snapshot,
         resource_create=(
@@ -561,7 +561,7 @@ def submit_clean_scope_interaction(
         event_root,
         expected_revision,
     )
-    replayed = _find_receipt(
+    replayed = find_receipt(
         authority,
         snapshot,
         caller.actor_root,
@@ -614,7 +614,7 @@ def submit_clean_scope_interaction(
         or binding.target_root != target_scope
     ):
         raise InvalidCell("scope interaction destination is not projected")
-    request_digest = _digest({
+    request_digest = digest({
         "intent": "submit-clean-scope-interaction",
         "browser-session": browser_session_root,
         "control": control_root,
@@ -631,7 +631,7 @@ def submit_clean_scope_interaction(
         event_root,
         expected_revision,
     )
-    authenticated, policy_proof = _validate_command_participants(
+    authenticated, policy_proof = validate_command_participants(
         authority,
         snapshot,
         caller,
@@ -642,7 +642,7 @@ def submit_clean_scope_interaction(
         scope_root=current_scope,
         budget=COMMAND_BUDGET,
     )
-    existing = _find_receipt(
+    existing = find_receipt(
         authority,
         snapshot,
         authenticated.actor_root,
@@ -682,7 +682,7 @@ def submit_clean_scope_interaction(
     now = datetime.now(timezone.utc).timestamp()
     if issued_at > now + 5 or expires_at <= now:
         raise InvalidCell("scope interaction browser session is expired")
-    return _commit_with_receipt(
+    return commit_with_receipt(
         authority,
         snapshot,
         resource_create=(),

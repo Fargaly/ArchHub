@@ -2296,6 +2296,47 @@ def _property_values(
     return values
 
 
+def _property_identities(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    relation_root: str,
+) -> dict[str, dict[str, str]]:
+    """Name the graph identities behind each property of one container.
+
+    _property_values reads these roots to decode a value and then discards
+    them, so nothing downstream can prove which cell a displayed value came
+    from. This returns the identities themselves, leaving the decoding to
+    _property_values.
+    """
+    identities: dict[str, dict[str, str]] = {}
+    for member in read_relation(snapshot, relation_root, budget=100_000):
+        if member.role_id not in {
+            authority.role("property"),
+            authority.role("override"),
+        }:
+            continue
+        property_root = member.participant_id
+        property_projection = validate_composition(
+            authority, snapshot, property_root
+        )
+        if property_projection.protocol_root != authority.shape("property"):
+            continue
+        name_root = _single_member(snapshot, property_root, authority.role("name"))
+        value_root = _single_member(
+            snapshot, property_root, authority.role("value")
+        )
+        key = _decode_scalar_leaf(snapshot, name_root)
+        if type(key) is not str:
+            continue
+        identities[key] = {
+            "property_root": property_root,
+            "owner": relation_root,
+            "name_root": name_root,
+            "value_root": value_root,
+        }
+    return identities
+
+
 def _definition_revision_root(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
@@ -5177,6 +5218,7 @@ relation_cells = _relation_cells
 build_definition_revision = _build_definition_revision
 build_property = _build_property
 definition_spec = _definition_spec
+property_identities = _property_identities
 
 
 __all__ = [
@@ -5194,6 +5236,7 @@ __all__ = [
     "build_definition_revision",
     "build_property",
     "definition_spec",
+    "property_identities",
     "audit_authority_history",
     "BootstrapManifest",
     "CallerCommandCapability",

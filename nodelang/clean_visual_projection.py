@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
+from .clean_scope_interactions import CleanScopeInteractions
 from .clean_visual_authority import (
     CleanVisualSystem,
     render_clean_visual_template,
@@ -152,6 +153,28 @@ def _selected_node(lens: Mapping[str, object]) -> Mapping[str, object] | None:
     )
 
 
+def _interaction_bindings(
+    interactions: CleanScopeInteractions | None,
+    scope_root: str,
+    nodes: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if interactions is None:
+        return []
+    bindings: list[dict[str, object]] = []
+    for node in nodes:
+        if not node["openable"]:
+            continue
+        binding = interactions.binding_for(scope_root, node["id"])
+        if binding is None:
+            continue
+        bindings.append({
+            "interaction": binding.interaction_root,
+            "control": binding.control_root,
+            "event": interactions.event_root,
+        })
+    return bindings
+
+
 def project_clean_visual_canvas(
     authority: UnifiedAuthority,
     visual: CleanVisualSystem,
@@ -160,6 +183,7 @@ def project_clean_visual_canvas(
     caller: CallerCommandCapability,
     session_root: str,
     subject_root: str,
+    interactions: CleanScopeInteractions | None = None,
 ) -> dict[str, object]:
     selected_root = lens.get("selected_root")
     selected_roots = tuple(lens.get("selected_roots") or ())
@@ -368,14 +392,14 @@ def project_clean_visual_canvas(
         },
         "interaction_projection": {
             "revision": lens["revision"],
-            "bindings": [
-                {
-                    "interaction": "scope:%s" % node["id"],
-                    "control": node["id"],
-                    "event": "open",
-                }
-                for node in nodes if node["openable"]
-            ],
+            # Every binding names graph-held identities that the installed
+            # interaction set already published. Without an installed set the
+            # canvas offers no interaction rather than inventing one.
+            "bindings": _interaction_bindings(
+                interactions,
+                lens["scope_root"],
+                nodes,
+            ),
         },
         "authorization": {
             "subject": subject_root,

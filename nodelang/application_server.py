@@ -242,6 +242,10 @@ from .clean_browser_authority import (
     revise_clean_browser_focus,
     verify_clean_browser_session,
 )
+from .clean_scope_interactions import (
+    open_clean_scope_interactions,
+    submit_clean_scope_interaction,
+)
 from .clean_visual_authority import open_clean_visual_system
 from .clean_visual_projection import project_clean_visual_canvas
 from .unified_application_lens import (
@@ -294,6 +298,7 @@ from .cell_authorization import (
 )
 from .cell_interactions import (
     InteractionProjectionBroker,
+    InteractionProjectionDenied,
     InteractionProjectionExpired,
     _read_interactions_with_verified_protocol,
     execute_interaction,
@@ -784,6 +789,12 @@ class _CleanAuthorityHttpServer:
         self.authority_key_provider = authority_key_provider
         self.clean_caller = scope_caller
         self.clean_scope_root = scope_root
+        self.clean_scope_interactions = open_clean_scope_interactions(
+            authority,
+            caller=scope_caller,
+        )
+        self.clean_interaction_broker = InteractionProjectionBroker()
+        self._clean_projection_handles: dict[str, object] = {}
         self._mutation_lock = threading.RLock()
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
@@ -902,13 +913,91 @@ class _CleanAuthorityHttpServer:
             self.clean_authority,
             caller=self.clean_caller,
         )
-        return project_clean_visual_canvas(
+        payload = project_clean_visual_canvas(
             self.clean_authority,
             visual,
             lens,
             caller=self.clean_caller,
             session_root=binding.session_root,
             subject_root=binding.subject_root,
+            interactions=self.clean_scope_interactions,
+        )
+        self._issue_projection_lease(binding, snapshot, payload)
+        return payload
+
+    def _projection_handle(
+        self,
+        binding: _CleanBrowserSessionBinding,
+        snapshot,
+    ) -> object:
+        handle = self._clean_projection_handles.get(binding.session_root)
+        if handle is None:
+            handle = self.clean_interaction_broker.mint(
+                snapshot,
+                session_root=binding.session_root,
+                subject_root=binding.subject_root,
+                view_root=binding.view_root,
+            )
+            self._clean_projection_handles[binding.session_root] = handle
+        return handle
+
+    def _scope_interaction_bindings(
+        self,
+        scope_root: str,
+    ) -> list[dict[str, object]]:
+        """Name the installed interactions reachable from one scope.
+
+        The interaction authority is graph-held, so it is read directly rather
+        than recovered from a rendered canvas.
+        """
+        installed = self.clean_scope_interactions
+        return [
+            {
+                "interaction": item.interaction_root,
+                "control": item.control_root,
+                "event": installed.event_root,
+            }
+            for item in installed.bindings.get(scope_root, {}).values()
+        ]
+
+    def _issue_scope_lease(
+        self,
+        binding: _CleanBrowserSessionBinding,
+        snapshot,
+        scope_root: str,
+    ) -> None:
+        self._issue_projection_lease(
+            binding,
+            snapshot,
+            {
+                "interaction_projection": {
+                    "bindings": self._scope_interaction_bindings(scope_root),
+                },
+            },
+        )
+
+    def _issue_projection_lease(
+        self,
+        binding: _CleanBrowserSessionBinding,
+        snapshot,
+        payload: Mapping[str, object],
+    ) -> None:
+        bindings = payload["interaction_projection"]["bindings"]
+        if not bindings:
+            return
+        handle = self._projection_handle(binding, snapshot)
+        # Scope entry is a graph-held capability rather than a transaction
+        # step, so the transaction and rule vocabularies are not consulted
+        # for it. Admitting the exact capability keeps that explicit.
+        self.clean_interaction_broker.issue_with_interactions(
+            handle,
+            snapshot,
+            self.clean_scope_interactions.protocol,
+            [item["control"] for item in bindings],
+            [item["interaction"] for item in bindings],
+            rule_protocol=None,
+            transaction_protocol=None,
+            admitted_nontransaction_action_roots=(CAPABILITY_SCOPE,),
         )
 
     def _make_handler(self):
@@ -967,8 +1056,20 @@ class _CleanAuthorityHttpServer:
                 try:
                     binding = owner._resolve_binding(self._token())
                     payload = owner._canvas(binding)
-                except (AuthorizationDenied, InvalidCell) as exc:
+                except Conflict as exc:
+                    self._json(409, {"ok": False, "error": str(exc)})
+                    return
+                except (
+                    AuthorizationDenied,
+                    InteractionProjectionDenied,
+                    InvalidCell,
+                ) as exc:
                     self._json(403, {"ok": False, "error": str(exc)})
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    # A refusal is an answer. An unanswered socket is a denial
+                    # of service, so every escape becomes an honest status.
+                    self._json(500, {"ok": False, "error": str(exc)})
                     return
                 self._json(200, {"ok": True, **payload})
 
@@ -1035,42 +1136,74 @@ class _CleanAuthorityHttpServer:
                         })
                         return
                     if self.path == "/api/universal/interaction":
-                        binding = owner._resolve_binding(
-                            self._token(),
-                            csrf_token=csrf_token,
-                            require_csrf=True,
-                        )
-                        revision = body.get("revision")
-                        if type(revision) is not int:
-                            raise InvalidCell("interaction request revision is invalid")
-                        current = owner.authority.store.revision
-                        if revision != current:
-                            self._json(400, {
-                                "ok": False,
-                                "error": "expected revision %s, current revision is %s"
-                                % (revision, current),
-                            })
-                            return
-                        payload = owner._canvas(binding)
-                        interaction = body.get("interaction")
-                        control = body.get("control")
-                        event = body.get("event")
-                        scope_root = None
-                        if (
-                            type(interaction) is str
-                            and type(control) is str
-                            and interaction == "scope:%s" % control
-                            and event == "open"
-                            and any(
-                                item["control"] == control
-                                and item["interaction"] == interaction
-                                and item["event"] == event
-                                for item in payload["interaction_projection"]["bindings"]
+                        with owner._mutation_lock:
+                            binding = owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
                             )
-                        ):
-                            scope_root = control
-                        payload = owner._canvas(binding, scope_root=scope_root)
-                        self._json(200, {"ok": True, **payload, "accepted_revision": revision})
+                            revision = body.get("revision")
+                            if type(revision) is not int:
+                                raise InvalidCell(
+                                    "interaction request revision is invalid"
+                                )
+                            current = owner.authority.store.revision
+                            if revision != current:
+                                self._json(400, {
+                                    "ok": False,
+                                    "error": "expected revision %s, current revision is %s"
+                                    % (revision, current),
+                                })
+                                return
+                            interaction_root = body.get("interaction")
+                            control_root = body.get("control")
+                            event_root = body.get("event")
+                            for value, label in (
+                                (interaction_root, "interaction"),
+                                (control_root, "control"),
+                                (event_root, "event"),
+                            ):
+                                if type(value) is not str or not value:
+                                    raise InvalidCell(
+                                        "scope interaction %s is invalid" % label
+                                    )
+                            snapshot = owner.authority.store.snapshot()
+                            scope_root = owner.clean_scope_root
+                            # Renew the interaction lease from the graph-held
+                            # interaction set. Rebuilding the whole visual
+                            # canvas to recover one scope identity would cost
+                            # a second full projection for no added authority.
+                            owner._issue_scope_lease(
+                                binding,
+                                snapshot,
+                                scope_root,
+                            )
+                            result = submit_clean_scope_interaction(
+                                owner.clean_authority,
+                                owner.clean_browser_authority,
+                                owner.clean_scope_interactions,
+                                owner.clean_interaction_broker,
+                                owner._projection_handle(binding, snapshot),
+                                binding.session_root,
+                                interaction_root=interaction_root,
+                                control_root=control_root,
+                                event_root=event_root,
+                                expected_revision=revision,
+                                projected_canvas={"root": scope_root},
+                                caller=owner.clean_caller,
+                            )
+                            payload = owner._canvas(
+                                binding,
+                                scope_root=result.root_id,
+                                at_revision=result.revision,
+                            )
+                        self._json(200, {
+                            "ok": True,
+                            **payload,
+                            "accepted_revision": result.revision,
+                            "receipt": result.receipt_root,
+                            "replayed": result.replayed,
+                        })
                         return
                     if self.path == "/api/universal/browser-handoff":
                         self._json(403, {
@@ -1079,8 +1212,17 @@ class _CleanAuthorityHttpServer:
                         })
                         return
                     self._json(404, {"ok": False, "error": "not found"})
-                except (AuthorizationDenied, InvalidCell) as exc:
+                except Conflict as exc:
+                    self._json(409, {"ok": False, "error": str(exc)})
+                except (
+                    AuthorizationDenied,
+                    InteractionProjectionDenied,
+                    InvalidCell,
+                ) as exc:
                     self._json(403, {"ok": False, "error": str(exc)})
+                except Exception as exc:  # noqa: BLE001
+                    # Never leave the browser waiting on a dead socket.
+                    self._json(500, {"ok": False, "error": str(exc)})
 
         return Handler
 

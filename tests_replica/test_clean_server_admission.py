@@ -1109,6 +1109,7 @@ def test_clean_browser_session_http_scope_interaction_requires_signed_graph_comm
             "/api/universal/interaction",
             _scope_interaction_request(canvas, target["id"]),
             token="scope-browser-token",
+            headers={"X-ArchHub-CSRF": "scope-browser-csrf"},
         )
         assert status == 200
         assert projected["root"] == target["id"]

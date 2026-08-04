@@ -18,6 +18,10 @@ from .clean_browser_authority import (
     CleanBrowserAuthority,
     install_clean_browser_authority,
 )
+from .clean_scope_interactions import (
+    CleanScopeInteractions,
+    install_clean_scope_interactions,
+)
 from .clean_visual_authority import (
     CleanVisualSystem,
     install_clean_visual_system,
@@ -69,6 +73,7 @@ class CleanRuntimeComponents:
     browser: CleanBrowserAuthority
     specification: SpecificationGraphImportResult
     grand_map: RequirementGraphImportResult
+    interactions: CleanScopeInteractions
 
 
 def _command(label: str) -> str:
@@ -111,6 +116,7 @@ def provision_clean_runtime(
             CleanBrowserAuthority,
             SpecificationGraphImportResult,
             RequirementGraphImportResult,
+            CleanScopeInteractions,
         ]
     ] = []
 
@@ -150,6 +156,15 @@ def provision_clean_runtime(
             caller=caller,
             command_id=_command("clean-browser-authority:v1"),
         )
+        interactions = install_clean_scope_interactions(
+            authority,
+            browser,
+            grand_map.root_id,
+            caller=caller,
+            command_id=_command(
+                "clean-scope-interactions:v1:" + map_digest
+            ),
+        )
         built.append((
             caller,
             sessions,
@@ -158,6 +173,7 @@ def provision_clean_runtime(
             browser,
             specification,
             grand_map,
+            interactions,
         ))
 
     location = provision_unified_authority(
@@ -183,6 +199,7 @@ def provision_clean_runtime(
         browser,
         specification,
         grand_map,
+        interactions,
     ) = built[0]
     return CleanRuntimeComponents(
         location,
@@ -193,6 +210,7 @@ def provision_clean_runtime(
         browser,
         specification,
         grand_map,
+        interactions,
     )
 
 

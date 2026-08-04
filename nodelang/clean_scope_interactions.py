@@ -42,6 +42,7 @@ from .unified_authority import (
     _typed_relation_cells,
     _validate_command_participants,
     audit_authority_history,
+    verify_exact_authority_head,
     composition_root,
     read_scope_level,
     validate_composition,
@@ -408,6 +409,13 @@ def install_clean_scope_interactions(
         )
 
     cells: list[Cell] = [*protocol_cells, event_cell, *interaction_batch.cells]
+    if CAPABILITY_SCOPE not in snapshot.cells:
+        # The scope capability is the graph-held action every binding points
+        # at; the first install must create it or the interaction relation
+        # would reference a dangling identity.
+        cells.append(
+            Cell(CAPABILITY_SCOPE, NULL_CELL_ID, NULL_CELL_ID, b"scope")
+        )
     entries: list[str] = []
     for category, roots in (
         ("role", protocol.roles),
@@ -511,6 +519,20 @@ def open_clean_scope_interactions(
     return installed[0]
 
 
+def _submit_command_id(
+    interaction_root: str,
+    browser_session_root: str,
+    control_root: str,
+    event_root: str,
+    expected_revision: int,
+) -> str:
+    """One stable identity for an exact scope-open submission."""
+    return str(uuid.uuid5(
+        uuid.UUID(interaction_root),
+        f"{browser_session_root}:{control_root}:{event_root}:{expected_revision}",
+    ))
+
+
 def submit_clean_scope_interaction(
     authority: UnifiedAuthority,
     browser: CleanBrowserAuthority,
@@ -528,9 +550,41 @@ def submit_clean_scope_interaction(
 ) -> CommandResult:
     """Execute one preinstalled scope-open interaction through a signed receipt."""
     snapshot = authority.store.snapshot()
+    # An exact retry of a command that already succeeded must return its
+    # existing receipt. The command identity embeds the base revision, and a
+    # successful submit advances that revision, so the replay lookup has to
+    # happen before staleness is enforced or the retry path is unreachable.
+    command_id = _submit_command_id(
+        interaction_root,
+        browser_session_root,
+        control_root,
+        event_root,
+        expected_revision,
+    )
+    replayed = _find_receipt(
+        authority,
+        snapshot,
+        caller.actor_root,
+        caller.session_root,
+        command_id,
+    )
+    if replayed is not None:
+        return CommandResult(
+            replayed.result_root,
+            replayed.result_revision,
+            True,
+            0,
+            0,
+            replayed.root_id,
+        )
     if snapshot.revision != expected_revision:
         raise InvalidCell("scope interaction base is stale")
-    audit_authority_history(authority)
+    # Per-submission work must stay bounded. The exact signed head for this
+    # revision is what authorizes this command; replaying the entire history
+    # on every click would make each interaction cost grow with the graph,
+    # which is the failure this rebuild exists to remove. The full audit
+    # stays available for authority open and for the courts.
+    verify_exact_authority_head(authority, snapshot)
     lease = projection_broker.resolve(
         projection_handle,
         snapshot,
@@ -570,10 +624,13 @@ def submit_clean_scope_interaction(
         "scope": current_scope,
         "target": target_scope,
     })
-    command_id = str(uuid.uuid5(
-        uuid.UUID(interaction_root),
-        f"{browser_session_root}:{control_root}:{event_root}:{expected_revision}",
-    ))
+    command_id = _submit_command_id(
+        interaction_root,
+        browser_session_root,
+        control_root,
+        event_root,
+        expected_revision,
+    )
     authenticated, policy_proof = _validate_command_participants(
         authority,
         snapshot,

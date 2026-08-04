@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 import uuid
@@ -18,6 +19,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from http.cookies import SimpleCookie
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import parse_qs, urlsplit
 
 from .application_machine_transport import (
@@ -56,7 +58,7 @@ from .cell_tenant_authority import PublishedTenantAdmissionVerifier
 from .cell_runtime_presence import renew_runtime_presence
 from .cell_reactions import ReactionEngine
 from .cell_catalog import with_catalog_verification_scope
-from .cell_protocols import with_relation_projection_scope
+from .cell_protocols import read_relation, with_relation_projection_scope
 from .core import relation_stages
 from .domains.cockpit import submit_cockpit_command
 from .http_server import QuietThreadingHTTPServer
@@ -186,6 +188,7 @@ from .universal_application import (
     sync_universal_roma_requirement_tree,
     transition_universal_governed_work,
     transition_universal_operational_state,
+    verify_universal_runtime_handoff_work,
     validate_universal_workshop_entry_content,
     settle_universal_baboom_model_execution,
     execute_universal_adapter_request,
@@ -210,6 +213,7 @@ from .cell_signing_authority import (
     verify_signing_key_descriptor,
 )
 from .cell_cde_authority import (
+    cde_write_permit_identity,
     consume_cde_write_permit,
     issue_cde_write_permit,
 )
@@ -233,10 +237,22 @@ from .site_export import SiteExportError, build_site_export
 from .checkpoint_authority_provisioning import (
     provision_windows_revision_checkpoint_authority,
 )
+from .clean_browser_authority import (
+    CleanBrowserAuthority,
+    verify_clean_browser_session,
+)
+from .unified_application_lens import (
+    project_unified_scope,
+    scope_lens_payload,
+)
 from .cell_cloud_routes import (
     CloudRouteDenied,
     find_cloud_route,
     resolve_cloud_route,
+)
+from .unified_authority import (
+    UnifiedAuthority,
+    validate_composition,
 )
 
 
@@ -252,6 +268,7 @@ from .cell_browser_sessions import (
 from .cell_exclusive_ownership import (
     acquire_ownership,
     read_ownership,
+    read_ownership_transition,
     transition_ownership,
     verify_ownership_authority,
 )
@@ -277,6 +294,7 @@ from .cell_interactions import (
     _read_interactions_with_verified_protocol,
     execute_interaction,
     read_interaction,
+    with_interaction_projection_scope,
 )
 from .cell_relation_forms import read_relation_form_binding
 from .cell_control_bindings import (
@@ -323,6 +341,7 @@ _INTERACTION_DELTA_MODE = "interaction-delta-v1"
 _TOPOLOGY_DELTA_MODE = "topology-delta-v1"
 _RECEIPT_MODE = "receipt-v1"
 _MACHINE_WORKSHOP_ENTRY_LIMIT = 50
+_BROWSER_SCOPE_PROJECTION_LIMIT = 8
 _MACHINE_DELIBERATION_PAYLOAD_BYTES = 64 * 1024
 _MACHINE_DELIBERATION_RESPONSE_BYTES = 192 * 1024
 _TOPOLOGY_DELTA_FIELDS = (
@@ -730,6 +749,341 @@ class _BrowserCanvasProjectionBinding:
     projection: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class _CleanBrowserSessionBinding:
+    session_root: str
+    subject_root: str
+    view_root: str
+    tenant_root: str
+    assurance_root: str
+
+
+class _CleanAuthorityHttpServer:
+    """Bounded clean-graph browser consumer without a second store."""
+
+    def __init__(
+        self,
+        authority: UnifiedAuthority,
+        *,
+        browser_authority: CleanBrowserAuthority,
+        authority_key_provider: SigningKeyProvider,
+        scope_caller,
+        scope_root: str,
+        host: str = "127.0.0.1",
+        port: int = 0,
+    ) -> None:
+        self.authority = authority
+        self.clean_authority = authority
+        self.clean_store = authority.store
+        self.browser_authority = browser_authority
+        self.clean_browser_authority = browser_authority
+        self.authority_key_provider = authority_key_provider
+        self.clean_caller = scope_caller
+        self.clean_scope_root = scope_root
+        self._pulse_root = "app:clean-browser-gesture:%s" % uuid.uuid4().hex
+        self._pulse_initialized = False
+        self._mutation_lock = threading.RLock()
+        self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
+        self.thread = None
+
+    @property
+    def url(self) -> str:
+        host, port = self.httpd.server_address[:2]
+        return "http://%s:%d" % (host, port)
+
+    def start(self):
+        if self.thread is None:
+            self.thread = threading.Thread(
+                target=self.httpd.serve_forever,
+                name="archhub-clean-browser-server",
+                daemon=True,
+            )
+            self.thread.start()
+        return self
+
+    def close(self):
+        if self.thread is not None:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+            self.thread.join(timeout=5.0)
+            self.thread = None
+
+    def _resolve_binding(self, token: str) -> _CleanBrowserSessionBinding:
+        if type(token) is not str or not token:
+            raise AuthorizationDenied("authenticated browser session required")
+        snapshot = self.authority.store.snapshot()
+        expected_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        matches = []
+        for session_root in list_browser_session_roots(
+            snapshot, self.browser_authority.protocol
+        ):
+            session = read_browser_session(
+                snapshot, self.browser_authority.protocol, session_root
+            )
+            try:
+                stored_digest = snapshot.cells[
+                    session.token_digest_root
+                ].atom.decode("utf-8")
+            except (KeyError, UnicodeDecodeError) as exc:
+                raise AuthorizationDenied(
+                    "browser credential digest is unreadable"
+                ) from exc
+            if not secrets.compare_digest(expected_digest, stored_digest):
+                continue
+            try:
+                session = verify_clean_browser_session(
+                    self.authority,
+                    self.browser_authority,
+                    session_root,
+                    token=token,
+                )
+            except (BrowserSessionDenied, InvalidCell) as exc:
+                raise AuthorizationDenied(str(exc))
+            matches.append(session)
+        if len(matches) != 1:
+            raise AuthorizationDenied("browser session is unknown")
+        session = matches[0]
+        expected = (
+            self.authority.manifest.principal_root,
+            self.authority.manifest.bootstrap_session_root,
+            self.authority.manifest.application_root,
+            self.browser_authority.root_id,
+        )
+        actual = (
+            session.subject_root,
+            session.view_root,
+            session.tenant_root,
+            session.assurance_root,
+        )
+        if actual != expected:
+            if session.subject_root != expected[0]:
+                raise AuthorizationDenied("browser session subject drifted")
+            raise AuthorizationDenied("browser session authority drifted")
+        return _CleanBrowserSessionBinding(
+            session.root_id,
+            session.subject_root,
+            session.view_root,
+            session.tenant_root,
+            session.assurance_root,
+        )
+
+    def _canvas(self, binding: _CleanBrowserSessionBinding) -> dict[str, object]:
+        root_id = self.clean_scope_root
+        snapshot = self.authority.store.snapshot()
+        if type(root_id) is not str or root_id not in snapshot.cells:
+            raise AuthorizationDenied("clean scope root is invalid")
+        lens = scope_lens_payload(
+            project_unified_scope(
+                self.clean_authority,
+                root_id,
+                caller=self.clean_caller,
+            )
+        )
+        nodes = [
+            {
+                "id": node["root_id"],
+                "label": node["label"],
+                "kind": node["structural_role"],
+                "openable": bool(node["openable"]),
+                "state": node["state"],
+                "ports": node["ports"],
+            }
+            for node in lens["nodes"]
+        ]
+        wires = [
+            {
+                "id": relation["root_id"],
+                "participants": [
+                    {"role": role, "root": participant_root}
+                    for role, participant_root in relation["participants"]
+                ],
+                "source": (
+                    next(
+                        (
+                            participant_root
+                            for role, participant_root in relation["participants"]
+                            if role == "source"
+                        ),
+                        None,
+                    )
+                ),
+                "target": (
+                    next(
+                        (
+                            participant_root
+                            for role, participant_root in relation["participants"]
+                            if role == "target"
+                        ),
+                        None,
+                    )
+                ),
+                "nary": len(relation["participants"]) > 2,
+                "kind": relation["properties"].get("kind"),
+                "reason": relation["properties"].get("reason"),
+                "properties": dict(relation["properties"]),
+            }
+            for relation in lens["relations"]
+        ]
+        catalog = [
+            {
+                "id": item["root_id"],
+                "name": item["name"],
+                "version": item["version"],
+                "kind": item["lifecycle"],
+            }
+            for item in lens["catalogue"]
+        ]
+        properties = [
+            {
+                "relation": node["root_id"],
+                "node": node["root_id"],
+                "name": prop["name"],
+                "value": prop["value"],
+            }
+            for node in lens["nodes"]
+            for prop in node["properties"]
+        ]
+        bindings = [
+            {
+                "interaction": "scope:%s" % node["id"],
+                "control": node["id"],
+                "event": "open",
+            }
+            for node in nodes if node["openable"]
+        ]
+        return {
+            "graph_id": self.authority.manifest.graph_id,
+            "revision": snapshot.revision,
+            "root": root_id,
+            "nodes": nodes,
+            "wires": wires,
+            "catalog": catalog,
+            "properties": properties,
+            "viewport": {"pan_x": 0.0, "pan_y": 0.0, "zoom": 1.0},
+            "interaction_projection": {
+                "revision": snapshot.revision,
+                "bindings": bindings,
+            },
+            "authorization": {
+                "subject": binding.subject_root,
+                "browser_sessions": [{"root": binding.session_root}],
+            },
+        }
+
+    def _touch_gesture_revision(self) -> int:
+        snapshot = self.authority.store.snapshot()
+        if not self._pulse_initialized:
+            self.authority.store.commit(
+                snapshot.revision,
+                create=(Cell(
+                    self._pulse_root,
+                    NULL_CELL_ID,
+                    NULL_CELL_ID,
+                    b"0",
+                ),),
+            )
+            self._pulse_initialized = True
+            return self.authority.store.revision
+        self.authority.store.commit(
+            snapshot.revision,
+            replace=(Cell(
+                self._pulse_root,
+                NULL_CELL_ID,
+                NULL_CELL_ID,
+                str(time.time()).encode("utf-8"),
+            ),),
+        )
+        return self.authority.store.revision
+
+    def _make_handler(self):
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                return
+
+            def _json(self, status: int, payload: Mapping[str, object]):
+                raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _token(self) -> str:
+                token = self.headers.get("X-ArchHub-Session", "")
+                if type(token) is not str:
+                    return ""
+                return token.strip()
+
+            def _body(self) -> dict[str, object]:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0:
+                    return {}
+                raw = self.rfile.read(length)
+                try:
+                    body = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise InvalidCell("request body is invalid JSON") from exc
+                if type(body) is not dict:
+                    raise InvalidCell("request body must be an object")
+                return body
+
+            def do_GET(self):
+                if self.path == "/api/universal/browser-handoff":
+                    self._json(403, {
+                        "ok": False,
+                        "error": "clean browser session is required",
+                    })
+                    return
+                if self.path != "/api/universal/canvas":
+                    self._json(404, {"ok": False, "error": "not found"})
+                    return
+                try:
+                    binding = owner._resolve_binding(self._token())
+                    payload = owner._canvas(binding)
+                except (AuthorizationDenied, InvalidCell) as exc:
+                    self._json(403, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, **payload})
+
+            def do_POST(self):
+                try:
+                    binding = owner._resolve_binding(self._token())
+                    body = self._body()
+                    if self.path == "/api/universal/gesture":
+                        touched = owner._touch_gesture_revision()
+                        self._json(200, {"ok": True, "touched": touched})
+                        return
+                    if self.path == "/api/universal/interaction":
+                        revision = body.get("revision")
+                        if type(revision) is not int:
+                            raise InvalidCell("interaction request revision is invalid")
+                        current = owner.authority.store.revision
+                        if revision != current:
+                            self._json(400, {
+                                "ok": False,
+                                "error": "expected revision %s, current revision is %s"
+                                % (revision, current),
+                            })
+                            return
+                        payload = owner._canvas(binding)
+                        self._json(200, {"ok": True, **payload, "accepted_revision": revision})
+                        return
+                    if self.path == "/api/universal/browser-handoff":
+                        self._json(403, {
+                            "ok": False,
+                            "error": "clean browser session is required",
+                        })
+                        return
+                    self._json(404, {"ok": False, "error": "not found"})
+                except (AuthorizationDenied, InvalidCell) as exc:
+                    self._json(403, {"ok": False, "error": str(exc)})
+
+        return Handler
+
+
 @dataclass(slots=True)
 class PreparedSharedUniversalRuntime:
     """One fenced shared authority prepared for exact server handoff."""
@@ -950,8 +1304,65 @@ def _ensure_cde_write_signing_authority(
 
 
 class ApplicationServer:
+    @classmethod
+    def from_unified_authority(
+        cls,
+        authority,
+        *,
+        browser_authority=None,
+        authority_key_provider=None,
+        scope_caller,
+        scope_root,
+        **kwargs,
+    ):
+        """Bind one existing clean authority into one HTTP consumer path."""
+        if not isinstance(authority, UnifiedAuthority):
+            raise TypeError("clean server admission requires one UnifiedAuthority")
+        if not isinstance(browser_authority, CleanBrowserAuthority):
+            raise TypeError(
+                "clean server admission requires one CleanBrowserAuthority"
+            )
+        if scope_caller is None or not hasattr(scope_caller, "sign"):
+            raise TypeError(
+                "clean server admission caller capability is invalid"
+            )
+        if (
+            getattr(scope_caller, "actor_root", None)
+            != authority.manifest.principal_root
+        ):
+            raise InvalidCell(
+                "clean server caller actor root does not match the authority"
+            )
+        if (
+            getattr(scope_caller, "session_root", None)
+            != authority.manifest.bootstrap_session_root
+        ):
+            raise InvalidCell(
+                "clean server caller session root does not match the authority"
+            )
+        if type(scope_root) is not str or not scope_root:
+            raise TypeError("clean server scope root is invalid")
+        if (
+            authority_key_provider is None
+            or not hasattr(authority_key_provider, "sign")
+            or not hasattr(authority_key_provider, "current")
+        ):
+            raise TypeError(
+                "clean server admission requires one signing key provider"
+            )
+        return _CleanAuthorityHttpServer(
+            authority,
+            browser_authority=browser_authority,
+            authority_key_provider=authority_key_provider,
+            scope_caller=scope_caller,
+            scope_root=scope_root,
+            **kwargs,
+        )
+
     def __init__(self, host='127.0.0.1', port=0, store=None, registry=None,
                  state_path=None, fresh=False, live_watch=False,
+                 public_server_url=None,
+                 runtime_drain_coordinator=None,
                  cloud_host='127.0.0.1', cloud_port=0,
                  universal_store=None, universal_registry=None,
                   universal_state_path=None,
@@ -985,6 +1396,15 @@ class ApplicationServer:
                  runtime_compliance_runner=None,
                  model_execution_broker=None):
         self.allow_legacy_mutations = bool(allow_legacy_mutations)
+        self._public_server_url = self._validate_public_server_url(
+            public_server_url
+        )
+        if (
+            runtime_drain_coordinator is not None
+            and not callable(runtime_drain_coordinator)
+        ):
+            raise ValueError("runtime drain coordinator must be callable")
+        self._runtime_drain_coordinator = runtime_drain_coordinator
         self.device_key_factory = device_key_factory
         self.cloud_host = cloud_host
         self.cloud_port = cloud_port
@@ -1043,6 +1463,18 @@ class ApplicationServer:
         self._browser_canvas_projections: dict[
             str, _BrowserCanvasProjectionBinding
         ] = {}
+        self._browser_scope_canvas_projections: dict[
+            tuple[str, str], _BrowserCanvasProjectionBinding
+        ] = {}
+        self._browser_scope_canvas_identities: dict[
+            tuple[str, str], tuple[
+                tuple[str, ...],
+                tuple[str, ...],
+                tuple[str, ...],
+                tuple[str, ...] | None,
+            ]
+        ] = {}
+        self._browser_scope_projection_lineage: dict[str, int] = {}
         self._machine_agent_sessions = {}
         self._machine_agent_recovery_capabilities = {}
         self._machine_agent_session_lock = threading.RLock()
@@ -1376,6 +1808,7 @@ class ApplicationServer:
         self._runtime_holder_root = "app:runtime-holder:" + uuid.uuid4().hex
         self._runtime_ownership_root = None
         self._runtime_fence_release = None
+        self._runtime_handoff_exit = threading.Event()
         self.cde_write_signing_provider = None
         self.cde_write_signing_descriptor_root = None
         try:
@@ -1593,6 +2026,12 @@ class ApplicationServer:
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
             def do_GET(self):
+                if owner._runtime_handoff_exit.is_set():
+                    self._json(503, {
+                        'ok': False,
+                        'error': 'runtime generation was released',
+                    })
+                    return
                 parsed = urlsplit(self.path)
                 if parsed.path == '/favicon.ico':
                     self.send_response(204)
@@ -1971,6 +2410,13 @@ class ApplicationServer:
             @with_session_canvas_roots_scope
             def do_POST(self):
                 try:
+                    if owner._runtime_handoff_exit.is_set():
+                        self._discard_admitted_body()
+                        self._json(503, {
+                            'ok': False,
+                            'error': 'runtime generation was released',
+                        })
+                        return
                     try:
                         binding, _session_token = \
                             self._browser_session_binding(unsafe=True)
@@ -2206,6 +2652,8 @@ class ApplicationServer:
                             )
                             created_root = None
                             scope_materialization = None
+                            reusable_scope_projection = None
+                            reusable_scope_identity = None
                             interaction = read_interaction(
                                 owner.universal_store.snapshot(),
                                 owner.universal_registry.interaction_protocol,
@@ -2379,6 +2827,26 @@ class ApplicationServer:
                                         'interaction carries undeclared event facts'
                                     )
                                 if interaction.action_root == CAPABILITY_SCOPE:
+                                    if len(interaction.input_roots) == 2:
+                                        reusable_scope_projection = (
+                                            owner._cached_browser_scope_projection(
+                                                binding,
+                                                interaction.input_roots[1],
+                                                expected_lineage_revision=(
+                                                    body['revision']
+                                                ),
+                                            )
+                                        )
+                                        if reusable_scope_projection is not None:
+                                            reusable_scope_identity = (
+                                                owner._cached_browser_scope_identity(
+                                                    binding,
+                                                    interaction.input_roots[1],
+                                                    expected_lineage_revision=(
+                                                        body['revision']
+                                                    ),
+                                                )
+                                            )
                                     scope_execution = (
                                         submit_universal_scope_interaction(
                                         owner.universal_store,
@@ -2390,6 +2858,12 @@ class ApplicationServer:
                                         event_root=body['event'],
                                         expected_revision=body['revision'],
                                         projected_canvas=previous_projection,
+                                        reusable_scope_projection=(
+                                            reusable_scope_projection
+                                        ),
+                                        reusable_scope_identity=(
+                                            reusable_scope_identity
+                                        ),
                                         authentication_context=binding.context,
                                     )
                                     )
@@ -2927,6 +3401,7 @@ class ApplicationServer:
                 ),
                 descriptor_path=machine_descriptor_path,
                 key_provider=transport_key_provider,
+                after_response=self._after_universal_machine_response,
             )
         self.thread = None
         self._live_stop = threading.Event()
@@ -2939,6 +3414,28 @@ class ApplicationServer:
     @staticmethod
     def _browser_token_digest(token: str) -> str:
         return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _validate_public_server_url(value):
+        if value is None:
+            return None
+        if type(value) is not str:
+            raise ValueError("public runtime origin must be text")
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.port is None
+            or parsed.username
+            or parsed.password
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "public runtime origin must be a bare numeric loopback URL"
+            )
+        return "http://127.0.0.1:%d" % int(parsed.port)
 
     def _runtime_owner_attestation_inputs(
         self, phase: str
@@ -3136,6 +3633,106 @@ class ApplicationServer:
             event="release",
             evidence_root=evidence_root,
         )
+
+    def _prove_runtime_backend_state(self, state: str) -> BackendGeneration:
+        """Verify this worker and every signed transition to one exact state."""
+        if state not in {"active", "draining", "released"}:
+            raise InvalidCell("runtime backend state is invalid")
+        if self.thread is None or not self.thread.is_alive():
+            raise InvalidCell("runtime backend is not serving")
+        if self.universal_store.supports_shared_writers:
+            self.universal_store.refresh()
+        snapshot = self.universal_store.snapshot()
+        ownerships = verify_ownership_authority(
+            snapshot, self.universal_registry.ownership_protocol
+        )
+        current = tuple(
+            ownership for ownership in ownerships
+            if ownership.root_id == self._runtime_ownership_root
+        )
+        if len(current) != 1:
+            raise InvalidCell("runtime ownership root is not authoritative")
+        ownership = current[0]
+        if (
+            ownership.resource_root != self.universal_registry.application_root
+            or ownership.holder_root != self._runtime_holder_root
+            or ownership.state_root
+            != self.universal_registry.ownership_protocol.states[state]
+        ):
+            raise InvalidCell("runtime ownership state does not match this worker")
+        if len(ownership.evidence_roots) != 1:
+            raise InvalidCell("runtime ownership acquisition evidence is ambiguous")
+        parameters, content = self._runtime_owner_attestation_inputs("acquire")
+        self.universal_registry.attestation_broker.verify(
+            snapshot,
+            self.universal_registry.attestation_protocol,
+            ownership.evidence_roots[0],
+            expected_court_root=(
+                self.universal_registry.runtime_ownership_court_root
+            ),
+            expected_subject_name=self._runtime_holder_root,
+            expected_subject_digest=hashlib.sha256(content).hexdigest(),
+            expected_parameters=parameters,
+            expected_result="pass",
+        )
+        expected_phases = {
+            "active": (),
+            "draining": ("drain",),
+            "released": ("drain", "release"),
+        }[state]
+        if len(ownership.transition_roots) != len(expected_phases):
+            raise InvalidCell("runtime ownership transition history drifted")
+        for transition_root, phase in zip(
+            ownership.transition_roots, expected_phases
+        ):
+            transition = read_ownership_transition(
+                snapshot,
+                self.universal_registry.ownership_protocol,
+                transition_root,
+            )
+            parameters, content = self._runtime_owner_attestation_inputs(phase)
+            self.universal_registry.attestation_broker.verify(
+                snapshot,
+                self.universal_registry.attestation_protocol,
+                transition.evidence_root,
+                expected_court_root=(
+                    self.universal_registry.runtime_ownership_court_root
+                ),
+                expected_subject_name=self._runtime_holder_root,
+                expected_subject_digest=hashlib.sha256(content).hexdigest(),
+                expected_parameters=parameters,
+                expected_result="pass",
+            )
+        if (
+            self.universal_store.is_durable
+            and not (
+                self.universal_store.has_exclusive_database_owner
+                or self.universal_store.supports_shared_writers
+            )
+        ):
+            raise InvalidCell("runtime durable authority is not admitted")
+        return BackendGeneration(
+            self.url, ownership.generation, ownership.root_id
+        )
+
+    @property
+    def runtime_handoff_exit_requested(self) -> bool:
+        return self._runtime_handoff_exit.is_set()
+
+    def _after_universal_machine_response(
+        self,
+        request: Mapping[str, object],
+        response: Mapping[str, object],
+    ) -> None:
+        result = response.get("result")
+        if (
+            request.get("method") == "POST"
+            and request.get("path") == "/api/universal/runtime-handoff"
+            and isinstance(result, Mapping)
+            and result.get("phase") == "released"
+            and result.get("signal_after_response") is True
+        ):
+            self._runtime_handoff_exit.set()
 
     def _register_browser_session(
         self,
@@ -4473,7 +5070,7 @@ class ApplicationServer:
     def _ensure_universal_workshop_participant(
         self, participant_root: str
     ) -> None:
-        """Admit one proven runtime Agent Session into app:workshop."""
+        """Admit one proven runtime Agent Session to Workshop control spaces."""
         if participant_root == self.universal_registry.authorization.subject_root:
             return
         if not participant_root.startswith("app:agent-session:runtime:"):
@@ -4493,6 +5090,11 @@ class ApplicationServer:
             snapshot,
             self.universal_registry.deliberation_protocol,
             self.universal_registry.workshop_root,
+        )
+        control_space = read_deliberation_space(
+            snapshot,
+            self.universal_registry.deliberation_protocol,
+            self.universal_registry.brain_control_ledger_root,
         )
         participant_patch = prepare_append_relation_member(
             snapshot,
@@ -4520,11 +5122,25 @@ class ApplicationServer:
         ) if (
             self.universal_registry.roles["member"], participant_root
         ) not in workbench_members else None
-        if participant_patch is None and workbench_patch is None:
+        control_participant_patch = prepare_append_relation_member(
+            snapshot,
+            self.universal_registry.brain_control_ledger_root,
+            self.universal_registry.deliberation_protocol.role(
+                "space-participant"
+            ),
+            participant_root,
+            budget=100_000,
+        ) if participant_root not in control_space.participant_roots else None
+        patches = (
+            participant_patch,
+            workbench_patch,
+            control_participant_patch,
+        )
+        if all(patch is None for patch in patches):
             return
         replacements = {
             cell.id: cell
-            for patch in (participant_patch, workbench_patch)
+            for patch in patches
             if patch is not None
             for cell in patch.replace
         }
@@ -4532,7 +5148,7 @@ class ApplicationServer:
             snapshot.revision,
             create=tuple(
                 cell
-                for patch in (participant_patch, workbench_patch)
+                for patch in patches
                 if patch is not None
                 for cell in patch.create
             ),
@@ -4672,10 +5288,11 @@ class ApplicationServer:
                 self._workshop_cache is not None
                 and self._workshop_cache_revision == snapshot.revision
             ):
-                return {
-                    "agent_session": request_agent_session,
-                    **self._workshop_cache,
-                }
+                projection = self._workshop_cache
+                return self._filter_universal_machine_workshop(
+                    projection,
+                    request_agent_session=request_agent_session,
+                )
         entries = list_deliberation_entries(
             snapshot,
             self.universal_registry.deliberation_protocol,
@@ -4714,14 +5331,49 @@ class ApplicationServer:
                     "text": entry.content,
                     "created_at": entry.created_at,
                 }
-                for entry in entries[-_MACHINE_WORKSHOP_ENTRY_LIMIT:]
+                for entry in entries
             ],
         }
         with self._work_index_cache_ready:
             if self.universal_store.revision == snapshot.revision:
                 self._workshop_cache_revision = snapshot.revision
                 self._workshop_cache = projection
-        return {"agent_session": request_agent_session, **projection}
+        return self._filter_universal_machine_workshop(
+            projection,
+            request_agent_session=request_agent_session,
+        )
+
+    def _filter_universal_machine_workshop(
+        self,
+        projection: Mapping[str, object],
+        *,
+        request_agent_session: str,
+    ) -> dict[str, object]:
+        """Apply graph-held Workshop audience relations at the read boundary."""
+        founder_session = self.universal_registry.agent_body.session.root_id
+        entries = projection.get("entries")
+        projected_entries = entries if isinstance(entries, list) else []
+        if request_agent_session == founder_session:
+            visible = projected_entries
+        else:
+            visible = [
+                entry
+                for entry in projected_entries
+                if (
+                    isinstance(entry, Mapping)
+                    and (
+                        not entry.get("recipients")
+                        or entry.get("actor") == request_agent_session
+                        or request_agent_session in entry.get("recipients", ())
+                    )
+                )
+            ]
+        return {
+            "agent_session": request_agent_session,
+            **projection,
+            "total": len(visible),
+            "entries": visible[-_MACHINE_WORKSHOP_ENTRY_LIMIT:],
+        }
 
     def _project_universal_machine_canvas(
         self,
@@ -4791,6 +5443,7 @@ class ApplicationServer:
             ("GET", "/api/universal/attention"),
             ("GET", "/api/universal/devices"),
             ("GET", "/api/universal/runtime-handoff-readiness"),
+            ("GET", "/api/universal/runtime-backend"),
             ("GET", "/api/universal/baboom-context"),
             ("GET", "/api/universal/baboom-presence"),
             ("GET", "/api/universal/baboom-native-frame"),
@@ -4855,6 +5508,7 @@ class ApplicationServer:
             ("POST", "/api/universal/work-transition"),
             ("POST", "/api/universal/work-court"),
             ("POST", "/api/universal/work-court-recover"),
+            ("POST", "/api/universal/runtime-handoff"),
             ("POST", "/api/universal/workshop-gate"),
         }
         if (method, path) not in admitted:
@@ -5090,6 +5744,21 @@ class ApplicationServer:
                 authentication_context=context,
                 work_index=work_index,
             )
+        if method == "GET" and path == "/api/universal/runtime-backend":
+            if body:
+                raise InvalidCell("runtime backend request must be empty")
+            if self.universal_checkpoint_guard is not None:
+                self.universal_checkpoint_guard.require_healthy()
+            self.require_universal_http_route(
+                method, path, authentication_context=context
+            )
+            backend = self.prove_runtime_backend_generation()
+            return {
+                "application": self.universal_registry.application_root,
+                "server_url": backend.url,
+                "generation": backend.generation,
+                "ownership_root": backend.ownership_root,
+            }
         if method == "GET" and path == "/api/universal/runtime-handoff-readiness":
             if body:
                 raise InvalidCell("runtime handoff readiness request must be empty")
@@ -5403,7 +6072,7 @@ class ApplicationServer:
             )
             return {
                 "application": self.universal_registry.application_root,
-                "server_url": self.url,
+                "server_url": self.public_url,
                 "supported": True,
                 "one_use_route": "POST /api/universal/browser-handoff",
                 "agent_session": request_agent_session,
@@ -5915,6 +6584,82 @@ class ApplicationServer:
                         "runtime presence requires its bound empty request"
                     )
                 return self._renew_universal_runtime_presence(request)
+            if path == "/api/universal/runtime-handoff":
+                expected_shape = {
+                    "phase", "work", "server_url", "generation",
+                    "ownership_root",
+                }
+                if direct or set(body) != expected_shape:
+                    raise AuthorizationDenied(
+                        "runtime handoff requires its bound exact request"
+                    )
+                phase = body["phase"]
+                if phase not in {"prepare", "finalize"}:
+                    raise InvalidCell("runtime handoff phase is invalid")
+                if (
+                    type(body["work"]) is not str
+                    or not body["work"]
+                    or type(body["server_url"]) is not str
+                    or type(body["generation"]) is not int
+                    or body["generation"] <= 0
+                    or type(body["ownership_root"]) is not str
+                    or not body["ownership_root"]
+                ):
+                    raise InvalidCell("runtime handoff values are invalid")
+                agent_session_root = (
+                    self._resolve_universal_machine_agent_session(request)
+                )
+                expected_state = "active" if phase == "prepare" else "draining"
+                backend = self._prove_runtime_backend_state(expected_state)
+                if (
+                    body["server_url"] != backend.url
+                    or body["generation"] != backend.generation
+                    or body["ownership_root"] != backend.ownership_root
+                ):
+                    raise AuthorizationDenied(
+                        "runtime handoff generation does not match this worker"
+                    )
+                verify_universal_runtime_handoff_work(
+                    self.universal_store,
+                    self.universal_registry,
+                    body["work"],
+                    agent_session_root=agent_session_root,
+                    expected_generation=backend.generation,
+                    expected_ownership_root=backend.ownership_root,
+                    authentication_context=context,
+                )
+                if phase == "prepare":
+                    if (
+                        self._public_server_url is not None
+                        and self._runtime_drain_coordinator is None
+                    ):
+                        raise InvalidCell(
+                            "stable runtime handoff requires its parent drain pipe"
+                        )
+                    if self._runtime_drain_coordinator is not None:
+                        try:
+                            self._runtime_drain_coordinator(backend)
+                        except Exception:
+                            self._runtime_handoff_exit.set()
+                            raise
+                    self._begin_runtime_drain()
+                    accepted = self._prove_runtime_backend_state("draining")
+                    result_phase = "draining"
+                else:
+                    self._release_runtime_ownership()
+                    accepted = self._prove_runtime_backend_state("released")
+                    result_phase = "released"
+                result = {
+                    "application": self.universal_registry.application_root,
+                    "agent_session": agent_session_root,
+                    "generation": accepted.generation,
+                    "ownership_root": accepted.ownership_root,
+                    "phase": result_phase,
+                    "work": body["work"],
+                }
+                if phase == "finalize":
+                    result["signal_after_response"] = True
+                return result
             if path == "/api/universal/browser-handoff":
                 if (not direct and request.get("session") != {}) or body:
                     raise AuthorizationDenied(
@@ -5925,7 +6670,7 @@ class ApplicationServer:
                     bootstrap_url = self.bootstrap_url
                 return {
                     "application": self.universal_registry.application_root,
-                    "server_url": self.url,
+                    "server_url": self.public_url,
                     "document_url": bootstrap_url,
                     "schema_version": UNIVERSAL_APPLICATION_SCHEMA_VERSION,
                     "one_use": True,
@@ -7339,7 +8084,20 @@ class ApplicationServer:
                     self.universal_registry.cde_signing_protocol,
                     self.cde_write_signing_provider,
                     self.cde_write_signing_descriptor_root,
-                    permit_id="app:cde-write-permit:" + uuid.uuid4().hex,
+                    permit_id=cde_write_permit_identity(
+                        runtime=runtime,
+                        agent_session_root=agent_session_root,
+                        work_root=admission.work_root,
+                        container_root=admission.container_root,
+                        container_id=admission.container_id,
+                        container_digest=admission.container_digest,
+                        operation=admission.operation,
+                        path=admission.path,
+                        content_digest=body["content_digest"],
+                        request_id=body["request_id"],
+                        nonce=body["nonce"],
+                        authorization_evidence=admission.claim_binding_root,
+                    ),
                     runtime=runtime,
                     agent_session_root=agent_session_root,
                     work_root=admission.work_root,
@@ -7845,9 +8603,70 @@ class ApplicationServer:
                 if not summary.strip():
                     raise InvalidCell("deliberation entry summary is empty")
                 actor_root = self.universal_registry.authorization.subject_root
+                entry_context = context
                 if not direct and request.get("session") != {}:
-                    raise AuthorizationDenied(
-                        "generic deliberation append requires a founder or explicitly admitted session"
+                    actor_root = self._resolve_universal_machine_agent_session(
+                        request
+                    )
+                    payload = body["payload"]
+                    expected_payload = {
+                        "operation", "session_fingerprint",
+                        "entry_count", "entries", "secret_ref_count",
+                        "secret_ref_hashes", "cwd_sha256",
+                        "git_remote_sha256",
+                    }
+                    surface = self._machine_session_surface_values(
+                        self.universal_store.snapshot(), actor_root
+                    )
+                    fingerprint = payload.get("session_fingerprint") \
+                        if type(payload) is dict else None
+                    evidence_hashes = (
+                        payload.get("cwd_sha256"),
+                        payload.get("git_remote_sha256"),
+                    ) if type(payload) is dict else ()
+                    if (
+                        space_root
+                        != self.universal_registry.brain_control_ledger_root
+                        or category_root
+                        != self.universal_registry.brain_control_category_roots[
+                            "compliance-event"
+                        ]
+                        or type(payload) is not dict
+                        or set(payload) != expected_payload
+                        or payload.get("operation")
+                        != "brain.hook_session_start"
+                        or summary != "Runtime Agent Session wiring"
+                        or not isinstance(fingerprint, str)
+                        or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+                        or fingerprint != surface.get("session fingerprint")
+                        or payload.get("entry_count") != 0
+                        or payload.get("entries") != []
+                        or payload.get("secret_ref_count") != 0
+                        or payload.get("secret_ref_hashes") != []
+                        or any(
+                            not isinstance(value, str)
+                            or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                            for value in evidence_hashes
+                        )
+                    ):
+                        raise AuthorizationDenied(
+                            "runtime session deliberation receipt is not admitted"
+                        )
+                    entry_context = (
+                        self.universal_registry.authorization.broker
+                        .mint_authenticated_context(
+                            actor_root,
+                            principal_roots=(),
+                            tenant_root=(
+                                self.universal_registry
+                                .authorization.tenant_root
+                            ),
+                            assurance_root=(
+                                self.universal_registry
+                                .authorization.assurance_root
+                            ),
+                            lifetime_seconds=60.0,
+                        )
                     )
                 created = (
                     datetime.now(timezone.utc).isoformat()
@@ -7876,7 +8695,7 @@ class ApplicationServer:
                         authentication_broker=(
                             self.universal_registry.authorization.broker
                         ),
-                        authentication_context=context,
+                        authentication_context=entry_context,
                     )
                 )
                 return {
@@ -8229,6 +9048,7 @@ class ApplicationServer:
 
     @with_relation_projection_scope
     @with_catalog_verification_scope
+    @with_interaction_projection_scope
     def _project_interaction_canvas(
         self,
         binding: _BrowserSessionBinding,
@@ -8239,6 +9059,19 @@ class ApplicationServer:
     ):
         """Bind controls over one exact full or materialized session scope."""
         with self.mutation_lock:
+            reusable_scope_projection = None
+            if scope_materialization is None:
+                self._discard_browser_scope_projections(binding.session_root)
+            else:
+                target_scope = scope_materialization.trail[-1]
+                reusable_scope_projection = (
+                    self._cached_browser_scope_projection(
+                        binding,
+                        target_scope,
+                        expected_lineage_revision=expected_base_revision,
+                        accepted_scope_materialization=scope_materialization,
+                    )
+                )
             panel_event_root, panel_interaction_roots = (
                 ensure_universal_properties_panel_interactions(
                     self.universal_store,
@@ -8267,6 +9100,7 @@ class ApplicationServer:
                     scope_materialization=scope_materialization,
                     previous_projection=previous_projection,
                     expected_base_revision=expected_base_revision,
+                    reusable_scope_projection=reusable_scope_projection,
                 )
             )
             (
@@ -8601,18 +9435,210 @@ class ApplicationServer:
                     for control in controls
                 ],
             }
+            projected_scope = projection.get("scope")
+            scope_identity = None
+            if scope_materialization is not None:
+                scope_identity = (
+                    scope_materialization.visible_roots,
+                    scope_materialization.relation_roots,
+                    scope_materialization.property_roots,
+                    scope_materialization.interface_roots,
+                )
+            elif (
+                isinstance(projected_scope, dict)
+                and projected_scope.get("current")
+                == self.universal_registry.canvas_root
+            ):
+                view_session = self.universal_registry.view_sessions[
+                    binding.subject_root
+                ]
+                visibility_members = read_relation(
+                    self.universal_store.snapshot(),
+                    view_session.visibility_root,
+                    budget=100_000,
+                )
+                interface_role = (
+                    self.universal_registry.assembly_protocol.role(
+                        "interface"
+                    )
+                )
+                visible_roots = tuple(
+                    member.participant_id
+                    for member in visibility_members
+                    if member.role_id == self.universal_registry.roles["visible"]
+                )
+                relation_roots = tuple(
+                    member.participant_id
+                    for member in visibility_members
+                    if member.role_id == self.universal_registry.roles["relation"]
+                )
+                property_roots = tuple(
+                    member.participant_id
+                    for member in visibility_members
+                    if member.role_id == self.universal_registry.roles["property"]
+                )
+                interface_roots = tuple(
+                    member.participant_id
+                    for member in visibility_members
+                    if member.role_id == interface_role
+                )
+                if tuple(
+                    node["id"] for node in projection["nodes"]
+                ) != visible_roots:
+                    raise InvalidCell(
+                        "retained scope identity differs from its projection"
+                    )
+                scope_identity = (
+                    visible_roots,
+                    relation_roots,
+                    property_roots,
+                    interface_roots,
+                )
+            projected_binding = _BrowserCanvasProjectionBinding(
+                binding.session_root,
+                binding.subject_root,
+                binding.view_root,
+                binding.tenant_root,
+                binding.assurance_root,
+                projection,
+            )
             with self._browser_session_lock:
                 self._browser_canvas_projections[
                     binding.session_root
-                ] = _BrowserCanvasProjectionBinding(
-                    binding.session_root,
-                    binding.subject_root,
-                    binding.view_root,
-                    binding.tenant_root,
-                    binding.assurance_root,
-                    projection,
-                )
+                ] = projected_binding
+                if (
+                    isinstance(projected_scope, dict)
+                    and type(projected_scope.get("current")) is str
+                ):
+                    scope_key = (
+                        binding.session_root,
+                        projected_scope["current"],
+                    )
+                    self._browser_scope_canvas_projections.pop(
+                        scope_key, None
+                    )
+                    self._browser_scope_canvas_projections[
+                        scope_key
+                    ] = projected_binding
+                    self._browser_scope_projection_lineage[
+                        binding.session_root
+                    ] = projection["revision"]
+                    if scope_identity is not None:
+                        self._browser_scope_canvas_identities[
+                            scope_key
+                        ] = scope_identity
+                    else:
+                        self._browser_scope_canvas_identities.pop(
+                            scope_key, None
+                        )
+                    self._enforce_browser_scope_projection_limit(
+                        binding.session_root
+                    )
             return projection
+
+    def _enforce_browser_scope_projection_limit(
+        self, session_root: str
+    ) -> None:
+        """Keep only the newest disposable scope views for one session."""
+        with self._browser_session_lock:
+            retained_keys = tuple(
+                key
+                for key in self._browser_scope_canvas_projections
+                if key[0] == session_root
+            )
+            for stale_key in retained_keys[
+                :-_BROWSER_SCOPE_PROJECTION_LIMIT
+            ]:
+                self._browser_scope_canvas_projections.pop(stale_key, None)
+                self._browser_scope_canvas_identities.pop(stale_key, None)
+
+    def _discard_browser_scope_projections(self, session_root: str) -> None:
+        """Discard disposable scope views without touching graph authority."""
+        with self._browser_session_lock:
+            self._browser_scope_canvas_projections = {
+                key: value
+                for key, value in self._browser_scope_canvas_projections.items()
+                if key[0] != session_root
+            }
+            self._browser_scope_canvas_identities = {
+                key: value
+                for key, value in self._browser_scope_canvas_identities.items()
+                if key[0] != session_root
+            }
+            self._browser_scope_projection_lineage.pop(session_root, None)
+
+    def _cached_browser_scope_projection(
+        self,
+        binding: _BrowserSessionBinding,
+        scope_root: str,
+        *,
+        expected_lineage_revision: int,
+        accepted_scope_materialization=None,
+    ) -> dict[str, object] | None:
+        """Return one retained private scope only on an observed lineage."""
+        if type(scope_root) is not str or type(expected_lineage_revision) is not int:
+            return None
+        with self._browser_session_lock:
+            lineage_revision = self._browser_scope_projection_lineage.get(
+                binding.session_root
+            )
+            cached = self._browser_scope_canvas_projections.get((
+                binding.session_root,
+                scope_root,
+            ))
+        if lineage_revision != expected_lineage_revision:
+            self._discard_browser_scope_projections(binding.session_root)
+            return None
+        current_revision = self.universal_store.revision
+        if current_revision != expected_lineage_revision:
+            materialization = accepted_scope_materialization
+            if (
+                materialization is None
+                or materialization.base_revision != expected_lineage_revision
+                or materialization.revision != current_revision
+                or materialization.revision != expected_lineage_revision + 1
+                or materialization.session_root != binding.view_root
+                or materialization.subject_root != binding.subject_root
+                or not materialization.trail
+                or materialization.trail[-1] != scope_root
+                or materialization.changed_roots
+                != self.universal_store.revision_changes(current_revision)
+            ):
+                self._discard_browser_scope_projections(binding.session_root)
+                return None
+        if (
+            cached is None
+            or cached.session_root != binding.session_root
+            or cached.subject_root != binding.subject_root
+            or cached.view_root != binding.view_root
+            or cached.tenant_root != binding.tenant_root
+            or cached.assurance_root != binding.assurance_root
+            or not isinstance(cached.projection.get("scope"), dict)
+            or cached.projection["scope"].get("current") != scope_root
+        ):
+            return None
+        return cached.projection
+
+    def _cached_browser_scope_identity(
+        self,
+        binding: _BrowserSessionBinding,
+        scope_root: str,
+        *,
+        expected_lineage_revision: int,
+    ):
+        """Return exact retained scope roots after the same identity checks."""
+        projection = self._cached_browser_scope_projection(
+            binding,
+            scope_root,
+            expected_lineage_revision=expected_lineage_revision,
+        )
+        if projection is None:
+            return None
+        with self._browser_session_lock:
+            return self._browser_scope_canvas_identities.get((
+                binding.session_root,
+                scope_root,
+            ))
 
     def _cached_browser_canvas_projection(
         self,
@@ -9145,11 +10171,15 @@ class ApplicationServer:
         return 'http://%s:%d' % (host, port)
 
     @property
+    def public_url(self):
+        return self._public_server_url or self.url
+
+    @property
     def bootstrap_url(self):
         token = self.browser_bootstrap_token
         if not token:
-            return self.url + '/'
-        return self.url + '/?bootstrap=' + token
+            return self.public_url + '/'
+        return self.public_url + '/?bootstrap=' + token
 
     def prewarm_universal_machine_read_projections(self) -> dict[str, object]:
         """Build revision-bound machine read caches from the Cell authority."""
@@ -9437,6 +10467,9 @@ class ApplicationServer:
                 bindings = tuple(self._browser_sessions.values())
                 self._browser_sessions.clear()
                 self._browser_canvas_projections.clear()
+                self._browser_scope_canvas_projections.clear()
+                self._browser_scope_canvas_identities.clear()
+                self._browser_scope_projection_lineage.clear()
             for binding in bindings:
                 self.interaction_projection_broker.revoke(
                     binding.interaction_projection_handle
@@ -9474,6 +10507,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8482)
+    parser.add_argument(
+        '--public-server-url',
+        default=os.environ.get('ARCHHUB_PUBLIC_SERVER_URL'),
+        help='stable numeric loopback gateway origin advertised to the browser',
+    )
+    parser.add_argument(
+        '--supervisor-control-stdio',
+        action='store_true',
+        help='use inherited parent-child pipes for the gateway drain handshake',
+    )
     parser.add_argument('--state-path', default=os.environ.get('ARCHHUB_STATE_PATH')
                         or str(default_state_path()))
     parser.add_argument('--fresh', action='store_true')
@@ -9527,8 +10570,19 @@ def main(argv=None):
         help='optional signed machine-transport descriptor path',
     )
     args = parser.parse_args(argv)
+    runtime_drain_coordinator = None
+    if args.supervisor_control_stdio:
+        from .runtime_supervisor import RuntimeDrainPipe
+        runtime_drain_coordinator = RuntimeDrainPipe(
+            reader=sys.stdin,
+            writer=sys.stdout,
+        ).begin_drain
     server = ApplicationServer(args.host, args.port, state_path=args.state_path,
                                fresh=args.fresh, live_watch=True,
+                               public_server_url=args.public_server_url,
+                               runtime_drain_coordinator=(
+                                   runtime_drain_coordinator
+                               ),
                                universal_state_path=args.universal_state_path,
                                universal_checkpoint_path=(
                                    args.universal_checkpoint_path
@@ -9565,11 +10619,18 @@ def main(argv=None):
     # one-use bootstrap URL instead of advertising an unusable bare address.
     print('Node-native ArchHub: %s' % server.bootstrap_url, flush=True)
     try:
-        server.thread.join()
+        while (
+            server.thread.is_alive()
+            and not server._runtime_handoff_exit.wait(0.25)
+        ):
+            pass
     except KeyboardInterrupt:
         pass
     finally:
-        server.close()
+        if server.runtime_handoff_exit_requested:
+            server.close(preserve_browser_session=True)
+        else:
+            server.close()
 
 
 if __name__ == '__main__':

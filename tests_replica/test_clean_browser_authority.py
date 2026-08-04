@@ -10,7 +10,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import nodelang.clean_browser_authority as clean_browser_authority
-from nodelang.cell_attention import active_focus, open_attention_protocol
+from nodelang.cell_attention import (
+    active_focus,
+    install_attention_protocol,
+    open_attention_protocol,
+)
 from nodelang.cell_browser_sessions import BrowserSessionDenied
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.clean_browser_authority import (
@@ -142,6 +146,15 @@ def test_two_sessions_racing_first_install_have_one_winner_and_zero_growth_retry
     authority = _authority()
     caller = _Caller(authority)
     other = _second_caller(authority, caller)
+    # install_clean_browser_authority installs the attention protocol as a
+    # prerequisite, which is itself one idempotent commit. Settle it before
+    # the baseline so this court measures the browser install alone; without
+    # this the assertion below counts a prerequisite as a second racer.
+    install_attention_protocol(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid5(uuid.uuid4(), "attention-protocol")),
+    )
     base_revision = authority.store.revision
     base_cell_count = len(authority.store.snapshot().cells)
     barrier = threading.Barrier(2, timeout=10.0)

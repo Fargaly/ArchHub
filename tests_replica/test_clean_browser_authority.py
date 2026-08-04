@@ -10,15 +10,18 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import nodelang.clean_browser_authority as clean_browser_authority
+from nodelang.cell_attention import active_focus, open_attention_protocol
 from nodelang.cell_browser_sessions import BrowserSessionDenied
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.clean_browser_authority import (
     install_clean_browser_authority,
     issue_clean_browser_session,
     open_clean_browser_authority,
+    revise_clean_browser_focus,
     revoke_clean_browser_session,
     verify_clean_browser_session,
 )
+from nodelang.unified_application_lens import project_unified_scope
 from nodelang.unified_authority import (
     BootstrapManifest,
     composition_root,
@@ -73,6 +76,10 @@ def _authority(store=None, provider=None):
         bootstrap_session_public_key=PUBLIC,
         composition_labels=("Interface", "Workshop", "Agent Sessions"),
     )
+
+
+def _focus_ready_authority(store=None, provider=None):
+    return _authority(store, provider)
 
 
 def _second_caller(authority, caller, label="Second browser"):
@@ -419,6 +426,462 @@ def test_browser_authority_reopens_and_replays_without_a_second_authority(tmp_pa
         require_csrf=True,
     ).root_id == issued.root_id
     reopened_store.close()
+
+
+def test_focus_protocol_bootstraps_and_reopens_cleanly(tmp_path):
+    database = tmp_path / "clean-browser-focus.sqlite3"
+    provider = _provider()
+    store = CellStore(database)
+    authority = _authority(store, provider)
+    caller = _Caller(authority)
+    browser = install_clean_browser_authority(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    other = _second_caller(authority, caller, label="Other admitted session")
+    issued = issue_clean_browser_session(
+        authority,
+        browser,
+        token="focus-browser-token",
+        csrf_token="focus-browser-csrf",
+        lifetime_seconds=300.0,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    workshop_root = composition_root(authority, "Workshop", caller=caller)
+    interface_root = composition_root(authority, "Interface", caller=caller)
+    scope_root = authority.manifest.application_root
+    base_revision = authority.store.revision
+    command_id = str(uuid.uuid4())
+    first = revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=command_id,
+        expected_revision=base_revision,
+    )
+    protocol = open_attention_protocol(authority.store.snapshot())
+    active = active_focus(
+        authority.store.snapshot(),
+        protocol,
+        session_root=issued.view_root,
+    )
+    assert active is not None
+    assert active.root_id == first.root_id
+    assert active.scope_root == scope_root
+    assert active.primary_root == workshop_root
+    assert active.selected_roots == (workshop_root,)
+    accepted_revision = first.revision
+    accepted_cell_count = len(authority.store.snapshot().cells)
+    _second_caller(authority, caller, label="Unrelated graph commit")
+    replay = revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=command_id,
+        expected_revision=base_revision,
+    )
+    assert replay.replayed is True
+    assert replay.root_id == first.root_id
+    assert replay.revision == accepted_revision
+    assert len(authority.store.snapshot().cells) > accepted_cell_count
+    no_growth_revision = authority.store.revision
+    no_growth_count = len(authority.store.snapshot().cells)
+    same_state = revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+        expected_revision=no_growth_revision,
+    )
+    assert same_state.replayed is False
+    assert same_state.root_id == first.root_id
+    assert same_state.receipt_root
+    assert same_state.revision > no_growth_revision
+    assert authority.store.revision == same_state.revision
+    assert len(authority.store.snapshot().cells) > no_growth_count
+    second_result = revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(interface_root, workshop_root),
+        primary_root=interface_root,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+        expected_revision=same_state.revision,
+    )
+    after_second = authority.store.snapshot()
+    assert second_result.revision == after_second.revision
+    current = active_focus(after_second, protocol, session_root=issued.view_root)
+    assert current is not None
+    assert current.primary_root == interface_root
+    assert current.selected_roots == (interface_root, workshop_root)
+    with pytest.raises(BrowserSessionDenied, match="another view session"):
+        revise_clean_browser_focus(
+            authority,
+            browser,
+            issued.root_id,
+            scope_root=scope_root,
+            selected_roots=(workshop_root,),
+            primary_root=workshop_root,
+            caller=other,
+            command_id=str(uuid.uuid4()),
+            expected_revision=after_second.revision,
+        )
+    revoked = revoke_clean_browser_session(
+        authority,
+        browser,
+        issued.root_id,
+        reason="focus revoked",
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    with pytest.raises(BrowserSessionDenied, match="revoked"):
+        revise_clean_browser_focus(
+            authority,
+            browser,
+            issued.root_id,
+            scope_root=scope_root,
+            selected_roots=(workshop_root,),
+            primary_root=workshop_root,
+            caller=caller,
+            command_id=str(uuid.uuid4()),
+            expected_revision=revoked.revision,
+        )
+    manifest = authority.manifest.to_json()
+    graph_id = authority.manifest.graph_id
+    focus_root = current.root_id
+    final_revision = authority.store.revision
+    store.close()
+
+    reopened_store = CellStore(database)
+    reopened = open_unified_authority(
+        reopened_store,
+        BootstrapManifest.from_json(manifest),
+        provider,
+    )
+    reopened_browser = open_clean_browser_authority(reopened, caller=caller)
+    reopened_focus = active_focus(
+        reopened_store.snapshot(),
+        open_attention_protocol(reopened_store.snapshot()),
+        session_root=issued.view_root,
+    )
+    assert reopened.manifest.graph_id == reopened_browser.graph_id == graph_id
+    assert reopened_focus is not None
+    assert reopened_focus.root_id == focus_root
+    assert reopened_focus.primary_root == interface_root
+    assert reopened_focus.selected_roots == (interface_root, workshop_root)
+    assert reopened_store.revision == final_revision
+    reopened_store.close()
+
+
+def test_fresh_same_focus_command_commits_receipt_not_false_replay(tmp_path):
+    database = tmp_path / "clean-browser-focus-noop.sqlite3"
+    provider = _provider()
+    store = CellStore(database)
+    authority = _focus_ready_authority(store, provider)
+    caller = _Caller(authority)
+    browser = install_clean_browser_authority(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    issued = issue_clean_browser_session(
+        authority,
+        browser,
+        token="focus-noop-token",
+        csrf_token="focus-noop-csrf",
+        lifetime_seconds=300.0,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    workshop_root = composition_root(authority, "Workshop", caller=caller)
+    scope_root = authority.manifest.application_root
+    first_command = str(uuid.uuid4())
+    first_revision = authority.store.revision
+    first = revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=first_command,
+        expected_revision=first_revision,
+    )
+    replay = revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=first_command,
+        expected_revision=first_revision,
+    )
+    assert replay.replayed is True
+    assert replay.receipt_root == first.receipt_root
+    before_noop_revision = authority.store.revision
+    before_noop_count = len(authority.store.snapshot().cells)
+    _second_caller(authority, caller, label="Fresh no-op unrelated commit")
+    fresh_same = revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+        expected_revision=authority.store.revision,
+    )
+    assert fresh_same.replayed is False
+    assert fresh_same.receipt_root
+    assert authority.store.revision > before_noop_revision
+    assert len(authority.store.snapshot().cells) >= before_noop_count
+    with pytest.raises(InvalidCell, match="idempotency key was reused"):
+        revise_clean_browser_focus(
+            authority,
+            browser,
+            issued.root_id,
+            scope_root=scope_root,
+            selected_roots=(
+                composition_root(authority, "Interface", caller=caller),
+                workshop_root,
+            ),
+            primary_root=workshop_root,
+            caller=caller,
+            command_id=first_command,
+            expected_revision=authority.store.revision,
+        )
+    store.close()
+
+
+def test_expired_or_future_browser_session_cannot_revise_focus(monkeypatch):
+    authority = _focus_ready_authority()
+    caller = _Caller(authority)
+    browser = install_clean_browser_authority(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    workshop_root = composition_root(authority, "Workshop", caller=caller)
+    scope_root = authority.manifest.application_root
+    expired = issue_clean_browser_session(
+        authority,
+        browser,
+        token="focus-expired-token",
+        csrf_token="focus-expired-csrf",
+        lifetime_seconds=0.001,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    time.sleep(0.02)
+    with pytest.raises(BrowserSessionDenied, match="expired"):
+        verify_clean_browser_session(
+            authority,
+            browser,
+            expired.root_id,
+            token="focus-expired-token",
+            csrf_token="focus-expired-csrf",
+            require_csrf=True,
+        )
+    with pytest.raises(BrowserSessionDenied, match="expired"):
+        revise_clean_browser_focus(
+            authority,
+            browser,
+            expired.root_id,
+            scope_root=scope_root,
+            selected_roots=(workshop_root,),
+            primary_root=workshop_root,
+            caller=caller,
+            command_id=str(uuid.uuid4()),
+            expected_revision=authority.store.revision,
+        )
+    original_time = time.time
+    future_start = original_time() + 600.0
+    monkeypatch.setattr(time, "time", lambda: future_start)
+    future = issue_clean_browser_session(
+        authority,
+        browser,
+        token="focus-future-token",
+        csrf_token="focus-future-csrf",
+        lifetime_seconds=300.0,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    monkeypatch.setattr(time, "time", original_time)
+    with pytest.raises(BrowserSessionDenied, match="expired"):
+        verify_clean_browser_session(
+            authority,
+            browser,
+            future.root_id,
+            token="focus-future-token",
+            csrf_token="focus-future-csrf",
+            require_csrf=True,
+        )
+    with pytest.raises(BrowserSessionDenied, match="expired"):
+        revise_clean_browser_focus(
+            authority,
+            browser,
+            future.root_id,
+            scope_root=scope_root,
+            selected_roots=(workshop_root,),
+            primary_root=workshop_root,
+            caller=caller,
+            command_id=str(uuid.uuid4()),
+            expected_revision=authority.store.revision,
+        )
+
+
+def test_project_unified_scope_denies_foreign_view_focus_projection():
+    authority = _focus_ready_authority()
+    caller = _Caller(authority)
+    other = _second_caller(authority, caller, label="Foreign lens caller")
+    browser = install_clean_browser_authority(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    issued = issue_clean_browser_session(
+        authority,
+        browser,
+        token="foreign-view-token",
+        csrf_token="foreign-view-csrf",
+        lifetime_seconds=300.0,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    workshop_root = composition_root(authority, "Workshop", caller=caller)
+    scope_root = authority.manifest.application_root
+    revise_clean_browser_focus(
+        authority,
+        browser,
+        issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+        expected_revision=authority.store.revision,
+    )
+    with pytest.raises(InvalidCell, match="view"):
+        project_unified_scope(
+            authority,
+            scope_root,
+            caller=other,
+            view_root=issued.view_root,
+        )
+
+
+def test_same_caller_browser_credentials_share_focus_and_different_callers_stay_isolated():
+    authority = _focus_ready_authority()
+    caller = _Caller(authority)
+    other = _second_caller(authority, caller, label="Different caller isolation")
+    browser = install_clean_browser_authority(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    scope_root = authority.manifest.application_root
+    workshop_root = composition_root(authority, "Workshop", caller=caller)
+    interface_root = composition_root(authority, "Interface", caller=caller)
+    issued_a = issue_clean_browser_session(
+        authority,
+        browser,
+        token="shared-focus-a",
+        csrf_token="shared-focus-a-csrf",
+        lifetime_seconds=300.0,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    issued_b = issue_clean_browser_session(
+        authority,
+        browser,
+        token="shared-focus-b",
+        csrf_token="shared-focus-b-csrf",
+        lifetime_seconds=300.0,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+    assert issued_a.view_root == issued_b.view_root == caller.session_root
+    revise_clean_browser_focus(
+        authority,
+        browser,
+        issued_a.root_id,
+        scope_root=scope_root,
+        selected_roots=(workshop_root,),
+        primary_root=workshop_root,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+        expected_revision=authority.store.revision,
+    )
+    shared = project_unified_scope(
+        authority,
+        scope_root,
+        caller=caller,
+        view_root=issued_b.view_root,
+    )
+    assert shared.selected_root == workshop_root
+    assert shared.selected_roots == (workshop_root,)
+    other_issued = issue_clean_browser_session(
+        authority,
+        browser,
+        token="isolated-focus-c",
+        csrf_token="isolated-focus-c-csrf",
+        lifetime_seconds=300.0,
+        caller=other,
+        command_id=str(uuid.uuid4()),
+    )
+    isolated = project_unified_scope(
+        authority,
+        scope_root,
+        caller=other,
+        view_root=other_issued.view_root,
+    )
+    assert isolated.selected_root is None
+    assert isolated.selected_roots == ()
+    revise_clean_browser_focus(
+        authority,
+        browser,
+        other_issued.root_id,
+        scope_root=scope_root,
+        selected_roots=(interface_root,),
+        primary_root=interface_root,
+        caller=other,
+        command_id=str(uuid.uuid4()),
+        expected_revision=authority.store.revision,
+    )
+    caller_projection = project_unified_scope(
+        authority,
+        scope_root,
+        caller=caller,
+        view_root=issued_a.view_root,
+    )
+    other_projection = project_unified_scope(
+        authority,
+        scope_root,
+        caller=other,
+        view_root=other_issued.view_root,
+    )
+    assert caller_projection.selected_root == workshop_root
+    assert other_projection.selected_root == interface_root
 
 
 def test_clean_browser_authority_has_no_parallel_server_store_or_token_ledger():

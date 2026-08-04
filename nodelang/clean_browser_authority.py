@@ -8,11 +8,19 @@ their digests and signed command receipts enter the one selected graph.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import time
 from types import MappingProxyType
 from typing import Mapping
+import uuid
 
+from .cell_attention import (
+    active_focus,
+    install_attention_protocol,
+    open_attention_protocol,
+    prepare_accepted_focus_transition,
+)
 from . import cell_browser_sessions
 from .cell_browser_sessions import (
     MAX_SESSION_SECONDS,
@@ -36,6 +44,7 @@ from .unified_authority import (
     CODEC_NAME,
     COMMAND_BUDGET,
     CallerCommandCapability,
+    CommandResult,
     UnifiedAuthority,
     _append_relation_member,
     _build_value,
@@ -83,6 +92,18 @@ class CleanBrowserSessionResult:
     revision: int
     replayed: bool
     receipt_root: str | None
+
+
+def _normalized_focus_selection(
+    selected_roots: tuple[str, ...] | list[str] | set[str] | frozenset[str],
+    primary_root: str,
+) -> tuple[str, ...]:
+    selected = tuple(dict.fromkeys(selected_roots))
+    if not selected or primary_root not in selected:
+        raise InvalidCell("browser focus primary must be selected")
+    if not all(type(root) is str and root for root in selected):
+        raise InvalidCell("browser focus selection contains an invalid root")
+    return selected
 
 
 def _source_digest() -> str:
@@ -298,6 +319,11 @@ def install_clean_browser_authority(
     command_id: str,
 ) -> CleanBrowserAuthority:
     """Install the exact existing browser-session protocol in one graph."""
+    install_attention_protocol(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid5(uuid.UUID(command_id), "attention-protocol")),
+    )
     source_digest = _source_digest()
     request_digest = _digest({
         "intent": "install-clean-browser-authority",
@@ -798,6 +824,149 @@ def revoke_clean_browser_session(
     )
 
 
+def revise_clean_browser_focus(
+    authority: UnifiedAuthority,
+    browser: CleanBrowserAuthority,
+    browser_session_root: str,
+    *,
+    scope_root: str,
+    selected_roots: tuple[str, ...] | list[str] | set[str] | frozenset[str],
+    primary_root: str,
+    caller: CallerCommandCapability,
+    command_id: str,
+    expected_revision: int | None = None,
+):
+    """Commit one accepted Focus transition for an issued browser/view session."""
+    selected = _normalized_focus_selection(selected_roots, primary_root)
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise InvalidCell("browser focus base is invalid")
+    request: dict[str, object] = {
+        "intent": "revise-clean-browser-focus",
+        "browser-authority": browser.root_id,
+        "browser-session": browser_session_root,
+        "scope": scope_root,
+        "selected": selected,
+        "primary": primary_root,
+    }
+    if expected_revision is not None:
+        request["expected_revision"] = expected_revision
+    request_digest = _digest(request)
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="revise-clean-browser-focus",
+        request_digest=request_digest,
+        object_root=primary_root,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            existing.result_root,
+            existing.result_revision,
+            True,
+            0,
+            0,
+            existing.root_id,
+        )
+    if expected_revision is not None and snapshot.revision != expected_revision:
+        raise InvalidCell("browser focus base is stale")
+    current = _current_browser(authority, browser, snapshot)
+    session = read_browser_session(snapshot, current.protocol, browser_session_root)
+    if (
+        session.tenant_root != authority.manifest.application_root
+        or session.assurance_root != current.root_id
+    ):
+        raise BrowserSessionDenied("browser session authority binding drifted")
+    try:
+        issued_at = float(snapshot.cells[session.issued_at_root].atom.decode("utf-8"))
+        expires_at = float(snapshot.cells[session.expires_at_root].atom.decode("utf-8"))
+    except (KeyError, UnicodeDecodeError, ValueError) as exc:
+        raise BrowserSessionDenied("browser session timing is invalid") from exc
+    current_time = time.time()
+    if issued_at > current_time + 5 or expires_at <= current_time:
+        raise BrowserSessionDenied("browser session is expired")
+    if session.state_root != current.protocol.states["active"]:
+        raise BrowserSessionDenied("browser session is revoked")
+    if session.subject_root != authenticated.actor_root:
+        raise BrowserSessionDenied("browser session subject drifted")
+    if session.view_root != authenticated.session_root:
+        raise BrowserSessionDenied("browser session is bound to another view session")
+    scope = read_scope_level(
+        authority,
+        scope_root,
+        scope_root=scope_root,
+        caller=caller,
+        at_revision=snapshot.revision,
+        budget=COMMAND_BUDGET,
+    )
+    visible = frozenset(scope.composition_roots)
+    if not set(selected).issubset(visible):
+        raise InvalidCell("browser focus selection is outside the current scope")
+    protocol = open_attention_protocol(snapshot)
+    current_focus = active_focus(
+        snapshot,
+        protocol,
+        session_root=session.view_root,
+    )
+    if (
+        current_focus is not None
+        and current_focus.actor_root == session.subject_root
+        and current_focus.scope_root == scope_root
+        and current_focus.selected_roots == selected
+        and current_focus.primary_root == primary_root
+        and current_focus.state_root == protocol.state("active")
+    ):
+        return _commit_with_receipt(
+            authority,
+            snapshot,
+            resource_create=(),
+            resource_replace=(),
+            authenticated=authenticated,
+            result_root=current_focus.root_id,
+            policy_proof=policy_proof,
+        )
+    transition = prepare_accepted_focus_transition(
+        snapshot,
+        protocol,
+        focus_id=_new_id(),
+        actor_root=session.subject_root,
+        session_root=session.view_root,
+        scope_root=scope_root,
+        selected_roots=selected,
+        primary_root=primary_root,
+        origin="user",
+        reason_roots=(browser_session_root,),
+        attention_roots=(),
+        authority_root=current.root_id,
+        consent_evidence_root=browser_session_root,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=transition.create,
+        resource_replace=transition.replace,
+        authenticated=authenticated,
+        result_root=transition.root_id,
+        policy_proof=policy_proof,
+    )
+
+
 __all__ = [
     "BROWSER_AUTHORITY_LABEL",
     "BROWSER_AUTHORITY_VERSION",
@@ -806,6 +975,7 @@ __all__ = [
     "install_clean_browser_authority",
     "issue_clean_browser_session",
     "open_clean_browser_authority",
+    "revise_clean_browser_focus",
     "revoke_clean_browser_session",
     "verify_clean_browser_session",
 ]

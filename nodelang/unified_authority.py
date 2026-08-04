@@ -25,7 +25,13 @@ from .cell_logic import (
     PrimitiveFact,
     evaluate_logic,
 )
-from .cell_protocols import RelationMember, read_relation
+from .cell_protocols import (
+    RelationMember,
+    prepare_append_relation_members,
+    prepare_remove_relation_members,
+    prepare_reorder_relation_members,
+    read_relation,
+)
 from .cell_revision_checkpoint import snapshot_digest
 from .cell_sequence import build_cell_sequence, read_cell_sequence
 from .cell_secret_keys import SigningKeyProvider
@@ -1989,6 +1995,13 @@ class ExplicitRelationProjection:
     root_id: str
     participants: tuple[tuple[str, str], ...]
     properties: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class RelationRevisionMember:
+    incidence_id: str | None
+    role_root: str
+    participant_root: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -4595,6 +4608,292 @@ def read_relation_node(
     return _project_relation_node(authority, snapshot, relation_root)
 
 
+def _normalized_relation_revision_members(
+    members: Iterable[Mapping[str, object]],
+) -> tuple[RelationRevisionMember, ...]:
+    normalized: list[RelationRevisionMember] = []
+    for item in members:
+        if not isinstance(item, Mapping):
+            raise InvalidCell("relation revision member is invalid")
+        incidence_id = item.get("incidence_id")
+        role_root = item.get("role_root")
+        participant_root = item.get("participant_root")
+        if incidence_id is not None and (
+            type(incidence_id) is not str or not _is_opaque_id(incidence_id)
+        ):
+            raise InvalidCell("relation revision member is invalid")
+        if not all(
+            type(value) is str and _is_opaque_id(value)
+            for value in (role_root, participant_root)
+        ):
+            raise InvalidCell("relation revision member is invalid")
+        normalized.append(
+            RelationRevisionMember(
+                incidence_id=incidence_id,
+                role_root=role_root,
+                participant_root=participant_root,
+            )
+        )
+    if not normalized:
+        raise InvalidCell("relation revision has no members")
+    return tuple(normalized)
+
+
+def revise_relation_node(
+    authority: UnifiedAuthority,
+    relation_root: str,
+    members: Iterable[Mapping[str, object]],
+    *,
+    scope_root: str,
+    caller: CallerCommandCapability,
+    command_id: str,
+    expected_revision: int | None = None,
+) -> CommandResult:
+    """Revise one existing relation to an exact desired member set."""
+    normalized = _normalized_relation_revision_members(members)
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise InvalidCell("relation revision base is invalid")
+    request: dict[str, object] = {
+        "intent": "revise-relation",
+        "relation": relation_root,
+        "members": tuple(
+            {
+                "incidence_id": member.incidence_id,
+                "role_root": member.role_root,
+                "participant_root": member.participant_root,
+            }
+            for member in normalized
+        ),
+        "scope": scope_root,
+    }
+    if expected_revision is not None:
+        request["expected_revision"] = expected_revision
+    request_digest = _digest(request)
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="revise-relation",
+        request_digest=request_digest,
+        object_root=relation_root,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            existing.result_root,
+            existing.result_revision,
+            True,
+            0,
+            0,
+            existing.root_id,
+        )
+    if expected_revision is not None and snapshot.revision != expected_revision:
+        raise InvalidCell("relation revision base is stale")
+    if relation_root not in snapshot.cells:
+        raise InvalidCell("relation revision target is missing")
+    _validate_composition_scope(authority, snapshot, scope_root)
+    current_members = read_relation(snapshot, relation_root, budget=COMMAND_BUDGET)
+    current_ids = tuple(member.incidence_id for member in current_members)
+    required_roots = {relation_root}
+    required_roots.update(member.role_root for member in normalized)
+    required_roots.update(member.participant_root for member in normalized)
+    if required_roots - set(snapshot.cells):
+        raise InvalidCell("relation revision member root is missing")
+    current_by_incidence = {
+        member.incidence_id: member for member in current_members
+    }
+    current_role_counts: dict[str, int] = {}
+    for member in current_members:
+        current_role_counts[member.role_id] = current_role_counts.get(member.role_id, 0) + 1
+    try:
+        typed_relation = validate_composition(authority, snapshot, relation_root)
+    except InvalidCell:
+        typed_relation = None
+    allowed_roles: set[str] = set(current_role_counts)
+    required_roles: set[str] = set()
+    optional_roles: set[str] = set()
+    repeated_roles: set[str] = set()
+    open_roles = False
+    if (
+        typed_relation is not None
+        and typed_relation.protocol_root == authority.shape("relation")
+    ):
+        shape_members = read_relation(
+            snapshot, typed_relation.protocol_root, budget=COMMAND_BUDGET
+        )
+        required_roles = {
+            member.participant_id
+            for member in shape_members
+            if member.role_id == authority.role("required-role")
+        }
+        optional_roles = {
+            member.participant_id
+            for member in shape_members
+            if member.role_id == authority.role("optional-role")
+        }
+        repeated_roles = {
+            member.participant_id
+            for member in shape_members
+            if member.role_id == authority.role("repeated-role")
+        }
+        open_roles = any(
+            member.role_id == authority.role("open-role")
+            for member in shape_members
+        )
+        allowed_roles = required_roles | optional_roles | repeated_roles
+    retained_ids: list[str] = []
+    final_members: list[RelationRevisionMember] = []
+    for member in normalized:
+        if member.incidence_id is not None:
+            if member.incidence_id not in current_by_incidence:
+                raise InvalidCell(
+                    "relation revision member incidence is outside the relation"
+                )
+            if member.incidence_id in retained_ids:
+                raise InvalidCell("relation revision incidence is duplicated")
+            retained_ids.append(member.incidence_id)
+        if not open_roles and member.role_root not in allowed_roles:
+            raise InvalidCell("relation participant role is outside the protocol")
+        final_members.append(member)
+    removed_ids = tuple(
+        incidence_id for incidence_id in current_ids if incidence_id not in retained_ids
+    )
+    role_counts: dict[str, int] = {}
+    for member in final_members:
+        role_counts[member.role_root] = role_counts.get(member.role_root, 0) + 1
+    if typed_relation is not None and typed_relation.protocol_root == authority.shape("relation"):
+        if any(role_counts.get(role, 0) != 1 for role in required_roles):
+            raise InvalidCell("relation revision is missing a required role")
+        if any(role_counts.get(role, 0) > 1 for role in optional_roles):
+            raise InvalidCell("relation revision repeats an optional role")
+        if (
+            final_members[0].role_root != authority.role("conforms-to")
+            or final_members[0].participant_root != authority.shape("relation")
+            or final_members[0].incidence_id is None
+            or final_members[0].incidence_id != current_members[0].incidence_id
+        ):
+            raise InvalidCell(
+                "typed relation revision must preserve its structural protocol member"
+            )
+    elif role_counts != current_role_counts:
+        raise InvalidCell(
+            "plain relation revision must preserve its role cardinality"
+        )
+    staged = snapshot
+    if removed_ids:
+        removal_patch = prepare_remove_relation_members(
+            staged,
+            relation_root,
+            removed_ids,
+            budget=COMMAND_BUDGET,
+        )
+        staged = overlay_read_snapshot(staged, replace=removal_patch.replace)
+    else:
+        removal_patch = None
+    additions = tuple(
+        (member.role_root, member.participant_root)
+        for member in final_members
+        if member.incidence_id is None
+    )
+    if additions:
+        append_patch = prepare_append_relation_members(
+            staged,
+            relation_root,
+            additions,
+            budget=COMMAND_BUDGET,
+        )
+        staged = overlay_read_snapshot(
+            staged,
+            create=append_patch.create,
+            replace=append_patch.replace,
+        )
+    else:
+        append_patch = None
+    added_ids = iter(append_patch.incidence_ids if append_patch is not None else ())
+    assigned_members: list[RelationRevisionMember] = []
+    for member in final_members:
+        assigned_members.append(
+            RelationRevisionMember(
+                incidence_id=member.incidence_id or next(added_ids),
+                role_root=member.role_root,
+                participant_root=member.participant_root,
+            )
+        )
+    incidence_replacements: list[Cell] = []
+    for member in assigned_members:
+        if member.incidence_id in current_by_incidence:
+            current = current_by_incidence[member.incidence_id]
+            if (
+                current.role_id != member.role_root
+                or current.participant_id != member.participant_root
+            ):
+                incidence_replacements.append(
+                    Cell(
+                        member.incidence_id,
+                        member.role_root,
+                        member.participant_root,
+                        b"",
+                    )
+                )
+    if incidence_replacements:
+        staged = overlay_read_snapshot(staged, replace=incidence_replacements)
+    requested_ids = tuple(member.incidence_id for member in assigned_members)
+    reorder_replacements = prepare_reorder_relation_members(
+        staged,
+        relation_root,
+        requested_ids,
+        budget=COMMAND_BUDGET,
+    )
+    if reorder_replacements:
+        staged = overlay_read_snapshot(staged, replace=reorder_replacements)
+    create_ids = {
+        cell.id for cell in append_patch.create
+    } if append_patch is not None else set()
+    replace_ids: dict[str, None] = {}
+    for cells in (
+        () if removal_patch is None else removal_patch.replace,
+        () if append_patch is None else append_patch.replace,
+        tuple(incidence_replacements),
+        tuple(reorder_replacements),
+    ):
+        for cell in cells:
+            replace_ids[cell.id] = None
+    resource_create = tuple(
+        staged.cells[cell_id] for cell_id in sorted(create_ids)
+    )
+    resource_replace = tuple(
+        staged.cells[cell_id]
+        for cell_id in replace_ids
+        if cell_id in snapshot.cells
+        if staged.cells[cell_id] != snapshot.cells[cell_id]
+    )
+    if not resource_create and not resource_replace:
+        raise InvalidCell("relation revision has no changes")
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=resource_create,
+        resource_replace=resource_replace,
+        authenticated=authenticated,
+        result_root=relation_root,
+        policy_proof=policy_proof,
+    )
+
+
 def _project_instance(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
@@ -4863,6 +5162,7 @@ __all__ = [
     "read_relation_node",
     "relation_members",
     "revoke_session",
+    "revise_relation_node",
     "revise_instance",
     "revise_definition",
     "sign_bootstrap_manifest",

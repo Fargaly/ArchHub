@@ -142,6 +142,16 @@ def _property_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     ]
 
 
+def _selected_node(lens: Mapping[str, object]) -> Mapping[str, object] | None:
+    selected_root = lens.get("selected_root")
+    if type(selected_root) is not str or not selected_root:
+        return None
+    return next(
+        (item for item in lens["nodes"] if item["root_id"] == selected_root),
+        None,
+    )
+
+
 def project_clean_visual_canvas(
     authority: UnifiedAuthority,
     visual: CleanVisualSystem,
@@ -151,6 +161,8 @@ def project_clean_visual_canvas(
     session_root: str,
     subject_root: str,
 ) -> dict[str, object]:
+    selected_root = lens.get("selected_root")
+    selected_roots = tuple(lens.get("selected_roots") or ())
     nodes: list[dict[str, object]] = []
     for item in lens["nodes"]:
         node = {
@@ -161,8 +173,8 @@ def project_clean_visual_canvas(
             "openable": bool(item["openable"]),
             "member_count": len(item["properties"]),
             "connection_count": len(item["ports"]),
-            "selected": False,
-            "focused": False,
+            "selected": item["root_id"] in selected_roots,
+            "focused": item["root_id"] == selected_root,
             "color": _node_color(item),
             "ports": [],
         }
@@ -271,41 +283,44 @@ def project_clean_visual_canvas(
             caller=caller,
         )
 
-    properties = _property_rows([
-        {
-            "relation": lens["nodes"][0]["root_id"],
-            "name": row["name"],
-            "value": row["value"],
-        }
-        for row in (
-            lens["nodes"][0]["properties"]
-            if lens["nodes"] else ()
-        )
-    ])
-    if lens["nodes"]:
-        selected_root = lens["nodes"][0]["root_id"]
-        selected_title = lens["nodes"][0]["label"]
-    else:
+    selected = _selected_node(lens)
+    if selected is None:
         selected_root = None
         selected_title = None
-    panels = ({
-        "id": "properties",
-        "label": "Properties",
-        "active": True,
-        "components": [{
-            "presenter": "properties",
-            "descriptor": render_clean_visual_template(
-                authority,
-                visual,
-                "properties",
-                {
-                    "selected": selected_root,
-                    "properties": properties,
-                },
-                caller=caller,
-            ),
-        }],
-    },)
+        properties = []
+        panels = ()
+    else:
+        selected_root = selected["root_id"]
+        selected_title = selected["label"]
+        properties = _property_rows([
+            {
+                "relation": selected_root,
+                "name": row["name"],
+                "value": row["value"],
+            }
+            for row in selected["properties"]
+        ])
+        panels = tuple(
+            {
+                "id": "panel:%s" % panel_label.casefold(),
+                "label": panel_label,
+                "active": index == 0,
+                "components": [{
+                    "presenter": "properties",
+                    "descriptor": render_clean_visual_template(
+                        authority,
+                        visual,
+                        "properties",
+                        {
+                            "selected": selected_root,
+                            "properties": properties,
+                        },
+                        caller=caller,
+                    ),
+                }],
+            }
+            for index, panel_label in enumerate(selected["panels"])
+        )
     projection = {
         "graph_id": lens["graph_id"],
         "revision": lens["revision"],
@@ -321,7 +336,7 @@ def project_clean_visual_canvas(
         },
         "selected": selected_root,
         "selected_title": selected_title,
-        "selection": [selected_root] if selected_root is not None else [],
+        "selection": list(selected_roots),
         "focus": selected_root,
         "nodes": nodes,
         "wires": wires,
@@ -341,12 +356,14 @@ def project_clean_visual_canvas(
             }
         },
         "inspector": {
-            "lenses": [{
-                "id": "use",
-                "name": "use",
-                "label": "Use",
-                "active": True,
-            }],
+            "lenses": [
+                {
+                    "id": "use",
+                    "name": "use",
+                    "label": "Use",
+                    "active": True,
+                }
+            ] if selected_root is not None else [],
             "presentation": {"panels": list(panels)},
         },
         "interaction_projection": {
@@ -416,14 +433,15 @@ def project_clean_visual_canvas(
         "inspector-shell",
         {
             "selected": projection["selected"],
-            "panels": (
+            "panels": tuple(
                 {
-                    "id": "properties",
-                    "key": "inspector-tabpanel:properties",
-                    "panel_id": "inspector-panel-0",
-                    "tab_id": "inspector-tab-0",
-                    "active": True,
-                },
+                    "id": panel["id"],
+                    "key": "inspector-tabpanel:%s" % panel["id"],
+                    "panel_id": "inspector-panel-%s" % index,
+                    "tab_id": "inspector-tab-%s" % index,
+                    "active": bool(panel["active"]),
+                }
+                for index, panel in enumerate(panels)
             ),
         },
         caller=caller,

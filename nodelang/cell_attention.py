@@ -434,6 +434,92 @@ def bootstrap_attention_protocol(
     )
 
 
+def install_attention_protocol(
+    authority,
+    *,
+    caller,
+    command_id: str,
+    prefix: str = "attention-protocol",
+) -> AttentionProtocol:
+    """Install the attention protocol through the signed authority history."""
+    from .unified_authority import (
+        COMMAND_BUDGET,
+        _commit_with_receipt,
+        _digest,
+        _find_receipt,
+        _validate_command_participants,
+    )
+
+    request_digest = _digest({
+        "intent": "install-attention-protocol",
+        "prefix": prefix,
+    })
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="install-attention-protocol",
+        request_digest=request_digest,
+        object_root=authority.manifest.application_root,
+        scope_root=authority.manifest.application_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return open_attention_protocol(authority.store.snapshot(), prefix=prefix)
+    try:
+        return open_attention_protocol(snapshot, prefix=prefix)
+    except InvalidCell:
+        pass
+    roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
+    states = {name: "%s:state:%s" % (prefix, name) for name in STATE_NAMES}
+    origins = {name: "%s:origin:%s" % (prefix, name) for name in ORIGIN_NAMES}
+    registries = {
+        name: "%s:registry:%s" % (prefix, name) for name in REGISTRY_NAMES
+    }
+    cells: list[Cell] = []
+    for name, root in (*roles.items(), *states.items(), *origins.items()):
+        cells.append(_terminal(root, name))
+    for root in registries.values():
+        cells.extend(compose_relation_cells((), relation_id=root).cells)
+    protocol = AttentionProtocol(
+        "%s:root" % prefix,
+        MappingProxyType(roles),
+        MappingProxyType(states),
+        MappingProxyType(origins),
+        MappingProxyType(registries),
+    )
+    cells.extend(compose_relation_cells(
+        [
+            *((roles["vocabulary-member"], root) for root in roles.values()),
+            *((roles["vocabulary-member"], root) for root in states.values()),
+            *((roles["vocabulary-member"], root) for root in origins.values()),
+            *((roles["vocabulary-member"], root) for root in registries.values()),
+        ],
+        relation_id=protocol.root_id,
+    ).cells)
+    _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=tuple(cells),
+        resource_replace=(),
+        authenticated=authenticated,
+        result_root=protocol.root_id,
+        policy_proof=policy_proof,
+    )
+    return open_attention_protocol(authority.store.snapshot(), prefix=prefix)
+
+
 def open_attention_protocol(
     snapshot: Snapshot,
     *,

@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from types import MappingProxyType
 from typing import Mapping
 
+from .cell_attention import active_focus, open_attention_protocol
 from .unified_authority import (
     CallerCommandCapability,
     DefinitionProjection,
@@ -73,6 +74,8 @@ class UnifiedScopeLens:
     revision: int
     scope_root: str
     scope_label: str | None
+    selected_root: str | None
+    selected_roots: tuple[str, ...]
     nodes: tuple[LensNode, ...]
     relations: tuple[LensRelation, ...]
     catalogue: tuple[LensCatalogueItem, ...]
@@ -142,14 +145,34 @@ def project_unified_scope(
     scope_root: str,
     *,
     caller: CallerCommandCapability,
+    view_root: str | None = None,
 ) -> UnifiedScopeLens:
     """Project one bounded scope without adding product-name dispatch."""
+    snapshot = authority.store.snapshot()
     level = read_scope_level(
         authority,
         scope_root,
         scope_root=scope_root,
         caller=caller,
+        at_revision=snapshot.revision,
     )
+    selected_root: str | None = None
+    selected_roots: tuple[str, ...] = ()
+    if view_root is not None:
+        if type(view_root) is not str or not view_root:
+            raise InvalidCell("view session root is invalid")
+        if view_root != caller.session_root:
+            raise InvalidCell("view session root does not belong to the caller")
+        protocol = open_attention_protocol(snapshot)
+        focus = active_focus(snapshot, protocol, session_root=view_root)
+        if focus is not None:
+            if focus.scope_root != scope_root:
+                raise InvalidCell("active focus scope drifted")
+            visible = frozenset(level.composition_roots)
+            if not set(focus.selected_roots).issubset(visible):
+                raise InvalidCell("active focus selection is outside the projected scope")
+            selected_root = focus.primary_root
+            selected_roots = focus.selected_roots
     relations = tuple(
         LensRelation(
             relation.root_id,
@@ -229,6 +252,8 @@ def project_unified_scope(
         level.revision,
         scope_root,
         level.label,
+        selected_root,
+        selected_roots,
         tuple(nodes),
         relations,
         _catalogue(authority, caller),

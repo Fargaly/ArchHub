@@ -113,7 +113,11 @@ def test_opaque_atoms_round_trip_all_byte_values(tmp_path: Path):
 def test_second_store_cannot_open_an_owned_database(tmp_path: Path):
     path = tmp_path / "concurrent.sqlite3"
     first = CellStore(path)
-    with pytest.raises(DatabaseOwnerConflict, match="active owner"):
+    # The denial must name WHICH owner holds it. One shared message for a
+    # caller reopening its own store and for a genuine external holder is
+    # unactionable: a supervisor cannot tell "my bug" from "someone else is
+    # serving" and either retries forever or stops a healthy owner.
+    with pytest.raises(DatabaseOwnerConflict, match="this same process"):
         CellStore(path)
     first.close()
 
@@ -219,7 +223,7 @@ def test_process_death_releases_database_ownership(tmp_path: Path):
     )
     try:
         assert child.stdout.readline().strip() == "READY"
-        with pytest.raises(DatabaseOwnerConflict, match="active owner"):
+        with pytest.raises(DatabaseOwnerConflict, match="another live process"):
             CellStore(path)
         child.stdin.close()
         assert child.wait(timeout=10) == 0

@@ -387,9 +387,12 @@ class InterprocessOwnerFence:
         self._released = False
         with self._process_guard:
             if self._database_path in self._process_paths:
+                # This exact process already holds the fence. Naming the
+                # holder separates a caller bug from a real external owner;
+                # one shared message for both costs hours of misdiagnosis.
                 raise DatabaseOwnerConflict(
-                    "Cell database already has an active owner: %s"
-                    % self._database_path
+                    "Cell database is already owned by this same process "
+                    "(pid %d): %s" % (os.getpid(), self._database_path)
                 )
             self._process_paths.add(self._database_path)
         try:
@@ -404,8 +407,8 @@ class InterprocessOwnerFence:
             if isinstance(exc, DatabaseOwnerConflict):
                 raise
             raise DatabaseOwnerConflict(
-                "Cell database already has an active owner: %s"
-                % self._database_path
+                "Cell database owner fence could not be taken for %s: %s"
+                % (self._database_path, exc)
             ) from exc
 
     def _ensure_lock_byte(self) -> None:
@@ -422,8 +425,11 @@ class InterprocessOwnerFence:
                 msvcrt.locking(self._stream.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as exc:
                 raise DatabaseOwnerConflict(
-                    "Cell database already has an active owner: %s"
-                    % self._database_path
+                    "Cell database is held by another live process; this "
+                    "process (pid %d) cannot own it. The holder keeps the "
+                    "OS lock on %s until it exits, so a supervisor must "
+                    "either reuse the running owner or stop it first."
+                    % (os.getpid(), self._lock_path)
                 ) from exc
             return
         import fcntl
@@ -434,8 +440,11 @@ class InterprocessOwnerFence:
             )
         except OSError as exc:
             raise DatabaseOwnerConflict(
-                "Cell database already has an active owner: %s"
-                % self._database_path
+                "Cell database is held by another live process; this "
+                "process (pid %d) cannot own it. The holder keeps the "
+                "OS lock on %s until it exits, so a supervisor must "
+                "either reuse the running owner or stop it first."
+                % (os.getpid(), self._lock_path)
             ) from exc
 
     def _release_process_path(self) -> None:

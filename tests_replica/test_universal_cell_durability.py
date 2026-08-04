@@ -135,7 +135,7 @@ def test_read_only_journal_probe_does_not_open_an_owner_or_write(tmp_path: Path,
             raise AssertionError("read-only probe must not acquire a database owner")
 
         monkeypatch.setattr(
-            "nodelang.universal_cell._DatabaseOwnerFence", forbidden_owner
+            "nodelang.universal_cell.InterprocessOwnerFence", forbidden_owner
         )
         observed = inspect_read_only_cell_journal(path)
 
@@ -159,7 +159,7 @@ def test_bounded_read_only_snapshot_never_opens_an_owner(tmp_path: Path, monkeyp
             raise AssertionError("read-only snapshot must not acquire a database owner")
 
         monkeypatch.setattr(
-            "nodelang.universal_cell._DatabaseOwnerFence", forbidden_owner
+            "nodelang.universal_cell.InterprocessOwnerFence", forbidden_owner
         )
         snapshot = load_bounded_read_only_cell_snapshot(path)
 
@@ -185,7 +185,7 @@ def test_read_only_revision_chain_digest_matches_the_owned_journal(tmp_path: Pat
             raise AssertionError("read-only digest must not acquire a database owner")
 
         monkeypatch.setattr(
-            "nodelang.universal_cell._DatabaseOwnerFence", forbidden_owner
+            "nodelang.universal_cell.InterprocessOwnerFence", forbidden_owner
         )
         assert read_only_revision_chain_digest(path, first) == (
             store.revision_chain_digest(first)

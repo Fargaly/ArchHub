@@ -157,11 +157,71 @@ class ArtifactVerificationCourt:
                 return False, "py_compile"
             return True, "py_compile"
         if kind == "pytest":
-            target, selector = self._target(
-                spec.get("path"), scope_roots, selector=True
-            )
-            if not target.exists():
-                raise ValueError("pytest target is missing")
+            declared_selectors = spec.get("selectors")
+            if declared_selectors is None:
+                target, selector = self._target(
+                    spec.get("path"), scope_roots, selector=True
+                )
+                if not target.exists():
+                    raise ValueError("pytest target is missing")
+                selectors = [selector]
+            else:
+                raw_base = spec.get("path")
+                if (
+                    type(raw_base) is not str
+                    or not raw_base
+                    or len(raw_base) > 1024
+                    or not _SELECTOR.fullmatch(raw_base)
+                ):
+                    raise ValueError("pytest base path is invalid")
+                base_relative = Path(raw_base.replace("/", os.sep))
+                if base_relative.is_absolute() or ".." in base_relative.parts:
+                    raise ValueError("pytest base path escapes the workspace")
+                base = (self.workspace_root / base_relative).resolve()
+                if (
+                    not base.is_relative_to(self.workspace_root)
+                    or not base.is_dir()
+                ):
+                    raise ValueError("pytest base path is unavailable")
+                if (
+                    type(declared_selectors) is not list
+                    or not declared_selectors
+                    or len(declared_selectors) > 64
+                ):
+                    raise ValueError("pytest selectors are invalid")
+                selectors = []
+                for raw_selector in declared_selectors:
+                    if (
+                        type(raw_selector) is not str
+                        or not raw_selector
+                        or len(raw_selector) > 1024
+                        or not _SELECTOR.fullmatch(raw_selector)
+                    ):
+                        raise ValueError("pytest selector is invalid")
+                    path_text, marker, suffix = raw_selector.partition("::")
+                    relative = Path(path_text.replace("/", os.sep))
+                    if relative.is_absolute() or ".." in relative.parts:
+                        raise ValueError("pytest selector escapes the base path")
+                    resolved = (base / relative).resolve()
+                    if (
+                        not resolved.is_relative_to(base)
+                        or not resolved.is_relative_to(self.workspace_root)
+                    ):
+                        raise ValueError("pytest selector escapes the workspace")
+                    if not any(
+                        resolved.is_relative_to(root) for root in scope_roots
+                    ):
+                        raise ValueError("gate path is outside the work CDE")
+                    if not resolved.exists():
+                        raise ValueError("pytest target is missing")
+                    normalized = resolved.relative_to(
+                        self.workspace_root
+                    ).as_posix()
+                    if marker:
+                        normalized += "::" + suffix
+                    selectors.append(normalized)
+                if len(selectors) != len(set(selectors)):
+                    raise ValueError("pytest selectors are duplicated")
             raw_args = spec.get("args", [])
             if type(raw_args) is not list or len(raw_args) > 8:
                 raise ValueError("pytest arguments are invalid")
@@ -178,7 +238,7 @@ class ArtifactVerificationCourt:
                 raise ValueError("pytest timeout is outside the admitted bound")
             try:
                 result = subprocess.run(
-                    [sys.executable, "-m", "pytest", "-q", selector, *args],
+                    [sys.executable, "-m", "pytest", "-q", *selectors, *args],
                     cwd=str(self.workspace_root),
                     env=self._subprocess_environment(),
                     stdin=subprocess.DEVNULL,

@@ -647,6 +647,8 @@ def _incoming_links_for_targets(
     target_roots: frozenset[str],
 ) -> Mapping[str, frozenset[tuple[str, int]]]:
     """Index every guarded target in one graph pass."""
+    if not target_roots:
+        return MappingProxyType({})
     incoming: dict[str, set[tuple[str, int]]] = {
         root: set() for root in target_roots
     }

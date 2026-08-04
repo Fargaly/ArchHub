@@ -20,6 +20,8 @@ import time
 from typing import Callable, Iterable, Iterator, Mapping, Protocol
 import uuid
 
+from rpds import HashTrieMap
+
 
 NULL_CELL_ID = "00000000-0000-0000-0000-000000000000"
 _JOURNAL_REVISIONS_COLUMNS = frozenset(("revision", "committed_at"))
@@ -212,76 +214,77 @@ _MAX_OVERLAY_DEPTH = 32
 
 
 class _OverlayCellMap(Mapping[str, Cell]):
-    """Immutable mapping overlay used to publish small commits cheaply."""
+    """Immutable persistent map used to publish small commits cheaply."""
 
-    __slots__ = ("_base", "_delta", "_created_count", "_depth")
+    __slots__ = ("_cells", "_created_count", "_depth")
+
+    def __init__(self, base: Mapping[str, Cell], delta: Mapping[str, Cell]) -> None:
+        persistent_base = (
+            base._cells
+            if isinstance(base, _OverlayCellMap)
+            else base
+            if isinstance(base, HashTrieMap)
+            else HashTrieMap(base)
+        )
+        self._created_count = sum(1 for key in delta if key not in persistent_base)
+        self._cells = persistent_base.update(delta)
+        self._depth = 1
+
+    def __getitem__(self, key: str) -> Cell:
+        return self._cells[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._cells)
+
+    def __len__(self) -> int:
+        return len(self._cells)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._cells
+
+
+class _BoundedCandidateCellMap(Mapping[str, Cell]):
+    """Read-only candidate overlay that never scans an external base mapping."""
+
+    __slots__ = ("_base", "_created_count", "_delta")
 
     def __init__(self, base: Mapping[str, Cell], delta: Mapping[str, Cell]) -> None:
         self._base = base
         self._delta = MappingProxyType(dict(delta))
-        self._created_count = sum(1 for key in self._delta if key not in base)
-        self._depth = (
-            base._depth + 1 if isinstance(base, _OverlayCellMap) else 1
-        )
+        self._created_count = sum(1 for key in delta if key not in base)
 
     def __getitem__(self, key: str) -> Cell:
-        source: Mapping[str, Cell] = self
-        while isinstance(source, _OverlayCellMap):
-            try:
-                return source._delta[key]
-            except KeyError:
-                source = source._base
-        return source[key]
+        try:
+            return self._delta[key]
+        except KeyError:
+            return self._base[key]
 
     def __iter__(self) -> Iterator[str]:
-        layers: list[_OverlayCellMap] = []
-        source: Mapping[str, Cell] = self
-        while isinstance(source, _OverlayCellMap):
-            layers.append(source)
-            source = source._base
         yielded: set[str] = set()
-        for key in source:
+        for key in self._base:
             yielded.add(key)
             yield key
-        for layer in reversed(layers):
-            for key in layer._delta:
-                if key in yielded:
-                    continue
-                yielded.add(key)
+        for key in self._delta:
+            if key not in yielded:
                 yield key
 
     def __len__(self) -> int:
         return len(self._base) + self._created_count
 
     def __contains__(self, key: object) -> bool:
-        source: Mapping[str, Cell] = self
-        while isinstance(source, _OverlayCellMap):
-            if key in source._delta:
-                return True
-            source = source._base
-        return key in source
+        return key in self._delta or key in self._base
 
 
 def _compact_cell_map(cells: Mapping[str, Cell]) -> Mapping[str, Cell]:
-    """Flatten overlays without changing any previously published snapshot."""
-    layers: list[_OverlayCellMap] = []
-    source = cells
-    while isinstance(source, _OverlayCellMap):
-        layers.append(source)
-        source = source._base
-    compacted = dict(source)
-    for layer in reversed(layers):
-        compacted.update(layer._delta)
-    return MappingProxyType(compacted)
+    """Materialize one dense immutable view without changing old snapshots."""
+    return MappingProxyType(dict(cells))
 
 
 def dense_read_snapshot(snapshot: Snapshot) -> Snapshot:
-    """Flatten an immutable overlay only for one dense interpreter read."""
+    """Return the already bounded immutable mapping for a dense read."""
     if type(snapshot) is not Snapshot:
         raise TypeError("dense read requires an exact Snapshot")
-    if not isinstance(snapshot.cells, _OverlayCellMap):
-        return snapshot
-    return Snapshot(snapshot.revision, _compact_cell_map(snapshot.cells))
+    return snapshot
 
 
 def overlay_read_snapshot(
@@ -310,10 +313,13 @@ def overlay_read_snapshot(
     if not created and not replaced:
         return Snapshot(snapshot.revision + 1, snapshot.cells)
     delta = {cell.id: cell for cell in created + replaced}
-    return Snapshot(
-        snapshot.revision + 1,
-        _OverlayCellMap(snapshot.cells, delta),
+    cells = (
+        _OverlayCellMap(snapshot.cells, delta)
+        if isinstance(snapshot.cells, (_OverlayCellMap, HashTrieMap))
+        or type(snapshot.cells) in {dict, MappingProxyType}
+        else _BoundedCandidateCellMap(snapshot.cells, delta)
     )
+    return Snapshot(snapshot.revision + 1, cells)
 
 
 def _validate_cell(cell: Cell) -> None:
@@ -366,8 +372,8 @@ def revision_chain_digest_step(
     return digest.digest()
 
 
-class _DatabaseOwnerFence:
-    """Process-fatal-safe exclusive ownership of one SQLite authority."""
+class InterprocessOwnerFence:
+    """Process-fatal-safe exclusive ownership of one physical resource."""
 
     _process_guard = threading.Lock()
     _process_paths: set[str] = set()
@@ -470,7 +476,7 @@ class _SqliteJournal:
     ) -> None:
         self._path = os.path.abspath(os.fspath(path))
         self._fault_injector = fault_injector
-        self._owner_fence = _DatabaseOwnerFence(self._path)
+        self._owner_fence = InterprocessOwnerFence(self._path)
         self._connection = None
         try:
             self._connection = sqlite3.connect(
@@ -1652,12 +1658,11 @@ class CellStore:
             return Snapshot(self._revision, self._cells)
 
     def dense_snapshot(self) -> Snapshot:
-        """Return the current revision in a flat immutable read mapping.
+        """Return the current revision in its bounded immutable read mapping.
 
-        Small commits remain cheap through persistent overlays. Interpreters
-        that deliberately walk a large part of the graph can request this
-        disposable dense view so each physical identity lookup stays O(1).
-        The Store and every previously published Snapshot remain unchanged.
+        Persistent revisions already provide bounded identity lookup, so a
+        dense reader must not copy the complete Cell map. The Store and every
+        previously published Snapshot remain unchanged.
         """
         with self._lock:
             cached = self._dense_snapshot_cache
@@ -2438,6 +2443,7 @@ __all__ = [
     "CellHistoryReader",
     "LoadedJournalHead",
     "RuntimeFenceLease",
+    "InterprocessOwnerFence",
     "CellStore",
     "CellKernelError",
     "Conflict",

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+import nodelang.cell_change_history as change_history_module
 
 from nodelang.cell_change_history import (
     ROLE_NAMES,
@@ -113,6 +116,19 @@ def test_change_is_a_graph_transaction_and_undo_redo_append_revisions():
     assert state.redo_root is None
     assert original_ids.issubset(store.snapshot().cells)
     assert len(read_relation(store.snapshot(), "test:history")) == 3
+
+
+def test_replacement_only_undo_does_not_scan_for_created_cell_links():
+    class EmptyTargetsMustNotTraverse:
+        def values(self):
+            raise AssertionError("empty created-target set scanned the whole graph")
+
+    incoming = change_history_module._incoming_links_for_targets(
+        SimpleNamespace(cells=EmptyTargetsMustNotTraverse()),
+        frozenset(),
+    )
+
+    assert dict(incoming) == {}
 
 
 def test_history_is_session_scoped_and_new_work_clears_redo():

@@ -1176,6 +1176,59 @@ def test_visible_public_interface_is_an_independently_selectable_graph_root(
 	)
 
 
+def test_exact_interface_history_is_projected_only_for_the_active_inspector(
+	application, monkeypatch,
+):
+	store, registry = application
+	initial = project_universal_canvas(store, registry)
+	ui_root = registry.map.domains["ui"]
+	ui_node = next(node for node in initial["nodes"] if node["id"] == ui_root)
+	interface = next(
+		port for port in ui_node["ports"]
+		if port["name"] == "Incoming relations"
+	)
+	exact_roots = frozenset(interface["previous_roots"])
+	assert exact_roots
+
+	projected_exact_roots = []
+	original = universal_application_module._project_canvas_interface_uncached
+
+	def trace_exact_interface(snapshot, protocol, interface_root):
+		if interface_root in exact_roots:
+			projected_exact_roots.append(interface_root)
+		return original(snapshot, protocol, interface_root)
+
+	monkeypatch.setattr(
+		universal_application_module,
+		"_project_canvas_interface_uncached",
+		trace_exact_interface,
+	)
+	project_universal_canvas(store, registry)
+	assert projected_exact_roots == []
+
+	apply_universal_canvas_gesture(
+		store,
+		registry,
+		roots=(),
+		focus_root=interface["id"],
+	)
+	projected_exact_roots.clear()
+	selected = project_universal_canvas(store, registry)
+	connections = [
+		connection for connection in selected["connections"]
+		if connection["role"] == "previous"
+	]
+	assert {connection["participant"] for connection in connections} \
+		== exact_roots
+	assert all(
+		connection["participant_label"].startswith(
+			"Exact target endpoint / "
+		)
+		for connection in connections
+	)
+	assert set(projected_exact_roots) == exact_roots
+
+
 def test_core_values_are_openable_wired_governance_not_a_side_document(application):
 	store, registry = application
 	top = project_universal_canvas(store, registry)
@@ -4629,6 +4682,18 @@ def test_visual_interface_authoring_is_registered_and_identity_exact():
 		if member.role_id == registry.assembly_protocol.role("interface")
 	}
 	assert interface_root in application_interfaces
+	visibility_interfaces = {
+		member.participant_id
+		for member in read_relation(
+			snapshot,
+			registry.view_sessions[
+				registry.authorization.subject_root
+			].visibility_root,
+			budget=100_000,
+		)
+		if member.role_id == registry.assembly_protocol.role("interface")
+	}
+	assert interface_root in visibility_interfaces
 
 	projected = project_universal_canvas(store, registry)
 	owner = next(node for node in projected["nodes"] if node["id"] == owner_root)
@@ -4681,6 +4746,18 @@ def test_visual_interface_batch_folds_staged_relation_tail_rewrites():
 		if member.role_id == registry.assembly_protocol.role("interface")
 	}
 	assert set(interface_roots).issubset(application_interfaces)
+	visibility_interfaces = {
+		member.participant_id
+		for member in read_relation(
+			snapshot,
+			registry.view_sessions[
+				registry.authorization.subject_root
+			].visibility_root,
+			budget=100_000,
+		)
+		if member.role_id == registry.assembly_protocol.role("interface")
+	}
+	assert set(interface_roots).issubset(visibility_interfaces)
 
 
 def test_visual_interface_authoring_rejects_partial_and_mismatched_graphs():

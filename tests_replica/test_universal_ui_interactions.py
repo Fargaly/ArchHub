@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import nodelang.cell_catalog as cell_catalog_module
 import nodelang.universal_application as universal_application_module
 
 from nodelang.cell_protocols import prepare_append_relation_members
@@ -25,11 +26,12 @@ from nodelang.universal_application import (
     set_universal_inspector_lens,
     set_universal_properties_panel,
     set_universal_selection,
+    set_universal_scope,
     redo_universal_change,
     undo_universal_change,
     update_universal_relation_composer,
 )
-from nodelang.universal_cell import NULL_CELL_ID, Cell
+from nodelang.universal_cell import NULL_CELL_ID, Cell, InvalidCell
 from nodelang.universal_view import project_universal_document
 
 
@@ -828,6 +830,51 @@ def test_queued_governed_mutations_use_the_accepted_projection_revision(
         item["payload"]["projection_revision"]
         for item in result["gestureRequests"]
     ] == [initial_revision, initial_revision + 1]
+    assert result["staleGestureCount"] == 0
+    assert result["errors"] == []
+
+
+def test_rapid_selection_reversal_is_not_dropped_as_a_stale_noop(
+    rendered_application,
+):
+    initial_revision = rendered_application[1]["revision"]
+    result = _probe(
+        rendered_application,
+        "rapid_queued_selection_reversal",
+        deltaResponses=True,
+    )
+
+    assert [
+        item["payload"]["projection_revision"]
+        for item in result["gestureRequests"]
+    ] == [initial_revision, initial_revision + 1]
+    assert result["staleGestureCount"] == 0
+    assert result["fixtureSelection"] == [result["nodeIds"][0]]
+    assert result["selected"] == [result["nodeIds"][0]]
+    assert result["errors"] == []
+
+
+def test_rapid_modifier_selection_uses_the_latest_visible_selection(
+    rendered_application,
+):
+    initial_revision = rendered_application[1]["revision"]
+    result = _probe(
+        rendered_application,
+        "rapid_modifier_selection_queue",
+        deltaResponses=True,
+    )
+
+    requests = result["gestureRequests"]
+    assert [item["payload"]["projection_revision"] for item in requests] == [
+        initial_revision,
+        initial_revision + 1,
+    ]
+    assert [item["payload"]["roots"] for item in requests] == [
+        result["nodeIds"][:2],
+        [result["nodeIds"][1]],
+    ]
+    assert result["fixtureSelection"] == [result["nodeIds"][1]]
+    assert result["selected"] == [result["nodeIds"][1]]
     assert result["staleGestureCount"] == 0
     assert result["errors"] == []
 
@@ -1716,6 +1763,157 @@ def test_cell_native_history_controls_drive_keyboard_undo_and_redo():
     assert result["errors"] == []
 
 
+def test_history_compensation_reuses_the_dependency_tracked_catalogue_proof(
+    monkeypatch,
+):
+    store, registry = build_universal_application(resolve_map_path())
+    root = registry.visible_roots[0]
+    projection = project_universal_canvas(store, registry)
+    node = next(item for item in projection["nodes"] if item["id"] == root)
+    move_universal_root(
+        store,
+        registry,
+        root,
+        float(node["x"]) + 48.0,
+        float(node["y"]) + 48.0,
+    )
+
+    def unexpected_catalogue_traversal(*_args, **_kwargs):
+        raise AssertionError(
+            "history compensation repeated the released catalogue traversal"
+        )
+
+    monkeypatch.setattr(
+        cell_catalog_module,
+        "_catalog_digest",
+        unexpected_catalogue_traversal,
+    )
+    undo_universal_change(store, registry)
+
+
+def test_history_compensation_rejects_a_changed_catalogue_dependency():
+    store, registry = build_universal_application(resolve_map_path())
+    root = registry.visible_roots[0]
+    projection = project_universal_canvas(store, registry)
+    node = next(item for item in projection["nodes"] if item["id"] == root)
+    move_universal_root(
+        store,
+        registry,
+        root,
+        float(node["x"]) + 48.0,
+        float(node["y"]) + 48.0,
+    )
+
+    snapshot = store.snapshot()
+    catalogue = cell_catalog_module.read_catalog(
+        snapshot,
+        registry.assembly_protocol,
+        registry.standard_library.catalog_root,
+    )
+    definition = cell_catalog_module.read_definition(
+        snapshot,
+        registry.assembly_protocol,
+        catalogue.definition_roots[0],
+    )
+    name = snapshot.cells[definition.name_root]
+    store.commit(snapshot.revision, replace=(Cell(
+        name.id,
+        name.link0,
+        name.link1,
+        name.atom + b" drift",
+    ),))
+
+    with pytest.raises(InvalidCell, match="definition has drifted"):
+        undo_universal_change(store, registry)
+
+
+def test_scope_entry_reuses_the_dependency_tracked_catalogue_proof(
+    monkeypatch,
+):
+    store, registry = build_universal_application(resolve_map_path())
+    projection = project_universal_canvas(store, registry)
+    target = next(
+        node["id"] for node in projection["nodes"] if node["openable"]
+    )
+
+    def unexpected_catalogue_traversal(*_args, **_kwargs):
+        raise AssertionError(
+            "scope entry repeated the released catalogue traversal"
+        )
+
+    monkeypatch.setattr(
+        cell_catalog_module,
+        "_catalog_digest",
+        unexpected_catalogue_traversal,
+    )
+    set_universal_scope(
+        store,
+        registry,
+        target,
+        expected_revision=projection["revision"],
+        projected_canvas=projection,
+    )
+
+
+def test_scope_entry_does_not_materialize_the_complete_cell_store(
+    monkeypatch,
+):
+    store, registry = build_universal_application(resolve_map_path())
+    projection = project_universal_canvas(store, registry)
+    target = next(
+        node["id"] for node in projection["nodes"] if node["openable"]
+    )
+
+    def unexpected_dense_snapshot():
+        raise AssertionError(
+            "scope entry materialized the complete Cell Store"
+        )
+
+    monkeypatch.setattr(store, "dense_snapshot", unexpected_dense_snapshot)
+    set_universal_scope(
+        store,
+        registry,
+        target,
+        expected_revision=projection["revision"],
+        projected_canvas=projection,
+    )
+
+
+def test_scope_entry_rejects_a_changed_catalogue_dependency():
+    store, registry = build_universal_application(resolve_map_path())
+    projection = project_universal_canvas(store, registry)
+    target = next(
+        node["id"] for node in projection["nodes"] if node["openable"]
+    )
+    snapshot = store.snapshot()
+    catalogue = cell_catalog_module.read_catalog(
+        snapshot,
+        registry.assembly_protocol,
+        registry.standard_library.catalog_root,
+    )
+    definition = cell_catalog_module.read_definition(
+        snapshot,
+        registry.assembly_protocol,
+        catalogue.definition_roots[0],
+    )
+    name = snapshot.cells[definition.name_root]
+    store.commit(snapshot.revision, replace=(Cell(
+        name.id,
+        name.link0,
+        name.link1,
+        name.atom + b" drift",
+    ),))
+
+    with pytest.raises(InvalidCell, match="definition has drifted"):
+        set_universal_scope(
+            store,
+            registry,
+            target,
+            expected_revision=store.revision,
+            projected_canvas={**projection, "revision": store.revision},
+        )
+
+
 def test_multi_selection_delta_reprojects_group_control_from_graph_state():
     store, registry = build_universal_application(resolve_map_path())
     before = project_universal_canvas(store, registry)
@@ -2184,10 +2382,11 @@ def test_selected_relation_exposes_real_endpoints_gates_and_presentation():
     result = json.loads(completed.stdout)
     relation = projection["selected_relation"]
     assert result["inspectorKicker"] == "RELATION NODE"
-    assert result["relationEndpointValues"] == [
+    initial_endpoints = [
         relation["source"]["participant_interface"],
         relation["target"]["participant_interface"],
     ]
+    assert result["initialRelationEndpointValues"] == initial_endpoints
     assert result["relationGateCount"] == len(relation["gates"])
     assert len(projection["properties"]) >= 3
     assert result["relationPropertyCount"] == 0
@@ -2205,4 +2404,11 @@ def test_selected_relation_exposes_real_endpoints_gates_and_presentation():
         "interaction", "control", "event", "revision",
         "projection_mode", "event_facts",
     }
+    candidate_index = request["payload"]["event_facts"][0]["value"]
+    expected_source = relation["source"]["rewire_choices"][candidate_index]["id"]
+    assert expected_source != initial_endpoints[0]
+    assert result["relationEndpointValues"] == [
+        expected_source,
+        initial_endpoints[1],
+    ]
     assert result["directTopologyRequestCount"] == 0

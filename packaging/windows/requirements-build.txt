@@ -6,3 +6,4 @@ PyQt6-WebEngine==6.11.0
 PyQt6-WebEngine-Qt6==6.11.0
 cryptography==48.0.1
 pywin32==311
+rpds-py==0.30.0

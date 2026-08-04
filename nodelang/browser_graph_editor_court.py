@@ -21,7 +21,9 @@ from .cell_attestations import CourtEvidenceDenied, CourtResult
 BROWSER_GRAPH_EDITOR_CHECKS = (
     "page-identity",
     "canvas-has-real-nodes-and-wires",
+    "visual-layout-contract",
     "selection-projects-properties",
+    "inspector-tab-semantics",
     "property-edit-updates-node",
     "keyboard-undo-redo",
     "presentation-color-updates-node",
@@ -29,6 +31,7 @@ BROWSER_GRAPH_EDITOR_CHECKS = (
     "modifier-selection-and-deselection",
     "group-and-ungroup-preserve-members",
     "directional-marquee",
+    "selection-box-tracks-pointer",
     "modifier-marquee-selection-and-deselection",
     "wheel-zoom",
     "space-pan",

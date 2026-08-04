@@ -115,7 +115,7 @@ def test_overlay_depth_is_bounded_without_mutating_older_snapshots():
     )
 
 
-def test_dense_snapshot_flattens_only_the_disposable_read_view():
+def test_dense_snapshot_reuses_the_bounded_persistent_read_view():
     store = CellStore()
     store._COPY_ON_COMMIT_CELL_LIMIT = 1
     for index in range(4):
@@ -131,7 +131,7 @@ def test_dense_snapshot_flattens_only_the_disposable_read_view():
 
     assert dense.revision == layered.revision == store.revision
     assert dict(dense.cells) == dict(layered.cells)
-    assert dense.cells is not layered.cells
+    assert dense.cells is layered.cells
     assert store.snapshot().cells is layered.cells
     with pytest.raises(TypeError):
         dense.cells["forbidden"] = Cell(

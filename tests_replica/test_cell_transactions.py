@@ -12,6 +12,7 @@ from nodelang.cell_transactions import (
     bootstrap_transaction_protocol,
     build_transaction,
     execute_transaction,
+    prepare_transaction,
     project_transaction_protocol,
     read_transaction,
     transaction_content_digest,
@@ -124,6 +125,44 @@ def test_two_rewrites_publish_as_one_revision_and_one_commit_event():
     assert {"state:a", "state:b"}.issubset(result.touched_roots)
     assert result.evidence_roots == ("transaction-test:evidence",)
     assert result.outcome_roots == ("transaction-test:outcome",)
+
+
+def test_prepare_transaction_materializes_patch_without_publishing():
+    store, rules, protocol, transaction, _activate, _retain = _fixture()
+    before_revision = store.revision
+    before_a = store.read("state:a")
+    before_b = store.read("state:b")
+
+    prepared = prepare_transaction(
+        store,
+        protocol,
+        rules,
+        transaction,
+        expected_revision=before_revision,
+    )
+
+    assert store.revision == before_revision
+    assert store.read("state:a") == before_a
+    assert store.read("state:b") == before_b
+    assert prepared.root_id == transaction
+    assert prepared.revision == before_revision
+    assert {"state:a", "state:b"}.issubset(prepared.touched_roots)
+    replace = {cell.id: cell for cell in prepared.replace}
+    assert replace["state:a"].link0 == replace["state:a"].link1 == "state:a:desired"
+    assert replace["state:b"].link0 == replace["state:b"].link1 == "state:b:desired"
+
+    committed = store.commit(
+        prepared.revision,
+        create=prepared.create,
+        replace=prepared.replace,
+    )
+    assert committed == before_revision + 1
+    assert store.read("state:a").link0 == store.read("state:a").link1 == (
+        "state:a:desired"
+    )
+    assert store.read("state:b").link0 == store.read("state:b").link1 == (
+        "state:b:desired"
+    )
 
 
 def test_failed_second_match_publishes_neither_rewrite():

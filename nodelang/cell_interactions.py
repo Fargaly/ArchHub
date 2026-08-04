@@ -7,7 +7,10 @@ projector; external effects remain outside this graph-only executor.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import wraps
 import hashlib
 import hmac
 import secrets
@@ -54,6 +57,44 @@ from .universal_cell import (
     RewriteResult,
     Snapshot,
 )
+
+
+@dataclass(slots=True)
+class _InteractionProjectionCache:
+    protocols: dict[
+        tuple[int, int, str], tuple["InteractionProtocol", int]
+    ]
+    interactions: dict[
+        tuple[int, int, str, str], tuple["Interaction", int]
+    ]
+
+
+_INTERACTION_PROJECTION_CACHE: ContextVar[
+    _InteractionProjectionCache | None
+] = ContextVar("interaction_projection_cache", default=None)
+
+
+@contextmanager
+def interaction_projection_scope():
+    """Reuse verified interaction reads only inside one interpreter request."""
+    existing = _INTERACTION_PROJECTION_CACHE.get()
+    if existing is not None:
+        yield
+        return
+    token = _INTERACTION_PROJECTION_CACHE.set(_InteractionProjectionCache({}, {}))
+    try:
+        yield
+    finally:
+        _INTERACTION_PROJECTION_CACHE.reset(token)
+
+
+def with_interaction_projection_scope(function):
+    """Run one interpreter entrypoint with exact-snapshot interaction reuse."""
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with interaction_projection_scope():
+            return function(*args, **kwargs)
+    return wrapped
 
 
 ROLE_NAMES = (
@@ -1029,7 +1070,19 @@ def _read_interaction_with_verified_protocol(
     *,
     budget: int = 10_000,
 ) -> Interaction:
+    cache = _INTERACTION_PROJECTION_CACHE.get()
+    cache_key = (
+        snapshot.revision,
+        id(snapshot.cells),
+        protocol.root_id,
+        interaction_root,
+    )
+    cached = cache.interactions.get(cache_key) if cache is not None else None
+    if cached is not None and budget >= cached[1]:
+        return cached[0]
     members = read_relation(snapshot, interaction_root, budget=budget)
+    if cached is not None:
+        return cached[0]
     admitted_roles = frozenset(protocol.roles.values()) - {
         protocol.role("vocabulary-member")
     }
@@ -1060,7 +1113,7 @@ def _read_interaction_with_verified_protocol(
     def optional(name: str, label: str) -> str | None:
         return _optional(members, protocol.role(name), label)
 
-    return Interaction(
+    interaction = Interaction(
         root_id=interaction_root,
         control_root=singles["control"],
         event_root=singles["event"],
@@ -1138,6 +1191,9 @@ def _read_interaction_with_verified_protocol(
         evidence_roots=evidence,
         reviewer_root=optional("reviewer", "reviewer"),
     )
+    if cache is not None:
+        cache.interactions[cache_key] = (interaction, budget)
+    return interaction
 
 
 def _read_interactions_with_verified_protocol(
@@ -1148,10 +1204,22 @@ def _read_interactions_with_verified_protocol(
     budget: int = 10_000,
 ) -> tuple[Interaction, ...]:
     """Read a bounded interaction set after one exact protocol verification."""
-    if (
-        project_interaction_protocol(snapshot, protocol.root_id, budget=budget)
-        != protocol
-    ):
+    cache = _INTERACTION_PROJECTION_CACHE.get()
+    protocol_key = (snapshot.revision, id(snapshot.cells), protocol.root_id)
+    cached_protocol = (
+        cache.protocols.get(protocol_key) if cache is not None else None
+    )
+    if cached_protocol is None:
+        projected_protocol = project_interaction_protocol(
+            snapshot, protocol.root_id, budget=budget
+        )
+        if cache is not None:
+            cache.protocols[protocol_key] = (projected_protocol, budget)
+    else:
+        projected_protocol, verified_budget = cached_protocol
+        if budget < verified_budget:
+            read_relation(snapshot, protocol.root_id, budget=budget)
+    if projected_protocol != protocol:
         raise InvalidCell("interaction protocol authority drifted")
     return tuple(
         _read_interaction_with_verified_protocol(
@@ -1781,6 +1849,8 @@ __all__ = [
     "InteractionProjectionHandle",
     "InteractionProjectionLease",
     "InteractionProjectionBroker",
+    "interaction_projection_scope",
+    "with_interaction_projection_scope",
     "bootstrap_interaction_protocol",
     "project_interaction_protocol",
     "build_interaction",

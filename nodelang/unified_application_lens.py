@@ -146,9 +146,15 @@ def project_unified_scope(
     *,
     caller: CallerCommandCapability,
     view_root: str | None = None,
+    at_revision: int | None = None,
 ) -> UnifiedScopeLens:
     """Project one bounded scope without adding product-name dispatch."""
-    snapshot = authority.store.snapshot()
+    if at_revision is None:
+        snapshot = authority.store.snapshot()
+    else:
+        if type(at_revision) is not int or at_revision < 0:
+            raise InvalidCell("scope revision is invalid")
+        snapshot = authority.store.at(at_revision)
     level = read_scope_level(
         authority,
         scope_root,

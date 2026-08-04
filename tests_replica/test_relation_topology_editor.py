@@ -15,6 +15,7 @@ from nodelang.universal_application import (
     build_universal_application,
     project_universal_canvas,
     rewire_universal_connection,
+    select_universal_root,
     set_universal_inspector_lens,
 )
 from nodelang.universal_cell import NULL_CELL_ID, Cell, InvalidCell
@@ -38,6 +39,18 @@ def _first_rewireable_wire(projection):
     )
 
 
+def _select_first_binary_wire(store, registry):
+    initial = project_universal_canvas(store, registry)
+    relation_root = next(
+        wire["id"] for wire in initial["wires"]
+        if wire["nary"] is False
+        and wire["source_incidence"]
+        and wire["target_incidence"]
+    )
+    select_universal_root(store, registry, relation_root)
+    return project_universal_canvas(store, registry)
+
+
 def _relation_members_with(snapshot, relation_root, *participants):
     wanted = set(participants)
     return tuple(
@@ -48,7 +61,7 @@ def _relation_members_with(snapshot, relation_root, *participants):
 
 def test_rewire_replaces_one_exact_incidence_and_preserves_relation_identity():
     store, registry = _build_canvas()
-    before_projection = project_universal_canvas(store, registry)
+    before_projection = _select_first_binary_wire(store, registry)
     wire = _first_rewireable_wire(before_projection)
     source_incidence = wire["source_incidence"]
     target_incidence = wire["target_incidence"]
@@ -94,7 +107,7 @@ def test_rewire_replaces_one_exact_incidence_and_preserves_relation_identity():
 
 def test_rewire_rejects_invisible_participant_without_partial_mutation():
     store, registry = _build_canvas()
-    projection = project_universal_canvas(store, registry)
+    projection = _select_first_binary_wire(store, registry)
     wire = _first_rewireable_wire(projection)
     source_incidence = wire["source_incidence"]
     before_incidence = store.read(source_incidence)
@@ -117,3 +130,35 @@ def test_rewire_rejects_invisible_participant_without_partial_mutation():
         item for item in project_universal_canvas(store, registry)["wires"]
         if item["id"] == wire["id"]
     )["source_interface"] == wire["source_interface"]
+
+
+def test_rewire_controls_are_disclosed_only_for_the_selected_wire():
+    store, registry = _build_canvas()
+    initial = project_universal_canvas(store, registry)
+    binary = tuple(wire for wire in initial["wires"] if not wire["nary"])
+    assert binary
+    assert all(
+        "disconnect_control" not in wire
+        and "source_rewire_choices" not in wire
+        and "target_rewire_choices" not in wire
+        for wire in binary if not wire["selected"]
+    )
+
+    selected_root = binary[0]["id"]
+    select_universal_root(store, registry, selected_root)
+    selected_projection = project_universal_canvas(store, registry)
+    selected = next(
+        wire for wire in selected_projection["wires"]
+        if wire["id"] == selected_root
+    )
+    assert selected["selected"] is True
+    assert selected["disconnect_control"]
+    assert selected["source_rewire_choices"]
+    assert selected["target_rewire_choices"]
+    assert all(
+        "disconnect_control" not in wire
+        and "source_rewire_choices" not in wire
+        and "target_rewire_choices" not in wire
+        for wire in selected_projection["wires"]
+        if not wire["nary"] and wire["id"] != selected_root
+    )

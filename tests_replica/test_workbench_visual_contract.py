@@ -66,6 +66,39 @@ def test_workbench_wires_have_real_selectable_interface_endpoints(tmp_path):
             created_at="2026-07-21T10:01:00+00:00",
         )
 
+        snapshot = store.snapshot()
+        view = registry.view_sessions[registry.authorization.subject_root]
+        visibility_members = read_relation(
+            snapshot, view.visibility_root, budget=100_000
+        )
+        assigned = {
+            member.participant_id
+            for member in visibility_members
+            if member.role_id == registry.roles["visible"]
+        }
+        indexed_interfaces = {
+            member.participant_id
+            for member in visibility_members
+            if member.role_id == registry.assembly_protocol.role("interface")
+        }
+        for relation_root in (
+            member.participant_id
+            for member in read_relation(
+                snapshot, registry.workshop_workbench_root, budget=100_000
+            )
+            if member.role_id == registry.roles["relation"]
+        ):
+            for member in read_relation(snapshot, relation_root, budget=256):
+                if member.role_id not in {
+                    registry.roles["source"], registry.roles["target"],
+                }:
+                    continue
+                interface = universal_application_module._project_canvas_interface(
+                    snapshot, registry.assembly_protocol, member.participant_id
+                )
+                if interface is not None and interface["owner"] in assigned:
+                    assert member.participant_id in indexed_interfaces
+
         set_universal_scope(store, registry, brain_root)
         set_universal_scope(store, registry, registry.workshop_workbench_root)
         projection = project_universal_canvas(store, registry)

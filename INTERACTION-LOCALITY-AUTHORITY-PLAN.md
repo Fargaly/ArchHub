@@ -1381,3 +1381,1249 @@ Final authored graph:
 
 Any failed visual item keeps the editor unreleased even if every machine check
 returns true.
+
+## 18. Dependency-tracked scope admission proof
+
+The next bounded change addressed the measured composer-authority traversal in
+scope admission. Scope entry previously opened a fresh request-local catalogue
+verification scope and then called `authorize_composer_command`, which rebuilt
+the released catalogue digest even when the Store's dependency-tracked proof
+was already valid. This was redundant proof work, not an authorization rule.
+
+The repair seeds the existing dependency-tracked released-catalogue proof at
+the exact scope snapshot before `_authorize` runs. The normal composer and
+application authorization decisions still execute. The stable proof's Store
+listener still invalidates it when any catalogue dependency changes.
+
+Red-to-green courts:
+
+```text
+scope proof reuse and dependency-drift denial
+2 passed, 83 deselected in 23.54s
+```
+
+The first court warms the real proof, forbids a second catalogue digest walk,
+and enters an openable composition. The second edits a released definition
+dependency and requires scope entry to fail closed with definition drift.
+
+Direct post-repair timing against one real built Universal Application:
+
+| Phase | Before | After |
+|---|---:|---:|
+| Complete scope commit | 103.004 ms | 16.819 ms |
+| Application plus composer authorization | 69.684 ms profiled | 6.183 ms |
+| Composer authorization | 58.422 ms profiled | 0.162 ms |
+
+No Cell shape, graph relation, Store, API, lifecycle, lease, authorization
+decision, persistence, or cross-request projection cache changed.
+
+This does not release the editor. Scope roots are bounded, but
+`project_universal_scope_transition` still enters the shared complete canvas
+interpreter. That interpreter rebuilds global invariant projection work even
+though the accepted scope commit changed only the revision-bound view-session
+composition. The next executable gate must forbid those unrelated global
+rebuilds while proving exact canonical equality, revocation, removal, lease,
+and destination-scope reconstruction. The unchanged browser budgets remain
+100 ms for mutation acknowledgement and 150 ms for scope entry.
+
+## 19. Exact scope focus without a complete Properties-lens traversal
+
+Fresh isolated source-level instrumentation after the section 18 repair
+measured one scope interaction as follows:
+
+| Phase | Measured cost |
+|---|---:|
+| HTTP request and response | 283.541 ms |
+| bounded canvas interpreter | 104.926 ms |
+| fourteen interaction builders | 48.820 ms |
+| relation projection inside the request | 70.207 ms |
+| response payload | 379,014 bytes |
+
+The relation trace recorded 5,836 reads over 983 exact revision/mapping/root
+keys. The complete `app:properties-lens` relation cost 15.996 ms in one walk.
+The application membership relation cost 14.325 ms across six revision-bound
+walks. The latter is not in this repair: it crosses the fourteen graph-held
+interaction builders and needs a separate gate.
+
+The complete Properties-lens walk is redundant only in the minted scope path.
+The scope executor has already derived the destination property roots from the
+accepted canonical Cells, committed the new focus, and minted a private
+materialization bound to the exact base revision, committed revision, browser
+session, subject, trail, and `revision_changes`. The projector can therefore:
+
+1. read the active focus directly through the view session's graph-held focus
+   incidence and validate its role and participant;
+2. use the materialized destination property roots without rereading every
+   property incidence in every unrelated scope;
+3. retain the complete Properties-lens traversal for exhaustive projection;
+4. retain the canonical exhaustive projector as the equality comparator.
+
+Red-to-green proof must show that the scoped projector cannot read the complete
+Properties lens, still equals the canonical projection after merge, rejects a
+malformed reusable projection, retains exact subject/revision/materialization
+checks, and changes no Store, Cell, API, lifecycle, authorization, lease,
+interaction-builder, persistence, or browser schema. No cache or second index
+is introduced.
+
+The new court first failed with HTTP 400 when the full Properties lens was
+forbidden. After the bounded repair, canonical merge equality and all existing
+materialization denials passed:
+
+```text
+exact scoped focus plus canonical comparator and fail-closed materialization
+2 passed, 40 deselected in 27.31s
+```
+
+Fresh like-for-like instrumentation measured:
+
+| Phase | Before | After |
+|---|---:|---:|
+| HTTP request and response | 283.541 ms | 228.653 ms |
+| bounded canvas interpreter | 104.926 ms | 84.247 ms |
+| relation projection | 70.207 ms | 45.161 ms |
+
+The response remains 379,014 bytes and the 150 ms scope budget remains red.
+
+## 20. Destination-bound public-interface projection
+
+The next diagnostic profile found 394 canvas-interface projections during one
+scope entry, with 368 uncached interpretations. The selected `gm:domain:ui`
+destination contains 21 visible roots, 23 relations, and 259 property roots.
+The application has 46 registered public interfaces, but zero of those 46 are
+owned by the destination roots. Processing the complete registration is an
+unrelated global traversal.
+
+The bounded design retains application membership as authority while limiting
+projection to interface identities explicitly referenced by the destination:
+
+1. read the application relation once and retain only its interface-role
+   members;
+2. derive admitted interface roots from the destination relation endpoint
+   incidences, the selected root, and explicit composition interface members;
+3. project only the intersection of registered and admitted identities;
+4. reuse the prior same-session interface-presentation options because the
+   exact scope commit changed no interface vocabulary root;
+5. retain exhaustive registration validation in the generic projector and the
+   post-transition generic comparator.
+
+The red court must reject any scoped call that omits the explicit admitted-root
+set. Existing canonical merge equality, control coverage, subject/revision
+drift, authorization, and exhaustive projection courts remain unchanged. This
+adds no naming inference, persistence, cache, index, Cell field, API field, or
+browser behavior.
+
+The admitted-root court failed first with HTTP 400. After implementation, the
+same canonical comparator and materialization-denial pair passed:
+
+```text
+destination-bound interfaces plus canonical comparator and fail-closed scope
+2 passed, 40 deselected in 26.23s
+```
+
+Fresh measurement changed the bounded interpreter from 84.247 ms to
+74.860 ms and reduced exact relation keys from 982 to 664. HTTP remained red
+at 230.723 ms under the same machine load; the response stayed 379,014 bytes.
+
+## 21. Relation-definition contract locality
+
+The profiler records fourteen calls to
+`_project_relation_definition_contract` on every scope entry. Whether a
+released definition carries a relation contract is invariant across the exact
+scope commit; only that contract's eligible visible-root choices change. The
+same-revision previous catalogue already records which definitions have a
+contract.
+
+The bounded repair may call the canonical contract projector only for prior
+catalogue entries whose `composition_contract` is a graph projection. Entries
+with `None` remain `None`. The prior catalogue order and record shape are
+validated before use, and the exhaustive comparator must remain equal after
+the destination choices are rebuilt. No product kind, hard-coded definition,
+cache, API field, or browser rule is introduced.
+
+The bounded court first failed with HTTP 400 when all fourteen definitions
+were projected. After limiting the work to the four definitions that actually
+carry a relation contract, the canonical comparator and materialization
+denials passed:
+
+```text
+bounded relation contracts plus canonical comparator and fail-closed scope
+2 passed, 40 deselected in 25.59s
+```
+
+Fresh isolated measurement changed the bounded interpreter from 74.860 ms to
+57.011 ms and relation work from 45.161 ms to 34.330 ms. The complete HTTP
+request remained red at 225.211 ms and the response remained 379,014 bytes.
+
+## 22. Released catalogue presentation reuse
+
+Repeated unprofiled source-level measurements still reject release:
+
+| Transition | Measurements | Response |
+|---|---:|---:|
+| enter `gm:domain:ui` | 202.490 / 264.197 / 252.762 ms | 379,014-379,099 bytes |
+| return to `app:canvas` | 553.118 / 724.370 / 541.865 ms | 814,661 bytes |
+
+An authorization trace disproved proof reuse as the next target. Scope entry
+performs one verification at the accepted base revision and one after the
+scope commit. They are different revisions and took 1.484 ms and 5.412 ms in
+the measured request. They must not be merged or reused across that commit.
+
+The next measured redundancy is the remaining four relation-definition
+contract projections. Under a full request profile they consumed 94 ms,
+including 71 ms in four `read_definition` calls. These definitions are part of
+the released Node Library catalogue, not destination nodes, wires, controls,
+properties, authorization, or active-scope state.
+
+The existing authority already provides the required invalidation proof:
+
+1. `verify_released_catalog_stable` verifies the current released catalogue
+   and records every Cell dependency read by that proof;
+2. the Store listener invalidates that proof whenever a commit touches any
+   recorded dependency;
+3. the previous catalogue presentation belongs to the server-held accepted
+   projection that minted the exact interaction lease; it is not submitted by
+   the browser;
+4. the scope materialization is privately minted, bound to the same session
+   and subject, requires `base + 1`, and matches the Store's exact
+   `revision_changes`;
+5. the scope interpreter still rebuilds destination nodes, wires, properties,
+   selection, inspector state, controls, authorization, and the post-ensure
+   interaction lease from canonical Cells;
+6. the exhaustive projector remains the independent same-revision comparator.
+
+The red court must forbid every call to
+`_project_relation_definition_contract` on the bounded scope path. Only the
+released static contract identity, role, cardinality, fixed-binding, and
+constraint metadata may be reused. Every eligible choice must be rebuilt from
+the destination's canonical visible Cells and labels. The court must still
+prove exact canonical equality for both reused and rebuilt fields, unique and
+complete controls, exact post-ensure lease revision, malformed projection
+denial, subject/revision/materialization denial, and unchanged topology
+removals. The exhaustive path must continue to interpret every definition
+normally. No Cell, Store, schema, API, lifecycle, authorization, persistence,
+cross-request projection cache, or browser handler may change.
+
+The first attempted implementation copied complete contracts and failed the
+canonical comparator because their choice lists still named the previous
+scope. That implementation was rejected. The corrected repair reuses only
+strictly validated static contract metadata and derives each eligible choice
+from current destination Cells. The focused comparator and denial courts then
+passed:
+
+```text
+static released contract plus canonical destination choices
+2 passed, 40 deselected in 26.77s
+```
+
+Fresh unprofiled measurements changed domain entry from 202.490-264.197 ms to
+175.273-205.446 ms. One return to the larger application scope changed from
+the earlier 541.865-724.370 ms range to 454.509 ms. Both transitions remain
+above their release budget, so the editor remains red.
+
+## 23. Static design-system projection locality
+
+The post-section-22 profile attributes 46 ms under instrumentation to opening
+and validating the deterministic design-token system, including 36 ms building
+its expected physical graph. Token resolution and icon projection add further
+work. Scope entry cannot edit those resources: its privately minted commit is
+one exact `base + 1` revision containing only the view-session scope, selection,
+and focus transition. A concurrent or foreign commit invalidates the
+materialization before projection.
+
+The bounded design may reuse only the prior server-held projection's static
+design-token, component, and icon data. It must:
+
+1. strictly validate the reusable design-system projection shape;
+2. rebuild personal theme revision facts and theme fields from current Cells;
+3. rebuild the control-presentation and activation catalogues from current
+   Cells, including current selection/scope applicability;
+4. replace the reused projection's control catalogue with that rebuilt value;
+5. retain exact canonical equality and the exhaustive projector as comparator;
+6. reject malformed reusable design data, base/revision/subject drift, and any
+   materialization not minted by the scope executor.
+
+The red court forbids `open_archhub_design_token_system`,
+`project_design_system_runtime`, and `project_icon_catalog` only on the bounded
+scope path. Exhaustive projection must continue to execute all three. No
+Store, Cell, schema, API, lifecycle, authorization, persistence, browser
+handler, or cross-request cache changes.
+
+The red court first returned HTTP 400. After the bounded branch reused only
+strictly validated static token/component/icon data and rebuilt the current
+control catalogue, the exhaustive canonical comparator and existing
+materialization denials passed:
+
+```text
+static design projection plus current controls and canonical comparator
+2 passed, 40 deselected in 26.13s
+```
+
+Initial end-to-end samples remained noisy and red at 192.688-213.347 ms for
+domain entry and 528.796 ms for the larger application scope. Direct repeated
+projector measurement is required before attributing an improvement; these
+HTTP samples are not release evidence.
+
+## 24. Explicit composition-boundary endpoint index
+
+Repeated direct measurement of `_nested_canvas_scope` for `gm:domain:ui`
+recorded a 54.890 ms median and the exact result shape 21 nodes / 23 relations /
+259 properties. A diagnostic profile found 3,095 `read_relation` calls. The
+scope contains 66 relation endpoints and 21 visible owners, but only 30 unique
+endpoint identities. `_canvas_endpoint` repeatedly scans every owner and its
+interfaces to rediscover explicit composition boundaries.
+
+The graph already declares every boundary through an owner's `interface`
+incidence and the interface's `seed` and `authority` incidences. The bounded
+repair is one disposable request-local index over those exact relations:
+
+1. read each visible owner relation once;
+2. project each explicitly owned interface once through the existing generic
+   interface interpreter;
+3. index its graph-held seed/endpoint-incidence pairs to the owning visible
+   root and projected boundary;
+4. resolve each source/target endpoint through that index before falling back
+   to the existing direct-interface projector;
+5. reject duplicate ownership, wrong-side wiring, or malformed interfaces;
+6. discard the index when `_nested_canvas_scope` returns.
+
+The red court extends the existing locality court: no unrelated relation may
+be read, no declared owner/relation may be reread, and the complete nested
+scope tuple must equal the canonical pre-change result. Existing scope
+canonical-comparator, topology-removal, authorization, lease, and browser
+courts remain unchanged. No Cell, Store, schema, API, persistence, naming
+inference, cross-request cache, or alternate graph is introduced.
+
+The red locality court first failed when the target composition and each
+endpoint owner were reread. The repair determines composition from the
+already-read member relations, builds the disposable endpoint indexes once,
+and passes them through `_canvas_endpoint`. Focused evidence then passed:
+
+```text
+declared-relation locality
+1 passed, 41 deselected in 10.94s
+
+locality plus canonical comparator and fail-closed scope
+3 passed, 39 deselected in 36.57s
+```
+
+Repeated direct `_nested_canvas_scope` measurements changed from a 54.890 ms
+median to 37.990 ms (32.944-40.621 ms), while preserving the exact 21-node,
+23-relation, 259-property result. Fresh end-to-end samples were 189.601 ms for
+a cold domain entry, 469.720 ms for the larger parent scope, and 161.542 ms for
+domain re-entry. The direct nested-scope work improved by about 31 percent,
+but the re-entry result is still above the 150 ms release budget. The next
+gate must therefore measure the duplicate validation of already-existing
+interaction identities before the final lease validates those same identities;
+it must not weaken creation, authorization, revision, or lease checks.
+
+## 25. Exact-snapshot interaction read scope
+
+A warm re-entry trace measured 172.614 ms end to end. The fourteen ensure
+families read 64 unique existing interactions, and the final lease read 57
+unique interactions. Every lease-admitted interaction was therefore parsed
+once by an ensure family and again by the lease; seven additional definitions
+were correctly checked by ensure but were not visible controls in that scope.
+The final lease itself took only 2.636 ms.
+
+A second diagnostic separated the duplicated work. Ensure-time interaction
+reads projected the same interaction protocol 64 times (7.840 ms) and parsed
+64 interaction relations (15.177 ms). The lease projected the protocol once
+(0.094 ms) and parsed its 57 admitted interactions in 2.266 ms. This rules out
+removing or weakening the final lease as a useful or acceptable repair.
+
+The bounded mechanism may reuse verified protocol and parsed interaction data
+only inside one `_project_interaction_canvas` call. Every entry is keyed by the
+exact immutable snapshot mapping identity, revision, protocol root, and, for
+an interaction, interaction root. A cache hit must still call the generic
+relation reader with the caller's budget so that a prior generous traversal
+cannot bypass a later smaller budget. The context is discarded when the
+request returns or raises.
+
+The RED courts must prove:
+
+1. repeated reads in one scope project one protocol and parse each interaction
+   once while preserving the exact returned value;
+2. the same revision number over a different snapshot mapping is not reused;
+3. a new revision is not reused;
+4. a smaller traversal budget still fails closed after a cached read;
+5. calls outside the request scope do not share verified data;
+6. every ensure-family semantic comparison, final action/input/subject/control
+   validation, exact lease revision, canonical scope comparator, malformed
+   materialization denial, and authorization behavior remain unchanged.
+
+No Cell, Store, schema, API, lifecycle, persistence, cross-request cache,
+control mapping, interaction definition, or browser handler may change.
+
+Both new courts failed first because no interaction read scope existed. The
+implemented scope retains the generic relation budget check on every cached
+interaction access and keys verified values by exact snapshot mapping identity
+and revision. Focused evidence passed without changing any ensure comparison
+or lease rule:
+
+```text
+exact-snapshot interaction scope courts
+2 passed, 16 deselected in 0.18s
+
+complete generic interaction court
+18 passed in 0.31s
+
+canonical scope comparator, fail-closed drift, and declared locality
+3 passed, 39 deselected in 37.46s
+```
+
+A post-change trace observed two required pre-commit protocol checks at
+revision 837 and one shared post-commit projection check at revision 838. The
+post-commit ensure and lease path therefore no longer projects the protocol 65
+times. End-to-end samples remained red and load-sensitive: the best warm domain
+entry was 156.301 ms, other warm samples were 206.094-207.345 ms, and a separate
+instrumented entry was 179.858 ms. Parent-scope samples were 532.826-798.180 ms.
+The change is accepted for authority-preserving locality, but it does not pass
+the 150 ms release gate and cannot release the editor.
+
+## 26. Rejected endpoint-classification experiment
+
+Instrumentation initially attributed 23.592 ms to 30 failed interface
+projections over large ordinary domain relations. A RED court and bounded
+known-non-interface branch were implemented, and the canonical/locality courts
+passed. A same-process A/B comparison against the exact prior endpoint behavior
+then disproved the performance hypothesis: current median 28.651 ms versus
+prior median 27.908 ms, with identical output. Profiling overhead had magnified
+the failed projections; the proposed classification added no production gain.
+
+The branch and its court were therefore removed. Interface interpretation
+retains its prior universal semantics, including unregistered graph-declared
+interfaces. This result rules out endpoint classification as the next latency
+target and prevents an unnecessary semantic restriction from entering the
+kernel.
+
+## 27. Scope-render endpoint locality
+
+An unprofiled caller-attributed trace of one `gm:domain:ui` scope entry found
+2,810 generic relation reads taking 33.289 ms inside the accepted request. The
+largest repeated traversals were 966 reads from `_canvas_endpoint` and 1,385
+reads from `_relation_members_or_none`. The cause is concrete: scope discovery
+already builds the graph-declared owner-interface and composition-boundary
+indexes in `_nested_scope_endpoint_indexes`, but the final scoped canvas
+renderer calls `_canvas_endpoint` without those indexes for every wire. Each
+wire endpoint therefore rescans the visible owner relations.
+
+The bounded repair may construct the same disposable indexes once from the
+exact destination snapshot and visible roots, then pass them to every final
+wire endpoint resolution. It must:
+
+1. derive ownership and boundaries only from explicit graph incidences;
+2. retain generic interface projection and malformed/duplicate-owner denial;
+3. remain request-local and disappear when projection returns or raises;
+4. preserve the exact canonical canvas and interaction delta;
+5. retain current authorization, revision, conflict, lifecycle, lease, and
+   cross-scope checks;
+6. add no Cell, Store, schema, API, persistence, naming inference, cache, or
+   alternate authority.
+
+The RED court must enter a real composition scope and prove that every bounded
+wire endpoint call receives the exact owner-interface and boundary indexes,
+while the existing exhaustive comparator proves merged output equality. The
+existing fail-closed materialization, control uniqueness, post-ensure lease,
+declared-relation locality, and browser behavior courts remain unchanged.
+Performance acceptance requires a same-process A/B measurement against the
+exact pre-change endpoint behavior before the repair is retained.
+
+The new court failed first with 46 unindexed final-render endpoint calls. The
+bounded renderer now constructs the disposable indexes once and passes them to
+both wire and selected-relation endpoint projection. Focused evidence passed:
+
+```text
+endpoint-index, canonical comparator, fail-closed drift, and locality
+4 passed, 39 deselected in 52.08s
+```
+
+A 15-pair same-process A/B comparison against the exact prior scanning path
+preserved identical output and changed median destination projection from
+47.035 ms to 43.485 ms, a 3.549 ms / 7.5 percent improvement. Caller-attributed
+relation reads fell from 2,810 to 899; the 966 `_canvas_endpoint` owner rescans
+were eliminated and `_relation_members_or_none` calls fell from 1,385 to 440.
+The change is accepted because the gain is independently measurable and the
+court pins the graph-declared endpoint source. It does not by itself release
+the still-red end-to-end 150 ms scope-entry budget.
+
+## 28. Rejected overlay memo and exposed top-scope locality defect
+
+Repeated real HTTP scope transitions showed the current physical overlay depth
+increasing from 9 to 20. Domain entry ranged from 155.522 to 229.345 ms while
+returning to the application composition ranged from 565.386 to 748.522 ms.
+This justified testing the physical lookup hypothesis, but not assuming it.
+
+The established persistent-map family is a structurally shared hash trie rather
+than an unbounded linear overlay: Bagwell's *Ideal Hash Trees* describes hash
+array mapped tries with bounded key lookup, while Python's current
+`MappingProxyType` contract supplies a read-only view but not persistent-map
+lookup guarantees. The environment contains `rpds-py` transitively, but the
+product does not declare that dependency and replacing the Cell mapping with a
+HAMT is a kernel migration, not a bounded editor repair.
+
+A disposable 10,000-entry overlay memo prototype was therefore measured before
+any source edit. It was not reliable: domain entry varied from 139.498 to
+280.048 ms and parent entry from 454.734 to 799.989 ms as depth increased. It
+also accumulated more than 111,000 cached references after five cycles. The
+memo is rejected and no `CellStore` source was changed.
+
+The follow-up parent-scope trace exposed the actual larger defect. Returning to
+`app:canvas` projects only 17 nodes, 136 wires, and 5 selected properties, yet
+the request performed 10,915 relation reads and spent 310.401 ms in the bounded
+projector. `_property_index` swept 4,682 property relations (93.471 ms) and
+`_canvas_scope_for_assigned` performed 5,361 containment reads (27.893 ms).
+The top composition has no bounded authoritative property/relation scope index,
+so returning to it reconstructs locality by sweeping the operating graph.
+
+The next design gate must define that index as ordinary graph-held composition
+relations, maintained atomically with topology/property changes and validated
+against a full canonical reconstruction. It cannot be a Python registry, hidden
+cache, copied parent projection, second store, naming convention, or route
+bypass. Until that graph contract and its mutation/revocation courts exist,
+parent navigation remains explicitly unreleased.
+
+Research references:
+
+- https://infoscience.epfl.ch/entities/publication/b892b2ce-7bf0-41d2-b68c-fb44a3c64a33
+- https://docs.python.org/3.14/library/types.html#types.MappingProxyType
+
+## 29. Hidden-descendant property exclusion
+
+The top-scope sweep returned 4,680 property relations for 17 visible composition
+roots and 136 visible relations. An exact owner check proved that only 631 of
+those property relations belong to visible roots or visible relations; 4,049
+belong exclusively to descendants hidden behind the composition boundary. The
+631 graph-derived identities exactly equal the existing owner/property bindings,
+with no missing or extra roots.
+
+This is a correctness boundary as well as a performance defect. The active lens
+must not parse hidden descendant properties merely because their ancestor is a
+visible composition. The bounded repair keeps the existing canonical property
+sweep but admits a property root into the resulting scope only when its explicit
+graph-held owner is a visible root or visible relation. No registry lookup,
+copied projection, naming inference, cache, or new graph contract is permitted.
+
+The RED court must prove every returned property relation has exactly one owner
+inside the returned visible-root/relation set and that at least one known hidden
+descendant remains excluded. Existing scope comparator, authorization,
+materialization, browser, and restart courts remain unchanged. After correctness
+passes, direct and HTTP measurements determine whether the filter is retained as
+a meaningful performance repair.
+
+The new court failed first because hidden descendant properties were present in
+the returned top scope. The bounded admission correction now retains properties
+only when their explicit owner is a visible root or visible relation. Focused
+authority evidence passed:
+
+```text
+hidden-property exclusion, endpoint indexes, canonical comparator,
+fail-closed drift, and declared locality
+5 passed, 39 deselected in 68.54s
+```
+
+Five isolated HTTP enter/return cycles preserved the exact 17-node/136-wire top
+graph. Domain-entry median was 174.177 ms. Top-scope return median fell from the
+prior 708.001 ms to 462.835 ms, a 245.166 ms / 34.6 percent improvement. The
+change is retained because it repairs the active-lens boundary and removes a
+measured cost, but both scope directions remain above the 150 ms release budget.
+
+## 30. Top-scope endpoint locality
+
+A post-repair phase trace measured a 391.821 ms top-scope return. Scope commit
+took 93.918 ms; bounded projection took 208.801 ms; binding around the projector
+added about 41.7 ms; delta construction took 0.346 ms. A direct profiler run is
+diagnostic only because tracing inflated total execution, but it located the
+repeated traversal: `_session_canvas_roots` spent 201 ms under instrumentation,
+including 336 `_project_canvas_interface` calls. The top-scope relation sweep
+calls `_canvas_endpoint` without the owner-interface and boundary indexes that
+the nested-scope and final-render paths already derive from the same Cells.
+
+The next bounded repair may construct those existing disposable indexes once
+from the exact snapshot and assigned visible roots, then pass them to every
+top-scope wire endpoint resolution. It must preserve generic interface
+projection, malformed/duplicate-owner denial, exact visible relations,
+properties, authorization, revision, conflict, lifecycle, and lease semantics.
+It adds no Cell, Store, schema, API, persistence, naming inference, or
+cross-request cache.
+
+The RED court must prove every top-scope wire endpoint receives the same
+request-local interface, owner, and boundary indexes. Existing hidden-property,
+canonical comparator, fail-closed drift, nested locality, and final-render
+endpoint courts remain unchanged. The mechanism is retained only after the
+focused courts and a same-process before/after measurement preserve exact
+output and show a repeatable gain.
+
+The new court failed first because no top-scope endpoint call received the
+owner or boundary indexes. The bounded repair now constructs the existing
+graph-derived indexes once and passes them to every top-scope endpoint read.
+Focused authority evidence passed:
+
+```text
+top and final endpoint indexes, hidden-property exclusion,
+canonical comparator, fail-closed drift, and nested locality
+6 passed, 39 deselected in 76.30s
+```
+
+A 15-pair same-process A/B comparison against the exact prior scanning path
+preserved 136 relations and 631 properties with identical ordered output.
+Median top-scope discovery changed from 65.841 ms to 49.140 ms, a 16.700 ms /
+25.4 percent improvement. The repair is retained. Five end-to-end HTTP cycles
+under current machine load remained variable and red: domain median 200.969 ms
+and top-scope median 500.065 ms. The editor therefore remains unreleased.
+
+## 31. Persistent physical Cell map
+
+The remaining request profile performs tens of thousands of exact Cell identity
+lookups against a linear immutable overlay chain. This is a physical storage
+cost, not graph semantics. The current chain preserves snapshots cheaply but an
+unchanged key can require one failed dictionary lookup per intervening revision.
+
+The established replacement family is a persistent hash array mapped trie.
+Bagwell's *Ideal Hash Trees* supplies the structural-sharing lineage; Python's
+PEP 603 documents the same persistent immutable-map contract and its bounded
+lookup/update characteristics. The installed `rpds-py` 0.30.0 implementation
+provides `HashTrieMap`, but it is not yet declared in either product or Windows
+packaging requirements and it does not promise insertion order. Physical map
+iteration therefore cannot be accepted as semantic ordering.
+
+A bounded synthetic benchmark used the same immutable `Cell` values, 20,000
+base identities, sixteen 32-Cell revisions, and 120,000 unchanged-key reads.
+The current overlay-chain median was 304.176 ms; `HashTrieMap` was 77.612 ms,
+about 3.9 times faster. Median immutable update cost was 0.0288 ms versus
+0.0424 ms. This is sufficient to create RED courts, not to claim application
+performance.
+
+The migration may replace only the physical immutable mapping under `Snapshot`.
+It must preserve the four-field Cell, one Store, revision numbers, conflict and
+dangling-link checks, exact changed-root sets, history/journal reconstruction,
+revision-chain digests, old snapshots, candidate snapshots, mapping
+immutability, and every public API. It may add no semantic index, cache, route,
+schema, lifecycle, or second authority.
+
+RED courts must prove:
+
+1. current and historical snapshots remain immutable and prior revisions do not
+   change after later commits;
+2. current lookup depth is structurally bounded rather than proportional to
+   revision count;
+3. candidate overlays and normal commits use the same persistent mapping
+   contract;
+4. physical insertion order cannot alter fingerprints or revision-chain
+   digests;
+5. the persistent-map lookup court beats an embedded exact linear-overlay
+   reference on the same process without weakening output equality;
+6. runtime and Windows build requirements declare the binary dependency;
+7. focused Cell, journal, restart, canonical canvas, security, and unchanged
+   browser courts pass before the physical representation is accepted.
+
+References:
+
+- https://infoscience.epfl.ch/entities/publication/b892b2ce-7bf0-41d2-b68c-fb44a3c64a33
+- https://peps.python.org/pep-0603/
+
+The five new physical-map courts were run RED before the implementation. Four
+failed: committed and candidate snapshots had no persistent backing map,
+unchanged-key lookup did not beat the exact former linear-overlay reference,
+and neither runtime nor Windows packaging declared the dependency. The digest
+ordering court already passed and remained unchanged.
+
+The bounded implementation replaced only `_OverlayCellMap` internals with one
+`HashTrieMap`; each new immutable revision structurally shares the prior map
+and keeps `_depth == 1`. `Cell`, `Snapshot`, `CellStore`, revisions, commit
+validation, journal persistence, routes, and graph semantics were not changed.
+`rpds-py` is now declared in runtime requirements and pinned for the Windows
+bundle. The five courts then passed:
+
+```text
+tests_replica/test_universal_cell_persistent_map.py
+5 passed in 0.72s
+```
+
+The same 20,000-base / sixteen-revision / 120,000-read benchmark after the
+repair measured 58.255 ms for the persistent map and 295.307 ms for the exact
+former overlay, a 5.07x unchanged-key lookup improvement. Existing focused
+regressions are also green: 10 incremental Cell courts, 18 interaction courts,
+6 history courts, 65 kernel/relation/rule/capability/durability/security courts,
+16 relation-contract courts, and 8 Windows packaging courts. This proves the
+physical storage contract only. The canonical application, restart, and
+unchanged real-browser performance gates remain required before this migration
+or the editor can be released.
+
+A second RED court proved that `dense_read_snapshot` still copied the complete
+persistent map even though the HAMT has no linear overlay to flatten. An
+isolated runtime-only identity substitution preserved the exact 17-node / 136-
+wire top projection while reducing domain-entry median from 139.011 to 127.260
+ms and top-scope return from 842.812 to 318.916 ms. The source was then changed
+so dense reads reuse the bounded immutable mapping. Sixteen persistent and
+incremental courts passed, followed by 128 kernel, relation, interaction,
+history, durability, shared-authority, security, and packaging courts.
+
+Five source-backed isolated HTTP cycles then measured domain entry at 118.149
+ms median and top-scope return at 317.708 ms median. All five returns preserved
+17 nodes and 136 wires. The final-source complete authoring/restart court passed
+in 58.83 seconds. The six unchanged canonical/fail-closed/locality courts also
+passed in 159.79 seconds. The domain direction is below the 150 ms budget in
+this bounded run; the parent direction and unchanged real-browser court remain
+red.
+
+## 32. Graph-held scope projection, not a copied index
+
+The post-repair parent profile attributes 154 ms to
+`_session_canvas_roots`, including 145 ms in
+`_canvas_scope_for_assigned`. The application composition exposes only 17
+direct roots, 136 wires, and 631 applicable properties, but the current
+interpreter reads every relation and property incidence registered on the
+global canvas before filtering them back to that bounded set.
+
+Two apparent shortcuts were measured and rejected:
+
+1. `registry.root_properties` happens to reproduce all 631 current top-scope
+   properties, but it is a Python projection rebuilt at application restore.
+   It is not live graph authority and cannot prove later property additions.
+2. The visible domain roots currently expose zero graph interfaces carrying the
+   136 top-level wire identities. Interface-derived adjacency therefore cannot
+   reconstruct this scope today, and inferring it from names would violate the
+   specification.
+
+Incremental view-maintenance literature treats a materialized view as a derived
+result that must be maintained from the same changes that modify its source;
+the delta must cost less than full recomputation while preserving the original
+query semantics. DBSP provides a formal incrementalization model for rich
+queries, and graph-view maintenance applies the same rule to changing graph
+patterns. ArchHub does not need a second dataflow engine for this repair. It
+needs the smaller invariant already implied by the one-graph architecture: a
+scope projection is an ordinary graph relation, replaced atomically in the same
+Cell commit as the topology/property change that affects it.
+
+The bounded design extends the existing per-view scope-exposure relation. One
+active exposure entry for each parent scope will contain explicit graph roles
+for:
+
+- the parent scope;
+- every direct visible root;
+- every visible relation/wire root;
+- every applicable property relation root.
+
+The entry is not a second store or independent truth. It is a graph-held,
+append-oriented materialized projection of canonical Cells. A replacement
+entry and its registry-pointer change must be committed in the same revision as
+wire creation/removal, property creation, placement, grouping, ungrouping, or
+other membership change. Scope selection, focus, pan, and navigation do not
+rewrite it. Restore/migration reconstructs it from the canonical generic
+projector before the application is admitted. Runtime scope entry reads the
+bounded entry; the generic full projector remains the comparator and recovery
+path, not the normal navigation path.
+
+Before implementation, RED courts must prove:
+
+1. the initial and restored top exposure equals the generic canonical roots,
+   relations, and properties at the same accepted revision;
+2. wire add/remove/rewire and property add update the exposure atomically with
+   no intermediate accepted revision;
+3. placement, group, ungroup, undo, and redo preserve exact projection
+   membership and append-only history;
+4. a missing, duplicate, foreign-session, wrong-parent, or malformed exposure
+   fails closed rather than falling back silently;
+5. a stale exposure cannot mint an interaction lease, and recovery may rebuild
+   it only from canonical Cells under the existing authority;
+6. hidden descendants remain absent, while every visible control, relation,
+   interface, and property required by the DOM remains present;
+7. deleting the projection entry changes no underlying graph semantics, and an
+   authorised reconstruction produces the same canonical view;
+8. no Python registry, cross-request cache, new store, route, public schema, or
+   naming inference enters the runtime path;
+9. unchanged browser authoring, restart, security, and canonical comparator
+   courts pass, with mutation acknowledgement at or below 100 ms and both scope
+   directions at or below 150 ms.
+
+## 33. One-request reuse of already validated relation projections
+
+The graph-held visibility projection removed the global relation/property
+sweeps and the complete authoring/restart court now passes. The current
+parent-scope request still validates its bounded visibility, wire, and property
+relations during the scope commit, destroys that request-local relation cache,
+then walks the same immutable relation Cells again during projection. This is
+duplicate physical interpretation inside one accepted transaction, not a
+missing semantic index.
+
+The bounded repair may extend the existing private
+`UniversalScopeMaterialization` with exact relation projections captured from
+the scope executor's existing request-local cache. Each entry must retain the
+source revision, projected members, traversal budget cost, and every source
+Cell whose links determined that projection. The projector may seed only its
+existing request-local relation cache after proving:
+
+1. the materialization was privately minted for the same session, subject,
+   base revision, committed revision, and exact changed-root receipt;
+2. every captured entry came from the exact base snapshot or its isolated
+   candidate revision and belongs to the bounded visible, relation, property,
+   or visibility roots;
+3. every source Cell is byte-for-byte identical in the committed snapshot;
+4. any source-cell, revision, session, subject, or receipt drift fails closed;
+5. the seeded entries disappear when the interpreter request exits and are not
+   available to a later request;
+6. ordinary uncaptured relations still use canonical `read_relation`;
+7. no Store, Cell, graph schema, public API, persistence, cross-request cache,
+   semantic index, or alternate authority is added.
+
+RED courts must prove exact dependency validation, disposal after the request,
+all parent-scope wire/property first reads hitting the seeded cache, tampered
+source denial, and unchanged canonical scope output. Only after those courts
+fail for the missing mechanism may the bounded reuse be implemented. The
+unchanged fail-closed, restart, authority, browser, and latency courts remain
+release gates.
+
+## 34. Carry graph-resolved endpoint interfaces through the same request
+
+The post-reuse profile still spends about 31 ms in
+`_scope_canvas_interface_roots`. The graph-held visibility validator has
+already opened every indexed wire and resolved both endpoints through
+`_canvas_endpoint` before the scope commit. It currently discards the exact
+interface identities, and the projector walks all 136 wires again to recover
+them.
+
+The next repair may add only those already resolved interface identities to the
+private `UniversalScopeMaterialization`. It must be derived from the same
+accepted visibility relation, filtered to the final visible scope, and used
+only when the exposure lens did not alter that baseline scope. Nested or
+exposure-altered scopes retain the existing canonical discovery path. The
+selected root remains added dynamically by the projector.
+
+The RED court must reject any second call to
+`_scope_canvas_interface_roots` during an eligible parent transition and then
+prove exact equality with the canonical nodes, wires, selected interface, and
+selected interfaces. Empty, foreign, hidden-owner, malformed, or
+exposure-altered interface materialization must fall back or fail closed as
+appropriate. No interface registry, new graph role, persistence, public field,
+cross-request cache, naming inference, or renderer shortcut is permitted.
+
+## 35. Batch proof for immutable relation reuse
+
+Profiling the corrected interface-complete parent projection shows 830 captured
+relation entries spending about 44 ms in per-entry source reconstruction and
+snapshot comparison. The accepted Store commit already publishes the exact
+changed-root receipt, while every unchanged Cell remains immutable across the
+adjacent revisions. Revalidating every unchanged chain therefore repeats a
+proof the Store has already supplied.
+
+The bounded repair may seal the ordered captured batch with one deterministic
+fingerprint over every source revision, relation root, projected member, step
+count, and source Cell. Seeding must require that exact fingerprint and the
+Store's exact changed-root receipt. If a changed root intersects any source
+dependency, its current Cell must equal the captured Cell; a mismatch fails
+closed. Unchanged dependencies may rely on the immutable adjacent-revision
+contract. A wrong fingerprint, duplicate root, non-adjacent revision, malformed
+entry, or changed dependency remains denied. The cache is still request-local
+and disposable.
+
+The RED court must reject an altered fingerprint and a changed incidence while
+retaining request disposal and budget behavior. No signature authority,
+process-global semantic cache, Store field, graph field, public API, or
+persistence change is permitted.
+
+## 36. Versioned graph-held visible-interface membership
+
+The interface-complete repair exposed 46 registered ports on the 17 top-level
+nodes, but finding them still scans the application composition and projects
+every registered interface during each parent transition. These memberships
+change only when graph topology registers an interface, so they belong beside
+the existing visible-root, relation, and property memberships in the same
+graph-held visibility relation.
+
+The bounded design uses the assembly protocol's existing `interface` role; it
+adds no role kind or Python registry. A graph marker records that the visibility
+relation has migrated to the interface-index contract. Restore may add the
+marker and exact canonical interface members once when the marker is absent.
+After the marker exists, missing, extra, duplicate, foreign-owner, unregistered,
+or malformed interface membership fails closed. Interface authoring appends the
+new application registration and every affected visibility membership in the
+same Store commit. Exposure-altered and nested scopes retain canonical bounded
+discovery.
+
+RED courts must prove exact equality with all graph-registered interfaces owned
+by direct visible roots, marker presence, partial-index denial after migration,
+and atomic single/batch interface authoring. Existing canonical output,
+unwired-port, restart, authorization, changed-root, and request-disposal courts
+remain unchanged. No second store, copied registry, naming inference,
+cross-request cache, public schema, or renderer rule is permitted.
+
+Research references:
+
+- https://arxiv.org/abs/2203.16684
+- https://arxiv.org/abs/1612.01641
+
+## 37. Same-request reuse of the registered batch seal
+
+The graph-held interface index is correct, but the latest phase trace keeps the
+release red. Parent commit measured about 75 ms: graph visibility validation
+37.7 ms, relation-batch fingerprint 18.6 ms, authorization 7.4 ms, and the
+physical Store commit only 0.22 ms. Parent projection measured 96-106 ms before
+HTTP and DOM work. Interface registration itself was only 2.8 ms, so removing
+the graph index would neither repair the latency nor preserve the new unwired
+port completeness court.
+
+The server already opens one `relation_projection_scope` around the complete
+POST. The scope executor computes a deterministic fingerprint for the exact
+immutable projection tuple inside that request, but the projector calls the
+same fingerprint function again before seeding the target-revision cache. This
+is duplicate integrity work, not an authority requirement: the originating
+tuple and its seal are both still present in the same request-local context.
+
+The bounded repair may register `(exact tuple object, fingerprint)` only in the
+existing disposable relation-projection context. Seeding may skip
+recomputation only when the tuple is the same immutable object and the expected
+fingerprint equals the seal registered earlier in that exact request. A later
+request, reconstructed tuple, changed expected fingerprint, changed dependency,
+non-adjacent revision, or changed-root mismatch retains the full deterministic
+recalculation and existing denial. The registry is reset with the request
+cache and is never persisted, exposed, or treated as graph authority.
+
+The RED HTTP court rejects a second fingerprint call during the parent half of
+one scope request. Existing unit and application courts continue proving wrong
+fingerprint, altered source Cell, revision drift, subject drift, request
+disposal, and canonical projection equality. No Cell, Store, schema, route,
+public payload, lifecycle, graph role, or cross-request cache changes.
+
+The repair is now green. Two low-level relation courts and three application
+same-request/canonical/tamper courts passed. The first post-repair HTTP run kept
+entry at 115.05 ms and reduced parent return from 259.66 ms to 226.19 ms median;
+the parent remained above budget.
+
+## 38. Capture only relations consumed by the parent projector
+
+The parent materialization currently seals 830 projections: 17 visible roots,
+136 wires, 631 properties, and 46 interfaces. The unchanged parent projector
+reuses only wire and property relations. An alternating seven-cycle A/B run
+removed the visible/interface entries from the disposable batch and preserved
+exact node output in every cycle. Full and reduced projection medians were
+103.37 ms and 103.56 ms respectively, while fingerprint microbenchmarks fell
+from 17.83 ms to 5.91 ms.
+
+The parent-return branch may therefore capture exactly the 136 relation roots
+and 631 property roots that the projector consumes. Interface identities remain
+explicit in `interface_roots`; visible roots remain explicit in
+`visible_roots`; both stay validated by the graph-held visibility projection.
+The nested-entry branch is unchanged because its smaller composition relations
+were not part of this A/B result. The RED court now requires exact equality,
+not merely a subset, between captured and consumed parent relation roots.
+
+The exact-capture and same-request seal courts pass together. The change is
+accepted for integrity and bounded work, but isolated HTTP timing remained
+variable and red; no release claim follows from this micro-optimization.
+
+## 39. Selection-scoped wire editing disclosure
+
+The full top projection currently computes source and target rewire candidates
+for all 136 binary wires. The server interaction builder and browser consumer
+already admit disconnect/rewire controls only for the selected wire, so 135
+wire-control payloads are unreachable in a normal turn. Profiling attributed
+about 23 ms to 303 compatibility computations, before JSON transfer and client
+merge cost.
+
+Current React Flow performance guidance recommends isolating selected state
+instead of repeatedly deriving it from the complete changing node/edge set:
+https://reactflow.dev/learn/advanced-use/performance. The W3C disclosure
+pattern likewise exposes controlled detail when its controlling element is
+active: https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/. These references
+do not control ArchHub semantics; the specification, graph selection relation,
+and existing topology interaction authority do.
+
+The bounded repair keeps every wire and port visible. Connect candidates remain
+on connectable source ports because direct manipulation can start from any such
+port. Disconnect and source/target rewire controls and choices are projected
+only onto the selected binary wire. Selecting a different wire changes the
+graph-held focus, after which the same interpreter derives that wire's controls.
+No client inference, hidden command, stale candidate list, schema addition,
+graph change, or authorization bypass is introduced.
+
+Three direct topology courts and three HTTP/canonical/reuse courts pass. A
+seven-cycle isolated HTTP run then measured entry at 109.38 ms median and
+parent return at 206.41 ms median, preserving 17 nodes, 136 wires, and 46
+ports. The parent response is 561,653 bytes: topology patch 249,524, catalogue
+164,301, interaction projection 61,262, authorization 26,657, and inspector
+21,042 bytes. Parent scope remains red against the unchanged 150 ms budget.
+
+## 40. Revision-bound reuse of an already accepted scope projection
+
+The next trace separates the remaining parent request instead of treating its
+206.41 ms total as one opaque delay. One isolated request made 1,870 relation
+reads: 946 request-cache hits and 924 physical walks. Of those misses, 835 were
+the canonical candidate-scope validation pass: 631 property relations, 136
+wire relations, 46 interface relations, 17 visible roots, and five view-session
+relations. The subsequent committed-revision projector correctly consumed its
+seeded relations. A three-cycle named-boundary trace measured the projector at
+74.33-84.37 ms and the complete HTTP turn at 173.20-185.54 ms under that run;
+the unchanged seven-cycle acceptance median remains the controlling red result.
+
+Re-entering a previously rendered scope is the one case where the browser
+session and server already hold a complete accepted representation of that
+scope. RFC 9111 describes the general safety rule for representation reuse:
+the cache key must distinguish the request context, stale representations need
+validation, and inappropriate reuse must be prevented. React Flow's current
+performance guidance likewise recommends isolating selected state from the
+complete node and edge arrays. These sources do not grant ArchHub authority;
+they support the narrower implementation technique below. ArchHub's Cell
+revision, subject, audience, lifecycle, scope, and interaction lease remain the
+controlling proof.
+
+The bounded mechanism may extend the existing disposable browser projection
+binding so it retains one prior accepted projection per visited scope. It is a
+private presentation materialization, not a Cell, Store, graph, persistence
+layer, authorization result, or second source of truth. Reuse is admitted only
+when all of the following are true:
+
+1. session, subject, view, tenant, assurance, and destination scope match;
+2. the server observed one uninterrupted revision lineage and every admitted
+   intervening request was a scope-only transition through the existing
+   `CAPABILITY_SCOPE` path;
+3. the target projection was produced by the canonical interpreter and stored
+   after its exact interaction lease was issued;
+4. the new graph-held materialization resolves the same visible roots,
+   relation roots, interface roots, and primary focus;
+5. only immutable topology presentation is reused; authorization, audience,
+   catalogue applicability, inspector state, controls, interactions, lease,
+   revision, focus, and selection are rebuilt from current canonical Cells;
+6. a graph edit, unknown revision, process restart, cache deletion, subject or
+   assurance mismatch, malformed projection, topology mismatch, or changed
+   primary focus discards the hint and runs the canonical path;
+7. the canonical comparator remains executable and exact at the resulting
+   revision; the optimisation cannot suppress a removal or mint authority.
+
+Before implementation, RED courts must prove:
+
+1. top -> nested -> top reuses only the exact previously accepted target-scope
+   topology and still equals the generic canonical projection;
+2. authorization, catalogue, inspector, controls, interaction bindings, and
+   lease revision come from the new accepted revision, not the retained view;
+3. foreign subject/session/view/tenant/assurance and malformed scope identity
+   fail closed or fall back to canonical projection without exposing the hint;
+4. any non-scope mutation or unexplained Store revision invalidates every
+   retained scope projection before it can be read;
+5. deleting all retained projections changes no graph semantics and the next
+   transition reconstructs the complete canonical response;
+6. selection/focus or topology mismatch takes the canonical path, including
+   every DOM-required removal;
+7. no route, public payload, Cell schema, Store field, graph role, persistence,
+   lifecycle, authorization rule, or interaction contract changes;
+8. the unchanged functional browser court and the <=100 ms mutation and <=150
+   ms scope budgets pass without sleeps or relaxed thresholds.
+
+Research references:
+
+- https://www.rfc-editor.org/rfc/rfc9111.html
+- https://reactflow.dev/learn/advanced-use/performance
+
+Implementation evidence:
+
+- The first two courts were RED because no private scope binding existed. The
+  implementation now retains projections and exact root identities only under
+  the existing browser-session binding. Browser session, graph view session,
+  subject, tenant, assurance, target scope, and server-observed lineage are
+  checked separately; confusing the two session identities was caught by the
+  court and repaired without weakening either check.
+- Three focused courts pass: exact top-to-nested-to-top reuse with canonical
+  equality, foreign/unexplained-revision denial plus semantic disposal, and a
+  parent revisit that cannot invoke the global visibility projector.
+- A retained topology still re-reads the selected Properties relations from
+  the current accepted snapshot. It no longer re-indexes all 631 parent
+  property relations merely to redraw unchanged nodes.
+- A nine-cycle isolated HTTP sample preserved 17 nodes, 136 relation-wires,
+  and 46 ports. Entry measured 98.40 ms median. Parent return measured 145.09
+  ms median, down from 206.41 ms before this mechanism. Individual parent
+  samples ranged from 125.11 to 175.21 ms, so the unchanged 150 ms acceptance
+  gate remains unreleased pending the real-browser court and tail-latency
+  diagnosis. No release claim follows from the green median alone.
+- Retained presentation is capped at eight scopes per browser session. Eviction
+  removes the projection and its exact graph-identity tuple together and does
+  not change the Cell Store revision. A focused court also proves that scope
+  reuse cannot mutate the retained source projection through shared objects.
+- The widened authority set passed 10 courts after the retained-scope mechanism
+  was introduced. Subsequent RED-to-GREEN courts removed 63 stable node/port
+  template renders and 14 stable catalogue-entry renders only when the exact
+  retained target scope, selection, catalogue inputs, and library control match.
+  Current authorization, catalogue contracts, inspector, controls, interaction
+  bindings, lease, and revision are still rebuilt from the accepted Cells.
+- The stable-descriptor and shallow immutable-copy repairs preserve canonical
+  equality. The latest focused results are four scope safety courts passing and
+  the stable-descriptor plus canonical comparator pair passing. The final
+  widened scope-authority set also passes all 10 courts after the complete
+  allocation repair.
+- Three 31-cycle measurements after these repairs show that ordinary work is
+  below the budget but runtime tail remains unstable. The latest sample measured
+  entry at 89.48 ms median / 141.08 ms p95 and parent return at 106.84 ms median /
+  151.49 ms p95 before catalogue descriptor reuse. Later samples under heavier
+  client-production pressure varied between 151.49 and 170.88 ms parent p95.
+  The release gate therefore remains RED.
+- A collection-correlated 31-cycle trace identified the tail cause. All four
+  parent requests above 150 ms coincided with two to five Python generation-1
+  collections. The 26 requests with no collection had a maximum of 139.37 ms.
+  Global garbage-collection disablement is rejected. Python 3.14.6 was also
+  tested in an isolated non-system installation and did not remove the tail, so
+  a runtime-version claim is not being used as a substitute for a product fix.
+
+## 41. Request-local interaction allocation gate
+
+The next diagnostic rules out a collector heuristic. `gc.get_count()` remained
+at `(0, 0, 0)` immediately before parent requests that subsequently performed
+between one and five generation-1 collections. It therefore provides no safe
+pre-request signal. A settled-runtime sample after an explicit full collection
+also remained red at 163.42 ms parent p95. Global collection disablement,
+threshold tuning, collection on a timer, and version-only remediation are not
+admissible repairs.
+
+The current named-function profile shows that the retained parent projection
+still performs 1,209 `read_relation` calls and verifies approximately 100 graph
+interactions while issuing the new exact-revision lease. Those mechanisms are
+authority, not optional work. The only admissible optimization is removal of
+duplicate request-local object construction after the same immutable snapshot
+and graph relation have already been verified in that request. It must not
+retain an interaction across requests, revisions, subjects, sessions, or
+leases, and it must not skip a budget check, protocol verification, release
+check, action-input check, or any of the 14 interaction builders.
+
+Before implementation, RED courts must prove:
+
+1. all 14 graph interaction builders still execute and every visible control
+   has exactly one graph interaction;
+2. one exact request/snapshot may reuse a parsed interaction only after its
+   relation budget and protocol have been verified, while a smaller budget,
+   foreign Cell map, changed revision, changed protocol, or next request cannot;
+3. the broker issues a new lease at the post-commit revision and performs the
+   existing release/action-input/subject checks over the admitted batch;
+4. no process-global GC setting, timer, persisted cache, public schema, route,
+   Store, Cell, lifecycle, authorization rule, or cross-request state is added;
+5. the scope result remains equal to the canonical comparator and source
+   projection immutability remains green;
+6. focused allocation evidence demonstrates fewer request-local parsed objects
+   before the unchanged 31-cycle and real-browser budgets are rerun.
+
+Implementation evidence:
+
+- The new request-local court was RED because the exact protocol relation and
+  interaction relation were each read twice at the same snapshot and budget.
+  The existing cache now records the conservative verified budget with the
+  parsed object and consults it before repeating the relation read.
+- A same-or-larger budget at the exact revision and exact Cell-map identity may
+  reuse the parsed object. A smaller budget still executes `read_relation` and
+  retains its `MatchBudgetExceeded` behavior. A foreign Cell map, new revision,
+  or next request has a different key or fresh context and cannot reuse it.
+- The complete interaction-law file passes 19 courts. Four retained-scope safety
+  courts and the final 10-court widened scope-authority set pass after the change.
+- The unchanged 31-cycle HTTP measurement now passes the source-level p95 gate:
+  entry is 89.18 ms median / 121.10 ms p95; parent return is 105.25 ms median /
+  147.74 ms p95. One parent collection spike reached 162.24 ms, so the unchanged
+  real-browser court remains required before editor release.
+- Five source-level UI projection courts pass: dependency-tracked catalogue
+  reuse, no complete-Store materialization, changed catalogue dependency denial,
+  canonical authorization/catalogue delta replacement, and stable topology merge.
+- The complete nine-scenario generated-runtime UI performance suite passes. A
+  first grouped run had one 17.858 ms pan sample against the 16.7 ms frame gate;
+  five unchanged repetitions measured 2.499-12.348 ms and the exact court then
+  passed. The complete grouped suite was rerun unchanged and passed all nine
+  scenarios. This resolves the synthetic-runtime gate, not the real-browser gate.
+
+## 42. Direct-manipulation source acceptance audit
+
+While the heavy real-browser slot remained reserved by client production, the
+current generated-runtime artifact was exercised through the founder-specified
+mechanics rather than a generic smoke test: directional and modifier marquee,
+cursor-aware zoom and pan, graph-defined Properties tabs, parameter creation,
+catalogue placement, grouping controls, relation hit targets, socket rewiring,
+cardinality, and relation inspection.
+
+The first run passed 17 scenarios and exposed one defective court assertion.
+The relation-rewire scenario started with the visible source/target interfaces
+`ui -> canvas`, submitted the graph-authorized source candidate at index zero,
+and correctly reconciled the DOM to `brain -> canvas`. The old assertion compared
+that post-transaction DOM with the pre-transaction projection and therefore
+rewarded stale rendering. The probe now records the initial endpoint values;
+the court separately proves the original pair, the exact requested candidate,
+the changed source interface, and the unchanged target interface.
+
+The strengthened individual court passes, and the complete focused
+direct-manipulation set passes 18 scenarios. The JavaScript probe and both
+real-browser verifier scripts pass syntax checks. These results prove the
+generated source behavior only. Fresh Chrome evidence, screenshots, console
+state, DOM timing, persistence/restart, and the unchanged 100/150 ms budgets
+remain mandatory before editor release.
+
+## 43. Visible composition interface transaction repair
+
+The Workbench acceptance path exposed a graph-index defect after the locality
+repair. A newly instantiated catalogue assembly contained all 14 graph-declared
+interface Cells, but the top view's persisted visibility relation did not index
+them. A later Workshop relation also registered an exact interface globally
+without publishing that interface to views where its owner was already visible.
+The graph data and wire endpoints were real; the view materialization was stale.
+
+The repair keeps one Cell authority and changes no public API, schema, lifecycle,
+authorization rule, or persistence system:
+
+1. atomic top-scope instantiation now appends every interface declared on the
+   new resource root to the same visibility transaction as the resource;
+2. visibility admission distinguishes globally registered interfaces from
+   composition-owned interfaces and verifies the latter through their explicit
+   owner relation;
+3. governed-work membership wires enter every eligible view relation index in
+   the same commit that creates the wire;
+4. Workshop-entry wires append only those newly created interfaces whose graph
+   owner is already assigned to that view; and
+5. legacy endpoint restore returns the exact interfaces it rewired and republishes
+   only those interfaces to eligible views before strict restore verification.
+
+The first restore rerun exposed an obsolete migration allowlist that rejected
+the already-canonical interface and migration roles. The allowlist now names
+those two roles explicitly. Subsequent diagnostics measured one missing governed
+work relation and one missing Workshop source interface; each was repaired at
+its originating transaction rather than by weakening the final verifier.
+
+Evidence after the bounded repair:
+
+- the strengthened Workbench court proves live interface-index completeness,
+  real selectable socket endpoints, shutdown, restore, legacy endpoint upgrade,
+  and wire preservation: 2 passed;
+- eight unchanged visibility/scope authority courts pass, including partial
+  relation/interface rejection, hidden-property denial, subject/revision drift,
+  canonical scope equality, and bounded parent-scope reuse; and
+- a new negative authority court proves that a structurally valid catalogue
+  interface is still rejected when its owning composition is outside the visible
+  graph scope; and
+- all nine unchanged generated-runtime UI performance budgets pass.
+
+This remains source and isolated-store evidence. The real-browser editor court
+is still held by the explicit BBC4 machine-priority reservation and remains a
+release requirement.
+
+## 44. Real-browser visual acceptance strengthening
+
+The editor court already operated the authoring mechanics, but its screenshot
+files were evidence for later inspection rather than verdict inputs. That gap
+would allow a functionally responsive but visibly defective editor to pass.
+The unchanged application remains the subject; only the isolated browser court
+and its declared check list are strengthened.
+
+The court now also rejects:
+
+1. overlap between the Node Library, canvas, and Properties rail;
+2. visible graph sockets smaller than 24 by 24 CSS pixels;
+3. clipped node titles in the accepted desktop viewport;
+4. inspector tabs without one active/focusable tab, one matching panel,
+   reciprocal `aria-controls` / `aria-labelledby`, or matching hidden state;
+   and
+5. a live marquee rectangle whose four viewport edges differ from the actual
+   pointer drag rectangle by more than three CSS pixels.
+
+The tab contract follows the W3C ARIA Authoring Practices tabs pattern:
+https://www.w3.org/WAI/ARIA/apg/patterns/tabs/ . The target-size floor follows
+WCAG 2.2 Success Criterion 2.5.8, and the live drag measurement follows the
+current W3C Pointer Events model rather than assuming mouse-event ordering:
+https://www.w3.org/TR/pointerevents/ . These standards define measurable
+interaction and accessibility constraints; they do not choose ArchHub's visual
+style.
+
+Source evidence before browser execution: the JavaScript runner passes syntax
+validation, the Python wrapper/tests compile, eight non-browser court checks
+pass, and `git diff --check` is clean. This does not make the visual gate green.
+The three new checks become evidence only when the unchanged isolated Chrome
+court runs, emits its measured geometry, saves all three admitted screenshots,
+and those screenshots are separately inspected for visual hierarchy and finish.

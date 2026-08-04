@@ -24,6 +24,7 @@ from .universal_cell import (
     MatchBudgetExceeded,
     Snapshot,
     _OverlayCellMap,
+    overlay_read_snapshot,
 )
 
 
@@ -736,14 +737,10 @@ def _candidate_snapshot(
     create: Iterable[Cell] = (),
     replace: Iterable[Cell] = (),
 ) -> Snapshot:
-    cells: dict[str, Cell] = {}
-    for cell in create:
-        cells[cell.id] = cell
-    for cell in replace:
-        cells[cell.id] = cell
-    return Snapshot(
-        snapshot.revision + 1,
-        _OverlayCellMap(snapshot.cells, cells),
+    return overlay_read_snapshot(
+        snapshot,
+        create=tuple(create),
+        replace=tuple(replace),
     )
 
 

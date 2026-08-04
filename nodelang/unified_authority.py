@@ -1196,6 +1196,17 @@ def audit_authority_history(authority: UnifiedAuthority) -> None:
     _verify_current_head(authority, authority.store.snapshot())
 
 
+def verify_exact_authority_head(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot | None = None,
+) -> None:
+    """Verify only the signed head for one exact selected graph revision."""
+    _verify_exact_snapshot_head(
+        authority,
+        authority.store.snapshot() if snapshot is None else snapshot,
+    )
+
+
 def create_unified_authority(
     store: CellStore,
     key_provider: SigningKeyProvider,
@@ -5167,4 +5178,5 @@ __all__ = [
     "revise_definition",
     "sign_bootstrap_manifest",
     "validate_composition",
+    "verify_exact_authority_head",
 ]

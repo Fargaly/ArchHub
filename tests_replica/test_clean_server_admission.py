@@ -4,6 +4,7 @@ import hashlib
 import json
 import inspect
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -18,11 +19,13 @@ from nodelang.cell_protocols import read_relation
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.clean_browser_authority import (
     issue_clean_browser_session,
+    revise_clean_browser_focus,
     revoke_clean_browser_session,
 )
 from nodelang.clean_runtime_bootstrap import provision_clean_runtime
 from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
-from nodelang.unified_authority import composition_root
+from nodelang.unified_application_lens import project_unified_scope
+from nodelang.unified_authority import audit_authority_history, composition_root
 from nodelang.universal_cell import Cell
 
 
@@ -167,15 +170,17 @@ def _issue_clean_session(
     )
 
 
-def _json(url, path, payload=None, *, token=None):
+def _json(url, path, payload=None, *, token=None, headers=None):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
+    headers_map = {"Content-Type": "application/json"}
     if token is not None:
-        headers["X-ArchHub-Session"] = token
+        headers_map["X-ArchHub-Session"] = token
+    if headers:
+        headers_map.update(headers)
     request = Request(
         _request_url(url, path),
         data=data,
-        headers=headers,
+        headers=headers_map,
         method="GET" if payload is None else "POST",
     )
     try:
@@ -224,6 +229,31 @@ def _replace_relation_participant(authority, relation_root, role_id, participant
     )
 
 
+def _current_authority_head_root(authority):
+    snapshot = authority.store.snapshot()
+    members = tuple(
+        member for member in read_relation(
+            snapshot,
+            authority.manifest.head_index_root,
+            budget=32,
+        )
+        if member.role_id == authority.role("current-head")
+    )
+    assert len(members) == 1
+    return members[0].participant_id
+
+
+def _relation_participants(snapshot, relation_root):
+    participants = {}
+    for member in read_relation(snapshot, relation_root, budget=256):
+        participants.setdefault(member.role_id, []).append(member.participant_id)
+    return participants
+
+
+def _scalar_text(snapshot, value_root):
+    return snapshot.cells[value_root].atom.decode("utf-8")
+
+
 def _assert_canvas_projects_same_root(canvas, snapshot, expected_root):
     assert canvas["revision"] == snapshot.revision
     assert canvas["root"] == expected_root
@@ -238,6 +268,25 @@ def _assert_canvas_projects_same_root(canvas, snapshot, expected_root):
     assert all("participants" in wire for wire in canvas["wires"])
     assert all(item["id"] in snapshot.cells for item in canvas["catalog"])
     assert all(row["relation"] in snapshot.cells for row in canvas["properties"])
+
+
+def _expected_selected_properties(
+    built,
+    *,
+    scope_root: str,
+    view_root: str,
+    selected_root: str,
+    revision: int,
+):
+    lens = project_unified_scope(
+        built.location.authority,
+        scope_root,
+        caller=built.caller,
+        view_root=view_root,
+        at_revision=revision,
+    )
+    node = next(item for item in lens.nodes if item.root_id == selected_root)
+    return [(row.name, row.value) for row in node.properties]
 
 
 def _request_url(url, path):
@@ -292,7 +341,7 @@ def test_from_unified_authority_binding_has_zero_growth_and_no_registry_sidecar(
         built.location.authority,
         browser_authority=built.browser,
         scope_caller=built.caller,
-        scope_root=built.grand_map.source_root,
+        scope_root=built.grand_map.root_id,
         authority_key_provider=provider,
     )
     assert getattr(server, "clean_authority", None) is built.location.authority
@@ -327,7 +376,7 @@ def test_clean_browser_session_http_admits_exact_graph_and_projects_one_selected
     server = _start_clean_server(
         built,
         provider,
-        scope_root=built.grand_map.source_root,
+        scope_root=built.grand_map.root_id,
     )
     try:
         issued = _issue_clean_session(
@@ -349,7 +398,7 @@ def test_clean_browser_session_http_admits_exact_graph_and_projects_one_selected
         _assert_canvas_projects_same_root(
             canvas,
             snapshot,
-            built.grand_map.source_root,
+            built.grand_map.root_id,
         )
 
         _issue_clean_session(
@@ -377,7 +426,7 @@ def test_clean_browser_session_http_admits_exact_graph_and_projects_one_selected
     foreign_server = _start_clean_server(
         built,
         provider,
-        scope_root=foreign.grand_map.source_root,
+        scope_root=foreign.grand_map.root_id,
     )
     try:
         _issue_clean_session(
@@ -417,6 +466,390 @@ def test_clean_browser_session_http_admits_exact_graph_and_projects_one_selected
         missing_server.close()
 
 
+def test_clean_browser_session_http_projects_graph_held_focus_and_properties_from_same_view_session(
+    tmp_path,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-focus-projection",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        issued = _issue_clean_session(
+            built,
+            token="focus-browser-token",
+            csrf="focus-browser-csrf",
+        )
+        status, before = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="focus-browser-token",
+        )
+        assert status == 200
+        assert before["selected"] is None
+        assert before["selection"] == []
+        assert before["properties"] == []
+
+        target = before["nodes"][1]["id"]
+        focused = revise_clean_browser_focus(
+            built.location.authority,
+            built.browser,
+            issued.root_id,
+            scope_root=built.grand_map.root_id,
+            selected_roots=(target,),
+            primary_root=target,
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+            expected_revision=before["revision"],
+        )
+        status, after = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="focus-browser-token",
+        )
+        assert status == 200
+        assert after["revision"] == focused.revision
+        assert after["root"] == built.grand_map.root_id
+        assert after["selected"] == target
+        assert after["focus"] == target
+        assert after["selection"] == [target]
+        selected = next(node for node in after["nodes"] if node["id"] == target)
+        assert selected["selected"] is True
+        assert selected["focused"] is True
+        assert after["selected_title"] == selected["label"]
+        assert after["authorization"]["browser_sessions"] == [
+            {"root": issued.root_id}
+        ]
+        assert [row["label"] for row in after["properties"]] == [
+            row["label"] for row in selected["properties"]
+        ]
+    finally:
+        server.close()
+
+
+def test_clean_browser_session_http_focus_command_persists_selection_and_reopens(
+    tmp_path,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-focus-http",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        issued = _issue_clean_session(
+            built,
+            token="focus-http-token",
+            csrf="focus-http-csrf",
+        )
+        status, before = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="focus-http-token",
+        )
+        assert status == 200
+        assert before["selected"] is None
+        target = before["nodes"][1]["id"]
+        command_id = str(uuid.uuid4())
+        focus_request = {
+            "scope_root": built.grand_map.root_id,
+            "selected_roots": [target],
+            "primary_root": target,
+            "revision": before["revision"],
+            "command_id": command_id,
+        }
+
+        status, focused = _json(
+            server.url,
+            "/api/universal/focus",
+            focus_request,
+            token="focus-http-token",
+            headers={"X-ArchHub-CSRF": "focus-http-csrf"},
+        )
+        assert status == 200
+        assert focused["root"] == built.grand_map.root_id
+        assert focused["selected"] == target
+        assert focused["focus"] == target
+        assert focused["selection"] == [target]
+        assert focused["accepted_revision"] > before["revision"]
+        assert focused["revision"] == focused["accepted_revision"]
+        assert focused["authorization"]["browser_sessions"] == [
+            {"root": issued.root_id}
+        ]
+        selected = next(node for node in focused["nodes"] if node["id"] == target)
+        assert selected["selected"] is True
+        assert selected["focused"] is True
+        expected_properties = _expected_selected_properties(
+            built,
+            scope_root=built.grand_map.root_id,
+            view_root=issued.view_root,
+            selected_root=target,
+            revision=focused["accepted_revision"],
+        )
+        assert focused["properties"]
+        assert all(row["relation"] == target for row in focused["properties"])
+        assert [(row["label"], row["value"]) for row in focused["properties"]] == [
+            (name, value) for name, value in expected_properties
+        ]
+        focus_snapshot = built.location.authority.store.at(focused["accepted_revision"])
+        assert focused["receipt"] in focus_snapshot.cells
+        participants = _relation_participants(focus_snapshot, focused["receipt"])
+        assert participants[built.location.authority.role("result")] == [
+            focused["focus_root"]
+        ]
+        focus_revision = focused["accepted_revision"]
+        focus_cells = len(built.location.authority.store.snapshot().cells)
+        status, replayed = _json(
+            server.url,
+            "/api/universal/focus",
+            focus_request,
+            token="focus-http-token",
+            headers={"X-ArchHub-CSRF": "focus-http-csrf"},
+        )
+        assert status == 200
+        assert replayed["accepted_revision"] == focus_revision
+        assert replayed["revision"] == focused["revision"]
+        assert replayed["root"] == focused["root"]
+        assert replayed["selection"] == focused["selection"]
+        assert replayed["focus_root"] == focused["focus_root"]
+        assert replayed["receipt"] == focused["receipt"]
+        assert len(built.location.authority.store.snapshot().cells) == focus_cells
+
+        different_target = before["nodes"][0]["id"]
+        status, conflicted = _json(
+            server.url,
+            "/api/universal/focus",
+            {
+                **focus_request,
+                "selected_roots": [different_target],
+                "primary_root": different_target,
+            },
+            token="focus-http-token",
+            headers={"X-ArchHub-CSRF": "focus-http-csrf"},
+        )
+        assert status == 403
+        assert "idempotency" in conflicted["error"].lower()
+    finally:
+        server.close()
+
+    reopened = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        status, after = _json(
+            reopened.url,
+            "/api/universal/canvas",
+            token="focus-http-token",
+        )
+        assert status == 200
+        assert after["selected"] == target
+        assert after["focus"] == target
+        assert after["selection"] == [target]
+        assert after["authorization"]["browser_sessions"] == [
+            {"root": issued.root_id}
+        ]
+    finally:
+        reopened.close()
+
+
+def test_clean_browser_session_http_focus_command_requires_exact_csrf_and_keeps_revision_stable(
+    tmp_path,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-focus-http-csrf",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        _issue_clean_session(
+            built,
+            token="focus-http-csrf-token",
+            csrf="focus-http-csrf-value",
+        )
+        status, before = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="focus-http-csrf-token",
+        )
+        assert status == 200
+        target = before["nodes"][1]["id"]
+        request = {
+            "scope_root": built.grand_map.root_id,
+            "selected_roots": [target],
+            "primary_root": target,
+            "revision": before["revision"],
+            "command_id": str(uuid.uuid4()),
+        }
+        before_revision = built.location.authority.store.revision
+
+        status, missing = _json(
+            server.url,
+            "/api/universal/focus",
+            request,
+            token="focus-http-csrf-token",
+        )
+        assert status == 403
+        assert "csrf" in missing["error"].lower()
+        assert built.location.authority.store.revision == before_revision
+
+        status, wrong = _json(
+            server.url,
+            "/api/universal/focus",
+            request,
+            token="focus-http-csrf-token",
+            headers={"X-ArchHub-CSRF": "wrong-focus-http-csrf"},
+        )
+        assert status == 403
+        assert "csrf" in wrong["error"].lower()
+        assert built.location.authority.store.revision == before_revision
+    finally:
+        server.close()
+
+
+def test_clean_browser_session_http_request_does_not_walk_prior_authority_revisions(
+    tmp_path,
+    monkeypatch,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-request-head-verify",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        _issue_clean_session(
+            built,
+            token="head-verify-browser-token",
+            csrf="head-verify-browser-csrf",
+        )
+        before_revision = built.location.authority.store.revision
+        original_at = built.location.authority.store.at
+        seen_revisions = []
+
+        def traced_at(revision):
+            seen_revisions.append(revision)
+            return original_at(revision)
+
+        monkeypatch.setattr(built.location.authority.store, "at", traced_at)
+        status, _ = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="head-verify-browser-token",
+        )
+        assert status == 200
+        assert not any(revision < before_revision for revision in seen_revisions)
+    finally:
+        server.close()
+
+
+def test_clean_browser_session_http_focus_command_serializes_stale_competition(
+    tmp_path,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-focus-http-concurrency",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        issued = _issue_clean_session(
+            built,
+            token="focus-http-race-token",
+            csrf="focus-http-race-csrf",
+        )
+        status, before = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="focus-http-race-token",
+        )
+        assert status == 200
+        targets = [before["nodes"][0]["id"], before["nodes"][1]["id"]]
+        barrier = threading.Barrier(2)
+        results = []
+        result_lock = threading.Lock()
+
+        def attempt(target):
+            barrier.wait()
+            outcome = _json(
+                server.url,
+                "/api/universal/focus",
+                {
+                    "scope_root": built.grand_map.root_id,
+                    "selected_roots": [target],
+                    "primary_root": target,
+                    "revision": before["revision"],
+                    "command_id": str(uuid.uuid4()),
+                },
+                token="focus-http-race-token",
+                headers={"X-ArchHub-CSRF": "focus-http-race-csrf"},
+            )
+            with result_lock:
+                results.append((target, outcome))
+
+        first = threading.Thread(target=attempt, args=(targets[0],))
+        second = threading.Thread(target=attempt, args=(targets[1],))
+        first.start()
+        second.start()
+        first.join(timeout=30)
+        second.join(timeout=30)
+        assert not first.is_alive()
+        assert not second.is_alive()
+
+        successes = [
+            (target, payload)
+            for target, (status, payload) in results
+            if status == 200
+        ]
+        failures = [
+            (target, payload)
+            for target, (status, payload) in results
+            if status == 403
+        ]
+        assert len(successes) == 1
+        assert len(failures) == 1
+        winner_target, winner = successes[0]
+        loser_target, loser = failures[0]
+        assert winner["revision"] == winner["accepted_revision"]
+        assert winner["selection"] == [winner_target]
+        assert winner["focus"] == winner_target
+        assert "stale" in loser["error"].lower() or "idempotency" in loser["error"].lower()
+
+        status, after = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="focus-http-race-token",
+        )
+        assert status == 200
+        assert after["revision"] == winner["accepted_revision"]
+        assert after["selection"] == [winner_target]
+        assert after["focus"] == winner_target
+        assert loser_target != winner_target
+        assert after["authorization"]["browser_sessions"] == [
+            {"root": issued.root_id}
+        ]
+    finally:
+        server.close()
+
+
 def test_clean_browser_session_http_fails_closed_on_wrong_subject_expiry_and_revocation(
     tmp_path,
 ):
@@ -427,7 +860,7 @@ def test_clean_browser_session_http_fails_closed_on_wrong_subject_expiry_and_rev
     server = _start_clean_server(
         built,
         provider,
-        scope_root=built.grand_map.source_root,
+        scope_root=built.grand_map.root_id,
     )
     try:
         issued = _issue_clean_session(
@@ -463,7 +896,7 @@ def test_clean_browser_session_http_fails_closed_on_wrong_subject_expiry_and_rev
     server = _start_clean_server(
         built,
         provider,
-        scope_root=built.grand_map.source_root,
+        scope_root=built.grand_map.root_id,
     )
     try:
         _issue_clean_session(
@@ -490,7 +923,7 @@ def test_clean_browser_session_http_fails_closed_on_wrong_subject_expiry_and_rev
     server = _start_clean_server(
         built,
         provider,
-        scope_root=built.grand_map.source_root,
+        scope_root=built.grand_map.root_id,
     )
     try:
         issued = _issue_clean_session(
@@ -525,7 +958,7 @@ def test_clean_browser_session_http_rejects_stale_revision_interactions(tmp_path
     server = _start_clean_server(
         built,
         provider,
-        scope_root=built.grand_map.source_root,
+        scope_root=built.grand_map.root_id,
     )
     try:
         _issue_clean_session(
@@ -541,8 +974,80 @@ def test_clean_browser_session_http_rejects_stale_revision_interactions(tmp_path
         assert status == 200
         target = next(node for node in canvas["nodes"] if node["openable"])
         before = built.location.authority.store.revision
-        viewport = canvas["viewport"]
         status, advanced = _json(
+            server.url,
+            "/api/universal/focus",
+            {
+                "scope_root": built.grand_map.root_id,
+                "selected_roots": [canvas["nodes"][0]["id"]],
+                "primary_root": canvas["nodes"][0]["id"],
+                "revision": before,
+                "command_id": str(uuid.uuid4()),
+            },
+            token="stale-browser-token",
+            headers={"X-ArchHub-CSRF": "stale-browser-csrf"},
+        )
+        assert status == 200
+        assert advanced["accepted_revision"] > before
+        advanced_revision = advanced["accepted_revision"]
+        assert built.location.authority.store.revision == advanced_revision
+
+        status, rejected = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(canvas, target["id"]),
+            token="stale-browser-token",
+            headers={"X-ArchHub-CSRF": "stale-browser-csrf"},
+        )
+        assert status == 400
+        assert rejected["error"] == (
+            "expected revision %s, current revision is %s"
+            % (canvas["revision"], advanced_revision)
+        )
+        assert built.location.authority.store.revision == advanced_revision
+    finally:
+        server.close()
+
+
+def test_clean_browser_session_http_source_has_no_hidden_pulse_or_magic_scope_dispatch():
+    server_source = inspect.getsource(application_server_module._CleanAuthorityHttpServer)
+    projector_source = inspect.getsource(
+        application_server_module.project_clean_visual_canvas
+    )
+    assert "_pulse_root" not in server_source
+    assert "_touch_gesture_revision" not in server_source
+    assert 'interaction == "scope:%s" % control' not in server_source
+    assert '"scope:%s" % node["id"]' not in projector_source
+
+
+def test_clean_browser_session_http_rejects_unsigned_gesture_commits_and_keeps_revision_stable(
+    tmp_path,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-gesture-red",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        _issue_clean_session(
+            built,
+            token="gesture-browser-token",
+            csrf="gesture-browser-csrf",
+        )
+        status, canvas = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="gesture-browser-token",
+        )
+        assert status == 200
+        before_revision = built.location.authority.store.revision
+        viewport = canvas["viewport"]
+
+        status, denied = _json(
             server.url,
             "/api/universal/gesture",
             {
@@ -553,23 +1058,118 @@ def test_clean_browser_session_http_rejects_stale_revision_interactions(tmp_path
                 },
                 "projection": False,
             },
-            token="stale-browser-token",
+            token="gesture-browser-token",
+            headers={"X-ArchHub-CSRF": "gesture-browser-csrf"},
+        )
+        assert status == 403
+        assert "gesture" in denied["error"].lower()
+        assert built.location.authority.store.revision == before_revision
+    finally:
+        server.close()
+
+
+def test_clean_browser_session_http_scope_interaction_requires_signed_graph_command(
+    tmp_path,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-scope-command-red",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        _issue_clean_session(
+            built,
+            token="scope-browser-token",
+            csrf="scope-browser-csrf",
+        )
+        status, canvas = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="scope-browser-token",
         )
         assert status == 200
-        assert advanced["touched"] == before + 1
-        advanced_revision = built.location.authority.store.revision
+        target = next(node for node in canvas["nodes"] if node["openable"])
+        binding = next(
+            item for item in canvas["interaction_projection"]["bindings"]
+            if item["control"] == target["id"]
+        )
+        snapshot_before = built.location.authority.store.snapshot()
+        assert binding["interaction"] in snapshot_before.cells
+        assert binding["control"] in snapshot_before.cells
+        assert binding["event"] in snapshot_before.cells
+        before_revision = built.location.authority.store.revision
+        before_head = _current_authority_head_root(built.location.authority)
 
-        status, rejected = _json(
+        status, projected = _json(
             server.url,
             "/api/universal/interaction",
             _scope_interaction_request(canvas, target["id"]),
-            token="stale-browser-token",
+            token="scope-browser-token",
         )
-        assert status == 400
-        assert rejected["error"] == (
-            "expected revision %s, current revision is %s"
-            % (canvas["revision"], advanced_revision)
+        assert status == 200
+        assert projected["root"] == target["id"]
+        assert projected["accepted_revision"] > before_revision
+        assert built.location.authority.store.revision == projected["accepted_revision"]
+        receipt_root = projected["receipt"]
+        snapshot = built.location.authority.store.at(projected["accepted_revision"])
+        assert receipt_root in snapshot.cells
+        assert _current_authority_head_root(built.location.authority) != before_head
+        participants = _relation_participants(snapshot, receipt_root)
+        command_root = participants[built.location.authority.role("command")][0]
+        head_root = participants[built.location.authority.role("head")][0]
+        result_root = participants[built.location.authority.role("result")][0]
+        assert result_root == target["id"]
+        assert head_root == _current_authority_head_root(built.location.authority)
+        command = _relation_participants(snapshot, command_root)
+        assert command[built.location.authority.role("object")] == [target["id"]]
+        assert command[built.location.authority.role("scope")] == [canvas["root"]]
+        intent_root = command[built.location.authority.role("intent")][0]
+        assert "scope" in _scalar_text(snapshot, intent_root).lower()
+        audit_authority_history(built.location.authority)
+    finally:
+        server.close()
+
+
+def test_clean_browser_session_http_fails_closed_on_invalid_authority_head_tamper(
+    tmp_path,
+):
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-head-tamper-red",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        issued = _issue_clean_session(
+            built,
+            token="tamper-browser-token",
+            csrf="tamper-browser-csrf",
         )
-        assert built.location.authority.store.revision == advanced_revision
+        wrong_subject = composition_root(
+            built.location.authority,
+            "Workshop",
+            caller=built.caller,
+        )
+        _replace_relation_participant(
+            built.location.authority,
+            issued.root_id,
+            built.browser.protocol.role("subject"),
+            wrong_subject,
+        )
+
+        status, denied = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="tamper-browser-token",
+        )
+        assert status == 403
+        assert "authority head" in denied["error"].lower()
     finally:
         server.close()

@@ -12,3 +12,7 @@ cryptography>=48,<49
 psycopg[binary]>=3.3,<4
 # Fly OIDC supplies short-lived AWS credentials; HMAC key bytes stay in KMS.
 boto3>=1.43,<2
+# Immutable HAMT backing for Universal Cell revision snapshots.
+rpds-py>=0.30,<1
+# Structured parsing of the normative Markdown specification before Cell import.
+markdown-it-py>=4,<5

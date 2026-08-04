@@ -54,6 +54,12 @@ def test_memory_key_provider_resolves_old_versions_after_rotation():
     assert (second.version, second.secret) == (2, b"b" * 32)
     assert provider.resolve("authority", 1).secret == b"a" * 32
     assert provider.resolve("authority", 2).secret == b"b" * 32
+    assert provider.key_fingerprint("authority", 1) != provider.key_fingerprint(
+        "authority", 2
+    )
+    assert provider.key_fingerprint("authority", 1) == MemorySigningKeyProvider(
+        "authority", b"a" * 32
+    ).key_fingerprint("authority", 1)
     with pytest.raises(SigningKeyError):
         provider.resolve("authority", 3)
 
@@ -104,6 +110,9 @@ def test_windows_dpapi_key_ring_reopens_and_rotates_without_plaintext(tmp_path):
 
     reopened = WindowsDpapiSigningKeyProvider(path)
     assert reopened.current("authority") == first
+    assert reopened.key_fingerprint("authority", 1) == first_provider.key_fingerprint(
+        "authority", 1
+    )
     second = reopened.rotate("authority")
     assert second.version == 2
     assert second.secret != first.secret

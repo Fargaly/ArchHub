@@ -7,6 +7,7 @@ import urllib.request
 import pytest
 
 from nodelang.application_server import ApplicationServer
+from nodelang.application_machine_transport import UniversalRuntimeClient
 from nodelang.cell_attestations import read_court_attestation
 from nodelang.cell_exclusive_ownership import (
     read_ownership,
@@ -158,6 +159,38 @@ def test_worker_handoff_preserves_browser_session_and_advances_owner(tmp_path):
             == restored.ownership_protocol.states["active"]
     finally:
         second.close()
+
+
+def test_runtime_backend_generation_is_exact_signed_owner(tmp_path):
+    descriptor_path = tmp_path / "runtime-backend-generation.json"
+    provider = _provider()
+    provider.add_key("archhub.local.universal-runtime-pipe", b"m" * 32)
+    store, registry = build_universal_application(
+        resolve_map_path(), key_provider=provider
+    )
+    server = ApplicationServer(
+        universal_store=store,
+        universal_registry=registry,
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+    ).start()
+    try:
+        backend = UniversalRuntimeClient(
+            descriptor_path, provider
+        ).runtime_backend_generation()
+        ownership = read_ownership(
+            server.universal_store.snapshot(),
+            registry.ownership_protocol,
+            backend.ownership_root,
+        )
+        assert backend.url == server.url
+        assert backend.generation == ownership.generation == 1
+        assert ownership.state_root == registry.ownership_protocol.states[
+            "active"
+        ]
+    finally:
+        server.close()
 
 
 def test_stable_gateway_holds_browser_request_across_real_worker_handoff(tmp_path):

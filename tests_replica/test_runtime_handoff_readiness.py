@@ -1,9 +1,19 @@
 """Courts for the local, graph-native runtime handoff readiness lens."""
 from nodelang.map_import import resolve_map_path
 from nodelang.universal_application import (
+    _APPLICATION_HTTP_ROUTE_SPECS,
     build_universal_application,
     project_universal_runtime_handoff_readiness,
 )
+
+
+def test_governed_runtime_handoff_routes_are_graph_declared():
+    assert ("GET", "/api/universal/runtime-backend", "read") in (
+        _APPLICATION_HTTP_ROUTE_SPECS
+    )
+    assert ("POST", "/api/universal/runtime-handoff", "execute") in (
+        _APPLICATION_HTTP_ROUTE_SPECS
+    )
 
 
 def test_unowned_idle_graph_is_clear_only_for_founder_review():

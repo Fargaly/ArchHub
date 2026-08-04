@@ -15,7 +15,14 @@ from .cell_protocols import (
     prepare_append_relation_members,
     read_relation,
 )
-from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
+from .universal_cell import (
+    NULL_CELL_ID,
+    Cell,
+    CellStore,
+    InvalidCell,
+    Snapshot,
+    overlay_read_snapshot,
+)
 
 
 ROLE_NAMES = (
@@ -548,10 +555,12 @@ def transition_machine(
         or any(cell.id not in snapshot.cells for cell in sidecar_replace)
     ):
         raise InvalidCell("state transition sidecar cells are invalid")
-    augmented_cells = dict(snapshot.cells)
-    augmented_cells.update((cell.id, cell) for cell in sidecar_replace)
-    augmented_cells.update((cell.id, cell) for cell in sidecar_create)
-    augmented = Snapshot(snapshot.revision, MappingProxyType(augmented_cells))
+    candidate = overlay_read_snapshot(
+        snapshot,
+        create=sidecar_create,
+        replace=sidecar_replace,
+    )
+    augmented = Snapshot(snapshot.revision, candidate.cells)
     history_event_root, create, replace = _prepare_transition(
         augmented,
         protocol,
@@ -605,12 +614,8 @@ def transition_machine_with_new_evidence(
         payload=evidence_payload,
         issuer_root=evidence_issuer_root,
     )
-    augmented_cells = dict(snapshot.cells)
-    augmented_cells.update((cell.id, cell) for cell in evidence_cells)
-    augmented = Snapshot(
-        snapshot.revision,
-        MappingProxyType(augmented_cells),
-    )
+    candidate = overlay_read_snapshot(snapshot, create=evidence_cells)
+    augmented = Snapshot(snapshot.revision, candidate.cells)
     history_event_root, transition_create, replace = _prepare_transition(
         augmented,
         protocol,

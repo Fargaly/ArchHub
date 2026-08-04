@@ -1059,7 +1059,12 @@ const dom = new JSDOM(input.html, {
       if (route.endsWith('/canvas')) return response({ ok: true, ...projection });
       if (route.endsWith('/gesture')) {
         if (
-          ['rapid_queued_gestures','queued_governed_mutations'].includes(
+          [
+            'rapid_queued_gestures',
+            'queued_governed_mutations',
+            'rapid_queued_selection_reversal',
+            'rapid_modifier_selection_queue',
+          ].includes(
             input.scenario)
           && payload.projection_revision !== projection.revision
         ) {
@@ -1840,6 +1845,8 @@ const initialExactSocketCount = document.querySelectorAll(
   '.node-port-exact[data-universal-interface]').length;
 const initialExpandedSocketCount = document.querySelectorAll(
   '.node-port:not(.node-port-exact)[data-universal-interface]').length;
+const initialRelationEndpointValues = [...document.querySelectorAll(
+  '[data-universal-incidence]')].map(input => input.value);
 const initialCardsById = new Map(cards.map(card => [
   card.dataset.universalRoot,card,
 ]));
@@ -1945,6 +1952,17 @@ if (input.scenario === 'duplicate_projection') {
   const second=window.__archhubUniversalCommit({
     roots:[cards[2].dataset.universalRoot],
     focus:cards[2].dataset.universalRoot,
+  });
+  await Promise.all([first,second]);
+  await settle();
+} else if (input.scenario === 'rapid_queued_selection_reversal') {
+  const original=cards[0].dataset.universalRoot;
+  const changed=cards[1].dataset.universalRoot;
+  const first=window.__archhubUniversalCommit({
+    roots:[changed],focus:changed,
+  });
+  const second=window.__archhubUniversalCommit({
+    roots:[original],focus:original,
   });
   await Promise.all([first,second]);
   await settle();
@@ -2129,6 +2147,22 @@ if (input.scenario === 'duplicate_projection') {
   pointer(cards[1], 'pointerup', {clientX:350,clientY:130});
   pointer(cards[2], 'pointerdown', {clientX:550,clientY:130});
   pointer(cards[2], 'pointerup', {clientX:550,clientY:130});
+  await waitUntil(() => requests.filter(
+    item => item.route.endsWith('/gesture')).length === 2);
+  await settle();
+} else if (input.scenario === 'rapid_modifier_selection_queue') {
+  pointer(cards[1], 'pointerdown', {
+    clientX:350,clientY:130,ctrlKey:true,
+  });
+  pointer(cards[1], 'pointerup', {
+    clientX:350,clientY:130,ctrlKey:true,
+  });
+  pointer(cards[0], 'pointerdown', {
+    clientX:150,clientY:130,shiftKey:true,
+  });
+  pointer(cards[0], 'pointerup', {
+    clientX:150,clientY:130,shiftKey:true,
+  });
   await waitUntil(() => requests.filter(
     item => item.route.endsWith('/gesture')).length === 2);
   await settle();
@@ -3153,6 +3187,7 @@ const result = {
     '.focus-section .focus-reason-link')].map(item => item.textContent),
   relationEndpointValues: [...document.querySelectorAll(
     '[data-universal-incidence]')].map(input => input.value),
+  initialRelationEndpointValues,
   relationGateCount: document.querySelectorAll(
     '.relation-authority-summary .property-row').length,
   relationPropertyCount: document.querySelectorAll(

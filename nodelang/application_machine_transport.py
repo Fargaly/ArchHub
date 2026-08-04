@@ -37,6 +37,7 @@ from .checkpoint_authority_provisioning import (
     default_checkpoint_authority_path,
     default_checkpoint_key_name,
 )
+from .runtime_gateway import BackendGeneration
 from .universal_cell import (
     ReadOnlyJournalError,
     inspect_read_only_cell_journal,
@@ -1173,6 +1174,9 @@ class UniversalRuntimeTransport:
         descriptor_path: str | os.PathLike[str] | None = None,
         key_provider: ExportableSigningKeyProvider,
         key_id: str = "archhub.local.universal-runtime-pipe",
+        after_response: Callable[
+            [Mapping[str, object], Mapping[str, object]], None
+        ] | None = None,
     ) -> None:
         if os.name != "nt":
             raise MachineTransportError("Universal runtime pipe requires Windows")
@@ -1187,6 +1191,7 @@ class UniversalRuntimeTransport:
         ).expanduser().resolve()
         self.key_provider = key_provider
         self.key_material = key_provider.current(key_id)
+        self.after_response = after_response
         self.runtime_id = secrets.token_hex(16)
         self.pipe = r"\\.\pipe\ArchHub-Universal-%s" % self.runtime_id
         self.started_at = datetime.now(timezone.utc).isoformat()
@@ -1310,6 +1315,8 @@ class UniversalRuntimeTransport:
             # A client can abandon a slow request. That request must not kill
             # the single-owner listener or strand later sessions.
             return
+        if response.get("ok") is True and self.after_response is not None:
+            self.after_response(request, response)
 
     def _serve_connection_and_close(self, connection) -> None:
         try:
@@ -1610,6 +1617,90 @@ class UniversalRuntimeClient:
                 )
             self._runtime_presence_expires_at = float(expires_at)
             return result
+
+    def runtime_backend_generation(self) -> BackendGeneration:
+        """Read the exact active worker generation through machine authority."""
+        result = self.request("GET", "/api/universal/runtime-backend", {})
+        if set(result) != {
+            "application", "generation", "ownership_root", "server_url"
+        }:
+            raise MachineTransportError(
+                "runtime backend generation response shape is invalid"
+            )
+        if (
+            type(result["application"]) is not str
+            or not result["application"]
+            or type(result["server_url"]) is not str
+            or not result["server_url"].startswith("http://127.0.0.1:")
+            or type(result["generation"]) is not int
+            or result["generation"] <= 0
+            or type(result["ownership_root"]) is not str
+            or not result["ownership_root"]
+        ):
+            raise MachineTransportError(
+                "runtime backend generation response values are invalid"
+            )
+        return BackendGeneration(
+            result["server_url"],
+            result["generation"],
+            result["ownership_root"],
+        )
+
+    def _governed_runtime_handoff(
+        self,
+        phase: str,
+        work_root: str,
+        backend: BackendGeneration,
+    ) -> dict[str, object]:
+        if not self.agent_session_root:
+            raise MachineTransportError(
+                "runtime handoff requires a bound Agent Session"
+            )
+        if phase not in {"prepare", "finalize"}:
+            raise MachineTransportError("runtime handoff phase is invalid")
+        if type(work_root) is not str or not work_root:
+            raise MachineTransportError("runtime handoff Work is invalid")
+        if type(backend) is not BackendGeneration:
+            raise MachineTransportError("runtime handoff backend is invalid")
+        result = self.request("POST", "/api/universal/runtime-handoff", {
+            "phase": phase,
+            "work": work_root,
+            "server_url": backend.url,
+            "generation": backend.generation,
+            "ownership_root": backend.ownership_root,
+        })
+        expected = {
+            "application", "agent_session", "generation", "ownership_root",
+            "phase", "work",
+        }
+        if phase == "finalize":
+            expected.add("signal_after_response")
+        if set(result) != expected:
+            raise MachineTransportError("runtime handoff response shape is invalid")
+        expected_phase = "draining" if phase == "prepare" else "released"
+        if (
+            result["agent_session"] != self.agent_session_root
+            or result["generation"] != backend.generation
+            or result["ownership_root"] != backend.ownership_root
+            or result["phase"] != expected_phase
+            or result["work"] != work_root
+            or (
+                phase == "finalize"
+                and result["signal_after_response"] is not True
+            )
+        ):
+            raise MachineTransportError("runtime handoff response binding failed")
+        return result
+
+    def prepare_runtime_handoff(
+        self, work_root: str, backend: BackendGeneration
+    ) -> dict[str, object]:
+        return self._governed_runtime_handoff("prepare", work_root, backend)
+
+    def finalize_runtime_handoff(
+        self, work_root: str, backend: BackendGeneration
+    ) -> dict[str, object]:
+        return self._governed_runtime_handoff("finalize", work_root, backend)
 
     def baboom_context(
         self,

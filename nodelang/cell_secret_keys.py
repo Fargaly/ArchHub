@@ -68,6 +68,9 @@ class SigningKeyProvider(Protocol):
     def current_reference(self, key_id: str) -> SigningKeyReference:
         ...
 
+    def key_fingerprint(self, key_id: str, version: int) -> str:
+        ...
+
     def sign(self, key_id: str, version: int, payload: bytes) -> str:
         ...
 
@@ -131,6 +134,12 @@ class MemorySigningKeyProvider:
     def current_reference(self, key_id: str) -> SigningKeyReference:
         material = self.current(key_id)
         return SigningKeyReference(material.key_id, material.version)
+
+    def key_fingerprint(self, key_id: str, version: int) -> str:
+        material = self.resolve(key_id, version)
+        return hashlib.sha256(
+            b"ArchHub/signing-key-fingerprint/v1\x00" + material.secret
+        ).hexdigest()
 
     def sign(self, key_id: str, version: int, payload: bytes) -> str:
         material = self.resolve(key_id, version)
@@ -251,6 +260,12 @@ class AwsKmsHmacSigningKeyProvider:
                 "unknown AWS KMS signing key reference"
             ) from None
         return SigningKeyReference(key_id, version)
+
+    def key_fingerprint(self, key_id: str, version: int) -> str:
+        return hashlib.sha256(
+            b"ArchHub/aws-kms-key-identity/v1\x00"
+            + self._key_arn(key_id, version).encode("ascii")
+        ).hexdigest()
 
     def sign(self, key_id: str, version: int, payload: bytes) -> str:
         key_arn = self._key_arn(key_id, version)
@@ -547,6 +562,12 @@ class WindowsDpapiSigningKeyProvider:
     def current_reference(self, key_id: str) -> SigningKeyReference:
         material = self.current(key_id)
         return SigningKeyReference(material.key_id, material.version)
+
+    def key_fingerprint(self, key_id: str, version: int) -> str:
+        material = self.resolve(key_id, version)
+        return hashlib.sha256(
+            b"ArchHub/signing-key-fingerprint/v1\x00" + material.secret
+        ).hexdigest()
 
     def sign(self, key_id: str, version: int, payload: bytes) -> str:
         material = self.resolve(key_id, version)

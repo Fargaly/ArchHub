@@ -1110,6 +1110,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   let acceptedProjection = null;
   let refreshPending = null;
   let mutationTail = Promise.resolve();
+  const skipUniversalMutation=Symbol('skip-universal-mutation');
   let pendingWire = null;
   let pendingRoleWire = null;
   let pendingConnectionRewire = null;
@@ -1647,6 +1648,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       const payload=typeof payloadFactory === 'function'
         ? payloadFactory(baseProjection)
         : payloadFactory;
+      if (payload === skipUniversalMutation) return baseProjection;
       const usesReceipt=(
         (path === '/api/universal/interaction'
           || path === '/api/universal/gesture')
@@ -3318,17 +3320,21 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // projection for rejection rollback instead of cloning the full graph on
     // every pointer gesture.
     const previous=lastProjection || null;
-    if (canvasGestureIsNoop(payload,previous)) return previous;
     try {
       const projection=await universalMutation(
-        '/api/universal/gesture',baseProjection => ({
-        ...payload,
-        projection_mode:(
-          baseProjection.interaction_projection?.acknowledgement_mode
-            === receiptMode
-        ) ? receiptMode : interactionDeltaMode,
-        projection_revision:baseProjection.revision,
-      }));
+        '/api/universal/gesture',baseProjection => {
+          if (canvasGestureIsNoop(payload,baseProjection)) {
+            return skipUniversalMutation;
+          }
+          return {
+            ...payload,
+            projection_mode:(
+              baseProjection.interaction_projection?.acknowledgement_mode
+                === receiptMode
+            ) ? receiptMode : interactionDeltaMode,
+            projection_revision:baseProjection.revision,
+          };
+        });
       reconcileGestureProjection(
         projection.__mutationBaseProjection || previous,projection);
       return projection;
@@ -4285,6 +4291,18 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       card.setAttribute('aria-selected',isSelected ? 'true' : 'false');
     });
   }
+  function visibleCanvasSelection(canvas) {
+    const allowed=new Set((lastProjection?.nodes || []).map(node => node.id));
+    try {
+      const roots=JSON.parse(canvas.dataset.selection || '[]');
+      if (!Array.isArray(roots)) throw new Error('selection is not an array');
+      return new Set(roots.filter(root => (
+        typeof root === 'string' && allowed.has(root))));
+    } catch (_) {
+      return new Set((lastProjection?.selection || []).filter(
+        root => allowed.has(root)));
+    }
+  }
   function selectionWithModifiers(base,roots,event) {
     const result=new Set(base);
     if (event.shiftKey) roots.forEach(root => result.delete(root));
@@ -4440,7 +4458,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const card=event.target.closest('[data-universal-root]');
     if (card) {
       const root=card.dataset.universalRoot;
-      const base=new Set(lastProjection.selection);
+      const base=visibleCanvasSelection(canvas);
       let roots;
       if (event.shiftKey || event.ctrlKey || event.metaKey) {
         roots=selectionWithModifiers(base,[root],event);
@@ -4470,9 +4488,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const box=canvas.querySelector('.selection-box');
     if (!box) return;
     event.preventDefault();
+    const base=visibleCanvasSelection(canvas);
     startCanvasGesture('marquee',event,{
       canvas,capture:canvas,box,startX:event.clientX,startY:event.clientY,
-      base:new Set(lastProjection.selection),roots:new Set(lastProjection.selection),
+      base,roots:new Set(base),
       focus:lastProjection.selected,moved:false,
       event:{shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey},
     });

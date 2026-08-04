@@ -120,7 +120,140 @@ def _issue(world, *, now=100.0):
     return permit, revision, content_digest
 
 
-def test_signed_permit_is_exact_cell_native_and_consumable_once():
+def test_permit_issue_recovers_one_exact_existing_permit_after_ack_loss():
+    world = _world()
+    store, signing, provider, descriptor, protocol = world
+    permit, revision, content_digest = _issue(world)
+
+    recovered, recovered_revision = issue_cde_write_permit(
+        store,
+        protocol,
+        signing,
+        provider,
+        descriptor,
+        permit_id="court:cde-permit:1",
+        runtime="codex",
+        agent_session_root="app:agent-session:runtime:court",
+        work_root="work:court",
+        container_root="cde:container:court",
+        container_id="GM.nodes.cde-authority",
+        container_digest="a" * 64,
+        operation="apply_patch",
+        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        content_digest=content_digest,
+        request_id="court-write-request-1",
+        nonce="court-nonce-1",
+        issued_at=110.0,
+        expires_at=170.0,
+        authorization_evidence="court:write-authorization",
+    )
+
+    assert recovered == permit
+    assert recovered_revision == revision
+    assert store.revision == revision
+    assert [
+        member.participant_id
+        for member in read_relation(
+            store.snapshot(), protocol.root_id, budget=100_000
+        )
+        if member.role_id == protocol.role("permit-member")
+    ] == [permit.root_id]
+    common = {
+        "permit_id": "court:cde-permit:1",
+        "runtime": "codex",
+        "agent_session_root": "app:agent-session:runtime:court",
+        "work_root": "work:court",
+        "container_root": "cde:container:court",
+        "container_id": "GM.nodes.cde-authority",
+        "container_digest": "a" * 64,
+        "operation": "apply_patch",
+        "path": (
+            "10.PRODUCT/13.NODE-LANGUAGE/"
+            "nodelang/cell_cde_authority.py"
+        ),
+        "content_digest": content_digest,
+        "request_id": "court-write-request-1",
+        "authorization_evidence": "court:write-authorization",
+    }
+    with pytest.raises(CdeWriteDenied, match="nonce mismatched"):
+        issue_cde_write_permit(
+            store,
+            protocol,
+            signing,
+            provider,
+            descriptor,
+            **common,
+            nonce="court-forged-nonce",
+            issued_at=111.0,
+            expires_at=171.0,
+        )
+    with pytest.raises(
+        CdeWriteDenied, match="expired or is not yet valid"
+    ):
+        issue_cde_write_permit(
+            store,
+            protocol,
+            signing,
+            provider,
+            descriptor,
+            **common,
+            nonce="court-nonce-1",
+            issued_at=161.0,
+            expires_at=221.0,
+        )
+
+
+def test_permit_issue_recovers_the_exact_concurrent_commit_winner(monkeypatch):
+    world = _world()
+    store = world[0]
+    original_commit = CellStore.commit
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def race_identical_permits(
+        self, expected_revision, *, create=(), replace=(), precommit_guard=None,
+    ):
+        created = tuple(create)
+        if self is store and any(
+            cell.id == "court:cde-permit:1" for cell in created
+        ):
+            barrier.wait(timeout=5)
+        return original_commit(
+            self,
+            expected_revision,
+            create=created,
+            replace=replace,
+            precommit_guard=precommit_guard,
+        )
+
+    monkeypatch.setattr(CellStore, "commit", race_identical_permits)
+
+    def issue():
+        try:
+            results.append(_issue(world)[:2])
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=issue) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+    assert results[0] == results[1]
+    assert [
+        member.participant_id
+        for member in read_relation(
+            store.snapshot(), world[-1].root_id, budget=100_000
+        )
+        if member.role_id == world[-1].role("permit-member")
+    ] == ["court:cde-permit:1"]
+
+
+def test_signed_permit_recovers_the_exact_receipt_after_ack_loss():
     world = _world()
     store, signing, provider, _descriptor, protocol = world
     base_revision = store.revision
@@ -192,7 +325,31 @@ def test_signed_permit_is_exact_cell_native_and_consumable_once():
     assert read_cde_write_permit(
         store.snapshot(), protocol, permit.root_id
     ).state_root == protocol.states["consumed"]
-    with pytest.raises(CdeWriteDenied, match="already consumed"):
+    recovered, recovered_revision = consume_cde_write_permit(
+        store,
+        protocol,
+        signing,
+        provider,
+        permit.root_id,
+        runtime="codex",
+        agent_session_root="app:agent-session:runtime:court",
+        work_root="work:court",
+        container_root="cde:container:court",
+        container_id="GM.nodes.cde-authority",
+        container_digest="a" * 64,
+        operation="apply_patch",
+        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        content_digest=content_digest,
+        request_id="court-write-request-1",
+        authorization_evidence="court:write-authorization",
+        authority_revision=consumed_revision,
+        now=200.0,
+    )
+    assert recovered == receipt
+    assert recovered_revision == consumed_revision
+    assert store.revision == consumed_revision
+
+    with pytest.raises(CdeWriteDenied, match="request mismatched"):
         consume_cde_write_permit(
             store,
             protocol,
@@ -208,10 +365,10 @@ def test_signed_permit_is_exact_cell_native_and_consumable_once():
             operation="apply_patch",
             path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
             content_digest=content_digest,
-            request_id="court-write-request-1",
+            request_id="court-write-request-forged",
             authorization_evidence="court:write-authorization",
-            authority_revision=revision,
-            now=121.0,
+            authority_revision=consumed_revision,
+            now=200.0,
         )
 
 

@@ -169,6 +169,186 @@ def test_transport_listener_publishes_failure_after_bounded_accept_errors(
     assert published[0][1]["status"] == "failed"
 
 
+def test_governed_runtime_handoff_signals_only_after_response_delivery():
+    events = []
+
+    class Connection:
+        def poll(self, _timeout):
+            return True
+
+        def recv_bytes(self, _limit):
+            return b"request"
+
+        def send_bytes(self, _raw):
+            events.append("response")
+
+    request = {
+        "runtime_id": "runtime-court",
+        "request_id": "a" * 32,
+        "method": "POST",
+        "path": "/api/universal/runtime-handoff",
+        "body": {"phase": "finalize"},
+        "session": {},
+    }
+    transport = object.__new__(UniversalRuntimeTransport)
+    transport.runtime_id = "runtime-court"
+    transport._decode_request = lambda _raw: request
+    transport._remember = lambda _request_id: None
+    transport.dispatch = lambda _request: {
+        "phase": "released",
+        "signal_after_response": True,
+    }
+    transport.after_response = lambda sent_request, response: events.append(
+        (sent_request["path"], response["result"]["phase"])
+    )
+
+    transport._serve_connection(Connection())
+
+    assert events == [
+        "response",
+        ("/api/universal/runtime-handoff", "released"),
+    ]
+
+
+def test_governed_runtime_handoff_routes_are_graph_declared_machine_only():
+    specs = universal_application_module._APPLICATION_HTTP_ROUTE_SPECS
+    assert ("GET", "/api/universal/runtime-backend", "read") in specs
+    assert ("POST", "/api/universal/runtime-handoff", "execute") in specs
+
+
+def _complete_runtime_handoff_work(server, client, tmp_path, backend):
+    (tmp_path / "green.flag").write_text("green", encoding="utf-8")
+    work_root, _wire, _revision = create_universal_governed_work(
+        server.universal_store,
+        server.universal_registry,
+        title="Release one accepted runtime generation",
+        description="The exact claiming session may release only this worker.",
+        priority=20,
+        external_key="court:runtime-handoff:release-v1",
+        structured_references={
+            "requirements": {
+                "gate": {
+                    "kind": "file_exists",
+                    "spec": {"path": "green.flag"},
+                },
+                "runtime-handoff": {
+                    "application": server.universal_registry.application_root,
+                    "generation": backend.generation,
+                    "operation": "release",
+                    "ownership_root": backend.ownership_root,
+                },
+            },
+            "cde-container": {
+                "container_id": "court-runtime-handoff",
+                "allowed_paths": ["."],
+            },
+        },
+        x=320,
+        y=240,
+    )
+    session_root = client.bind_agent_session(
+        runtime="codex",
+        external_session_id="court-runtime-handoff-owner",
+    )["agent_session"]
+    client.claim_work(work_root)
+    client.request("POST", "/api/universal/work-transition", {
+        "root": work_root,
+        "event": "submit",
+        "evidence": "Runtime handoff implementation and focused courts passed.",
+        "projection": "index",
+    })
+    decision = client.adjudicate_work(work_root, projection="index")
+    assert decision["passed"] is True
+    assert decision["event"] == "accept"
+    return work_root, session_root
+
+
+def test_governed_runtime_handoff_requires_exact_completed_work_and_generation(
+    tmp_path,
+):
+    descriptor_path = tmp_path / "governed-runtime-handoff.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"g" * 32
+    )
+    drain_events = []
+
+    def coordinate_public_drain(backend):
+        drain_events.append(server._prove_runtime_backend_state("active"))
+        assert drain_events[-1] == backend
+
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+        universal_workspace_root=tmp_path,
+        runtime_compliance_runner=_green_runtime_compliance,
+        public_server_url="http://127.0.0.1:8495",
+        runtime_drain_coordinator=coordinate_public_drain,
+    ).start()
+    owner = UniversalRuntimeClient(descriptor_path, provider)
+    foreign = UniversalRuntimeClient(descriptor_path, provider)
+    try:
+        backend = owner.runtime_backend_generation()
+        assert backend.url == server.url
+        assert backend.generation == 1
+        assert backend.ownership_root == server._runtime_ownership_root
+        work_root, owner_session = _complete_runtime_handoff_work(
+            server, owner, tmp_path, backend
+        )
+        foreign.bind_agent_session(
+            runtime="gemini",
+            external_session_id="court-runtime-handoff-foreign",
+        )
+
+        with pytest.raises(MachineTransportError, match="claiming Agent Session"):
+            foreign.prepare_runtime_handoff(work_root, backend)
+        with pytest.raises(MachineTransportError, match="generation"):
+            owner.prepare_runtime_handoff(
+                work_root,
+                type(backend)(
+                    backend.url,
+                    backend.generation + 1,
+                    backend.ownership_root,
+                ),
+            )
+
+        prepared = owner.prepare_runtime_handoff(work_root, backend)
+        assert drain_events == [backend]
+        assert prepared == {
+            "application": server.universal_registry.application_root,
+            "agent_session": owner_session,
+            "generation": 1,
+            "ownership_root": backend.ownership_root,
+            "phase": "draining",
+            "work": work_root,
+        }
+        assert not server.runtime_handoff_exit_requested
+
+        released = owner.finalize_runtime_handoff(work_root, backend)
+        assert released == {
+            "application": server.universal_registry.application_root,
+            "agent_session": owner_session,
+            "generation": 1,
+            "ownership_root": backend.ownership_root,
+            "phase": "released",
+            "signal_after_response": True,
+            "work": work_root,
+        }
+        assert server._runtime_handoff_exit.wait(1.0)
+        assert server.runtime_handoff_exit_requested
+    finally:
+        server.close(preserve_browser_session=True)
+
+
+def test_governed_runtime_handoff_court(tmp_path):
+    """One exact selector for the pre-multi-selector live court authority."""
+    test_governed_runtime_handoff_signals_only_after_response_delivery()
+    test_governed_runtime_handoff_routes_are_graph_declared_machine_only()
+    test_governed_runtime_handoff_requires_exact_completed_work_and_generation(
+        tmp_path
+    )
+
+
 def test_agent_session_enrollment_keeps_the_long_graph_receipt_wait():
     assert _default_machine_response_timeout(
         "POST", "/api/universal/agent-session"
@@ -1192,7 +1372,18 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
             request_id="court-machine-cde-permit-request",
             nonce="court-machine-cde-permit-nonce",
         )
+        # A lost response must recover this exact graph-held permit.
+        issued_revision = server.universal_store.revision
+        recovered_issue = agent.issue_cde_write_permit(
+            operation="apply_patch",
+            path=target,
+            content_digest=content_digest,
+            request_id="court-machine-cde-permit-request",
+            nonce="court-machine-cde-permit-nonce",
+        )
 
+        assert recovered_issue == issued
+        assert server.universal_store.revision == issued_revision
         assert issued["agent_session"] == agent.agent_session_root
         assert issued["work"] == work_root
         assert issued["claim_binding"] == claim_binding
@@ -1225,13 +1416,24 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
         assert consumed["work"] == work_root
         assert consumed["claim_binding"] == claim_binding
         assert consumed["revision"] == issued["revision"] + 1
-        with pytest.raises(MachineTransportError, match="already consumed"):
+        recovered = agent.consume_cde_write_permit(
+            permit=issued["permit"],
+            operation="apply_patch",
+            path=target,
+            content_digest=content_digest,
+            request_id="court-machine-cde-permit-request",
+        )
+        assert recovered["receipt"] == consumed["receipt"]
+        assert recovered["receipt_digest"] == consumed["receipt_digest"]
+        assert recovered["revision"] == consumed["revision"]
+
+        with pytest.raises(MachineTransportError, match="request mismatched"):
             agent.consume_cde_write_permit(
                 permit=issued["permit"],
                 operation="apply_patch",
                 path=target,
                 content_digest=content_digest,
-                request_id="court-machine-cde-permit-request",
+                request_id="court-machine-cde-permit-forged",
             )
 
         with pytest.raises(
@@ -3110,6 +3312,106 @@ def test_machine_workshop_read_bounds_entries_before_transport(tmp_path, monkeyp
         assert len(result["entries"]) == 50
         assert result["entries"][0]["sequence"] == 250
         assert result["entries"][-1]["sequence"] == 299
+    finally:
+        server.close()
+
+
+def test_machine_workshop_read_filters_direct_entries_by_graph_relationship(
+    tmp_path, monkeypatch
+):
+    descriptor_path = tmp_path / "private-workshop-runtime.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"p" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+    ).start()
+    founder = server.universal_registry.agent_body.session.root_id
+    agent_a = "app:agent-session:runtime:agent-a"
+    agent_b = "app:agent-session:runtime:agent-b"
+    agent_c = "app:agent-session:runtime:agent-c"
+    category_root = server.universal_registry.workshop_category_roots["finding"]
+    entries = (
+        SimpleNamespace(
+            root_id="test:workshop-entry:public",
+            sequence=1,
+            actor_root=agent_a,
+            category_root=category_root,
+            recipient_roots=(),
+            reference_roots=(),
+            evidence_roots=(),
+            reply_to_root=NULL_CELL_ID,
+            content="Visible to every authorised Workshop participant.",
+            created_at="2026-08-03T00:00:00Z",
+        ),
+        SimpleNamespace(
+            root_id="test:workshop-entry:a-to-b",
+            sequence=2,
+            actor_root=agent_a,
+            category_root=category_root,
+            recipient_roots=(agent_b,),
+            reference_roots=(),
+            evidence_roots=(),
+            reply_to_root=NULL_CELL_ID,
+            content="Private from A to B.",
+            created_at="2026-08-03T00:01:00Z",
+        ),
+        SimpleNamespace(
+            root_id="test:workshop-entry:c-to-b",
+            sequence=3,
+            actor_root=agent_c,
+            category_root=category_root,
+            recipient_roots=(agent_b,),
+            reference_roots=(),
+            evidence_roots=(),
+            reply_to_root=NULL_CELL_ID,
+            content="Private from C to B.",
+            created_at="2026-08-03T00:02:00Z",
+        ),
+    )
+    monkeypatch.setattr(
+        application_server_module,
+        "list_deliberation_entries",
+        lambda *_args, **_kwargs: entries,
+    )
+    try:
+        projection_a = server._project_universal_machine_workshop(
+            request_agent_session=agent_a
+        )
+        projection_b = server._project_universal_machine_workshop(
+            request_agent_session=agent_b
+        )
+        projection_c = server._project_universal_machine_workshop(
+            request_agent_session=agent_c
+        )
+        projection_founder = server._project_universal_machine_workshop(
+            request_agent_session=founder
+        )
+
+        assert [entry["root"] for entry in projection_a["entries"]] == [
+            "test:workshop-entry:public",
+            "test:workshop-entry:a-to-b",
+        ]
+        assert [entry["root"] for entry in projection_b["entries"]] == [
+            "test:workshop-entry:public",
+            "test:workshop-entry:a-to-b",
+            "test:workshop-entry:c-to-b",
+        ]
+        assert [entry["root"] for entry in projection_c["entries"]] == [
+            "test:workshop-entry:public",
+            "test:workshop-entry:c-to-b",
+        ]
+        assert [entry["root"] for entry in projection_founder["entries"]] == [
+            "test:workshop-entry:public",
+            "test:workshop-entry:a-to-b",
+            "test:workshop-entry:c-to-b",
+        ]
+        assert projection_a["total"] == 2
+        assert projection_b["total"] == 3
+        assert projection_c["total"] == 2
+        assert projection_founder["total"] == 3
     finally:
         server.close()
 

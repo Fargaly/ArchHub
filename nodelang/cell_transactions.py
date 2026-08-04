@@ -79,6 +79,18 @@ class TransactionExecution:
     outcome_roots: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedTransaction:
+    root_id: str
+    revision: int
+    rewrites: tuple[PreparedRewrite, ...]
+    create: tuple[Cell, ...]
+    replace: tuple[Cell, ...]
+    touched_roots: tuple[str, ...]
+    evidence_roots: tuple[str, ...]
+    outcome_roots: tuple[str, ...]
+
+
 def bootstrap_transaction_protocol(
     store: CellStore,
     *,
@@ -307,17 +319,16 @@ def transaction_content_digest(
     return hashlib.sha256(canonical).hexdigest().encode("ascii")
 
 
-def execute_transaction(
+def prepare_transaction(
     store: CellStore,
     protocol: TransactionProtocol,
     rule_protocol: RuleProtocol,
     transaction_root: str,
     *,
     expected_revision: int | None = None,
-    precommit_guard: Callable[[], None] | None = None,
     budget: int = 10_000,
-) -> TransactionExecution:
-    """Materialize every declared rule against one revision and commit once."""
+) -> PreparedTransaction:
+    """Materialize every declared rule against one revision without committing."""
     snapshot = store.snapshot()
     revision = snapshot.revision if expected_revision is None else expected_revision
     if snapshot.revision != revision:
@@ -356,19 +367,50 @@ def execute_transaction(
                 raise InvalidCell("transaction changes one continuing root twice")
             replaced[cell.id] = cell
 
-    committed = store.commit(
-        revision,
-        create=tuple(created.values()),
-        replace=tuple(replaced.values()),
-        precommit_guard=precommit_guard,
-    )
-    return TransactionExecution(
+    return PreparedTransaction(
         transaction.root_id,
-        committed,
+        revision,
         tuple(prepared),
+        tuple(created.values()),
+        tuple(replaced.values()),
         tuple(sorted((*created, *replaced))),
         transaction.evidence_roots,
         transaction.outcome_roots,
+    )
+
+
+def execute_transaction(
+    store: CellStore,
+    protocol: TransactionProtocol,
+    rule_protocol: RuleProtocol,
+    transaction_root: str,
+    *,
+    expected_revision: int | None = None,
+    precommit_guard: Callable[[], None] | None = None,
+    budget: int = 10_000,
+) -> TransactionExecution:
+    """Materialize every declared rule against one revision and commit once."""
+    prepared = prepare_transaction(
+        store,
+        protocol,
+        rule_protocol,
+        transaction_root,
+        expected_revision=expected_revision,
+        budget=budget,
+    )
+    committed = store.commit(
+        prepared.revision,
+        create=prepared.create,
+        replace=prepared.replace,
+        precommit_guard=precommit_guard,
+    )
+    return TransactionExecution(
+        prepared.root_id,
+        committed,
+        prepared.rewrites,
+        prepared.touched_roots,
+        prepared.evidence_roots,
+        prepared.outcome_roots,
     )
 
 
@@ -377,10 +419,12 @@ __all__ = [
     "TransactionStep",
     "GraphTransaction",
     "TransactionBuild",
+    "PreparedTransaction",
     "TransactionExecution",
     "bootstrap_transaction_protocol",
     "project_transaction_protocol",
     "build_transaction",
+    "prepare_transaction",
     "read_transaction",
     "transaction_content_digest",
     "execute_transaction",

@@ -16,6 +16,9 @@ class _CompletedThread:
     def join(self) -> None:
         return None
 
+    def is_alive(self) -> bool:
+        return False
+
 
 class _FakeCredentialVault:
     @staticmethod
@@ -33,6 +36,8 @@ def test_primary_server_cli_can_own_signed_machine_transport(tmp_path, monkeypat
     captured = {}
 
     class FakeServer:
+        runtime_handoff_exit_requested = False
+
         def __init__(self, *args, **kwargs):
             captured["args"] = args
             captured["kwargs"] = kwargs
@@ -112,6 +117,7 @@ def test_primary_server_cli_leaves_machine_transport_off_without_explicit_flag(
     class FakeServer:
         thread = _CompletedThread()
         bootstrap_url = "http://127.0.0.1:8482/?bootstrap=court"
+        runtime_handoff_exit_requested = False
 
         def __init__(self, *args, **kwargs):
             captured["kwargs"] = kwargs
@@ -131,6 +137,39 @@ def test_primary_server_cli_leaves_machine_transport_off_without_explicit_flag(
     assert captured["kwargs"]["machine_descriptor_path"] is None
 
 
+def test_primary_server_cli_passes_the_stable_public_gateway_origin(
+    tmp_path,
+    monkeypatch,
+):
+    captured = {}
+
+    class FakeServer:
+        thread = _CompletedThread()
+        bootstrap_url = "http://127.0.0.1:8495/?bootstrap=court"
+        runtime_handoff_exit_requested = False
+
+        def __init__(self, *args, **kwargs):
+            captured["kwargs"] = kwargs
+
+        def start(self):
+            return self
+
+        def close(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(application_server, "ApplicationServer", FakeServer)
+    monkeypatch.setattr(application_server, "BrowserCredentialVault", _FakeCredentialVault)
+
+    application_server.main([
+        "--state-path", str(tmp_path / "state.json.gz"),
+        "--public-server-url", "http://127.0.0.1:8495",
+        "--supervisor-control-stdio",
+    ])
+
+    assert captured["kwargs"]["public_server_url"] == "http://127.0.0.1:8495"
+    assert callable(captured["kwargs"]["runtime_drain_coordinator"])
+
+
 def test_primary_server_cli_passes_explicit_graph_cloud_gateway_configuration(
     tmp_path,
     monkeypatch,
@@ -140,6 +179,7 @@ def test_primary_server_cli_passes_explicit_graph_cloud_gateway_configuration(
     class FakeServer:
         thread = _CompletedThread()
         bootstrap_url = "http://127.0.0.1:8482/?bootstrap=court"
+        runtime_handoff_exit_requested = False
 
         def __init__(self, *args, **kwargs):
             captured["kwargs"] = kwargs

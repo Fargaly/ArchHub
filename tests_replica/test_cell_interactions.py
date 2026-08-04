@@ -1,6 +1,7 @@
 """Courts for one graph-held interaction path with no product dispatch."""
 from __future__ import annotations
 
+import inspect
 import pickle
 
 import pytest
@@ -40,6 +41,7 @@ from nodelang.universal_cell import (
     CellStore,
     Conflict,
     InvalidCell,
+    MatchBudgetExceeded,
     NoMatch,
     Snapshot,
     _OverlayCellMap,
@@ -270,6 +272,136 @@ def _build_fixture():
     }
 
 
+def test_interaction_read_scope_reuses_only_one_exact_snapshot(monkeypatch):
+    fixture = _build_fixture()
+    store = fixture["store"]
+    protocol = fixture["interaction_protocol"]
+    interaction_root = fixture["interactions"][0]
+    snapshot = store.snapshot()
+    original_project = interaction_runtime.project_interaction_protocol
+    protocol_projections = []
+
+    def record_protocol_projection(current_snapshot, root_id, **kwargs):
+        protocol_projections.append((current_snapshot.revision, id(current_snapshot.cells)))
+        return original_project(current_snapshot, root_id, **kwargs)
+
+    monkeypatch.setattr(
+        interaction_runtime,
+        "project_interaction_protocol",
+        record_protocol_projection,
+    )
+    with interaction_runtime.interaction_projection_scope():
+        first = interaction_runtime.read_interaction(
+            snapshot, protocol, interaction_root, budget=512
+        )
+        second = interaction_runtime.read_interaction(
+            snapshot, protocol, interaction_root, budget=512
+        )
+        assert second is first
+    assert protocol_projections == [(snapshot.revision, id(snapshot.cells))]
+
+    outside = interaction_runtime.read_interaction(
+        snapshot, protocol, interaction_root, budget=512
+    )
+    assert outside == first
+    assert outside is not first
+    assert protocol_projections == [
+        (snapshot.revision, id(snapshot.cells)),
+        (snapshot.revision, id(snapshot.cells)),
+    ]
+
+
+def test_interaction_read_scope_does_not_repeat_same_budget_relation_reads(
+    monkeypatch,
+):
+    fixture = _build_fixture()
+    store = fixture["store"]
+    protocol = fixture["interaction_protocol"]
+    interaction_root = fixture["interactions"][0]
+    snapshot = store.snapshot()
+    original_read_relation = interaction_runtime.read_relation
+    relation_reads = []
+
+    def record_relation_read(current_snapshot, root_id, **kwargs):
+        relation_reads.append((
+            current_snapshot.revision,
+            id(current_snapshot.cells),
+            root_id,
+            kwargs.get("budget"),
+        ))
+        return original_read_relation(current_snapshot, root_id, **kwargs)
+
+    monkeypatch.setattr(
+        interaction_runtime, "read_relation", record_relation_read
+    )
+    with interaction_runtime.interaction_projection_scope():
+        first = interaction_runtime.read_interaction(
+            snapshot, protocol, interaction_root, budget=512
+        )
+        second = interaction_runtime.read_interaction(
+            snapshot, protocol, interaction_root, budget=512
+        )
+        assert second is first
+
+    assert [root for _revision, _cells, root, _budget in relation_reads].count(
+        protocol.root_id
+    ) == 1
+    assert [root for _revision, _cells, root, _budget in relation_reads].count(
+        interaction_root
+    ) == 1
+
+
+def test_interaction_read_scope_rejects_budget_and_snapshot_aliasing(monkeypatch):
+    fixture = _build_fixture()
+    store = fixture["store"]
+    protocol = fixture["interaction_protocol"]
+    interaction_root = fixture["interactions"][0]
+    snapshot = store.snapshot()
+    foreign_cells = dict(snapshot.cells)
+    foreign_cells.pop(interaction_root)
+    foreign_snapshot = Snapshot(snapshot.revision, foreign_cells)
+    original_project = interaction_runtime.project_interaction_protocol
+    protocol_projections = []
+
+    def record_protocol_projection(current_snapshot, root_id, **kwargs):
+        protocol_projections.append((current_snapshot.revision, id(current_snapshot.cells)))
+        return original_project(current_snapshot, root_id, **kwargs)
+
+    monkeypatch.setattr(
+        interaction_runtime,
+        "project_interaction_protocol",
+        record_protocol_projection,
+    )
+    with interaction_runtime.interaction_projection_scope():
+        accepted = interaction_runtime.read_interaction(
+            snapshot, protocol, interaction_root, budget=512
+        )
+        with pytest.raises(MatchBudgetExceeded):
+            interaction_runtime.read_interaction(
+                snapshot, protocol, interaction_root, budget=1
+            )
+        with pytest.raises(InvalidCell):
+            interaction_runtime.read_interaction(
+                foreign_snapshot, protocol, interaction_root, budget=512
+            )
+        store.commit(
+            store.revision,
+            create=(_terminal("interaction-test:new-revision", "new revision"),),
+        )
+        next_snapshot = store.snapshot()
+        next_read = interaction_runtime.read_interaction(
+            next_snapshot, protocol, interaction_root, budget=512
+        )
+        assert next_read == accepted
+        assert next_read is not accepted
+
+    assert protocol_projections == [
+        (snapshot.revision, id(snapshot.cells)),
+        (foreign_snapshot.revision, id(foreign_snapshot.cells)),
+        (next_snapshot.revision, id(next_snapshot.cells)),
+    ]
+
+
 def _execute(fixture, index: int):
     store = fixture["store"]
     fixture["projection_broker"].issue(
@@ -324,6 +456,93 @@ def test_three_unrelated_controls_execute_through_one_graph_path():
         assert result.rewrite.root_id == fixture["activate_actions"][index]
         assert target in result.rewrite.touched_roots
         assert result.authorization.allowed is True
+
+
+def test_interaction_inputs_require_named_transaction_bindings():
+    # Named per-input binding is not implemented yet; this court is intentionally
+    # red until the interaction contract carries names and explicit binding
+    # relations.
+    fixture = _build_fixture()
+    store = fixture["store"]
+
+    assert "input_bindings" in inspect.signature(build_interaction).parameters
+
+    control_root = "control:input-binding-red"
+    store.commit(
+        store.revision,
+        create=(_terminal(control_root, "input binding red"),),
+    )
+
+    input_rule_root = build_rule(
+        store,
+        fixture["rule_protocol"],
+        rule_id="rule:input-binding-red",
+        pattern_root="p:state",
+        replacement_root="r:activate",
+        pattern_variables=("p:current", "p:desired"),
+        replacement_bindings={"r:activate:left": "p:desired"},
+        replacement_constants={
+            "r:activate:right": fixture["targets"][1],
+            "r:activate:missing": fixture["targets"][0],
+        },
+    ).root_id
+    transaction_root = build_transaction(
+        store,
+        fixture["transaction_protocol"],
+        transaction_id="interaction-test:transaction:input-binding-red",
+        steps=((input_rule_root, fixture["targets"][0]),),
+    ).root_id
+    interaction_root = build_interaction(
+        store,
+        fixture["interaction_protocol"],
+        interaction_id="interaction:input-binding-red",
+        control_root=control_root,
+        event_root=fixture["event"],
+        target_root=fixture["targets"][0],
+        # This interaction intentionally provides only one input root while the
+        # action rule declares two distinct input contracts.
+        input_roots=(fixture["targets"][1],),
+        action_root=transaction_root,
+        subject_root=fixture["roots"]["subject"],
+        policy_root=fixture["policy_root"],
+        authorization_action_root=(
+            fixture["authorization_protocol"].actions["edit"]
+        ),
+        authorization_object_root=fixture["roots"]["object"],
+        lifecycle_root="interaction-test:released",
+    ).root_id
+
+    handle = fixture["projection_broker"].mint(
+        store.snapshot(),
+        session_root=fixture["session_root"],
+        subject_root=fixture["roots"]["subject"],
+        view_root=fixture["roots"]["object"],
+    )
+    fixture["projection_broker"].issue(
+        handle,
+        store.snapshot(),
+        fixture["interaction_protocol"],
+        (control_root,),
+        (interaction_root,),
+        rule_protocol=fixture["rule_protocol"],
+        transaction_protocol=fixture["transaction_protocol"],
+    )
+    with pytest.raises(InvalidCell, match="explicitly bound"):
+        execute_interaction(
+            store,
+            fixture["interaction_protocol"],
+            fixture["transaction_protocol"],
+            fixture["rule_protocol"],
+            fixture["authorization_protocol"],
+            fixture["broker"],
+            fixture["context"],
+            fixture["projection_broker"],
+            handle,
+            interaction_root=interaction_root,
+            control_root=control_root,
+            event_root=fixture["event"],
+            expected_revision=store.revision,
+        )
 
 
 def test_nontransaction_admission_does_not_iterate_the_complete_snapshot(

@@ -93,11 +93,23 @@ def bootstrap_browser_session_protocol(
     root_id = prefix + ":root"
     if root_id in store.snapshot().cells:
         return project_browser_session_protocol(store.snapshot(), prefix=prefix)
+    batch = CellBatch(store)
+    protocol = compose_browser_session_protocol(batch, prefix=prefix)
+    batch.commit()
+    return protocol
+
+
+def compose_browser_session_protocol(
+    batch: CellBatch,
+    *,
+    prefix: str = "browser-session-protocol",
+) -> BrowserSessionProtocol:
+    """Compose the browser-session vocabulary into a caller-owned batch."""
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     states = {name: "%s:state:%s" % (prefix, name) for name in STATE_NAMES}
-    batch = CellBatch(store)
     for name, root in (*roles.items(), *states.items()):
         batch.add(_terminal(root, name))
+    root_id = prefix + ":root"
     batch.relation(
         (
             (roles["vocabulary-member"], root)
@@ -105,7 +117,6 @@ def bootstrap_browser_session_protocol(
         ),
         relation_id=root_id,
     )
-    batch.commit()
     return BrowserSessionProtocol(
         root_id, MappingProxyType(roles), MappingProxyType(states)
     )
@@ -362,6 +373,7 @@ __all__ = [
     "BrowserSessionProjection",
     "BrowserSessionProtocol",
     "bootstrap_browser_session_protocol",
+    "compose_browser_session_protocol",
     "issue_browser_session",
     "list_browser_session_roots",
     "project_browser_session_protocol",

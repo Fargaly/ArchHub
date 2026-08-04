@@ -239,6 +239,7 @@ from .checkpoint_authority_provisioning import (
 )
 from .clean_browser_authority import (
     CleanBrowserAuthority,
+    revise_clean_browser_focus,
     verify_clean_browser_session,
 )
 from .clean_visual_authority import open_clean_visual_system
@@ -255,6 +256,7 @@ from .cell_cloud_routes import (
 from .unified_authority import (
     UnifiedAuthority,
     validate_composition,
+    verify_exact_authority_head,
 )
 
 
@@ -782,8 +784,6 @@ class _CleanAuthorityHttpServer:
         self.authority_key_provider = authority_key_provider
         self.clean_caller = scope_caller
         self.clean_scope_root = scope_root
-        self._pulse_root = "app:clean-browser-gesture:%s" % uuid.uuid4().hex
-        self._pulse_initialized = False
         self._mutation_lock = threading.RLock()
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
@@ -810,10 +810,17 @@ class _CleanAuthorityHttpServer:
             self.thread.join(timeout=5.0)
             self.thread = None
 
-    def _resolve_binding(self, token: str) -> _CleanBrowserSessionBinding:
+    def _resolve_binding(
+        self,
+        token: str,
+        *,
+        csrf_token: str | None = None,
+        require_csrf: bool = False,
+    ) -> _CleanBrowserSessionBinding:
         if type(token) is not str or not token:
             raise AuthorizationDenied("authenticated browser session required")
         snapshot = self.authority.store.snapshot()
+        verify_exact_authority_head(self.authority, snapshot)
         expected_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
         matches = []
         for session_root in list_browser_session_roots(
@@ -838,6 +845,8 @@ class _CleanAuthorityHttpServer:
                     self.browser_authority,
                     session_root,
                     token=token,
+                    csrf_token=csrf_token,
+                    require_csrf=require_csrf,
                 )
             except (BrowserSessionDenied, InvalidCell) as exc:
                 raise AuthorizationDenied(str(exc))
@@ -874,6 +883,7 @@ class _CleanAuthorityHttpServer:
         binding: _CleanBrowserSessionBinding,
         *,
         scope_root: str | None = None,
+        at_revision: int | None = None,
     ) -> dict[str, object]:
         root_id = self.clean_scope_root if scope_root is None else scope_root
         snapshot = self.authority.store.snapshot()
@@ -884,6 +894,8 @@ class _CleanAuthorityHttpServer:
                 self.clean_authority,
                 root_id,
                 caller=self.clean_caller,
+                view_root=binding.view_root,
+                at_revision=at_revision,
             )
         )
         visual = open_clean_visual_system(
@@ -898,31 +910,6 @@ class _CleanAuthorityHttpServer:
             session_root=binding.session_root,
             subject_root=binding.subject_root,
         )
-
-    def _touch_gesture_revision(self) -> int:
-        snapshot = self.authority.store.snapshot()
-        if not self._pulse_initialized:
-            self.authority.store.commit(
-                snapshot.revision,
-                create=(Cell(
-                    self._pulse_root,
-                    NULL_CELL_ID,
-                    NULL_CELL_ID,
-                    b"0",
-                ),),
-            )
-            self._pulse_initialized = True
-            return self.authority.store.revision
-        self.authority.store.commit(
-            snapshot.revision,
-            replace=(Cell(
-                self._pulse_root,
-                NULL_CELL_ID,
-                NULL_CELL_ID,
-                str(time.time()).encode("utf-8"),
-            ),),
-        )
-        return self.authority.store.revision
 
     def _make_handler(self):
         owner = self
@@ -942,6 +929,14 @@ class _CleanAuthorityHttpServer:
 
             def _token(self) -> str:
                 token = self.headers.get("X-ArchHub-Session", "")
+                if type(token) is not str:
+                    return ""
+                return token.strip()
+
+            def _csrf(self) -> str | None:
+                token = self.headers.get("X-ArchHub-CSRF")
+                if token is None:
+                    return None
                 if type(token) is not str:
                     return ""
                 return token.strip()
@@ -979,13 +974,72 @@ class _CleanAuthorityHttpServer:
 
             def do_POST(self):
                 try:
-                    binding = owner._resolve_binding(self._token())
                     body = self._body()
+                    csrf_token = self._csrf()
                     if self.path == "/api/universal/gesture":
-                        touched = owner._touch_gesture_revision()
-                        self._json(200, {"ok": True, "touched": touched})
+                        owner._resolve_binding(
+                            self._token(),
+                            csrf_token=csrf_token,
+                            require_csrf=True,
+                        )
+                        self._json(403, {
+                            "ok": False,
+                            "error": "gesture mutations are not admitted on this clean server path",
+                        })
+                        return
+                    if self.path == "/api/universal/focus":
+                        with owner._mutation_lock:
+                            binding = owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
+                            )
+                            scope_root = body.get("scope_root", owner.clean_scope_root)
+                            if type(scope_root) is not str or not scope_root:
+                                raise InvalidCell("focus scope root is invalid")
+                            selected_roots = body.get("selected_roots")
+                            if type(selected_roots) is not list:
+                                raise InvalidCell("focus selection must be a list")
+                            primary_root = body.get("primary_root")
+                            if type(primary_root) is not str or not primary_root:
+                                raise InvalidCell("focus primary root is invalid")
+                            revision = body.get("revision")
+                            if type(revision) is not int:
+                                raise InvalidCell("focus request revision is invalid")
+                            command_id = body.get("command_id")
+                            if type(command_id) is not str or not command_id:
+                                raise InvalidCell("focus command id is invalid")
+                            result = revise_clean_browser_focus(
+                                owner.clean_authority,
+                                owner.clean_browser_authority,
+                                binding.session_root,
+                                scope_root=scope_root,
+                                selected_roots=selected_roots,
+                                primary_root=primary_root,
+                                caller=owner.clean_caller,
+                                command_id=command_id,
+                                expected_revision=revision,
+                            )
+                            payload = owner._canvas(
+                                binding,
+                                scope_root=scope_root,
+                                at_revision=result.revision,
+                            )
+                        self._json(200, {
+                            "ok": True,
+                            **payload,
+                            "accepted_revision": result.revision,
+                            "receipt": result.receipt_root,
+                            "replayed": result.replayed,
+                            "focus_root": result.root_id,
+                        })
                         return
                     if self.path == "/api/universal/interaction":
+                        binding = owner._resolve_binding(
+                            self._token(),
+                            csrf_token=csrf_token,
+                            require_csrf=True,
+                        )
                         revision = body.get("revision")
                         if type(revision) is not int:
                             raise InvalidCell("interaction request revision is invalid")

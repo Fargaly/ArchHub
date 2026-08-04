@@ -16,7 +16,35 @@ from nodelang.cell_state_machine import (
     transition_machine,
     transition_machine_with_new_evidence,
 )
-from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
+from nodelang.universal_cell import (
+    NULL_CELL_ID,
+    Cell,
+    CellStore,
+    InvalidCell,
+    Snapshot,
+    _OverlayCellMap,
+)
+
+
+class _IterationForbiddenOverlay(_OverlayCellMap):
+    def __iter__(self):
+        raise AssertionError("state transition iterated the whole authority graph")
+
+
+class _GuardedSnapshotStore:
+    def __init__(self, store):
+        self._store = store
+        snapshot = store.snapshot()
+        self._snapshot = Snapshot(
+            snapshot.revision,
+            _IterationForbiddenOverlay(snapshot.cells, {}),
+        )
+
+    def snapshot(self):
+        return self._snapshot
+
+    def commit(self, *args, **kwargs):
+        return self._store.commit(*args, **kwargs)
 
 
 @pytest.fixture()
@@ -400,6 +428,62 @@ def test_new_evidence_and_transition_share_one_atomic_revision(machine):
     history = machine_history(store.snapshot(), protocol, root)
     assert history[-1].root_id == event
     assert history[-1].evidence_roots == (evidence,)
+    assert read_state_machine(
+        store.snapshot(), protocol, root
+    ).current_state_root == "state:committed"
+
+
+def test_transition_candidate_reads_only_base_plus_changed_cells(machine):
+    store, protocol, root = machine
+    before = store.revision
+
+    event, revision = transition_machine(
+        _GuardedSnapshotStore(store),
+        protocol,
+        root,
+        event_root="event:prepare",
+        expected_state_root="state:open",
+        actor_root="actor:member",
+    )
+
+    assert revision == before + 1
+    assert machine_history(store.snapshot(), protocol, root)[-1].root_id == event
+    assert read_state_machine(
+        store.snapshot(), protocol, root
+    ).current_state_root == "state:pending"
+
+
+def test_evidence_candidate_reads_only_base_plus_changed_cells(machine):
+    store, protocol, root = machine
+    transition_machine(
+        store,
+        protocol,
+        root,
+        event_root="event:prepare",
+        expected_state_root="state:open",
+        actor_root="actor:member",
+    )
+    before = store.revision
+
+    evidence, event, revision = transition_machine_with_new_evidence(
+        _GuardedSnapshotStore(store),
+        protocol,
+        root,
+        event_root="event:commit",
+        expected_state_root="state:pending",
+        actor_root="actor:member",
+        evidence_id="evidence:bounded-candidate",
+        evidence_type_root="evidence-type:confirmation",
+        evidence_payload=b'{"provider":"confirmed"}',
+        evidence_issuer_root="issuer:adapter",
+        trusted_issuer_roots=("issuer:adapter",),
+    )
+
+    assert revision == before + 1
+    assert read_evidence(store.snapshot(), protocol, evidence).payload == (
+        b'{"provider":"confirmed"}'
+    )
+    assert machine_history(store.snapshot(), protocol, root)[-1].root_id == event
     assert read_state_machine(
         store.snapshot(), protocol, root
     ).current_state_root == "state:committed"

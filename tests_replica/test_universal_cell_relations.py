@@ -129,6 +129,75 @@ def test_relation_projection_cache_is_request_scoped_revision_safe_and_budgeted(
     assert outside is not first
 
 
+def test_relation_projection_reuse_is_exact_dependency_checked_and_request_local():
+    import nodelang.cell_protocols as protocol_module
+
+    store = _base_store()
+    built = build_relation(store, [
+        ("owner-role", "wall"),
+        ("value-role", "material"),
+    ], relation_id="reusable-property")
+    source = store.snapshot()
+
+    with relation_projection_scope():
+        first = read_relation(source, built.root_id, budget=16)
+        reuse = protocol_module.capture_relation_projections(
+            source, (built.root_id,)
+        )
+        reuse_fingerprint = (
+            protocol_module.relation_projection_fingerprint(reuse)
+        )
+
+    store.commit(store.revision, create=[_atom("unrelated", b"Unrelated")])
+    accepted = store.snapshot()
+    with relation_projection_scope():
+        protocol_module.seed_relation_projections(
+            accepted,
+            reuse,
+            expected_source_revision=source.revision,
+            expected_target_revision=accepted.revision,
+            expected_fingerprint=reuse_fingerprint,
+            changed_roots=store.revision_changes(accepted.revision),
+        )
+        assert read_relation(accepted, built.root_id, budget=16) is first
+    with relation_projection_scope():
+        with pytest.raises(InvalidCell, match="fingerprint drifted"):
+            protocol_module.seed_relation_projections(
+                accepted,
+                reuse,
+                expected_source_revision=source.revision,
+                expected_target_revision=accepted.revision,
+                expected_fingerprint="0" * 64,
+                changed_roots=store.revision_changes(accepted.revision),
+            )
+
+    with relation_projection_scope():
+        assert read_relation(accepted, built.root_id, budget=16) is not first
+
+    with relation_projection_scope():
+        accepted_members = read_relation(accepted, built.root_id, budget=16)
+        accepted_reuse = protocol_module.capture_relation_projections(
+            accepted, (built.root_id,)
+        )
+        accepted_fingerprint = (
+            protocol_module.relation_projection_fingerprint(accepted_reuse)
+        )
+    value = next(member for member in first if member.role_id == "value-role")
+    rewire_incidence(store, value.incidence_id, "stone")
+    drifted = store.snapshot()
+    with relation_projection_scope():
+        with pytest.raises(InvalidCell, match="source Cell drifted"):
+            protocol_module.seed_relation_projections(
+                drifted,
+                accepted_reuse,
+                expected_source_revision=accepted.revision,
+                expected_target_revision=drifted.revision,
+                expected_fingerprint=accepted_fingerprint,
+                changed_roots=store.revision_changes(drifted.revision),
+            )
+    assert accepted_members == first
+
+
 def test_relation_can_be_participant_of_another_relation_and_be_rewired():
     store = _base_store()
     property_relation = build_relation(store, [

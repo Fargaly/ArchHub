@@ -10,7 +10,9 @@ const { chromium } = require("playwright");
 const CHECKS = Object.freeze([
   "page-identity",
   "canvas-has-real-nodes-and-wires",
+  "visual-layout-contract",
   "selection-projects-properties",
+  "inspector-tab-semantics",
   "property-edit-updates-node",
   "keyboard-undo-redo",
   "presentation-color-updates-node",
@@ -18,6 +20,7 @@ const CHECKS = Object.freeze([
   "modifier-selection-and-deselection",
   "group-and-ungroup-preserve-members",
   "directional-marquee",
+  "selection-box-tracks-pointer",
   "modifier-marquee-selection-and-deselection",
   "wheel-zoom",
   "space-pan",
@@ -90,6 +93,14 @@ function overlaps(left, right) {
     && left.top < right.bottom && left.bottom > right.top;
 }
 
+function isMarqueeEndpoint(canvas, x, y) {
+  const target = document.elementFromPoint(x, y);
+  return Boolean(target && target.closest(".canvas") === canvas
+    && !target.closest(
+      "[data-universal-root],.canvas-toolbar,.composer,.wire-hit,.wire-line,button,input"
+    ));
+}
+
 function marqueePlan() {
   const canvas = document.querySelector(".canvas[data-universal='true']");
   if (!canvas) return null;
@@ -102,18 +113,27 @@ function marqueePlan() {
     };
     if (!isInsideCanvas(windowBox, canvasRect)) continue;
     if (cards.some(other => other.id !== card.id && overlaps(windowBox, other))) continue;
-    const crossingBox = {
-      left: card.left + card.width * 0.45, right: card.right + 12,
-      top: card.top - 8, bottom: card.bottom + 8,
+    const partialBox = {
+      left: card.left - 12, right: card.right + 12,
+      top: card.top + card.height * 0.45, bottom: card.bottom + 8,
     };
-    if (!isInsideCanvas(crossingBox, canvasRect)) continue;
-    if (cards.some(other => other.id !== card.id && overlaps(crossingBox, other))) continue;
+    if (!isInsideCanvas(partialBox, canvasRect)) continue;
+    if (cards.some(other => other.id !== card.id && overlaps(partialBox, other))) continue;
+    const endpoints = [
+      [windowBox.left, windowBox.top],
+      [windowBox.right, windowBox.bottom],
+      [partialBox.left, partialBox.top],
+      [partialBox.right, partialBox.bottom],
+    ];
+    if (!endpoints.every(([x, y]) => isMarqueeEndpoint(canvas, x, y))) continue;
     return {
       id: card.id,
       window: { startX: windowBox.left, startY: windowBox.top,
         endX: windowBox.right, endY: windowBox.bottom },
-      crossing: { startX: crossingBox.right, startY: crossingBox.top,
-        endX: crossingBox.left, endY: crossingBox.bottom },
+      partialWindow: { startX: partialBox.left, startY: partialBox.top,
+        endX: partialBox.right, endY: partialBox.bottom },
+      crossing: { startX: partialBox.right, startY: partialBox.top,
+        endX: partialBox.left, endY: partialBox.bottom },
     };
   }
   return null;
@@ -142,6 +162,7 @@ const PAGE_HELPER_SCRIPT = [
   visibleCards,
   isInsideCanvas,
   overlaps,
+  isMarqueeEndpoint,
   marqueePlan,
   blankCanvasPoint,
 ].map(helper => helper.toString()).join("\n") + `
@@ -158,11 +179,19 @@ async function waitFor(page, predicate, argument, timeout = 10000) {
   await page.waitForFunction(predicate, argument, { timeout });
 }
 
-async function moveDrag(page, from, to) {
+async function moveDrag(page, from, to, beforeRelease = null) {
   await page.mouse.move(from.startX, from.startY);
   await page.mouse.down();
   await page.mouse.move(to.endX, to.endY, { steps: 8 });
+  const evidence = beforeRelease ? await beforeRelease() : null;
   await page.mouse.up();
+  return evidence;
+}
+
+function canvasCard(page, root) {
+  return page.locator(
+    `.canvas[data-universal="true"] [data-universal-root=${JSON.stringify(root)}]`
+  ).first();
 }
 
 function sameRoots(left, right) {
@@ -173,6 +202,13 @@ function sameRoots(left, right) {
 
 async function performGesture(page, expectedRoots, trigger, timeout = 15000) {
   let requestBody = null;
+  const observedRequests = [];
+  const observeRequest = request => {
+    if (new URL(request.url()).pathname !== "/api/universal/gesture"
+        || request.method() !== "POST") return;
+    try { observedRequests.push(request.postDataJSON()); } catch (_) {}
+  };
+  page.on("request", observeRequest);
   const responsePromise = page.waitForResponse(response => {
     if (new URL(response.url()).pathname !== "/api/universal/gesture"
         || response.request().method() !== "POST") return false;
@@ -185,8 +221,23 @@ async function performGesture(page, expectedRoots, trigger, timeout = 15000) {
       return false;
     }
   }, { timeout });
-  await trigger();
-  const response = await responsePromise;
+  let response;
+  try {
+    await trigger();
+    response = await responsePromise;
+  } catch (error) {
+    const state = await page.evaluate(() => ({
+      selected: window.__archhubCourt.selectedRoots(),
+      pointerOwner: window.__archhubPointerOwner || null,
+      selecting: document.querySelector(".canvas[data-universal='true']")
+        ?.classList.contains("is-selecting") || false,
+    })).catch(() => null);
+    throw new Error(`gesture response missing: expected=${JSON.stringify(expectedRoots)}`
+      + ` observed=${JSON.stringify(observedRequests.map(request => request.roots))}`
+      + ` state=${JSON.stringify(state)} cause=${error.message}`);
+  } finally {
+    page.off("request", observeRequest);
+  }
   let responseBody = {};
   try { responseBody = await response.json(); } catch (_) {}
   const baseRevision = responseBody.base_revision;
@@ -381,12 +432,62 @@ async function recordScreenshot(page, name) {
     const second = initial.cards.find(card => card.id !== first?.id);
     if (!first || !second) throw new Error("graph editor court needs two visible cards");
 
+    details.visualLayout = await page.evaluate(() => {
+      const canvas = document.querySelector(".canvas[data-universal='true']");
+      const inspector = document.querySelector(".inspector");
+      const library = document.querySelector(".sidebar .library-panel");
+      const rect = element => {
+        const value = element?.getBoundingClientRect();
+        return value ? {
+          left: value.left, top: value.top, right: value.right,
+          bottom: value.bottom, width: value.width, height: value.height,
+        } : null;
+      };
+      const canvasRect = rect(canvas);
+      const inspectorRect = rect(inspector);
+      const libraryRect = rect(library);
+      const visiblePorts = [...document.querySelectorAll(
+        ".canvas .node-port[data-universal-interface]"
+      )].filter(port => port.getClientRects().length > 0);
+      const portRects = visiblePorts.map(rect);
+      const titles = [...document.querySelectorAll(
+        ".canvas [data-universal-root] .node-title"
+      )].filter(title => title.getClientRects().length > 0);
+      return {
+        canvas: canvasRect,
+        inspector: inspectorRect,
+        library: libraryRect,
+        panelOverlap: Boolean(canvasRect && inspectorRect && libraryRect) && !(
+          libraryRect.right <= canvasRect.left + 1
+          && canvasRect.right <= inspectorRect.left + 1
+        ),
+        portCount: portRects.length,
+        minimumPortWidth: portRects.length
+          ? Math.min(...portRects.map(item => item.width)) : 0,
+        minimumPortHeight: portRects.length
+          ? Math.min(...portRects.map(item => item.height)) : 0,
+        titleCount: titles.length,
+        overflowingTitles: titles.filter(title => (
+          title.scrollWidth > title.clientWidth + 1
+          || title.scrollHeight > title.clientHeight + 1
+        )).length,
+      };
+    });
+    checks["visual-layout-contract"] = (
+      details.visualLayout.canvas?.width >= 600
+      && details.visualLayout.inspector?.width >= 280
+      && details.visualLayout.library?.width >= 180
+      && !details.visualLayout.panelOverlap
+      && details.visualLayout.portCount > 0
+      && details.visualLayout.minimumPortWidth >= 24
+      && details.visualLayout.minimumPortHeight >= 24
+      && details.visualLayout.titleCount > 0
+      && details.visualLayout.overflowingTitles === 0
+    );
+
     const initialSelectionExchange = await performGesture(
       page, [first.id],
-      () => page.mouse.click(
-        (first.left + first.right) / 2,
-        (first.top + first.bottom) / 2
-      )
+      () => canvasCard(page, first.id).click()
     );
     details.initialSelectionExchange = initialSelectionExchange;
     await waitFor(page, root => {
@@ -399,7 +500,50 @@ async function recordScreenshot(page, name) {
       document.querySelector(".inspector")?.dataset.inspectedNode === root
         && document.querySelectorAll(".inspector [data-inspector-tabpanel]").length > 0
         && document.querySelectorAll(".inspector [data-universal-properties-panel]").length > 0
-    ), first.id);
+      ), first.id);
+
+    details.inspectorTabSemantics = await page.evaluate(() => {
+      const tablist = document.querySelector(".inspector [role='tablist']");
+      const tabs = [...(tablist?.querySelectorAll("[role='tab']") || [])];
+      const panels = [...document.querySelectorAll(
+        ".inspector [role='tabpanel'][data-inspector-tabpanel]"
+      )];
+      const active = tabs.filter(tab => tab.getAttribute("aria-selected") === "true");
+      const focusable = tabs.filter(tab => tab.getAttribute("tabindex") === "0");
+      const pairs = tabs.map(tab => {
+        const panel = document.getElementById(tab.getAttribute("aria-controls") || "");
+        const tabRect = tab.getBoundingClientRect();
+        return {
+          panelExists: Boolean(panel),
+          labelled: panel?.getAttribute("aria-labelledby") === tab.id,
+          visibilityMatches: Boolean(panel) && (
+            panel.hidden === (tab.getAttribute("aria-selected") !== "true")
+          ),
+          targetWidth: tabRect.width,
+          targetHeight: tabRect.height,
+        };
+      });
+      return {
+        tablist: Boolean(tablist),
+        tabCount: tabs.length,
+        panelCount: panels.length,
+        activeCount: active.length,
+        focusableCount: focusable.length,
+        pairs,
+      };
+    });
+    checks["inspector-tab-semantics"] = (
+      details.inspectorTabSemantics.tablist
+      && details.inspectorTabSemantics.tabCount >= 4
+      && details.inspectorTabSemantics.panelCount
+        === details.inspectorTabSemantics.tabCount
+      && details.inspectorTabSemantics.activeCount === 1
+      && details.inspectorTabSemantics.focusableCount === 1
+      && details.inspectorTabSemantics.pairs.every(pair => (
+        pair.panelExists && pair.labelled && pair.visibilityMatches
+        && pair.targetWidth >= 24 && pair.targetHeight >= 24
+      ))
+    );
 
     const titleInput = page.locator(".inspector label.property-row:visible")
       .filter({ hasText: /^title\b/i }).locator(
@@ -408,16 +552,13 @@ async function recordScreenshot(page, name) {
     if (await titleInput.count()) {
       const originalTitle = await titleInput.inputValue();
       const editedTitle = `${originalTitle} Court`;
-      await titleInput.fill(editedTitle);
-      const [propertyResponse] = await Promise.all([
-        page.waitForResponse(response => (
+      const propertyResponsePromise = page.waitForResponse(response => (
           new URL(response.url()).pathname === "/api/universal/interaction"
           && response.request().method() === "POST"
-        ), { timeout: 15000 }),
-        titleInput.evaluate(input => input.dispatchEvent(new Event("change", {
-          bubbles: true, cancelable: true,
-        }))),
-      ]);
+        ), { timeout: 15000 });
+      await titleInput.fill(editedTitle);
+      await titleInput.press("Tab");
+      const propertyResponse = await propertyResponsePromise;
       try {
         await waitFor(page, ({ root, title }) => {
           const card = [...document.querySelectorAll(
@@ -453,10 +594,17 @@ async function recordScreenshot(page, name) {
       const undoControl = page.locator(
         '[data-universal-history="undo"][data-universal-control]'
       ).first();
-      const redoControl = page.locator(
-        '[data-universal-history="redo"][data-universal-control]'
-      ).first();
-      if (await undoControl.count() && await redoControl.count()) {
+      details.historyControls = await page.evaluate(() => (
+        [...document.querySelectorAll('[data-universal-history]')].map(
+          control => ({
+            operation: control.dataset.universalHistory || "",
+            control: control.dataset.universalControl || "",
+            disabled: Boolean(control.disabled),
+            connected: control.isConnected,
+          })
+        )
+      ));
+      if (await undoControl.count()) {
         try {
           const undoRoot = await undoControl.getAttribute(
             "data-universal-control");
@@ -479,6 +627,10 @@ async function recordScreenshot(page, name) {
             return card?.querySelector(".node-title")?.textContent === title;
           }, { root: first.id, title: originalTitle }, 15000);
 
+          const redoControl = page.locator(
+            '[data-universal-history="redo"][data-universal-control]'
+          ).first();
+          await redoControl.waitFor({ state: "attached", timeout: 15000 });
           const redoRoot = await redoControl.getAttribute(
             "data-universal-control");
           const redoResponsePromise = page.waitForResponse(response => {
@@ -660,17 +812,8 @@ async function recordScreenshot(page, name) {
     }
 
     const multiSelectionExchange = await performGesture(
-      page, [first.id, second.id], async () => {
-        await page.keyboard.down("Control");
-        try {
-          await page.mouse.click(
-            (second.left + second.right) / 2,
-            (second.top + second.bottom) / 2
-          );
-        } finally {
-          await page.keyboard.up("Control");
-        }
-      }
+      page, [first.id, second.id],
+      () => canvasCard(page, second.id).click({ modifiers: ["Control"] })
     );
     await waitFor(page, roots => {
       const selected = window.__archhubCourt.selectedRoots();
@@ -690,17 +833,8 @@ async function recordScreenshot(page, name) {
     };
     try {
       const shiftExchange = await performGesture(
-        page, [second.id], async () => {
-          await page.keyboard.down("Shift");
-          try {
-            await page.mouse.click(
-              (first.left + first.right) / 2,
-              (first.top + first.bottom) / 2
-            );
-          } finally {
-            await page.keyboard.up("Shift");
-          }
-        }
+        page, [second.id],
+        () => canvasCard(page, first.id).click({ modifiers: ["Shift"] })
       );
       await waitFor(page, ({ removed, retained }) => {
         const selected = window.__archhubCourt.selectedRoots();
@@ -713,17 +847,8 @@ async function recordScreenshot(page, name) {
       details.modifierSelection.shiftExchange = shiftExchange;
 
       const controlExchange = await performGesture(
-        page, [second.id, first.id], async () => {
-          await page.keyboard.down("Control");
-          try {
-            await page.mouse.click(
-              (first.left + first.right) / 2,
-              (first.top + first.bottom) / 2
-            );
-          } finally {
-            await page.keyboard.up("Control");
-          }
-        }
+        page, [second.id, first.id],
+        () => canvasCard(page, first.id).click({ modifiers: ["Control"] })
       );
       await waitFor(page, roots => {
         const selected = window.__archhubCourt.selectedRoots();
@@ -826,9 +951,38 @@ async function recordScreenshot(page, name) {
     const marquee = await page.evaluate(() => window.__archhubCourt.marqueePlan());
     details.marquee = marquee;
     if (marquee) {
+      let liveSelectionGeometry = null;
       const windowExchange = await performGesture(
         page, [marquee.id],
-        () => moveDrag(page, marquee.window, marquee.window)
+        async () => {
+          liveSelectionGeometry = await moveDrag(
+            page, marquee.window, marquee.window,
+            () => page.evaluate(({ startX, startY, endX, endY }) => {
+              const box = document.querySelector(".selection-box");
+              const actual = box?.getBoundingClientRect();
+              const expected = {
+                left: Math.min(startX, endX),
+                top: Math.min(startY, endY),
+                right: Math.max(startX, endX),
+                bottom: Math.max(startY, endY),
+              };
+              return {
+                visible: Boolean(box) && getComputedStyle(box).display !== "none",
+                expected,
+                actual: actual ? {
+                  left: actual.left, top: actual.top,
+                  right: actual.right, bottom: actual.bottom,
+                } : null,
+                maximumEdgeError: actual ? Math.max(
+                  Math.abs(actual.left - expected.left),
+                  Math.abs(actual.top - expected.top),
+                  Math.abs(actual.right - expected.right),
+                  Math.abs(actual.bottom - expected.bottom),
+                ) : null,
+              };
+            }, marquee.window),
+          );
+        }
       );
       await waitFor(page, root => {
         const selected = window.__archhubCourt.selectedRoots();
@@ -839,12 +993,7 @@ async function recordScreenshot(page, name) {
         return selected.length === 1 && selected[0] === root;
       }, marquee.id);
 
-      const partialWindow = {
-        startX: marquee.crossing.endX,
-        startY: marquee.crossing.startY,
-        endX: marquee.crossing.startX,
-        endY: marquee.crossing.endY,
-      };
+      const partialWindow = marquee.partialWindow;
       const partialWindowExchange = await performGesture(
         page, [], () => moveDrag(page, partialWindow, partialWindow)
       );
@@ -868,6 +1017,7 @@ async function recordScreenshot(page, name) {
         return selected.length === 1 && selected[0] === root;
       }, marquee.id);
       details.marquee.windowExchange = windowExchange;
+      details.marquee.liveSelectionGeometry = liveSelectionGeometry;
       details.marquee.partialWindow = partialWindow;
       details.marquee.partialWindowExchange = partialWindowExchange;
       details.marquee.crossingExchange = crossingExchange;
@@ -875,6 +1025,11 @@ async function recordScreenshot(page, name) {
         && partialWindowExchange.valid
         && crossingExchange.valid
         && containing && partialWindowRejected && crossing;
+      checks["selection-box-tracks-pointer"] = (
+        liveSelectionGeometry?.visible === true
+        && Number.isFinite(liveSelectionGeometry.maximumEdgeError)
+        && liveSelectionGeometry.maximumEdgeError <= 3
+      );
 
       details.modifierMarquee = {
         initial: await page.evaluate(() => window.__archhubCourt.selectedRoots()),
@@ -889,17 +1044,8 @@ async function recordScreenshot(page, name) {
           throw new Error("modifier marquee needs one retained visible node");
         }
         const baselineExchange = await performGesture(
-          page, [marquee.id, retained.id], async () => {
-            await page.keyboard.down("Control");
-            try {
-              await page.mouse.click(
-                (retained.left + retained.right) / 2,
-                (retained.top + retained.bottom) / 2
-              );
-            } finally {
-              await page.keyboard.up("Control");
-            }
-          }
+          page, [marquee.id, retained.id],
+          () => canvasCard(page, retained.id).click({ modifiers: ["Control"] })
         );
         await waitFor(page, roots => {
           const selected = window.__archhubCourt.selectedRoots();
@@ -957,8 +1103,8 @@ async function recordScreenshot(page, name) {
           && details.modifierMarquee.afterShift.length === 1
           && details.modifierMarquee.afterShift[0] === retained.id
           && details.modifierMarquee.afterControl.length === 2
-          && details.modifierMarquee.afterControl[0] === retained.id
-          && details.modifierMarquee.afterControl[1] === marquee.id
+          && details.modifierMarquee.afterControl.includes(retained.id)
+          && details.modifierMarquee.afterControl.includes(marquee.id)
         );
       } catch (error) {
         details.modifierMarquee.error = String(error.message || error);
@@ -1350,6 +1496,8 @@ async function recordScreenshot(page, name) {
       await label.press("Enter");
       try {
         const parameterResponse = await parameterResponsePromise;
+        let parameterPayload = {};
+        try { parameterPayload = await parameterResponse.json(); } catch (_) {}
         await waitFor(page, () => [...document.querySelectorAll(
           ".inspector label.property-row .property-label"
         )].some(item => item.textContent?.trim() === "Acoustic rating"), null, 20000);
@@ -1361,9 +1509,12 @@ async function recordScreenshot(page, name) {
           return row?.querySelector("input")?.value || "";
         });
         checks["visual-parameter-creation"] = parameterResponse.status() === 200
+          && Boolean(parameterPayload.created_root)
           && parameterValue === "Rw 50";
         details.parameterCreation = {
-          status: parameterResponse.status(), value: parameterValue,
+          status: parameterResponse.status(),
+          createdRoot: parameterPayload.created_root || "",
+          value: parameterValue,
         };
       } catch (error) {
         details.parameterCreationError = String(error.message || error);
@@ -1472,6 +1623,8 @@ async function recordScreenshot(page, name) {
       await name.press("Enter");
       try {
         const interfaceResponse = await interfaceResponsePromise;
+        let interfacePayload = {};
+        try { interfacePayload = await interfaceResponse.json(); } catch (_) {}
         await waitFor(page, before => document.querySelectorAll(
           '.canvas [data-universal-output][data-universal-interface]'
         ).length > before, outputsBefore, 20000);
@@ -1479,9 +1632,11 @@ async function recordScreenshot(page, name) {
           '.canvas [data-universal-output][data-universal-interface]'
         ).count();
         checks["visual-interface-creation"] = interfaceResponse.status() === 200
+          && Boolean(interfacePayload.created_root)
           && outputsAfter > outputsBefore;
         details.interfaceCreation = {
           status: interfaceResponse.status(),
+          createdRoot: interfacePayload.created_root || "",
           before: outputsBefore,
           after: outputsAfter,
         };
@@ -1551,6 +1706,8 @@ async function recordScreenshot(page, name) {
       await name.press("Enter");
       try {
         const inputResponse = await inputResponsePromise;
+        let inputPayload = {};
+        try { inputPayload = await inputResponse.json(); } catch (_) {}
         await waitFor(page, before => document.querySelectorAll(
           '.canvas [data-universal-input][data-universal-interface]'
         ).length > before, inputsBefore, 20000);
@@ -1558,9 +1715,11 @@ async function recordScreenshot(page, name) {
           '.canvas [data-universal-input][data-universal-interface]'
         ).count();
         checks["visual-input-interface-creation"] = inputResponse.status() === 200
+          && Boolean(inputPayload.created_root)
           && inputsAfter > inputsBefore;
         details.inputInterfaceCreation = {
           status: inputResponse.status(),
+          createdRoot: inputPayload.created_root || "",
           before: inputsBefore,
           after: inputsAfter,
         };

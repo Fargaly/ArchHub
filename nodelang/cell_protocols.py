@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
 from typing import Iterable
+import hashlib
 import uuid
 
 from .universal_cell import (
@@ -51,8 +52,11 @@ class RelationRemovalPatch:
 
 
 _RELATION_PROJECTION_CACHE: ContextVar[
-    dict[tuple[int, int, str], tuple[tuple["RelationMember", ...], int]] | None
+    dict[tuple[int, int, str], "RelationProjectionReuse"] | None
 ] = ContextVar("relation_projection_cache", default=None)
+_RELATION_PROJECTION_BATCH_SEALS: ContextVar[
+    dict[int, tuple[tuple["RelationProjectionReuse", ...], str]] | None
+] = ContextVar("relation_projection_batch_seals", default=None)
 
 
 @contextmanager
@@ -60,13 +64,17 @@ def relation_projection_scope():
     """Reuse relation walks only inside one interpreter request."""
     existing = _RELATION_PROJECTION_CACHE.get()
     if existing is not None:
+        if _RELATION_PROJECTION_BATCH_SEALS.get() is None:
+            raise InvalidCell("relation projection request scope is incomplete")
         yield
         return
-    token = _RELATION_PROJECTION_CACHE.set({})
+    cache_token = _RELATION_PROJECTION_CACHE.set({})
+    seal_token = _RELATION_PROJECTION_BATCH_SEALS.set({})
     try:
         yield
     finally:
-        _RELATION_PROJECTION_CACHE.reset(token)
+        _RELATION_PROJECTION_BATCH_SEALS.reset(seal_token)
+        _RELATION_PROJECTION_CACHE.reset(cache_token)
 
 
 def with_relation_projection_scope(function):
@@ -90,6 +98,17 @@ class RelationMember:
     incidence_id: str
     role_id: str
     participant_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class RelationProjectionReuse:
+    """One exact relation walk reusable only across one accepted commit."""
+
+    source_revision: int
+    relation_root: str
+    members: tuple[RelationMember, ...]
+    steps: int
+    source_cells: tuple[Cell, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,12 +226,12 @@ def read_relation(
     cache = _RELATION_PROJECTION_CACHE.get()
     cache_key = (snapshot.revision, id(snapshot.cells), relation_root)
     if cache is not None and cache_key in cache:
-        cached, steps = cache[cache_key]
-        if steps > budget:
+        cached = cache[cache_key]
+        if cached.steps > budget:
             raise MatchBudgetExceeded(
                 "relation projection exceeded %s chain cells" % budget
             )
-        return cached
+        return cached.members
     if relation_root not in snapshot.cells:
         raise InvalidCell("relation root is missing")
 
@@ -220,6 +239,7 @@ def read_relation(
     seen: set[str] = set()
     cursor = relation_root
     steps = 0
+    source_cells: list[Cell] = []
     while cursor != NULL_CELL_ID:
         steps += 1
         if steps > budget:
@@ -232,6 +252,7 @@ def read_relation(
         chain = snapshot.cells.get(cursor)
         if chain is None:
             raise InvalidCell("relation chain contains a dangling cell")
+        source_cells.append(chain)
         if chain.link0 == NULL_CELL_ID:
             if chain.link1 != NULL_CELL_ID:
                 raise InvalidCell("empty relation root has a non-empty tail")
@@ -239,6 +260,7 @@ def read_relation(
         incidence = snapshot.cells.get(chain.link0)
         if incidence is None:
             raise InvalidCell("relation incidence is missing")
+        source_cells.append(incidence)
         if (
             incidence.link0 not in snapshot.cells
             or incidence.link1 not in snapshot.cells
@@ -252,8 +274,159 @@ def read_relation(
         cursor = chain.link1
     projected = tuple(members)
     if cache is not None:
-        cache[cache_key] = (projected, steps)
+        cache[cache_key] = RelationProjectionReuse(
+            source_revision=snapshot.revision,
+            relation_root=relation_root,
+            members=projected,
+            steps=steps,
+            source_cells=tuple(source_cells),
+        )
     return projected
+
+
+def capture_relation_projections(
+    snapshot: Snapshot,
+    relation_roots: Iterable[str],
+) -> tuple[RelationProjectionReuse, ...]:
+    """Capture only relation walks already performed in this request scope."""
+    cache = _RELATION_PROJECTION_CACHE.get()
+    if cache is None:
+        raise InvalidCell("relation projection capture requires a request scope")
+    captured = []
+    for relation_root in dict.fromkeys(relation_roots):
+        if type(relation_root) is not str:
+            raise InvalidCell("relation projection root is invalid")
+        entry = cache.get((
+            snapshot.revision,
+            id(snapshot.cells),
+            relation_root,
+        ))
+        if entry is not None:
+            captured.append(entry)
+    return tuple(captured)
+
+
+def relation_projection_fingerprint(
+    projections: Iterable[RelationProjectionReuse],
+) -> str:
+    """Fingerprint one ordered, disposable batch without minting authority."""
+    digest = hashlib.sha256()
+
+    def add(value: str | bytes | int) -> None:
+        encoded = (
+            value if type(value) is bytes else str(value).encode("utf-8")
+        )
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+
+    entries = tuple(projections)
+    add(len(entries))
+    for entry in entries:
+        if (
+            type(entry) is not RelationProjectionReuse
+            or type(entry.source_revision) is not int
+            or type(entry.relation_root) is not str
+            or type(entry.steps) is not int
+            or entry.steps < 1
+            or not entry.source_cells
+        ):
+            raise InvalidCell("relation projection reuse is invalid")
+        add(entry.source_revision)
+        add(entry.relation_root)
+        add(entry.steps)
+        add(len(entry.members))
+        for member in entry.members:
+            if type(member) is not RelationMember:
+                raise InvalidCell("relation projection reuse is invalid")
+            add(member.incidence_id)
+            add(member.role_id)
+            add(member.participant_id)
+        add(len(entry.source_cells))
+        for cell in entry.source_cells:
+            if type(cell) is not Cell:
+                raise InvalidCell("relation projection reuse is invalid")
+            add(cell.id)
+            add(cell.link0)
+            add(cell.link1)
+            add(cell.atom)
+    fingerprint = digest.hexdigest()
+    seals = _RELATION_PROJECTION_BATCH_SEALS.get()
+    if seals is not None:
+        seals[id(entries)] = (entries, fingerprint)
+    return fingerprint
+
+
+def seed_relation_projections(
+    snapshot: Snapshot,
+    projections: Iterable[RelationProjectionReuse],
+    *,
+    expected_source_revision: int,
+    expected_target_revision: int,
+    expected_fingerprint: str,
+    changed_roots: Iterable[str],
+) -> None:
+    """Seed the current request cache after exact revision/dependency proof."""
+    cache = _RELATION_PROJECTION_CACHE.get()
+    if cache is None:
+        raise InvalidCell("relation projection seed requires a request scope")
+    if (
+        type(expected_source_revision) is not int
+        or type(expected_target_revision) is not int
+        or expected_target_revision != expected_source_revision + 1
+        or snapshot.revision != expected_target_revision
+    ):
+        raise InvalidCell("relation projection reuse revision drifted")
+    entries = tuple(projections)
+    if type(expected_fingerprint) is not str:
+        raise InvalidCell("relation projection fingerprint drifted")
+    seals = _RELATION_PROJECTION_BATCH_SEALS.get()
+    registered = seals.get(id(entries)) if seals is not None else None
+    if registered is not None:
+        registered_entries, registered_fingerprint = registered
+        fingerprint_matches = (
+            registered_entries is entries
+            and registered_fingerprint == expected_fingerprint
+        )
+    else:
+        fingerprint_matches = (
+            relation_projection_fingerprint(entries) == expected_fingerprint
+        )
+    if not fingerprint_matches:
+        raise InvalidCell("relation projection fingerprint drifted")
+    changed = tuple(changed_roots)
+    if (
+        len(changed) != len(set(changed))
+        or any(type(root_id) is not str for root_id in changed)
+    ):
+        raise InvalidCell("relation projection changed-root receipt is invalid")
+    changed_set = set(changed)
+    seen_roots = set()
+    for entry in entries:
+        if (
+            type(entry) is not RelationProjectionReuse
+            or entry.source_revision not in (
+                expected_source_revision,
+                expected_target_revision,
+            )
+            or entry.relation_root in seen_roots
+        ):
+            raise InvalidCell("relation projection reuse revision drifted")
+        seen_roots.add(entry.relation_root)
+        for source_cell in entry.source_cells:
+            if (
+                source_cell.id in changed_set
+                and snapshot.cells.get(source_cell.id) != source_cell
+            ):
+                raise InvalidCell("relation projection source Cell drifted")
+        cache_key = (
+            snapshot.revision,
+            id(snapshot.cells),
+            entry.relation_root,
+        )
+        existing = cache.get(cache_key)
+        if existing is not None and existing != entry:
+            raise InvalidCell("relation projection cache conflicts")
+        cache[cache_key] = entry
 
 
 def rewire_incidence(
@@ -815,11 +988,15 @@ __all__ = [
     "RelationPatch",
     "RelationRemovalPatch",
     "RelationMember",
+    "RelationProjectionReuse",
     "PropertyProjection",
     "CellBatch",
     "build_relation",
     "compose_relation_cells",
     "read_relation",
+    "capture_relation_projections",
+    "relation_projection_fingerprint",
+    "seed_relation_projections",
     "relation_projection_scope",
     "with_relation_projection_scope",
     "rewire_incidence",

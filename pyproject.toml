@@ -2,3 +2,6 @@
 extraPaths = ["."]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

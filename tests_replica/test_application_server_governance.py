@@ -1,4 +1,5 @@
 """HTTP court proving the normal desktop host has no raw authoring bypass."""
+import copy
 import json
 import hashlib
 import base64
@@ -7,6 +8,7 @@ import time
 import uuid
 from dataclasses import replace
 from functools import wraps
+from pathlib import Path
 from types import MappingProxyType
 from http.cookiejar import CookieJar
 from urllib.error import HTTPError
@@ -18,7 +20,12 @@ import nodelang.application_server as application_server_module
 import nodelang.universal_application as universal_application_module
 
 from nodelang.application_server import ApplicationServer
-from nodelang.cell_protocols import prepare_append_relation_members, read_relation
+from nodelang.cell_protocols import (
+    prepare_append_relation_members,
+    prepare_remove_relation_members,
+    read_relation,
+)
+from nodelang.cell_catalog import read_definition
 from nodelang.cell_relation_composer import read_relation_composer_draft
 from nodelang.map_import import resolve_map_path
 from nodelang.universal_application import (
@@ -47,6 +54,30 @@ from nodelang.windows_cng_signing_provider import SOFTWARE_PROVIDER_ID
 from nodelang.checkpoint_authority_provisioning import (
     provision_windows_revision_checkpoint_authority,
 )
+
+
+def test_application_server_clean_browser_admission_is_not_yet_bound():
+    source = Path(application_server_module.__file__).read_text(
+        encoding="utf-8"
+    )
+    assert "verify_clean_browser_session(" in source, (
+        "ApplicationServer still admits browser sessions only through the "
+        "legacy browser-session verifier"
+    )
+    assert "issue_clean_browser_session(" in source, (
+        "ApplicationServer still issues browser sessions through the legacy "
+        "browser-session path"
+    )
+    for marker in (
+        "self.browser_session_token =",
+        "self.browser_csrf_token =",
+        "self.browser_bootstrap_token =",
+        "self._browser_sessions = {}",
+    ):
+        assert marker not in source, (
+            "ApplicationServer still owns local browser token state: %s"
+            % marker
+        )
 
 
 def test_baboom_department_runner_is_released_as_a_closed_connector_provider():
@@ -403,6 +434,34 @@ def test_browser_cookie_hides_session_and_requires_bound_csrf_for_writes():
             urlopen(cross_site, timeout=30)
         assert denied.value.code == 403
         assert "cross-site" in denied.value.read().decode("utf-8")
+    finally:
+        server.close()
+
+
+def test_browser_bootstrap_does_not_admit_without_clean_signed_session():
+    server = ApplicationServer().start()
+    try:
+        with pytest.raises(HTTPError) as denied:
+            urlopen(server.bootstrap_url, timeout=30)
+        assert denied.value.code == 403
+        body = denied.value.read().decode("utf-8")
+        assert "clean" in body
+        assert "browser session" in body
+    finally:
+        server.close()
+
+
+def test_legacy_local_browser_token_does_not_bypass_clean_admission():
+    server = ApplicationServer().start()
+    try:
+        status, denied = _json(
+            server.url,
+            "/api/universal/canvas",
+            token=server.browser_session_token,
+        )
+        assert status == 403
+        assert "clean" in denied["error"]
+        assert "browser session" in denied["error"]
     finally:
         server.close()
 
@@ -2704,6 +2763,27 @@ def test_scope_transition_does_not_use_the_generic_projector_and_matches_it(
         assert status == 200
         target = next(node for node in canvas["nodes"] if node["openable"])
         generic_projector = application_server_module.project_universal_canvas
+        validate_library = (
+            universal_application_module._validate_node_library_sections
+        )
+        project_library_metadata = (
+            universal_application_module
+            ._project_node_library_catalogue_metadata
+        )
+        read_relation_projection = universal_application_module.read_relation
+        registered_interface_projection = (
+            universal_application_module._registered_canvas_interfaces
+        )
+        relation_contract_projection = (
+            universal_application_module._project_relation_definition_contract
+        )
+        open_design_tokens = (
+            universal_application_module.open_archhub_design_token_system
+        )
+        project_design_runtime = (
+            universal_application_module.project_design_system_runtime
+        )
+        project_icons = universal_application_module.project_icon_catalog
 
         def reject_generic_projection(*_args, **_kwargs):
             raise universal_application_module.InvalidCell(
@@ -2714,6 +2794,99 @@ def test_scope_transition_does_not_use_the_generic_projector_and_matches_it(
             application_server_module,
             "project_universal_canvas",
             reject_generic_projection,
+        )
+        dense_snapshot = universal_store.dense_snapshot
+
+        def reject_complete_store_materialization():
+            raise AssertionError(
+                "scope transition materialized the complete Cell Store"
+            )
+
+        monkeypatch.setattr(
+            universal_store,
+            "dense_snapshot",
+            reject_complete_store_materialization,
+        )
+
+        def reject_library_rebuild(*_args, **_kwargs):
+            raise AssertionError(
+                "scope transition rebuilt invariant Node Library metadata"
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "_validate_node_library_sections",
+            reject_library_rebuild,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "_project_node_library_catalogue_metadata",
+            reject_library_rebuild,
+        )
+
+        def reject_complete_properties_lens(snapshot, root, *args, **kwargs):
+            view = universal_registry.view_sessions[
+                universal_registry.authorization.subject_root
+            ]
+            if root == view.properties_lens_root:
+                raise AssertionError(
+                    "scope transition traversed the complete Properties lens"
+                )
+            return read_relation_projection(snapshot, root, *args, **kwargs)
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "read_relation",
+            reject_complete_properties_lens,
+        )
+
+        def require_bounded_registered_interfaces(
+            snapshot, registry, *args, **kwargs
+        ):
+            if kwargs.get("admitted_roots") is None:
+                raise AssertionError(
+                    "scope transition projected every registered interface"
+                )
+            return registered_interface_projection(
+                snapshot, registry, *args, **kwargs
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "_registered_canvas_interfaces",
+            require_bounded_registered_interfaces,
+        )
+
+        def reject_invariant_relation_contract_rebuild(*_args, **_kwargs):
+            raise AssertionError(
+                "scope transition rebuilt invariant definition contracts"
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "_project_relation_definition_contract",
+            reject_invariant_relation_contract_rebuild,
+        )
+
+        def reject_static_design_system_rebuild(*_args, **_kwargs):
+            raise AssertionError(
+                "scope transition rebuilt invariant design-system data"
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "open_archhub_design_token_system",
+            reject_static_design_system_rebuild,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "project_design_system_runtime",
+            reject_static_design_system_rebuild,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "project_icon_catalog",
+            reject_static_design_system_rebuild,
         )
         status, delta = _json(
             server.url,
@@ -2728,6 +2901,51 @@ def test_scope_transition_does_not_use_the_generic_projector_and_matches_it(
             application_server_module,
             "project_universal_canvas",
             generic_projector,
+        )
+        monkeypatch.setattr(
+            universal_store,
+            "dense_snapshot",
+            dense_snapshot,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "_validate_node_library_sections",
+            validate_library,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "_project_node_library_catalogue_metadata",
+            project_library_metadata,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "read_relation",
+            read_relation_projection,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "_registered_canvas_interfaces",
+            registered_interface_projection,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "_project_relation_definition_contract",
+            relation_contract_projection,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "open_archhub_design_token_system",
+            open_design_tokens,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "project_design_system_runtime",
+            project_design_runtime,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "project_icon_catalog",
+            project_icons,
         )
         binding = server._browser_sessions[
             server._browser_token_digest(token)
@@ -2845,6 +3063,18 @@ def test_scope_transition_fails_closed_on_base_or_subject_drift():
                 previous_projection=canvas,
                 expected_base_revision=request["revision"] - 1,
             )
+        with pytest.raises(InvalidCell, match="materialization revision"):
+            universal_application_module.project_universal_scope_transition(
+                universal_store,
+                universal_registry,
+                authentication_context=binding.context,
+                scope_materialization=replace(
+                    materialization,
+                    changed_roots=(),
+                ),
+                previous_projection=canvas,
+                expected_base_revision=request["revision"],
+            )
         with pytest.raises(InvalidCell, match="exact view revision"):
             universal_application_module.project_universal_scope_transition(
                 universal_store,
@@ -2857,8 +3087,643 @@ def test_scope_transition_fails_closed_on_base_or_subject_drift():
                 previous_projection=canvas,
                 expected_base_revision=request["revision"],
             )
+        malformed = dict(canvas)
+        malformed["catalog_sections"] = ["not-a-graph-projection"]
+        with pytest.raises(InvalidCell, match="reusable projection"):
+            universal_application_module.project_universal_scope_transition(
+                universal_store,
+                universal_registry,
+                authentication_context=binding.context,
+                scope_materialization=materialization,
+                previous_projection=malformed,
+                expected_base_revision=request["revision"],
+            )
+        malformed = dict(canvas)
+        malformed["catalog"] = ["not-a-catalogue-entry"]
+        with pytest.raises(InvalidCell, match="reusable projection"):
+            universal_application_module.project_universal_scope_transition(
+                universal_store,
+                universal_registry,
+                authentication_context=binding.context,
+                scope_materialization=materialization,
+                previous_projection=malformed,
+                expected_base_revision=request["revision"],
+            )
+        malformed = dict(canvas)
+        malformed_catalog = json.loads(json.dumps(canvas["catalog"]))
+        relation_definition = next(
+            item for item in malformed_catalog
+            if item.get("composition_contract") is not None
+        )
+        relation_definition["composition_contract"]["roles"][0][
+            "choices"
+        ] = "not-a-choice-projection"
+        malformed["catalog"] = malformed_catalog
+        with pytest.raises(InvalidCell, match="relation role"):
+            universal_application_module.project_universal_scope_transition(
+                universal_store,
+                universal_registry,
+                authentication_context=binding.context,
+                scope_materialization=materialization,
+                previous_projection=malformed,
+                expected_base_revision=request["revision"],
+            )
+        malformed = dict(canvas)
+        malformed_configuration = dict(canvas["configuration"])
+        malformed_design_system = dict(
+            malformed_configuration["design_system"]
+        )
+        malformed_design_system["tokens"] = "not-a-token-projection"
+        malformed_configuration["design_system"] = malformed_design_system
+        malformed["configuration"] = malformed_configuration
+        with pytest.raises(InvalidCell, match="design system"):
+            universal_application_module.project_universal_scope_transition(
+                universal_store,
+                universal_registry,
+                authentication_context=binding.context,
+                scope_materialization=materialization,
+                previous_projection=malformed,
+                expected_base_revision=request["revision"],
+            )
     finally:
         server.close()
+
+
+def test_parent_scope_transition_reuses_only_exact_validated_relations(
+    monkeypatch,
+):
+    import nodelang.cell_protocols as protocol_module
+
+    universal_store, universal_registry = build_universal_application(
+        resolve_map_path()
+    )
+    server = ApplicationServer(
+        universal_store=universal_store,
+        universal_registry=universal_registry,
+    ).start()
+    try:
+        token = server.browser_session_token
+        status, canvas = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        binding = server._browser_sessions[
+            server._browser_token_digest(token)
+        ]
+        target = next(node for node in canvas["nodes"] if node["openable"])
+        entered = universal_application_module._set_universal_scope_execution(
+            universal_store,
+            universal_registry,
+            target["id"],
+            expected_revision=canvas["revision"],
+            projected_canvas=canvas,
+            authentication_context=binding.context,
+        )
+        nested = universal_application_module.project_universal_scope_transition(
+            universal_store,
+            universal_registry,
+            authentication_context=binding.context,
+            scope_materialization=entered.materialization,
+            previous_projection=canvas,
+            expected_base_revision=canvas["revision"],
+        )
+        returned = universal_application_module._set_universal_scope_execution(
+            universal_store,
+            universal_registry,
+            universal_registry.canvas_root,
+            expected_revision=nested["revision"],
+            projected_canvas=nested,
+            authentication_context=binding.context,
+        )
+        materialization = returned.materialization
+        assert materialization is not None
+        assert materialization.interface_roots
+        reusable_roots = {
+            entry.relation_root
+            for entry in materialization.relation_projections
+        }
+        required_roots = {
+            *materialization.relation_roots,
+            *materialization.property_roots,
+        }
+        assert reusable_roots == required_roots
+
+        original_read_relation = universal_application_module.read_relation
+        first_read_was_reused = {}
+
+        def record_first_relation_read(snapshot, relation_root, *args, **kwargs):
+            if (
+                relation_root in required_roots
+                and relation_root not in first_read_was_reused
+            ):
+                cache = protocol_module._RELATION_PROJECTION_CACHE.get()
+                cache_key = (
+                    snapshot.revision,
+                    id(snapshot.cells),
+                    relation_root,
+                )
+                first_read_was_reused[relation_root] = (
+                    cache is not None and cache_key in cache
+                )
+            return original_read_relation(
+                snapshot, relation_root, *args, **kwargs
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "read_relation",
+            record_first_relation_read,
+        )
+        discover_interfaces = (
+            universal_application_module._scope_canvas_interface_roots
+        )
+
+        def reject_duplicate_interface_discovery(*_args, **_kwargs):
+            raise AssertionError(
+                "parent scope rediscovered already validated interfaces"
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "_scope_canvas_interface_roots",
+            reject_duplicate_interface_discovery,
+        )
+        projected = universal_application_module.project_universal_scope_transition(
+            universal_store,
+            universal_registry,
+            authentication_context=binding.context,
+            scope_materialization=materialization,
+            previous_projection=nested,
+            expected_base_revision=nested["revision"],
+        )
+        assert projected["scope"]["current"] == universal_registry.canvas_root
+        assert set(first_read_was_reused) == required_roots
+        assert all(first_read_was_reused.values())
+        monkeypatch.setattr(
+            universal_application_module,
+            "_scope_canvas_interface_roots",
+            discover_interfaces,
+        )
+        canonical = universal_application_module.project_universal_canvas(
+            universal_store,
+            universal_registry,
+            authentication_context=binding.context,
+        )
+        for field in (
+            "nodes",
+            "wires",
+            "selected_interface",
+            "selected_interfaces",
+        ):
+            assert projected[field] == canonical[field]
+
+        first_reuse = materialization.relation_projections[0]
+        first_source = first_reuse.source_cells[0]
+        forged_source = Cell(
+            first_source.id,
+            first_source.link0,
+            first_source.link1,
+            first_source.atom + b"forged",
+        )
+        forged_reuse = replace(
+            first_reuse,
+            source_cells=(forged_source, *first_reuse.source_cells[1:]),
+        )
+        forged_materialization = replace(
+            materialization,
+            relation_projections=(
+                forged_reuse,
+                *materialization.relation_projections[1:],
+            ),
+        )
+        with pytest.raises(
+            InvalidCell, match="(source Cell|fingerprint) drifted"
+        ):
+            universal_application_module.project_universal_scope_transition(
+                universal_store,
+                universal_registry,
+                authentication_context=binding.context,
+                scope_materialization=forged_materialization,
+                previous_projection=nested,
+                expected_base_revision=nested["revision"],
+            )
+    finally:
+        server.close()
+
+
+def test_scope_request_reuses_its_registered_relation_batch_seal(
+    monkeypatch,
+):
+    """One HTTP turn must not recompute a seal registered in that turn."""
+    import nodelang.cell_protocols as protocol_module
+
+    universal_store, universal_registry = build_universal_application(
+        resolve_map_path()
+    )
+    server = ApplicationServer(
+        universal_store=universal_store,
+        universal_registry=universal_registry,
+    ).start()
+    try:
+        token = server.browser_session_token
+        status, canvas = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        target = next(node for node in canvas["nodes"] if node["openable"])
+        status, entered_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(canvas, target["id"]),
+            token=token,
+        )
+        assert status == 200
+        nested = _merge_canvas_delta(canvas, entered_delta)
+
+        def reject_duplicate_batch_seal(*_args, **_kwargs):
+            raise AssertionError(
+                "scope request recomputed its registered relation batch seal"
+            )
+
+        monkeypatch.setattr(
+            protocol_module,
+            "relation_projection_fingerprint",
+            reject_duplicate_batch_seal,
+        )
+        status, returned_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(
+                nested, universal_registry.canvas_root
+            ),
+            token=token,
+        )
+        assert status == 200
+        returned = _merge_canvas_delta(nested, returned_delta)
+        assert returned["scope"]["current"] == universal_registry.canvas_root
+        assert len(returned["nodes"]) == 17
+        assert len(returned["wires"]) == 136
+    finally:
+        server.close()
+
+
+def test_top_scope_reuses_declared_endpoint_indexes_for_every_wire(
+    monkeypatch,
+):
+    universal_store, universal_registry = build_universal_application(
+        resolve_map_path()
+    )
+    snapshot = universal_store.dense_snapshot()
+    view_session = universal_registry.view_sessions[
+        universal_registry.authorization.subject_root
+    ]
+    assigned = tuple(
+        member.participant_id
+        for member in read_relation(
+            snapshot, view_session.visibility_root, budget=100_000
+        )
+        if member.role_id == universal_registry.roles["visible"]
+    )
+    original_endpoint = universal_application_module._canvas_endpoint
+    indexed_calls = []
+    unindexed_calls = []
+
+    @wraps(original_endpoint)
+    def require_endpoint_indexes(
+        snapshot,
+        registry,
+        member,
+        owner_roots=(),
+        **kwargs,
+    ):
+        if len(owner_roots) > 1:
+            record = (member.participant_id, member.incidence_id)
+            if any(
+                kwargs.get(name) is None
+                for name in (
+                    "interface_cache",
+                    "owner_interface_index",
+                    "boundary_index",
+                )
+            ):
+                unindexed_calls.append(record)
+            else:
+                indexed_calls.append(record)
+        return original_endpoint(
+            snapshot,
+            registry,
+            member,
+            owner_roots,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        universal_application_module,
+        "_canvas_endpoint",
+        require_endpoint_indexes,
+    )
+    universal_application_module._canvas_scope_for_assigned(
+        snapshot, universal_registry, assigned
+    )
+    assert indexed_calls
+    assert unindexed_calls == []
+
+
+def test_scope_canvas_reuses_declared_endpoint_indexes_for_every_wire(
+    monkeypatch,
+):
+    universal_store, universal_registry = build_universal_application(
+        resolve_map_path()
+    )
+    server = ApplicationServer(
+        universal_store=universal_store,
+        universal_registry=universal_registry,
+    ).start()
+    try:
+        token = server.browser_session_token
+        status, canvas = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        target = next(
+            node for node in canvas["nodes"]
+            if node["id"] == "gm:domain:ui"
+        )
+        original_endpoint = universal_application_module._canvas_endpoint
+        indexed_calls = []
+        unindexed_calls = []
+
+        @wraps(original_endpoint)
+        def require_endpoint_indexes(
+            snapshot,
+            registry,
+            member,
+            owner_roots=(),
+            **kwargs,
+        ):
+            if len(owner_roots) > 1:
+                record = (member.participant_id, member.incidence_id)
+                if any(
+                    kwargs.get(name) is None
+                    for name in (
+                        "interface_cache",
+                        "owner_interface_index",
+                        "boundary_index",
+                    )
+                ):
+                    unindexed_calls.append(record)
+                else:
+                    indexed_calls.append(record)
+            return original_endpoint(
+                snapshot,
+                registry,
+                member,
+                owner_roots,
+                **kwargs,
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "_canvas_endpoint",
+            require_endpoint_indexes,
+        )
+        status, _delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(canvas, target["id"]),
+            token=token,
+        )
+        assert status == 200
+        assert indexed_calls
+        assert unindexed_calls == []
+    finally:
+        server.close()
+
+
+def test_top_scope_is_read_from_the_graph_visibility_projection(
+    monkeypatch,
+):
+    store, registry = build_universal_application(resolve_map_path())
+    snapshot = store.snapshot()
+    view = next(iter(registry.view_sessions.values()))
+    visibility_members = read_relation(
+        snapshot, view.visibility_root, budget=100_000
+    )
+    indexed_relations = tuple(
+        member.participant_id for member in visibility_members
+        if member.role_id == registry.roles["relation"]
+    )
+    indexed_properties = tuple(
+        member.participant_id for member in visibility_members
+        if member.role_id == registry.roles["property"]
+    )
+    indexed_interfaces = tuple(
+        member.participant_id for member in visibility_members
+        if member.role_id == registry.assembly_protocol.role("interface")
+    )
+    index_markers = tuple(
+        member.participant_id for member in visibility_members
+        if member.role_id == registry.roles["migration"]
+    )
+    assert len(indexed_relations) == 136
+    assert len(indexed_properties) == 631
+    assigned = {
+        member.participant_id for member in visibility_members
+        if member.role_id == registry.roles["visible"]
+    }
+    canonical_interfaces = tuple(
+        str(interface["id"])
+        for interface in universal_application_module._registered_canvas_interfaces(
+            snapshot, registry
+        )
+        if interface["owner"] in assigned
+    )
+    assert indexed_interfaces == canonical_interfaces
+    assert index_markers == (
+        universal_application_module._VISIBILITY_INTERFACE_INDEX_MARKER_ROOT,
+    )
+
+    def reject_global_canvas_sweep(*_args, **_kwargs):
+        raise AssertionError("top scope swept the global canvas")
+
+    monkeypatch.setattr(
+        universal_application_module,
+        "_canvas_scope_for_assigned",
+        reject_global_canvas_sweep,
+    )
+    roots, relations, properties = (
+        universal_application_module._session_canvas_roots(
+            snapshot, registry, view
+        )
+    )
+    assert len(roots) == 17
+    assert relations == indexed_relations
+    assert properties == indexed_properties
+
+
+def test_top_scope_visibility_projection_fails_closed_on_hidden_property():
+    store, registry = build_universal_application(resolve_map_path())
+    snapshot = store.snapshot()
+    view = next(iter(registry.view_sessions.values()))
+    assigned = {
+        member.participant_id for member in read_relation(
+            snapshot, view.visibility_root, budget=100_000
+        )
+        if member.role_id == registry.roles["visible"]
+    }
+    hidden_property = next(
+        property_root
+        for property_root in universal_application_module._canvas_roots(
+            snapshot, registry
+        )[2]
+        if universal_application_module._one_for_role(
+            read_relation(snapshot, property_root, budget=8),
+            registry.roles["owner"],
+        ) not in assigned
+    )
+    patch = prepare_append_relation_members(
+        snapshot,
+        view.visibility_root,
+        ((registry.roles["property"], hidden_property),),
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision, create=patch.create, replace=patch.replace
+    )
+
+    with pytest.raises(InvalidCell, match="visibility projection"):
+        universal_application_module._session_canvas_roots(
+            store.snapshot(), registry, view
+        )
+
+
+def test_restore_admission_rejects_a_partial_visibility_projection():
+    store, registry = build_universal_application(resolve_map_path())
+    snapshot = store.snapshot()
+    view = next(iter(registry.view_sessions.values()))
+    relation_member = next(
+        member for member in read_relation(
+            snapshot, view.visibility_root, budget=100_000
+        )
+        if member.role_id == registry.roles["relation"]
+    )
+    removal = prepare_remove_relation_members(
+        snapshot,
+        view.visibility_root,
+        (relation_member.incidence_id,),
+        budget=100_000,
+    )
+    store.commit(snapshot.revision, replace=removal.replace)
+
+    with pytest.raises(
+        InvalidCell, match="persisted visibility relation projection drifted"
+    ):
+        universal_application_module._ensure_view_visibility_scope_projection(
+            store, registry, view
+        )
+
+
+def test_restore_admission_rejects_a_partial_visibility_interface_index():
+    store, registry = build_universal_application(resolve_map_path())
+    snapshot = store.snapshot()
+    view = next(iter(registry.view_sessions.values()))
+    interface_member = next(
+        member for member in read_relation(
+            snapshot, view.visibility_root, budget=100_000
+        )
+        if member.role_id == registry.assembly_protocol.role("interface")
+    )
+    removal = prepare_remove_relation_members(
+        snapshot,
+        view.visibility_root,
+        (interface_member.incidence_id,),
+        budget=100_000,
+    )
+    store.commit(snapshot.revision, replace=removal.replace)
+
+    with pytest.raises(
+        InvalidCell, match="persisted visibility interface projection drifted"
+    ):
+        universal_application_module._ensure_view_visibility_scope_projection(
+            store, registry, view
+        )
+
+
+def test_top_scope_rejects_an_interface_without_a_visible_graph_owner():
+    store, registry = build_universal_application(resolve_map_path())
+    snapshot = store.snapshot()
+    view = next(iter(registry.view_sessions.values()))
+    definition = read_definition(
+        snapshot,
+        registry.assembly_protocol,
+        registry.standard_library.definition_roots[0],
+    )
+    foreign_interface = definition.interface_roots[0]
+    visibility_members = read_relation(
+        snapshot, view.visibility_root, budget=100_000
+    )
+    assert foreign_interface not in {
+        member.participant_id for member in visibility_members
+    }
+    patch = prepare_append_relation_members(
+        snapshot,
+        view.visibility_root,
+        ((registry.assembly_protocol.role("interface"), foreign_interface),),
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision, create=patch.create, replace=patch.replace
+    )
+
+    with pytest.raises(
+        InvalidCell, match="visibility interface lacks a visible graph owner"
+    ):
+        universal_application_module._session_canvas_roots(
+            store.snapshot(), registry, view
+        )
+
+
+def test_top_scope_excludes_properties_owned_only_by_hidden_descendants():
+    universal_store, universal_registry = build_universal_application(
+        resolve_map_path()
+    )
+    snapshot = universal_store.dense_snapshot()
+    view_session = universal_registry.view_sessions[
+        universal_registry.authorization.subject_root
+    ]
+    assigned = tuple(
+        member.participant_id
+        for member in read_relation(
+            snapshot, view_session.visibility_root, budget=100_000
+        )
+        if member.role_id == universal_registry.roles["visible"]
+    )
+    visible_roots, relation_roots, property_roots = (
+        universal_application_module._canvas_scope_for_assigned(
+            snapshot, universal_registry, assigned
+        )
+    )
+    admitted_owners = set(visible_roots) | set(relation_roots)
+    projected_owners = {}
+    for property_root in property_roots:
+        members = read_relation(snapshot, property_root, budget=8)
+        owners = tuple(
+            member.participant_id for member in members
+            if member.role_id == universal_registry.roles["owner"]
+        )
+        assert len(owners) == 1
+        projected_owners[property_root] = owners[0]
+
+    hidden_properties = {
+        property_root
+        for owner_root, owned_properties
+        in universal_registry.root_properties.items()
+        if owner_root not in admitted_owners
+        for property_root in owned_properties
+    }
+    assert hidden_properties
+    assert hidden_properties.isdisjoint(property_roots)
+    assert set(projected_owners.values()).issubset(admitted_owners)
 
 
 def test_interaction_projection_rejects_missing_or_duplicate_visible_controls(
@@ -2983,12 +3848,18 @@ def test_nested_scope_reads_only_declared_relations_and_owner_properties(
     read_relation_or_none = (
         universal_application_module._relation_members_or_none
     )
+    relation_reads = set()
 
     def bounded_relation_read(current_snapshot, relation_root):
         if relation_root not in allowed:
             raise AssertionError(
                 "scope derivation read an unrelated registered relation"
             )
+        if relation_root in relation_reads:
+            raise AssertionError(
+                "scope derivation reread a declared relation"
+            )
+        relation_reads.add(relation_root)
         return read_relation_or_none(current_snapshot, relation_root)
 
     monkeypatch.setattr(
@@ -3200,6 +4071,300 @@ def test_discarding_disposable_projection_changes_no_graph_semantics():
         assert status == 200
         assert server.universal_store.revision == before
         assert {key: rebuilt[key] for key in semantic_keys} == expected
+    finally:
+        server.close()
+
+
+def test_scope_revisit_uses_only_the_exact_private_target_projection(
+    monkeypatch,
+):
+    """A revisit may reuse presentation, never authority or another identity."""
+    server = ApplicationServer().start()
+    try:
+        token = server.browser_session_token
+        status, top = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        binding = server._browser_sessions[
+            server._browser_token_digest(token)
+        ]
+        cached_scope = getattr(
+            server, "_cached_browser_scope_projection", None
+        )
+        assert callable(cached_scope)
+        retained_top = cached_scope(
+            binding,
+            top["scope"]["current"],
+            expected_lineage_revision=top["revision"],
+        )
+        assert retained_top == {
+            key: value for key, value in top.items() if key != "ok"
+        }
+        retained_top_before = copy.deepcopy(retained_top)
+
+        observed_reuse = []
+        original_transition = (
+            application_server_module.project_universal_scope_transition
+        )
+
+        def record_scope_reuse(*args, **kwargs):
+            observed_reuse.append(kwargs.get("reusable_scope_projection"))
+            return original_transition(*args, **kwargs)
+
+        monkeypatch.setattr(
+            application_server_module,
+            "project_universal_scope_transition",
+            record_scope_reuse,
+        )
+        target = next(node for node in top["nodes"] if node["openable"])
+        status, entered_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(top, target["id"]),
+            token=token,
+        )
+        assert status == 200
+        nested = _merge_canvas_delta(top, entered_delta)
+        status, parent_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(
+                nested, top["scope"]["current"]
+            ),
+            token=token,
+        )
+        assert status == 200
+        parent = _merge_canvas_delta(nested, parent_delta)
+        assert observed_reuse[0] is None
+        assert observed_reuse[1] is retained_top
+
+        canonical = server.project_interaction_canvas(binding)
+        for field in (
+            "application_root",
+            "canvas_root",
+            "authorization",
+            "catalog",
+            "catalog_sections",
+            "inspector",
+            "interaction_projection",
+            "nodes",
+            "properties",
+            "scope",
+            "selected",
+            "selected_interfaces",
+            "selection",
+            "wires",
+        ):
+            assert parent[field] == canonical[field]
+        assert parent["revision"] == canonical["revision"]
+        assert parent["interaction_projection"]["revision"] == (
+            canonical["revision"]
+        )
+        assert retained_top == retained_top_before
+    finally:
+        server.close()
+
+
+def test_scope_projection_retention_is_bounded_per_browser_session():
+    """Disposable scope acceleration has a fixed per-session memory ceiling."""
+    server = ApplicationServer().start()
+    try:
+        token = server.browser_session_token
+        status, canvas = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        binding = server._browser_sessions[
+            server._browser_token_digest(token)
+        ]
+        seed = server._browser_canvas_projections[binding.session_root]
+        with server._browser_session_lock:
+            server._browser_scope_canvas_projections = {
+                (binding.session_root, f"test:scope:{index}"): seed
+                for index in range(
+                    application_server_module._BROWSER_SCOPE_PROJECTION_LIMIT
+                )
+            }
+            server._browser_scope_canvas_identities = {
+                key: ((), (), (), ())
+                for key in server._browser_scope_canvas_projections
+            }
+
+        projection = copy.deepcopy(seed.projection)
+        projection["scope"]["current"] = "test:scope:newest"
+        projected_binding = type(seed)(
+            seed.session_root,
+            seed.subject_root,
+            seed.view_root,
+            seed.tenant_root,
+            seed.assurance_root,
+            projection,
+        )
+        scope_key = (binding.session_root, "test:scope:newest")
+        with server._browser_session_lock:
+            server._browser_scope_canvas_projections[scope_key] = (
+                projected_binding
+            )
+            server._browser_scope_canvas_identities[scope_key] = (
+                (), (), (), ()
+            )
+        server._enforce_browser_scope_projection_limit(binding.session_root)
+
+        retained = tuple(
+            key
+            for key in server._browser_scope_canvas_projections
+            if key[0] == binding.session_root
+        )
+        assert len(retained) == (
+            application_server_module._BROWSER_SCOPE_PROJECTION_LIMIT
+        )
+        assert scope_key in retained
+        assert (binding.session_root, "test:scope:0") not in retained
+        assert set(server._browser_scope_canvas_identities) == set(
+            server._browser_scope_canvas_projections
+        )
+        assert server.universal_store.revision == canvas["revision"]
+    finally:
+        server.close()
+
+
+def test_scope_projection_reuse_discards_foreign_or_unexplained_state():
+    server = ApplicationServer().start()
+    try:
+        token = server.browser_session_token
+        status, canvas = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        binding = server._browser_sessions[
+            server._browser_token_digest(token)
+        ]
+        cached_scope = getattr(
+            server, "_cached_browser_scope_projection", None
+        )
+        assert callable(cached_scope)
+        foreign_binding = type(binding)(
+            session_root=binding.session_root,
+            subject_root="test:foreign-scope-projection-subject",
+            view_root=binding.view_root,
+            tenant_root=binding.tenant_root,
+            assurance_root=binding.assurance_root,
+            context=binding.context,
+            csrf_token=binding.csrf_token,
+            interaction_projection_handle=(
+                binding.interaction_projection_handle
+            ),
+        )
+        assert cached_scope(
+            foreign_binding,
+            canvas["scope"]["current"],
+            expected_lineage_revision=canvas["revision"],
+        ) is None
+
+        before = server.universal_store.snapshot()
+        server.universal_store.commit(
+            before.revision,
+            create=(Cell(
+                "test:unexplained-scope-cache-revision",
+                NULL_CELL_ID,
+                NULL_CELL_ID,
+                b"unexplained",
+            ),),
+        )
+        assert cached_scope(
+            binding,
+            canvas["scope"]["current"],
+            expected_lineage_revision=server.universal_store.revision,
+        ) is None
+        accepted = server.universal_store.snapshot()
+        accepted_cells = dict(accepted.cells)
+        server._browser_scope_canvas_projections.clear()
+        assert server.universal_store.revision == accepted.revision
+        assert dict(server.universal_store.snapshot().cells) == accepted_cells
+    finally:
+        server.close()
+
+
+def test_parent_scope_revisit_does_not_rescan_the_global_visibility_index(
+    monkeypatch,
+):
+    """A retained parent scope remains bounded to its accepted graph region."""
+    server = ApplicationServer().start()
+    try:
+        token = server.browser_session_token
+        status, top = _json(
+            server.url, "/api/universal/canvas", token=token
+        )
+        assert status == 200
+        target = next(node for node in top["nodes"] if node["openable"])
+        status, entered_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(top, target["id"]),
+            token=token,
+        )
+        assert status == 200
+        nested = _merge_canvas_delta(top, entered_delta)
+
+        def reject_global_visibility_rescan(*_args, **_kwargs):
+            raise AssertionError(
+                "retained parent scope rescanned the global visibility index"
+            )
+
+        def reject_endpoint_index_rebuild(*_args, **_kwargs):
+            raise AssertionError(
+                "retained parent topology rebuilt endpoint indexes"
+            )
+
+        original_render_view_template = (
+            universal_application_module.render_view_template
+        )
+
+        def reject_stable_topology_rerender(
+            snapshot, protocol, template_root, values
+        ):
+            if template_root in {
+                universal_application_module.CANVAS_CARD_TEMPLATE_ROOT,
+                universal_application_module.CANVAS_PORT_TEMPLATE_ROOT,
+                universal_application_module.LIBRARY_DEFINITION_TEMPLATE_ROOT,
+            }:
+                raise AssertionError(
+                    "retained parent scope rerendered stable descriptors"
+                )
+            return original_render_view_template(
+                snapshot, protocol, template_root, values
+            )
+
+        monkeypatch.setattr(
+            universal_application_module,
+            "_visibility_scope_projection",
+            reject_global_visibility_rescan,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "_nested_scope_endpoint_indexes",
+            reject_endpoint_index_rebuild,
+        )
+        monkeypatch.setattr(
+            universal_application_module,
+            "render_view_template",
+            reject_stable_topology_rerender,
+        )
+        status, parent_delta = _json(
+            server.url,
+            "/api/universal/interaction",
+            _scope_interaction_request(
+                nested, top["scope"]["current"]
+            ),
+            token=token,
+        )
+        assert status == 200, parent_delta
+        parent = _merge_canvas_delta(nested, parent_delta)
+        assert parent["scope"]["current"] == top["scope"]["current"]
+        assert [node["id"] for node in parent["nodes"]] == [
+            node["id"] for node in top["nodes"]
+        ]
     finally:
         server.close()
 

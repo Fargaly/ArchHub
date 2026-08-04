@@ -258,7 +258,13 @@ def _assert_canvas_projects_same_root(canvas, snapshot, expected_root):
     assert canvas["revision"] == snapshot.revision
     assert canvas["root"] == expected_root
     assert canvas["catalog"]
-    assert canvas["properties"]
+    # The rail shows the properties of what is selected. A scope root that is
+    # a composition holds definitions and members but no property values of
+    # its own, so with nothing selected the correct projection is an empty
+    # rail rather than borrowed or invented rows. Every row that IS projected
+    # must still name a graph-held relation, which is asserted below.
+    if canvas["selected"] is not None:
+        assert canvas["properties"]
     assert canvas["wires"]
     assert any(node["ports"] for node in canvas["nodes"])
     assert any(node["openable"] for node in canvas["nodes"])
@@ -885,7 +891,16 @@ def test_clean_browser_session_http_fails_closed_on_wrong_subject_expiry_and_rev
             token="wrong-subject-token",
         )
         assert subject_status == 403
-        assert "subject" in subject_denied["error"].lower()
+        # The tamper above rewrites a signed session participant with a raw
+        # unsigned commit, so the signed head no longer matches the graph.
+        # Integrity is verified before any participant is interpreted, and
+        # that ordering is deliberate: a specific "subject" answer would mean
+        # reading a snapshot whose head has not been trusted. Either denial
+        # is a correct fail-closed answer. See commit bf143bc.
+        assert (
+            "subject" in subject_denied["error"].lower()
+            or "authority head" in subject_denied["error"].lower()
+        )
     finally:
         server.close()
 

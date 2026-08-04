@@ -241,6 +241,8 @@ from .clean_browser_authority import (
     CleanBrowserAuthority,
     verify_clean_browser_session,
 )
+from .clean_visual_authority import open_clean_visual_system
+from .clean_visual_projection import project_clean_visual_canvas
 from .unified_application_lens import (
     project_unified_scope,
     scope_lens_payload,
@@ -867,8 +869,13 @@ class _CleanAuthorityHttpServer:
             session.assurance_root,
         )
 
-    def _canvas(self, binding: _CleanBrowserSessionBinding) -> dict[str, object]:
-        root_id = self.clean_scope_root
+    def _canvas(
+        self,
+        binding: _CleanBrowserSessionBinding,
+        *,
+        scope_root: str | None = None,
+    ) -> dict[str, object]:
+        root_id = self.clean_scope_root if scope_root is None else scope_root
         snapshot = self.authority.store.snapshot()
         if type(root_id) is not str or root_id not in snapshot.cells:
             raise AuthorizationDenied("clean scope root is invalid")
@@ -879,96 +886,18 @@ class _CleanAuthorityHttpServer:
                 caller=self.clean_caller,
             )
         )
-        nodes = [
-            {
-                "id": node["root_id"],
-                "label": node["label"],
-                "kind": node["structural_role"],
-                "openable": bool(node["openable"]),
-                "state": node["state"],
-                "ports": node["ports"],
-            }
-            for node in lens["nodes"]
-        ]
-        wires = [
-            {
-                "id": relation["root_id"],
-                "participants": [
-                    {"role": role, "root": participant_root}
-                    for role, participant_root in relation["participants"]
-                ],
-                "source": (
-                    next(
-                        (
-                            participant_root
-                            for role, participant_root in relation["participants"]
-                            if role == "source"
-                        ),
-                        None,
-                    )
-                ),
-                "target": (
-                    next(
-                        (
-                            participant_root
-                            for role, participant_root in relation["participants"]
-                            if role == "target"
-                        ),
-                        None,
-                    )
-                ),
-                "nary": len(relation["participants"]) > 2,
-                "kind": relation["properties"].get("kind"),
-                "reason": relation["properties"].get("reason"),
-                "properties": dict(relation["properties"]),
-            }
-            for relation in lens["relations"]
-        ]
-        catalog = [
-            {
-                "id": item["root_id"],
-                "name": item["name"],
-                "version": item["version"],
-                "kind": item["lifecycle"],
-            }
-            for item in lens["catalogue"]
-        ]
-        properties = [
-            {
-                "relation": node["root_id"],
-                "node": node["root_id"],
-                "name": prop["name"],
-                "value": prop["value"],
-            }
-            for node in lens["nodes"]
-            for prop in node["properties"]
-        ]
-        bindings = [
-            {
-                "interaction": "scope:%s" % node["id"],
-                "control": node["id"],
-                "event": "open",
-            }
-            for node in nodes if node["openable"]
-        ]
-        return {
-            "graph_id": self.authority.manifest.graph_id,
-            "revision": snapshot.revision,
-            "root": root_id,
-            "nodes": nodes,
-            "wires": wires,
-            "catalog": catalog,
-            "properties": properties,
-            "viewport": {"pan_x": 0.0, "pan_y": 0.0, "zoom": 1.0},
-            "interaction_projection": {
-                "revision": snapshot.revision,
-                "bindings": bindings,
-            },
-            "authorization": {
-                "subject": binding.subject_root,
-                "browser_sessions": [{"root": binding.session_root}],
-            },
-        }
+        visual = open_clean_visual_system(
+            self.clean_authority,
+            caller=self.clean_caller,
+        )
+        return project_clean_visual_canvas(
+            self.clean_authority,
+            visual,
+            lens,
+            caller=self.clean_caller,
+            session_root=binding.session_root,
+            subject_root=binding.subject_root,
+        )
 
     def _touch_gesture_revision(self) -> int:
         snapshot = self.authority.store.snapshot()
@@ -1069,6 +998,24 @@ class _CleanAuthorityHttpServer:
                             })
                             return
                         payload = owner._canvas(binding)
+                        interaction = body.get("interaction")
+                        control = body.get("control")
+                        event = body.get("event")
+                        scope_root = None
+                        if (
+                            type(interaction) is str
+                            and type(control) is str
+                            and interaction == "scope:%s" % control
+                            and event == "open"
+                            and any(
+                                item["control"] == control
+                                and item["interaction"] == interaction
+                                and item["event"] == event
+                                for item in payload["interaction_projection"]["bindings"]
+                            )
+                        ):
+                            scope_root = control
+                        payload = owner._canvas(binding, scope_root=scope_root)
                         self._json(200, {"ok": True, **payload, "accepted_revision": revision})
                         return
                     if self.path == "/api/universal/browser-handoff":

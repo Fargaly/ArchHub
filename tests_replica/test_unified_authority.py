@@ -2267,3 +2267,33 @@ def test_property_predecessor_sentinel_holds_only_while_one_mint_site_exists():
         "the sentinel is no longer enforced at a single construction site: "
         "%r" % foreign
     )
+
+
+def test_a_property_cannot_be_recorded_as_its_own_predecessor(monkeypatch):
+    """The runtime guard must fail a court if anyone deletes it.
+
+    A property naming itself is how a reader learns it replaced nothing, so
+    a real predecessor edge must never be a self-loop. _new_id returns a
+    fresh identity today, which means the guard cannot fire in normal use and
+    nothing would notice its removal. Its value is entirely in the future:
+    the moment property roots become derived, content-addressed or reused, it
+    is load-bearing, and that is exactly when an untested raise is most
+    likely to have been quietly dropped in a refactor.
+
+    The mint is forced to collide with the predecessor rather than waiting
+    for a scenario that cannot occur.
+    """
+    authority = _authority()
+    collision = "00000000-0000-4000-8000-00000000dead"
+    monkeypatch.setattr(
+        unified_authority_module, "_new_id", lambda: collision
+    )
+    with pytest.raises(InvalidCell, match="cannot be its own predecessor"):
+        unified_authority_module._build_property(
+            authority,
+            "status",
+            "WIP",
+            owner_root=authority.manifest.application_root,
+            predecessor_root=collision,
+        )
+

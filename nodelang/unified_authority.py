@@ -3956,8 +3956,35 @@ def revise_definition(
     current_revision = _definition_revision_root(
         authority, snapshot, definition_root
     )
+    # Evidence is what a revision rests on, not something the reviser
+    # restates. A caller revising a contract does not re-supply the source a
+    # definition was imported from, so building the new revision from the
+    # caller's spec alone silently drops it and the definition loses its
+    # provenance at the first revision. The request digest deliberately stays
+    # the caller's intent, so replaying one command id still compares equal.
+    carried_evidence = tuple(
+        member.participant_id
+        for member in read_relation(
+            snapshot, current_revision, budget=COMMAND_BUDGET
+        )
+        if member.role_id == authority.role("evidence")
+    )
     new_revision, _, revision_cells = _build_definition_revision(
-        authority, spec, previous_revision_root=current_revision
+        authority,
+        _definition_spec(
+            name,
+            version,
+            lifecycle,
+            defaults,
+            parameters,
+            interfaces,
+            rules,
+            presentation,
+            courts,
+            provenance,
+            carried_evidence,
+        ),
+        previous_revision_root=current_revision,
     )
     current_members = tuple(
         member

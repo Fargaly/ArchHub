@@ -16,8 +16,10 @@ from nodelang.unified_authority import (
     composition_root,
     create_unified_authority,
     read_contained_scope,
+    read_definition,
     read_instance,
     read_relation_node,
+    revise_definition,
 )
 from nodelang.universal_cell import CellStore, InvalidCell
 
@@ -304,3 +306,49 @@ def test_specification_digest_and_executable_html_fail_closed_without_writes():
 
     assert authority.store.revision == revision
     assert len(authority.store.snapshot().cells) == count
+
+
+def test_revising_an_imported_definition_keeps_the_evidence_it_rests_on():
+    """Evidence is what a revision rests on, not something a reviser restates.
+
+    An imported definition names the source it came from. Someone revising a
+    contract does not re-supply that source, so a revision built from the
+    caller's spec alone drops it, and the definition loses its provenance at
+    the first edit -- silently, because nothing else reads it back. This
+    revises supplying no contracts at all, which is the weakest possible
+    caller, and still requires the evidence to survive.
+    """
+    authority = _authority()
+    caller = _Caller(authority)
+    grand_map_root = composition_root(authority, "Grand Map", caller=caller)
+    source = _source()
+    imported = import_requirement_graph(
+        authority,
+        source_bytes=source,
+        expected_sha256=hashlib.sha256(source).hexdigest(),
+        caller=caller,
+        command_id=_command_id("import-before-evidence-carry"),
+    )
+    definition_root = read_instance(
+        authority,
+        imported.requirement_roots["brain_attention"],
+        scope_root=grand_map_root,
+        caller=caller,
+    )["definition"]
+    before = read_definition(authority, definition_root, caller=caller)
+    assert before.evidence_roots, (
+        "an imported definition should rest on its source evidence"
+    )
+
+    revise_definition(
+        authority,
+        definition_root,
+        before.name,
+        caller=caller,
+        command_id=_command_id("revise-imported-definition-v2"),
+        version=before.version + "-carry",
+    )
+
+    after = read_definition(authority, definition_root, caller=caller)
+    assert after.revision_root != before.revision_root
+    assert after.evidence_roots == before.evidence_roots

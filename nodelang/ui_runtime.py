@@ -1609,6 +1609,11 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const csrfToken=document.querySelector('meta[name="archhub-csrf"]')?.content;
     const requestHeaders={'Content-Type':'application/json'};
     if (csrfToken) requestHeaders['X-ArchHub-CSRF']=csrfToken;
+    // The session travels in a header from origin-scoped storage, never a
+    // cookie: a cookie authenticates every request that carries it and is
+    // shared with every other service on this host, port regardless.
+    const sessionToken=window.__archhubSession?.token;
+    if (sessionToken) requestHeaders['X-ArchHub-Session']=sessionToken;
     const response = await fetch(path, {
       method:path.endsWith('/canvas') ? 'GET' : 'POST',
       headers:requestHeaders,

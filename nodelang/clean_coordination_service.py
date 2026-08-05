@@ -8,6 +8,7 @@ import urllib.error
 import sys
 import threading
 import time
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from typing import Type
@@ -111,18 +112,31 @@ class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
 
 def build_service(
     host: str = "127.0.0.1",
-    port: int = 8474,
     *,
+    port: int,
     handler: Type[CleanCoordinationRequestHandler] = (
         CleanCoordinationRequestHandler
     ),
+    runtime_root,
 ) -> tuple[_CoordinationServer, object]:
     if host != "127.0.0.1" or type(port) is not int or not 1024 <= port <= 65535:
         raise InvalidCell("clean coordination bind address is invalid")
     provider = WindowsDpapiSigningKeyProvider(
         WindowsDpapiSigningKeyProvider.default_path()
     )
-    location = open_current_authority(default_runtime_root(), provider)
+    # The root is REQUIRED, with no default here. A library that defaults
+    # to the founder's live generation makes owning production the thing
+    # that happens when a caller says nothing -- and the owner fence cannot
+    # help, because a court that acquires a free live lock, asserts, and
+    # exits was a perfectly legitimate owner for its whole short life, and
+    # took the founder's service down when it left. Only the entry point
+    # below is allowed to name the live graph.
+    # The port is required for the same reason the root is, and the pair
+    # is worse than either alone: a caller who says nothing would take its
+    # own graph and the founder's port. During any restart window that
+    # binds 8474 successfully, backed by a throwaway fixture, and every
+    # agent reaching it enrols against a temp directory and is told ok.
+    location = open_current_authority(runtime_root, provider)
     try:
         key_store = WindowsDpapiCallerKeyStore(
             WindowsDpapiCallerKeyStore.default_path()
@@ -214,6 +228,11 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8474)
     parser.add_argument("--canvas-port", type=int, default=8475)
     parser.add_argument(
+        "--root",
+        default="",
+        help="runtime root to own (defaults to the founder's runtime)",
+    )
+    parser.add_argument(
         "--no-canvas",
         action="store_true",
         help="serve coordination only (a graph without canvas subsystems)",
@@ -231,7 +250,13 @@ def main() -> int:
         )
         return 0
     try:
-        service, location = build_service(args.host, args.port)
+        service, location = build_service(
+            args.host,
+            port=args.port,
+            runtime_root=(
+                Path(args.root) if args.root else default_runtime_root()
+            ),
+        )
     except DatabaseOwnerConflict as exc:
         print("clean coordination service cannot own the graph: %s" % exc,
               file=sys.stderr)

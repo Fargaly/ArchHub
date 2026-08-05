@@ -799,6 +799,134 @@ class _CleanAuthorityHttpServer:
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
 
+    def _clean_sign_in(self):
+        """Mint one bounded browser session for an explicit same-origin POST.
+
+        Only reached from a POST carrying a custom header, which a
+        cross-origin page cannot send without a preflight this server never
+        answers. The token and CSRF go back in the response body -- readable
+        only by same-origin script -- and never into a cookie, because
+        cookies are ambient and are not port-scoped.
+        """
+        import secrets as _secrets
+        from .clean_browser_authority import issue_clean_browser_session
+        token = _secrets.token_urlsafe(24)
+        csrf = _secrets.token_urlsafe(24)
+        with self._mutation_lock:
+            issued = issue_clean_browser_session(
+                self.clean_authority,
+                self.clean_browser_authority,
+                token=token,
+                csrf_token=csrf,
+                lifetime_seconds=3600.0,
+                caller=self.clean_caller,
+                command_id=str(uuid.uuid4()),
+            )
+        return {
+            "ok": True,
+            "token": token,
+            "csrf": csrf,
+            "session": issued.root_id,
+            "revision": issued.revision,
+        }
+
+    def _clean_page(self):
+        """Serve the page. Pure: no graph write, no session, no cookie.
+
+        The bootstrap script reuses a session already held in ORIGIN-scoped
+        storage -- unlike cookies, that is scoped to this exact port -- and
+        signs in only when it has none or the one it has no longer answers.
+        Reloading therefore costs the graph nothing after the first sign-in.
+        """
+        from .ui_runtime import UNIVERSAL_CANVAS_SCRIPT
+        bootstrap = """
+(async () => {
+  const KEY='archhub.session.v1';
+  function stored() {
+    try { return JSON.parse(localStorage.getItem(KEY) || 'null'); }
+    catch (error) { return null; }
+  }
+  function keep(value) {
+    try { localStorage.setItem(KEY, JSON.stringify(value)); }
+    catch (error) { /* private mode: session lives for this page only */ }
+  }
+  async function answers(session) {
+    if (!session || !session.token) return false;
+    try {
+      const probe = await fetch('/api/universal/canvas', {
+        headers: {
+          'X-ArchHub-Session': session.token,
+          'X-ArchHub-CSRF': session.csrf,
+        },
+      });
+      return probe.ok;
+    } catch (error) { return false; }
+  }
+  let session = stored();
+  if (!await answers(session)) {
+    const minted = await fetch('/api/universal/session', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ArchHub-Sign-In': '1',
+      },
+      body: '{}',
+    });
+    if (!minted.ok) {
+      document.body.dataset.archhubSignIn = 'refused';
+      return;
+    }
+    session = await minted.json();
+    keep(session);
+  }
+  window.__archhubSession = session;
+  const meta = document.querySelector('meta[name="archhub-csrf"]');
+  if (meta) meta.content = session.csrf;
+  document.body.dataset.archhubSignIn = 'ready';
+  const canvas = document.createElement('script');
+  canvas.textContent = document.getElementById('archhub-canvas-source').text;
+  document.body.append(canvas);
+})();
+"""
+        page = (
+            "<!doctype html><html><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" "
+            "content=\"width=device-width,initial-scale=1\">"
+            "<meta name=\"archhub-csrf\" content=\"\">"
+            "<title>ArchHub</title>"
+            "<style>"
+            "html,body{margin:0;height:100%%;font-family:Inter,system-ui,"
+            "sans-serif;background:#191919;color:#e8e6e3;}"
+            ".app{display:grid;grid-template-columns:48px 280px 1fr 320px;"
+            "height:100vh;}"
+            ".icon-rail{border-right:1px solid #2c2c2a;}"
+            ".sidebar{border-right:1px solid #2c2c2a;overflow:auto;}"
+            ".workspace{position:relative;display:flex;"
+            "flex-direction:column;}"
+            ".canvas-toolbar{display:flex;gap:8px;align-items:center;"
+            "padding:8px 12px;border-bottom:1px solid #2c2c2a;}"
+            ".canvas{position:relative;flex:1;overflow:hidden;}"
+            ".canvas-stage{position:absolute;inset:0;}"
+            ".inspector{border-left:1px solid #2c2c2a;overflow:auto;"
+            "padding:12px;}"
+            "</style></head><body>"
+            "<div class=\"app\">"
+            "<nav class=\"icon-rail\"></nav>"
+            "<aside class=\"sidebar\"><div class=\"library-panel\">"
+            "</div></aside>"
+            "<main class=\"workspace\">"
+            "<div class=\"canvas-toolbar\"></div>"
+            "<div class=\"canvas\" data-pan-surface=\"true\">"
+            "<div class=\"canvas-stage\"></div></div>"
+            "</main>"
+            "<aside class=\"inspector\"></aside>"
+            "</div>"
+            "<script type=\"text/plain\" id=\"archhub-canvas-source\">"
+            "%s</script>"
+            "<script>%s</script></body></html>"
+        ) % (UNIVERSAL_CANVAS_SCRIPT, bootstrap)
+        return page
+
     @property
     def url(self) -> str:
         host, port = self.httpd.server_address[:2]
@@ -1017,6 +1145,13 @@ class _CleanAuthorityHttpServer:
                 self.wfile.write(raw)
 
             def _token(self) -> str:
+                # Header only, deliberately. A cookie would be ambient
+                # authority -- any request carrying it authenticates itself
+                # -- and cookies are NOT port-scoped, so every other
+                # loopback service on this host shares the jar and could
+                # both read the token and set one of its own. The browser
+                # keeps its session in origin-scoped storage and sends it
+                # here explicitly.
                 token = self.headers.get("X-ArchHub-Session", "")
                 if type(token) is not str:
                     return ""
@@ -1049,6 +1184,21 @@ class _CleanAuthorityHttpServer:
                         "ok": False,
                         "error": "clean browser session is required",
                     })
+                    return
+                if self.path in ("/", "/index.html"):
+                    # Pure. A safe method must not write: any local page
+                    # could force a signed graph command with an <img> tag,
+                    # and every reload would mint another session in an
+                    # append-only graph. The page carries the bootstrap
+                    # script; signing in is an explicit POST.
+                    body = owner._clean_page().encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type",
+                                     "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
                     return
                 if self.path != "/api/universal/canvas":
                     self._json(404, {"ok": False, "error": "not found"})
@@ -1204,6 +1354,20 @@ class _CleanAuthorityHttpServer:
                             "receipt": result.receipt_root,
                             "replayed": result.replayed,
                         })
+                        return
+                    if self.path == "/api/universal/session":
+                        # The custom header is the same-origin proof: a
+                        # cross-origin page cannot send it without a
+                        # preflight this server never answers, so no other
+                        # site can make the founder's browser sign in.
+                        if not self.headers.get("X-ArchHub-Sign-In"):
+                            self._json(403, {
+                                "ok": False,
+                                "error": "sign-in requires a same-origin "
+                                         "request",
+                            })
+                            return
+                        self._json(200, owner._clean_sign_in())
                         return
                     if self.path == "/api/universal/browser-handoff":
                         self._json(403, {

@@ -2168,3 +2168,31 @@ def test_wire_is_an_explicit_editable_relation_node_and_survives_restart(tmp_pat
     }
     assert reopened_store.revision == revision
     reopened_store.close()
+
+
+def test_property_predecessor_sentinel_holds_only_while_one_mint_site_exists():
+    """A property naming itself means it replaced nothing.
+
+    That reading is only sound while every property root is freshly minted,
+    so no property can legitimately be its own predecessor. The sentinel is
+    load-bearing and the invariant behind it is not otherwise stated: a
+    second mint site, or any path that reuses a property root, turns
+    "replaced nothing" into a claim that is silently false. This pins the
+    invariant to the source so that change fails here instead of in a
+    reader that trusts the sentinel.
+    """
+    import pathlib
+
+    source = pathlib.Path(
+        unified_authority_module.__file__
+    ).read_text(encoding="utf-8")
+    mint_sites = [
+        line.strip()
+        for line in source.splitlines()
+        if "property_root = _new_id()" in line
+    ]
+    assert len(mint_sites) == 1, (
+        "property roots must come from exactly one mint site or "
+        "predecessor_root == property_root stops meaning 'replaced nothing': "
+        "%r" % mint_sites
+    )

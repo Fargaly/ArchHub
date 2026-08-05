@@ -1189,3 +1189,109 @@ def test_clean_browser_session_http_fails_closed_on_invalid_authority_head_tampe
         assert "authority head" in denied["error"].lower()
     finally:
         server.close()
+
+
+def test_unauthenticated_page_loads_leave_the_graph_unchanged(tmp_path):
+    """A safe method must not write, and nothing courted that it did not.
+
+    The first page route minted a browser session on GET "/". Any local
+    page could then force a signed graph command with an <img> tag, and
+    every ordinary reload left another session in an append-only graph --
+    at ten requests a second, tens of thousands of sessions and revisions
+    an hour, with revision churn turning other agents' expected_revision
+    into stale-base failures. The founder's live graph carries two such
+    ghosts from the hour that design existed.
+
+    Every court asserted that GET "/" returns the right page. None
+    asserted that it does NOT WRITE, which is why a safe-method violation
+    survived a suite that was otherwise strict -- "does not mutate" is
+    not a property anyone thinks to court. This is that property.
+    """
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-page-purity",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        before = built.location.authority.store.snapshot()
+        for _ in range(5):
+            request = Request(server.url + "/")
+            with urlopen(request, timeout=60) as response:
+                assert response.status == 200
+                body = response.read().decode("utf-8")
+            assert "archhub-canvas-source" in body, (
+                "the page must carry the client source it bootstraps"
+            )
+            assert "Set-Cookie" not in {
+                name for name, _value in response.getheaders()
+            }, (
+                "the page must not hand out ambient authority: cookies are "
+                "not port-scoped, so every other loopback service on this "
+                "host shares the jar"
+            )
+        after = built.location.authority.store.snapshot()
+        assert after.revision == before.revision, (
+            "unauthenticated page loads wrote to the graph: revision %s -> "
+            "%s" % (before.revision, after.revision)
+        )
+        assert set(after.cells) == set(before.cells), (
+            "unauthenticated page loads added cells to the graph"
+        )
+    finally:
+        server.close()
+        built.location.authority.store.close()
+
+
+def test_signing_in_requires_a_same_origin_request(tmp_path):
+    """Minting is explicit, and a cross-origin page cannot reach it.
+
+    The custom header is the proof of same origin: a page on another
+    site cannot send it without a preflight this server never answers.
+    Without that gate the explicit POST would simply be the drive-by
+    mint again with one more step.
+    """
+    built, provider = _provision_clean_runtime(
+        tmp_path,
+        root_name="clean-server-sign-in-gate",
+    )
+    server = _start_clean_server(
+        built,
+        provider,
+        scope_root=built.grand_map.root_id,
+    )
+    try:
+        before = built.location.authority.store.snapshot().revision
+        bare = Request(
+            server.url + "/api/universal/session",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(HTTPError) as denied:
+            urlopen(bare, timeout=60)
+        assert denied.value.code == 403
+        assert built.location.authority.store.snapshot().revision == before, (
+            "a refused sign-in still wrote to the graph"
+        )
+
+        allowed = Request(
+            server.url + "/api/universal/session",
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "X-ArchHub-Sign-In": "1",
+            },
+            method="POST",
+        )
+        with urlopen(allowed, timeout=60) as response:
+            issued = json.loads(response.read().decode("utf-8"))
+        assert issued["ok"] is True
+        assert issued["token"] and issued["csrf"]
+        assert issued["token"] != issued["csrf"]
+    finally:
+        server.close()
+        built.location.authority.store.close()

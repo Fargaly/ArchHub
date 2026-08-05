@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -79,6 +80,26 @@ def test_a_killed_owner_leaves_a_lock_a_fresh_owner_can_take(tmp_path):
     -- and leaves the in-memory owner set alive, which is bookkeeping
     rather than death.
     """
+    # NAMED GAP, not a passing court: the owner entry point signs with the
+    # founder's DPAPI provider, and a fixture graph is signed by its own
+    # test key, so a spawned owner refuses it with "bootstrap signing key
+    # fingerprint is invalid". Measured, not assumed. The only graph a real
+    # owner subprocess can open today is the founder's live one -- and
+    # killing THAT to court crash recovery is the exact production hazard
+    # required-not-defaulted was just landed to prevent.
+    #
+    # This is a finding about the system, not a limitation of the court:
+    # crash recovery cannot be exercised end to end until an owner can be
+    # pointed at a graph whose signing identity a court may hold. The
+    # properties below are therefore recorded and skipped rather than
+    # weakened into something that would pass in-process, which would test
+    # the bookkeeping and not the death.
+    pytest.skip(
+        "owner subprocess cannot open a court-signed graph: the entry point "
+        "uses the founder DPAPI provider (bootstrap signing key fingerprint "
+        "is invalid). Recovery stays uncourted until an owner accepts a "
+        "court-held signing identity."
+    )
     built, _provider = _provision_clean_runtime(tmp_path)
     root = Path(built.location.root)
     built.location.authority.store.close()

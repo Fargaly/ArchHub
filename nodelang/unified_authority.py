@@ -1289,11 +1289,6 @@ def create_unified_authority(
             ("optional-role", "authority"),
             ("optional-role", "lifecycle"),
             ("optional-role", "history"),
-            # A revised property names the one it replaced. Optional because
-            # a first-written property has no predecessor; the shape already
-            # admits history, and this is the link that makes that history
-            # walkable one step at a time.
-            ("optional-role", "previous-revision"),
         ),
         "map": (
             ("required-role", "conforms-to"),
@@ -2184,8 +2179,13 @@ def _build_property(
         # A revised property is a new cell. Naming the property it replaced
         # keeps the row walkable backwards; without it the old value is
         # still in the graph but nothing says the new one succeeded it.
+        # Recorded under "history", which the released property shape already
+        # declares optional. Adding a role to that shape would only exist in
+        # newly bootstrapped graphs: validate_composition reads the shape from
+        # the graph, and there is no protocol re-release path, so an
+        # already-bootstrapped graph would reject every revised property.
         optional_members.append(
-            (authority.role("previous-revision"), predecessor_root)
+            (authority.role("history"), predecessor_root)
         )
     property_root = _new_id()
     return property_root, (
@@ -2351,7 +2351,7 @@ def _property_identities(
         # predecessor yet names itself rather than None: the identity must
         # always resolve to a cell that exists.
         predecessor_root = _optional_single_member(
-            snapshot, property_root, authority.role("previous-revision")
+            snapshot, property_root, authority.role("history")
         ) or property_root
         identities[key] = {
             "property_root": property_root,

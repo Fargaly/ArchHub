@@ -32,26 +32,6 @@ def _wire_color(properties: Mapping[str, object]) -> str:
     return "#5ac8fa"
 
 
-def _node_color(node: Mapping[str, object]) -> str:
-    lifecycle = node.get("lifecycle")
-    if lifecycle == "published":
-        return "#7bd389"
-    if lifecycle == "shared":
-        return "#f2c14e"
-    return "#d97757"
-
-
-def _node_positions(nodes: list[dict[str, object]]) -> None:
-    columns = 3
-    x0 = 96
-    y0 = 88
-    dx = 280
-    dy = 180
-    for index, node in enumerate(nodes):
-        node["x"] = x0 + (index % columns) * dx
-        node["y"] = y0 + (index // columns) * dy
-
-
 def _toolbar_projection(projection: Mapping[str, object]) -> dict[str, object]:
     return {
         "trail": (
@@ -215,7 +195,18 @@ def project_clean_visual_canvas(
             "connection_count": len(item["ports"]),
             "selected": item["root_id"] in selected_roots,
             "focused": item["root_id"] == selected_root,
-            "color": _node_color(item),
+            # Appearance is whatever the definition declares, carried with
+            # the cell that declares it. A Python default here would be the
+            # fallback the graph-held presentation court exists to catch.
+            "color": item.get("resolved_color"),
+            "icon": item.get("icon"),
+            "color_token": item.get("color_token"),
+            "resolved_color": item.get("resolved_color"),
+            "position": item.get("position"),
+            "presentation_root": item.get("presentation_root"),
+            "icon_root": item.get("icon_root"),
+            "color_token_root": item.get("color_token_root"),
+            "position_root": item.get("position_root"),
             # Each node carries its own graph-held property rows so the rail
             # and the node agree without a second projection pass.
             "properties": _property_rows([
@@ -267,7 +258,11 @@ def project_clean_visual_canvas(
             )
             node["ports"].append(port_projection)
         nodes.append(node)
-    _node_positions(nodes)
+    for node in nodes:
+        position = node.get("position")
+        if isinstance(position, Mapping):
+            node["x"] = position.get("x")
+            node["y"] = position.get("y")
 
     wires = []
     for relation in lens["relations"]:

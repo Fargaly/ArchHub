@@ -56,9 +56,17 @@ class LensNode:
     properties: tuple[LensProperty, ...]
     ports: tuple[LensPort, ...]
     openable: bool
-    # Root of the definition's presentation contract, so a rendered node can
-    # name the cell its appearance was declared in.
+    # Appearance is declared in the definition's presentation contract. It is
+    # carried with the root of each declaring cell so a rendered node can name
+    # where every visible attribute came from instead of inventing it.
     presentation_root: str | None = None
+    icon: object = None
+    color_token: object = None
+    resolved_color: object = None
+    position: object = None
+    icon_root: str | None = None
+    color_token_root: str | None = None
+    position_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +255,13 @@ def project_unified_scope(
             raise InvalidCell("instance lens projection is invalid")
         definition = read_definition(authority, definition_root, caller=caller)
         presentation = definition.contracts["presentation"]
+        presentation_root = definition.contract_roots.get("presentation")
+        presentation_identities = (
+            property_identities(
+                authority, authority.store.snapshot(), presentation_root
+            )
+            if presentation_root else {}
+        )
         rules = definition.contracts["rules"]
         label = presentation.get("label", definition.name)
         if type(label) is not str or not label.strip():
@@ -275,7 +290,14 @@ def project_unified_scope(
             ),
             tuple(sorted(ports[root], key=lambda item: item.relation_root)),
             True,
-            definition.contract_roots.get("presentation"),
+            presentation_root,
+            presentation.get("icon"),
+            presentation.get("token"),
+            presentation.get("color"),
+            presentation.get("position"),
+            presentation_identities.get("icon", {}).get("property_root"),
+            presentation_identities.get("token", {}).get("property_root"),
+            presentation_identities.get("position", {}).get("property_root"),
         ))
     return UnifiedScopeLens(
         authority.manifest.graph_id,

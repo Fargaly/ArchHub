@@ -33,6 +33,11 @@ class LensProperty:
     owner_root: str | None = None
     name_root: str | None = None
     value_root: str | None = None
+    # Continuity: where this row sits in history and what it replaced. Carried
+    # on every row, not only revised ones, so a reader never has to guess
+    # whether absence means "unchanged" or "not reported".
+    history_root: str | None = None
+    predecessor_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +243,8 @@ def _properties(
             identity.get("owner"),
             identity.get("name_root"),
             identity.get("value_root"),
+            identity.get("history_root"),
+            identity.get("predecessor_root"),
         ))
     return tuple(projected)
 

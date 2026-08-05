@@ -1289,6 +1289,11 @@ def create_unified_authority(
             ("optional-role", "authority"),
             ("optional-role", "lifecycle"),
             ("optional-role", "history"),
+            # A revised property names the one it replaced. Optional because
+            # a first-written property has no predecessor; the shape already
+            # admits history, and this is the link that makes that history
+            # walkable one step at a time.
+            ("optional-role", "previous-revision"),
         ),
         "map": (
             ("required-role", "conforms-to"),
@@ -2159,6 +2164,7 @@ def _build_property(
     owner_root: str,
     constraints_value: object = None,
     editor_value: object = None,
+    predecessor_root: str | None = None,
 ) -> tuple[str, tuple[Cell, ...]]:
     name_root, name_cell = _build_scalar_leaf(key)
     value_root, value_cells = _build_data_value(authority, value)
@@ -2174,6 +2180,13 @@ def _build_property(
         editor_root, editor_cells = _build_data_value(authority, editor_value)
         optional_cells.extend(editor_cells)
         optional_members.append((authority.role("editor"), editor_root))
+    if predecessor_root is not None:
+        # A revised property is a new cell. Naming the property it replaced
+        # keeps the row walkable backwards; without it the old value is
+        # still in the graph but nothing says the new one succeeded it.
+        optional_members.append(
+            (authority.role("previous-revision"), predecessor_root)
+        )
     property_root = _new_id()
     return property_root, (
         name_cell,
@@ -2331,13 +2344,38 @@ def _property_identities(
         key = _decode_scalar_leaf(snapshot, name_root)
         if type(key) is not str:
             continue
+        # A displayed value must be traceable to what it replaced, not only
+        # to the cell it currently lives in. history_root anchors the row to
+        # the graph's history spine; predecessor_root names the property this
+        # one succeeded, so a reader can walk backwards. A property with no
+        # predecessor yet names itself rather than None: the identity must
+        # always resolve to a cell that exists.
+        predecessor_root = _optional_single_member(
+            snapshot, property_root, authority.role("previous-revision")
+        ) or property_root
         identities[key] = {
             "property_root": property_root,
             "owner": relation_root,
             "name_root": name_root,
             "value_root": value_root,
+            "history_root": authority.manifest.history_root,
+            "predecessor_root": predecessor_root,
         }
     return identities
+
+
+def _optional_single_member(
+    snapshot: Snapshot,
+    relation_root: str,
+    role_id: str,
+) -> str | None:
+    """The one participant for a role, or None when the role is absent."""
+    found = tuple(
+        member.participant_id
+        for member in read_relation(snapshot, relation_root, budget=1024)
+        if member.role_id == role_id
+    )
+    return found[0] if len(found) == 1 else None
 
 
 def _definition_revision_root(
@@ -4472,6 +4510,7 @@ def revise_instance(
             )
 
     retained_members: list[tuple[str, str]] = []
+    superseded: dict[str, str] = {}
     cells: list[Cell] = []
     for member in instance.members:
         if member.role_id == authority.role("conforms-to"):
@@ -4488,6 +4527,9 @@ def revise_instance(
             raise InvalidCell("instance override name is invalid")
         if name not in normalized:
             retained_members.append((member.role_id, property_root))
+        else:
+            # The property this revision replaces, so the new one can name it.
+            superseded[name] = property_root
     for key, value in normalized.items():
         constraints, editor = _validated_parameter_metadata(
             key, mutable[key], value
@@ -4499,6 +4541,7 @@ def revise_instance(
             owner_root=instance_root,
             constraints_value=constraints,
             editor_value=editor,
+            predecessor_root=superseded.get(key),
         )
         cells.extend(property_cells)
         retained_members.append((authority.role("override"), property_root))

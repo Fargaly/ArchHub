@@ -12,6 +12,7 @@ from nodelang.requirement_graph_import import (
     import_requirement_graph,
     import_specification_graph,
 )
+import nodelang.unified_authority as unified_authority_module
 from nodelang.unified_authority import (
     composition_root,
     create_unified_authority,
@@ -19,6 +20,7 @@ from nodelang.unified_authority import (
     read_definition,
     read_instance,
     read_relation_node,
+    relation_members,
     revise_definition,
 )
 from nodelang.universal_cell import CellStore, InvalidCell
@@ -352,3 +354,97 @@ def test_revising_an_imported_definition_keeps_the_evidence_it_rests_on():
     after = read_definition(authority, definition_root, caller=caller)
     assert after.revision_root != before.revision_root
     assert after.evidence_roots == before.evidence_roots
+
+
+def test_a_graph_bootstrapped_before_scope_panels_can_still_be_given_them():
+    """The importer runs once, at generation creation.
+
+    A graph imported before the importer seeded panel applicability will
+    never have it, and nothing will say so: the inspector simply projects no
+    panels, forever. That is the same fixture-versus-production divergence as
+    declaring a protocol the live graph would reject, with the alarm removed
+    -- rejection is loud and fails closed, absence is silent and fails open.
+
+    Whatever the importer seeds must therefore be reachable on a graph that
+    predates the seeding. The governance import does not seed panels, so its
+    scope IS such a graph, and this proves the migration mints there -- not
+    merely that it tolerates a scope the importer already seeded.
+    revise_definition cannot do this itself, because it is given a definition
+    and cannot ask which scope holds it; a caller holding the scope can.
+    """
+    migration = getattr(
+        unified_authority_module, "install_scope_panels", None
+    )
+    if migration is None:
+        pytest.fail(
+            "the importer seeds panel applicability but no public command "
+            "can give it to a graph bootstrapped before that seeding, so "
+            "every live generation projects no panels and never reports it"
+        )
+    authority = _authority()
+    caller = _Caller(authority)
+    composition_root(authority, "Governance", caller=caller)
+    source = (Path(__file__).parents[1] / "SPEC.md").read_bytes()
+    imported = import_specification_graph(
+        authority,
+        source_bytes=source,
+        expected_sha256=hashlib.sha256(source).hexdigest(),
+        caller=caller,
+        command_id=_command_id("import-spec-before-panel-migration"),
+    )
+    scope_root = imported.root_id
+    snapshot = authority.store.snapshot()
+    definition_roots = sorted({
+        member.participant_id
+        for member in relation_members(snapshot, scope_root)
+        if member.role_id == authority.role("definition")
+    })
+    assert definition_roots, "the governance scope must hold definitions"
+
+    def applicability_evidence(definition_root):
+        current = read_definition(authority, definition_root, caller=caller)
+        state = authority.store.snapshot()
+        return [
+            root
+            for root in current.evidence_roots
+            if any(
+                member.role_id == authority.role("scope")
+                and member.participant_id == scope_root
+                for member in relation_members(state, root)
+            )
+        ]
+
+    for definition_root in definition_roots:
+        assert applicability_evidence(definition_root) == [], (
+            "a pre-seeding graph must start without panel applicability, "
+            "or this court is not testing the migration at all"
+        )
+
+    first = migration(
+        authority,
+        scope_root,
+        caller=caller,
+        command_id=_command_id("install-scope-panels-v1"),
+    )
+    assert first.replayed is False
+
+    carried = [
+        applicability_evidence(definition_root)
+        for definition_root in definition_roots
+    ]
+    assert all(len(roots) == 1 for roots in carried), (
+        "every definition in the scope must rest on exactly one "
+        "applicability relation naming that scope"
+    )
+    assert len({roots[0] for roots in carried}) == 1, (
+        "the scope's applicability is one shared relation, not one per "
+        "definition"
+    )
+
+    replayed = migration(
+        authority,
+        scope_root,
+        caller=caller,
+        command_id=_command_id("install-scope-panels-v1"),
+    )
+    assert replayed.replayed is True

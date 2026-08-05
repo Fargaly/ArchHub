@@ -3884,6 +3884,312 @@ def declare_definition(
     )
 
 
+PANEL_AUDIENCE = "any"
+
+
+def _scope_applicability(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    revision_root: str,
+) -> tuple[str, str, tuple[RelationMember, ...]] | None:
+    """Find the scope applicability a definition revision rests on.
+
+    A definition cannot be asked which scope holds it, because relations only
+    walk forwards. The import puts that answer in the revision's evidence
+    instead, so a reviser reads its own evidence rather than searching the
+    graph for something pointing back at it.
+    """
+    for member in read_relation(snapshot, revision_root, budget=COMMAND_BUDGET):
+        if member.role_id != authority.role("evidence"):
+            continue
+        try:
+            carried = read_relation(
+                snapshot, member.participant_id, budget=COMMAND_BUDGET
+            )
+        except (InvalidCell, MatchBudgetExceeded):
+            continue
+        conforms = [
+            each.participant_id
+            for each in carried
+            if each.role_id == authority.role("conforms-to")
+        ]
+        scopes = [
+            each.participant_id
+            for each in carried
+            if each.role_id == authority.role("scope")
+        ]
+        if conforms == [authority.shape("relation")] and len(scopes) == 1:
+            return member.participant_id, scopes[0], carried
+    return None
+
+
+def _declared_panel_labels(presentation: object) -> tuple[str, ...]:
+    if not isinstance(presentation, Mapping):
+        return ()
+    declared = presentation.get("panels")
+    if not isinstance(declared, (list, tuple)):
+        return ()
+    labels = tuple(str(label) for label in declared)
+    if len(set(labels)) != len(labels):
+        raise InvalidCell("presentation declares one panel label twice")
+    return labels
+
+
+def _panel_declared_by(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    panel_root: str,
+) -> str | None:
+    try:
+        members = read_relation(snapshot, panel_root, budget=COMMAND_BUDGET)
+    except (InvalidCell, MatchBudgetExceeded):
+        return None
+    declaring = [
+        member.participant_id
+        for member in members
+        if member.role_id == authority.role("definition")
+    ]
+    return declaring[0] if len(declaring) == 1 else None
+
+
+def _build_scope_panels(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    definition_root: str,
+    revision_root: str,
+    labels: tuple[str, ...],
+) -> tuple[tuple[Cell, ...], tuple[Cell, ...]]:
+    """Give every declared panel a root in the scope it applies to.
+
+    A panel is something the graph holds, not a string a projector reads back
+    out of a contract: it has an identity, the definition that declared it,
+    and membership in the scope's one applicability relation. Revising the
+    presentation contract replaces exactly the panels this definition
+    contributed there, so a definition that declares none leaves none.
+
+    The carriers are already-released shapes with an open role, so this adds
+    no protocol and runs on a graph bootstrapped before it existed. A graph
+    whose revisions carry no applicability -- one bootstrapped before the
+    import seeded it and not yet migrated -- is left untouched rather than
+    guessed at: install_scope_panels is the loud path for that state.
+    """
+    found = _scope_applicability(authority, snapshot, revision_root)
+    if found is None:
+        return (), ()
+    applicability_root, _scope_root, current = found
+    stale = tuple(
+        member.incidence_id
+        for member in current
+        if member.role_id == authority.role("object")
+        and _panel_declared_by(authority, snapshot, member.participant_id)
+        == definition_root
+    )
+    codec_root = authority.codecs[CODEC_NAME]
+    create: list[Cell] = []
+    additions: list[tuple[str, str]] = []
+    for label in labels:
+        label_root, label_cells = _build_value(
+            authority.roles,
+            codec_root,
+            label,
+            shape_root=authority.shape("value"),
+        )
+        panel_root = _new_id()
+        create.extend(label_cells)
+        create.extend(_typed_relation_cells(
+            panel_root,
+            authority.role("conforms-to"),
+            authority.shape("composition"),
+            (
+                (authority.role("label"), label_root),
+                (authority.role("definition"), definition_root),
+            ),
+        ))
+        additions.append((authority.role("object"), panel_root))
+    replace: list[Cell] = []
+    staged = snapshot
+    if stale:
+        removal = prepare_remove_relation_members(
+            staged, applicability_root, stale, budget=COMMAND_BUDGET
+        )
+        replace.extend(removal.replace)
+        staged = overlay_read_snapshot(staged, replace=removal.replace)
+    if additions:
+        append = prepare_append_relation_members(
+            staged, applicability_root, additions, budget=COMMAND_BUDGET
+        )
+        create.extend(append.create)
+        replace.extend(append.replace)
+    # Retiring then appending can touch one chain cell twice. A cell the
+    # graph does not hold yet must stay a creation whatever touched it after.
+    created: dict[str, Cell] = {cell.id: cell for cell in create}
+    replaced: dict[str, Cell] = {}
+    for cell in replace:
+        if cell.id in created:
+            created[cell.id] = cell
+        else:
+            replaced[cell.id] = cell
+    return tuple(created.values()), tuple(replaced.values())
+
+
+def install_scope_panels(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    *,
+    caller: CallerCommandCapability,
+    command_id: str,
+    audience: str = PANEL_AUDIENCE,
+) -> CommandResult:
+    """Give an existing scope the panel applicability newer imports seed.
+
+    The importer runs once, when a generation is created, so a graph
+    bootstrapped before the importer seeded panel applicability will never
+    have it -- and nothing says so, because absence does not raise. The
+    inspector simply projects no panels, forever, on exactly the graphs that
+    matter. This is the loud path for that quiet gap: an ordinary signed
+    command a caller runs against a live graph, producing the same reachable
+    state the importer now seeds.
+
+    The caller names the scope explicitly because a definition cannot be
+    asked which scope holds it -- relations only walk forwards -- while a
+    caller, holding the scope it has open, can.
+
+    A revision's content digest seals its evidence, so the applicability
+    cannot be appended to the revisions that exist: each definition gets a
+    NEW revision, identical but for resting on the applicability, with the
+    old one as its predecessor. History stays honest -- the graph records
+    that the feature arrived, rather than pretending it was always there.
+    """
+    request_digest = _digest({
+        "intent": "install-scope-panels",
+        "scope": scope_root,
+        "audience": audience,
+    })
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="install-scope-panels",
+        request_digest=request_digest,
+        object_root=scope_root,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            existing.result_root,
+            existing.result_revision,
+            True,
+            0,
+            0,
+            existing.root_id,
+        )
+    _validate_composition_scope(authority, snapshot, scope_root)
+    definition_roots = tuple(dict.fromkeys(
+        member.participant_id
+        for member in read_relation(snapshot, scope_root, budget=COMMAND_BUDGET)
+        if member.role_id == authority.role("definition")
+    ))
+    if not definition_roots:
+        raise InvalidCell("scope holds no definitions to give panels to")
+    projections = {
+        definition_root: read_definition(
+            authority, definition_root, caller=caller
+        )
+        for definition_root in definition_roots
+    }
+    pending = tuple(
+        definition_root
+        for definition_root, projection in projections.items()
+        if not any(
+            found is not None and found[1] == scope_root
+            for found in (_scope_applicability(
+                authority, snapshot, projection.revision_root
+            ),)
+        )
+    )
+    if not pending:
+        # The feature is fully installed. Repeating the command must not
+        # stack a second applicability relation onto every revision.
+        return CommandResult(
+            scope_root,
+            snapshot.revision,
+            True,
+            0,
+            0,
+            "",
+        )
+    audience_root, audience_cells = _build_value(
+        authority.roles,
+        authority.codecs[CODEC_NAME],
+        audience,
+        shape_root=authority.shape("value"),
+    )
+    applicability_root = _new_id()
+    create: list[Cell] = list(audience_cells)
+    create.extend(_typed_relation_cells(
+        applicability_root,
+        authority.role("conforms-to"),
+        authority.shape("relation"),
+        (
+            (authority.role("scope"), scope_root),
+            (authority.role("audience"), audience_root),
+        ),
+    ))
+    replace: list[Cell] = []
+    for definition_root in pending:
+        projection = projections[definition_root]
+        spec = _definition_spec(
+            projection.name,
+            projection.version,
+            projection.lifecycle,
+            *(dict(projection.contracts[name]) for name in CONTRACT_NAMES),
+            (*projection.evidence_roots, applicability_root),
+        )
+        new_revision, _, revision_cells = _build_definition_revision(
+            authority,
+            spec,
+            previous_revision_root=projection.revision_root,
+        )
+        create.extend(revision_cells)
+        current_members = tuple(
+            member
+            for member in read_relation(
+                snapshot, definition_root, budget=COMMAND_BUDGET
+            )
+            if member.role_id == authority.role("current-revision")
+        )
+        if len(current_members) != 1:
+            raise InvalidCell("definition current revision binding is invalid")
+        incidence = snapshot.cells[current_members[0].incidence_id]
+        replace.append(Cell(
+            incidence.id,
+            incidence.link0,
+            new_revision,
+            incidence.atom,
+        ))
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=tuple(create),
+        resource_replace=tuple(replace),
+        authenticated=authenticated,
+        result_root=scope_root,
+        policy_proof=policy_proof,
+    )
+
+
 def revise_definition(
     authority: UnifiedAuthority,
     definition_root: str,
@@ -4000,11 +4306,18 @@ def revise_definition(
         new_revision,
         incidence.atom,
     )
+    panel_create, panel_replace = _build_scope_panels(
+        authority,
+        snapshot,
+        definition_root,
+        current_revision,
+        _declared_panel_labels(spec["presentation"]),
+    )
     return _commit_with_receipt(
         authority,
         snapshot,
-        resource_create=revision_cells,
-        resource_replace=(replacement,),
+        resource_create=(*revision_cells, *panel_create),
+        resource_replace=(replacement, *panel_replace),
         authenticated=authenticated,
         result_root=definition_root,
         policy_proof=policy_proof,

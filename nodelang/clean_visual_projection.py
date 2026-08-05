@@ -8,7 +8,86 @@ from .clean_visual_authority import (
     CleanVisualSystem,
     render_clean_visual_template,
 )
-from .unified_authority import CallerCommandCapability, UnifiedAuthority
+from .unified_authority import (
+    COMMAND_BUDGET,
+    CallerCommandCapability,
+    UnifiedAuthority,
+    decode_value,
+    relation_members,
+)
+
+
+def _scope_panel_rows(
+    authority: UnifiedAuthority,
+    lens: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Read the panels the graph declares applicable to this scope.
+
+    Panels are compositions the graph holds, named by the scope's one
+    applicability relation. The relation is reached forwards -- definition to
+    current revision to evidence -- never by searching for something that
+    points back. A scope whose revisions carry no applicability projects no
+    panels: absence of the declaration is absence of the tabs, not a cue to
+    invent Python defaults.
+    """
+    snapshot = authority.store.snapshot()
+    seen: set[str] = set()
+    rows: list[dict[str, object]] = []
+    for node in lens["nodes"]:
+        definition_root = node.get("definition_root")
+        if type(definition_root) is not str or definition_root in seen:
+            continue
+        seen.add(definition_root)
+        try:
+            current = next(
+                member.participant_id
+                for member in relation_members(snapshot, definition_root)
+                if member.role_id == authority.role("current-revision")
+            )
+        except (StopIteration, Exception):
+            continue
+        for member in relation_members(snapshot, current):
+            if member.role_id != authority.role("evidence"):
+                continue
+            try:
+                carried = relation_members(snapshot, member.participant_id)
+            except Exception:
+                continue
+            conforms = [
+                each.participant_id
+                for each in carried
+                if each.role_id == authority.role("conforms-to")
+            ]
+            if conforms != [authority.shape("relation")]:
+                continue
+            scopes = [
+                each.participant_id
+                for each in carried
+                if each.role_id == authority.role("scope")
+            ]
+            if scopes != [lens["scope_root"]]:
+                continue
+            for each in carried:
+                if each.role_id != authority.role("object"):
+                    continue
+                panel_root = each.participant_id
+                if panel_root in {row["id"] for row in rows}:
+                    continue
+                try:
+                    label_root = next(
+                        inner.participant_id
+                        for inner in relation_members(snapshot, panel_root)
+                        if inner.role_id == authority.role("label")
+                    )
+                    label = decode_value(authority, snapshot, label_root)
+                except (StopIteration, Exception):
+                    continue
+                rows.append({
+                    "id": panel_root,
+                    "label": str(label),
+                    "applicability_root": member.participant_id,
+                })
+    return rows
 
 
 def _port_side(role: str) -> str:
@@ -351,12 +430,12 @@ def project_clean_visual_canvas(
             caller=caller,
         )
 
+    scope_panels = _scope_panel_rows(authority, lens)
     selected = _selected_node(lens)
     if selected is None:
         selected_root = None
         selected_title = None
         properties = []
-        panels = ()
     else:
         selected_root = selected["root_id"]
         selected_title = selected["label"]
@@ -377,27 +456,30 @@ def project_clean_visual_canvas(
             }
             for row in selected["properties"]
         ])
-        panels = tuple(
-            {
-                "id": "panel:%s" % panel_label.casefold(),
-                "label": panel_label,
-                "active": index == 0,
-                "components": [{
-                    "presenter": "properties",
-                    "descriptor": render_clean_visual_template(
-                        authority,
-                        visual,
-                        "properties",
-                        {
-                            "selected": selected_root,
-                            "properties": properties,
-                        },
-                        caller=caller,
-                    ),
-                }],
-            }
-            for index, panel_label in enumerate(selected["panels"])
-        )
+    # The tabs are the graph's declaration for this scope, selection or not.
+    # Selection changes what the panels present, never which panels exist.
+    panels = tuple(
+        {
+            "id": row["id"],
+            "label": row["label"],
+            "applicability_root": row["applicability_root"],
+            "active": index == 0,
+            "components": [{
+                "presenter": "properties",
+                "descriptor": render_clean_visual_template(
+                    authority,
+                    visual,
+                    "properties",
+                    {
+                        "selected": selected_root,
+                        "properties": properties,
+                    },
+                    caller=caller,
+                ),
+            }],
+        }
+        for index, row in enumerate(scope_panels)
+    )
     projection = {
         "graph_id": lens["graph_id"],
         "revision": lens["revision"],
@@ -504,7 +586,13 @@ def project_clean_visual_canvas(
         projection,
         caller=caller,
     )
-    projection["inspector"]["shell_descriptor"] = render_clean_visual_template(
+    # With no panels there is nothing to shell. This was wrong as a projector
+    # guard while panels were Python strings -- the descriptors court and the
+    # deleted-panels court then reached here with identical state and demanded
+    # opposite results. Panels are graph compositions now: a fresh scope holds
+    # its seeded panel and shells; a scope whose declarations were revised
+    # away holds none and shells nothing.
+    projection["inspector"]["shell_descriptor"] = [] if not panels else render_clean_visual_template(
         authority,
         visual,
         "inspector-shell",

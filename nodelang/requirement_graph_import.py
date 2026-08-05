@@ -13,6 +13,7 @@ from markdown_it import MarkdownIt
 from .unified_authority import (
     CODEC_NAME,
     COMMAND_BUDGET,
+    PANEL_AUDIENCE,
     CallerCommandCapability,
     CommandResult,
     UnifiedAuthority,
@@ -428,13 +429,21 @@ def _validated_specification_source(
 IMPORT_CONNECTION = "requirement-link"
 
 
+# The inspector's tabs are a thing the graph declares, not a default the
+# projector invents. A scope that declares none should show none, which is
+# only distinguishable from "never declared any" if the bootstrap declares
+# something real.
+SCOPE_PANELS = ("Properties",)
+
+
 def _definition_cells(
     authority: UnifiedAuthority,
     *,
     name: str,
     fields: Iterable[str],
-    evidence_root: str,
+    evidence_roots: tuple[str, ...],
     source_digest: str,
+    presentation: Mapping[str, object] | None = None,
 ) -> tuple[str, str, tuple]:
     definition_root = new_id()
     parameters = {
@@ -457,10 +466,10 @@ def _definition_cells(
             }
         },
         {"source-digest": source_digest},
-        {},
+        dict(presentation or {}),
         {"source-integrity": "required"},
         {"source-digest": source_digest},
-        (evidence_root,),
+        evidence_roots,
     )
     revision_root, _, revision_cells = build_definition_revision(authority, spec)
     definition_cells = typed_relation_cells(
@@ -666,24 +675,72 @@ def import_requirement_graph(
             (authority.role("content-digest"), digest_root),
         ),
     ))
+    # One applicability relation per scope, named as evidence on every
+    # definition in it. A definition cannot be asked which scope holds it --
+    # relations only walk forwards -- so the revision carries the answer
+    # instead, and revising a presentation contract can find the relation to
+    # revise by reading its own evidence rather than searching the graph.
+    import_root = new_id()
+    panel_audience_root, panel_audience_cells = build_value(
+        authority.roles,
+        authority.codecs[CODEC_NAME],
+        PANEL_AUDIENCE,
+        shape_root=authority.shape("value"),
+    )
+    panel_applicability_root = new_id()
+    cells.extend(panel_audience_cells)
+    definition_evidence = (evidence_root, panel_applicability_root)
     domain_definition, domain_revision, domain_definition_cells = _definition_cells(
         authority,
         name="Domain composition",
         fields=DOMAIN_FIELDS,
-        evidence_root=evidence_root,
+        evidence_roots=definition_evidence,
         source_digest=source_digest,
+        presentation={"panels": list(SCOPE_PANELS)},
     )
     requirement_definition, requirement_revision, requirement_definition_cells = (
         _definition_cells(
             authority,
             name="Requirement composition",
             fields=REQUIREMENT_FIELDS,
-            evidence_root=evidence_root,
+            evidence_roots=definition_evidence,
             source_digest=source_digest,
         )
     )
     cells.extend(domain_definition_cells)
     cells.extend(requirement_definition_cells)
+    # The declared tabs exist as graph compositions, not only as contract
+    # text: each carries its label and the definition that declared it, and
+    # the scope's one applicability relation names which panels apply here.
+    panel_members: list[tuple[str, str]] = [
+        (authority.role("scope"), import_root),
+        (authority.role("audience"), panel_audience_root),
+    ]
+    for panel_label in SCOPE_PANELS:
+        panel_label_root, panel_label_cells = build_value(
+            authority.roles,
+            authority.codecs[CODEC_NAME],
+            panel_label,
+            shape_root=authority.shape("value"),
+        )
+        panel_root = new_id()
+        cells.extend(panel_label_cells)
+        cells.extend(typed_relation_cells(
+            panel_root,
+            authority.role("conforms-to"),
+            authority.shape("composition"),
+            (
+                (authority.role("label"), panel_label_root),
+                (authority.role("definition"), domain_definition),
+            ),
+        ))
+        panel_members.append((authority.role("object"), panel_root))
+    cells.extend(typed_relation_cells(
+        panel_applicability_root,
+        authority.role("conforms-to"),
+        authority.shape("relation"),
+        tuple(panel_members),
+    ))
 
     domain_roots: dict[str, str] = {}
     requirement_roots: dict[str, str] = {}
@@ -758,7 +815,6 @@ def import_requirement_graph(
             cells.extend(relation_cells)
             cross_relations.append((authority.role("relation"), relation_root))
 
-    import_root = new_id()
     import_members: list[tuple[str, str]] = [
         (authority.role("label"), label_root),
         (authority.role("evidence"), evidence_root),
@@ -980,7 +1036,7 @@ def import_specification_graph(
             authority,
             name="Specification section composition",
             fields=SPEC_SECTION_FIELDS,
-            evidence_root=evidence_root,
+            evidence_roots=(evidence_root,),
             source_digest=source_digest,
         )
     )
@@ -989,7 +1045,7 @@ def import_specification_graph(
             authority,
             name="Specification requirement composition",
             fields=SPEC_REQUIREMENT_FIELDS,
-            evidence_root=evidence_root,
+            evidence_roots=(evidence_root,),
             source_digest=source_digest,
         )
     )

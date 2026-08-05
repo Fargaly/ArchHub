@@ -2181,18 +2181,54 @@ def test_property_predecessor_sentinel_holds_only_while_one_mint_site_exists():
     invariant to the source so that change fails here instead of in a
     reader that trusts the sentinel.
     """
+    import ast
     import pathlib
 
     source = pathlib.Path(
         unified_authority_module.__file__
     ).read_text(encoding="utf-8")
-    mint_sites = [
-        line.strip()
-        for line in source.splitlines()
-        if "property_root = _new_id()" in line
-    ]
-    assert len(mint_sites) == 1, (
-        "property roots must come from exactly one mint site or "
-        "predecessor_root == property_root stops meaning 'replaced nothing': "
-        "%r" % mint_sites
+    tree = ast.parse(source)
+    # Reading an existing property root is normal and several readers do it.
+    # What must stay unique is MINTING one: the sentinel means "this root is
+    # new, so naming itself means it replaced nothing".
+    minters = sorted({
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        for statement in ast.walk(node)
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Name)
+        and target.id.endswith("property_root")
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == "_new_id"
+    })
+    assert minters == ["_build_property"], (
+        "only _build_property may mint a property root. A second minter "
+        "means predecessor_root == property_root stops encoding 'replaced "
+        "nothing': %r" % minters
+    )
+    # The other half of the same invariant: a property composition assembled
+    # anywhere else could carry a root that was never minted here, which
+    # defeats the sentinel without adding a second minter.
+    constructors = sorted({
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "_typed_relation_cells"
+        for argument in call.args
+        if isinstance(argument, ast.Call)
+        and isinstance(argument.func, ast.Attribute)
+        and argument.func.attr == "shape"
+        and argument.args
+        and isinstance(argument.args[0], ast.Constant)
+        and argument.args[0].value == "property"
+    })
+    assert constructors == ["_build_property"], (
+        "only _build_property may construct a property composition: %r"
+        % constructors
     )

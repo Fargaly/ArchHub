@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import urllib.request
 import sys
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from typing import Type
@@ -164,10 +166,57 @@ def _healthy_owner_is_serving(host: str, port: int) -> bool:
         return False
 
 
+def _build_canvas_server(location, host: str, port: int):
+    """Stand the browser canvas over the SAME owned authority.
+
+    One process, one lock, two surfaces. The canvas opens -- never installs
+    -- its subsystems: an owner is an operator, and installation is a
+    migration someone runs deliberately.
+    """
+    from .application_server import ApplicationServer
+    from .clean_browser_authority import open_clean_browser_authority
+    from .runtime_caller_capability import WindowsDpapiCallerKeyStore
+    from .unified_authority import composition_root
+    from .cell_protocols import read_relation
+
+    authority = location.authority
+    key_store = WindowsDpapiCallerKeyStore(
+        WindowsDpapiCallerKeyStore.default_path()
+    )
+    caller = key_store.bind_bootstrap(authority, "founder.bootstrap")
+    browser = open_clean_browser_authority(authority, caller=caller)
+    provider = WindowsDpapiSigningKeyProvider(
+        WindowsDpapiSigningKeyProvider.default_path()
+    )
+    grand = composition_root(authority, "Grand Map", caller=caller)
+    scope = next(
+        member.participant_id
+        for member in read_relation(
+            authority.store.snapshot(), grand, budget=100_000
+        )
+        if member.role_id == authority.role("composition")
+    )
+    return ApplicationServer.from_unified_authority(
+        authority,
+        browser_authority=browser,
+        scope_caller=caller,
+        scope_root=scope,
+        authority_key_provider=provider,
+        host=host,
+        port=port,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8474)
+    parser.add_argument("--canvas-port", type=int, default=8475)
+    parser.add_argument(
+        "--no-canvas",
+        action="store_true",
+        help="serve coordination only (a graph without canvas subsystems)",
+    )
     args = parser.parse_args()
     # A supervisor restarts this unconditionally. Without these two exits a
     # second instance starts, blocks forever on the generation owner lock the
@@ -190,9 +239,47 @@ def main() -> int:
         print("clean coordination service cannot bind %s:%d: %s"
               % (args.host, args.port, exc), file=sys.stderr)
         return 76
+    # Both surfaces or neither. A half-serving owner holding the lock is
+    # worse than no owner: it blocks recovery while delivering nothing, and
+    # from outside it looks healthy because something answers. Any failure
+    # past this point releases the lock and exits distinctly.
+    canvas = None
+    if not args.no_canvas:
+        try:
+            canvas = _build_canvas_server(
+                location, args.host, args.canvas_port
+            ).start()
+        except Exception as exc:
+            print(
+                "clean owner cannot stand the canvas surface: %s" % exc,
+                file=sys.stderr,
+            )
+            service.server_close()
+            location.authority.store.close()
+            return 77
+        print(
+            "canvas serving on %s" % canvas.url,
+            file=sys.stderr,
+        )
+    if canvas is not None:
+        # Both-or-neither holds at runtime too: a dead canvas thread takes
+        # the coordination surface down with it, so the supervisor restarts
+        # one whole owner instead of half of one lingering behind the lock.
+        def _stop_when_canvas_dies() -> None:
+            while canvas.thread is not None and canvas.thread.is_alive():
+                time.sleep(1.0)
+            service.shutdown()
+
+        threading.Thread(
+            target=_stop_when_canvas_dies,
+            name="clean-owner-canvas-watchdog",
+            daemon=True,
+        ).start()
     try:
         service.serve_forever(poll_interval=0.25)
     finally:
+        if canvas is not None:
+            canvas.close()
         service.server_close()
         location.authority.store.close()
     return 0

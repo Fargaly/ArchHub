@@ -91,6 +91,18 @@ def test_every_renderer_of_the_real_client_accepts_the_real_projection(
         "the DOM shim answers selectors the server does not serve, so it "
         "is too permissive to trust"
     )
+    # A value that is computed and reported but not asserted is not a guard,
+    # it is a comment with extra steps. The refusal half of shim honesty --
+    # that the shim rejects what a browser rejects -- was measured and
+    # reported here and gated nothing, so a shim made permissive again would
+    # have carried the failure in its own report while the court passed.
+    unmet_shim = sorted(
+        name for name, held in report["shim_checks"].items() if not held
+    )
+    assert unmet_shim == [], (
+        "the DOM shim accepts operations a browser refuses (%s), so every "
+        "verdict below is provisional" % ", ".join(unmet_shim)
+    )
 
     verdicts = report["verdicts"]
     unmet = {

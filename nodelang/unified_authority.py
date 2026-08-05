@@ -834,9 +834,22 @@ def _validate_manifest_shape(manifest: BootstrapManifest) -> None:
 # semantic read rebuilds and hashes the whole cell table every time -- on the
 # live graph that is ~152k cells per template render, which turned the first
 # canvas projection over the real generation into minutes of sha256 while
-# every fixture court stayed fast enough to hide it. Snapshot mappings are
-# immutable, so identity plus revision plus the blanked roots is the digest.
-_SNAPSHOT_DIGEST_CACHE: dict[tuple[int, int, frozenset[str]], str] = {}
+# every fixture court stayed fast enough to hide it.
+#
+# The cache HOLDS the mapping it keys on. Immutability makes an id stable
+# while the object lives, not unique across time: an entry that stored only
+# the integer would survive the mapping it described, the allocator would
+# reuse the address, and a later snapshot sharing revision and blank set
+# would read a digest that was never its own -- on the integrity path that
+# head verification and receipts trust. Same-revision-different-content is
+# ordinary here (overlay snapshots, candidate commits), so the entry keeps
+# the mapping alive and a hit re-checks identity with `is`. No court can
+# reach the failure deterministically -- it is allocation-timing dependent --
+# which is exactly why the guarantee is structural instead of courted.
+_SNAPSHOT_DIGEST_CACHE: dict[
+    tuple[int, int, frozenset[str]],
+    tuple[Mapping[str, Cell], str],
+] = {}
 
 
 def _normalized_snapshot_digest(
@@ -847,7 +860,9 @@ def _normalized_snapshot_digest(
     key = (id(snapshot.cells), snapshot.revision, blank)
     cached = _SNAPSHOT_DIGEST_CACHE.get(key)
     if cached is not None:
-        return cached
+        held, digest = cached
+        if held is snapshot.cells:
+            return digest
     cells = {
         root: (
             Cell(cell.id, cell.link0, cell.link1, b"")
@@ -859,7 +874,7 @@ def _normalized_snapshot_digest(
     digest = snapshot_digest(Snapshot(snapshot.revision, MappingProxyType(cells)))
     if len(_SNAPSHOT_DIGEST_CACHE) >= 8:
         _SNAPSHOT_DIGEST_CACHE.pop(next(iter(_SNAPSHOT_DIGEST_CACHE)))
-    _SNAPSHOT_DIGEST_CACHE[key] = digest
+    _SNAPSHOT_DIGEST_CACHE[key] = (snapshot.cells, digest)
     return digest
 
 

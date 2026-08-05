@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import urllib.request
+import urllib.error
 import sys
 import threading
 import time
@@ -261,28 +262,72 @@ def main() -> int:
             "canvas serving on %s" % canvas.url,
             file=sys.stderr,
         )
-    if canvas is not None:
-        # Both-or-neither holds at runtime too: a dead canvas thread takes
-        # the coordination surface down with it, so the supervisor restarts
-        # one whole owner instead of half of one lingering behind the lock.
-        def _stop_when_canvas_dies() -> None:
-            while canvas.thread is not None and canvas.thread.is_alive():
-                time.sleep(1.0)
-            service.shutdown()
+    # Both-or-neither holds at runtime too, and the watcher is the MAIN
+    # thread: if the watcher dies the process dies and the OS releases the
+    # lock, so "who watches the watchdog" bottoms out in process death
+    # rather than in another thread. Liveness is a bounded probe of each
+    # SURFACE, not thread aliveness -- a wedged thread is alive and serving
+    # nothing, the exact state last night's dead-pid descriptor taught.
+    # Teardown is ordered: the canvas socket closes before coordination, so
+    # there is no window where the canvas answers while coordination
+    # refuses and two agents see different halves of one owner.
+    serve_thread = threading.Thread(
+        target=lambda: service.serve_forever(poll_interval=0.25),
+        name="clean-owner-coordination",
+        daemon=True,
+    )
+    serve_thread.start()
 
-        threading.Thread(
-            target=_stop_when_canvas_dies,
-            name="clean-owner-canvas-watchdog",
-            daemon=True,
-        ).start()
+    def _surface_answers(url: str) -> bool:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                response.read(1)
+                return True
+        except urllib.error.HTTPError:
+            # An HTTP status is an answer; refusing unauthenticated
+            # requests is the canvas surface working, not failing.
+            return True
+        except Exception:
+            return False
+
+    coordination_url = "http://%s:%d/health" % (args.host, args.port)
+    canvas_url = None if canvas is None else (
+        canvas.url + "/api/universal/canvas"
+    )
+    failed_probes = 0
+    exit_code = 0
     try:
-        service.serve_forever(poll_interval=0.25)
+        while True:
+            time.sleep(5.0)
+            if not serve_thread.is_alive():
+                print("clean owner: coordination worker stopped",
+                      file=sys.stderr)
+                exit_code = 78
+                break
+            healthy = _surface_answers(coordination_url) and (
+                canvas_url is None or _surface_answers(canvas_url)
+            )
+            if healthy:
+                failed_probes = 0
+                continue
+            failed_probes += 1
+            if failed_probes >= 3:
+                print(
+                    "clean owner: a surface stopped answering bounded "
+                    "probes; taking the whole owner down for restart",
+                    file=sys.stderr,
+                )
+                exit_code = 78
+                break
+    except KeyboardInterrupt:
+        exit_code = 130
     finally:
         if canvas is not None:
             canvas.close()
+        service.shutdown()
         service.server_close()
         location.authority.store.close()
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -4758,7 +4758,17 @@ def revise_relation_node(
     command_id: str,
     expected_revision: int | None = None,
 ) -> CommandResult:
-    """Revise one existing relation to an exact desired member set."""
+    """Revise one existing relation to an exact desired member set.
+
+    A member carrying an incidence_id keeps that incidence, so an edge
+    that survives a revision keeps its identity instead of being deleted
+    and recreated under a new one; a member without an incidence_id is
+    new and gets a fresh incidence; an existing member the caller omits
+    is removed. The relation root does not change, so anything pointing
+    at this relation keeps pointing at it. Order is taken from the caller
+    rather than sorted here: the sequence a reader sees is the sequence
+    the command asked for.
+    """
     normalized = _normalized_relation_revision_members(members)
     if expected_revision is not None and (
         type(expected_revision) is not int or expected_revision < 0

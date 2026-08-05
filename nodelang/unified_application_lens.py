@@ -15,6 +15,7 @@ from .unified_authority import (
     composition_root,
     read_definition,
     read_scope_level,
+    read_view_session_state,
     relation_members,
 )
 from .universal_cell import InvalidCell
@@ -116,6 +117,10 @@ class UnifiedScopeLens:
     nodes: tuple[LensNode, ...]
     relations: tuple[LensRelation, ...]
     catalogue: tuple[LensCatalogueItem, ...]
+    # The view's graph-held working state. A view that never moved sits at
+    # the recorded defaults; the lens never invents a viewport of its own.
+    viewport: Mapping[str, object] = MappingProxyType({})
+    design_tokens: Mapping[str, object] = MappingProxyType({})
 
 
 def _text_tuple(value: object, label: str) -> tuple[str, ...]:
@@ -411,6 +416,21 @@ def project_unified_scope(
             presentation_identities.get("token", {}).get("property_root"),
             presentation_identities.get("position", {}).get("property_root"),
         ))
+    viewport, design_tokens = (
+        read_view_session_state(
+            authority,
+            view_root,
+            caller=caller,
+            at_revision=snapshot.revision,
+        )
+        if view_root is not None
+        else read_view_session_state(
+            authority,
+            caller.session_root,
+            caller=caller,
+            at_revision=snapshot.revision,
+        )
+    )
     return UnifiedScopeLens(
         authority.manifest.graph_id,
         level.revision,
@@ -421,6 +441,8 @@ def project_unified_scope(
         tuple(nodes),
         relations,
         _catalogue(authority, caller),
+        MappingProxyType(viewport),
+        MappingProxyType(design_tokens),
     )
 
 

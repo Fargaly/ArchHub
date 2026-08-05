@@ -4032,6 +4032,252 @@ def _build_scope_panels(
     return tuple(created.values()), tuple(replaced.values())
 
 
+VIEW_DEFAULT_VIEWPORT = {"x": 0.0, "y": 0.0, "zoom": 1.0}
+
+
+def _plain_json_mapping(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise InvalidCell("%s must be a mapping" % label)
+    try:
+        return json.loads(_canonical_json(dict(value)).decode("utf-8"))
+    except InvalidCell:
+        raise InvalidCell("%s is not plain data" % label) from None
+
+
+def _view_session_state(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    interface_root: str,
+    view_root: str,
+) -> tuple[str, tuple[RelationMember, ...]] | None:
+    """Find the one graph-held state relation for a view, walking forward.
+
+    The browser-session composition is strict -- its reader refuses an
+    undeclared field -- and the view root is the agent session, which is not
+    ours to extend. The Interface composition is the released open-role
+    carrier for interface state, so each view's state relation registers
+    there under the released session role -- the view IS an agent session --
+    and is found by walking members rather than by searching the graph.
+    """
+    for member in read_relation(snapshot, interface_root, budget=COMMAND_BUDGET):
+        if member.role_id != authority.role("session"):
+            continue
+        try:
+            carried = read_relation(
+                snapshot, member.participant_id, budget=COMMAND_BUDGET
+            )
+        except (InvalidCell, MatchBudgetExceeded):
+            continue
+        views = [
+            each.participant_id
+            for each in carried
+            if each.role_id == authority.role("session")
+        ]
+        if views == [view_root]:
+            return member.participant_id, carried
+    return None
+
+
+def read_view_session_state(
+    authority: UnifiedAuthority,
+    view_root: str,
+    *,
+    caller: CallerCommandCapability,
+    at_revision: int | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Read a view's viewport and design tokens, defaulting when unrecorded.
+
+    Absence of the state is a graph fact, not an error: a view that never
+    moved sits at the origin with no token overrides. The defaults are named
+    once here rather than invented per reader.
+    """
+    if at_revision is None:
+        snapshot = authority.store.snapshot()
+    else:
+        snapshot = authority.store.at(at_revision)
+    interface_root = composition_root(authority, "Interface", caller=caller)
+    found = _view_session_state(
+        authority, snapshot, interface_root, view_root
+    )
+    viewport: dict[str, object] = dict(VIEW_DEFAULT_VIEWPORT)
+    tokens: dict[str, object] = {}
+    if found is not None:
+        _state_root, carried = found
+        for each in carried:
+            if each.role_id == authority.role("presentation"):
+                viewport = dict(_property_values(
+                    authority, snapshot, each.participant_id
+                ))
+            elif each.role_id == authority.role("defaults"):
+                tokens = dict(_property_values(
+                    authority, snapshot, each.participant_id
+                ))
+    return viewport, tokens
+
+
+def revise_view_session_viewport(
+    authority: UnifiedAuthority,
+    view_root: str,
+    *,
+    viewport: Mapping[str, object],
+    design_tokens: Mapping[str, object],
+    session_root: str,
+    caller: CallerCommandCapability,
+    command_id: str,
+    expected_revision: int | None = None,
+) -> CommandResult:
+    """Mutate one view's viewport and design tokens for an issued session.
+
+    The view is the agent session's working view, shared by every browser
+    session that agent holds -- a second tab seeing the pan is correct, not a
+    leak. The boundary is the browser session: the caller names which issued
+    session is acting, and an unknown, foreign or revoked session is refused
+    before anything is staged, so the denial is fail-closed by construction
+    rather than by cleanup.
+    """
+    plain_viewport = _plain_json_mapping(viewport, "viewport")
+    plain_tokens = _plain_json_mapping(design_tokens, "design tokens")
+    if type(session_root) is not str or not session_root:
+        raise InvalidCell("browser session root is invalid")
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise InvalidCell("view session revision base is invalid")
+    interface_root = composition_root(authority, "Interface", caller=caller)
+    request: dict[str, object] = {
+        "intent": "revise-view-session-viewport",
+        "view": view_root,
+        "session": session_root,
+        "viewport": plain_viewport,
+        "design-tokens": plain_tokens,
+    }
+    if expected_revision is not None:
+        request["expected_revision"] = expected_revision
+    request_digest = _digest(request)
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="revise-view-session-viewport",
+        request_digest=request_digest,
+        # The graph policy admits an object within its scope. The view root
+        # belongs to no released composition, so the command is anchored on
+        # the Interface composition it writes into; the view is bound by the
+        # request digest and checked against the issued browser session.
+        object_root=interface_root,
+        scope_root=interface_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            existing.result_root,
+            existing.result_revision,
+            True,
+            0,
+            0,
+            existing.root_id,
+        )
+    if expected_revision is not None and snapshot.revision != expected_revision:
+        raise InvalidCell("view session revision base is stale")
+    # The named browser session must exist, be active, and hold THIS view.
+    # The import is deferred because the browser authority module composes
+    # over this one; the dependency at call time runs the other way.
+    from .clean_browser_authority import open_clean_browser_authority
+    from .cell_browser_sessions import read_browser_session
+    browser = open_clean_browser_authority(authority, caller=caller)
+    session = read_browser_session(snapshot, browser.protocol, session_root)
+    if session.state_root != browser.protocol.states["active"]:
+        raise InvalidCell("browser session is not active")
+    if session.view_root != view_root:
+        raise InvalidCell("browser session does not hold this view")
+    # Compound data is compositions, not encoded blobs: the state carries
+    # its viewport and tokens as the same property contracts definitions use.
+    viewport_root, viewport_cells = _build_contract(authority, plain_viewport)
+    tokens_root, tokens_cells = _build_contract(authority, plain_tokens)
+    create: list[Cell] = [*viewport_cells, *tokens_cells]
+    replace: list[Cell] = []
+    found = _view_session_state(
+        authority, snapshot, interface_root, view_root
+    )
+    if found is None:
+        state_root = _new_id()
+        create.extend(_typed_relation_cells(
+            state_root,
+            authority.role("conforms-to"),
+            authority.shape("relation"),
+            (
+                (authority.role("session"), view_root),
+                (authority.role("presentation"), viewport_root),
+                (authority.role("defaults"), tokens_root),
+            ),
+        ))
+        registration = _append_relation_member(
+            snapshot,
+            interface_root,
+            authority.role("session"),
+            state_root,
+        )
+        create.extend(registration.create)
+        replace.extend(registration.replace)
+    else:
+        state_root, carried = found
+        stale = tuple(
+            each.incidence_id
+            for each in carried
+            if each.role_id in (
+                authority.role("presentation"),
+                authority.role("defaults"),
+            )
+        )
+        staged = snapshot
+        if stale:
+            removal = prepare_remove_relation_members(
+                staged, state_root, stale, budget=COMMAND_BUDGET
+            )
+            replace.extend(removal.replace)
+            staged = overlay_read_snapshot(staged, replace=removal.replace)
+        append = prepare_append_relation_members(
+            staged,
+            state_root,
+            (
+                (authority.role("presentation"), viewport_root),
+                (authority.role("defaults"), tokens_root),
+            ),
+            budget=COMMAND_BUDGET,
+        )
+        create.extend(append.create)
+        replace.extend(append.replace)
+        merged: dict[str, Cell] = {cell.id: cell for cell in create}
+        rest: dict[str, Cell] = {}
+        for cell in replace:
+            if cell.id in merged:
+                merged[cell.id] = cell
+            else:
+                rest[cell.id] = cell
+        create = list(merged.values())
+        replace = list(rest.values())
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=tuple(create),
+        resource_replace=tuple(replace),
+        authenticated=authenticated,
+        result_root=view_root,
+        policy_proof=policy_proof,
+    )
+
+
 def install_scope_panels(
     authority: UnifiedAuthority,
     scope_root: str,

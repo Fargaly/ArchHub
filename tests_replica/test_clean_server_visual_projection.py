@@ -1317,20 +1317,15 @@ def _view_session_viewport_command():
 def test_clean_visual_projection_view_session_revision_changes_viewport_tokens_and_reopens(
     tmp_path,
 ):
-    """Viewport and design tokens are graph-held state bound to one issued view.
+    """Viewport and design tokens are graph-held state bound to one view.
 
-    Three properties, each of which an implementation can satisfy alone while
-    failing the others: the mutation lands against the ISSUED session and view
-    root and nobody else's; it survives close and reopen because it lives in
-    the graph rather than in a process; and it is refused fail-closed for a
-    foreign or revoked session -- refused meaning raised AND unchanged, not
-    raised after the write.
-
-    Deliberately not a skip while unimplemented. The predecessor court used
-    skipif on a missing symbol and became structurally red without anyone
-    noticing, because a skip reads as "not failing". This fails naming the
-    exact missing symbol, so the board shows a specification, and the same
-    text becomes a real test the moment the symbol lands.
+    The view is the agent session's working view, shared by every browser
+    session that agent holds -- a second browser session seeing the pan is
+    correct product behavior, so the boundary under test is the BROWSER
+    session: an unknown session and a revoked session must both be refused
+    fail-closed, refused meaning raised AND unchanged. The second session is
+    also the untainted read path after revocation, so no assertion depends
+    on reading through a session that was just revoked.
     """
     command = _view_session_viewport_command()
     if command is None:
@@ -1344,9 +1339,11 @@ def test_clean_visual_projection_view_session_revision_changes_viewport_tokens_a
     built, _provider = _provision_clean_runtime(tmp_path)
     try:
         owner = _issue_visual_session(built, prefix="viewport-owner")
-        stranger = _issue_visual_session(built, prefix="viewport-stranger")
-        assert owner.view_root != stranger.view_root
-        assert owner.root_id != stranger.root_id
+        witness = _issue_visual_session(built, prefix="viewport-witness")
+        assert owner.root_id != witness.root_id
+        assert owner.view_root == witness.view_root, (
+            "both sessions belong to one agent, so they share one view"
+        )
         authority = built.location.authority
 
         _projected, lens_before, _b, _a = _project_current_visual_for_session(
@@ -1376,18 +1373,19 @@ def test_clean_visual_projection_view_session_revision_changes_viewport_tokens_a
         assert lens_owner["design_tokens"] == tokens
         assert lens_owner["revision"] == accepted.revision
 
-        _p_str, lens_stranger, _b, _a = _project_current_visual_for_session(
-            built, stranger
+        # the shared view: the agent's other browser session sees the state
+        _p_wit, lens_witness, _b, _a = _project_current_visual_for_session(
+            built, witness
         )
-        assert lens_stranger.get("viewport") != viewport, (
-            "viewport leaked across issued view sessions: state is bound to "
-            "the graph or the process, not to the issued view root"
-        )
+        assert lens_witness["viewport"] == viewport
+        assert lens_witness["design_tokens"] == tokens
 
+        # survives close and reopen
         reopened = _project_current_visual_for_session(built, owner)[1]
         assert reopened["viewport"] == viewport
         assert reopened["design_tokens"] == tokens
 
+        # fail-closed for an UNKNOWN browser session: raised AND unchanged
         with pytest.raises(
             (unified_authority_module.InvalidCell, BrowserSessionDenied)
         ):
@@ -1396,17 +1394,53 @@ def test_clean_visual_projection_view_session_revision_changes_viewport_tokens_a
                 owner.view_root,
                 viewport={"x": 9999, "y": 9999, "zoom": 4.0},
                 design_tokens={"surface": "stolen"},
-                session_root=stranger.root_id,
+                session_root=str(uuid.uuid4()),
                 caller=built.caller,
                 command_id=str(uuid.uuid4()),
                 expected_revision=None,
             )
-        after_foreign = _project_current_visual_for_session(built, owner)[1]
-        assert after_foreign["viewport"] == viewport, (
-            "foreign session was refused but the viewport changed: the denial "
-            "is not fail-closed, it raised after writing"
+        after_unknown = _project_current_visual_for_session(built, witness)[1]
+        assert after_unknown["viewport"] == viewport, (
+            "unknown session was refused but the viewport changed: the "
+            "denial is not fail-closed, it raised after writing"
         )
 
+        # fail-closed for a VALID, ACTIVE session of a DIFFERENT agent --
+        # the real cross-tenant case. Rejecting a fabricated uuid is a failed
+        # lookup; rejecting a well-formed session aimed at someone else's
+        # view requires the command to compare the session's view against
+        # the target, and that comparison is what this proves.
+        other_agent = _second_admitted_caller(built)
+        foreign = issue_clean_browser_session(
+            authority,
+            built.browser,
+            token=f"viewport-foreign-{uuid.uuid4().hex}",
+            csrf_token=f"viewport-foreign-csrf-{uuid.uuid4().hex}",
+            lifetime_seconds=120.0,
+            caller=other_agent,
+            command_id=str(uuid.uuid4()),
+        )
+        assert foreign.view_root != owner.view_root
+        with pytest.raises(
+            (unified_authority_module.InvalidCell, BrowserSessionDenied)
+        ):
+            command(
+                authority,
+                owner.view_root,
+                viewport={"x": 555, "y": 555, "zoom": 5.0},
+                design_tokens={"surface": "cross-agent"},
+                session_root=foreign.root_id,
+                caller=built.caller,
+                command_id=str(uuid.uuid4()),
+                expected_revision=None,
+            )
+        after_cross = _project_current_visual_for_session(built, witness)[1]
+        assert after_cross["viewport"] == viewport, (
+            "a different agent's live session was refused but the viewport "
+            "changed: the view comparison is missing, not the lookup"
+        )
+
+        # fail-closed for a REVOKED session, read through the live witness
         revoke_clean_browser_session(
             authority,
             built.browser,
@@ -1428,11 +1462,12 @@ def test_clean_visual_projection_view_session_revision_changes_viewport_tokens_a
                 command_id=str(uuid.uuid4()),
                 expected_revision=None,
             )
-        after_revoked = _project_current_visual_for_session(built, stranger)[1]
-        assert after_revoked.get("viewport") != {"x": 1, "y": 1, "zoom": 1.0}, (
-            "revoked session was refused but the write landed: revocation is "
-            "advisory, not fail-closed"
+        after_revoked = _project_current_visual_for_session(built, witness)[1]
+        assert after_revoked["viewport"] == viewport, (
+            "revoked session was refused but the viewport changed: "
+            "revocation is advisory, not fail-closed"
         )
+        assert after_revoked["design_tokens"] == tokens
     finally:
         built.location.authority.store.close()
 

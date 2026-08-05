@@ -3918,8 +3918,8 @@ def _scope_applicability(
             for each in carried
             if each.role_id == authority.role("scope")
         ]
-        if conforms == [authority.shape("relation")] and len(scopes) == 1:
-            return member.participant_id, scopes[0], carried
+        if conforms == [authority.shape("relation")] and scopes:
+            return member.participant_id, tuple(scopes), carried
     return None
 
 
@@ -4113,7 +4113,7 @@ def install_scope_panels(
         definition_root
         for definition_root, projection in projections.items()
         if not any(
-            found is not None and found[1] == scope_root
+            found is not None and scope_root in found[1]
             for found in (_scope_applicability(
                 authority, snapshot, projection.revision_root
             ),)

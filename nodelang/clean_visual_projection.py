@@ -65,7 +65,7 @@ def _scope_panel_rows(
                 for each in carried
                 if each.role_id == authority.role("scope")
             ]
-            if scopes != [lens["scope_root"]]:
+            if lens["scope_root"] not in scopes:
                 continue
             for each in carried:
                 if each.role_id != authority.role("object"):

@@ -716,6 +716,16 @@ def import_requirement_graph(
         (authority.role("scope"), import_root),
         (authority.role("audience"), panel_audience_root),
     ]
+    # Entering a domain is entering a scope; the same tabs apply there.
+    # Domain identities are minted in the build loop below, so they are
+    # allocated here first and the loop is told to reuse them.
+    domain_scope_roots: dict[str, str] = {
+        str(domain["key"]): new_id() for domain in domains
+    }
+    panel_members.extend(
+        (authority.role("scope"), domain_scope_root)
+        for domain_scope_root in domain_scope_roots.values()
+    )
     for panel_label in SCOPE_PANELS:
         panel_label_root, panel_label_cells = build_value(
             authority.roles,
@@ -748,7 +758,7 @@ def import_requirement_graph(
     domain_children: dict[str, list[tuple[str, str]]] = {}
     for domain in domains:
         domain_key = str(domain["key"])
-        domain_root = new_id()
+        domain_root = domain_scope_roots[domain_key]
         domain_roots[domain_key] = domain_root
         domain_cells[domain_key] = []
         domain_children[domain_key] = []

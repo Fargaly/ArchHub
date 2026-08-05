@@ -316,15 +316,20 @@ def _revise_scope_definition(
     )
 
 
-def _json(url, path, payload=None, *, token: str):
+def _json(url, path, payload=None, *, token: str, csrf: str | None = None):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "X-ArchHub-Session": token,
+    }
+    # Mutating routes verify the session's CSRF digest; a POST without the
+    # issued token is refused 403 by design, not by accident.
+    if csrf is not None:
+        headers["X-ArchHub-CSRF"] = csrf
     request = Request(
         url + path,
         data=data,
-        headers={
-            "Content-Type": "application/json",
-            "X-ArchHub-Session": token,
-        },
+        headers=headers,
         method="GET" if payload is None else "POST",
     )
     try:
@@ -433,6 +438,7 @@ def test_clean_server_scope_interaction_enters_child_scope_with_same_visual_cont
                 "projection_mode": "topology-delta-v1",
             },
             token="clean-scope-token",
+            csrf="clean-scope-csrf",
         )
         assert status == 200
         assert entered["root"] == target["id"], (

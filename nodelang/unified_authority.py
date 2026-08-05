@@ -4376,26 +4376,60 @@ def install_scope_panels(
             0,
             "",
         )
-    audience_root, audience_cells = _build_value(
-        authority.roles,
-        authority.codecs[CODEC_NAME],
-        audience,
-        shape_root=authority.shape("value"),
-    )
-    applicability_root = _new_id()
-    create: list[Cell] = list(audience_cells)
-    create.extend(_typed_relation_cells(
-        applicability_root,
-        authority.role("conforms-to"),
-        authority.shape("relation"),
-        (
-            (authority.role("scope"), scope_root),
-            (authority.role("audience"), audience_root),
-        ),
-    ))
+    # One applicability relation per graph feature, naming every scope it
+    # applies in -- the shape the importer seeds. Definitions already resting
+    # on one keep it: the missing scope is APPENDED to that relation, which
+    # touches no revision. Only definitions carrying none get a new revision
+    # resting on the relation, minting it if this run is the first.
+    # The rehearsal against a copy of the live graph is what forced this:
+    # a per-scope mint left every definition pointing at whichever relation
+    # sorted first in its evidence, and 15 of 17 scope pairs uncovered.
+    shared_root: str | None = None
+    shared_scopes: tuple[str, ...] = ()
+    for projection in projections.values():
+        found = _scope_applicability(
+            authority, snapshot, projection.revision_root
+        )
+        if found is not None:
+            shared_root, shared_scopes, _members = found
+            break
+    create: list[Cell] = []
     replace: list[Cell] = []
+    if shared_root is None:
+        audience_root, audience_cells = _build_value(
+            authority.roles,
+            authority.codecs[CODEC_NAME],
+            audience,
+            shape_root=authority.shape("value"),
+        )
+        applicability_root = _new_id()
+        create.extend(audience_cells)
+        create.extend(_typed_relation_cells(
+            applicability_root,
+            authority.role("conforms-to"),
+            authority.shape("relation"),
+            (
+                (authority.role("scope"), scope_root),
+                (authority.role("audience"), audience_root),
+            ),
+        ))
+    else:
+        applicability_root = shared_root
+        if scope_root not in shared_scopes:
+            widened = _append_relation_member(
+                snapshot,
+                applicability_root,
+                authority.role("scope"),
+                scope_root,
+            )
+            create.extend(widened.create)
+            replace.extend(widened.replace)
     for definition_root in pending:
         projection = projections[definition_root]
+        if applicability_root in projection.evidence_roots:
+            # Already resting on the shared relation; widening it above is
+            # the whole change for this definition.
+            continue
         spec = _definition_spec(
             projection.name,
             projection.version,

@@ -504,11 +504,7 @@ def project_clean_visual_canvas(
         projection,
         caller=caller,
     )
-    # With no panels there is nothing to shell. Rendering the template anyway
-    # emits an inspector-panel element describing tabs that do not exist,
-    # which is a Python-side default standing in for a graph that declared
-    # none — the exact fallback the panel courts forbid.
-    projection["inspector"]["shell_descriptor"] = [] if not panels else render_clean_visual_template(
+    projection["inspector"]["shell_descriptor"] = render_clean_visual_template(
         authority,
         visual,
         "inspector-shell",

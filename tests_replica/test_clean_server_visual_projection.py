@@ -17,7 +17,11 @@ import nodelang.unified_authority as unified_authority_module
 from nodelang.cell_protocols import read_relation
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
-from nodelang.clean_browser_authority import issue_clean_browser_session
+from nodelang.cell_browser_sessions import BrowserSessionDenied
+from nodelang.clean_browser_authority import (
+    issue_clean_browser_session,
+    revoke_clean_browser_session,
+)
 from nodelang.clean_visual_projection import project_clean_visual_canvas
 from nodelang.clean_runtime_bootstrap import provision_clean_runtime
 from nodelang.runtime_caller_capability import WindowsDpapiCallerKeyStore
@@ -1299,34 +1303,129 @@ def test_clean_visual_projection_requires_graph_held_view_session_viewport_and_t
         built.location.authority.store.close()
 
 
-@pytest.mark.skipif(
-    _generic_relation_revision_command() is None,
-    reason="blocked by missing generic public relation/view-session revision command",
-)
+def _view_session_viewport_command():
+    """The concrete clean view-session viewport/token mutation command."""
+    return getattr(unified_authority_module, "revise_view_session_viewport", None)
+
+
 def test_clean_visual_projection_view_session_revision_changes_viewport_tokens_and_reopens(
     tmp_path,
 ):
+    """Viewport and design tokens are graph-held state bound to one issued view.
+
+    Three properties, each of which an implementation can satisfy alone while
+    failing the others: the mutation lands against the ISSUED session and view
+    root and nobody else's; it survives close and reopen because it lives in
+    the graph rather than in a process; and it is refused fail-closed for a
+    foreign or revoked session -- refused meaning raised AND unchanged, not
+    raised after the write.
+
+    Deliberately not a skip while unimplemented. The predecessor court used
+    skipif on a missing symbol and became structurally red without anyone
+    noticing, because a skip reads as "not failing". This fails naming the
+    exact missing symbol, so the board shows a specification, and the same
+    text becomes a real test the moment the symbol lands.
+    """
+    command = _view_session_viewport_command()
+    if command is None:
+        pytest.fail(
+            "clean view-session behavior court remains red: missing exact "
+            "symbol unified_authority.revise_view_session_viewport -- the "
+            "public command that mutates viewport/design-token state for one "
+            "issued browser session view root and returns the accepted "
+            "revision"
+        )
     built, _provider = _provision_clean_runtime(tmp_path)
     try:
-        issued = _issue_visual_session(built, prefix="viewport-command")
-        projected_before, lens_before, _before, _after = _project_current_visual_for_session(
-            built,
-            issued,
+        owner = _issue_visual_session(built, prefix="viewport-owner")
+        stranger = _issue_visual_session(built, prefix="viewport-stranger")
+        assert owner.view_root != stranger.view_root
+        assert owner.root_id != stranger.root_id
+        authority = built.location.authority
+
+        _projected, lens_before, _b, _a = _project_current_visual_for_session(
+            built, owner
         )
-        assert projected_before["graph_id"] == lens_before["graph_id"]
-        assert projected_before["root"] == lens_before["scope_root"]
-        assert projected_before["revision"] == lens_before["revision"]
-        command = _generic_relation_revision_command()
-        if command is None:
-            pytest.skip(
-                "blocked by exact missing symbol unified_authority.revise_relation_node"
+        base_revision = lens_before["revision"]
+
+        viewport = {"x": 128, "y": -64, "zoom": 1.75}
+        tokens = {"surface": "graph-held", "accent": "terracotta"}
+
+        accepted = command(
+            authority,
+            owner.view_root,
+            viewport=viewport,
+            design_tokens=tokens,
+            session_root=owner.root_id,
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+            expected_revision=base_revision,
+        )
+        assert accepted.revision > base_revision
+
+        _p_owner, lens_owner, _b, _a = _project_current_visual_for_session(
+            built, owner
+        )
+        assert lens_owner["viewport"] == viewport
+        assert lens_owner["design_tokens"] == tokens
+        assert lens_owner["revision"] == accepted.revision
+
+        _p_str, lens_stranger, _b, _a = _project_current_visual_for_session(
+            built, stranger
+        )
+        assert lens_stranger.get("viewport") != viewport, (
+            "viewport leaked across issued view sessions: state is bound to "
+            "the graph or the process, not to the issued view root"
+        )
+
+        reopened = _project_current_visual_for_session(built, owner)[1]
+        assert reopened["viewport"] == viewport
+        assert reopened["design_tokens"] == tokens
+
+        with pytest.raises(
+            (unified_authority_module.InvalidCell, BrowserSessionDenied)
+        ):
+            command(
+                authority,
+                owner.view_root,
+                viewport={"x": 9999, "y": 9999, "zoom": 4.0},
+                design_tokens={"surface": "stolen"},
+                session_root=stranger.root_id,
+                caller=built.caller,
+                command_id=str(uuid.uuid4()),
+                expected_revision=None,
             )
-        pytest.fail(
-            "clean visual viewport behavior remains red: the public generic "
-            "relation/view-session revision symbol now exists, but this court still "
-            "needs the concrete clean command call that mutates viewport/design-token "
-            "state for the issued browser session/view root, survives close/reopen "
-            "recovery, and denies foreign or revoked sessions fail-closed"
+        after_foreign = _project_current_visual_for_session(built, owner)[1]
+        assert after_foreign["viewport"] == viewport, (
+            "foreign session was refused but the viewport changed: the denial "
+            "is not fail-closed, it raised after writing"
+        )
+
+        revoke_clean_browser_session(
+            authority,
+            built.browser,
+            owner.root_id,
+            reason="court: revoked session must not mutate viewport",
+            caller=built.caller,
+            command_id=str(uuid.uuid4()),
+        )
+        with pytest.raises(
+            (unified_authority_module.InvalidCell, BrowserSessionDenied)
+        ):
+            command(
+                authority,
+                owner.view_root,
+                viewport={"x": 1, "y": 1, "zoom": 1.0},
+                design_tokens={"surface": "revoked"},
+                session_root=owner.root_id,
+                caller=built.caller,
+                command_id=str(uuid.uuid4()),
+                expected_revision=None,
+            )
+        after_revoked = _project_current_visual_for_session(built, stranger)[1]
+        assert after_revoked.get("viewport") != {"x": 1, "y": 1, "zoom": 1.0}, (
+            "revoked session was refused but the write landed: revocation is "
+            "advisory, not fail-closed"
         )
     finally:
         built.location.authority.store.close()

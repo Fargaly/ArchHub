@@ -2296,4 +2296,37 @@ def test_a_property_cannot_be_recorded_as_its_own_predecessor(monkeypatch):
             owner_root=authority.manifest.application_root,
             predecessor_root=collision,
         )
-
+
+
+def test_no_module_defines_the_same_top_level_name_twice():
+    """A redefined name is dead code that reads as live code.
+
+    revise_relation_node was added a second time in one module while an
+    earlier definition of the same name sat lower in the file. Python binds
+    the last one, so the new command never ran, and the courts it was written
+    for went green against the incumbent -- which made the addition look
+    correct. Nothing about the source says which definition is reachable, so
+    this checks by structure across the whole package rather than trusting a
+    reader to notice a name they have already seen.
+    """
+    import ast
+    import collections
+    import pathlib
+
+    package = pathlib.Path(unified_authority_module.__file__).parent
+    shadowed: list[str] = []
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        seen: dict[str, list[int]] = collections.defaultdict(list)
+        for node in tree.body:
+            if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                seen[node.name].append(node.lineno)
+        shadowed.extend(
+            "%s defines %s at lines %s"
+            % (path.name, name, ", ".join(str(line) for line in lines))
+            for name, lines in sorted(seen.items())
+            if len(lines) > 1
+        )
+    assert shadowed == []

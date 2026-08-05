@@ -2188,6 +2188,14 @@ def _build_property(
             (authority.role("history"), predecessor_root)
         )
     property_root = _new_id()
+    if predecessor_root == property_root:
+        # A property naming itself is how a reader learns it replaced
+        # nothing. If a real predecessor edge could ever be a self-loop the
+        # sentinel would be a lie, so it is refused at the one place every
+        # property is born rather than trusted to callers. build_property is
+        # published on the public seam and other modules already call it, so
+        # a static check inside this file cannot cover every path; this can.
+        raise InvalidCell("a property cannot be its own predecessor")
     return property_root, (
         name_cell,
         *value_cells,

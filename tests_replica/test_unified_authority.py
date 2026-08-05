@@ -2232,3 +2232,38 @@ def test_property_predecessor_sentinel_holds_only_while_one_mint_site_exists():
         "only _build_property may construct a property composition: %r"
         % constructors
     )
+    # build_property and typed_relation_cells are BOTH published on the
+    # public seam, so another module can assemble a property composition
+    # without touching this file and defeat the two checks above. The scan
+    # therefore covers the package, not one module. requirement_graph_import
+    # legitimately CALLS build_property; what is forbidden is assembling the
+    # composition directly somewhere else.
+    package = pathlib.Path(unified_authority_module.__file__).parent
+    foreign = {}
+    for module_path in sorted(package.glob("*.py")):
+        if module_path.name == "unified_authority.py":
+            continue
+        module_tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        for call in ast.walk(module_tree):
+            if not isinstance(call, ast.Call):
+                continue
+            name = getattr(call.func, "id", None) or getattr(
+                call.func, "attr", None
+            )
+            if name not in {"_typed_relation_cells", "typed_relation_cells"}:
+                continue
+            for argument in call.args:
+                if (
+                    isinstance(argument, ast.Call)
+                    and getattr(argument.func, "attr", None) == "shape"
+                    and argument.args
+                    and isinstance(argument.args[0], ast.Constant)
+                    and argument.args[0].value == "property"
+                ):
+                    foreign.setdefault(module_path.name, 0)
+                    foreign[module_path.name] += 1
+    assert foreign == {}, (
+        "a property composition is assembled outside unified_authority, so "
+        "the sentinel is no longer enforced at a single construction site: "
+        "%r" % foreign
+    )

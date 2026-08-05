@@ -48,7 +48,47 @@ for (const name of RENDERERS) {
     verdicts[name] = { ok: false, error: String(error && error.message || error) };
   }
 }
-// C7: prove the shim is not permissive. A selector the server never serves
-// must be null, or every verdict above is worthless.
-const shimHonest = document.querySelector('.not-a-served-selector') === null;
-console.log(JSON.stringify({ loaded: true, shim_honest: shimHonest, verdicts }));
+// A shim is dishonest in two directions and a court that checks one while
+// claiming both is worse than one that checks neither, because it reads as
+// covered. First direction: it must not INVENT what the browser lacks.
+// Second: it must REFUSE what the browser refuses -- a shim that quietly
+// accepts an undefined child turns "the catalogue entry was missing, so
+// the element was never built" into a pass, which is the gap this court
+// exists to find hiding inside the court itself.
+function refuses(operation) {
+  try {
+    operation();
+    return false;
+  } catch (error) {
+    return error instanceof TypeError;
+  }
+}
+const probe = document.createElement('div');
+const child = document.createElement('span');
+probe.append(child);
+const orphan = document.createElement('em');
+const prependProbe = document.createElement('div');
+prependProbe.append(document.createElement('i'));
+prependProbe.prepend(document.createElement('b'));
+const shimChecks = {
+  invents_nothing: document.querySelector('.not-a-served-selector') === null,
+  refuses_undefined_child: refuses(() => probe.appendChild(undefined)),
+  refuses_non_node: refuses(() => probe.append('text')),
+  refuses_foreign_reference: refuses(
+    () => probe.insertBefore(document.createElement('p'), orphan),
+  ),
+  children_and_childnodes_agree:
+    prependProbe.children.length === prependProbe.childNodes.length
+    && prependProbe.children.every((node, at) => node === prependProbe.childNodes[at]),
+  remove_detaches: (() => {
+    const parent = document.createElement('div');
+    const leaving = document.createElement('span');
+    parent.append(leaving);
+    leaving.remove();
+    return parent.children.length === 0 && parent.childNodes.length === 0;
+  })(),
+};
+const shimHonest = Object.values(shimChecks).every(Boolean);
+console.log(JSON.stringify({
+  loaded: true, shim_honest: shimHonest, shim_checks: shimChecks, verdicts,
+}));

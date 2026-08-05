@@ -8,6 +8,19 @@ const SERVED = new Set([
   'html', 'head',
 ]);
 
+function requireNode(candidate, operation) {
+  // The browser throws TypeError when handed a non-node. So does this.
+  if (
+    candidate === null || candidate === undefined
+    || typeof candidate !== 'object' || typeof candidate.tagName !== 'string'
+  ) {
+    throw new TypeError(
+      operation + ': argument is not a node (' + String(candidate) + ')',
+    );
+  }
+  return candidate;
+}
+
 function makeElement(tag = 'div', selector = null) {
   const node = {
     tagName: String(tag).toUpperCase(),
@@ -19,6 +32,7 @@ function makeElement(tag = 'div', selector = null) {
     title: '',
     draggable: false,
     hidden: false,
+    parentNode: null,
     children: [],
     childNodes: [],
     dataset: {},
@@ -46,12 +60,61 @@ function makeElement(tag = 'div', selector = null) {
     hasAttribute(name) {
       return Object.prototype.hasOwnProperty.call(this.attributes, name);
     },
-    append(...kids) { kids.forEach(k => { this.children.push(k); this.childNodes.push(k); }); },
+    // A shim is dishonest in TWO directions: hallucinating what the browser
+    // lacks, and ACCEPTING WHAT THE BROWSER REJECTS. The second turns a
+    // renderer that appended an undefined element -- because the catalogue
+    // entry it needed was missing -- into a passing verdict, which is the
+    // very gap the contract court exists to find, hiding inside the court.
+    append(...kids) {
+      kids.forEach(kid => {
+        requireNode(kid, 'append');
+        kid.parentNode = this;
+        this.children.push(kid);
+        this.childNodes.push(kid);
+      });
+    },
     appendChild(kid) { this.append(kid); return kid; },
-    prepend(...kids) { this.children.unshift(...kids); },
-    replaceChildren(...kids) { this.children = [...kids]; this.childNodes = [...kids]; },
-    remove() {},
-    insertBefore(kid) { this.append(kid); return kid; },
+    prepend(...kids) {
+      kids.forEach(kid => requireNode(kid, 'prepend'));
+      kids.forEach(kid => { kid.parentNode = this; });
+      // children and childNodes are one tree seen twice. Updating only one
+      // makes the verdict depend on which array a renderer happens to read.
+      this.children.unshift(...kids);
+      this.childNodes.unshift(...kids);
+    },
+    replaceChildren(...kids) {
+      kids.forEach(kid => requireNode(kid, 'replaceChildren'));
+      this.children.forEach(kid => { kid.parentNode = null; });
+      kids.forEach(kid => { kid.parentNode = this; });
+      this.children = [...kids];
+      this.childNodes = [...kids];
+    },
+    insertBefore(kid, reference) {
+      requireNode(kid, 'insertBefore');
+      if (reference === null || reference === undefined) {
+        this.append(kid);
+        return kid;
+      }
+      const at = this.children.indexOf(reference);
+      if (at < 0) {
+        throw new TypeError(
+          'insertBefore: the reference node is not a child of this node',
+        );
+      }
+      kid.parentNode = this;
+      this.children.splice(at, 0, kid);
+      this.childNodes.splice(at, 0, kid);
+      return kid;
+    },
+    remove() {
+      const parent = this.parentNode;
+      if (!parent) return;
+      [parent.children, parent.childNodes].forEach(list => {
+        const at = list.indexOf(this);
+        if (at >= 0) list.splice(at, 1);
+      });
+      this.parentNode = null;
+    },
     addEventListener() {},
     removeEventListener() {},
     closest() { return null; },

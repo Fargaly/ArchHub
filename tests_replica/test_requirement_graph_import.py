@@ -448,3 +448,83 @@ def test_a_graph_bootstrapped_before_scope_panels_can_still_be_given_them():
         command_id=_command_id("install-scope-panels-v1"),
     )
     assert replayed.replayed is True
+
+    # A second RUN is not a replay: a fresh command id reaches the command
+    # body, and the claim under test is that it does not accumulate -- a
+    # migration that minted a rival applicability for an already-covered
+    # scope would leave two relations disagreeing about which panels apply,
+    # and the projector reads membership without arbitrating between them.
+    second_run = migration(
+        authority,
+        scope_root,
+        caller=caller,
+        command_id=_command_id("install-scope-panels-v2"),
+    )
+    assert second_run.replayed is True
+    snapshot = authority.store.snapshot()
+    naming_scope = [
+        root
+        for root in {
+            evidence_root
+            for definition_root in definition_roots
+            for evidence_root in read_definition(
+                authority, definition_root, caller=caller
+            ).evidence_roots
+        }
+        if any(
+            member.role_id == authority.role("scope")
+            and member.participant_id == scope_root
+            for member in relation_members(snapshot, root)
+        )
+    ]
+    assert len(naming_scope) == 1, (
+        "a second run accumulated rival applicability relations: %r"
+        % naming_scope
+    )
+
+    # The migration installs the scaffold; the PANELS arrive when a
+    # definition declares them. On the real graph the scaffold landed and
+    # nothing changed for the user, because no live definition declared any
+    # -- the coverage check counted evidence links and never asked whether a
+    # panel existed behind them. This is the delivery half: declare one
+    # panel through the ordinary revision path and require it to exist as a
+    # graph object on the migrated applicability.
+    declared = read_definition(
+        authority, definition_roots[0], caller=caller
+    )
+    revise_definition(
+        authority,
+        definition_roots[0],
+        declared.name,
+        caller=caller,
+        command_id=_command_id("declare-panel-after-migration"),
+        version=declared.version + "-panel",
+        defaults=dict(declared.contracts["defaults"]),
+        parameters=dict(declared.contracts["parameters"]),
+        interfaces=dict(declared.contracts["interfaces"]),
+        rules=dict(declared.contracts["rules"]),
+        presentation={"panels": ["Overview"]},
+        courts=dict(declared.contracts["courts"]),
+        provenance=dict(declared.contracts["provenance"]),
+    )
+    delivered = authority.store.snapshot()
+    panel_labels = []
+    for member in relation_members(delivered, naming_scope[0]):
+        if member.role_id != authority.role("object"):
+            continue
+        labels = [
+            each.participant_id
+            for each in relation_members(delivered, member.participant_id)
+            if each.role_id == authority.role("label")
+        ]
+        assert member.participant_id in delivered.cells
+        panel_labels.extend(
+            unified_authority_module.decode_value(
+                authority, delivered, label_root
+            )
+            for label_root in labels
+        )
+    assert panel_labels == ["Overview"], (
+        "a declared panel did not arrive on the migrated applicability as a "
+        "graph object: %r" % panel_labels
+    )

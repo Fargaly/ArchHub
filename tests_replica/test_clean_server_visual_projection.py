@@ -252,6 +252,18 @@ def _focus_command():
     return getattr(clean_browser_authority, "revise_clean_browser_focus", None)
 
 
+def _flatten_descriptor(node):
+    """Every element in a rendered descriptor tree, parents before children."""
+    if isinstance(node, list):
+        for item in node:
+            yield from _flatten_descriptor(item)
+        return
+    if not isinstance(node, dict):
+        return
+    yield node
+    yield from _flatten_descriptor(node.get("children") or [])
+
+
 def _projected_node_by_root(projected, root_id: str):
     return next(node for node in projected["nodes"] if node["id"] == root_id)
 
@@ -636,7 +648,25 @@ def test_clean_visual_projection_removes_deleted_panels_without_python_fallback(
         )
         projected, _lens, _before, _after = _project_current_visual(built)
         assert projected["inspector"]["presentation"]["panels"] == []
-        assert projected["inspector"]["shell_descriptor"] == []
+        shell = projected["inspector"]["shell_descriptor"]
+        assert shell, (
+            "inspector chrome vanished with its content: a scope that "
+            "declares no panels must still render its shell -- 'no tabs' and "
+            "'no shell' are different facts and collapsing them blanks the "
+            "inspector for every scope the graph has not seeded"
+        )
+        invented = [
+            node for node in _flatten_descriptor(shell)
+            if str(node.get("key", "")).startswith("panel:")
+            or node.get("id") in {
+                row["id"]
+                for row in projected["inspector"]["presentation"]["panels"]
+            }
+        ]
+        assert invented == [], (
+            "shell rendered panel elements the graph never declared: %r"
+            % invented
+        )
     finally:
         built.location.authority.store.close()
 

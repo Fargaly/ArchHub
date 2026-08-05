@@ -586,13 +586,13 @@ def project_clean_visual_canvas(
         projection,
         caller=caller,
     )
-    # With no panels there is nothing to shell. This was wrong as a projector
-    # guard while panels were Python strings -- the descriptors court and the
-    # deleted-panels court then reached here with identical state and demanded
-    # opposite results. Panels are graph compositions now: a fresh scope holds
-    # its seeded panel and shells; a scope whose declarations were revised
-    # away holds none and shells nothing.
-    projection["inspector"]["shell_descriptor"] = [] if not panels else render_clean_visual_template(
+    # Chrome and content are separate facts. The shell is chrome and renders
+    # whenever the scope projects at all; panels are content and may
+    # legitimately be empty -- an inspector with zero tabs, never no
+    # inspector. Collapsing the two blanked the inspector for every scope the
+    # graph had not seeded, which no court could reach because every court
+    # bootstraps a freshly seeded graph.
+    projection["inspector"]["shell_descriptor"] = render_clean_visual_template(
         authority,
         visual,
         "inspector-shell",

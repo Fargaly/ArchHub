@@ -425,6 +425,9 @@ def _validated_specification_source(
     return title, built
 
 
+IMPORT_CONNECTION = "requirement-link"
+
+
 def _definition_cells(
     authority: UnifiedAuthority,
     *,
@@ -444,7 +447,15 @@ def _definition_cells(
         "published",
         {},
         parameters,
-        {},
+        {
+            IMPORT_CONNECTION: {
+                # A requirement may be wired to many others, and an imported
+                # source is read-only until it is revised through a command.
+                "direction": "target",
+                "multiple": True,
+                "permission": "read",
+            }
+        },
         {"source-digest": source_digest},
         {},
         {"source-integrity": "required"},
@@ -504,6 +515,10 @@ def _relation_cells_for_import(
         (authority.role("source"), source_root),
         (authority.role("target"), target_root),
     ]
+    # A drawn wire is a socket on both nodes. Naming the interface it
+    # satisfies lets a reader ask the definition what that socket permits
+    # instead of leaving the renderer to assume.
+    properties = {"connection": IMPORT_CONNECTION, **dict(properties)}
     for key in sorted(properties):
         property_root, property_cells = build_property(
             authority, key, properties[key], owner_root=root

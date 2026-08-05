@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 from .cell_attention import active_focus, open_attention_protocol
+from .cell_protocols import read_relation
 from .unified_authority import (
     property_identities,
     CallerCommandCapability,
@@ -40,6 +41,18 @@ class LensPort:
     participant_role: str
     connection: str | None
     other_roots: tuple[str, ...]
+    # A socket is declared by an interface in the definition and realised by
+    # incidences in the relation. Both are named here so a drawn socket can
+    # be traced to the cells that authorise it rather than described by
+    # whatever the renderer guessed.
+    interface_root: str | None = None
+    direction: object = None
+    multiple: object = None
+    permission: object = None
+    editable: bool = False
+    source_incidence: str | None = None
+    target_incidence: str | None = None
+    authority_roots: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +133,70 @@ def _definition_item(definition: DefinitionProjection) -> LensCatalogueItem:
         MappingProxyType(dict(definition.contracts["interfaces"])),
         MappingProxyType(dict(definition.contracts["presentation"])),
     )
+
+
+def _interface_binding(
+    authority,
+    snapshot,
+    level,
+    owner_root: str,
+    connection: object,
+    caller,
+    relation_root: str,
+    participant_role: str,
+) -> dict[str, object]:
+    """Name the interface a socket is declared by, and what it declares.
+
+    A socket is drawn because a definition declares an interface for it. If
+    that declaration cannot be found the socket carries no interface facts
+    rather than invented ones, so a renderer cannot present a guess as a
+    contract.
+    """
+    # A socket exists because a relation puts this node in it. That relation
+    # is the authority for the socket even when no interface is declared, so
+    # it is named rather than leaving the socket unattributable. Direction,
+    # cardinality and permission stay absent until a definition declares
+    # them; a default here would assert a contract the graph never made.
+    # With no declared interface the graph still states which side of the
+    # relation this node occupies. That role is the direction it can honestly
+    # report; cardinality and permission remain unknown rather than assumed.
+    fallback = {
+        "interface_root": relation_root,
+        "direction": participant_role,
+        "multiple": None,
+        "permission": None,
+        "authority_roots": (relation_root,),
+    }
+    instance = level.instances.get(owner_root)
+    if instance is None or type(connection) is not str:
+        return fallback
+    definition_root = instance.get("definition")
+    if type(definition_root) is not str:
+        return fallback
+    definition = read_definition(authority, definition_root, caller=caller)
+    interfaces = definition.contracts.get("interfaces") or {}
+    declared = interfaces.get(connection)
+    if not isinstance(declared, Mapping):
+        return fallback
+    contract_root = definition.contract_roots.get("interfaces")
+    identities = (
+        property_identities(authority, snapshot, contract_root)
+        if contract_root else {}
+    )
+    interface_root = (identities.get(connection) or {}).get(
+        "property_root"
+    ) or contract_root
+    authority_roots = tuple(
+        root for root in (interface_root, contract_root, definition.revision_root)
+        if root and root in snapshot.cells
+    )
+    return {
+        "interface_root": interface_root,
+        "direction": declared.get("direction") or participant_role,
+        "multiple": declared.get("multiple"),
+        "permission": declared.get("permission"),
+        "authority_roots": authority_roots,
+    }
 
 
 def _catalogue(
@@ -212,6 +289,7 @@ def project_unified_scope(
         )
         for relation in level.relations.values()
     )
+    role_names = {authority.role(name): name for name in authority.roles}
     ports: dict[str, list[LensPort]] = {
         root: [] for root in level.composition_roots
     }
@@ -220,14 +298,41 @@ def project_unified_scope(
         if connection is not None and type(connection) is not str:
             raise InvalidCell("relation connection presentation is invalid")
         participant_roots = tuple(root for _, root in relation.participants)
+        members = read_relation(snapshot, relation.root_id, budget=1024)
+        incidence_by_role: dict[str, str] = {}
+        for member in members:
+            role_name = role_names.get(member.role_id)
+            if role_name and role_name not in incidence_by_role:
+                incidence_by_role[role_name] = member.incidence_id
+        source_incidence = incidence_by_role.get("source")
+        target_incidence = incidence_by_role.get("target")
+        if source_incidence is None or target_incidence is None:
+            ordered = [member.incidence_id for member in members]
+            if len(ordered) >= 2:
+                source_incidence = source_incidence or ordered[0]
+                target_incidence = target_incidence or next(
+                    item for item in ordered if item != source_incidence
+                )
         for role, root in relation.participants:
             if root not in ports:
                 continue
+            interface = _interface_binding(
+                authority, snapshot, level, root, connection, caller,
+                relation.root_id, role,
+            )
             ports[root].append(LensPort(
                 relation.root_id,
                 role,
                 connection,
                 tuple(item for item in participant_roots if item != root),
+                interface.get("interface_root"),
+                interface.get("direction"),
+                interface.get("multiple"),
+                interface.get("permission"),
+                bool(interface.get("interface_root")),
+                source_incidence,
+                target_incidence,
+                interface.get("authority_roots", ()),
             ))
 
     nodes: list[LensNode] = []

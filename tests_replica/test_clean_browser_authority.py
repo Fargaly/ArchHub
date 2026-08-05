@@ -27,6 +27,7 @@ from nodelang.clean_browser_authority import (
 )
 from nodelang.unified_application_lens import project_unified_scope
 from nodelang.unified_authority import (
+    relation_members,
     BootstrapManifest,
     composition_root,
     create_unified_authority,
@@ -916,3 +917,66 @@ def test_clean_browser_authority_has_no_parallel_server_store_or_token_ledger():
         "clean_application_view",
     )
     assert all(term not in source for term in forbidden)
+
+
+def test_installing_on_a_graph_with_enrolled_sessions_orphans_none_of_them():
+    """Pre-existing enrolments survive the install untouched.
+
+    The live graph enrolled its agent fleet before the browser authority
+    existed, and the install ran against it with every enrolment standing.
+    A freshly bootstrapped fixture cannot reach this case -- it has no
+    pre-existing sessions to break -- which is exactly how an install that
+    re-parented or re-keyed session state would pass every court and orphan
+    a production fleet. Enrolments here are created BEFORE the install, and
+    afterwards each must still sign an accepted command, not merely still
+    appear in a listing: presence is plumbing, signing is water.
+    """
+    authority = _authority()
+    caller = _Caller(authority)
+    enrolled = [
+        _second_caller(authority, caller, label="Pre-install agent %d" % index)
+        for index in range(3)
+    ]
+    sessions_root = composition_root(
+        authority, "Agent Sessions", caller=caller
+    )
+    before_members = {
+        member.participant_id
+        for member in relation_members(
+            authority.store.snapshot(), sessions_root
+        )
+    }
+    assert all(
+        agent.session_root in before_members for agent in enrolled
+    )
+
+    installed = install_clean_browser_authority(
+        authority,
+        caller=caller,
+        command_id=str(uuid.uuid4()),
+    )
+
+    after_members = {
+        member.participant_id
+        for member in relation_members(
+            authority.store.snapshot(), sessions_root
+        )
+    }
+    assert before_members.issubset(after_members), (
+        "the install removed pre-existing agent sessions: %r"
+        % sorted(before_members - after_members)
+    )
+    for agent in enrolled:
+        issued = issue_clean_browser_session(
+            authority,
+            installed,
+            token="survivor-%s" % agent.session_root,
+            csrf_token="survivor-csrf-%s" % agent.session_root,
+            lifetime_seconds=120.0,
+            caller=agent,
+            command_id=str(uuid.uuid4()),
+        )
+        assert issued.view_root == agent.session_root, (
+            "a pre-existing session no longer binds as itself after the "
+            "install"
+        )

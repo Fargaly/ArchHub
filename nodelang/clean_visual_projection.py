@@ -396,7 +396,12 @@ def _catalogue_rows(authority, caller, facts):
                 row["activation"]["condition"], facts
             ),
         })
-    return control_rows, list(icon_rows.values()), by_root
+    return (
+        control_rows,
+        list(icon_rows.values()),
+        by_root,
+        catalogue.get("stylesheet", ""),
+    )
 
 
 def project_clean_visual_canvas(
@@ -431,6 +436,12 @@ def project_clean_visual_canvas(
             "color_token": item.get("color_token"),
             "resolved_color": item.get("resolved_color"),
             "position": item.get("position"),
+            # The client lays out from x and y. They are read from the
+            # position the graph holds, never invented here: a node the
+            # graph has not placed has no place, and the canvas must say
+            # so rather than scatter it somewhere plausible.
+            "x": (item.get("position") or {}).get("x"),
+            "y": (item.get("position") or {}).get("y"),
             "presentation_root": item.get("presentation_root"),
             "icon_root": item.get("icon_root"),
             "color_token_root": item.get("color_token_root"),
@@ -536,7 +547,7 @@ def project_clean_visual_canvas(
     # Facts the graph-held conditions are evaluated against. They come
     # from the lens, so one catalogue yields a different applicable set as
     # the scope and selection change.
-    control_rows, icon_rows, _icons_by_root = _catalogue_rows(
+    control_rows, icon_rows, _icons_by_root, stylesheet = _catalogue_rows(
         authority,
         caller,
         {
@@ -685,6 +696,7 @@ def project_clean_visual_canvas(
                 },
                 "control_catalog": {"controls": control_rows},
                 "icon_catalog": {"icons": icon_rows},
+                "stylesheet": stylesheet,
             }
         },
         "inspector": {

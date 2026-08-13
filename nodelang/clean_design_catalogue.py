@@ -26,6 +26,7 @@ from .cell_control_presentations import (
     ensure_archhub_control_catalog,
     project_control_catalog,
 )
+from .application import STYLESHEET
 from .cell_icons import ensure_archhub_icon_catalog, project_icon_catalog
 from .cell_protocols import read_relation
 from .universal_cell import NULL_CELL_ID, InvalidCell
@@ -141,7 +142,16 @@ def compose_design_catalogue() -> dict[str, object]:
             "activation": activation,
         })
     control_rows.sort(key=lambda row: (row["zone"], row["order"]))
-    return {"icons": icon_rows, "controls": control_rows}
+    # The stylesheet is part of the catalogue for the same reason the
+    # controls are: the canvas satisfied every contract and still showed
+    # nothing, because appearance was the one thing no court could see and
+    # the page carried nine rules of its own. It travels with the rest, so
+    # revising the catalogue restyles the canvas without touching code.
+    return {
+        "icons": icon_rows,
+        "controls": control_rows,
+        "stylesheet": STYLESHEET,
+    }
 
 
 def install_design_catalogue(

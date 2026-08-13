@@ -882,6 +882,25 @@ class _CleanAuthorityHttpServer:
   window.__archhubSession = session;
   const meta = document.querySelector('meta[name="archhub-csrf"]');
   if (meta) meta.content = session.csrf;
+  // Appearance comes from the graph like everything else. The page ships
+  // only the skeleton the renderers mount on; how any of it LOOKS is a
+  // graph fact, so restyling the canvas is a revision, not a deploy.
+  try {
+    const projected = await fetch('/api/universal/canvas', {
+      headers: {
+        'X-ArchHub-Session': session.token,
+        'X-ArchHub-CSRF': session.csrf,
+      },
+    }).then(response => response.json());
+    const sheet = projected?.configuration?.design_system?.stylesheet;
+    if (sheet) {
+      const style = document.createElement('style');
+      style.textContent = sheet;
+      document.head.append(style);
+    }
+  } catch (error) {
+    document.body.dataset.archhubStylesheet = 'unavailable';
+  }
   document.body.dataset.archhubSignIn = 'ready';
   // A script element carrying text/plain holds source, it does not run
   // it, and copying that text into a new script element is a document
@@ -897,32 +916,29 @@ class _CleanAuthorityHttpServer:
             "content=\"width=device-width,initial-scale=1\">"
             "<meta name=\"archhub-csrf\" content=\"\">"
             "<title>ArchHub</title>"
-            "<style>"
-            "html,body{margin:0;height:100%%;font-family:Inter,system-ui,"
-            "sans-serif;background:#191919;color:#e8e6e3;}"
-            ".app{display:grid;grid-template-columns:48px 280px 1fr 320px;"
-            "height:100vh;}"
-            ".icon-rail{border-right:1px solid #2c2c2a;}"
-            ".sidebar{border-right:1px solid #2c2c2a;overflow:auto;}"
-            ".workspace{position:relative;display:flex;"
-            "flex-direction:column;}"
-            ".canvas-toolbar{display:flex;gap:8px;align-items:center;"
-            "padding:8px 12px;border-bottom:1px solid #2c2c2a;}"
-            ".canvas{position:relative;flex:1;overflow:hidden;}"
-            ".canvas-stage{position:absolute;inset:0;}"
-            ".inspector{border-left:1px solid #2c2c2a;overflow:auto;"
-            "padding:12px;}"
-            "</style></head><body>"
-            "<div class=\"app\">"
+            # The skeleton is not a design. It is exactly the structure the
+            # graph-held stylesheet declares -- .archhub-app's two columns,
+            # the sidebar's rail and library, the workspace's header, canvas
+            # and inspector -- so that CSS lands on the boxes it was written
+            # for. An invented shell fights its own stylesheet: the first
+            # one here nested the rail beside the sidebar and the canvas
+            # measured zero pixels wide.
+            "<style>html,body{margin:0;height:100%%}</style>"
+            "</head><body>"
+            "<div class=\"archhub-app\">"
+            "<aside class=\"sidebar\">"
             "<nav class=\"icon-rail\"></nav>"
-            "<aside class=\"sidebar\"><div class=\"library-panel\">"
-            "</div></aside>"
+            "<div class=\"library-panel\"></div>"
+            "</aside>"
             "<main class=\"workspace\">"
-            "<div class=\"canvas-toolbar\"></div>"
+            "<header class=\"workspace-header\"></header>"
             "<div class=\"canvas\" data-pan-surface=\"true\">"
-            "<div class=\"canvas-stage\"></div></div>"
-            "</main>"
+            "<div class=\"canvas-stage\"></div>"
+            "<div class=\"canvas-toolbar\"></div>"
+            "</div>"
             "<aside class=\"inspector\"></aside>"
+            "</main>"
+            "<footer class=\"status-strip\"></footer>"
             "</div>"
             "<script type=\"text/plain\" id=\"archhub-canvas-source\">"
             "%s</script>"

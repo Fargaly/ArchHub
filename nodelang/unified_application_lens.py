@@ -8,6 +8,7 @@ from typing import Mapping
 from .cell_attention import active_focus, open_attention_protocol
 from .cell_protocols import read_relation
 from .unified_authority import (
+    read_composition_placements,
     property_identities,
     CallerCommandCapability,
     DefinitionProjection,
@@ -348,6 +349,14 @@ def project_unified_scope(
             ))
 
     nodes: list[LensNode] = []
+    # Where a composition sits is a graph fact the scope holds, not a
+    # number a projector picks. A composition that has never been placed
+    # reads as unplaced, so the canvas can say so rather than scatter it.
+    placements = read_composition_placements(
+        authority,
+        authority.store.snapshot(),
+        composition_root(authority, "Interface", caller=caller),
+    )
     for root in level.composition_roots:
         instance = level.instances.get(root)
         if instance is None:
@@ -364,6 +373,11 @@ def project_unified_scope(
                 (),
                 tuple(sorted(ports[root], key=lambda item: item.relation_root)),
                 True,
+                None,
+                None,
+                None,
+                None,
+                placements.get(root),
             ))
             continue
         definition_root = instance.get("definition")
@@ -411,7 +425,11 @@ def project_unified_scope(
             presentation.get("icon"),
             presentation.get("token"),
             presentation.get("color"),
-            presentation.get("position"),
+            # A node's own placement wins over its definition's. Two
+            # instances of one definition are two nodes on a canvas and
+            # must be able to sit apart; a definition-level position
+            # would stack every instance of it in one spot.
+            placements.get(root) or presentation.get("position"),
             presentation_identities.get("icon", {}).get("property_root"),
             presentation_identities.get("token", {}).get("property_root"),
             presentation_identities.get("position", {}).get("property_root"),

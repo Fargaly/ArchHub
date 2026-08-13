@@ -23,6 +23,8 @@ from .unified_authority import (
     CallerCommandCapability,
     UnifiedAuthority,
     composition_root,
+    place_composition,
+    read_composition_placements,
     read_definition,
     revise_definition,
 )
@@ -68,6 +70,31 @@ def install_scope_layout(
     moved keeps where he put it and re-running changes nothing.
     """
     snapshot = authority.store.snapshot()
+    # Compositions are the nodes a canvas actually shows at this level,
+    # and they carry their place in the scope rather than in a definition
+    # they may share with fifteen others -- which would stack them all in
+    # one spot.
+    compositions = [
+        member.participant_id
+        for member in read_relation(
+            snapshot, scope_root, budget=COMMAND_BUDGET
+        )
+        if member.role_id == authority.role("composition")
+    ]
+    held = read_composition_placements(authority, snapshot, scope_root)
+    placed = 0
+    for index, composition in enumerate(sorted(compositions)):
+        if held.get(composition):
+            continue
+        place_composition(
+            authority,
+            scope_root,
+            composition,
+            _placed(index),
+            caller=caller,
+            command_id=_derived_command(command_id, "place", composition),
+        )
+        placed += 1
     definitions = [
         member.participant_id
         for member in read_relation(
@@ -75,7 +102,6 @@ def install_scope_layout(
         )
         if member.role_id == authority.role("definition")
     ]
-    placed = 0
     for index, definition_root in enumerate(sorted(definitions)):
         current = read_definition(authority, definition_root, caller=caller)
         presentation = dict(current.contracts["presentation"])

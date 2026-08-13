@@ -4076,6 +4076,194 @@ def _plain_json_mapping(value: object, label: str) -> dict[str, object]:
         raise InvalidCell("%s is not plain data" % label) from None
 
 
+def _composition_placement(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    interface_root: str,
+    composition_root_id: str,
+) -> tuple[str, tuple[RelationMember, ...]] | None:
+    """Find the one placement relation for a composition inside its scope.
+
+    A composition is a released shape whose reader refuses undeclared
+    members -- and so is the scope that holds it, which is a composition
+    too. Neither can carry the placement. Interface is the released
+    open-role carrier for interface state, the same place a view session
+    keeps its viewport, so placements register there and are found by
+    walking its members forward rather than by searching the graph for
+    whatever happens to point at a composition.
+    """
+    for member in read_relation(snapshot, interface_root, budget=COMMAND_BUDGET):
+        if member.role_id != authority.role("object"):
+            continue
+        try:
+            carried = read_relation(
+                snapshot, member.participant_id, budget=COMMAND_BUDGET
+            )
+        except (InvalidCell, MatchBudgetExceeded):
+            continue
+        conforms = [
+            each.participant_id for each in carried
+            if each.role_id == authority.role("conforms-to")
+        ]
+        if conforms != [authority.shape("relation")]:
+            continue
+        subjects = [
+            each.participant_id for each in carried
+            if each.role_id == authority.role("composition")
+        ]
+        if subjects == [composition_root_id]:
+            return member.participant_id, carried
+    return None
+
+
+def read_composition_placements(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    interface_root: str,
+) -> dict[str, dict[str, object]]:
+    """Every placement Interface holds, by the composition it places."""
+    placements: dict[str, dict[str, object]] = {}
+    for member in read_relation(snapshot, interface_root, budget=COMMAND_BUDGET):
+        if member.role_id != authority.role("object"):
+            continue
+        try:
+            carried = read_relation(
+                snapshot, member.participant_id, budget=COMMAND_BUDGET
+            )
+        except (InvalidCell, MatchBudgetExceeded):
+            continue
+        conforms = [
+            each.participant_id for each in carried
+            if each.role_id == authority.role("conforms-to")
+        ]
+        if conforms != [authority.shape("relation")]:
+            continue
+        subjects = [
+            each.participant_id for each in carried
+            if each.role_id == authority.role("composition")
+        ]
+        presentations = [
+            each.participant_id for each in carried
+            if each.role_id == authority.role("presentation")
+        ]
+        if len(subjects) != 1 or len(presentations) != 1:
+            continue
+        placements[subjects[0]] = _property_values(
+            authority, snapshot, presentations[0]
+        )
+    return placements
+
+
+def place_composition(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    composition_root_id: str,
+    position: Mapping[str, object],
+    *,
+    caller: CallerCommandCapability,
+    command_id: str,
+) -> CommandResult:
+    """Record where a composition sits on the canvas of its scope.
+
+    A canvas cannot draw what has no place, and every composition node
+    carried none: the client computed NaN bounds and the whole layout
+    collapsed while every court stayed green. The position is a graph
+    fact from here on -- carried as the same property contract a view
+    session uses for its viewport, revised by the same signed path, and
+    read back rather than recomputed, so moving a node is an ordinary
+    revision and an unplaced node stays honestly unplaced.
+    """
+    plain = _plain_json_mapping(position, "composition position")
+    request_digest = _digest({
+        "intent": "place-composition",
+        "scope": scope_root,
+        "composition": composition_root_id,
+        "position": plain,
+    })
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="place-composition",
+        request_digest=request_digest,
+        object_root=composition_root_id,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            composition_root_id, existing.result_revision, True, 0, 0,
+            existing.root_id,
+        )
+    position_root, position_cells = _build_contract(authority, plain)
+    create: list[Cell] = list(position_cells)
+    replace: list[Cell] = []
+    interface_root = composition_root(authority, "Interface", caller=caller)
+    found = _composition_placement(
+        authority, snapshot, interface_root, composition_root_id
+    )
+    if found is None:
+        placement_root = _new_id()
+        create.extend(_typed_relation_cells(
+            placement_root,
+            authority.role("conforms-to"),
+            authority.shape("relation"),
+            (
+                (authority.role("composition"), composition_root_id),
+                (authority.role("presentation"), position_root),
+            ),
+        ))
+        registration = _append_relation_member(
+            snapshot,
+            interface_root,
+            authority.role("object"),
+            placement_root,
+        )
+        create.extend(registration.create)
+        replace.extend(registration.replace)
+    else:
+        placement_root, carried = found
+        stale = tuple(
+            each.incidence_id for each in carried
+            if each.role_id == authority.role("presentation")
+        )
+        staged = snapshot
+        if stale:
+            removal = prepare_remove_relation_members(
+                staged, placement_root, stale, budget=COMMAND_BUDGET
+            )
+            replace.extend(removal.replace)
+            staged = overlay_read_snapshot(staged, replace=removal.replace)
+        append = prepare_append_relation_members(
+            staged,
+            placement_root,
+            ((authority.role("presentation"), position_root),),
+            budget=COMMAND_BUDGET,
+        )
+        create.extend(append.create)
+        replace.extend(append.replace)
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=tuple(create),
+        resource_replace=tuple(replace),
+        authenticated=authenticated,
+        result_root=composition_root_id,
+        policy_proof=policy_proof,
+    )
+
+
 def _view_session_state(
     authority: UnifiedAuthority,
     snapshot: Snapshot,

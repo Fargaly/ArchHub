@@ -356,6 +356,7 @@ def project_unified_scope(
         authority,
         authority.store.snapshot(),
         composition_root(authority, "Interface", caller=caller),
+        wanted=level.composition_roots,
     )
     for root in level.composition_roots:
         instance = level.instances.get(root)

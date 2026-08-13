@@ -4116,13 +4116,31 @@ def _composition_placement(
     return None
 
 
-def read_composition_placements(
+# One placement index per immutable snapshot. Interface accumulates a
+# placement for every node ever placed, and walking all of them on every
+# canvas read is what a projection spends its time on once a real graph
+# is laid out. The entry HOLDS the mapping it keys on: an id is stable
+# while its object lives, not unique across time, and a cache that kept
+# only the integer would answer for a snapshot that no longer exists.
+_PLACEMENT_INDEX_CACHE: dict[
+    tuple[int, int, str],
+    tuple[Mapping[str, Cell], dict[str, str]],
+] = {}
+
+
+def _placement_index(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
     interface_root: str,
-) -> dict[str, dict[str, object]]:
-    """Every placement Interface holds, by the composition it places."""
-    placements: dict[str, dict[str, object]] = {}
+) -> dict[str, str]:
+    """Map each placed composition to the contract holding its position."""
+    key = (id(snapshot.cells), snapshot.revision, interface_root)
+    cached = _PLACEMENT_INDEX_CACHE.get(key)
+    if cached is not None:
+        held, index = cached
+        if held is snapshot.cells:
+            return index
+    index: dict[str, str] = {}
     for member in read_relation(snapshot, interface_root, budget=COMMAND_BUDGET):
         if member.role_id != authority.role("object"):
             continue
@@ -4138,7 +4156,7 @@ def read_composition_placements(
         ]
         if conforms != [authority.shape("relation")]:
             continue
-        subjects = [
+        placed = [
             each.participant_id for each in carried
             if each.role_id == authority.role("composition")
         ]
@@ -4146,12 +4164,36 @@ def read_composition_placements(
             each.participant_id for each in carried
             if each.role_id == authority.role("presentation")
         ]
-        if len(subjects) != 1 or len(presentations) != 1:
-            continue
-        placements[subjects[0]] = _property_values(
-            authority, snapshot, presentations[0]
-        )
-    return placements
+        if len(placed) == 1 and len(presentations) == 1:
+            index[placed[0]] = presentations[0]
+    if len(_PLACEMENT_INDEX_CACHE) >= 8:
+        _PLACEMENT_INDEX_CACHE.pop(next(iter(_PLACEMENT_INDEX_CACHE)))
+    _PLACEMENT_INDEX_CACHE[key] = (snapshot.cells, index)
+    return index
+
+
+def read_composition_placements(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    interface_root: str,
+    wanted: Iterable[str] | None = None,
+) -> dict[str, dict[str, object]]:
+    """The placements Interface holds for the compositions asked about.
+
+    Interface accumulates one placement per node ever placed, across
+    every scope, while a canvas shows one scope at a time. Decoding all
+    of them to draw fifteen nodes is what turned a canvas read into
+    seventeen seconds; the position is only decoded for a node the
+    caller actually asked about.
+    """
+    index = _placement_index(authority, snapshot, interface_root)
+    subjects = index.keys() if wanted is None else (
+        root for root in wanted if root in index
+    )
+    return {
+        root: _property_values(authority, snapshot, index[root])
+        for root in subjects
+    }
 
 
 def place_composition(

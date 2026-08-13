@@ -1036,6 +1036,13 @@ class _CleanAuthorityHttpServer:
             session.assurance_root,
         )
 
+    # One canvas read walks the same relations many times over -- the
+    # Interface composition alone is read by the browser authority, the
+    # visual system, the interaction set and the placements, and it now
+    # carries a member for every node ever placed. The reuse scope makes
+    # those repeats free within a single request and expires with it, so
+    # nothing is remembered across a revision.
+    @with_relation_projection_scope
     def _canvas(
         self,
         binding: _CleanBrowserSessionBinding,

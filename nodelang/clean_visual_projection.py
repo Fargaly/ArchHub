@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Mapping
 
+from .clean_design_catalogue import read_design_catalogue
+from .universal_cell import InvalidCell
 from .clean_scope_interactions import CleanScopeInteractions
 from .clean_visual_authority import (
     CleanVisualSystem,
@@ -111,7 +113,17 @@ def _wire_color(properties: Mapping[str, object]) -> str:
     return "#5ac8fa"
 
 
-def _toolbar_projection(projection: Mapping[str, object]) -> dict[str, object]:
+def _toolbar_projection(
+    projection: Mapping[str, object],
+    control_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    """The toolbar draws the controls the graph declares for its zone.
+
+    An empty tuple here was the toolbar half of the same invention as the
+    library's: the projector answering for the graph. The zone and the
+    order are graph facts, so the toolbar's contents and their sequence
+    are decided by revising the catalogue, not by editing this.
+    """
     return {
         "trail": (
             {
@@ -122,7 +134,20 @@ def _toolbar_projection(projection: Mapping[str, object]) -> dict[str, object]:
                 "show_divider": False,
             },
         ),
-        "controls": (),
+        "controls": tuple(
+            {
+                "owner": control["owner"],
+                "title": control["title"],
+                "icon": control["icon"],
+                "activation": {
+                    "binding": control["activation"]["binding"],
+                    "capability": control["activation"]["capability"],
+                    "arguments": dict(control["activation"]["arguments"]),
+                },
+            }
+            for control in control_rows
+            if control["zone"] == "canvas-toolbar" and control["applicable"]
+        ),
         "zoom_percent": round(float(projection["viewport"]["zoom"]) * 100),
         "selection_count": len(projection["selection"]),
     }
@@ -157,10 +182,31 @@ def _section_projection(section_id: str, label: str, definitions: list[str]) -> 
     }
 
 
-def _catalog_projection(items: list[dict[str, object]]) -> list[dict[str, object]]:
+def _catalog_projection(
+    items: list[dict[str, object]],
+    place_control: dict[str, object],
+) -> list[dict[str, object]]:
+    """Each library row carries the control that places it.
+
+    The row and the catalogue must agree exactly -- the client compares
+    the rendered binding, capability, icon and title against the
+    catalogue and refuses a row that drifted from it. Carrying the
+    control here is what makes that comparison an agreement between two
+    readings of one graph fact rather than between the graph and a
+    constant.
+    """
     projected = []
     for item in items:
         projected.append({
+            "control": {
+                "owner": place_control["owner"],
+                "title": place_control["title"],
+                "icon": place_control["icon"],
+                "activation": {
+                    "binding": place_control["activation"]["binding"],
+                    "capability": place_control["activation"]["capability"],
+                },
+            },
             "id": item["id"],
             "name": item["name"],
             "version": item["version"],
@@ -181,15 +227,6 @@ def _catalog_projection(items: list[dict[str, object]]) -> list[dict[str, object
             "parts": 1,
             "interface_count": len(item["interfaces"]),
             "composition_contract": {"root": item["id"]},
-            "control": {
-                "owner": "control:place:%s" % item["id"],
-                "title": "Place assembly",
-                "icon": "plus",
-                "activation": {
-                    "binding": "binding:place:%s" % item["id"],
-                    "capability": "capability:instantiate",
-                },
-            },
         })
     return projected
 
@@ -250,6 +287,116 @@ def _interaction_bindings(
             "event": interactions.event_root,
         })
     return bindings
+
+
+def _condition_operand(operand, facts, depth):
+    if "fact" in operand:
+        if operand["fact"] not in facts:
+            raise InvalidCell("control condition fact is missing")
+        return facts[operand["fact"]]
+    if "literal" in operand:
+        text = operand["literal"]
+        if text in ("true", "false"):
+            return text == "true"
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    return _applicable(operand, facts, depth + 1)
+
+
+def _applicable(condition, facts, depth=0):
+    """Whether a control applies, from the condition the graph declares.
+
+    Five operators, mirrored from the catalogue's own evaluator, over the
+    condition carried as data. Unknown data fails closed: a control whose
+    condition cannot be understood is refused, never shown by default.
+    """
+    if condition is None:
+        return False
+    if depth > 8:
+        raise InvalidCell("control condition nests too deeply")
+    operator = condition.get("operator")
+    values = [
+        _condition_operand(operand, facts, depth)
+        for operand in condition.get("operands", ())
+    ]
+    if operator == "true":
+        if values:
+            raise InvalidCell("true condition cannot have operands")
+        return True
+    if operator == "truthy":
+        if len(values) != 1:
+            raise InvalidCell("truthy condition requires one operand")
+        return bool(values[0])
+    if operator == "equal":
+        if len(values) != 2:
+            raise InvalidCell("equal condition requires two operands")
+        return values[0] == values[1]
+    if operator == "at-least":
+        if len(values) != 2 or any(
+            type(value) not in (int, float) for value in values
+        ):
+            raise InvalidCell("at-least condition requires two numbers")
+        return values[0] >= values[1]
+    if operator == "all":
+        if not values or any(type(value) is not bool for value in values):
+            raise InvalidCell("all condition requires boolean operands")
+        return all(values)
+    raise InvalidCell("control condition operator is not admitted")
+
+
+def _catalogue_rows(authority, caller, facts):
+    """Read the controls and icons the graph holds, or refuse.
+
+    No default catalogue, no minimum set, no empty-but-shaped stub. A
+    graph that was never given a catalogue must produce a canvas that
+    fails loudly, because a projector-side answer to a graph-side absence
+    is exactly the invention this removes.
+    """
+    catalogue = read_design_catalogue(authority, caller=caller)
+    if catalogue is None:
+        raise InvalidCell("the graph holds no design-system catalogue")
+    icon_rows = {
+        row["name"]: {
+            "root": row["root"],
+            "name": row["name"],
+            "view_box": row["view_box"],
+            "primitives": [
+                {
+                    "root": "%s:%s" % (row["root"], primitive["order"]),
+                    "order": primitive["order"],
+                    "tag": primitive["tag"],
+                    "attributes": dict(primitive["attributes"]),
+                }
+                for primitive in row["primitives"]
+            ],
+        }
+        for row in catalogue["icons"]
+    }
+    by_root = {row["root"]: row for row in icon_rows.values()}
+    control_rows = []
+    for row in catalogue["controls"]:
+        activation = row.get("activation")
+        control_rows.append({
+            "root": row["owner"],
+            "owner": row["owner"],
+            "label": row["label"],
+            "title": row["title"],
+            "zone": row["zone"],
+            "order": row["order"],
+            "icon": row["icon"],
+            "activation": None if activation is None else {
+                "binding": activation["binding"],
+                "capability": activation["capability"],
+                "arguments": dict(activation["arguments"]),
+            },
+            "condition": None if activation is None else activation["condition"],
+            "applicable": activation is not None and _applicable(
+                row["activation"]["condition"], facts
+            ),
+        })
+    return control_rows, list(icon_rows.values()), by_root
 
 
 def project_clean_visual_canvas(
@@ -386,6 +533,31 @@ def project_clean_visual_canvas(
             "properties": dict(relation["properties"]),
         })
 
+    # Facts the graph-held conditions are evaluated against. They come
+    # from the lens, so one catalogue yields a different applicable set as
+    # the scope and selection change.
+    control_rows, icon_rows, _icons_by_root = _catalogue_rows(
+        authority,
+        caller,
+        {
+            "scope-parent-present": bool(lens.get("scope_parent_root")),
+            "selection-count": len(lens.get("selected_roots") or ()),
+            "focus-is-composition": bool(lens.get("selected_root")),
+            "can-undo": False,
+            "can-redo": False,
+        },
+    )
+    place_control = next(
+        (
+            control for control in control_rows
+            if control["zone"] == "library" and control["applicable"]
+        ),
+        None,
+    )
+    if place_control is None:
+        raise InvalidCell(
+            "the graph declares no applicable library place control"
+        )
     catalog = _catalog_projection([
         {
             "id": item["root_id"],
@@ -397,7 +569,7 @@ def project_clean_visual_canvas(
             "presentation": item["presentation"],
         }
         for item in lens["catalogue"]
-    ])
+    ], place_control)
     for item in catalog:
         item["descriptor"] = render_clean_visual_template(
             authority,
@@ -510,8 +682,9 @@ def project_clean_visual_canvas(
                 "components": {
                     "card": {"width": {"value": "220px"}},
                     "canvas": {"grid-size": {"value": "16px"}},
-                    "control_catalog": [],
-                }
+                },
+                "control_catalog": {"controls": control_rows},
+                "icon_catalog": {"icons": icon_rows},
             }
         },
         "inspector": {
@@ -545,7 +718,7 @@ def project_clean_visual_canvas(
         authority,
         visual,
         "canvas-toolbar",
-        _toolbar_projection(projection),
+        _toolbar_projection(projection, control_rows),
         caller=caller,
     )
     projection["canvas_heading_descriptor"] = render_clean_visual_template(

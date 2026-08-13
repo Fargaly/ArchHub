@@ -22,6 +22,7 @@ from .clean_scope_interactions import (
     CleanScopeInteractions,
     install_clean_scope_interactions,
 )
+from .clean_design_catalogue import install_design_catalogue
 from .clean_visual_authority import (
     CleanVisualSystem,
     install_clean_visual_system,
@@ -150,6 +151,14 @@ def provision_clean_runtime(
             authority,
             caller=caller,
             command_id=_command("clean-visual-system:v1"),
+        )
+        # The catalogue belongs to the foundation, not to the projector:
+        # projecting a canvas must add no cells, and a projector that
+        # installed what it needed would grow the graph on every read.
+        install_design_catalogue(
+            authority,
+            caller=caller,
+            command_id=_command("clean-design-catalogue:v1"),
         )
         browser = install_clean_browser_authority(
             authority,

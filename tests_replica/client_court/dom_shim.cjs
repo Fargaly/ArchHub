@@ -8,6 +8,8 @@ const SERVED = new Set([
   'html', 'head',
 ]);
 
+const REFLECTED = new Set(['title', 'id', 'href', 'src', 'alt', 'value']);
+
 function requireNode(candidate, operation) {
   // The browser throws TypeError when handed a non-node. So does this.
   if (
@@ -51,6 +53,11 @@ function makeElement(tag = 'div', selector = null) {
         this.dataset[name.slice(5).replace(/-([a-z])/g, (_m, c) => c.toUpperCase())] =
           String(value);
       }
+      // A browser reflects a handful of attributes onto same-named
+      // properties, and the client reads them that way -- place.title,
+      // not place.getAttribute('title'). A shim that stores only the
+      // attribute reports drift the browser never sees.
+      if (REFLECTED.has(name)) this[name] = String(value);
     },
     getAttribute(name) {
       return Object.prototype.hasOwnProperty.call(this.attributes, name)
@@ -136,6 +143,14 @@ function makeElement(tag = 'div', selector = null) {
 
 function matches(node, sel) {
   if (!sel) return false;
+  // A compound selector is every part at once: button[data-universal-control]
+  // matches only a BUTTON that also carries the marker. Treating the whole
+  // string as one tag name silently matches nothing, which reads as "the
+  // projector rendered no buttons" when it rendered them correctly.
+  const parts = sel.match(/(^[a-zA-Z][\w-]*)|(\.[\w-]+)|(#[\w-]+)|(\[[^\]]+\])/g);
+  if (parts && parts.length > 1) {
+    return parts.every(part => matches(node, part));
+  }
   const attr = sel.match(/^\[([^\]=]+)(?:=["']?([^"'\]]*)["']?)?\]$/);
   if (attr) {
     const [, name, value] = attr;

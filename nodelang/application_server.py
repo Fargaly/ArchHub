@@ -883,9 +883,12 @@ class _CleanAuthorityHttpServer:
   const meta = document.querySelector('meta[name="archhub-csrf"]');
   if (meta) meta.content = session.csrf;
   document.body.dataset.archhubSignIn = 'ready';
-  const canvas = document.createElement('script');
-  canvas.textContent = document.getElementById('archhub-canvas-source').text;
-  document.body.append(canvas);
+  // A script element carrying text/plain holds source, it does not run
+  // it, and copying that text into a new script element is a document
+  // write the browser will not execute either. Evaluating it directly is
+  // what actually starts the canvas, and it runs only after a session
+  // exists, which is the ordering the sign-in requires.
+  (0, eval)(document.getElementById('archhub-canvas-source').text);
 })();
 """
         page = (

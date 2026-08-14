@@ -767,6 +767,10 @@ class _CleanBrowserSessionBinding:
     assurance_root: str
 
 
+class CleanGestureRefused(Exception):
+    """A gesture carrying facts this path has no signed command for."""
+
+
 class _CleanAuthorityHttpServer:
     """Bounded clean-graph browser consumer without a second store."""
 
@@ -829,6 +833,64 @@ class _CleanAuthorityHttpServer:
             "session": issued.root_id,
             "revision": issued.revision,
         }
+
+    def _clean_gesture(self, binding, body):
+        """Record where the founder put a node.
+
+        A canvas that cannot be rearranged is a picture. The client sends
+        the positions it settled on after a drag; each one is written
+        through the same signed command that placed the node in the first
+        place, so a move is an ordinary revision with a receipt rather
+        than a special path, and the projection returned afterwards is
+        read back from the graph rather than echoed from the request.
+        """
+        from .unified_authority import place_composition
+        # This path writes exactly one kind of fact: where a node sits.
+        # Anything else arriving as a "gesture" -- a viewport, a lifecycle
+        # change, a field edit -- has its own signed command and must go
+        # through it, so an unadmitted gesture is refused before anything
+        # is written rather than quietly interpreted here.
+        admitted = {
+            "positions",
+            "roots",
+            "focus",
+            "projection",
+            "projection_mode",
+            "projection_revision",
+            "command_id",
+        }
+        unadmitted = sorted(set(body) - admitted)
+        if unadmitted:
+            raise CleanGestureRefused(
+                "gesture carries facts this path cannot sign: %s"
+                % ", ".join(unadmitted)
+            )
+        positions = body.get("positions")
+        if positions is None:
+            raise CleanGestureRefused(
+                "gesture without positions is not admitted on this path"
+            )
+        if type(positions) is not dict or not positions:
+            raise InvalidCell("gesture positions must be a non-empty object")
+        moved = 0
+        for root, place in (positions or {}).items():
+            if type(root) is not str or type(place) is not dict:
+                raise InvalidCell("gesture position entry is invalid")
+            x, y = place.get("x"), place.get("y")
+            if type(x) not in (int, float) or type(y) not in (int, float):
+                raise InvalidCell("gesture position is not a point")
+            place_composition(
+                self.clean_authority,
+                self.clean_scope_root,
+                root,
+                {"x": int(x), "y": int(y)},
+                caller=self.clean_caller,
+                command_id=str(uuid.uuid4()),
+            )
+            moved += 1
+        projection = self._canvas(binding)
+        projection["moved"] = moved
+        return projection
 
     def _clean_page(self):
         """Serve the page. Pure: no graph write, no session, no cookie.
@@ -1254,15 +1316,18 @@ class _CleanAuthorityHttpServer:
                     body = self._body()
                     csrf_token = self._csrf()
                     if self.path == "/api/universal/gesture":
-                        owner._resolve_binding(
-                            self._token(),
-                            csrf_token=csrf_token,
-                            require_csrf=True,
-                        )
-                        self._json(403, {
-                            "ok": False,
-                            "error": "gesture mutations are not admitted on this clean server path",
-                        })
+                        try:
+                            with owner._mutation_lock:
+                                binding = owner._resolve_binding(
+                                    self._token(),
+                                    csrf_token=csrf_token,
+                                    require_csrf=True,
+                                )
+                                payload = owner._clean_gesture(binding, body)
+                        except CleanGestureRefused as exc:
+                            self._json(403, {"ok": False, "error": str(exc)})
+                            return
+                        self._json(200, {"ok": True, **payload})
                         return
                     if self.path == "/api/universal/focus":
                         with owner._mutation_lock:

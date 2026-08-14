@@ -4295,6 +4295,19 @@ def place_composition(
         )
         create.extend(append.create)
         replace.extend(append.replace)
+        # Removing the old position and appending the new one can touch the
+        # same incidence twice. A cell cannot be created and replaced in one
+        # patch, so the later version of each wins and only cells that
+        # already exist stay in the replace half.
+        merged: dict[str, Cell] = {cell.id: cell for cell in create}
+        rest: dict[str, Cell] = {}
+        for cell in replace:
+            if cell.id in merged:
+                merged[cell.id] = cell
+            else:
+                rest[cell.id] = cell
+        create = list(merged.values())
+        replace = list(rest.values())
     return _commit_with_receipt(
         authority,
         snapshot,

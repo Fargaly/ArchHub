@@ -23,6 +23,7 @@ from .clean_scope_interactions import (
     install_clean_scope_interactions,
 )
 from .clean_design_catalogue import install_design_catalogue
+from .clean_host_boundaries import install_host_boundaries
 from .clean_visual_authority import (
     CleanVisualSystem,
     install_clean_visual_system,
@@ -159,6 +160,12 @@ def provision_clean_runtime(
             authority,
             caller=caller,
             command_id=_command("clean-design-catalogue:v1"),
+        )
+        # The applications ArchHub can reach are a graph fact too.
+        install_host_boundaries(
+            authority,
+            caller=caller,
+            command_id=_command("clean-host-boundaries:v1"),
         )
         browser = install_clean_browser_authority(
             authority,

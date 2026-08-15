@@ -696,7 +696,6 @@ def project_clean_visual_canvas(
                 },
                 "control_catalog": {"controls": control_rows},
                 "icon_catalog": {"icons": icon_rows},
-                "stylesheet": stylesheet,
             }
         },
         "inspector": {

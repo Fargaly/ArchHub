@@ -1138,11 +1138,40 @@ def _verify_authority_head(
         raise InvalidCell("current authority head signature is invalid")
 
 
+# Verifying a head is a pure function of the graph it verifies, and every
+# authenticated request verified the same unchanged graph again -- which
+# means hashing every cell again. The verdict is kept per snapshot, and the
+# entry HOLDS the mapping it keys on: an id is stable while its object
+# lives, not unique across time, so an entry keeping only the integer could
+# answer for a graph that no longer exists. A write publishes a new mapping
+# and the next verification runs for real.
+_HEAD_VERDICT_CACHE: dict[tuple[int, int, str], Mapping[str, Cell]] = {}
+
+
 def _verify_exact_snapshot_head(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
 ) -> None:
     """Verify the signed head for exactly one selected graph revision."""
+    verdict_key = (
+        id(snapshot.cells),
+        snapshot.revision,
+        authority.manifest.graph_id,
+    )
+    held = _HEAD_VERDICT_CACHE.get(verdict_key)
+    if held is not None and held is snapshot.cells:
+        return
+    _verify_exact_snapshot_head_uncached(authority, snapshot)
+    if len(_HEAD_VERDICT_CACHE) >= 8:
+        _HEAD_VERDICT_CACHE.pop(next(iter(_HEAD_VERDICT_CACHE)))
+    _HEAD_VERDICT_CACHE[verdict_key] = snapshot.cells
+
+
+def _verify_exact_snapshot_head_uncached(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+) -> None:
+    """Verify the signed head without consulting the per-snapshot verdict."""
     current = _current_head_member(authority, snapshot)
     if current is None:
         if (

@@ -799,6 +799,8 @@ class _CleanAuthorityHttpServer:
         )
         self.clean_interaction_broker = InteractionProjectionBroker()
         self._clean_projection_handles: dict[str, object] = {}
+        self._clean_projection_cache: dict[tuple, tuple] = {}
+        self._session_index = None
         self._mutation_lock = threading.RLock()
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
@@ -892,6 +894,16 @@ class _CleanAuthorityHttpServer:
         projection["moved"] = moved
         return projection
 
+    def _clean_stylesheet(self):
+        """The appearance the graph holds, served once rather than per read."""
+        from .clean_design_catalogue import read_design_catalogue
+        catalogue = read_design_catalogue(
+            self.clean_authority, caller=self.clean_caller
+        )
+        if catalogue is None:
+            raise InvalidCell("the graph holds no design-system catalogue")
+        return catalogue.get("stylesheet", "")
+
     def _clean_page(self):
         """Serve the page. Pure: no graph write, no session, no cookie.
 
@@ -948,13 +960,7 @@ class _CleanAuthorityHttpServer:
   // only the skeleton the renderers mount on; how any of it LOOKS is a
   // graph fact, so restyling the canvas is a revision, not a deploy.
   try {
-    const projected = await fetch('/api/universal/canvas', {
-      headers: {
-        'X-ArchHub-Session': session.token,
-        'X-ArchHub-CSRF': session.csrf,
-      },
-    }).then(response => response.json());
-    const sheet = projected?.configuration?.design_system?.stylesheet;
+    const sheet = await fetch('/api/universal/stylesheet').then(r => r.text());
     if (sheet) {
       const style = document.createElement('style');
       style.textContent = sheet;
@@ -1043,9 +1049,33 @@ class _CleanAuthorityHttpServer:
         verify_exact_authority_head(self.authority, snapshot)
         expected_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
         matches = []
-        for session_root in list_browser_session_roots(
-            snapshot, self.browser_authority.protocol
-        ):
+        # Every request used to read every browser session ever issued and
+        # compare digests one at a time -- a linear scan that grows with the
+        # graph forever, and the reason an authenticated request cost more
+        # than the drawing it authorised. The digest identifies the session,
+        # so it is looked up. The index is rebuilt whenever the graph moves,
+        # and holds the mapping it keys on so a recycled address can never
+        # answer for a graph that no longer exists.
+        index_key = (id(snapshot.cells), snapshot.revision)
+        held = self._session_index
+        if held is None or held[0] != index_key or held[1] is not snapshot.cells:
+            built: dict[str, list[str]] = {}
+            for session_root in list_browser_session_roots(
+                snapshot, self.browser_authority.protocol
+            ):
+                candidate = read_browser_session(
+                    snapshot, self.browser_authority.protocol, session_root
+                )
+                try:
+                    digest = snapshot.cells[
+                        candidate.token_digest_root
+                    ].atom.decode("utf-8")
+                except (KeyError, UnicodeDecodeError):
+                    continue
+                built.setdefault(digest, []).append(session_root)
+            self._session_index = (index_key, snapshot.cells, built)
+            held = self._session_index
+        for session_root in held[2].get(expected_digest, ()):
             session = read_browser_session(
                 snapshot, self.browser_authority.protocol, session_root
             )
@@ -1116,6 +1146,30 @@ class _CleanAuthorityHttpServer:
         snapshot = self.authority.store.snapshot()
         if type(root_id) is not str or root_id not in snapshot.cells:
             raise AuthorizationDenied("clean scope root is invalid")
+        # A projection is a function of the graph, the scope and the view.
+        # Drawing fifteen nodes walks three thousand relations, so reading
+        # the same unchanged revision twice paid that twice. The result is
+        # kept per revision; any write moves the revision and the next read
+        # rebuilds, so a reader after a writer never sees the old graph.
+        lease_key = (
+            id(snapshot.cells),
+            snapshot.revision,
+            root_id,
+            binding.view_root,
+            binding.session_root,
+            at_revision,
+        )
+        held = self._clean_projection_cache.get(lease_key)
+        if held is not None:
+            cells, cached = held
+            if cells is snapshot.cells:
+                # The cached projection is plain JSON data, and a fresh copy
+                # of it is cheaper to parse than to deep-copy: the lease is
+                # stamped into what the caller receives, so the cached value
+                # must never be the object handed out.
+                payload = json.loads(cached)
+                self._issue_projection_lease(binding, snapshot, payload)
+                return payload
         lens = scope_lens_payload(
             project_unified_scope(
                 self.clean_authority,
@@ -1137,6 +1191,14 @@ class _CleanAuthorityHttpServer:
             session_root=binding.session_root,
             subject_root=binding.subject_root,
             interactions=self.clean_scope_interactions,
+        )
+        if len(self._clean_projection_cache) >= 4:
+            self._clean_projection_cache.pop(
+                next(iter(self._clean_projection_cache))
+            )
+        self._clean_projection_cache[lease_key] = (
+            snapshot.cells,
+            json.dumps(payload),
         )
         self._issue_projection_lease(binding, snapshot, payload)
         return payload
@@ -1272,6 +1334,23 @@ class _CleanAuthorityHttpServer:
                         "ok": False,
                         "error": "clean browser session is required",
                     })
+                    return
+                if self.path == "/api/universal/stylesheet":
+                    # Appearance changes with a revision, not with a read.
+                    # Shipping it inside every canvas projection put forty
+                    # kilobytes on the wire for each open and rebuilt it
+                    # every time.
+                    try:
+                        sheet = owner._clean_stylesheet()
+                    except Exception as exc:  # noqa: BLE001
+                        self._json(500, {"ok": False, "error": str(exc)})
+                        return
+                    body = sheet.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/css; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                     return
                 if self.path in ("/", "/index.html"):
                     # Pure. A safe method must not write: any local page

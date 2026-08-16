@@ -801,6 +801,7 @@ class _CleanAuthorityHttpServer:
         self._clean_projection_handles: dict[str, object] = {}
         self._clean_projection_cache: dict[tuple, tuple] = {}
         self._session_index = None
+        self._live_sign_in = None
         self._mutation_lock = threading.RLock()
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
@@ -816,6 +817,24 @@ class _CleanAuthorityHttpServer:
         """
         import secrets as _secrets
         from .clean_browser_authority import issue_clean_browser_session
+        # A session is graph state, so minting one moves the revision --
+        # and every cache in this process is keyed on the revision. Minting
+        # per page load therefore made the act of signing in throw away the
+        # work of everyone already signed in, including the projection the
+        # new arrival is about to ask for. A live session is handed back
+        # instead, and the graph only moves when there is genuinely no
+        # session to give.
+        held = self._live_sign_in
+        if held is not None:
+            token, csrf, session_root, revision, expires_at = held
+            if time.time() < expires_at - 60.0:
+                return {
+                    "ok": True,
+                    "token": token,
+                    "csrf": csrf,
+                    "session": session_root,
+                    "revision": revision,
+                }
         token = _secrets.token_urlsafe(24)
         csrf = _secrets.token_urlsafe(24)
         with self._mutation_lock:
@@ -828,6 +847,9 @@ class _CleanAuthorityHttpServer:
                 caller=self.clean_caller,
                 command_id=str(uuid.uuid4()),
             )
+        self._live_sign_in = (
+            token, csrf, issued.root_id, issued.revision, time.time() + 3600.0
+        )
         return {
             "ok": True,
             "token": token,

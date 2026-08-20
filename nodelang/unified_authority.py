@@ -7009,7 +7009,9 @@ def _remembered_reachability(store, revision, root_id, required):
     is kept beside the graph as an accelerator: deleting it costs one
     slow open and changes no meaning (SPEC 3.1.6).
     """
-    accelerators = getattr(store, "_accelerators", None)
+    # The sidecar belongs to the journal, not to the store above it.
+    journal = getattr(store, "_journal", None)
+    accelerators = getattr(journal, "_accelerators", None)
     if accelerators is None:
         return None
     try:
@@ -7072,6 +7074,12 @@ def roots_are_reachable(
                 return True
     pending = [root_id]
     found: set[str] = set()
+    # Which cell led to which: the proof kept afterwards is the PATH to
+    # each required root, not everything the search happened to touch.
+    # Keeping the whole visited set let any commit anywhere invalidate
+    # it, and the walk came back on every start.
+    came_from: dict[str, str] = {}
+    proven: set[str] = {root_id}
     # A lazily read head answers one row per query; asking it for the
     # whole frontier at once turns half a million round trips into a
     # few hundred statements.
@@ -7090,11 +7098,17 @@ def roots_are_reachable(
             if cell is None:
                 raise InvalidCell("graph contains a dangling link")
             found.add(current)
+            if current in outstanding:
+                step = current
+                while step in came_from:
+                    proven.add(step)
+                    step = came_from[step]
+                proven.add(step)
             outstanding.discard(current)
             if not outstanding:
                 if remembered is not None:
                     try:
-                        walked = ",".join(sorted(found))
+                        walked = ",".join(sorted(proven))
                         remembered.execute(
                             "INSERT OR REPLACE INTO reachability_proofs "
                             "(revision, root, required, path) "
@@ -7105,8 +7119,10 @@ def roots_are_reachable(
                     except Exception:  # noqa: BLE001
                         pass
                 return True
-            pending.append(cell.link0)
-            pending.append(cell.link1)
+            for link in (cell.link0, cell.link1):
+                if link and link != root_id and link not in came_from:
+                    came_from[link] = current
+                pending.append(link)
     return False
 
 

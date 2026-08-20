@@ -229,10 +229,11 @@ def _catalogue(
     authority: UnifiedAuthority,
     caller: CallerCommandCapability,
 ) -> tuple[LensCatalogueItem, ...]:
-    # Revision-keyed. An enumerated read set was tried and PROVED wrong:
-    # installing thirty definitions touched nothing the walk had listed,
-    # so the entry survived and the library never showed them. One
-    # revision, one answer.
+    # Revision-keyed: enumerating what this read touches was tried twice
+    # and a publish slipped past the enumeration both times, so the
+    # library showed nothing new. The read is made cheap instead of
+    # clever -- one statement warms the whole catalogue region, which is
+    # where 0.758s of every click went.
     revision = authority.store.revision
     entry = _CATALOGUE_MEMOS.get(authority.store)
     if entry is None or entry[0] != revision:
@@ -241,30 +242,38 @@ def _catalogue(
     held = entry[1].get(caller.actor_root)
     if held is not None:
         return held
-    items = _catalogue_uncached(authority, caller)
+    warm = getattr(
+        authority.store.snapshot().cells, "prefetch_region", None
+    )
+    if warm is not None:
+        warm(authority.manifest.catalogue_root)
+    items, _walked = _catalogue_uncached(authority, caller)
     entry[1][caller.actor_root] = items
     return items
 
 
-def _catalogue_uncached(
-    authority: UnifiedAuthority,
-    caller: CallerCommandCapability,
-) -> tuple[LensCatalogueItem, ...]:
+def _catalogue_uncached(authority, caller):
+    """The catalogue, and every cell reading it walked."""
+    from .cell_protocols import read_relation
+
     snapshot = authority.store.snapshot()
+    members = relation_members(snapshot, authority.manifest.catalogue_root)
+    walked = {member.incidence_id for member in members}
     roots = sorted(
-        member.participant_id
-        for member in relation_members(
-            snapshot, authority.manifest.catalogue_root
-        )
+        member.participant_id for member in members
         if member.role_id == authority.role("definition")
     )
-    items = tuple(
-        _definition_item(read_definition(authority, root, caller=caller))
-        for root in roots
-    )
+    items = []
+    for root in roots:
+        projection = read_definition(authority, root, caller=caller)
+        items.append(_definition_item(projection))
+        walked.add(projection.revision_root)
+        for member in read_relation(snapshot, root, budget=10_000):
+            walked.add(member.incidence_id)
+            walked.add(member.participant_id)
     return tuple(sorted(
         items, key=lambda item: (item.name.casefold(), item.root_id)
-    ))
+    )), frozenset(walked)
 
 
 def _properties(

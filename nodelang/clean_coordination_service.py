@@ -480,7 +480,10 @@ def main() -> int:
 
     def _surface_answers(url: str) -> bool:
         try:
-            with urllib.request.urlopen(url, timeout=10) as response:
+            # A cold projection over a five-million-cell graph legitimately
+            # takes tens of seconds; a bound of ten made the watchdog shoot
+            # a healthy owner three probes into its first paint.
+            with urllib.request.urlopen(url, timeout=90) as response:
                 response.read(1)
                 return True
         except urllib.error.HTTPError:

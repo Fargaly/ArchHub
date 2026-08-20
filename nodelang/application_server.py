@@ -2051,6 +2051,11 @@ class _CleanAuthorityHttpServer:
         # judges is measured here rather than guessed from outside.
         import time as _time
         _t0 = _time.perf_counter()
+        # One statement warms this scope's region; without it the first
+        # projection after a start pays a round trip per cell.
+        warm = getattr(self.authority.store.snapshot().cells, "prefetch_region", None)
+        if warm is not None:
+            warm(root_id)
         lens = scope_lens_payload(
             project_unified_scope(
                 self.clean_authority,

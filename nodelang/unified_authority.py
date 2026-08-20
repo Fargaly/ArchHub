@@ -6980,6 +6980,27 @@ def _read_scope_level_uncached(
     )
 
 
+def _path_unchanged(store, since_revision: int, path) -> bool:
+    """Whether every cell the proof walked is still the one it walked."""
+    journal = getattr(store, "_journal", None)
+    connection = getattr(journal, "_connection", None)
+    if connection is None:
+        return False
+    try:
+        for start in range(0, len(path), 800):
+            batch = path[start:start + 800]
+            changed = connection.execute(
+                "SELECT COUNT(*) FROM cell_versions WHERE revision > ? "
+                "AND cell_id IN (%s)" % ",".join("?" * len(batch)),
+                (int(since_revision), *batch),
+            ).fetchone()[0]
+            if int(changed):
+                return False
+        return True
+    except Exception:  # noqa: BLE001 - an accelerator may never refuse a read
+        return False
+
+
 def _remembered_reachability(store, revision, root_id, required):
     """A revision-bound note that these roots were already proven here.
 
@@ -6996,7 +7017,8 @@ def _remembered_reachability(store, revision, root_id, required):
         connection.execute(
             "CREATE TABLE IF NOT EXISTS reachability_proofs ("
             "revision INTEGER NOT NULL, root TEXT NOT NULL, "
-            "required TEXT NOT NULL, PRIMARY KEY (root, required))"
+            "required TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', "
+            "PRIMARY KEY (root, required))"
         )
         return connection
     except Exception:  # noqa: BLE001 - an accelerator may never refuse a read
@@ -7031,12 +7053,23 @@ def roots_are_reachable(
     )
     if remembered is not None:
         row = remembered.execute(
-            "SELECT revision FROM reachability_proofs "
+            "SELECT revision, path FROM reachability_proofs "
             "WHERE root = ? AND required = ?",
             (root_id, wanted),
         ).fetchone()
-        if row is not None and int(row[0]) == int(snapshot.revision):
-            return True
+        if row is not None:
+            if int(row[0]) == int(snapshot.revision):
+                return True
+            # A path is still a path while none of its cells changed, so
+            # ordinary commits elsewhere do not cost a second walk of the
+            # whole graph.
+            held_path = [
+                part for part in str(row[1] or "").split(",") if part
+            ]
+            if held_path and _path_unchanged(
+                store, int(row[0]), held_path
+            ):
+                return True
     pending = [root_id]
     found: set[str] = set()
     # A lazily read head answers one row per query; asking it for the
@@ -7061,10 +7094,12 @@ def roots_are_reachable(
             if not outstanding:
                 if remembered is not None:
                     try:
+                        walked = ",".join(sorted(found))
                         remembered.execute(
                             "INSERT OR REPLACE INTO reachability_proofs "
-                            "(revision, root, required) VALUES (?, ?, ?)",
-                            (int(snapshot.revision), root_id, wanted),
+                            "(revision, root, required, path) "
+                            "VALUES (?, ?, ?, ?)",
+                            (int(snapshot.revision), root_id, wanted, walked),
                         )
                         remembered.commit()
                     except Exception:  # noqa: BLE001

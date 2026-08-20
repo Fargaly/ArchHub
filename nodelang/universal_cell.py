@@ -297,6 +297,10 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
             self._created_count + created,
         )
 
+    def prefetch_region(self, root_id: str, limit: int = 400_000) -> int:
+        """Warm one whole region in a single statement."""
+        return self._reader.prefetch_region(root_id, limit)
+
     def prefetch(self, cell_ids) -> None:
         """Warm many cells at once; a no-op for what is already held."""
         self._reader.prefetch([
@@ -455,6 +459,31 @@ class _HeadRowReader:
             for cell_id in batch:
                 if cell_id not in seen:
                     self._missing.add(cell_id)
+
+    def prefetch_region(self, root_id: str, limit: int = 400_000) -> int:
+        """Warm everything under one root with a single statement.
+
+        Following links one query at a time is a round trip per cell;
+        sqlite can walk the region itself and hand back the rows.
+        """
+        rows = self._connection.execute(
+            "WITH RECURSIVE region(cell_id, link0, link1, atom) AS ("
+            "  SELECT cell_id, link0, link1, atom FROM current_cells "
+            "   WHERE cell_id = ?"
+            "  UNION "
+            "  SELECT c.cell_id, c.link0, c.link1, c.atom "
+            "    FROM current_cells c JOIN region r "
+            "      ON c.cell_id = r.link0 OR c.cell_id = r.link1"
+            ") SELECT cell_id, link0, link1, atom FROM region LIMIT ?",
+            (root_id, int(limit)),
+        ).fetchall()
+        for cell_id, link0, link1, atom in rows:
+            key = str(cell_id)
+            if key not in self._cache:
+                self._cache[key] = Cell(
+                    key, str(link0), str(link1), bytes(atom)
+                )
+        return len(rows)
 
     def forget(self, cell_id: str) -> None:
         self._missing.discard(cell_id)

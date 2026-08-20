@@ -16,6 +16,7 @@ from .unified_authority import (
     declare_definition,
     instantiate_definition,
     promote_definition,
+    published_definition_named,
     read_contained_scope,
     revise_instance,
 )
@@ -77,6 +78,9 @@ def _publish_definition(
     courts: Mapping[str, object],
     caller: CallerCommandCapability,
 ) -> str:
+    held = published_definition_named(authority, name, caller=caller)
+    if held is not None:
+        return held
     declared = declare_definition(
         authority,
         name,

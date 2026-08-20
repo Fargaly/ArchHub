@@ -201,7 +201,7 @@ def project_canvas_interaction_policy_protocol(
     enum_values = _enum_map(prefix)
     root_id = prefix + ":root"
     required = {root_id, *roles.values(), *fields.values(), *enum_values.values()}
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("canvas interaction protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed_roles = {

@@ -237,3 +237,173 @@ def test_staged_initializer_must_pass_before_current_pointer_changes(tmp_path):
         assert (root / "CURRENT").read_text() == accepted.authority.manifest.graph_id
     finally:
         accepted.authority.store.close()
+
+
+def _boot_proof(location):
+    import json
+
+    return json.loads(
+        (location.generation_root / "accepted-proof.json").read_text(encoding="utf-8")
+    )
+
+
+def test_boot_proof_records_the_audited_head_and_reuses_it(tmp_path):
+    """Opening twice must not re-audit a history that did not move."""
+    root = tmp_path / "runtime"
+    provisioned = _provision(root)
+    provisioned.authority.store.close()
+
+    first = open_current_authority(root, _provider())
+    revision = first.authority.store.snapshot().revision
+    first.authority.store.close()
+    recorded = _boot_proof(first)
+    assert recorded["head"].startswith("head:%d:" % revision)
+    # The prefix is named by what its rows say, not only by how many there
+    # are, so a history rewritten in place cannot pass for the one that
+    # was audited.
+    assert len(recorded["head"].split(":")) == 5
+    # The digest names its formula: the chained prefix ("v2-" + 64 hex)
+    # costs only the rows since the last recorded link at the next boot.
+    digest_part = recorded["head"].split(":")[4]
+    assert digest_part.startswith("v2-") and len(digest_part) == 3 + 64
+
+    second = open_current_authority(root, _provider())
+    try:
+        assert _boot_proof(second)["head"] == recorded["head"]
+    finally:
+        second.authority.store.close()
+
+
+def test_boot_proof_is_refused_when_stored_history_is_rewritten(tmp_path):
+    """A rewritten history must not inherit the proof of the one it replaced.
+
+    Loading cross-checks the version journal against the current-cell
+    index, so a tamper in one table alone is caught before any proof is
+    consulted. A tamper written consistently to both passes that check,
+    and from there the only thing standing between the graph and a
+    rewritten history is the verification the proof lets us skip.
+
+    Rewriting in place leaves the row count and the newest row exactly as
+    they were. A proof naming the prefix by those two numbers matches the
+    forgery, skips the verification, and the graph opens as trusted -- so
+    the recorded prefix is named by what its rows say.
+    """
+    import sqlite3
+
+    root = tmp_path / "runtime"
+    provisioned = _provision(root)
+    provisioned.authority.store.close()
+
+    first = open_current_authority(root, _provider())
+    database = first.database_path
+    first.authority.store.close()
+
+    connection = sqlite3.connect(database)
+    try:
+        before = connection.execute(
+            "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM cell_versions"
+        ).fetchone()
+        target = connection.execute(
+            "SELECT cell_id, revision, atom FROM current_cells"
+            " WHERE atom IS NOT NULL AND LENGTH(atom) > 4"
+            " ORDER BY cell_id LIMIT 1"
+        ).fetchone()
+        assert target is not None
+        cell_id, revision, atom = target
+        forged = bytes([atom[0] ^ 0x01]) + atom[1:]
+        # A real attacker with raw file access removes the append-only
+        # fence first; the store must still catch the rewrite by re-hashing.
+        for trigger in (
+            "cell_versions_append_only_update",
+            "cell_versions_append_only_delete",
+            "revisions_append_only_update",
+            "revisions_append_only_delete",
+        ):
+            connection.execute("DROP TRIGGER IF EXISTS %s" % trigger)
+        connection.execute(
+            "UPDATE cell_versions SET atom = ?"
+            " WHERE cell_id = ? AND revision = ?",
+            (forged, cell_id, revision),
+        )
+        connection.execute(
+            "UPDATE current_cells SET atom = ? WHERE cell_id = ?",
+            (forged, cell_id),
+        )
+        connection.commit()
+        after = connection.execute(
+            "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM cell_versions"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert before == after, "the rewrite must leave count and newest row alone"
+
+    with pytest.raises(InvalidCell):
+        reopened = open_current_authority(root, _provider())
+        reopened.authority.store.close()
+
+
+def test_boot_audit_still_catches_a_rewrite_above_the_accepted_revision(tmp_path):
+    """The signed-history walk, not only the accepted digest, must bite.
+
+    A rewrite inside the accepted prefix is caught by the bootstrap digest
+    before the walk runs, which makes it a poor witness for the walk. This
+    tampers with a cell written after the accepted revision, where the only
+    thing that can notice is the audit of the signed head chain -- the same
+    audit that now reads its revisions one named cell at a time.
+    """
+    import sqlite3
+
+    root = tmp_path / "runtime"
+    provisioned = _provision(root)
+    accepted = provisioned.authority.manifest.accepted_revision
+    declared = declare_definition(
+        provisioned.authority,
+        "Definition written after bootstrap",
+        {"state": "candidate"},
+        caller=_Caller(provisioned.authority),
+        command_id="0f1d0a7c-2b52-4c0e-9f2c-1d4b6b7a9c31",
+    )
+    provisioned.authority.store.close()
+
+    first = open_current_authority(root, _provider())
+    database = first.database_path
+    assert first.authority.store.snapshot().revision > accepted
+    first.authority.store.close()
+
+    connection = sqlite3.connect(database)
+    try:
+        target = connection.execute(
+            "SELECT cell_id, revision, atom FROM cell_versions"
+            " WHERE revision > ? AND atom IS NOT NULL AND LENGTH(atom) > 4"
+            " ORDER BY rowid DESC LIMIT 1",
+            (accepted,),
+        ).fetchone()
+        assert target is not None, "nothing was written above the accepted revision"
+        cell_id, revision, atom = target
+        forged = bytes([atom[0] ^ 0x01]) + atom[1:]
+        # A real attacker with raw file access removes the append-only
+        # fence first; the store must still catch the rewrite by re-hashing.
+        for trigger in (
+            "cell_versions_append_only_update",
+            "cell_versions_append_only_delete",
+            "revisions_append_only_update",
+            "revisions_append_only_delete",
+        ):
+            connection.execute("DROP TRIGGER IF EXISTS %s" % trigger)
+        connection.execute(
+            "UPDATE cell_versions SET atom = ?"
+            " WHERE cell_id = ? AND revision = ?",
+            (forged, cell_id, revision),
+        )
+        connection.execute(
+            "UPDATE current_cells SET atom = ? WHERE cell_id = ?",
+            (forged, cell_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert declared.root_id
+
+    with pytest.raises(InvalidCell):
+        reopened = open_current_authority(root, _provider())
+        reopened.authority.store.close()

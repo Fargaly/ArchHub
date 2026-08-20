@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 import threading
+import sys
 import time
 from typing import Mapping
 import uuid
@@ -264,6 +265,19 @@ def _message_projection(value: CoordinationMessageProjection) -> dict[str, objec
     return asdict(value)
 
 
+def _boot_note(line: str) -> None:
+    """One measured line into the owner's boot log (stderr is lost under pythonw)."""
+    try:
+        import os as _os
+        from pathlib import Path as _Path
+        root = _Path(_os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "unified-authority"
+        if root.is_dir():
+            with (root / "boot-timing.log").open("a", encoding="utf-8") as log:
+                log.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  boot phase: " + line + chr(10))
+    except Exception:
+        pass
+
+
 class CleanCoordinationHost:
     """Single authority owner for authenticated provider adapters."""
 
@@ -280,7 +294,10 @@ class CleanCoordinationHost:
             str,
             tuple[AgentSessionBundle, GraphAgentCoordinator],
         ] = {}
+        _t = time.monotonic()
         self._founder = key_store.bind_bootstrap(authority, "founder.bootstrap")
+        _boot_note("bind_bootstrap %.1fs" % (time.monotonic() - _t))
+        _t = time.monotonic()
         self._sessions = install_agent_session_catalogue(
             authority,
             operation_id=str(uuid.uuid5(
@@ -289,6 +306,8 @@ class CleanCoordinationHost:
             )),
             caller=self._founder,
         )
+        _boot_note("agent session catalogue %.1fs" % (time.monotonic() - _t))
+        _t = time.monotonic()
         self._workshop = install_workshop_catalogue(
             authority,
             operation_id=str(uuid.uuid5(
@@ -297,6 +316,15 @@ class CleanCoordinationHost:
             )),
             caller=self._founder,
         )
+        _boot_note("workshop catalogue %.1fs" % (time.monotonic() - _t))
+        _t = time.monotonic()
+        from .base_universal_catalogue import install_base_universal_catalogue
+        self._base_catalogue = install_base_universal_catalogue(
+            authority, caller=self._founder,
+        )
+        _boot_note("base universal catalogue %.1fs (%d definitions)" % (
+            time.monotonic() - _t, len(self._base_catalogue),
+        ))
 
     def verify_request(self, request: SignedCoordinationRequest) -> None:
         if request.version != _REQUEST_VERSION:

@@ -29,6 +29,23 @@ from nodelang.universal_cell import Cell, CellStore, InvalidCell  # noqa: E402
 import nodelang.cell_legacy_webshell_host as contract_module  # noqa: E402
 from production_webshell_preview import preview_bridge_source  # noqa: E402
 
+# Importing the production preview drags 12.PRODUCTION/app onto sys.path,
+# and that directory holds a legacy package named `mcp` which shadows the
+# pip `mcp` for every module collected after this one -- two unrelated
+# courts then fail with "No module named 'mcp.server'" in full-suite runs
+# only. The modules this court needs are already bound; the paths and the
+# half-resolved shadow are not, so both are withdrawn here.
+for _polluted in (
+    str(PUBLIC_ROOT / "app"), str(PUBLIC_ROOT / "tools"), str(PUBLIC_ROOT),
+):
+    while _polluted in sys.path:
+        sys.path.remove(_polluted)
+_shadow = sys.modules.get("mcp")
+if _shadow is not None and "12.PRODUCTION" in (
+    getattr(_shadow, "__file__", "") or ""
+):
+    del sys.modules["mcp"]
+
 
 def _contract_world():
     store = CellStore()

@@ -199,7 +199,7 @@ def build_transaction(
         for rule_root, target_root in declared_steps
         for root in (rule_root, target_root)
     } | set(evidence) | set(outcomes)
-    if participants - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in participants):
         raise InvalidCell("transaction references a missing graph root")
     if project_transaction_protocol(snapshot, protocol.root_id) != protocol:
         raise InvalidCell("transaction protocol authority drifted")

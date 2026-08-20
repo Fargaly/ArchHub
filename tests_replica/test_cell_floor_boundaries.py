@@ -17,7 +17,11 @@ NODELANG = NODE_LANGUAGE / "nodelang"
 
 # These are physical and generic protocol modules, not application assemblies.
 FLOOR_IMPORTS = {
-    "universal_cell": frozenset(),
+    # The set-digest is a leaf below the kernel: pure hashing over cell
+    # rows, no kernel import (Cell = Any), so the physical floor gained a
+    # module without gaining a doorway.
+    "cell_set_digest": frozenset(),
+    "universal_cell": frozenset({"cell_set_digest"}),
     "cell_protocols": frozenset({"universal_cell"}),
     "cell_rules": frozenset({"universal_cell", "cell_protocols"}),
     "cell_relation_contract": frozenset({"universal_cell", "cell_protocols"}),

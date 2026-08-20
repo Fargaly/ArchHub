@@ -635,6 +635,7 @@ def test_fit_measures_the_projected_graph_instead_of_using_a_magic_zoom(
     rendered_application,
 ):
     result = _probe(rendered_application, "fit")
+    assert result["gesture"] is not None, result["errors"]
     viewport = result["gesture"]["payload"]["viewport"]
     assert 0.25 <= viewport["zoom"] <= 1.25
     assert viewport != {"pan_x": 18, "pan_y": 18, "zoom": 0.82}
@@ -1109,8 +1110,12 @@ def test_generic_browser_interaction_binding_has_no_product_dispatch():
     ):
         assert product_term not in projector.lower()
     assert "'/api/universal/interaction'" in projector
+    # /connect returned deliberately on 2026-08-19: declared sockets have
+    # no relation yet, so there is no projected rewire endpoint to speak
+    # through; the route commits a signed create_relation_node server-side.
+    # Disconnect and rewire stay retired -- existing wires carry projected
+    # topology endpoints.
     for retired_topology_route in (
-        "'/api/universal/connect'",
         "'/api/universal/disconnect'",
         "'/api/universal/rewire'",
     ):
@@ -1676,13 +1681,18 @@ def test_visible_icon_controls_project_real_cell_native_lucide_geometry(
     design_system = projection["configuration"]["design_system"]
     assert design_system["icon_catalog"]["source"]["package"] == "lucide-static"
     assert design_system["icon_catalog"]["source"]["version"] == "1.25.0"
-    assert len(design_system["control_catalog"]["controls"]) == 15
-    assert result["railGraphIconCount"] == 4
+    # 16 = the 15 original controls plus the Run control the catalogue
+    # gained deliberately (a host operation's button is graph-declared;
+    # test_no_declared_operation_is_a_dead_button holds its meaning).
+    assert len(design_system["control_catalog"]["controls"]) == 16
+    # 6 = the original 4 plus Home and Search, which gained real actions
+    # when the rail stopped being decorative (2026-08-19).
+    assert result["railGraphIconCount"] == 6
     assert result["libraryPlaceGraphIconCount"] == len(projection["catalog"])
     assert result["toolbarGraphIconCount"] == 3
     assert result["missingGraphIconControls"] == []
     assert result["textGlyphControlCount"] == 0
-    assert result["graphIconCount"] == 4 + len(projection["catalog"]) + 3
+    assert result["graphIconCount"] == 6 + len(projection["catalog"]) + 3
 
 
 def test_canvas_toolbar_order_activation_and_keyboard_are_graph_authored(

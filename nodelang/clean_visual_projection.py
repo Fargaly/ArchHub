@@ -14,6 +14,7 @@ from .unified_authority import (
     COMMAND_BUDGET,
     CallerCommandCapability,
     UnifiedAuthority,
+    _decode_data_value as decode_data_value,
     decode_value,
     relation_members,
 )
@@ -84,9 +85,27 @@ def _scope_panel_rows(
                     label = decode_value(authority, snapshot, label_root)
                 except (StopIteration, Exception):
                     continue
+                # A tab says what it presents. One that does not is not
+                # offered: the same rule this reader already applies to
+                # the applicability itself, carried one level down. A
+                # projector that filled this in would decide the content
+                # of every panel, which is how they all came to show the
+                # same thing.
+                try:
+                    presenter_root = next(
+                        inner.participant_id
+                        for inner in relation_members(snapshot, panel_root)
+                        if inner.role_id == authority.role("presentation")
+                    )
+                    presenter = decode_value(authority, snapshot, presenter_root)
+                except (StopIteration, Exception):
+                    continue
+                if type(presenter) is not str or not presenter.strip():
+                    continue
                 rows.append({
                     "id": panel_root,
                     "label": str(label),
+                    "presenter": presenter.strip(),
                     "applicability_root": member.participant_id,
                 })
     return rows
@@ -106,11 +125,18 @@ def _port_name(port: Mapping[str, object]) -> str:
     return str(role) if role is not None else "link"
 
 
-def _wire_color(properties: Mapping[str, object]) -> str:
+def _wire_color(properties: Mapping[str, object], default: str) -> str:
+    """The wire's own colour, or the palette the graph declares.
+
+    The fallback used to be a literal written here, which meant every
+    wire that did not carry a colour was drawn in a shade the graph had
+    never heard of -- and drawn over the stylesheet, so revising the
+    palette changed everything except the wires.
+    """
     value = properties.get("color")
     if type(value) is str and value.strip():
         return value
-    return "#5ac8fa"
+    return default
 
 
 def _toolbar_projection(
@@ -125,14 +151,15 @@ def _toolbar_projection(
     are decided by revising the catalogue, not by editing this.
     """
     return {
-        "trail": (
+        "trail": tuple(
             {
-                "root": projection["scope"]["current"],
-                "label": projection["scope"]["current_label"],
-                "key": "toolbar:scope:item:%s" % projection["scope"]["current"],
-                "current": True,
-                "show_divider": False,
-            },
+                "root": entry["root"],
+                "label": entry["label"],
+                "key": "toolbar:scope:item:%s" % entry["root"],
+                "current": bool(entry.get("current")),
+                "show_divider": index > 0,
+            }
+            for index, entry in enumerate(projection["scope"]["trail"])
         ),
         "controls": tuple(
             {
@@ -212,10 +239,30 @@ def _catalog_projection(
             "version": item["version"],
             "kind": item["kind"],
             "parameters": item["parameters"],
-            "interfaces": item["interfaces"],
+            # Both readers of this field render a count: the graph-held
+            # row descriptor concatenates it in front of " interface(s)",
+            # and the client coerces it with Number() to size a placed
+            # card. Handing them the contract map printed a raw mapping
+            # on every library row and sized every card as if it had no
+            # interfaces at all. The contract is carried under its name.
+            "interfaces": len(item["interfaces"]),
+            "interface_contract": item["interfaces"],
             "presentation": item["presentation"],
-            "category": "Definitions",
-            "description": "%s / %s" % (item["name"], item["version"]),
+            # The library groups by what the definition SAYS it is -- the
+            # category its presentation declares (Input, Logic, Shape, AI,
+            # ...). A definition that declares none sits under Definitions.
+            "category": (
+                str(item["presentation"].get("category")).strip()
+                if isinstance(item.get("presentation"), dict)
+                and str(item["presentation"].get("category") or "").strip()
+                else "Definitions"
+            ),
+            "description": (
+                str(item["presentation"].get("description")).strip()
+                if isinstance(item.get("presentation"), dict)
+                and str(item["presentation"].get("description") or "").strip()
+                else "%s / %s" % (item["name"], item["version"])
+            ),
             "search_text": "%s %s %s" % (
                 item["name"],
                 item["version"],
@@ -226,9 +273,271 @@ def _catalog_projection(
             # the definition, so it is not restated here as a constant.
             "parts": 1,
             "interface_count": len(item["interfaces"]),
-            "composition_contract": {"root": item["id"]},
+            # A relation is a definition with participants to choose.
+            # Stamping a contract on every entry sent all of them down
+            # the relation-composer path, where placement asks for an
+            # interaction that is only ever bound for entries WITHOUT a
+            # contract -- so the library filled up and not one card
+            # could be placed. A definition declaring no interface has
+            # nothing to compose; it is a thing to put on the canvas.
+            # A stem node -- a definition whose presentation says it places
+            # as a card -- lands on the canvas with its ports unbound and is
+            # wired afterwards, as every node did in 1.4. Only a definition
+            # that does not say so and declares interfaces goes through the
+            # relation composer to choose its participants first.
+            "composition_contract": (
+                None
+                if (
+                    isinstance(item.get("presentation"), dict)
+                    and item["presentation"].get("placement") == "card"
+                )
+                else ({"root": item["id"]} if item["interfaces"] else None)
+            ),
         })
     return projected
+
+
+def latest_run_rows(
+    authority: UnifiedAuthority,
+    snapshot,
+    node_root: str,
+    *,
+    limit: int = 200,
+) -> tuple[str, list[dict[str, object]], int]:
+    """What this node last returned, and the operation that returned it.
+
+    A run is recorded against the node that asked for it, and every
+    receipt the graph has ever signed hangs off the history root in the
+    order it was signed. Reading backwards from the newest therefore
+    finds the last run of a node without an index -- relations only walk
+    forwards, and this one already does.
+
+    The walk is bounded. A graph accumulates a receipt per revision
+    forever, and a panel that re-read all of them would get slower every
+    time anyone did anything. Not finding a run inside the bound reads as
+    no run, which is the honest answer for a node nobody has run lately.
+    """
+    try:
+        history = relation_members(snapshot, authority.manifest.history_root)
+    except Exception:
+        return "", [], 0
+    result_role = authority.role("result")
+    presentation_role = authority.role("presentation")
+    property_role = authority.role("property")
+    name_role = authority.role("name")
+    value_role = authority.role("value")
+    for member in reversed(history[-limit:]):
+        try:
+            receipt = relation_members(snapshot, member.participant_id)
+        except Exception:
+            continue
+        effects = [
+            each.participant_id for each in receipt
+            if each.role_id == result_role
+        ]
+        if not effects:
+            continue
+        try:
+            carried = relation_members(snapshot, effects[0])
+        except Exception:
+            continue
+        presentations = [
+            each.participant_id for each in carried
+            if each.role_id == presentation_role
+        ]
+        if not presentations:
+            continue
+        # Read the subject before anything else. A receipt carries what
+        # the run returned, which for a read of a large model is every
+        # row it found; decoding that to discover the run belonged to a
+        # different node made looking for a node with no runs cost more
+        # than running one. The subject alone answers that question.
+        held: dict[str, object] = {}
+        try:
+            properties = [
+                each.participant_id
+                for each in relation_members(snapshot, presentations[0])
+                if each.role_id == property_role
+            ]
+            fields: dict[str, str] = {}
+            for property_root in properties:
+                parts = relation_members(snapshot, property_root)
+                key = next(
+                    decode_data_value(authority, snapshot, part.participant_id)
+                    for part in parts if part.role_id == name_role
+                )
+                fields[str(key)] = next(
+                    part.participant_id
+                    for part in parts if part.role_id == value_role
+                )
+            subject_root = fields.get("subject")
+            if subject_root is None:
+                continue
+            if decode_data_value(
+                authority, snapshot, subject_root
+            ) != node_root:
+                continue
+            for key, value_root in fields.items():
+                held[key] = decode_data_value(authority, snapshot, value_root)
+        except Exception:
+            continue
+        outcome = held.get("outcome")
+        rows = outcome.get("result") if isinstance(outcome, Mapping) else None
+        if not isinstance(rows, list):
+            rows = []
+        kept = [row for row in rows if isinstance(row, Mapping)]
+        # What the host found, which is not always what the graph kept.
+        returned = held.get("rows_returned")
+        return (
+            str(held.get("operation") or ""),
+            kept,
+            returned if isinstance(returned, int) else len(kept),
+        )
+    return "", [], 0
+
+
+def _panel_input(
+    presenter: str,
+    authority: UnifiedAuthority,
+    selected_root: str | None,
+    selected: Mapping[str, object] | None,
+    properties: list,
+) -> dict[str, object]:
+    """What one panel is given to draw, decided by what it presents.
+
+    Every panel used to receive the same thing, which is why they all
+    drew the same thing. A presenter names what a tab is for, and the
+    input follows from that name -- read from the graph in each case,
+    never assembled here from something the graph did not say.
+    """
+    shared: dict[str, object] = {
+        "selected": selected_root,
+        "properties": properties,
+        "operation": selected.get("operation") if selected else None,
+    }
+    if presenter != "result":
+        return shared
+    operation, rows, returned = ("", [], 0)
+    if selected_root:
+        operation, rows, returned = latest_run_rows(
+            authority, authority.store.snapshot(), selected_root
+        )
+    return {
+        **shared,
+        # The summary names the run that produced these rows, which is
+        # not always the operation the node declares now: a node can be
+        # repointed after it ran.
+        "operation": _run_summary(operation, len(rows), returned),
+        "rows": [_row_line(row) for row in rows],
+    }
+
+
+def _run_summary(operation: str, shown: int, returned: int) -> str | None:
+    """What the panel says a run returned, including what it left out.
+
+    A capped answer that reads like a whole one is the failure this
+    exists to prevent. The graph records both counts; the person looking
+    at the rows is who needs to know, so the difference is said here
+    rather than left in a cell nobody opens.
+    """
+    if not operation:
+        return None
+    if returned > shown:
+        return "%s  --  showing %d of %d rows" % (operation, shown, returned)
+    return "%s  --  %d rows" % (operation, shown)
+
+
+def _row_line(row: Mapping[str, object]) -> str:
+    """One row of a host answer, as a line a person can read.
+
+    A row is whatever the host returned, and this build has no idea what
+    a workset or a sheet is -- rightly, since the shape of the answer
+    belongs to the host that gave it. So every field is shown, in a
+    stable order, and none is chosen over another: picking which fields
+    matter would be this file inventing a schema the host never stated.
+    """
+    return "  ".join(
+        "%s: %s" % (key, row[key]) for key in sorted(row)
+    )
+
+
+def _focus_is_composition(lens: Mapping[str, object]) -> bool:
+    """Whether the focused node is a composition that can be dissolved.
+
+    The old fact was bool(selected_root) -- any focus at all -- which lit
+    the Ungroup control for a plain instance and made the toolbar lie.
+    """
+    selected_root = lens.get("selected_root")
+    if type(selected_root) is not str or not selected_root:
+        return False
+    for item in lens["nodes"]:
+        if item["root_id"] != selected_root:
+            continue
+        return item.get("structural_role") == "composition"
+    return False
+
+
+def _focus_declares_operation(
+    lens: Mapping[str, object],
+    declared_by_definition: Mapping[str, Mapping[str, object]] | None = None,
+) -> bool:
+    """Whether the focused node runs: a host operation, or a stem engine.
+
+    Both are the same button. A node that declares rules.operation runs
+    on its host; a node whose definition declares rules.engine runs the
+    scope's stem graph. A node declaring neither keeps no dead Run.
+    """
+    selected_root = lens.get("selected_root")
+    if type(selected_root) is not str or not selected_root:
+        return False
+    for item in lens["nodes"]:
+        if item["root_id"] != selected_root:
+            continue
+        operation = item.get("operation")
+        if type(operation) is str and operation.strip():
+            return True
+        declared = (declared_by_definition or {}).get(
+            item.get("definition_root") or ""
+        )
+        return bool((declared or {}).get("engine"))
+    return False
+
+
+def _text_or_none(value: object) -> str | None:
+    if type(value) is str and value.strip():
+        return value.strip()
+    return None
+
+
+def _node_title(item: Mapping[str, object]) -> str:
+    """What this node is called, preferring what it says about itself.
+
+    An instance takes its label from the definition it was made from, so a
+    canvas of two hundred requirements drew two hundred cards all reading
+    "Requirement composition" -- every card identical, none of them saying
+    anything. The definition supplies a title property for exactly this,
+    and when an instance carries one it is that instance's name.
+
+    A composition is not renamed: its label is its own, held on the cell
+    rather than borrowed from a shape, and a title property on it names
+    something the composition contains rather than the composition.
+    """
+    if item.get("structural_role") != "instance":
+        return str(item["label"])
+    # A definition that declares a label has named these nodes deliberately,
+    # and revising that label is how the graph renames them. Only when it
+    # declares none -- so the label falls back to the definition's own name,
+    # and every instance of it is called the same thing -- does the instance
+    # get to answer for itself.
+    if str(item["label"]) != str(item.get("definition_name") or ""):
+        return str(item["label"])
+    for row in item.get("properties") or ():
+        if row.get("name") != "title":
+            continue
+        value = row.get("value")
+        if type(value) is str and value.strip():
+            return value.strip()
+    return str(item["label"])
 
 
 def _property_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -250,6 +559,13 @@ def _property_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
             "editor": row.get("editor"),
             "constraints": dict(row.get("constraints") or {}),
             "editable": row.get("editor") is not None,
+            # Whether the value varies across the selection is a fact the
+            # row has to state. The descriptor chooses an empty input when
+            # it is mixed, and an unstated fact reads as mixed -- so every
+            # property in the panel showed a blank box over a value the
+            # graph was holding. These rows are one node's properties, so
+            # there is nothing for them to vary across.
+            "mixed": False,
             "control": None,
             "event_fact_input": None,
         }
@@ -285,6 +601,29 @@ def _interaction_bindings(
             "interaction": binding.interaction_root,
             "control": binding.control_root,
             "event": interactions.event_root,
+            # What the founder must type before this can run. These
+            # interactions take nothing: a scope-open names its target, and
+            # a run names the node the focus already holds. Leaving the
+            # list out entirely is not the same statement -- the client
+            # reads a missing list as an interaction whose inputs it was
+            # never told about, and refuses it.
+            "event_facts": [],
+        })
+    # Opening a node is not the only interaction a scope offers. A toolbar
+    # control the graph has declared an interaction for must carry it too,
+    # or the client refuses to activate the button and does so silently --
+    # a Run that looks live and does nothing.
+    for control_root in sorted(interactions.bindings.get(scope_root) or ()):
+        if any(entry["control"] == control_root for entry in bindings):
+            continue
+        binding = interactions.binding_for(scope_root, control_root)
+        if binding is None:
+            continue
+        bindings.append({
+            "interaction": binding.interaction_root,
+            "control": binding.control_root,
+            "event": interactions.event_root,
+            "event_facts": [],
         })
     return bindings
 
@@ -401,10 +740,11 @@ def _catalogue_rows(authority, caller, facts):
         list(icon_rows.values()),
         by_root,
         catalogue.get("stylesheet", ""),
+        dict(catalogue.get("tokens") or {}),
     )
 
 
-def project_clean_visual_canvas(
+def _project_clean_visual_canvas_unscoped(
     authority: UnifiedAuthority,
     visual: CleanVisualSystem,
     lens: Mapping[str, object],
@@ -413,15 +753,73 @@ def project_clean_visual_canvas(
     session_root: str,
     subject_root: str,
     interactions: CleanScopeInteractions | None = None,
+    door_root: str | None = None,
+    door_label: str | None = None,
 ) -> dict[str, object]:
     selected_root = lens.get("selected_root")
     selected_roots = tuple(lens.get("selected_roots") or ())
     nodes: list[dict[str, object]] = []
+    # What each definition declares, by root: category (for the card's
+    # colour + head) and its interface contract (for declared sockets).
+    declared_by_definition = {
+        entry["root_id"]: {
+            "category": (
+                str(entry["presentation"].get("category")).strip()
+                if isinstance(entry.get("presentation"), dict)
+                and str(entry["presentation"].get("category") or "").strip()
+                else None
+            ),
+            "interfaces": (
+                entry.get("interfaces")
+                if isinstance(entry.get("interfaces"), dict)
+                else {}
+            ),
+            # What the definition RUNS as, and the defaults it runs
+            # with. The stem evaluator reads both off the node so a
+            # Run gesture needs no second lens pass.
+            "engine": (
+                str(entry["rules"].get("engine")).strip()
+                if isinstance(entry.get("rules"), dict)
+                and str(entry["rules"].get("engine") or "").strip()
+                else None
+            ),
+            "parameters": (
+                entry.get("parameters")
+                if isinstance(entry.get("parameters"), dict)
+                else {}
+            ),
+        }
+        for entry in lens["catalogue"]
+    }
     for item in lens["nodes"]:
+        rows_by_label = {
+            str(row.get("name")): row.get("value")
+            for row in (item.get("properties") or ())
+            if isinstance(row, dict) and row.get("name")
+        }
         node = {
             "id": item["root_id"],
-            "label": item["label"],
+            "label": _node_title(item),
             "assembly": item.get("definition_name"),
+            # What kind of thing this is, what state it is in, and what it
+            # says about itself -- all read from the graph: the definition's
+            # name, and the node's own status / description properties when
+            # it declares them. A card that read "ASSEMBLY / v" and
+            # "2 cells / 0 interface" told the founder about the plumbing
+            # and nothing about the requirement.
+            # Empty text, not null, when absent: the template language
+            # tests presence with length(), and a null has none.
+            "kind": _text_or_none(item.get("definition_name")) or "",
+            "status": _text_or_none(rows_by_label.get("status")) or "",
+            "summary": _text_or_none(
+                rows_by_label.get("sub")
+                if rows_by_label.get("sub") is not None
+                else rows_by_label.get("description")
+            ) or "",
+            # What this node runs, when it runs anything. A node that DOES
+            # something has to say so where the canvas can read it, or the
+            # Run it offers has nothing to point at.
+            "operation": item.get("operation"),
             "composition": item["structural_role"] == "composition",
             "openable": bool(item["openable"]),
             "member_count": len(item["properties"]),
@@ -450,7 +848,10 @@ def project_clean_visual_canvas(
             # and the node agree without a second projection pass.
             "properties": _property_rows([
                 {
-                    "relation": item["root_id"],
+                    "relation": (
+                        row["property_root"]
+                        or "%s:%s" % (item["root_id"], row["name"])
+                    ),
                     "name": row["name"],
                     "value": row["value"],
                     "editor": row["editor"],
@@ -507,12 +908,120 @@ def project_clean_visual_canvas(
                 caller=caller,
             )
             node["ports"].append(port_projection)
+        declared = declared_by_definition.get(
+            item.get("definition_root") or "", None
+        )
+        node["category"] = (declared or {}).get("category") or ""
+        node["engine"] = (declared or {}).get("engine")
+        node["parameter_defaults"] = {
+            str(name): (
+                spec.get("default") if isinstance(spec, dict) else spec
+            )
+            for name, spec in ((declared or {}).get("parameters") or {}).items()
+        }
+        # Declared sockets: the typed ports the definition promises, drawn
+        # unwired so a node reads and wires like a node (1.4's grammar).
+        # A wire made from one is an explicit relation node between the two
+        # instances, created by the direct connect route; existing wired
+        # ports above stay exactly as they were.
+        wired_names = {p.get("name") for p in node["ports"]}
+        if declared and declared["interfaces"]:
+            input_index = 0
+            output_index = 0
+            for interface_name in sorted(declared["interfaces"]):
+                contract = declared["interfaces"][interface_name]
+                if not isinstance(contract, dict):
+                    continue
+                direction = str(contract.get("direction") or "input")
+                side = "source" if direction == "output" else "target"
+                if interface_name in wired_names:
+                    continue
+                index = output_index if side == "source" else input_index
+                if side == "source":
+                    output_index += 1
+                else:
+                    input_index += 1
+                socket = {
+                    "id": "decl:%s:%s" % (item["root_id"], interface_name),
+                    "name": interface_name,
+                    "side": side,
+                    "mode": "declared",
+                    "connectable": True,
+                    "read_only": False,
+                    "editable": False,
+                    "interface_root": None,
+                    "direction": direction,
+                    "multiple": bool(contract.get("multiple")),
+                    "permission": None,
+                    "source_incidence": None,
+                    "target_incidence": None,
+                    "authority_roots": [],
+                    "selected": False,
+                    "context": False,
+                    "relation_root": "decl:%s:%s" % (item["root_id"], interface_name),
+                    "participant_role": side,
+                    "connection": interface_name,
+                    "other_roots": [],
+                    "port_index": str(index),
+                    "value_type": str(contract.get("type") or "any"),
+                    "connect_route": "direct",
+                }
+                socket["descriptor"] = render_clean_visual_template(
+                    authority,
+                    visual,
+                    "canvas-port",
+                    {**socket, "node_id": node["id"]},
+                    caller=caller,
+                )
+                node["ports"].append(socket)
         nodes.append(node)
+    # Every declared input socket in the scope is a drop target for every
+    # declared output socket: the client lights them and the direct
+    # connect route makes the relation.
+    input_targets = [
+        {"id": node["id"], "interface": port["name"]}
+        for node in nodes
+        for port in node["ports"]
+        if port.get("mode") == "declared" and port["side"] == "target"
+    ]
+    for node in nodes:
+        for port in node["ports"]:
+            if port.get("mode") == "declared" and port["side"] == "source":
+                port["connect_control"] = "direct:connect"
+                port["connect_choices"] = [
+                    {"id": target["id"], "interface": target["interface"]}
+                    for target in input_targets
+                    if target["id"] != node["id"]
+                ]
     for node in nodes:
         position = node.get("position")
         if isinstance(position, Mapping):
             node["x"] = position.get("x")
             node["y"] = position.get("y")
+
+    # Facts the graph-held conditions are evaluated against. They come
+    # from the lens, so one catalogue yields a different applicable set as
+    # the scope and selection change.
+    control_rows, icon_rows, _icons_by_root, stylesheet, tokens = _catalogue_rows(
+        authority,
+        caller,
+        {
+            "scope-parent-present": bool(lens.get("scope_parent_root")),
+            "selection-count": len(lens.get("selected_roots") or ()),
+            "focus-is-composition": _focus_is_composition(lens),
+            # Whether the focused node declares a host operation, read from
+            # the definition it was made from rather than guessed from its
+            # name: a node that DOES something says so in its rules.
+            "focus-is-operation": _focus_declares_operation(
+                lens, declared_by_definition
+            ),
+            "can-undo": False,
+            "can-redo": False,
+        },
+    )
+    wire_default_color = tokens.get("accent") or ""
+    if not wire_default_color:
+        raise InvalidCell("the graph holds no accent colour for its wires")
 
     wires = []
     for relation in lens["relations"]:
@@ -534,9 +1043,19 @@ def project_clean_visual_canvas(
             "participants": participants,
             "source": source,
             "target": target,
-            "selected": False,
-            "context": False,
-            "color": _wire_color(relation["properties"]),
+            "selected": relation["root_id"] in selected_roots,
+            # The stylesheet hides a wire that is not in context, so a
+            # projector that called every wire out-of-context drew a
+            # canvas of connections and then made all of them invisible.
+            # Context is relative to the selection: with nothing
+            # selected nothing is being set aside, so every wire is in
+            # context; with a selection, the wires that touch it are.
+            "context": (
+                not selected_roots
+                or source in selected_roots
+                or target in selected_roots
+            ),
+            "color": _wire_color(relation["properties"], wire_default_color),
             "width": 2,
             "dash": None,
             "directed": source is not None and target is not None,
@@ -544,20 +1063,6 @@ def project_clean_visual_canvas(
             "properties": dict(relation["properties"]),
         })
 
-    # Facts the graph-held conditions are evaluated against. They come
-    # from the lens, so one catalogue yields a different applicable set as
-    # the scope and selection change.
-    control_rows, icon_rows, _icons_by_root, stylesheet = _catalogue_rows(
-        authority,
-        caller,
-        {
-            "scope-parent-present": bool(lens.get("scope_parent_root")),
-            "selection-count": len(lens.get("selected_roots") or ()),
-            "focus-is-composition": bool(lens.get("selected_root")),
-            "can-undo": False,
-            "can-redo": False,
-        },
-    )
     place_control = next(
         (
             control for control in control_rows
@@ -590,11 +1095,34 @@ def project_clean_visual_canvas(
             caller=caller,
         )
 
-    catalog_sections = [_section_projection(
-        "library-section:definitions",
-        "Definitions",
-        [item["id"] for item in catalog],
-    )]
+    # One section per declared category, in the palette's reading order,
+    # then everything that declares none. The order is the 1.4 palette's.
+    _ORDER = ("Input", "Output", "Watch", "Trigger", "Logic", "Shape", "AI",
+              "Note", "Skill", "Connector")
+    by_category: dict[str, list[str]] = {}
+    for item in catalog:
+        by_category.setdefault(str(item.get("category") or "Definitions"), []).append(item["id"])
+    ordered = [c for c in _ORDER if c in by_category] + sorted(
+        c for c in by_category if c not in _ORDER and c != "Definitions"
+    ) + (["Definitions"] if "Definitions" in by_category else [])
+    # The client holds the library to one order: the sections, flattened,
+    # must read exactly as the catalogue does. The catalogue is therefore
+    # laid out in section order -- a re-grouped library is the same release,
+    # in the palette's reading order.
+    by_id = {item["id"]: item for item in catalog}
+    catalog[:] = [
+        by_id[definition]
+        for category in ordered
+        for definition in by_category[category]
+    ]
+    catalog_sections = [
+        _section_projection(
+            "library-section:%s" % category.lower().replace(" ", "-"),
+            category,
+            by_category[category],
+        )
+        for category in ordered
+    ]
     for section in catalog_sections:
         section["descriptor"] = render_clean_visual_template(
             authority,
@@ -621,10 +1149,18 @@ def project_clean_visual_canvas(
         properties = []
     else:
         selected_root = selected["root_id"]
-        selected_title = selected["label"]
+        # The inspector names the same thing the card names.
+        selected_title = _node_title(selected)
         properties = _property_rows([
             {
-                "relation": selected_root,
+                # The row key must NAME THE ROW: keying every row on the
+                # owner gave five inputs one identity, and the client's
+                # duplicate-mount guard took the whole render down on the
+                # first reconcile after an edit.
+                "relation": (
+                    row["property_root"]
+                    or "%s:%s" % (selected_root, row["name"])
+                ),
                 "name": row["name"],
                 "value": row["value"],
                 "editor": row["editor"],
@@ -648,15 +1184,18 @@ def project_clean_visual_canvas(
             "applicability_root": row["applicability_root"],
             "active": index == 0,
             "components": [{
-                "presenter": "properties",
+                "presenter": row["presenter"],
                 "descriptor": render_clean_visual_template(
                     authority,
                     visual,
-                    "properties",
-                    {
-                        "selected": selected_root,
-                        "properties": properties,
-                    },
+                    row["presenter"],
+                    _panel_input(
+                        row["presenter"],
+                        authority,
+                        selected_root,
+                        selected,
+                        properties,
+                    ),
                     caller=caller,
                 ),
             }],
@@ -670,11 +1209,24 @@ def project_clean_visual_canvas(
         "scope": {
             "current": lens["scope_root"],
             "current_label": lens["scope_label"] or "Scope",
-            "trail": [{
-                "root": lens["scope_root"],
-                "label": lens["scope_label"] or "Scope",
-                "current": True,
-            }],
+            # The door the founder came in through stands first in the
+            # trail when the scope shown is below it: that entry is the
+            # way back, and the graph declares the interaction for it.
+            "trail": [
+                *(
+                    [{
+                        "root": door_root,
+                        "label": door_label or "Map",
+                        "current": False,
+                    }]
+                    if door_root and door_root != lens["scope_root"] else []
+                ),
+                {
+                    "root": lens["scope_root"],
+                    "label": lens["scope_label"] or "Scope",
+                    "current": True,
+                },
+            ],
         },
         "selected": selected_root,
         "selected_title": selected_title,
@@ -687,7 +1239,18 @@ def project_clean_visual_canvas(
         "library": _library_projection(catalog),
         "primitive": _primitive_projection(),
         "properties": properties,
-        "viewport": {"pan_x": 0.0, "pan_y": 0.0, "zoom": 1.0},
+        # Where the founder is looking is held on the view session, and the
+        # lens already reads it. Answering with a literal meant zoom and pan
+        # were signed into the graph and then overwritten by 1.0 on the way
+        # back out -- the canvas snapping home after every gesture.
+        "viewport": {
+            "pan_x": 0.0, "pan_y": 0.0, "zoom": 1.0,
+            # A view that has never been panned records nothing, and a
+            # partial record is still a record. Filling per key rather than
+            # all-or-nothing means a stored zoom survives even when no pan
+            # was ever taken, and every reader gets a whole viewport.
+            **dict(lens.get("viewport") or {}),
+        },
         "configuration": {
             "design_system": {
                 "components": {
@@ -799,3 +1362,40 @@ def project_clean_visual_canvas(
 
 
 __all__ = ["project_clean_visual_canvas"]
+
+
+def project_clean_visual_canvas(
+    authority: UnifiedAuthority,
+    visual: CleanVisualSystem,
+    lens: Mapping[str, object],
+    *,
+    caller: CallerCommandCapability,
+    session_root: str,
+    subject_root: str,
+    interactions: CleanScopeInteractions | None = None,
+    door_root: str | None = None,
+    door_label: str | None = None,
+) -> dict[str, object]:
+    """One projection request shares one template-plan cache.
+
+    The engine already carries a store-bound plan cache with commit
+    invalidation (view_template_projection_scope); only the universal
+    app entered it. The clean projector rendered ~494 descriptors per
+    click, each building a fresh cache, so one warm click re-read the
+    same template cells 93,294 times -- 1.2s of the 0.150s the founder
+    is owed (SPEC 11.14).
+    """
+    from .cell_view_template import view_template_projection_scope
+
+    with view_template_projection_scope(authority.store):
+        return _project_clean_visual_canvas_unscoped(
+            authority,
+            visual,
+            lens,
+            caller=caller,
+            session_root=session_root,
+            subject_root=subject_root,
+            interactions=interactions,
+            door_root=door_root,
+            door_label=door_label,
+        )

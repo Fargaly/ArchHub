@@ -433,7 +433,7 @@ IMPORT_CONNECTION = "requirement-link"
 # projector invents. A scope that declares none should show none, which is
 # only distinguishable from "never declared any" if the bootstrap declares
 # something real.
-SCOPE_PANELS = ("Properties",)
+SCOPE_PANELS = (("Properties", "properties"),)
 
 
 def _definition_cells(
@@ -696,7 +696,7 @@ def import_requirement_graph(
         fields=DOMAIN_FIELDS,
         evidence_roots=definition_evidence,
         source_digest=source_digest,
-        presentation={"panels": list(SCOPE_PANELS)},
+        presentation={"panels": [label for label, _ in SCOPE_PANELS]},
     )
     requirement_definition, requirement_revision, requirement_definition_cells = (
         _definition_cells(
@@ -726,21 +726,31 @@ def import_requirement_graph(
         (authority.role("scope"), domain_scope_root)
         for domain_scope_root in domain_scope_roots.values()
     )
-    for panel_label in SCOPE_PANELS:
+    for panel_label, panel_presenter in SCOPE_PANELS:
         panel_label_root, panel_label_cells = build_value(
             authority.roles,
             authority.codecs[CODEC_NAME],
             panel_label,
             shape_root=authority.shape("value"),
         )
+        # A tab names what it presents. Leaving that to the projector is
+        # what made every panel render the same thing.
+        panel_presenter_root, panel_presenter_cells = build_value(
+            authority.roles,
+            authority.codecs[CODEC_NAME],
+            panel_presenter,
+            shape_root=authority.shape("value"),
+        )
         panel_root = new_id()
         cells.extend(panel_label_cells)
+        cells.extend(panel_presenter_cells)
         cells.extend(typed_relation_cells(
             panel_root,
             authority.role("conforms-to"),
             authority.shape("composition"),
             (
                 (authority.role("label"), panel_label_root),
+                (authority.role("presentation"), panel_presenter_root),
                 (authority.role("definition"), domain_definition),
             ),
         ))

@@ -381,6 +381,15 @@ def test_forged_sqlite_genesis_is_denied_without_leaking_the_owner_fence(
     created.close()
     connection = sqlite3.connect(path)
     try:
+        # A real attacker with raw file access removes the append-only
+        # fence first; the store must still catch the rewrite by re-hashing.
+        for trigger in (
+            "cell_versions_append_only_update",
+            "cell_versions_append_only_delete",
+            "revisions_append_only_update",
+            "revisions_append_only_delete",
+        ):
+            connection.execute("DROP TRIGGER IF EXISTS %s" % trigger)
         connection.execute(
             "UPDATE cell_versions SET atom=? WHERE revision=0 AND cell_id=?",
             (b"forged", NULL_CELL_ID),

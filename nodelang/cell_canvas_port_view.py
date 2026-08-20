@@ -146,6 +146,10 @@ def compose_canvas_port_template(
             attribute("interface", "data-universal-interface", identity),
             attribute("interface-label", "data-interface-label", name),
             attribute("interface-mode", "data-interface-mode", mode),
+            attribute(
+                "port-index", "data-port-index",
+                path("port-index", root, segment("port_index")),
+            ),
             attribute("context", "data-context", context),
             attribute("selected", "data-selected", selected),
             attribute(

@@ -101,6 +101,130 @@ def _atomic_text(path: Path, value: str) -> None:
             pass
 
 
+class _AcceptedSnapshotProof:
+    """Remember that this exact history already proved its bootstrap digest.
+
+    Opening the authority rebuilt the accepted snapshot from every stored
+    version and hashed all of it -- three hundred and fifty thousand cells
+    on the founder's graph, minutes of work, on every single start, to
+    re-confirm a fact about a revision that can never change.
+
+    The store is append-only, so the accepted prefix is immutable: if the
+    rows that compose it are the same rows, the digest is the same digest.
+    The proof therefore records the digest together with a fingerprint of
+    that prefix -- how many versions exist at or before the accepted
+    revision, and the newest row among them. Any rewrite of history moves
+    those numbers and the full verification runs again. Nothing is skipped
+    on a graph that has changed underneath us.
+    """
+
+    def __init__(self, generation: Path) -> None:
+        self._path = generation / "accepted-proof.json"
+
+    # Proof strings carry which prefix formula made them: "v2-" marks the
+    # chained digest (only the rows of the revisions since the last
+    # recorded link are hashed); a bare digest is the v1 fold over every
+    # row, kept verifiable so a proof recorded before the change still
+    # stands once -- after which the chained form is recorded instead.
+    @staticmethod
+    def _content(store, revision: int, like):
+        if like is not None and like.split(":")[-1].startswith("v2-"):
+            rows, newest, content = store.chained_prefix_fingerprint(revision)
+            return rows, newest, "v2-" + content
+        if like is not None:
+            rows, newest, content = store.accepted_prefix_fingerprint(revision)
+            return rows, newest, content
+        rows, newest, content = store.chained_prefix_fingerprint(revision)
+        return rows, newest, "v2-" + content
+    def _recorded(self, key: str):
+        try:
+            held = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        value = held.get(key)
+        return value if type(value) is str else None
+    def fingerprint(self, store, accepted_revision: int) -> str:
+        rows, newest, content = self._content(
+            store, accepted_revision, self._recorded("fingerprint")
+        )
+        return "%d:%d:%d:%s" % (accepted_revision, rows, newest, content)
+
+    def proven(self, fingerprint: str, digest: str) -> bool:
+        try:
+            held = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return (
+            held.get("fingerprint") == fingerprint
+            and held.get("digest") == digest
+        )
+
+    def head_fingerprint(self, store, revision: int) -> str | None:
+        rows, newest, content = self._content(store, revision, None)
+        if rows == 0:
+            return None
+        return "head:%d:%d:%d:%s" % (revision, rows, newest, content)
+
+    def head_proven(self, fingerprint: str) -> bool:
+        try:
+            held = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return held.get("head") == fingerprint
+
+    def record_head(self, fingerprint: str) -> None:
+        try:
+            held = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            held = {}
+        held["head"] = fingerprint
+        try:
+            self._path.write_text(json.dumps(held), encoding="utf-8")
+        except OSError:
+            pass
+
+    def head_floor_revision(self, store) -> int | None:
+        """The revision whose head this generation already audited whole.
+
+        Re-auditing rebuilds one full snapshot per revision back to the
+        beginning, so a graph that has been worked on pays its entire
+        history again on every start to re-prove revisions it proved
+        yesterday. The recorded head says which revision was audited over
+        which append-only prefix; if that prefix still has the same row
+        count and the same newest row, the audit below it still stands and
+        the walk only has to cover what was appended since.
+        """
+        try:
+            held = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        recorded = held.get("head")
+        if type(recorded) is not str:
+            return None
+        parts = recorded.split(":")
+        if len(parts) != 5 or parts[0] != "head":
+            return None
+        try:
+            revision = int(parts[1])
+        except ValueError:
+            return None
+        rows, newest, content = self._content(store, revision, recorded)
+        if recorded != "head:%d:%d:%d:%s" % (revision, rows, newest, content):
+            return None
+        return revision
+
+    def record(self, fingerprint: str, digest: str) -> None:
+        try:
+            try:
+                held = json.loads(self._path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                held = {}
+            held.update({"fingerprint": fingerprint, "digest": digest})
+            self._path.write_text(json.dumps(held), encoding="utf-8")
+        except OSError:
+            pass
+
+
 def _open_generation(
     root: Path,
     generation_id: str,
@@ -117,12 +241,36 @@ def _open_generation(
         raise InvalidCell("selected bootstrap manifest is unreadable") from exc
     if manifest.graph_id != generation_id:
         raise InvalidCell("generation folder and signed graph identity differ")
+    import time as _time
+    _t0 = _time.perf_counter()
     store = CellStore(database)
+    _t1 = _time.perf_counter()
     try:
-        authority = open_unified_authority(store, manifest, key_provider)
+        authority = open_unified_authority(
+            store,
+            manifest,
+            key_provider,
+            accepted_proof=_AcceptedSnapshotProof(generation),
+        )
     except Exception:
         store.close()
         raise
+    _t2 = _time.perf_counter()
+    # What an open actually costs, phase by phase, beside the boot log the
+    # owner keeps: the store load (rows -> cells) and the authority open
+    # (accepted proof, head audit, accumulator seed). Measured, so the
+    # next cut is aimed at a number rather than a guess.
+    try:
+        with (root / "boot-timing.log").open("a", encoding="utf-8") as log:
+            log.write(
+                "%s  open phases: store load %.1fs  authority open %.1fs  "
+                "(cells=%d rev=%s)" % (
+                    _time.strftime("%Y-%m-%d %H:%M:%S"), _t1 - _t0, _t2 - _t1,
+                    len(store.snapshot().cells), store.revision,
+                ) + chr(10)
+            )
+    except OSError:
+        pass
     return AuthorityLocation(root, generation, database, manifest_path, authority)
 
 

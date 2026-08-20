@@ -9,6 +9,7 @@ const ICON_NAMES = Object.freeze([
   'house',
   'maximize',
   'minus',
+  'play',
   'plus',
   'redo-2',
   'search',

@@ -14,6 +14,7 @@ from .unified_authority import (
     create_relation_node,
     declare_definition,
     enroll_session,
+    published_definition_named,
     instantiate_definition,
     promote_definition,
     read_contained_scope,
@@ -69,6 +70,13 @@ def install_agent_session_catalogue(
     caller: CallerCommandCapability,
 ) -> AgentSessionCatalogue:
     """Publish the reusable visible state carried by every provider session."""
+    # Published already: answer from the catalogue the audited head holds,
+    # not from a replay of three signed commands at every start.
+    held = published_definition_named(
+        authority, "Agent session state", caller=caller
+    )
+    if held is not None:
+        return AgentSessionCatalogue(held)
     declared = declare_definition(
         authority,
         "Agent session state",

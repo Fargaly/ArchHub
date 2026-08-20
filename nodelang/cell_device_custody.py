@@ -171,7 +171,7 @@ def project_device_custody_protocol(
     states = {name: "%s:state:%s" % (prefix, name) for name in STATE_NAMES}
     root_id = prefix + ":root"
     required = {root_id, *roles.values(), *states.values()}
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("device-custody protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {roles["vocabulary-member"], roles["custody-member"]}

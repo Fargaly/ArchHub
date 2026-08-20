@@ -115,7 +115,7 @@ def open_relation_composer_protocol(
         }),
     )
     expected = {protocol.root_id, *protocol.roles.values()}
-    if expected - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in expected):
         raise InvalidCell("relation-composer protocol is incomplete")
     members = read_relation(snapshot, protocol.root_id, budget=64)
     vocabulary = {

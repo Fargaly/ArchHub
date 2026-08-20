@@ -356,6 +356,10 @@ EXPECTED_TEMPLATES = {
     "library-section",
     "library-shell",
     "relation-composer",
+    # The stem executor work (2026-08-20) gave the visual system the run
+    # and result panel templates.
+    "run",
+    "result",
 }
 
 CANONICAL_EQUIVALENCE_CASES = (

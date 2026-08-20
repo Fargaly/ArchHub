@@ -8,7 +8,7 @@
     "repository": "https://github.com/lucide-icons/lucide.git",
     "source": "icon-nodes.json",
     "source_sha256": "03aa38fc8e15ef5a50bae81ba46071cd7faf93bbe71a3dd0744e54e651ef6cae",
-    "selected_geometry_sha256": "3bb7ea074cb71c46dea70f996cf193839d6d3c863e8af61f98e4f3a59b612c27"
+    "selected_geometry_sha256": "f3a7fd9c81071d094c14661c5860fe72fa0e679f0c0066ea668e586eb06f2e63"
   },
   "icons": {
     "arrow-left": [
@@ -116,6 +116,14 @@
         "path",
         {
           "d": "M5 12h14"
+        }
+      ]
+    ],
+    "play": [
+      [
+        "path",
+        {
+          "d": "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"
         }
       ]
     ],

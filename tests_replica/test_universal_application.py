@@ -124,7 +124,7 @@ def test_design_system_projects_the_cell_native_icon_catalog(application):
 		"homepage": "https://lucide.dev",
 		"repository": "https://github.com/lucide-icons/lucide.git",
 		"source_sha256": "03aa38fc8e15ef5a50bae81ba46071cd7faf93bbe71a3dd0744e54e651ef6cae",
-		"selected_geometry_sha256": "3bb7ea074cb71c46dea70f996cf193839d6d3c863e8af61f98e4f3a59b612c27",
+		"selected_geometry_sha256": "f3a7fd9c81071d094c14661c5860fe72fa0e679f0c0066ea668e586eb06f2e63",
 	}
 	assert set(icons["icons"]) == set(registry.icon_roots)
 	assert icons["icons"]["plus"]["root"] == registry.icon_roots["plus"]
@@ -148,6 +148,9 @@ def test_design_system_projects_the_cell_native_icon_catalog(application):
 		"app:control:canvas:redo",
 		"app:control:canvas:group",
 		"app:control:canvas:ungroup",
+		# Run: a host operation's button is graph-declared like every other
+		# control (test_no_declared_operation_is_a_dead_button holds its meaning).
+		"app:control:canvas:run",
 		"app:control:inspector:add-interface",
 		"app:control:inspector:add-property",
 		"app:control:library:place",
@@ -162,7 +165,7 @@ def test_visible_controls_project_cell_native_activation_and_applicability(appli
 	controls = projection["configuration"]["design_system"]["control_catalog"][
 		"controls"
 	]
-	assert len(controls) == 15
+	assert len(controls) == 16  # 15 original controls + the Run control
 	for control in controls:
 		assert control["activation"]["root"]
 		assert control["activation"]["capability"]

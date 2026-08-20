@@ -231,6 +231,12 @@ def _term_value(term: LogicTerm, frame: int) -> _Value:
     return term.constant_root
 
 
+# The most goals ONE transitive edge expansion may burn before it is
+# refused as pathological. Ordinary edge rules cost ~30 goals; this is
+# a backstop, not a tuning knob.
+_EDGE_EXPANSION_CEILING = 10_000
+
+
 @dataclass(slots=True)
 class _Meter:
     remaining: int
@@ -330,6 +336,29 @@ def _transitive_closure_plan(
         recursive,
         identity,
     )
+
+
+# Reachability over a transitive-closure predicate is a pure function of
+# (snapshot, edge predicate, source): a snapshot is immutable and the edge
+# rule is graph-held. The solver re-derived that set through unification on
+# every closure query -- hundreds of queries per boot, each walking the same
+# edges. The memo HOLDS the mapping it keys on (an id is stable only while
+# its object lives) and is bounded to a few snapshots. It records ONLY the
+# reachable set discovered by the solver's own walk; a target outside the
+# set is answered without a walk (the walk would yield nothing), a target
+# inside walks exactly as before and yields the same trace.
+_CLOSURE_REACH_MEMO: dict[int, tuple[object, dict]] = {}
+
+
+def _reach_memo_for(snapshot: Snapshot) -> dict:
+    key = id(snapshot.cells)
+    held = _CLOSURE_REACH_MEMO.get(key)
+    if held is None or held[0] is not snapshot.cells:
+        if len(_CLOSURE_REACH_MEMO) >= 4:
+            _CLOSURE_REACH_MEMO.pop(next(iter(_CLOSURE_REACH_MEMO)))
+        held = (snapshot.cells, {})
+        _CLOSURE_REACH_MEMO[key] = held
+    return held[1]
 
 
 def evaluate_logic(
@@ -457,6 +486,53 @@ def evaluate_logic(
             )
         return result
 
+    edge_memo = _reach_memo_for(snapshot)
+
+    def edge_children(plan: _TransitiveClosurePlan, node: str) -> tuple[str, ...]:
+        """The nodes one edge away from `node`, in solver order.
+
+        A memo over the snapshot: the edge rule is graph-held and the
+        snapshot immutable, so this tuple is a fact of the pair. The
+        expansion runs the solver itself once per (edge, node) -- the
+        exact goal the walk would run -- and only the CHILDREN are kept.
+        Traces are never memoized: they are re-derived along the found
+        path by the same goal, so the yielded proof is byte-identical to
+        an unmemoized walk.
+        """
+        key = (plan.edge_predicate, node)
+        held = edge_memo.get(key)
+        if held is not None:
+            return held
+        variable = (meter.frame(), "transitive-edge-child")
+        children: list[str] = []
+        # One frontier node costs the caller ONE step. The inner solve
+        # that finds its children is real work, but billing every inner
+        # goal made the budget a function of the RULE BODY SIZE times
+        # the region: a 1,482-node containment sweep spent 48,305 goals
+        # and one 2026-08-19 publish batch pushed one scope past
+        # the ceiling -- the live canvas served no interactions. The
+        # walk is bounded by the graph by construction; the budget now
+        # bounds the FRONTIER, and a separate per-expansion ceiling
+        # still refuses a pathological edge rule.
+        before = meter.remaining
+        for solved in solve_goal(
+            plan.edge_predicate, (node, variable),
+            _Trace(MappingProxyType({}), (), ()), frozenset()
+        ):
+            child = _deref(variable, solved.bindings)
+            if _is_variable(child):
+                raise InvalidCell("transitive edge left its result unbound")
+            children.append(child)
+        inner_spend = before - meter.remaining
+        if inner_spend > _EDGE_EXPANSION_CEILING:
+            raise InvalidCell("transitive edge rule exceeded its budget")
+        meter.remaining = before - 1
+        if meter.remaining < 0:
+            raise InvalidCell("logic evaluation exceeded its budget")
+        held = tuple(children)
+        edge_memo[key] = held
+        return held
+
     def solve_transitive(
         plan: _TransitiveClosurePlan,
         source: str,
@@ -467,27 +543,43 @@ def evaluate_logic(
         if source == target and plan.identity_rule is not None:
             yield closure_trace(trace, plan, (source,))
             return
-        pending = deque(((source, (source,), trace),))
-        visited = {source}
-        while pending:
-            current, path, current_trace = pending.popleft()
+        # Find the path over memoized edges (cheap), then re-derive the
+        # traces along exactly that path with the real goals (bounded by
+        # path length, not by the frontier).
+        parents: dict[str, str] = {source: source}
+        pending = deque((source,))
+        found_path: tuple[str, ...] | None = None
+        while pending and found_path is None:
+            current = pending.popleft()
+            for child in edge_children(plan, current):
+                if child in parents:
+                    continue
+                parents[child] = current
+                if child == target:
+                    chain = [child]
+                    while chain[-1] != source:
+                        chain.append(parents[chain[-1]])
+                    found_path = tuple(reversed(chain))
+                    break
+                pending.append(child)
+        if found_path is None:
+            return
+        current_trace = trace
+        for index in range(len(found_path) - 1):
+            step_from, step_to = found_path[index], found_path[index + 1]
             variable = (meter.frame(), "transitive-edge-result")
+            advanced = None
             for solved in solve_goal(
-                plan.edge_predicate,
-                (current, variable),
-                current_trace,
-                stack,
+                plan.edge_predicate, (step_from, variable), current_trace, stack
             ):
                 child = _deref(variable, solved.bindings)
-                if _is_variable(child):
-                    raise InvalidCell("transitive edge left its result unbound")
-                if child == target:
-                    yield closure_trace(solved, plan, (*path, child))
-                    return
-                if child in visited:
-                    continue
-                visited.add(child)
-                pending.append((child, (*path, child), solved))
+                if child == step_to:
+                    advanced = solved
+                    break
+            if advanced is None:
+                raise InvalidCell("transitive edge vanished between walk and proof")
+            current_trace = advanced
+        yield closure_trace(current_trace, plan, found_path)
 
     def solve_goal(
         predicate: str,

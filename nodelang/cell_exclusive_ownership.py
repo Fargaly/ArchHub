@@ -121,7 +121,7 @@ def project_ownership_protocol(
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     states = {name: "%s:state:%s" % (prefix, name) for name in STATE_NAMES}
     required = {root_id, *roles.values(), *states.values()}
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("ownership protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {roles["vocabulary-member"], roles["ownership-member"]}
@@ -325,7 +325,7 @@ def acquire_ownership(
         protocol.root_id, resource_root, holder_root, evidence_root,
         protocol.states["active"],
     }
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("ownership acquisition root is missing")
     existing = [
         item for item in verify_ownership_authority(snapshot, protocol)

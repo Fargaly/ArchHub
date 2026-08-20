@@ -739,7 +739,7 @@ def read_deliberation_space(
         *entries,
         *scopes,
     }
-    if required_roots - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required_roots):
         raise InvalidCell("deliberation space references missing Cells")
     seen: set[tuple[str, str]] = set()
     for requirement_root in requirements:

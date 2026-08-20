@@ -2296,37 +2296,115 @@ def test_a_property_cannot_be_recorded_as_its_own_predecessor(monkeypatch):
             owner_root=authority.manifest.application_root,
             predecessor_root=collision,
         )
-
-
-def test_no_module_defines_the_same_top_level_name_twice():
-    """A redefined name is dead code that reads as live code.
-
-    revise_relation_node was added a second time in one module while an
-    earlier definition of the same name sat lower in the file. Python binds
-    the last one, so the new command never ran, and the courts it was written
-    for went green against the incumbent -- which made the addition look
-    correct. Nothing about the source says which definition is reachable, so
-    this checks by structure across the whole package rather than trusting a
-    reader to notice a name they have already seen.
-    """
-    import ast
-    import collections
-    import pathlib
-
-    package = pathlib.Path(unified_authority_module.__file__).parent
-    shadowed: list[str] = []
-    for path in sorted(package.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        seen: dict[str, list[int]] = collections.defaultdict(list)
-        for node in tree.body:
-            if isinstance(
-                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            ):
-                seen[node.name].append(node.lineno)
-        shadowed.extend(
-            "%s defines %s at lines %s"
-            % (path.name, name, ", ".join(str(line) for line in lines))
-            for name, lines in sorted(seen.items())
-            if len(lines) > 1
-        )
-    assert shadowed == []
+
+
+
+
+def test_no_module_defines_the_same_top_level_name_twice():
+
+    """A redefined name is dead code that reads as live code.
+
+
+
+    revise_relation_node was added a second time in one module while an
+
+    earlier definition of the same name sat lower in the file. Python binds
+
+    the last one, so the new command never ran, and the courts it was written
+
+    for went green against the incumbent -- which made the addition look
+
+    correct. Nothing about the source says which definition is reachable, so
+
+    this checks by structure across the whole package rather than trusting a
+
+    reader to notice a name they have already seen.
+
+    """
+
+    import ast
+
+    import collections
+
+    import pathlib
+
+
+
+    package = pathlib.Path(unified_authority_module.__file__).parent
+
+    shadowed: list[str] = []
+
+    for path in sorted(package.glob("*.py")):
+
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        seen: dict[str, list[int]] = collections.defaultdict(list)
+
+        for node in tree.body:
+
+            if isinstance(
+
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+            ):
+
+                seen[node.name].append(node.lineno)
+
+        shadowed.extend(
+
+            "%s defines %s at lines %s"
+
+            % (path.name, name, ", ".join(str(line) for line in lines))
+
+            for name, lines in sorted(seen.items())
+
+            if len(lines) > 1
+
+        )
+
+    assert shadowed == []
+
+
+
+def test_the_head_audit_reads_each_revision_once():
+    """Auditing a history must not rebuild the same snapshot twice.
+
+    This is a cost court, and cost is why it matters: rebuilding one
+    snapshot is the whole expense of one step, so reading each revision
+    twice doubles the price of starting. On a graph large enough to
+    matter that is the difference between a program that restarts and a
+    program nobody dares restart -- and nobody notices, because reading
+    the same revision twice is correct. It is only slow.
+
+    Courting the absence, because the second read is invisible in review:
+    the line that adds it always has a good local reason.
+    """
+    from nodelang.unified_authority import audit_authority_history
+
+    authority = _authority()
+    for index in range(6):
+        declare_definition(
+            authority,
+            "Read once %d" % index,
+            {},
+            version="1",
+            **_command(authority, "read-once-%d" % index),
+        )
+
+    rebuilt = []
+    store = authority.store
+    original_at = store.at
+
+    def counting_at(revision):
+        rebuilt.append(revision)
+        return original_at(revision)
+
+    store.at = counting_at
+    try:
+        audit_authority_history(authority)
+    finally:
+        store.at = original_at
+
+    assert rebuilt, "the audit rebuilt no snapshot at all"
+    twice = sorted({r for r in rebuilt if rebuilt.count(r) > 1})
+    assert not twice, "revisions rebuilt more than once: %s" % twice

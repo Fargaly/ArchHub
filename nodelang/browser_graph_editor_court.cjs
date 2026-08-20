@@ -894,14 +894,34 @@ async function recordScreenshot(page, name) {
         && response.request().method() === "POST"
       ), { timeout: 20000 });
       await groupControl.click();
-      const groupStatus = (await groupResponse).status();
+      const groupReply = await groupResponse;
+      const groupStatus = groupReply.status();
+      let groupBody = null;
+      try { groupBody = await groupReply.json(); } catch (error) { groupBody = null; }
       details.grouping.groupStatus = groupStatus;
-      await waitFor(page, ({ members, before }) => {
-        const selected = window.__archhubCourt.selectedRoots();
-        return selected.length === 1 && !members.includes(selected[0])
-          && document.querySelectorAll(".canvas [data-universal-root]").length
-            === before - members.length + 1;
-      }, { members: [first.id, second.id], before: nodesBeforeGroup }, 20000);
+      try {
+        await waitFor(page, ({ members, before }) => {
+          const selected = window.__archhubCourt.selectedRoots();
+          return selected.length === 1 && !members.includes(selected[0])
+            && document.querySelectorAll(".canvas [data-universal-root]").length
+              === before - members.length + 1;
+        }, { members: [first.id, second.id], before: nodesBeforeGroup }, 20000);
+      } catch (error) {
+        const state = await page.evaluate(() => ({
+          selected: window.__archhubCourt.selectedRoots(),
+          cards: document.querySelectorAll(".canvas [data-universal-root]").length,
+          toast: document.querySelector(".toast,.error-banner")?.textContent || null,
+        }));
+        throw new Error(
+          "group settle timeout; state=" + JSON.stringify(state)
+          + " before=" + nodesBeforeGroup
+          + " status=" + groupStatus
+          + " bodyNodes=" + (groupBody && groupBody.nodes ? groupBody.nodes.length : "none")
+          + " bodySelection=" + JSON.stringify(groupBody && groupBody.selection)
+          + " bodyKeys=" + JSON.stringify(groupBody ? Object.keys(groupBody).slice(0, 12) : null)
+          + " bodyError=" + JSON.stringify(groupBody && groupBody.error)
+        );
+      }
       const composition = (await page.evaluate(
         () => window.__archhubCourt.selectedRoots()
       ))[0];

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import urllib.request
 import urllib.error
 import sys
@@ -19,6 +20,7 @@ from .clean_coordination_host import (
     SignedCoordinationRequest,
 )
 from .runtime_caller_capability import WindowsDpapiCallerKeyStore
+from .clean_boot_surface import BootSurface
 from .unified_authority_runtime import default_runtime_root, open_current_authority
 from .universal_cell import DatabaseOwnerConflict, InvalidCell
 
@@ -110,6 +112,17 @@ class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
         self._write(200, result)
 
 
+def _service_boot_note(line: str) -> None:
+    try:
+        from pathlib import Path as _Path
+        root = _Path(os.environ.get("LOCALAPPDATA", "")) / "ArchHub" / "unified-authority"
+        if root.is_dir():
+            with (root / "boot-timing.log").open("a", encoding="utf-8") as log:
+                log.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  boot phase: " + line + chr(10))
+    except Exception:
+        pass
+
+
 def build_service(
     host: str = "127.0.0.1",
     *,
@@ -136,13 +149,21 @@ def build_service(
     # own graph and the founder's port. During any restart window that
     # binds 8474 successfully, backed by a throwaway fixture, and every
     # agent reaching it enrols against a temp directory and is told ok.
+    _opening = time.monotonic()
     location = open_current_authority(runtime_root, provider)
+    _service_boot_note(
+        "open_current_authority %.1fs" % (time.monotonic() - _opening)
+    )
     try:
+        _binding = time.monotonic()
         key_store = WindowsDpapiCallerKeyStore(
             WindowsDpapiCallerKeyStore.default_path()
         )
         graph_host = CleanCoordinationHost(location.authority, key_store)
         service = build_bound_service(graph_host, host, port, handler=handler)
+        _service_boot_note(
+            "bind coordination %.1fs" % (time.monotonic() - _binding)
+        )
     except Exception:
         location.authority.store.close()
         raise
@@ -192,7 +213,6 @@ def _build_canvas_server(location, host: str, port: int):
     from .clean_browser_authority import open_clean_browser_authority
     from .runtime_caller_capability import WindowsDpapiCallerKeyStore
     from .unified_authority import composition_root
-    from .cell_protocols import read_relation
 
     authority = location.authority
     key_store = WindowsDpapiCallerKeyStore(
@@ -203,14 +223,42 @@ def _build_canvas_server(location, host: str, port: int):
     provider = WindowsDpapiSigningKeyProvider(
         WindowsDpapiSigningKeyProvider.default_path()
     )
-    grand = composition_root(authority, "Grand Map", caller=caller)
-    scope = next(
-        member.participant_id
-        for member in read_relation(
-            authority.store.snapshot(), grand, budget=100_000
-        )
-        if member.role_id == authority.role("composition")
-    )
+    # The canvas opens on the Grand Map, not on whichever member happens
+    # to be first inside it. Descending one level picked an arbitrary
+    # document region whose own members are a level deeper still, so every
+    # relation it carried pointed at something the canvas never drew: a
+    # screen of unconnected cards and hundreds of wires with no endpoints.
+    scope = composition_root(authority, "Grand Map", caller=caller)
+    # Which region the canvas opens on is an operator's choice, and this is
+    # the entry point where naming one is a declaration rather than a trap.
+    chosen = os.environ.get("ARCHHUB_CANVAS_SCOPE", "").strip()
+    if chosen:
+        scope = chosen
+    # This is where the machines ArchHub may reach are named. An owner
+    # standing up a runtime declares its adapters; a library that picked
+    # them for itself would be a runtime that could touch a host nobody
+    # chose. Adding a host is adding a line here, and a host absent from
+    # this map is a host this runtime cannot reach at all.
+    from .clean_office_adapter import invoke as reach_office
+    from .clean_revit_adapter import invoke as reach_revit
+
+    adapters = {
+        "revit": reach_revit,
+        "word": reach_office,
+        "excel": reach_office,
+        "powerpoint": reach_office,
+    }
+
+    def reach_host(op_id, arguments):
+        host = str(op_id).split(".", 1)[0]
+        adapter = adapters.get(host)
+        if adapter is None:
+            raise InvalidCell(
+                "this runtime declares no adapter for %r; it reaches %s"
+                % (host, ", ".join(sorted(adapters)))
+            )
+        return adapter(op_id, arguments)
+
     return ApplicationServer.from_unified_authority(
         authority,
         browser_authority=browser,
@@ -219,6 +267,7 @@ def _build_canvas_server(location, host: str, port: int):
         authority_key_provider=provider,
         host=host,
         port=port,
+        host_invoker=reach_host,
     )
 
 
@@ -227,6 +276,15 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8474)
     parser.add_argument("--canvas-port", type=int, default=8475)
+    parser.add_argument(
+        "--await-lock-seconds",
+        type=float,
+        default=120.0,
+        help=(
+            "how long a successor waits for a stopping predecessor to "
+            "release the graph lock before refusing to start"
+        ),
+    )
     parser.add_argument(
         "--root",
         default="",
@@ -249,44 +307,161 @@ def main() -> int:
             file=sys.stderr,
         )
         return 0
+    # How long a start takes is a fact about this runtime, and it is the
+    # one nobody could get: the process runs under pythonw with no
+    # console, so a slow start looked identical to a hung one from
+    # outside. Each phase is timed and written where an operator can read
+    # it afterwards.
+    started_at = time.monotonic()
+    phases: list[tuple[str, float]] = []
+
+    # A boot that says nothing for thirteen minutes is indistinguishable
+    # from a boot that has died, and under pythonw there is no console to
+    # say it to. Every phase announces itself where an operator can read it
+    # WHILE it runs, and the same file records the failure that ends it --
+    # a silent exit is how the last four restarts looked from outside.
+    def _boot_log_path() -> Path:
+        return (
+            Path(args.root) if args.root else default_runtime_root()
+        ) / "boot-timing.log"
+
+    def _say(message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+        try:
+            path = _boot_log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write("%s  %s%s" % (
+                    time.strftime("%Y-%m-%d %H:%M:%S"), message, chr(10)))
+        except OSError:
+            pass
+
+    def _begin(label: str) -> None:
+        if boot_surface is not None:
+            boot_surface.progress.begin(label)
+        _say("... %s (%.1fs since launch)" % (
+            label, time.monotonic() - started_at))
+
+    def _mark(label: str, since: float) -> float:
+        now = time.monotonic()
+        phases.append((label, now - since))
+        if boot_surface is not None:
+            boot_surface.progress.finish(label)
+        _say("done %s in %.1fs" % (label, now - since))
+        return now
+
+    _say("clean owner starting (pid %d, port %d, canvas %d)" % (
+        os.getpid(), args.port, args.canvas_port))
+    # A start that shows nothing cannot be told from a start that failed.
+    # The progress page takes the canvas port first and hands it back the
+    # moment the real canvas can serve, so opening a graph is visible from
+    # the first second instead of ninety seconds of silence.
+    boot_surface = None
+    if not args.no_canvas:
+        try:
+            boot_surface = BootSurface(args.host, args.canvas_port).start()
+        except OSError as exc:
+            _say("boot surface not stood: %s" % exc)
+    _begin("open authority and bind coordination")
+
+    # A successor that asks for the graph the instant the predecessor is
+    # told to stop loses the race and dies, and the operator sees only a
+    # program that did not come back. The predecessor releases the OS lock
+    # when its process ends, so the successor waits for the LOCK rather
+    # than for a liveness ping: a ping answers while the holder is still
+    # shutting down, and it stops answering long before the lock is free.
+    #
+    # Waiting is refused, not extended, when the holder is a working owner:
+    # taking over from a healthy predecessor is not recovery, it is two
+    # owners fighting. That case exits distinctly and says which pid holds
+    # it, so a supervisor reuses the running owner instead of restarting.
+    def _surfaces_answer() -> bool:
+        for url in (
+            "http://%s:%d/health" % (args.host, args.port),
+            "http://%s:%d/" % (args.host, args.canvas_port),
+        ):
+            try:
+                with urllib.request.urlopen(url, timeout=5) as response:
+                    response.read(1)
+                return True
+            except urllib.error.HTTPError:
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _open_owning_the_graph():
+        deadline = time.monotonic() + max(0.0, args.await_lock_seconds)
+        announced = False
+        while True:
+            try:
+                return build_service(
+                    args.host,
+                    port=args.port,
+                    runtime_root=(
+                        Path(args.root)
+                        if args.root else default_runtime_root()
+                    ),
+                )
+            except DatabaseOwnerConflict as exc:
+                if _surfaces_answer():
+                    _say("REFUSED a live owner already serves this graph; "
+                         "reuse it or stop it first: %s" % exc)
+                    raise SystemExit(78)
+                if time.monotonic() >= deadline:
+                    raise
+                if not announced:
+                    _say("... waiting up to %.0fs for the previous owner to "
+                         "release the graph lock" % args.await_lock_seconds)
+                    announced = True
+                time.sleep(1.0)
+
     try:
-        service, location = build_service(
-            args.host,
-            port=args.port,
-            runtime_root=(
-                Path(args.root) if args.root else default_runtime_root()
-            ),
-        )
+        service, location = _open_owning_the_graph()
     except DatabaseOwnerConflict as exc:
-        print("clean coordination service cannot own the graph: %s" % exc,
-              file=sys.stderr)
+        _say("FAILED cannot own the graph: %s" % exc)
         return 75
     except OSError as exc:
-        print("clean coordination service cannot bind %s:%d: %s"
-              % (args.host, args.port, exc), file=sys.stderr)
+        _say("FAILED cannot bind %s:%d: %s" % (args.host, args.port, exc))
         return 76
     # Both surfaces or neither. A half-serving owner holding the lock is
     # worse than no owner: it blocks recovery while delivering nothing, and
     # from outside it looks healthy because something answers. Any failure
     # past this point releases the lock and exits distinctly.
+    opened_at = _mark("open authority and bind coordination", started_at)
     canvas = None
     if not args.no_canvas:
+        _begin("stand the canvas surface")
+        if boot_surface is not None:
+            boot_surface.hand_over()
+            boot_surface = None
         try:
             canvas = _build_canvas_server(
                 location, args.host, args.canvas_port
             ).start()
         except Exception as exc:
-            print(
-                "clean owner cannot stand the canvas surface: %s" % exc,
-                file=sys.stderr,
-            )
+            _say("FAILED cannot stand the canvas surface: %s" % exc)
             service.server_close()
             location.authority.store.close()
             return 77
+        _mark("stand the canvas surface", opened_at)
+        total = time.monotonic() - started_at
+        report = "  ".join(
+            "%s %.1fs" % (label, seconds) for label, seconds in phases
+        )
         print(
-            "canvas serving on %s" % canvas.url,
+            "canvas serving on %s after %.1fs (%s)" % (canvas.url, total, report),
             file=sys.stderr,
         )
+        try:
+            log = Path(
+                args.root
+            ) if args.root else default_runtime_root()
+            (log / "boot-timing.log").open("a", encoding="utf-8").write(
+                "%.1fs total  " % total + report + chr(10)
+            )
+        except OSError:
+            pass
     # Both-or-neither holds at runtime too, and the watcher is the MAIN
     # thread: if the watcher dies the process dies and the OS releases the
     # lock, so "who watches the watchdog" bottoms out in process death

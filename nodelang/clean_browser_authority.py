@@ -196,7 +196,7 @@ def _validate_protocol(
         *protocol.roles.values(),
         *protocol.states.values(),
     }
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("browser-session protocol is incomplete")
     members = read_relation(snapshot, protocol.root_id, budget=100_000)
     allowed_roles = {
@@ -227,7 +227,14 @@ def _read_authority(
     replayed: bool,
     receipt_root: str | None,
 ) -> CleanBrowserAuthority:
-    validate_composition(authority, snapshot, root_id)
+    # Every member of the Interface is offered to this reader, and one of
+    # them is the scope interaction set -- a command-scale structure. The
+    # line below already reads at the command budget; validating at the
+    # ten-thousand default meant one large neighbour stopped the browser
+    # authority opening at all, and with it the whole canvas.
+    validate_composition(
+        authority, snapshot, root_id, budget=COMMAND_BUDGET
+    )
     members = read_relation(snapshot, root_id, budget=COMMAND_BUDGET)
     protocol_root = _one_member(
         members,

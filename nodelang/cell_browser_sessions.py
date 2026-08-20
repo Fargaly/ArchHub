@@ -129,7 +129,7 @@ def project_browser_session_protocol(
     states = {name: "%s:state:%s" % (prefix, name) for name in STATE_NAMES}
     root_id = prefix + ":root"
     required = {root_id, *roles.values(), *states.values()}
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("browser-session protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed_roles = {roles["vocabulary-member"], roles["session-member"]}
@@ -182,7 +182,7 @@ def issue_browser_session(
         assurance_root,
         protocol.states["active"],
     }
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("browser-session authority root is missing")
     root_id = "browser-session:" + uuid.uuid4().hex
     values = {

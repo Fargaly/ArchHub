@@ -18,6 +18,7 @@ CANVAS_CARD_TEMPLATE_MEMBER_ROOTS = (
     CANVAS_CARD_PREFIX + ":accent",
     CANVAS_CARD_PREFIX + ":head",
     CANVAS_CARD_PREFIX + ":title",
+    CANVAS_CARD_PREFIX + ":summary",
     CANVAS_CARD_PREFIX + ":value",
     CANVAS_CARD_PREFIX + ":ports",
 )
@@ -61,6 +62,20 @@ def compose_canvas_card_template(
     assembly_present = expression(
         "assembly-present", "fallback", assembly, false_value
     )
+    # What the graph says this node IS, what state it is in, and what it
+    # says about itself. Read from the projection, which reads them from
+    # the definition name and the node's own properties. Absent -> False,
+    # so the chooser below can fall through to the structural words.
+    # Presence is length(): a literal False is an atom, and an atom's text
+    # is never empty, so fallback(x, False) is always truthy here. length
+    # of "" is 0, which is the only false the engine's choose respects.
+    kind = path("kind", root, segment("kind"))
+    category = path("category", root, segment("category"))
+    kind_present = expression("kind-present", "length", kind)
+    status = path("status", root, segment("status"))
+    status_present = expression("status-present", "length", status)
+    summary = path("summary", root, segment("summary"))
+    summary_present = expression("summary-present", "length", summary)
     assembly_version = path(
         "assembly-version", assembly, segment("version")
     )
@@ -71,28 +86,33 @@ def compose_canvas_card_template(
         "assembly-interface-count", "length", assembly_interfaces
     )
 
+    # The head names the kind of thing: the definition's own name when the
+    # node was made from one ("Domain composition", "Requirement"), else
+    # the structural word. "ASSEMBLY / v" told the founder nothing.
+    category_present = expression("category-present", "length", category)
     head = expression(
         "head",
         "choose",
-        assembly_present,
+        category_present,
+        category,
         expression(
-            "assembly-head",
-            "concat",
-            literal("assembly-label", "ASSEMBLY  /  v"),
-            assembly_version,
-        ),
+        "head-kind",
+        "choose",
+        kind_present,
+        kind,
         expression(
             "non-assembly-head",
             "choose",
             composition,
-            literal("composition-label", "COMPOSITION"),
+            literal("composition-label", "Composition"),
             expression(
                 "non-composition-head",
                 "choose",
                 openable,
-                literal("relation-label", "RELATION"),
-                literal("cell-label", "CELL"),
+                literal("relation-label", "Relation"),
+                literal("cell-label", "Cell"),
             ),
+        ),
         ),
     )
     assembly_value = expression(
@@ -111,8 +131,23 @@ def compose_canvas_card_template(
         connection_count,
         literal("cell-relations", " relations"),
     )
+    # The value line is the node's state when it declares one; a scope
+    # that opens says so; everything else keeps its structural count.
     value = expression(
-        "value", "choose", assembly_present, assembly_value, cell_value
+        "value",
+        "choose",
+        status_present,
+        status,
+        expression(
+            "value-without-status",
+            "choose",
+            openable,
+            literal("open-hint", "Double-click to open"),
+            expression(
+                "value-structural", "choose",
+                assembly_present, assembly_value, cell_value,
+            ),
+        ),
     )
     accessibility_label = expression(
         "accessibility-label",
@@ -154,6 +189,14 @@ def compose_canvas_card_template(
         text=label,
     )
     builder.template(
+        prefix + ":summary",
+        tag=literal("summary-tag", "div"),
+        key=keyed_value("summary"),
+        class_name=literal("summary-class", "node-summary"),
+        text=summary,
+        condition=summary_present,
+    )
+    builder.template(
         prefix + ":value",
         tag=literal("value-tag", "div"),
         key=keyed_value("value"),
@@ -189,11 +232,16 @@ def compose_canvas_card_template(
                 prefix + ":attribute:card-label", "aria-label",
                 accessibility_label,
             ),
+            builder.attribute(
+                prefix + ":attribute:card-category", "data-node-category",
+                category,
+            ),
         ),
         children=(
             prefix + ":accent",
             prefix + ":head",
             prefix + ":title",
+            prefix + ":summary",
             prefix + ":value",
             prefix + ":ports",
         ),

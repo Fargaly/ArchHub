@@ -600,7 +600,25 @@ def test_clean_browser_session_http_focus_command_persists_selection_and_reopens
             revision=focused["accepted_revision"],
         )
         assert focused["properties"]
-        assert all(row["relation"] == target for row in focused["properties"])
+        # The row's own relation cell is what makes it addressable: the
+        # client keys its property diff by it, so two rows sharing one
+        # identity would collapse that map and lose an edit. The node the
+        # rows belong to is carried by owner.
+        assert all(row["owner"] == target for row in focused["properties"])
+        assert len({row["relation"] for row in focused["properties"]}) == len(
+            focused["properties"]
+        )
+        # A row that does not say whether its value varies across the
+        # selection is read as varying, and the descriptor answers that by
+        # rendering an empty box -- the panel then hides every value the
+        # graph holds while looking entirely healthy.
+        for row in focused["properties"]:
+            assert "mixed" in row, (
+                "a projected property row must state whether its value "
+                "varies across the selection"
+            )
+            assert row["mixed"] is False
+            assert row["value"] not in (None, "")
         assert [(row["label"], row["value"]) for row in focused["properties"]] == [
             (name, value) for name, value in expected_properties
         ]
@@ -965,7 +983,7 @@ def test_clean_browser_session_http_fails_closed_on_wrong_subject_expiry_and_rev
         server.close()
 
 
-def test_clean_browser_session_http_rejects_stale_revision_interactions(tmp_path):
+def test_clean_browser_session_http_refuses_stale_interactions_only_for_real_conflicts(tmp_path):
     built, provider = _provision_clean_runtime(
         tmp_path,
         root_name="clean-server-stale-revision",
@@ -1007,19 +1025,72 @@ def test_clean_browser_session_http_rejects_stale_revision_interactions(tmp_path
         advanced_revision = advanced["accepted_revision"]
         assert built.location.authority.store.revision == advanced_revision
 
-        status, rejected = _json(
+        # The focus commit moved the head but touched nothing a scope
+        # click reads (scope tree, published catalogue), so the click is
+        # not stale in any sense the graph can name: it rebases and
+        # enters (SPEC 8: conflicts are about WHAT changed). Refusing it
+        # for the head having moved at all made every pan a global lock
+        # -- measured live as "expected revision 909, current 914" on a
+        # double-click after a viewport commit.
+        status, entered = _json(
             server.url,
             "/api/universal/interaction",
             _scope_interaction_request(canvas, target["id"]),
             token="stale-browser-token",
             headers={"X-ArchHub-CSRF": "stale-browser-csrf"},
         )
-        assert status == 400
-        assert rejected["error"] == (
-            "expected revision %s, current revision is %s"
-            % (canvas["revision"], advanced_revision)
+        assert status == 200, entered
+        assert entered["scope"]["current"] == target["id"]
+        assert built.location.authority.store.revision > advanced_revision
+
+        # A change to what the click READS is a real conflict: grow the
+        # published catalogue under a second, older projection and the
+        # same request is refused with the client's refresh-and-retry code.
+        status, canvas_two = _json(
+            server.url,
+            "/api/universal/canvas",
+            token="stale-browser-token",
         )
-        assert built.location.authority.store.revision == advanced_revision
+        assert status == 200
+        target_two = next(
+            (node for node in canvas_two["nodes"] if node.get("openable")),
+            None,
+        )
+        if target_two is not None:
+            from nodelang.unified_authority import (
+                declare_definition, promote_definition,
+            )
+            authority, caller = built.location.authority, built.caller
+            declared = declare_definition(
+                authority, "Grown under the click", {}, caller=caller,
+                command_id=str(uuid.uuid4()), version="1",
+                presentation={"label": "Grown", "icon": "play"},
+            )
+            shared = promote_definition(
+                authority, declared.root_id, target_lifecycle="shared",
+                version="1-shared", evidence_roots=(declared.receipt_root,),
+                caller=caller, command_id=str(uuid.uuid4()),
+            )
+            promote_definition(
+                authority, declared.root_id, target_lifecycle="published",
+                version="1-published", evidence_roots=(shared.receipt_root,),
+                caller=caller, command_id=str(uuid.uuid4()),
+            )
+            grown_revision = authority.store.revision
+            status, rejected = _json(
+                server.url,
+                "/api/universal/interaction",
+                _scope_interaction_request(canvas_two, target_two["id"]),
+                token="stale-browser-token",
+                headers={"X-ArchHub-CSRF": "stale-browser-csrf"},
+            )
+            assert status == 409, rejected
+            assert rejected["error"] == (
+                "expected revision %s, current revision is %s"
+                % (canvas_two["revision"], grown_revision)
+            )
+            assert rejected["code"] == "projection_lease_expired"
+            assert authority.store.revision == grown_revision
     finally:
         server.close()
 
@@ -1060,17 +1131,19 @@ def test_clean_browser_session_http_rejects_unsigned_gesture_commits_and_keeps_r
         )
         assert status == 200
         before_revision = built.location.authority.store.revision
+        # A viewport is always whole, whether or not one was ever recorded.
         viewport = canvas["viewport"]
+        assert {"pan_x", "pan_y", "zoom"} <= set(viewport)
 
         status, denied = _json(
             server.url,
             "/api/universal/gesture",
+            # Where the founder is looking IS signable now -- it has its
+            # own command and Court 13 needs zoom to work -- so proving
+            # this path refuses what it cannot sign needs a fact that
+            # genuinely has no command here. A lifecycle change does.
             {
-                "viewport": {
-                    "pan_x": viewport["pan_x"] + 1.0,
-                    "pan_y": viewport["pan_y"],
-                    "zoom": viewport["zoom"],
-                },
+                "lifecycle": "published",
                 "projection": False,
             },
             token="gesture-browser-token",

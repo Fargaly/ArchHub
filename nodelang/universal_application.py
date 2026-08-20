@@ -498,6 +498,7 @@ from .cell_control_bindings import (
     FACT_CAN_REDO,
     FACT_CAN_UNDO,
     FACT_FOCUS_COMPOSITION,
+    FACT_FOCUS_OPERATION,
     FACT_SCOPE_PARENT,
     FACT_SELECTION_COUNT,
     ensure_archhub_control_binding_catalog,
@@ -22546,6 +22547,13 @@ def _project_universal_canvas_interpreter(
         FACT_FOCUS_COMPOSITION: _is_universal_composition(
             snapshot, registry, selected_root
         ),
+        # Whether the focused node runs on a host. The catalogue's Run
+        # control conditions on this fact, and a condition naming a fact
+        # nobody supplies fails closed for EVERY control -- one absent
+        # answer here took the whole toolbar down, not just Run. This
+        # lens has no host-operation notion of its own, so the honest
+        # value is False rather than a guess.
+        FACT_FOCUS_OPERATION: False,
         FACT_CAN_UNDO: bool(action_history_projection["can_undo"]),
         FACT_CAN_REDO: bool(action_history_projection["can_redo"]),
     }

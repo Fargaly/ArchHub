@@ -58,6 +58,7 @@ CONTROL_SPECS = (
     ControlSpec("app:control:canvas:redo", "Redo", "Redo graph transaction", "canvas-toolbar", 46, "redo-2"),
     ControlSpec("app:control:canvas:group", "Group", "Compose selected nodes", "canvas-toolbar", 50, "group"),
     ControlSpec("app:control:canvas:ungroup", "Ungroup", "Expose this composition's direct members", "canvas-toolbar", 60, "ungroup"),
+    ControlSpec("app:control:canvas:run", "Run", "Run this operation on its host", "canvas-toolbar", 70, "play"),
     ControlSpec(
         "app:control:inspector:add-property",
         "Add parameter",

@@ -185,7 +185,7 @@ def project_relation_exposure_policy_protocol(
         *classifications.values(),
         *decisions.values(),
     }
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("relation exposure policy protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     if any(member.role_id != roles["vocabulary-member"] for member in members):

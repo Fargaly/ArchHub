@@ -12,6 +12,8 @@ from typing import Callable, Mapping
 import uuid
 
 from . import (
+    cell_result_view,
+    cell_run_view,
     cell_authority_view,
     cell_canvas_card_view,
     cell_canvas_heading_view,
@@ -36,6 +38,7 @@ from . import (
     cell_view_template,
 )
 from .cell_protocols import read_relation
+from .clean_subsystem_revision import replace_interface_subsystem
 from .cell_source_assembly import (
     SourceCellBatch,
     remap_source_cells,
@@ -146,6 +149,16 @@ _TEMPLATE_SPECS: tuple[
         cell_inspector_header_view.compose_inspector_header_template,
     ),
     (
+        "run",
+        cell_run_view.RUN_TEMPLATE_ROOT,
+        cell_run_view.compose_run_template,
+    ),
+    (
+        "result",
+        cell_result_view.RESULT_TEMPLATE_ROOT,
+        cell_result_view.compose_result_template,
+    ),
+    (
         "canvas-card",
         cell_canvas_card_view.CANVAS_CARD_TEMPLATE_ROOT,
         cell_canvas_card_view.compose_canvas_card_template,
@@ -214,6 +227,8 @@ _SOURCE_MODULES = (
     cell_timeline_view,
     cell_evidence_floor_view,
     cell_inspector_header_view,
+    cell_run_view,
+    cell_result_view,
     cell_canvas_card_view,
     cell_inspector_controls_view,
     cell_inspector_shell_view,
@@ -329,8 +344,15 @@ def _read_visual_system(
     *,
     replayed: bool,
     receipt_root: str | None,
+    require_current_catalogue: bool = True,
 ) -> CleanVisualSystem:
-    validate_composition(authority, snapshot, root_id)
+    # This reader is offered every member of the Interface, and one of
+    # them is the scope interaction set -- a command-scale structure.
+    # The read below already uses the command budget; validating at the
+    # default refused one large neighbour and took the canvas with it.
+    validate_composition(
+        authority, snapshot, root_id, budget=COMMAND_BUDGET
+    )
     members = read_relation(snapshot, root_id, budget=COMMAND_BUDGET)
     protocol_root = _one_member(
         members,
@@ -379,7 +401,16 @@ def _read_visual_system(
         raise InvalidCell("visual role vocabulary is incomplete")
     if set(operation_roots) != set(OPERATION_NAMES):
         raise InvalidCell("visual operation vocabulary is incomplete")
-    if set(template_roots) != {item[0] for item in _TEMPLATE_SPECS}:
+    # A runtime must hold exactly the templates it knows how to draw, so
+    # opening one to render with is strict. Revising is the opposite
+    # situation: the installed system is EXPECTED to be older than the
+    # code, and reading it is the first thing revising has to do. Holding
+    # both to the same rule made adding a template impossible -- the new
+    # name made the installed system unreadable, and the one command that
+    # could have carried it forward reported that nothing was installed.
+    if require_current_catalogue and (
+        set(template_roots) != {item[0] for item in _TEMPLATE_SPECS}
+    ):
         raise InvalidCell("visual template catalogue is incomplete")
     protocol = ViewTemplateProtocol(
         protocol_root,
@@ -405,6 +436,8 @@ def _visual_systems_in_interface(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
     interface_root: str,
+    *,
+    require_current_catalogue: bool = True,
 ) -> tuple[CleanVisualSystem, ...]:
     members = read_relation(snapshot, interface_root, budget=COMMAND_BUDGET)
     candidates: list[CleanVisualSystem] = []
@@ -416,6 +449,7 @@ def _visual_systems_in_interface(
                 authority,
                 snapshot,
                 member.participant_id,
+                require_current_catalogue=require_current_catalogue,
                 replayed=False,
                 receipt_root=None,
             )
@@ -425,6 +459,93 @@ def _visual_systems_in_interface(
     if len(candidates) > 1:
         raise InvalidCell("Interface contains duplicate graph visual systems")
     return tuple(candidates)
+
+
+def revise_clean_visual_system(
+    authority: UnifiedAuthority,
+    *,
+    caller: CallerCommandCapability,
+    command_id: str,
+) -> CleanVisualSystem:
+    """Carry the current visual source onto a graph that holds an older one.
+
+    Installing refuses a graph that already carries a different source, so
+    without this every descriptor on a graph is whatever was written the
+    first time, for good. This is how a descriptor changes: the Interface
+    stops holding the installed system and holds the newly compiled one, in
+    one signed revision.
+    """
+    source_digest = _visual_source_digest()
+    snapshot = authority.store.snapshot()
+    interface_root = composition_root(authority, "Interface", caller=caller)
+    installed = _visual_systems_in_interface(
+        authority, snapshot, interface_root, require_current_catalogue=False
+    )
+    if not installed:
+        raise InvalidCell("no graph visual system is installed to revise")
+    current = installed[0]
+    if current.source_digest == source_digest:
+        raise InvalidCell(
+            "the installed graph visual system already carries this source"
+        )
+
+    visual_cells, protocol, template_roots = _compile_visual_source()
+    cells: list[Cell] = list(visual_cells)
+    entries: list[str] = []
+    for category, roots in (
+        ("role", protocol.roles),
+        ("operation", protocol.operations),
+        ("template", template_roots),
+    ):
+        for name, target in sorted(roots.items()):
+            entry_root, entry_cells = _entry_cells(
+                authority, "%s/%s" % (category, name), target
+            )
+            entries.append(entry_root)
+            cells.extend(entry_cells)
+    label_root, label_cells = build_value(
+        authority.roles,
+        authority.codecs[CODEC_NAME],
+        VISUAL_SYSTEM_LABEL,
+        shape_root=authority.shape("value"),
+    )
+    digest_root, digest_cells = build_value(
+        authority.roles,
+        authority.codecs[CODEC_NAME],
+        source_digest,
+        shape_root=authority.shape("value"),
+    )
+    system_root = new_id()
+    system_cells = typed_relation_cells(
+        system_root,
+        authority.role("conforms-to"),
+        authority.shape("composition"),
+        (
+            (authority.role("label"), label_root),
+            (authority.role("content-digest"), digest_root),
+            (authority.role("protocol-definition"), protocol.root_id),
+            *((authority.role("item"), entry) for entry in entries),
+        ),
+    )
+    receipt = replace_interface_subsystem(
+        authority,
+        caller=caller,
+        command_id=command_id,
+        intent="revise-clean-visual-system",
+        held_root=current.root_id,
+        replacement_root=system_root,
+        replacement_cells=(
+            *cells, *label_cells, *digest_cells, *system_cells
+        ),
+        source_digest=source_digest,
+    )
+    return _read_visual_system(
+        authority,
+        authority.store.snapshot(),
+        system_root,
+        replayed=False,
+        receipt_root=getattr(receipt, "root_id", None),
+    )
 
 
 def install_clean_visual_system(
@@ -562,12 +683,34 @@ def install_clean_visual_system(
     )
 
 
+_OPENED_VISUAL_CACHE: dict[int, tuple[object, str, "CleanVisualSystem"]] = {}
+
+
 def open_clean_visual_system(
     authority: UnifiedAuthority,
     *,
     caller: CallerCommandCapability,
 ) -> CleanVisualSystem:
-    """Open the structurally unique visual assembly from Interface scope."""
+    """Open the structurally unique visual assembly from Interface scope.
+
+    Rendering one template re-opens this to check that the caller's
+    binding still matches the graph, which is right: a stale binding must
+    not draw. But the answer cannot change while the graph does not, and
+    a canvas renders hundreds of templates per projection -- so every draw
+    walked the whole Interface again, and one canvas became a million
+    relation reads.
+
+    The opened system is remembered against the exact cell mapping it was
+    read from, and the mapping is compared by identity rather than by
+    equality: an object that is still the same object is still the same
+    graph. A commit replaces it, and the next open reads the graph again.
+    """
+    held = _OPENED_VISUAL_CACHE.get(id(authority))
+    if held is not None:
+        cells, graph_id, opened = held
+        current = authority.store.snapshot()
+        if cells is current.cells and graph_id == authority.manifest.graph_id:
+            return opened
     interface_root = composition_root(authority, "Interface", caller=caller)
     read_scope_level(
         authority,
@@ -581,6 +724,9 @@ def open_clean_visual_system(
     )
     if len(candidates) != 1:
         raise InvalidCell("Interface requires exactly one graph visual system")
+    _OPENED_VISUAL_CACHE[id(authority)] = (
+        snapshot.cells, authority.manifest.graph_id, candidates[0]
+    )
     return candidates[0]
 
 
@@ -616,6 +762,7 @@ __all__ = [
     "CleanVisualSystem",
     "VISUAL_SYSTEM_LABEL",
     "VISUAL_SYSTEM_VERSION",
+    "revise_clean_visual_system",
     "install_clean_visual_system",
     "open_clean_visual_system",
     "render_clean_visual_template",

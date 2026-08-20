@@ -123,7 +123,7 @@ STYLESHEET += r"""
 .graph-node{width:220px;min-height:112px;height:auto;border-width:1px;border-color:var(--line);border-radius:6px;background:var(--bg-panel);box-shadow:0 3px 12px rgba(0,0,0,.28)}.graph-node:hover{border-color:color-mix(in srgb,var(--node-color) 65%,var(--line));box-shadow:0 6px 18px rgba(0,0,0,.36)}.graph-node:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.graph-node[data-selected="True"]{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan),0 5px 18px rgba(0,0,0,.36)}.graph-node[data-focused="True"]{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft),0 7px 22px rgba(0,0,0,.4)}
 .node-accent{height:2px;border-radius:5px 5px 0 0}.node-head{height:27px;padding:7px 10px 6px;border-radius:5px 5px 0 0;font-family:Inter,system-ui,sans-serif;font-size:9px;font-weight:650;letter-spacing:0}.node-head::before{width:6px;height:6px;margin-right:7px;border-radius:1px}.node-title{padding:10px 12px 2px;font-size:13px;font-weight:650;line-height:1.25}.node-value{padding:3px 12px 9px;font-family:Inter,system-ui,sans-serif;font-size:10px;line-height:1.35}
 .node-port{width:94px;height:20px;padding:0 17px;border-radius:3px;color:var(--ink-muted);font-family:Inter,system-ui,sans-serif;font-size:9px;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.node-port-in{left:-8px;text-align:left}.node-port-out{right:-8px;text-align:right}.node-port:hover{background:var(--bg-hover);color:var(--ink)}.node-port::before{top:5px;width:9px;height:9px;box-shadow:0 0 0 2px var(--bg-canvas)}.node-port-in::before{left:3px}.node-port-out::before{left:auto;right:3px}
-.universal-wire{opacity:.34}.universal-wire[data-context="True"],.universal-wire[data-hover-context="True"],.universal-wire[data-focused="True"]{opacity:.96}.wire-line{stroke-width:1.5}
+.universal-wire{opacity:.14}.universal-wire[data-context="True"],.universal-wire[data-hover-context="True"],.universal-wire[data-focused="True"]{opacity:.96}.wire-line{stroke-width:1.5}.node-summary{padding:2px 12px 0;font-family:Inter,system-ui,sans-serif;font-size:10px;line-height:1.35;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.node-value{text-transform:none}.node-head{text-transform:none;letter-spacing:.02em}
 .canvas-toolbar{bottom:12px;min-height:34px;padding:4px 6px;border-radius:5px;box-shadow:0 4px 16px rgba(0,0,0,.28);font-family:Inter,system-ui,sans-serif;font-size:10px}.canvas-scope-item{display:contents}.canvas-heading{left:18px;top:15px;font-family:Inter,system-ui,sans-serif;font-size:10px;font-weight:600;letter-spacing:0;color:var(--ink-muted);text-transform:none}
 .inspector{padding:16px 18px 24px}.inspector-panel{gap:8px}.inspector-kicker{font-family:Inter,system-ui,sans-serif;font-size:10px;font-weight:650;letter-spacing:0;color:var(--node-color,var(--accent))}.inspector-title{font-family:Inter,system-ui,sans-serif;font-size:17px;font-weight:650;line-height:1.3}.inspector-lenses{display:flex;align-items:center;gap:12px;min-height:28px;margin-top:4px;border-bottom:1px solid var(--line-soft)}.inspector-lens-button{height:28px;padding:0;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ink-muted);font-family:Inter,system-ui,sans-serif;font-size:9px;cursor:pointer}.inspector-lens-button:hover{color:var(--ink)}.inspector-lens-button[data-active="true"]{border-bottom-color:var(--accent);color:var(--ink)}.inspector-tabs{display:flex;grid-template-columns:none;gap:2px;margin:10px 0;padding:2px;border-radius:5px;overflow-x:auto}.inspector-tab{flex:1 0 auto;height:32px;min-width:72px;border-radius:3px;padding:0 10px;font-family:Inter,system-ui,sans-serif;font-size:10px;font-weight:550}.inspector-tab[data-active="true"]{background:var(--bg-hover);box-shadow:inset 0 -2px 0 var(--accent)}.inspector-tabpanel{display:flex;flex-direction:column;gap:14px}.inspector-tabpanel[hidden]{display:none}.inspector-section{padding-top:13px;gap:9px}.inspector-heading{font-family:Inter,system-ui,sans-serif;font-size:10px;font-weight:650;letter-spacing:0}.property-row{gap:6px}.property-label{font-family:Inter,system-ui,sans-serif;font-size:10px;letter-spacing:0;text-transform:none}.property-input{height:34px;border-radius:4px;padding:6px 9px;font-family:Inter,system-ui,sans-serif;font-size:12px}.connection-box{border-radius:4px;padding:9px 10px;font-family:Inter,system-ui,sans-serif;font-size:11px;line-height:1.45}.presentation-source{font-size:10px;color:var(--ink-muted);overflow-wrap:anywhere}.presentation-reset{align-self:flex-start;height:28px;border:1px solid var(--line);border-radius:4px;background:transparent;color:var(--ink-soft);padding:0 9px;font-size:9px;cursor:pointer}.presentation-reset:hover{border-color:var(--accent);color:var(--ink)}.inspector-meta{font-size:9px}
 .relation-group{margin:0;border-top:1px solid var(--line-soft);padding:0}.relation-group-summary{min-height:36px;margin-left:14px;padding:0 2px;display:list-item;line-height:36px;color:var(--ink-soft);font-size:10px;font-weight:650;cursor:pointer;list-style-position:outside}.relation-group-summary:hover{color:var(--ink)}.relation-group[open]>.relation-group-summary{color:var(--ink)}.relation-group>.property-row{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:center;gap:8px;padding:4px 2px}.relation-group>.property-row:last-child{padding-bottom:10px}.relation-group .connection-box{min-width:0;overflow-wrap:anywhere}.relation-group-connections>.relation-connection-row{grid-template-columns:minmax(0,1fr);padding:3px 2px}.relation-group-connections>.relation-connection-row>.property-label{display:none}.relation-group-connections .connection-box{min-height:34px;display:flex;align-items:center}.relation-authority-summary{display:flex;flex-direction:column;gap:8px}.relation-flow-summary{font-weight:550}
@@ -2132,3 +2132,49 @@ def build_archhub_application(store=None):
         'settings': settings_surface, 'settings_inputs': settings_inputs,
         'website': website,
     }
+
+# With nothing selected, the map's wires are a faint weave -- the cards
+# read first; a selected or hovered card lights its own wires. 1.4 showed
+# wires per focus; 330 wires at .62 was a hairball.
+STYLESHEET += (
+    '.canvas[data-selection="[]"] .universal-wire[data-context="True"]'
+    ':not([data-focused="True"]):not([data-hover-context="True"]){opacity:.18}'
+    '.canvas[data-selection="[]"] .graph-node:hover ~ .wire-layer .universal-wire{opacity:.18}'
+)
+
+# The 1.4 palette, on the one graph: category colours drive the card's
+# accent (top border, head, sockets) exactly as the 1.4 category map did;
+# declared sockets stack down the card edges; head reads the category.
+STYLESHEET += (
+    '.graph-node[data-node-category="Input"]{--node-color:var(--blue)}'
+    '.graph-node[data-node-category="Output"]{--node-color:var(--ok)}'
+    '.graph-node[data-node-category="Watch"]{--node-color:var(--cyan)}'
+    '.graph-node[data-node-category="Trigger"]{--node-color:var(--warn)}'
+    '.graph-node[data-node-category="Logic"]{--node-color:var(--purple)}'
+    '.graph-node[data-node-category="Shape"]{--node-color:var(--warn)}'
+    '.graph-node[data-node-category="AI"]{--node-color:var(--purple)}'
+    '.graph-node[data-node-category="Note"]{--node-color:var(--ink-soft)}'
+    '.graph-node[data-node-category="Skill"]{--node-color:var(--accent)}'
+    '.node-head{text-transform:uppercase;letter-spacing:.16em;font-family:ui-monospace,monospace;font-size:8.5px}'
+    '.node-port[data-port-index="0"]{top:44px}'
+    '.node-port[data-port-index="1"]{top:66px}'
+    '.node-port[data-port-index="2"]{top:88px}'
+    '.node-port[data-port-index="3"]{top:110px}'
+    '.node-port[data-port-index="4"]{top:132px}'
+    '.node-port[data-port-index="5"]{top:154px}'
+    '.graph-node:hover .node-port,.node-port.wire-target-ready{font-size:8.5px;color:var(--ink-muted)}'
+    '.node-port.wire-target-ready{color:var(--ok)}'
+    '.node-port[data-interface-mode="declared"]{cursor:crosshair}'
+    '.node-port[data-interface-mode="declared"]::before{border-style:solid}'
+)
+
+# Cards grow with their socket rows instead of overlapping them; the value
+# line stays pinned to the bottom edge.
+STYLESHEET += (
+    '.graph-node:has(.node-port[data-port-index="1"]){min-height:132px}'
+    '.graph-node:has(.node-port[data-port-index="2"]){min-height:154px}'
+    '.graph-node:has(.node-port[data-port-index="3"]){min-height:176px}'
+    '.graph-node:has(.node-port[data-port-index="4"]){min-height:198px}'
+    '.graph-node:has(.node-port[data-port-index="5"]){min-height:220px}'
+    '.node-value{position:relative;z-index:2;background:var(--bg-panel)}'
+)

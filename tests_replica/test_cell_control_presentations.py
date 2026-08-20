@@ -31,7 +31,8 @@ def test_every_admitted_visible_control_is_a_graph_composition_with_an_icon_wire
     assert set(projected.controls) == {
         specification.owner_root for specification in CONTROL_SPECS
     }
-    assert len(projected.controls) == len(CONTROL_SPECS) == 15
+    # 16 = 15 + the Run control (host execution, 2026-08-20).
+    assert len(projected.controls) == len(CONTROL_SPECS) == 16
     for owner_root, control in projected.controls.items():
         assert control.owner_root == owner_root
         assert control.label
@@ -102,7 +103,7 @@ def test_control_catalog_old_release_appends_missing_controls(monkeypatch):
         store.snapshot(), migrated.protocol, icons.protocol, migrated.catalog_root
     )
 
-    assert len(projected.controls) == len(CONTROL_SPECS) == 15
+    assert len(projected.controls) == len(CONTROL_SPECS) == 16
     assert dict(old.control_roots).items() <= dict(migrated.control_roots).items()
     assert (
         store.snapshot().cells["app:control-presentation-catalog:v1:chain:12"]

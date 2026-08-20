@@ -174,7 +174,7 @@ def project_website_protocol(snapshot: Snapshot) -> WebsiteProtocol:
         for name in ROLE_NAMES
     }
     root_id = WEBSITE_PROTOCOL_PREFIX + ":root"
-    if {root_id, *roles.values()} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {root_id, *roles.values()}):
         raise InvalidCell("website protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=128)
     if (

@@ -70,7 +70,9 @@ def test_clean_runtime_selects_only_complete_sources_and_replays_zero(tmp_path):
     assert first.workshop.message_definition in first.location.authority.store.snapshot().cells
     assert first.visual.graph_id == graph_id
     assert first.visual.root_id in first.location.authority.store.snapshot().cells
-    assert len(first.visual.template_roots) == 22
+    # 24 = the 22 originals plus the run and result panel templates the
+    # visual system gained with the stem executor work (2026-08-20).
+    assert len(first.visual.template_roots) == 24
     assert first.browser.graph_id == graph_id
     assert first.browser.root_id in first.location.authority.store.snapshot().cells
     assert (root / "CURRENT").read_text() == graph_id

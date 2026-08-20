@@ -183,7 +183,7 @@ def project_work_claim_transfer_protocol(
         for name in RECEIPT_KINDS
     }
     required = {root_id, *roles.values(), *states.values(), *receipt_kinds.values()}
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("work claim-transfer protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {
@@ -387,9 +387,9 @@ def prepare_work_claim_transfer_issue(
         ):
             raise InvalidCell("work claim transfer key was reused")
         return root_id, (), ()
-    if {
+    if any(_root not in snapshot.cells for _root in {
         work, source_session, source_custody, target_custody,
-    } - set(snapshot.cells):
+    }):
         raise InvalidCell("work claim transfer participant is missing")
     values = {
         "transfer-key": key,

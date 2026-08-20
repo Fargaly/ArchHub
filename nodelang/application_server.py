@@ -237,12 +237,14 @@ from .site_export import SiteExportError, build_site_export
 from .checkpoint_authority_provisioning import (
     provision_windows_revision_checkpoint_authority,
 )
+from .cell_control_bindings import CAPABILITY_EXECUTE, CAPABILITY_INSTANTIATE
 from .clean_browser_authority import (
     CleanBrowserAuthority,
     revise_clean_browser_focus,
     verify_clean_browser_session,
 )
 from .clean_scope_interactions import (
+    derive_clean_scope_interactions,
     open_clean_scope_interactions,
     submit_clean_scope_interaction,
 )
@@ -624,7 +626,20 @@ def _topology_canvas_delta(
         previous_projection=previous_projection,
     )
     delta["projection_mode"] = _TOPOLOGY_DELTA_MODE
-    delta.update({field: projection[field] for field in _TOPOLOGY_DELTA_FIELDS})
+    # The catalogue and the authorization block are ~200KB together and
+    # change on almost no gesture. A patch that re-ships them on every
+    # placement is a full projection wearing a delta's name. Ship each only
+    # when it differs from what the client already holds; the client keeps
+    # its held value when the field is absent.
+    for field in _TOPOLOGY_DELTA_FIELDS:
+        if field not in projection:
+            continue
+        if (
+            previous_projection is None
+            or previous_projection.get("revision") != base_revision
+            or previous_projection.get(field) != projection.get(field)
+        ):
+            delta[field] = projection[field]
     if (
         previous_projection is None
         or previous_projection.get("revision") != base_revision
@@ -784,8 +799,14 @@ class _CleanAuthorityHttpServer:
         scope_root: str,
         host: str = "127.0.0.1",
         port: int = 0,
+        host_invoker=None,
     ) -> None:
         self.authority = authority
+        # Which machine this runtime may reach is named by whoever stands
+        # it up, not decided here. A server given no adapter can refuse
+        # honestly; one that acquired a default could touch a host nobody
+        # chose.
+        self.clean_host_invoker = host_invoker
         self.clean_authority = authority
         self.clean_store = authority.store
         self.browser_authority = browser_authority
@@ -793,9 +814,52 @@ class _CleanAuthorityHttpServer:
         self.authority_key_provider = authority_key_provider
         self.clean_caller = scope_caller
         self.clean_scope_root = scope_root
-        self.clean_scope_interactions = open_clean_scope_interactions(
-            authority,
-            caller=scope_caller,
+        # The interaction set is derived from the scope tree and the
+        # published catalogue -- the same facts the persisted table merely
+        # repeats (equivalence court: test_derived_interactions_equivalence).
+        # Deriving here means a publish no longer has to rewrite the table
+        # for every scope, and a graph whose table was retired still serves
+        # every control. The persisted table, where present, remains the
+        # source of interaction CELLS for reads; the derivation is the
+        # source of the binding map.
+        import time as _time
+        _d0 = _time.perf_counter()
+        try:
+            derived, derived_cells = derive_clean_scope_interactions(
+                authority,
+                browser_authority,
+                scope_root,
+                caller=scope_caller,
+            )
+        except InvalidCell:
+            # A scope root the graph does not hold, or one this caller
+            # may not read, derives nothing. The server still stands and
+            # every request against that scope is refused where it always
+            # was -- at the request, with a 403 that names the scope --
+            # rather than the process dying at construction.
+            derived, derived_cells = None, ()
+        try:
+            installed = open_clean_scope_interactions(
+                authority,
+                caller=scope_caller,
+            )
+        except Exception:
+            installed = None
+        if installed is not None and derived is not None and (
+            installed.source_digest != derived.source_digest
+        ):
+            # The table was written for an older scope tree or catalogue.
+            # The derivation reads the graph as it is now; the stale table
+            # would refuse controls for everything added since. Serving the
+            # derivation is serving the graph.
+            installed = None
+        self.clean_scope_interactions = installed or derived
+        self._derived_interaction_cells = (
+            () if installed is not None else derived_cells
+        )
+        self._record_gesture_timing(
+            "boot: derive interactions + open table %.1fs (derived cells=%d)"
+            % (_time.perf_counter() - _d0, len(derived_cells or ()))
         )
         self.clean_interaction_broker = InteractionProjectionBroker()
         self._clean_projection_handles: dict[str, object] = {}
@@ -858,6 +922,318 @@ class _CleanAuthorityHttpServer:
             "revision": issued.revision,
         }
 
+    def _clean_control_capability(self, control_root):
+        """What the graph says pressing this control does.
+
+        The answer is the action of the interaction the graph installed for
+        it, not a lookup by which control it is: a control's meaning lives
+        in the interaction, and reading it there covers a toolbar button and
+        a library definition with the same question. A control the graph
+        declared no interaction for has no capability, and falls through to
+        the path that refuses it.
+        """
+        from .cell_interactions import read_interaction
+
+        interactions = self.clean_scope_interactions
+        if interactions is None or type(control_root) is not str:
+            return None
+        binding = interactions.binding_for(self.clean_scope_root, control_root)
+        if binding is None:
+            return None
+        interaction = read_interaction(
+            self._interaction_snapshot(self.clean_authority.store.snapshot()),
+            interactions.protocol,
+            binding.interaction_root,
+        )
+        return interaction.action_root
+
+    def _clean_instantiate_definition(self, binding, body, definition_root):
+        """Put one published definition on the canvas of this scope.
+
+        The library offers what the catalogue publishes; placing one is an
+        ordinary signed instantiation followed by a placement, so a node
+        that appears on the canvas is a node the graph agreed to and knows
+        where it sits. Nothing about which definition comes from anywhere
+        but the control that was pressed.
+        """
+        import uuid as _uuid
+
+        from .unified_authority import instantiate_definition, place_composition
+
+        created = instantiate_definition(
+            self.clean_authority,
+            definition_root,
+            {},
+            scope_root=self.clean_scope_root,
+            caller=self.clean_caller,
+            command_id=str(_uuid.uuid4()),
+        )
+        # A node with no place is a node the canvas cannot draw. It lands
+        # where the founder dropped it when the request carries the point
+        # (the same event-fact shape every placement interaction uses),
+        # and in the corner only when nothing was said.
+        drop_x, drop_y = 60.0, 60.0
+        facts = body.get("event_facts")
+        if isinstance(facts, list):
+            for fact in facts:
+                if not isinstance(fact, dict):
+                    continue
+                source = fact.get("source") or fact.get("input")
+                value = fact.get("value")
+                if type(value) in (int, float):
+                    if source == "canvas-point-x":
+                        drop_x = float(value)
+                    elif source == "canvas-point-y":
+                        drop_y = float(value)
+        place_composition(
+            self.clean_authority,
+            self.clean_scope_root,
+            created.root_id,
+            {"x": drop_x, "y": drop_y},
+            caller=self.clean_caller,
+            command_id=str(_uuid.uuid4()),
+        )
+        self._refresh_scope_interactions()
+        payload = self._canvas(binding)
+        payload.update({
+            "definition": definition_root,
+            "node": created.root_id,
+            "replayed": created.replayed,
+        })
+        return payload
+
+
+    def _clean_run_stem_graph(self, binding, payload):
+        """Evaluate the scope's stem graph and land what it produced.
+
+        Values flow along declared wires (data.constant to
+        output.parameter and everything between), and each node that
+        produced or refused a value has that answer written onto its
+        instance as its status -- the card shows what Run did, and the
+        write is the same signed sparse-override command the inspector
+        uses. Engines this version cannot run are answered per node
+        ("engine ai.master is pending"), never guessed.
+        """
+        import uuid as _uuid
+
+        from .stem_graph_evaluation import (
+            StemNode,
+            StemWire,
+            evaluate_stem_graph,
+        )
+        from .unified_authority import revise_instance
+
+        stem_nodes = []
+        for item in payload["nodes"]:
+            engine = item.get("engine")
+            if type(engine) is not str or not engine.strip():
+                continue
+            overrides = {
+                str(row.get("label")): row.get("value")
+                for row in (item.get("properties") or ())
+                if isinstance(row, dict) and row.get("label")
+            }
+            parameters = dict(item.get("parameter_defaults") or {})
+            parameters.update({
+                name: value for name, value in overrides.items()
+                if name in parameters
+            })
+            stem_nodes.append(StemNode(
+                item["id"], engine.strip(), parameters
+            ))
+        stem_wires = []
+        for wire in payload.get("wires") or ():
+            properties = wire.get("properties") or {}
+            source_interface = properties.get("source_interface")
+            target_interface = properties.get("target_interface")
+            if (
+                type(source_interface) is str and source_interface
+                and type(target_interface) is str and target_interface
+                and type(wire.get("source")) is str
+                and type(wire.get("target")) is str
+            ):
+                stem_wires.append(StemWire(
+                    wire["source"], source_interface,
+                    wire["target"], target_interface,
+                ))
+        evaluation = evaluate_stem_graph(stem_nodes, stem_wires)
+        written = 0
+        stale = {}
+        for item in payload["nodes"]:
+            root = item["id"]
+            answer = evaluation.display.get(root)
+            if answer is None and root in evaluation.pending:
+                answer = evaluation.pending[root]
+            if answer is None:
+                continue
+            # The write lands on the declared status parameter; a node
+            # whose definition never declared one (or predates it) has
+            # nowhere to land, and skipping is the honest answer.
+            if "status" not in (item.get("parameter_defaults") or {}):
+                continue
+            rows = {
+                str(row.get("label")): row.get("value")
+                for row in (item.get("properties") or ())
+                if isinstance(row, dict) and row.get("label")
+            }
+            if rows.get("status") == answer:
+                continue
+            try:
+                revise_instance(
+                    self.clean_authority,
+                    root,
+                    {"status": answer},
+                    scope_root=self.clean_scope_root,
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            except InvalidCell as refusal:
+                # An instance pinned to a definition revision that
+                # predates the status channel has nowhere to land its
+                # answer. The run still stands for every other node;
+                # the refusal is carried per node, never invented away
+                # and never allowed to take the whole run down.
+                stale[root] = str(refusal)
+                continue
+            written += 1
+        self._refresh_scope_interactions()
+        payload = self._canvas(binding)
+        payload.update({
+            "ran": "stem-graph",
+            "results": dict(evaluation.results),
+            "pending": dict(evaluation.pending),
+            "written": written,
+            "stale": stale,
+        })
+        return payload
+
+    def _clean_execute_focused(self, binding, body):
+        """Run the operation the focused node declares.
+
+        The node names its operation, the operation is declared in the
+        graph, and the signed path decides whether it may run. Nothing
+        about which operation to run comes from the request: a client that
+        could name the operation could ask for one the node it points at
+        never offered.
+        """
+        from .clean_host_execution import execute_host_operation
+
+        payload = self._canvas(binding)
+        selected = payload.get("selected")
+        if type(selected) is not str or not selected:
+            raise InvalidCell("no node is focused to run")
+        node = next(
+            (item for item in payload["nodes"] if item["id"] == selected),
+            None,
+        )
+        operation = None if node is None else node.get("operation")
+        if type(operation) is not str or not operation.strip():
+            engine = None if node is None else node.get("engine")
+            if type(engine) is str and engine.strip():
+                return self._clean_run_stem_graph(binding, payload)
+            raise InvalidCell("the focused node declares no host operation")
+        command_id = body.get("command_id")
+        if type(command_id) is not str or not command_id.strip():
+            command_id = str(uuid.uuid4())
+        result = execute_host_operation(
+            self.clean_authority,
+            operation.strip(),
+            {},
+            caller=self.clean_caller,
+            command_id=command_id.strip(),
+            invoker=self.clean_host_invoker,
+            subject_root=selected,
+        )
+        # The client reconciles what a mutation returns against what it is
+        # showing. Answering with the effect alone left it holding the
+        # revision from before the run, so the next press was refused as
+        # stale and the founder had to reload between runs. The answer is
+        # the canvas as it now stands, carrying what the run produced.
+        payload = self._canvas(binding)
+        payload.update({
+            "operation": operation.strip(),
+            "node": selected,
+            "effect": result.root_id,
+            "receipt": result.receipt_root,
+            "replayed": result.replayed,
+        })
+        return payload
+
+    def _clean_execute_adapter(self, binding, body):
+        """Run one operation the graph declares, and answer with its receipt.
+
+        Nothing about which operations exist, what they need, or whether
+        one may run is decided here: this route carries a request to the
+        signed path and returns what that path committed. A refusal is an
+        answer too, and it arrives as a refusal rather than as an empty
+        success.
+        """
+        from .clean_host_execution import execute_host_operation
+
+        admitted = {
+            "operation", "arguments", "command_id", "allow_destructive",
+            "root",
+        }
+        unadmitted = sorted(set(body) - admitted)
+        if unadmitted:
+            raise CleanGestureRefused(
+                "execute request carries facts this path cannot sign: %s"
+                % ", ".join(unadmitted)
+            )
+        # A Run control names the node it belongs to, and the node names
+        # the operation. The client has always sent the root; this path
+        # refused it, so pressing Run was answered with a refusal about a
+        # field the client had no other way to express. Which operation
+        # runs still comes from the graph, never from the request: naming
+        # a node is not naming an operation.
+        subject = body.get("root")
+        operation = body.get("operation")
+        if subject is not None:
+            if type(subject) is not str or not subject.strip():
+                raise InvalidCell("execute request names no node")
+            payload = self._canvas(binding)
+            node = next(
+                (item for item in payload["nodes"]
+                 if item["id"] == subject.strip()),
+                None,
+            )
+            declared = None if node is None else node.get("operation")
+            if type(declared) is not str or not declared.strip():
+                raise InvalidCell("that node declares no host operation")
+            if operation is not None and str(operation).strip() != declared.strip():
+                raise InvalidCell(
+                    "the request names an operation the node does not declare"
+                )
+            operation = declared
+        if type(operation) is not str or not operation.strip():
+            raise InvalidCell("execute request names no operation")
+        arguments = body.get("arguments") or {}
+        if type(arguments) is not dict:
+            raise InvalidCell("execute request arguments are invalid")
+        command_id = body.get("command_id")
+        if type(command_id) is not str or not command_id.strip():
+            raise InvalidCell("execute request carries no command identity")
+        result = execute_host_operation(
+            self.clean_authority,
+            operation.strip(),
+            arguments,
+            caller=self.clean_caller,
+            command_id=command_id.strip(),
+            invoker=self.clean_host_invoker,
+            allow_destructive=bool(body.get("allow_destructive")),
+            subject_root=(
+                subject.strip() if isinstance(subject, str) and subject.strip()
+                else None
+            ),
+        )
+        return {
+            "operation": operation.strip(),
+            "effect": result.root_id,
+            "receipt": result.receipt_root,
+            "revision": result.revision,
+            "replayed": result.replayed,
+        }
+
     def _clean_gesture(self, binding, body):
         """Record where the founder put a node.
 
@@ -876,6 +1252,23 @@ class _CleanAuthorityHttpServer:
         # is written rather than quietly interpreted here.
         admitted = {
             "positions",
+            # Taking a card off the canvas is a signed act like every
+            # other: the scope releases the member, and the wires that
+            # ended on it go with it, because a wire to nothing is not
+            # a wire.
+            "delete",
+            # A field edit in the rail is a sparse instance override --
+            # the same signed revise-instance the stem runner uses. The
+            # gesture only carries WHICH declared parameter of WHICH held
+            # node; anything undeclared is refused by the command itself.
+            "property",
+            # Where the founder is looking is a graph fact too, held on the
+            # view session rather than on any node. Admitting only positions
+            # meant zoom and pan were refused by this server as facts it
+            # could not sign -- a canvas that cannot be zoomed is a picture
+            # again. It has its own signed command; this path carries it
+            # there rather than interpreting it.
+            "viewport",
             "roots",
             "focus",
             "projection",
@@ -890,10 +1283,152 @@ class _CleanAuthorityHttpServer:
                 % ", ".join(unadmitted)
             )
         positions = body.get("positions")
-        if positions is None:
-            raise CleanGestureRefused(
-                "gesture without positions is not admitted on this path"
+        viewport = body.get("viewport")
+        roots = body.get("roots")
+        removing = body.get("delete")
+        if isinstance(removing, list) and removing:
+            import uuid as _uuid
+
+            from .unified_authority import (
+                read_scope_level,
+                remove_composition_member,
             )
+
+            level = read_scope_level(
+                self.clean_authority,
+                self.clean_scope_root,
+                scope_root=self.clean_scope_root,
+                caller=self.clean_caller,
+            )
+            members = set(level.composition_roots)
+            wanted = [
+                str(root) for root in removing
+                if isinstance(root, str) and root in members
+            ]
+            if not wanted:
+                raise CleanGestureRefused(
+                    "nothing selected here can be taken off the canvas"
+                )
+            # A relation whose participant is leaving loses its meaning,
+            # so it leaves in the same gesture rather than dangling.
+            leaving = set(wanted)
+            for relation in level.relations.values():
+                participants = {
+                    root for _role, root in relation.participants
+                }
+                if participants & leaving:
+                    leaving.add(relation.root_id)
+            for root in sorted(leaving):
+                if root not in members:
+                    continue
+                remove_composition_member(
+                    self.clean_authority,
+                    self.clean_scope_root,
+                    root,
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            self._refresh_scope_interactions()
+            return self._gesture_answer(binding, body)
+        edit = body.get("property")
+        if isinstance(edit, dict):
+            import uuid as _uuid
+
+            from .unified_authority import (
+                read_scope_level,
+                revise_instance,
+            )
+
+            owner_root = edit.get("owner")
+            label = edit.get("label")
+            value = edit.get("value")
+            if (
+                type(owner_root) is not str or not owner_root
+                or type(label) is not str or not label
+                or type(value) is not str
+            ):
+                raise CleanGestureRefused("property edit is invalid")
+            level = read_scope_level(
+                self.clean_authority,
+                self.clean_scope_root,
+                scope_root=self.clean_scope_root,
+                caller=self.clean_caller,
+            )
+            if owner_root not in set(level.composition_roots):
+                raise CleanGestureRefused(
+                    "property edit target is not held by this scope"
+                )
+            revise_instance(
+                self.clean_authority,
+                owner_root,
+                {label: value},
+                scope_root=self.clean_scope_root,
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+            return self._gesture_answer(binding, body)
+        if positions is None and viewport is None:
+            # A selection is a view fact like the viewport: which roots the
+            # founder is holding, and which is primary. The client sends it
+            # through the same gesture path as every other canvas act;
+            # refusing it painted an error toast on every single click.
+            if isinstance(roots, list):
+                import uuid as _uuid
+
+                from .clean_browser_authority import (
+                    revise_clean_browser_focus,
+                )
+                focus = body.get("focus")
+                primary = (
+                    focus if type(focus) is str and focus
+                    else (roots[-1] if roots else "")
+                )
+                if not primary:
+                    # An empty click clears nothing the graph holds; the
+                    # projection the view already has is the answer.
+                    return self._gesture_answer(binding, body, view_only=True)
+                revise_clean_browser_focus(
+                    self.clean_authority,
+                    self.clean_browser_authority,
+                    binding.session_root,
+                    scope_root=self.clean_scope_root,
+                    selected_roots=[str(root) for root in roots],
+                    primary_root=primary,
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                    expected_revision=self.authority.store.revision,
+                )
+                return self._gesture_answer(binding, body)
+            raise CleanGestureRefused(
+                "gesture without positions or viewport is not admitted"
+            )
+        if viewport is not None:
+            if type(viewport) is not dict or not viewport:
+                raise InvalidCell("gesture viewport must be a non-empty object")
+            from .unified_authority import (
+                read_view_session_state,
+                revise_view_session_viewport,
+            )
+            import uuid as _uuid
+
+            held = read_view_session_state(
+                self.clean_authority,
+                binding.view_root,
+                caller=self.clean_caller,
+            )
+            # The tokens travel with the viewport in one signed revision, so
+            # a pan cannot quietly drop the theme the view was carrying.
+            revise_view_session_viewport(
+                self.clean_authority,
+                binding.view_root,
+                viewport=dict(viewport),
+                design_tokens=dict(held[1] if isinstance(held, tuple) else {}),
+                session_root=binding.session_root,
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+            if positions is None:
+                return self._gesture_answer(binding, body, view_only=True)
         if type(positions) is not dict or not positions:
             raise InvalidCell("gesture positions must be a non-empty object")
         moved = 0
@@ -912,9 +1447,300 @@ class _CleanAuthorityHttpServer:
                 command_id=str(uuid.uuid4()),
             )
             moved += 1
-        projection = self._canvas(binding)
+        projection = self._gesture_answer(binding, body)
         projection["moved"] = moved
         return projection
+
+    def _canvas_after_view_commit(self, binding, held_payload):
+        """The projection after a commit that touched only this view's
+        session state, from the projection the view already holds.
+
+        Measured on a fixture across a viewport commit, the projection
+        differs in exactly: viewport.*, revision, interaction_projection
+        .revision, and the toolbar descriptor (its zoom text). Rebuilding
+        the whole canvas -- 1.3 s on the founder's graph -- to change four
+        fields is what made every pan a wait. The held projection is
+        patched from the graph (the view session state is READ, the rest
+        is what the graph already gave this view) and the toolbar is
+        re-rendered from the same template. The court holds this equal to a
+        full rebuild; anything it cannot answer from the graph falls back.
+        Returns None when the reuse cannot be made exact.
+        """
+        try:
+            from .clean_visual_authority import render_clean_visual_template
+            from .clean_visual_projection import _toolbar_projection
+            from .unified_authority import read_view_session_state
+            snapshot = self.authority.store.snapshot()
+            if held_payload.get("root") != self.clean_scope_root:
+                return None
+            viewport, _tokens = read_view_session_state(
+                self.clean_authority,
+                binding.view_root,
+                caller=self.clean_caller,
+                at_revision=snapshot.revision,
+            )
+            payload = json.loads(json.dumps(held_payload))
+            payload.pop("moved", None)
+            payload["viewport"] = {
+                "pan_x": 0.0, "pan_y": 0.0, "zoom": 1.0,
+                **dict(viewport or {}),
+            }
+            payload["revision"] = snapshot.revision
+            payload["interaction_projection"]["revision"] = snapshot.revision
+            controls = (
+                payload.get("configuration", {})
+                .get("design_system", {})
+                .get("control_catalog", {})
+                .get("controls", [])
+            )
+            visual = open_clean_visual_system(
+                self.clean_authority, caller=self.clean_caller,
+            )
+            payload["toolbar_descriptor"] = render_clean_visual_template(
+                self.clean_authority,
+                visual,
+                "canvas-toolbar",
+                _toolbar_projection(payload, controls),
+                caller=self.clean_caller,
+            )
+        except Exception:
+            return None
+        # Cache it as this revision's projection and lease it, exactly as a
+        # built projection would be.
+        lease_key = (
+            id(snapshot.cells),
+            snapshot.revision,
+            self.clean_scope_root,
+            binding.view_root,
+            binding.session_root,
+            None,
+        )
+        if len(self._clean_projection_cache) >= 4:
+            self._clean_projection_cache.pop(
+                next(iter(self._clean_projection_cache))
+            )
+        self._clean_projection_cache[lease_key] = (
+            snapshot.cells, json.dumps(payload),
+        )
+        self._issue_projection_lease(binding, snapshot, payload)
+        self._remember_view_projection(binding, payload)
+        self._record_gesture_timing(
+            "view-only reuse rev=%s scope=%s" % (
+                snapshot.revision, self.clean_scope_root[:12],
+            )
+        )
+        return payload
+
+    def _remember_view_projection(self, binding, payload) -> None:
+        """Keep the last full projection this view received, so the next
+        gesture can be answered as a delta against it."""
+        held = getattr(self, "_view_projections", None)
+        if held is None:
+            held = self._view_projections = {}
+        held[binding.view_root] = (payload.get("revision"), payload.get("root"), payload)
+        if len(held) > 16:
+            held.pop(next(iter(held)))
+
+    def _gesture_answer(self, binding, body, *, view_only=False):
+        """A gesture's answer: the full projection, or -- when the client
+        says which revision it holds and asks for a delta -- only what
+        changed since it.
+
+        Every pan answered with the whole canvas: 841 KB on the founder's
+        graph, re-rendered by the client on every wheel notch. A viewport
+        commit changes the viewport and nothing a card is drawn from; the
+        delta carries the fields and the node states, and the client merges
+        it onto what it holds. The delta is computed against the projection
+        this server last handed THIS view -- never against a guess -- and
+        falls back to the full projection when that base is not in hand.
+        """
+        # The base the view holds must be read BEFORE the new projection is
+        # built: building it records itself as this view's latest.
+        held = (getattr(self, "_view_projections", None) or {}).get(
+            binding.view_root
+        )
+        projection = (
+            self._canvas_after_view_commit(binding, held[2])
+            if view_only and held is not None and held[1] == self.clean_scope_root
+            else None
+        )
+        if projection is None:
+            projection = self._canvas(binding)
+        wanted = body.get("projection_mode")
+        base_revision = body.get("projection_revision")
+        if wanted != _INTERACTION_DELTA_MODE or type(base_revision) is not int:
+            return projection
+        previous = None
+        if held is not None and held[0] == base_revision and held[1] == projection.get("root"):
+            previous = held[2]
+        if previous is None or previous is projection:
+            return projection
+        try:
+            delta = _interaction_canvas_delta(
+                {"connections": [], **projection},
+                base_revision=base_revision,
+                previous_projection={"connections": [], **previous},
+            )
+        except Exception:
+            return projection
+        # The clean projection also carries these per-gesture fields the
+        # generic delta does not list; a pan moves the viewport.
+        for field in ("viewport", "revision", "scope"):
+            if field in projection:
+                delta[field] = projection[field]
+        # What this view now holds is the full projection just built.
+        self._remember_view_projection(binding, projection)
+        return delta
+
+    def _clean_group_or_ungroup(self, binding, body, control_root):
+        """Group the current selection, or dissolve the focused group.
+
+        Which act is the control's own name -- the catalogue declares
+        canvas:group and canvas:ungroup -- and what it acts ON is the
+        graph-held browser focus, never a list the client sends: the
+        selection the founder sees is the selection the command uses.
+        """
+        import uuid as _uuid
+
+        from .clean_browser_authority import (
+            active_focus, open_attention_protocol,
+        )
+        from .unified_authority import (
+            group_compositions, place_composition, ungroup_composition,
+        )
+
+        snapshot = self.authority.store.snapshot()
+        protocol = open_attention_protocol(snapshot)
+        focus = active_focus(
+            snapshot,
+            protocol,
+            session_root=binding.view_root,
+        )
+        selected = tuple(focus.selected_roots) if focus is not None else ()
+        primary = focus.primary_root if focus is not None else None
+        act = str(control_root or "")
+        released = ()
+        if act.endswith(":ungroup"):
+            target = primary or (selected[0] if len(selected) == 1 else None)
+            if not target:
+                raise InvalidCell("select the group to ungroup first")
+            from .cell_protocols import read_relation
+            from .unified_authority import COMMAND_BUDGET
+            released = tuple(
+                member.participant_id
+                for member in read_relation(
+                    snapshot, target, budget=COMMAND_BUDGET
+                )
+                if member.role_id == self.clean_authority.role("composition")
+            )
+            ungroup_composition(
+                self.clean_authority,
+                self.clean_scope_root,
+                target,
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+        else:
+            if len(selected) < 2:
+                raise InvalidCell("select at least two nodes to group")
+            created = group_compositions(
+                self.clean_authority,
+                self.clean_scope_root,
+                selected,
+                label="Group of %d" % len(selected),
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+            place_composition(
+                self.clean_authority,
+                self.clean_scope_root,
+                created.root_id,
+                {"x": 120.0, "y": 120.0},
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+        # The members the focus held just left the scope (into the group)
+        # or the group left (dissolved). A focus over roots the scope no
+        # longer shows refuses the next lease, so the selection moves to
+        # what the act produced: the group, or nothing.
+        from .clean_browser_authority import revise_clean_browser_focus
+        follow = None if act.endswith(":ungroup") else created.root_id
+        if follow:
+            revise_clean_browser_focus(
+                self.clean_authority,
+                self.clean_browser_authority,
+                binding.session_root,
+                scope_root=self.clean_scope_root,
+                selected_roots=[follow],
+                primary_root=follow,
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+        else:
+            # No clear-focus command exists; the released members are the
+            # honest selection after a dissolve.
+            revise_clean_browser_focus(
+                self.clean_authority,
+                self.clean_browser_authority,
+                binding.session_root,
+                scope_root=self.clean_scope_root,
+                selected_roots=list(released),
+                primary_root=released[0],
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+        self._refresh_scope_interactions()
+        payload = self._canvas(binding)
+        return payload
+
+    def _clean_connect(self, binding, body):
+        """Wire two placed nodes: one explicit relation between them.
+
+        The wire is an ordinary relation node -- the same shape every
+        imported Grand Map wire already has -- created by the same signed
+        command, carrying which declared interface each end used. Both
+        ends must be members of this scope; nothing else is admitted.
+        """
+        import uuid as _uuid
+
+        from .unified_authority import create_relation_node, read_scope_level
+
+        source = body.get("source")
+        target = body.get("target")
+        source_interface = body.get("source_interface")
+        target_interface = body.get("target_interface")
+        for value, label in (
+            (source, "source"), (target, "target"),
+            (source_interface, "source interface"),
+            (target_interface, "target interface"),
+        ):
+            if type(value) is not str or not value:
+                raise InvalidCell("connect %s is invalid" % label)
+        if source == target:
+            raise InvalidCell("a node cannot be wired to itself")
+        level = read_scope_level(
+            self.clean_authority,
+            self.clean_scope_root,
+            scope_root=self.clean_scope_root,
+            caller=self.clean_caller,
+        )
+        members = set(level.composition_roots)
+        if source not in members or target not in members:
+            raise InvalidCell("connect ends must both be members of this scope")
+        created = create_relation_node(
+            self.clean_authority,
+            (("source", source), ("target", target)),
+            scope_root=self.clean_scope_root,
+            caller=self.clean_caller,
+            command_id=str(_uuid.uuid4()),
+            properties={
+                "source_interface": source_interface,
+                "target_interface": target_interface,
+            },
+        )
+        payload = self._canvas(binding)
+        payload["created_wire"] = created.root_id
+        return payload
 
     def _clean_stylesheet(self):
         """The appearance the graph holds, served once rather than per read."""
@@ -924,7 +1750,19 @@ class _CleanAuthorityHttpServer:
         )
         if catalogue is None:
             raise InvalidCell("the graph holds no design-system catalogue")
-        return catalogue.get("stylesheet", "")
+        # Every rule in the stylesheet is written in terms of --bg, --ink,
+        # --accent and their siblings. Serving the rules without the values
+        # is a page that loads, reports a healthy stylesheet, and paints
+        # nothing: white ground, invisible wires, flat panels. A graph that
+        # holds no palette must say so here rather than let the browser
+        # resolve every colour to nothing.
+        tokens = catalogue.get("tokens") or {}
+        if not tokens:
+            raise InvalidCell("the graph holds no design-system palette")
+        declared = "".join(
+            "--%s:%s;" % (name, value) for name, value in sorted(tokens.items())
+        )
+        return ":root{%s}" % declared + catalogue.get("stylesheet", "")
 
     def _clean_page(self):
         """Serve the page. Pure: no graph write, no session, no cookie.
@@ -1028,7 +1866,14 @@ class _CleanAuthorityHttpServer:
             "</div>"
             "<aside class=\"inspector\"></aside>"
             "</main>"
-            "<footer class=\"status-strip\"></footer>"
+            # Every refusal a governed control raises is written here.
+            # Without the element the client's own status call returns at
+            # its first line, so a control that was refused looks exactly
+            # like a control that did nothing -- which is how a Run button
+            # can be pressed all day and never say why it will not run.
+            "<footer class=\"status-strip\">"
+            "<span class=\"status-message\" hidden></span>"
+            "</footer>"
             "</div>"
             "<script type=\"text/plain\" id=\"archhub-canvas-source\">"
             "%s</script>"
@@ -1189,9 +2034,23 @@ class _CleanAuthorityHttpServer:
                 # of it is cheaper to parse than to deep-copy: the lease is
                 # stamped into what the caller receives, so the cached value
                 # must never be the object handed out.
+                import time as _time
+                _c0 = _time.perf_counter()
                 payload = json.loads(cached)
+                _c1 = _time.perf_counter()
                 self._issue_projection_lease(binding, snapshot, payload)
+                self._remember_view_projection(binding, payload)
+                _c2 = _time.perf_counter()
+                self._record_gesture_timing(
+                    "cached projection rev=%s parse=%.3fs lease=%.3fs"
+                    % (snapshot.revision, _c1 - _c0, _c2 - _c1)
+                )
                 return payload
+        # SPEC 11.14 puts numbers on gestures; the owner records what one
+        # projection actually cost, phase by phase, so the number a court
+        # judges is measured here rather than guessed from outside.
+        import time as _time
+        _t0 = _time.perf_counter()
         lens = scope_lens_payload(
             project_unified_scope(
                 self.clean_authority,
@@ -1201,10 +2060,12 @@ class _CleanAuthorityHttpServer:
                 at_revision=at_revision,
             )
         )
+        _t1 = _time.perf_counter()
         visual = open_clean_visual_system(
             self.clean_authority,
             caller=self.clean_caller,
         )
+        _t2 = _time.perf_counter()
         payload = project_clean_visual_canvas(
             self.clean_authority,
             visual,
@@ -1213,6 +2074,24 @@ class _CleanAuthorityHttpServer:
             session_root=binding.session_root,
             subject_root=binding.subject_root,
             interactions=self.clean_scope_interactions,
+            door_root=self.clean_scope_root,
+            door_label=self._door_label(snapshot),
+        )
+        _t3 = _time.perf_counter()
+        from .unified_application_lens import LAST_LENS_PHASES
+        self._record_gesture_timing(
+            "lens phases " + " ".join(
+                "%s=%.3fs" % (name, cost)
+                for name, cost in sorted(LAST_LENS_PHASES.items())
+            )
+        )
+        self._record_gesture_timing(
+            "projection rev=%s scope=%s lens=%.3fs visual-open=%.3fs "
+            "canvas=%.3fs nodes=%s"
+            % (
+                snapshot.revision, root_id[:12], _t1 - _t0, _t2 - _t1,
+                _t3 - _t2, len(payload.get("nodes", ())),
+            )
         )
         if len(self._clean_projection_cache) >= 4:
             self._clean_projection_cache.pop(
@@ -1222,7 +2101,12 @@ class _CleanAuthorityHttpServer:
             snapshot.cells,
             json.dumps(payload),
         )
+        _l0 = _time.perf_counter()
         self._issue_projection_lease(binding, snapshot, payload)
+        self._remember_view_projection(binding, payload)
+        self._record_gesture_timing(
+            "lease rev=%s issue=%.3fs" % (snapshot.revision, _time.perf_counter() - _l0)
+        )
         return payload
 
     def _projection_handle(
@@ -1276,6 +2160,188 @@ class _CleanAuthorityHttpServer:
             },
         )
 
+    def _refresh_scope_interactions(self) -> None:
+        """Re-derive the interaction set after the scope tree changed.
+
+        The set is derived at start and served as a process constant; a
+        group created mid-session had a card but no scope-open binding --
+        it could not be entered until a restart. A composition-changing
+        act calls this: same derivation, swapped atomically, memos keyed
+        on the old cells fall away with it.
+        """
+        try:
+            derived, derived_cells = derive_clean_scope_interactions(
+                self.clean_authority,
+                self.clean_browser_authority,
+                self.clean_scope_root,
+                caller=self.clean_caller,
+            )
+        except InvalidCell:
+            return
+        held = self.clean_scope_interactions
+        if held is not None and held.source_digest == derived.source_digest:
+            return
+        self.clean_scope_interactions = derived
+        self._derived_interaction_cells = derived_cells
+        self._interaction_snapshot_cache = None
+        self._derived_overlay_parts = None
+        self._interaction_scope_index = None
+        self._verified_interaction_reads = {}
+        self._clean_projection_cache.clear()
+
+    def _scope_of_interaction(self, interaction_root: str) -> str:
+        """The scope a derived interaction is taken from; the door if unknown."""
+        held = self.clean_scope_interactions
+        if held is not None:
+            index = getattr(self, "_interaction_scope_index", None)
+            if index is None or index[0] is not held:
+                index = (held, {
+                    item.interaction_root: scope
+                    for scope, controls in held.bindings.items()
+                    for item in controls.values()
+                })
+                self._interaction_scope_index = index
+            scope = index[1].get(interaction_root)
+            if scope is not None:
+                return scope
+        return self.clean_scope_root
+
+    def _door_label(self, snapshot) -> str | None:
+        """The name of the scope the canvas opens on, read as a card would."""
+        held = getattr(self, "_door_label_cache", None)
+        if held is not None and held[0] is snapshot.cells:
+            return held[1]
+        try:
+            from .unified_application_lens import _scope_title
+            from .unified_authority import _optional_label
+            label = _scope_title(
+                self.clean_authority,
+                snapshot,
+                self.clean_scope_root,
+                _optional_label(self.clean_authority, snapshot, self.clean_scope_root),
+                self.clean_caller,
+            )
+        except Exception:
+            label = None
+        self._door_label_cache = (snapshot.cells, label)
+        return label
+
+    def _record_gesture_timing(self, line: str) -> None:
+        """Append one measured line to gesture-timing.log beside boot-timing.log."""
+        try:
+            import os as _os
+            from pathlib import Path as _Path
+            root = _Path(_os.environ.get("LOCALAPPDATA", ""))
+            root = root / "ArchHub" / "unified-authority"
+            if not root.is_dir():
+                return
+            import time as _time
+            with (root / "gesture-timing.log").open("a", encoding="utf-8") as log:
+                log.write(_time.strftime("%Y-%m-%d %H:%M:%S") + "  " + line + chr(10))
+        except Exception:
+            pass
+
+    def _interaction_read_set_unchanged(self, seen_revision, current_revision):
+        """Did anything a scope interaction reads change between two heads?
+
+        The read set of a scope-open interaction is the scope tree and the
+        published catalogue -- exactly what the derivation's source digest
+        summarises. Same digest at both revisions means every binding the
+        client acted on still holds, and the request may rebase. Anything
+        else -- including any error while looking -- refuses, and the client
+        re-projects: fail closed.
+        """
+        try:
+            from .clean_scope_interactions import derive_clean_scope_interactions
+            held = self.clean_scope_interactions
+            if held is None:
+                return False
+            if seen_revision > current_revision:
+                return False
+            # The derivation reads the CURRENT snapshot; the client's view
+            # was projected from an installed set whose source digest we
+            # remember on the interactions object. Equal digests = same
+            # scope tree + catalogue = same read set.
+            snapshot = self.clean_authority.store.snapshot()
+            cache = getattr(self, "_read_set_digest_cache", None)
+            if cache is not None and cache[0] is snapshot.cells:
+                fresh_digest = cache[1]
+            else:
+                fresh, _cells = derive_clean_scope_interactions(
+                    self.clean_authority,
+                    self.clean_browser_authority,
+                    self.clean_scope_root,
+                    caller=self.clean_caller,
+                )
+                fresh_digest = fresh.source_digest
+                self._read_set_digest_cache = (snapshot.cells, fresh_digest)
+            return fresh_digest == held.source_digest
+        except Exception:
+            return False
+
+    def _interaction_snapshot(self, snapshot):
+        """The snapshot every interaction READ runs against.
+
+        Bindings come from the derivation; the interaction cells that
+        derivation names exist nowhere on disk once the table is retired.
+        A reader handed the bare graph snapshot asks for a relation root
+        the graph does not hold and refuses the whole projection. The
+        derived cells are overlaid for reads only -- never committed -- so
+        the law stays visible (SPEC 4.1: the rule is graph-held, its
+        expansion is a read) and the graph stays small.
+        """
+        cells = getattr(self, "_derived_interaction_cells", ())
+        if not cells:
+            return snapshot
+        cached = getattr(self, "_interaction_snapshot_cache", None)
+        # Keyed on the MAPPING the snapshot carries, not the Snapshot
+        # object: the store hands out a fresh Snapshot per call over the
+        # same mapping while nothing commits, and keying on the object
+        # rebuilt this overlay -- and cold-started every proof memo keyed
+        # on it downstream -- on every request. Measured: a cached canvas
+        # answered in 7.8 s while its projection took 0.05 s.
+        if (
+            cached is not None
+            and cached[0] is snapshot.cells
+            and cached[2] == snapshot.revision
+        ):
+            return cached[1]
+        from types import MappingProxyType as _Proxy
+        from .universal_cell import Snapshot, _BoundedCandidateCellMap
+        # 826,233 derived cells on the founder's graph (310 scopes). Folding
+        # them into a fresh persistent trie on every revision cost 4-7 s
+        # per gesture -- the lease, not the projection, was the wall. The
+        # delta is a process constant: it is built once, and the overlay
+        # stacks it over whatever mapping the store holds now, O(1) per
+        # revision. The split between "new to the graph" and "replacing a
+        # graph cell" is recomputed only when a commit touches one of the
+        # derived ids (the store reports every touched id).
+        held = getattr(self, "_derived_overlay_parts", None)
+        if held is None or held[0] is not cells:
+            delta = _Proxy({cell.id: cell for cell in cells})
+            held = [cells, delta, frozenset(delta), None]
+            self._derived_overlay_parts = held
+            store = self.clean_authority.store
+
+            def _on_commit(event, _held=held):
+                if event.touched & _held[2]:
+                    _held[3] = None
+            try:
+                store.subscribe(_on_commit)
+            except Exception:
+                pass
+        delta = held[1]
+        if held[3] is None:
+            held[3] = sum(1 for key in delta if key not in snapshot.cells)
+        overlaid = Snapshot(
+            snapshot.revision,
+            _BoundedCandidateCellMap._from_parts(snapshot.cells, delta, held[3]),
+        )
+        self._interaction_snapshot_cache = (
+            snapshot.cells, overlaid, snapshot.revision,
+        )
+        return overlaid
+
     def _issue_projection_lease(
         self,
         binding: _CleanBrowserSessionBinding,
@@ -1285,19 +2351,70 @@ class _CleanAuthorityHttpServer:
         bindings = payload["interaction_projection"]["bindings"]
         if not bindings:
             return
+        snapshot = self._interaction_snapshot(snapshot)
         handle = self._projection_handle(binding, snapshot)
+        protocol = self.clean_scope_interactions.protocol
+        interaction_roots = tuple(item["interaction"] for item in bindings)
+        # Reading and verifying the leased interactions is a function of
+        # the interaction cells (process constants: derived once at boot,
+        # or the installed table) and the protocol they conform to. Doing
+        # it again for every revision cost 8-10 s per gesture on the
+        # founder's graph -- the reads walk a fresh overlay whose proof
+        # memos are cold. The reads are kept per (protocol identity, the
+        # protocol's reachable-cell fingerprint -- which the store drops
+        # the moment a commit touches any of those cells -- and the exact
+        # interaction set); the lease itself is still minted per revision
+        # and every per-snapshot check in the broker still runs.
+        # A protocol the graph holds is gated by its reachable-cell
+        # fingerprint (dropped by the store the moment a commit touches
+        # any of those cells). A protocol that exists only in the derived
+        # overlay -- the live graph, table retired -- is a process constant
+        # already keyed by the identity of the derived cells below.
+        store = self.clean_authority.store
+        protocol_gate = (
+            store.fingerprint(protocol.root_id)
+            if protocol.root_id in store.snapshot().cells
+            else "derived"
+        )
+        read_key = (
+            protocol.root_id,
+            protocol_gate,
+            interaction_roots,
+            id(getattr(self, "_derived_interaction_cells", ())),
+        )
+        memo = getattr(self, "_verified_interaction_reads", None)
+        if memo is None:
+            memo = self._verified_interaction_reads = {}
+        projected = memo.get(read_key)
+        if projected is None:
+            from .cell_interactions import (
+                _read_interactions_with_verified_protocol,
+            )
+            projected = _read_interactions_with_verified_protocol(
+                snapshot, protocol, interaction_roots,
+            )
+            if len(memo) >= 16:
+                memo.pop(next(iter(memo)))
+            memo[read_key] = projected
         # Scope entry is a graph-held capability rather than a transaction
         # step, so the transaction and rule vocabularies are not consulted
         # for it. Admitting the exact capability keeps that explicit.
         self.clean_interaction_broker.issue_with_interactions(
             handle,
             snapshot,
-            self.clean_scope_interactions.protocol,
+            protocol,
             [item["control"] for item in bindings],
-            [item["interaction"] for item in bindings],
+            list(interaction_roots),
+            projected_interactions=projected,
             rule_protocol=None,
             transaction_protocol=None,
-            admitted_nontransaction_action_roots=(CAPABILITY_SCOPE,),
+            # Running a declared operation is the second capability a scope
+            # affords. Admitting only scope-entry meant the Run interaction
+            # was leased as nothing at all.
+            admitted_nontransaction_action_roots=(
+                CAPABILITY_SCOPE, CAPABILITY_EXECUTE, CAPABILITY_INSTANTIATE,
+                CAPABILITY_COMPOSITION,
+            ),
         )
 
     def _make_handler(self):
@@ -1309,9 +2426,30 @@ class _CleanAuthorityHttpServer:
 
             def _json(self, status: int, payload: Mapping[str, object]):
                 raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                # A canvas answer is three quarters of a megabyte of highly
+                # repetitive JSON -- the same keys, the same shapes, once per
+                # node and once per port -- and it was going over the wire
+                # whole. Compressing it changes no fact the caller receives,
+                # only how many bytes carry them, and every browser asks for
+                # it. Small answers are left alone: framing them costs more
+                # than it saves.
+                encoding = None
+                if len(raw) >= 2048:
+                    accepted = (self.headers.get("Accept-Encoding") or "")
+                    if "gzip" in accepted.lower():
+                        import gzip as _gzip
+                        compressed = _gzip.compress(raw, 6)
+                        if len(compressed) < len(raw):
+                            raw = compressed
+                            encoding = "gzip"
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")
+                if encoding is not None:
+                    self.send_header("Content-Encoding", encoding)
+                    # A cache keyed on the URL alone would hand a compressed
+                    # answer to a caller that cannot read one.
+                    self.send_header("Vary", "Accept-Encoding")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
@@ -1393,8 +2531,16 @@ class _CleanAuthorityHttpServer:
                     self._json(404, {"ok": False, "error": "not found"})
                     return
                 try:
+                    import time as _time
+                    _r0 = _time.perf_counter()
                     binding = owner._resolve_binding(self._token())
+                    _r1 = _time.perf_counter()
                     payload = owner._canvas(binding)
+                    _r2 = _time.perf_counter()
+                    owner._record_gesture_timing(
+                        "GET canvas rev=%s bind=%.3fs canvas=%.3fs"
+                        % (payload.get("revision"), _r1 - _r0, _r2 - _r1)
+                    )
                 except Conflict as exc:
                     self._json(409, {"ok": False, "error": str(exc)})
                     return
@@ -1403,6 +2549,13 @@ class _CleanAuthorityHttpServer:
                     InteractionProjectionDenied,
                     InvalidCell,
                 ) as exc:
+                    import traceback as _tb
+                    owner._record_gesture_timing(
+                        "canvas 403: " + str(exc) + " | " + " <- ".join(
+                            "%s:%s" % (frame.name, frame.lineno)
+                            for frame in _tb.extract_tb(exc.__traceback__)[-6:]
+                        )
+                    )
                     self._json(403, {"ok": False, "error": str(exc)})
                     return
                 except Exception as exc:  # noqa: BLE001
@@ -1428,6 +2581,28 @@ class _CleanAuthorityHttpServer:
                         except CleanGestureRefused as exc:
                             self._json(403, {"ok": False, "error": str(exc)})
                             return
+                        self._json(200, {"ok": True, **payload})
+                        return
+                    if self.path == "/api/universal/connect":
+                        with owner._mutation_lock:
+                            binding = owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
+                            )
+                            payload = owner._clean_connect(binding, body)
+                        self._json(200, {"ok": True, **payload})
+                        return
+                    if self.path == "/api/universal/execute-adapter":
+                        with owner._mutation_lock:
+                            binding = owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
+                            )
+                            payload = owner._clean_execute_adapter(
+                                binding, body
+                            )
                         self._json(200, {"ok": True, **payload})
                         return
                     if self.path == "/api/universal/focus":
@@ -1479,6 +2654,36 @@ class _CleanAuthorityHttpServer:
                         return
                     if self.path == "/api/universal/interaction":
                         with owner._mutation_lock:
+                            # A control does what the graph says it does.
+                            # Execute is not a scope-open, and answering it
+                            # with one would open a scope the founder never
+                            # asked for instead of running what was pressed.
+                            probe = owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
+                            )
+                            capability = owner._clean_control_capability(
+                                body.get("control")
+                            )
+                            if capability == CAPABILITY_EXECUTE:
+                                payload = owner._clean_execute_focused(
+                                    probe, body
+                                )
+                                self._json(200, {"ok": True, **payload})
+                                return
+                            if capability == CAPABILITY_INSTANTIATE:
+                                payload = owner._clean_instantiate_definition(
+                                    probe, body, body.get("control")
+                                )
+                                self._json(200, {"ok": True, **payload})
+                                return
+                            if capability == CAPABILITY_COMPOSITION:
+                                payload = owner._clean_group_or_ungroup(
+                                    probe, body, body.get("control")
+                                )
+                                self._json(200, {"ok": True, **payload})
+                                return
                             binding = owner._resolve_binding(
                                 self._token(),
                                 csrf_token=csrf_token,
@@ -1489,14 +2694,41 @@ class _CleanAuthorityHttpServer:
                                 raise InvalidCell(
                                     "interaction request revision is invalid"
                                 )
-                            current = owner.authority.store.revision
+                            # One snapshot for the gate, the lease and the
+                            # submit. Reading the head, then snapshotting
+                            # later, let another client's commit land in
+                            # between: the request rebased onto 916, the
+                            # lease was minted at 917, and the submit refused
+                            # its own rebase ("expected 916, projected 917").
+                            snapshot = owner.authority.store.snapshot()
+                            current = snapshot.revision
                             if revision != current:
-                                self._json(400, {
-                                    "ok": False,
-                                    "error": "expected revision %s, current revision is %s"
-                                    % (revision, current),
-                                })
-                                return
+                                # The client's revision is the head it last
+                                # SAW. Refusing every click because the graph
+                                # moved anywhere at all -- a viewport pan, a
+                                # session mint -- is a global lock, not
+                                # conflict detection (SPEC 8: conflicts are
+                                # about what changed). A scope-open interaction
+                                # reads the scope tree and the catalogue; if
+                                # neither moved since the client's revision,
+                                # the request rebases onto the current head.
+                                # If they did move, the refusal stands and the
+                                # client re-projects.
+                                if owner._interaction_read_set_unchanged(
+                                    revision, current
+                                ):
+                                    revision = current
+                                else:
+                                    # Same recovery as an expired lease:
+                                    # the client re-projects once and
+                                    # retries against the head it now sees.
+                                    self._json(409, {
+                                        "ok": False,
+                                        "error": "expected revision %s, current revision is %s"
+                                        % (revision, current),
+                                        "code": "projection_lease_expired",
+                                    })
+                                    return
                             interaction_root = body.get("interaction")
                             control_root = body.get("control")
                             event_root = body.get("event")
@@ -1509,8 +2741,16 @@ class _CleanAuthorityHttpServer:
                                     raise InvalidCell(
                                         "scope interaction %s is invalid" % label
                                     )
-                            snapshot = owner.authority.store.snapshot()
-                            scope_root = owner.clean_scope_root
+                            # The scope this interaction is taken FROM is a
+                            # fact of the interaction itself (its first
+                            # input), not always the door: a click inside an
+                            # entered domain -- the way back, a nested open --
+                            # belongs to that domain's interaction set. Leasing
+                            # the door's set for it refused every such click
+                            # as "not admitted for the projected control".
+                            scope_root = owner._scope_of_interaction(
+                                interaction_root
+                            )
                             # Renew the interaction lease from the graph-held
                             # interaction set. Rebuilding the whole visual
                             # canvas to recover one scope identity would cost
@@ -1533,6 +2773,9 @@ class _CleanAuthorityHttpServer:
                                 expected_revision=revision,
                                 projected_canvas={"root": scope_root},
                                 caller=owner.clean_caller,
+                                read_snapshot=owner._interaction_snapshot(
+                                    snapshot
+                                ),
                             )
                             payload = owner._canvas(
                                 binding,

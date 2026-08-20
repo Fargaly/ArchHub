@@ -267,7 +267,7 @@ def project_capability_protocol(
         for name in EVENT_OUTCOMES
     }
     required = {root_id, *roles.values(), *states.values(), *outcomes.values()}
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("capability protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {

@@ -21,7 +21,10 @@ ALLOWED_TAGS = frozenset({
 })
 ALLOWED_ATTRIBUTES = frozenset({
     "aria-controls", "aria-label", "aria-labelledby", "aria-pressed",
-    "aria-selected", "autocomplete", "disabled", "hidden", "id",
+    "aria-selected", "autocomplete", "disabled",
+    # draggable marks an element the pointer can pick up (the library
+    # rows); it is a boolean hint, not executable content.
+    "draggable", "hidden", "id",
     "maxlength", "open", "placeholder", "role", "spellcheck", "tabindex",
     "title", "step", "type",
 })

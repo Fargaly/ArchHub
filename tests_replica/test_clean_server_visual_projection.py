@@ -620,7 +620,8 @@ def test_clean_visual_projection_uses_graph_held_panels_properties_and_catalogue
             if candidate["root_id"] == definition_root
         )
         assert item["parameters"] == source_item["parameters"]
-        assert item["interfaces"] == source_item["interfaces"]
+        assert item["interface_contract"] == source_item["interfaces"]
+        assert item["interfaces"] == len(source_item["interfaces"])
         assert item["presentation"] == source_item["presentation"]
     finally:
         built.location.authority.store.close()
@@ -1691,3 +1692,1736 @@ def test_clean_visual_projection_requires_graph_held_panel_definition_roots_and_
                 )
     finally:
         built.location.authority.store.close()
+
+
+def test_installed_visual_system_can_be_revised_onto_a_graph(tmp_path):
+    """A graph that holds a subsystem must be able to hold a newer one.
+
+    Installing refuses a source it did not already have, which on a graph
+    installed once froze every descriptor for good: a row that renders the
+    wrong thing could not be corrected on the graph it was wrong on, and a
+    control the graph should offer could never be added. This is the
+    ordinary signed way through -- and it refuses the two cases that would
+    make it a way around: a graph with nothing installed, and a
+    replacement identical to what is already held.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_visual_authority import (
+        install_clean_visual_system,
+        open_clean_visual_system,
+        revise_clean_visual_system,
+    )
+    from nodelang.clean_subsystem_revision import replace_interface_subsystem
+    from nodelang.universal_cell import InvalidCell
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        caller = built.caller
+        held = open_clean_visual_system(authority, caller=caller)
+
+        # Nothing has changed, so there is nothing to carry.
+        with pytest.raises(InvalidCell):
+            revise_clean_visual_system(
+                authority, caller=caller, command_id=str(_uuid.uuid4())
+            )
+
+        # A subsystem cannot be replaced by itself: that would report a
+        # revision while changing nothing the graph holds.
+        with pytest.raises(InvalidCell):
+            replace_interface_subsystem(
+                authority,
+                caller=caller,
+                command_id=str(_uuid.uuid4()),
+                intent="revise-clean-visual-system",
+                held_root=held.root_id,
+                replacement_root=held.root_id,
+                replacement_cells=(),
+                source_digest=held.source_digest,
+            )
+
+        # A subsystem the Interface does not hold cannot be replaced.
+        with pytest.raises(InvalidCell):
+            replace_interface_subsystem(
+                authority,
+                caller=caller,
+                command_id=str(_uuid.uuid4()),
+                intent="revise-clean-visual-system",
+                held_root=str(_uuid.uuid4()),
+                replacement_root=str(_uuid.uuid4()),
+                replacement_cells=(),
+                source_digest="none",
+            )
+
+        # The graph still holds exactly what it held, and still opens.
+        after = open_clean_visual_system(authority, caller=caller)
+        assert after.root_id == held.root_id
+        assert after.source_digest == held.source_digest
+        assert install_clean_visual_system is not None
+
+        # And the swap itself: the Interface stops holding the installed
+        # subsystem and holds the replacement, in one revision. Refusals
+        # alone would leave the thing this exists for unproven.
+        from nodelang.cell_protocols import read_relation
+        from nodelang.unified_authority import (
+            COMMAND_BUDGET,
+            composition_root,
+            new_id,
+            typed_relation_cells,
+        )
+
+        def held_roots():
+            snapshot = authority.store.snapshot()
+            interface_root = composition_root(
+                authority, "Interface", caller=caller
+            )
+            return {
+                member.participant_id
+                for member in read_relation(
+                    snapshot, interface_root, budget=COMMAND_BUDGET
+                )
+                if member.role_id == authority.role("composition")
+            }
+
+        assert held.root_id in held_roots()
+        replacement_root = new_id()
+        replacement_cells = typed_relation_cells(
+            replacement_root,
+            authority.role("conforms-to"),
+            authority.shape("composition"),
+            ((authority.role("label"), authority.manifest.application_root),),
+        )
+        before_revision = authority.store.snapshot().revision
+        replace_interface_subsystem(
+            authority,
+            caller=caller,
+            command_id=str(_uuid.uuid4()),
+            intent="revise-clean-visual-system",
+            held_root=held.root_id,
+            replacement_root=replacement_root,
+            replacement_cells=replacement_cells,
+            source_digest="a-different-source",
+        )
+        now = held_roots()
+        assert replacement_root in now, "the Interface must hold the replacement"
+        assert held.root_id not in now, "the Interface must let the old one go"
+        assert authority.store.snapshot().revision > before_revision
+    finally:
+        built.location.authority.store.close()
+
+
+def test_host_execution_runs_only_what_the_graph_declares(tmp_path):
+    """Running an operation is gated by the graph, and always leaves a receipt.
+
+    An effect is the one thing a graph cannot take back, so every way of
+    reaching one is refused unless the graph itself admits it: the
+    operation must be declared, the arguments must be the ones it declares,
+    a destructive operation needs explicit leave, and a runtime with no
+    adapter can reach nothing at all. A run that happened is recorded, and
+    a run that is replayed is not run again.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_host_execution import (
+        HostOperationRefused,
+        execute_host_operation,
+    )
+    from nodelang.clean_host_operations import (
+        compose_host_operations,
+        install_host_operations,
+    )
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        caller = built.caller
+        catalogue = compose_host_operations([
+            {
+                "op_id": "probe.read", "host": "probe", "kind": "read",
+                "label": "Read", "description": "", "output_type": "row",
+                "destructive": False,
+                "inputs": [
+                    {"id": "target", "label": "Target", "type": "text",
+                     "default": "", "required": True, "help": ""},
+                ],
+            },
+            {
+                "op_id": "probe.wreck", "host": "probe", "kind": "action",
+                "label": "Wreck", "description": "", "output_type": "row",
+                "destructive": True, "inputs": [],
+            },
+        ])
+        install_host_operations(
+            authority, catalogue, caller=caller,
+            command_id=str(_uuid.uuid4()))
+
+        seen = []
+
+        def invoker(op_id, arguments):
+            seen.append((op_id, dict(arguments)))
+            return {"rows": 1}
+
+        def run(op_id, arguments, **kwargs):
+            return execute_host_operation(
+                authority, op_id, arguments, caller=caller,
+                command_id=kwargs.pop("command_id", str(_uuid.uuid4())),
+                invoker=kwargs.pop("invoker", invoker), **kwargs)
+
+        # An operation the graph never declared is not an ArchHub operation.
+        with pytest.raises(HostOperationRefused):
+            run("probe.invented", {})
+        # An argument the operation never declared would be ignored by the
+        # host or acted on by it, and both make the catalogue a fiction.
+        with pytest.raises(HostOperationRefused):
+            run("probe.read", {"target": "a", "extra": 1})
+        # A required argument that is missing is caught here rather than
+        # halfway through whatever the host was doing.
+        with pytest.raises(HostOperationRefused):
+            run("probe.read", {})
+        # Destroying work needs explicit leave, every time.
+        with pytest.raises(HostOperationRefused):
+            run("probe.wreck", {})
+        # A runtime given no adapter can reach nothing.
+        with pytest.raises(HostOperationRefused):
+            run("probe.read", {"target": "a"}, invoker=None)
+        assert seen == [], "nothing may reach a host through a refused call"
+
+        before = authority.store.snapshot().revision
+        command = str(_uuid.uuid4())
+        first = run("probe.read", {"target": "a"}, command_id=command)
+        assert seen == [("probe.read", {"target": "a"})]
+        assert first.replayed is False
+        assert authority.store.snapshot().revision > before
+        assert first.receipt_root in authority.store.snapshot().cells
+
+        # The same command is the same effect. Asking twice must not do it
+        # twice, whatever the caller intended.
+        replayed = run("probe.read", {"target": "a"}, command_id=command)
+        assert len(seen) == 1, "a replayed effect must not reach the host again"
+        assert replayed.replayed is True
+
+        # A host that fails is a fact this graph keeps.
+        def broken(op_id, arguments):
+            raise RuntimeError("the host said no")
+
+        failing = authority.store.snapshot().revision
+        with pytest.raises(HostOperationRefused):
+            run("probe.read", {"target": "b"}, invoker=broken)
+        assert authority.store.snapshot().revision > failing, (
+            "a run that failed must still be recorded"
+        )
+    finally:
+        built.location.authority.store.close()
+
+
+def test_a_control_does_what_the_graph_says_it_does(tmp_path):
+    """A control's meaning is read from its interaction, not from its name.
+
+    The route that answers a pressed control has to decide what was asked
+    for. Deciding by which control it was would put the meaning of every
+    button in the server, where revising the graph could never reach it --
+    and a control the graph declared nothing for would be answered by
+    whatever branch happened to be last. The capability comes from the
+    interaction the graph installed, and a control with no interaction has
+    no capability at all.
+    """
+    import uuid as _uuid
+
+    from nodelang.cell_control_bindings import (
+        CAPABILITY_EXECUTE,
+        CAPABILITY_INSTANTIATE,
+        CAPABILITY_SCOPE,
+    )
+    from nodelang.clean_scope_interactions import (
+        CONTROL_RUN,
+        install_clean_scope_interactions,
+    )
+    from nodelang.cell_interactions import read_interaction
+    from nodelang.clean_scope_interactions import CAPABILITY_COMPOSITION
+
+    built, provider = _provision_clean_runtime(tmp_path)
+    server = _start_clean_server(built, provider)
+    try:
+        interactions = server.clean_scope_interactions
+        scope = server.clean_scope_root
+        assert interactions is not None, (
+            "a scope with no interaction set can activate nothing"
+        )
+
+        def capability_of(control_root):
+            return server._clean_control_capability(control_root)
+
+        # A control the graph declared no interaction for is not a control
+        # this server will act on.
+        assert capability_of(str(_uuid.uuid4())) is None
+        assert capability_of("app:control:canvas:invented") is None
+        assert capability_of(None) is None
+
+        # Run is declared, and it is declared as execution -- not as scope
+        # entry, which is what answering by name would have made it.
+        run = capability_of(CONTROL_RUN)
+        assert run == CAPABILITY_EXECUTE, run
+
+        # Every binding the scope carries names a capability the graph
+        # holds, and each one is read back from the interaction itself.
+        held = interactions.bindings.get(scope) or {}
+        assert held, "the projected scope must carry its bindings"
+        admitted = {
+            CAPABILITY_SCOPE,
+            CAPABILITY_EXECUTE,
+            CAPABILITY_INSTANTIATE,
+            # Group and ungroup landed as first-class signed acts; their
+            # bindings name the composition capability by design.
+            CAPABILITY_COMPOSITION,
+        }
+        snapshot = built.location.authority.store.snapshot()
+        for control_root, binding in held.items():
+            interaction = read_interaction(
+                snapshot, interactions.protocol, binding.interaction_root
+            )
+            assert interaction.action_root in admitted, (
+                "control %s names a capability outside the admitted set"
+                % control_root
+            )
+            assert capability_of(control_root) == interaction.action_root
+        assert install_clean_scope_interactions is not None
+    finally:
+        built.location.authority.store.close()
+
+
+def test_host_adapters_attach_and_never_launch():
+    """An adapter joins what is open; it never opens anything.
+
+    An adapter that can start an application turns "read my documents"
+    into "take over my desktop": press a button and Word appears, or four
+    copies of it do. Attaching is GetActiveObject; launching is Dispatch,
+    and the difference is one call nobody would notice in review. So it is
+    courted as an absence -- the adapters may not contain the launching
+    call at all -- and courted the same way for Revit, which must not spawn
+    a session either.
+
+    The refusals are courted with it, because an adapter that answers an
+    operation it does not carry out is an adapter that will one day answer
+    the wrong host.
+    """
+    import inspect
+
+    from nodelang import clean_office_adapter, clean_revit_adapter
+
+    office_source = inspect.getsource(clean_office_adapter)
+    assert "GetActiveObject" in office_source, (
+        "the office adapter must attach to a running application"
+    )
+    # The call, not the word: this file explains why launching is refused,
+    # and a court that cannot tell the explanation from the act would
+    # forbid saying so.
+    assert ".Dispatch(" not in office_source, (
+        "the office adapter must never launch an application"
+    )
+    assert "DispatchEx" not in office_source
+    assert "subprocess" not in office_source
+    assert "os.startfile" not in office_source
+
+    revit_source = inspect.getsource(clean_revit_adapter)
+    assert "subprocess" not in revit_source, (
+        "the Revit adapter must never start a Revit"
+    )
+    assert "os.startfile" not in revit_source
+    # It finds sessions by asking the published range, never by remembering
+    # a port: a port remembered from last time belongs to whatever is
+    # listening now.
+    assert "BROKER_PORTS" in revit_source
+
+    # An operation an adapter does not carry out is refused by name, not
+    # answered by whatever branch happened to be last.
+    with pytest.raises(clean_office_adapter.OfficeUnreachable):
+        clean_office_adapter.invoke("word.invented", {})
+    with pytest.raises(clean_office_adapter.OfficeUnreachable):
+        clean_office_adapter.invoke("revit.list_levels", {})
+    with pytest.raises(clean_revit_adapter.RevitUnreachable):
+        clean_revit_adapter.invoke("revit.invented", {})
+    with pytest.raises(clean_revit_adapter.RevitUnreachable):
+        clean_revit_adapter.invoke("word.list_documents", {})
+
+
+def test_attention_and_state_survive_a_restart(tmp_path):
+    """What the founder was looking at is still there after a restart.
+
+    SPEC court 6 asks that focus, cursors and obligations recover; court 7
+    asks that the same revision reconstructs deterministically. Both are
+    the same claim seen twice: the graph is the state, and a runtime is
+    only a reader of it. So this closes the store, opens it again from
+    disk, and asks whether the answers changed.
+
+    A canvas that forgets the selection on restart would push the founder
+    back to the top of a two hundred node map every time -- and a graph
+    that reconstructs differently would make every court above it
+    meaningless, because the thing they certified would not be the thing
+    that comes back.
+    """
+    import uuid as _uuid
+
+    from nodelang.cell_secret_keys import MemorySigningKeyProvider
+    from nodelang.cell_revision_checkpoint import snapshot_digest
+    from nodelang.unified_authority import (
+        composition_root,
+        place_composition,
+        read_composition_placements,
+        read_scope_level,
+    )
+    from nodelang.unified_authority_runtime import open_current_authority
+
+    built, provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    scope = built.grand_map.root_id
+    level = read_scope_level(authority, scope, scope_root=scope, caller=caller)
+    node = sorted(level.composition_roots)[0]
+
+    place_composition(
+        authority, scope, node, {"x": 421.0, "y": 137.0},
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    before_revision = authority.store.snapshot().revision
+    before_digest = snapshot_digest(authority.store.snapshot())
+    root_path = built.location.root
+    authority.store.close()
+
+    # A restart is not a reset. Nothing below re-installs, re-declares or
+    # repairs anything -- it opens what is on disk and reads it.
+    reopened = open_current_authority(root_path, provider)
+    try:
+        current = reopened.authority.store.snapshot()
+        assert current.revision == before_revision, (
+            "a restart must not move the graph"
+        )
+        assert snapshot_digest(current) == before_digest, (
+            "the same revision must reconstruct to the same graph"
+        )
+        placements = read_composition_placements(
+            reopened.authority,
+            current,
+            composition_root(reopened.authority, "Interface", caller=caller),
+            wanted=(node,),
+        )
+        held = placements.get(node) or {}
+        assert held.get("x") == 421.0 and held.get("y") == 137.0, (
+            "where the founder put a node must survive a restart"
+        )
+    finally:
+        reopened.authority.store.close()
+
+
+def test_deleting_the_fast_path_does_not_change_the_answer(tmp_path):
+    """Every cache must be invisible except in how long the answer takes.
+
+    SPEC court 3 forbids a hidden interpreter: the fast path and the graph
+    path must mean the same thing, and deleting the fast path must not
+    alter meaning. Today's speed came from remembering answers -- the
+    opened visual system, definition projections, the head verdict -- and a
+    remembered answer is exactly how a second interpreter gets in: it can
+    drift from the graph and nobody notices, because the fast path is the
+    only one anybody runs.
+
+    So the caches are emptied and the same questions asked again. Same
+    answers, or they were never caches.
+    """
+    from nodelang import clean_visual_authority, unified_authority
+    from nodelang.clean_visual_authority import open_clean_visual_system
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        caller = built.caller
+
+        warm_canvas, warm_lens, _snapshot, _after = _project_current_visual(built)
+        warm_visual = open_clean_visual_system(authority, caller=caller)
+
+        emptied = 0
+        for module, name in (
+            (clean_visual_authority, "_OPENED_VISUAL_CACHE"),
+            (unified_authority, "_DEFINITION_CACHE"),
+            (unified_authority, "_HEAD_VERDICT_CACHE"),
+            (unified_authority, "_SNAPSHOT_DIGEST_CACHE"),
+        ):
+            cache = getattr(module, name, None)
+            assert cache is not None, "%s is gone; this court no longer guards it" % name
+            cache.clear()
+            emptied += 1
+        assert emptied == 4
+
+        cold_canvas, cold_lens, _snapshot2, _after2 = _project_current_visual(built)
+        cold_visual = open_clean_visual_system(authority, caller=caller)
+
+        assert cold_visual.root_id == warm_visual.root_id
+        assert cold_visual.source_digest == warm_visual.source_digest
+
+        # Projecting issues a lease, which is graph state, so the second
+        # read is honestly one revision later. That number is expected to
+        # differ; everything a cache could corrupt is not.
+        def without_revision(payload):
+            return {
+                key: value for key, value in payload.items()
+                if key not in ("revision", "accepted_revision")
+            }
+
+        assert cold_lens["revision"] >= warm_lens["revision"]
+        assert without_revision(cold_lens) == without_revision(warm_lens), (
+            "the lens changed when the caches were dropped"
+        )
+        # The revision moves and each projection is authorized through its
+        # own freshly issued session, so those two differ honestly. What a
+        # stale cache would corrupt is what the graph says -- the nodes,
+        # what connects them, what may be placed, and how it all renders.
+        described = (
+            "nodes", "wires", "catalog", "catalog_sections", "library",
+            "scope", "inspector", "properties", "configuration",
+            "toolbar_descriptor", "canvas_heading_descriptor", "primitive",
+        )
+        for key in described:
+            assert key in warm_canvas, "%s left the projection" % key
+            assert cold_canvas[key] == warm_canvas[key], (
+                "%s changed when the caches were dropped -- the fast path "
+                "was not a cache but a second interpreter" % key
+            )
+    finally:
+        built.location.authority.store.close()
+
+
+def test_the_canvas_shows_nothing_the_scope_does_not_hold(tmp_path):
+    """Nothing outside the projected scope may reach the canvas.
+
+    SPEC court 8 asks that hidden roots cannot influence visible output.
+    The risk got sharper today: relations are now resolved up to the card
+    that contains them, which means a walk decides what a node stands for.
+    A walk that wanders outside the scope would put another region's work
+    on this canvas -- and on a graph that holds client projects beside each
+    other, that is the whole confidentiality boundary, drawn by a loop.
+
+    So every root the canvas names is checked against what the scope
+    actually holds: every node, every wire end, every placement.
+    """
+    from nodelang.unified_authority import read_scope_level
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        caller = built.caller
+        scope = built.grand_map.root_id
+        canvas, lens, _snapshot, _after = _project_current_visual(built)
+
+        level = read_scope_level(
+            authority, scope, scope_root=scope, caller=caller
+        )
+        held = set(level.composition_roots)
+        assert held, "the scope must hold something for this court to mean anything"
+
+        drawn = {node["id"] for node in canvas["nodes"]}
+        assert drawn <= held, (
+            "the canvas drew %s, which this scope does not hold"
+            % sorted(drawn - held)
+        )
+
+        # A wire may only join two cards this scope draws. An end pointing
+        # anywhere else is a line out of the region.
+        for wire in canvas["wires"]:
+            assert wire["source"] in drawn, (
+                "a wire starts at %s, which is not on this canvas" % wire["source"]
+            )
+            assert wire["target"] in drawn, (
+                "a wire ends at %s, which is not on this canvas" % wire["target"]
+            )
+            for participant in wire["participants"]:
+                assert participant["root"] in drawn, (
+                    "a wire names participant %s, which is not on this canvas"
+                    % participant["root"]
+                )
+
+        # The library offers definitions, not another scope's nodes.
+        offered = {item["id"] for item in canvas["catalog"]}
+        assert not (offered & drawn), (
+            "the library offered a node that is already on the canvas"
+        )
+    finally:
+        built.location.authority.store.close()
+
+
+def test_rewiring_the_catalogue_changes_the_canvas(tmp_path):
+    """Authority causes behaviour; the projector only reports it.
+
+    SPEC court 5 asks that rewiring authority changes behaviour while
+    deleting projection does not. The toolbar is where that is easiest to
+    fake: a server could hold its own list of buttons and no one would
+    know until the graph and the screen disagreed.
+
+    So the catalogue in the graph is revised and the canvas is asked
+    again. If the button set follows the revision, the graph is the cause.
+    If it does not, the toolbar was a Python list wearing a graph's name.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_design_catalogue import (
+        compose_design_catalogue,
+        read_design_catalogue,
+    )
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        caller = built.caller
+
+        before, _lens, _s, _a = _project_current_visual(built)
+        held = read_design_catalogue(authority, caller=caller)
+        assert held is not None, "the graph must hold its own catalogue"
+        drawn = {
+            control["label"]
+            for control in before["configuration"]["design_system"]
+            ["control_catalog"]["controls"]
+        }
+        assert "Run" in drawn, "the Run control must start out declared"
+
+        # Revise the catalogue: the same source, minus one control. This is
+        # an ordinary signed revision, not a code edit.
+        revised = compose_design_catalogue()
+        revised["controls"] = [
+            control for control in revised["controls"]
+            if control["label"] != "Run"
+        ]
+        # Revise the definition the graph actually holds. This is the same
+        # signed path the founder's own edit would take.
+        from nodelang.cell_protocols import read_relation
+        from nodelang.unified_authority import (
+            COMMAND_BUDGET, read_definition, revise_definition,
+        )
+
+        target = None
+        for member in read_relation(
+            authority.store.snapshot(),
+            authority.manifest.catalogue_root,
+            budget=COMMAND_BUDGET,
+        ):
+            if member.role_id != authority.role("definition"):
+                continue
+            projection = read_definition(
+                authority, member.participant_id, caller=caller
+            )
+            if projection.name == "Design System Catalogue":
+                target = projection
+                break
+        assert target is not None, "the graph must hold the catalogue definition"
+        revise_definition(
+            authority, target.root_id, target.name,
+            caller=caller, command_id=str(_uuid.uuid4()),
+            version=target.version,
+            presentation=revised,
+        )
+
+        after, _lens2, _s2, _a2 = _project_current_visual(built)
+        drawn_after = {
+            control["label"]
+            for control in after["configuration"]["design_system"]
+            ["control_catalog"]["controls"]
+        }
+        assert "Run" not in drawn_after, (
+            "the graph stopped declaring Run and the canvas still drew it -- "
+            "the toolbar is not caused by the catalogue"
+        )
+        assert drawn - {"Run"} == drawn_after, (
+            "revising one control changed more than that control"
+        )
+    finally:
+        built.location.authority.store.close()
+
+
+def test_every_lens_resolves_the_same_roots(tmp_path):
+    """One graph, many views, the same identities.
+
+    SPEC court 4 asks that every lens resolves the same roots and facts.
+    ArchHub's whole claim is that the canvas, the library, the inspector
+    and the interaction set are views of one graph rather than four
+    databases that agree by habit. Four things that agree today and drift
+    next month are exactly what a court is for.
+
+    So the same node is asked for from the scope level, the canvas, the
+    placements and the interaction bindings, and the identities are
+    compared. A node that is one thing has one root everywhere.
+    """
+    from nodelang.cell_protocols import read_relation
+    from nodelang.unified_authority import (
+        COMMAND_BUDGET,
+        composition_root,
+        read_composition_placements,
+        read_scope_level,
+    )
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        caller = built.caller
+        scope = built.grand_map.root_id
+        canvas, lens, _s, _a = _project_current_visual(built)
+
+        level = read_scope_level(
+            authority, scope, scope_root=scope, caller=caller
+        )
+        by_level = set(level.composition_roots)
+        by_lens = {node["root_id"] for node in lens["nodes"]}
+        by_canvas = {node["id"] for node in canvas["nodes"]}
+        assert by_level == by_lens == by_canvas, (
+            "the scope, the lens and the canvas disagree about which nodes exist"
+        )
+
+        # A placement is about the same node the canvas drew, not a copy of
+        # it under another identity.
+        interface_root = composition_root(authority, "Interface", caller=caller)
+        placed = read_composition_placements(
+            authority, authority.store.snapshot(), interface_root
+        )
+        assert set(placed) <= by_level | {scope}, (
+            "a placement names %s, which this scope does not hold"
+            % sorted(set(placed) - (by_level | {scope}))
+        )
+
+        # And the graph itself agrees: each drawn root is a cell, and the
+        # scope holds it as a member rather than merely mentioning it.
+        snapshot = authority.store.snapshot()
+        members = {
+            member.participant_id
+            for member in read_relation(snapshot, scope, budget=COMMAND_BUDGET)
+            if member.role_id == authority.role("composition")
+        }
+        for root in by_canvas:
+            assert root in snapshot.cells, "%s is drawn but is not a cell" % root
+            assert root in members, "%s is drawn but the scope does not hold it" % root
+    finally:
+        built.location.authority.store.close()
+
+
+def test_relations_are_exact_not_decorative(tmp_path):
+    """A wire stands for a relation that is really in the graph.
+
+    SPEC court 10 asks that sockets, cables, relations, incidences and
+    n-ary cases are exact. A canvas can always draw a convincing line; the
+    question is whether the line is a reading of the graph or a drawing
+    next to it. Today wires are resolved up to the card that contains
+    them, which makes that question sharper -- a resolved wire must still
+    be traceable to one relation cell with real incidences.
+
+    An n-ary relation is included deliberately: a relation with more than
+    two participants is where a two-ended drawing starts lying.
+    """
+    from nodelang.cell_protocols import read_relation
+    from nodelang.unified_authority import COMMAND_BUDGET
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        canvas, lens, _s, _a = _project_current_visual(built)
+        snapshot = authority.store.snapshot()
+
+        assert canvas["wires"], "this court needs at least one wire to mean anything"
+        for wire in canvas["wires"]:
+            root = wire["id"]
+            assert root in snapshot.cells, (
+                "wire %s does not name a cell in the graph" % root
+            )
+            # The relation the wire names really relates things, and the
+            # wire's ends are among them once resolved to visible cards.
+            members = read_relation(snapshot, root, budget=COMMAND_BUDGET)
+            assert members, "wire %s names a cell that relates nothing" % root
+            participants = [entry["root"] for entry in wire["participants"]]
+            assert len(participants) >= 2, (
+                "wire %s draws fewer than two ends" % root
+            )
+            assert wire["source"] in participants
+            assert wire["target"] in participants
+            # A relation with more ends than a line has says so, rather
+            # than quietly drawing two of them.
+            assert wire["nary"] is (len(participants) > 2), (
+                "wire %s misreports whether it is n-ary" % root
+            )
+            assert wire["directed"] is (
+                wire["source"] is not None and wire["target"] is not None
+            )
+    finally:
+        built.location.authority.store.close()
+
+
+def test_everything_persisted_is_one_cell_shape(tmp_path):
+    """One physical record, and no side door beside it.
+
+    SPEC court 1 forbids a second persisted semantic shape or a side
+    authority. Everything added today -- host operations, operation
+    definitions, effect receipts, placements, viewports -- went in through
+    signed commands, and this asks the store whether that is actually
+    true: are there other tables holding meaning, and is every row a Cell
+    with the exact four fields.
+
+    A second table is how a graph computer quietly becomes an application
+    with a database, and it never announces itself.
+    """
+    import sqlite3
+    import uuid as _uuid
+
+    from nodelang.clean_host_execution import execute_host_operation
+    from nodelang.clean_host_operations import (
+        compose_host_operations, install_host_operations,
+    )
+    from nodelang.unified_authority import place_composition, read_scope_level
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    scope = built.grand_map.root_id
+
+    # Exercise every kind of thing this session learned to persist.
+    install_host_operations(
+        authority,
+        compose_host_operations([{
+            "op_id": "probe.read", "host": "probe", "kind": "read",
+            "label": "Read", "description": "", "output_type": "row",
+            "destructive": False, "inputs": [],
+        }]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    execute_host_operation(
+        authority, "probe.read", {}, caller=caller,
+        command_id=str(_uuid.uuid4()), invoker=lambda op, args: {"rows": 0},
+    )
+    level = read_scope_level(authority, scope, scope_root=scope, caller=caller)
+    place_composition(
+        authority, scope, sorted(level.composition_roots)[0],
+        {"x": 12.0, "y": 34.0}, caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    database = built.location.database_path
+    authority.store.close()
+
+    connection = sqlite3.connect(database)
+    try:
+        tables = {
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        # The journal, the current index, and the revision chain. Nothing
+        # else may hold meaning: a fourth table is a second shape.
+        assert tables == {"revisions", "cell_versions", "current_cells"}, (
+            "the store grew a table beside the Cell journal: %s"
+            % sorted(tables - {"revisions", "cell_versions", "current_cells"})
+        )
+        for table in ("cell_versions", "current_cells"):
+            columns = {
+                row[1] for row in connection.execute(
+                    "PRAGMA table_info(%s)" % table
+                )
+            }
+            assert {"cell_id", "link0", "link1", "atom"} <= columns, (
+                "%s stopped holding the four Cell fields" % table
+            )
+            extra = columns - {"cell_id", "link0", "link1", "atom", "revision"}
+            assert not extra, (
+                "%s grew fields beside the Cell shape: %s" % (table, sorted(extra))
+            )
+        held = connection.execute("SELECT COUNT(*) FROM current_cells").fetchone()[0]
+        assert held > 0
+    finally:
+        connection.close()
+
+
+def test_the_inspector_has_no_dead_tab(tmp_path):
+    """Every panel the inspector offers shows something the graph holds.
+
+    SPEC court 11 asks that panels and editors are graph-projected and no
+    tab is dead. A dead tab is worse than a missing one: it tells the
+    founder there is something there and then shows nothing, and it looks
+    identical to a panel whose data failed to load.
+
+    This session found exactly that failure once already -- rows rendered
+    an empty box over a value the graph was holding, because the row never
+    said whether its value varied. So each declared panel is checked for a
+    descriptor, and the selected node's rows are checked for their values.
+    """
+    built, _provider = _provision_clean_runtime(tmp_path)
+    try:
+        authority = built.location.authority
+        canvas, lens, _s, _a = _project_current_visual(built)
+        inspector = canvas["inspector"]
+        panels = inspector["presentation"]["panels"]
+        assert panels, "the inspector offers no panel at all"
+        # The lenses are tabs too, and a lens with no name is a tab that
+        # says nothing.
+        for lens_entry in inspector["lenses"]:
+            assert lens_entry["label"], "a visibility lens is offered with no name"
+
+        for panel in panels:
+            assert panel["label"], "a panel is offered with no name"
+            assert panel["components"], (
+                "panel %r is offered with nothing in it" % panel["label"]
+            )
+            for component in panel["components"]:
+                assert component["descriptor"], (
+                    "panel %r has a component that renders nothing"
+                    % panel["label"]
+                )
+            assert panel["applicability_root"] in authority.store.snapshot().cells, (
+                "panel %r is not declared by anything in the graph"
+                % panel["label"]
+            )
+        assert sum(1 for panel in panels if panel["active"]) == 1, (
+            "exactly one panel may be the one in front"
+        )
+    finally:
+        built.location.authority.store.close()
+
+
+def test_an_effect_and_its_receipt_survive_conflict_and_restart(tmp_path):
+    """A run that happened stays happened, and is readable afterwards.
+
+    SPEC court 15 asks for independent states, receipts, reconciliation,
+    conflicts, recovery. The dangerous half is the one nobody sees: an
+    effect reaches a machine, the process dies, and the graph has no idea
+    whether it ran. Then someone retries and the building is changed
+    twice.
+
+    So a real effect is committed, the store is closed and reopened from
+    disk, and the same command is replayed against the recovered graph.
+    The receipt must still be there, and the host must not be asked again.
+    """
+    import uuid as _uuid
+
+    from nodelang.cell_secret_keys import MemorySigningKeyProvider
+    from nodelang.clean_host_execution import execute_host_operation
+    from nodelang.clean_host_operations import (
+        compose_host_operations, install_host_operations,
+    )
+    from nodelang.unified_authority_runtime import open_current_authority
+
+    built, provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    install_host_operations(
+        authority,
+        compose_host_operations([{
+            "op_id": "probe.touch", "host": "probe", "kind": "action",
+            "label": "Touch", "description": "", "output_type": "row",
+            "destructive": False, "inputs": [],
+        }]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+
+    reached = []
+    command = str(_uuid.uuid4())
+    done = execute_host_operation(
+        authority, "probe.touch", {}, caller=caller, command_id=command,
+        invoker=lambda op, args: reached.append(op) or {"ok": True},
+    )
+    assert reached == ["probe.touch"]
+    receipt_root = done.receipt_root
+    effect_root = done.root_id
+    revision = authority.store.snapshot().revision
+    root_path = built.location.root
+    # The process dies here, exactly as it would mid-run.
+    authority.store.close()
+
+    reopened = open_current_authority(root_path, provider)
+    try:
+        recovered = reopened.authority.store.snapshot()
+        assert recovered.revision == revision, "recovery moved the graph"
+        assert receipt_root in recovered.cells, (
+            "the receipt for a run that happened did not survive the restart"
+        )
+        assert effect_root in recovered.cells, (
+            "the effect a run produced did not survive the restart"
+        )
+
+        # The retry a frightened operator would make. It must answer from
+        # the receipt, not from the host.
+        replayed = execute_host_operation(
+            reopened.authority, "probe.touch", {},
+            caller=built.caller_for(reopened.authority)
+            if hasattr(built, "caller_for") else caller,
+            command_id=command,
+            invoker=lambda op, args: reached.append(op) or {"ok": True},
+        )
+        assert reached == ["probe.touch"], (
+            "a replayed effect reached the host a second time"
+        )
+        assert replayed.replayed is True
+        assert replayed.receipt_root == receipt_root
+        assert reopened.authority.store.snapshot().revision == revision, (
+            "a replay must not move the graph"
+        )
+    finally:
+        reopened.authority.store.close()
+
+
+def test_no_declared_operation_is_a_dead_button():
+    """What the catalogue offers is exactly what an adapter can carry out.
+
+    A button that refuses is worse than a button that is absent. The
+    person who pressed it now has to work out whether their model is
+    wrong, their session is wrong, or the program never could do this at
+    all -- and only the last one is true. This is how a working program
+    becomes a demo: not by breaking, but by offering.
+
+    So the two sides are held equal in both directions. Nothing may be
+    declared without an adapter behind it, and no adapter may hold a
+    script for something the catalogue never declared, because power
+    nobody declared is power nobody reviewed.
+    """
+    from nodelang import clean_office_adapter, clean_revit_adapter
+    from nodelang.clean_host_catalogue_source import HOST_OPERATION_RECORDS
+    from nodelang.clean_host_operations import compose_host_operations
+
+    catalogue = compose_host_operations(HOST_OPERATION_RECORDS)
+    declared = {str(entry["op_id"]) for entry in catalogue["operations"]}
+    carried_out = (
+        set(clean_revit_adapter._READS)
+        | set(clean_office_adapter._OPEN_READS)
+        | set(clean_office_adapter._INSIDE_READS)
+    )
+    assert declared, "the catalogue declares nothing at all"
+    assert not (declared - carried_out), (
+        "declared with no adapter behind it: %s"
+        % sorted(declared - carried_out)
+    )
+    assert not (carried_out - declared), (
+        "an adapter carries out what the catalogue never declared: %s"
+        % sorted(carried_out - declared)
+    )
+
+    for entry in catalogue["operations"]:
+        assert entry["kind"] == "read", (
+            "%s is declared as %r; this build offers reads only"
+            % (entry["op_id"], entry["kind"])
+        )
+        assert entry["destructive"] is False, (
+            "%s is a read and must not be marked destructive"
+            % entry["op_id"]
+        )
+        assert str(entry["label"]).strip(), (
+            "%s has no label to show" % entry["op_id"]
+        )
+        assert str(entry["description"]).strip(), (
+            "%s has no description to show" % entry["op_id"]
+        )
+
+    # Which machine a host reaches is named where the runtime is stood
+    # up, not here. What this court can hold is that the catalogue never
+    # names a host the adapters cannot answer for -- proven above by the
+    # two sets being equal, operation by operation.
+    assert set(catalogue["hosts"]) == {
+        str(entry["op_id"]).split(".", 1)[0]
+        for entry in catalogue["operations"]
+    }
+
+
+def test_the_operation_catalogue_can_be_revised_not_only_declared(tmp_path):
+    """Adding an operation revises the catalogue on the graph.
+
+    This is the whole claim the catalogue makes for itself: that what the
+    runtime can do is graph state, so extending it is a revision rather
+    than an edit-and-redeploy. The declare path was exercised constantly
+    and the revise path never was, and it did not work at all -- it
+    raised before it wrote. A branch nobody runs is a branch nobody has.
+
+    So: install, install again with more, and read back what the graph
+    then says the runtime can do.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_host_operations import (
+        compose_host_operations, install_host_operations, read_host_operations,
+    )
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+
+    def record(op_id):
+        return {
+            "op_id": op_id, "host": op_id.split(".", 1)[0], "kind": "read",
+            "label": op_id, "description": "d", "output_type": "row",
+            "destructive": False, "inputs": [],
+        }
+
+    first = install_host_operations(
+        authority, compose_host_operations([record("probe.one")]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    assert len(read_host_operations(authority, caller=caller)["operations"]) == 1
+
+    # The same catalogue again must not churn the graph.
+    steady = authority.store.snapshot().revision
+    again = install_host_operations(
+        authority, compose_host_operations([record("probe.one")]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    assert again == first
+    assert authority.store.snapshot().revision == steady, (
+        "installing an unchanged catalogue moved the graph"
+    )
+
+    # And now the branch that had never run.
+    revised = install_host_operations(
+        authority,
+        compose_host_operations([record("probe.one"), record("probe.two")]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    assert revised == first, "revising the catalogue moved it to a new root"
+    held = read_host_operations(authority, caller=caller)
+    assert [entry["op_id"] for entry in held["operations"]] == [
+        "probe.one", "probe.two",
+    ]
+    assert authority.store.snapshot().revision > steady
+
+def test_a_definition_with_nothing_to_compose_can_be_placed(tmp_path):
+    """A library card is placeable unless it has participants to choose.
+
+    The client routes a catalogue entry by one fact: whether it carries a
+    composition contract. With a contract it goes to the relation
+    composer, which demands a placement interaction that is only ever
+    bound for entries WITHOUT one. Stamping a contract on every entry
+    therefore satisfied both halves of a contradiction and produced a
+    library where not one card could be placed -- no error at load, no
+    missing button, just a refusal on every click.
+
+    So: an ordinary definition declares no interfaces and must project no
+    contract, and a definition that declares interfaces must project one.
+    """
+    from nodelang.clean_visual_projection import _catalog_projection
+
+    def entry(name, interfaces):
+        return {
+            "id": "def-" + name, "name": name, "version": "1",
+            "kind": "published", "parameters": {}, "interfaces": interfaces,
+            "presentation": {"label": name},
+        }
+
+    place_control = {
+        "owner": "app:control:library:place",
+        "title": "Place on canvas",
+        "icon": "app:icon:lucide:plus",
+        "activation": {
+            "binding": "app:control-binding:library:place",
+            "capability": "app:device-capability:instantiate",
+        },
+    }
+    projected = _catalog_projection(
+        [
+            entry("List worksets", {}),
+            entry("Relation", {"left": {"direction": "input"}}),
+        ],
+        place_control,
+    )
+    by_name = {item["name"]: item for item in projected}
+    assert by_name["List worksets"]["composition_contract"] is None, (
+        "a definition with no participants was routed to the relation "
+        "composer, where it cannot be placed"
+    )
+    assert by_name["Relation"]["composition_contract"] == {
+        "root": "def-Relation"
+    }
+
+def test_every_published_definition_is_placeable_in_the_scope_shown(tmp_path):
+    """A card in the library has a placement interaction where it is shown.
+
+    The interaction set is computed from the definitions published at the
+    moment it is installed, and it binds them per scope. Publish a
+    definition afterwards, or install the set walking from a root that is
+    not the one the canvas opens on, and the library fills with cards the
+    graph declared no way to place. Nothing errors: the buttons render,
+    and every click is discarded.
+
+    The canvas scope is therefore the subject here -- not some scope, the
+    one being shown -- and the claim is coverage: every published
+    definition offered in that scope can be placed in it.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_scope_interactions import (
+        open_clean_scope_interactions, revise_clean_scope_interactions,
+    )
+    from nodelang.unified_authority import declare_definition, promote_definition
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    scope = built.grand_map.root_id
+
+    def publish(name):
+        declared = declare_definition(
+            authority, name, {}, caller=caller,
+            command_id=str(_uuid.uuid4()), version="1",
+            presentation={"label": name, "icon": "play"},
+        )
+        shared = promote_definition(
+            authority, declared.root_id, target_lifecycle="shared",
+            version="1-shared", evidence_roots=(declared.receipt_root,),
+            caller=caller, command_id=str(_uuid.uuid4()),
+        )
+        promote_definition(
+            authority, declared.root_id, target_lifecycle="published",
+            version="1-published", evidence_roots=(shared.receipt_root,),
+            caller=caller, command_id=str(_uuid.uuid4()),
+        )
+        return declared.root_id
+
+    # The runtime is provisioned with a set already installed, which is
+    # exactly the situation a growing catalogue is always in.
+    first = publish("Placeable one")
+    revise_clean_scope_interactions(
+        authority, built.browser, scope,
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    held = open_clean_scope_interactions(authority, caller=caller)
+    bound = set(held.bindings.get(scope, {}))
+    assert scope in held.bindings, (
+        "the scope the canvas opens on carries no interactions at all"
+    )
+    assert first in bound, (
+        "a published definition has no way to be placed in the scope that "
+        "shows it"
+    )
+
+    # Publishing after the set was installed is the ordinary case: a
+    # catalogue grows. The set must be revisable to cover it, or every
+    # card added from then on is a button that does nothing.
+    second = publish("Placeable two")
+    revise_clean_scope_interactions(
+        authority, built.browser, scope,
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    revised = open_clean_scope_interactions(authority, caller=caller)
+    bound_after = set(revised.bindings.get(scope, {}))
+    assert first in bound_after and second in bound_after, (
+        "revising did not cover both definitions: %s"
+        % sorted({first, second} - bound_after)
+    )
+
+def test_an_effect_says_which_node_asked_for_it(tmp_path):
+    """A run started from a node is recorded against that node.
+
+    Without it the graph holds the answer and no record of what asked the
+    question: the rows exist, and nothing can show a node what it last
+    returned. The result is present and unreachable, which reads to the
+    person at the canvas exactly like a run that did nothing.
+
+    The subject also separates two requests. The same operation run for
+    two different nodes is two different questions, so replaying one must
+    never answer for the other -- the guard on that is the subject being
+    part of the request digest, and it is checked here by reusing one
+    command identity across two subjects.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_host_execution import execute_host_operation
+    from nodelang.clean_host_operations import (
+        compose_host_operations, install_host_operations,
+    )
+    from nodelang.unified_authority import (
+        InvalidCell, _decode_data_value, relation_members,
+    )
+
+    def effect_record(root):
+        """Read back the contract an effect carries, key by key."""
+        snapshot = authority.store.snapshot()
+        presentation = next(
+            member.participant_id
+            for member in relation_members(snapshot, root)
+            if member.role_id == authority.role("presentation")
+        )
+        held = {}
+        for member in relation_members(snapshot, presentation):
+            if member.role_id != authority.role("property"):
+                continue
+            parts = relation_members(snapshot, member.participant_id)
+            name = next(
+                _decode_data_value(authority, snapshot, inner.participant_id)
+                for inner in parts
+                if inner.role_id == authority.role("name")
+            )
+            value = next(
+                _decode_data_value(authority, snapshot, inner.participant_id)
+                for inner in parts
+                if inner.role_id == authority.role("value")
+            )
+            held[str(name)] = value
+        return held
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    install_host_operations(
+        authority,
+        compose_host_operations([{
+            "op_id": "probe.read", "host": "probe", "kind": "read",
+            "label": "Read", "description": "d", "output_type": "row",
+            "destructive": False, "inputs": [],
+        }]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+
+    node = "node-" + str(_uuid.uuid4())
+    done = execute_host_operation(
+        authority, "probe.read", {}, caller=caller,
+        command_id=str(_uuid.uuid4()),
+        invoker=lambda op, args: {"rows": 3},
+        subject_root=node,
+    )
+    held = effect_record(done.root_id)
+    assert held["subject"] == node, (
+        "the effect does not say which node ran it: %r" % (held,)
+    )
+
+    # One command identity, two subjects: the second is a different
+    # request and must not be answered from the first receipt.
+    shared = str(_uuid.uuid4())
+    execute_host_operation(
+        authority, "probe.read", {}, caller=caller, command_id=shared,
+        invoker=lambda op, args: {"rows": 1}, subject_root="node-a",
+    )
+    try:
+        execute_host_operation(
+            authority, "probe.read", {}, caller=caller, command_id=shared,
+            invoker=lambda op, args: {"rows": 1}, subject_root="node-b",
+        )
+    except InvalidCell as exc:
+        assert "idempotency" in str(exc).lower()
+    else:
+        raise AssertionError(
+            "a replay for one node answered with another node's receipt"
+        )
+
+
+def test_a_node_shows_what_it_returned_and_not_what_another_node_did(tmp_path):
+    """The last run of a node is found, and only that node's run.
+
+    A receipt names the node that asked for it, and every receipt the
+    graph signs hangs off the history root in signing order. Reading
+    backwards therefore answers "what did this node last return" using
+    the only direction relations walk -- no index, no new relation.
+
+    Two nodes run the same operation here, because that is the case a
+    subject check exists for: without it the newest receipt wins and a
+    node confidently shows another node's rows, which is worse than
+    showing nothing.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_host_execution import execute_host_operation
+    from nodelang.clean_host_operations import (
+        compose_host_operations, install_host_operations,
+    )
+    from nodelang.clean_visual_projection import latest_run_rows
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    install_host_operations(
+        authority,
+        compose_host_operations([{
+            "op_id": "probe.rows", "host": "probe", "kind": "read",
+            "label": "Rows", "description": "d", "output_type": "row",
+            "destructive": False, "inputs": [],
+        }]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+
+    first, second = "node-first", "node-second"
+    execute_host_operation(
+        authority, "probe.rows", {}, caller=caller,
+        command_id=str(_uuid.uuid4()), subject_root=first,
+        invoker=lambda op, args: {"result": [{"name": "alpha"}]},
+    )
+    # The second run is newer, so a reader that ignored the subject would
+    # hand these rows to the first node.
+    execute_host_operation(
+        authority, "probe.rows", {}, caller=caller,
+        command_id=str(_uuid.uuid4()), subject_root=second,
+        invoker=lambda op, args: {"result": [{"name": "beta"}, {"name": "gamma"}]},
+    )
+
+    snapshot = authority.store.snapshot()
+    operation, rows, returned = latest_run_rows(authority, snapshot, first)
+    assert operation == "probe.rows"
+    assert [row["name"] for row in rows] == ["alpha"], (
+        "a node was shown another node's rows: %s" % (rows,)
+    )
+    operation, rows, returned = latest_run_rows(authority, snapshot, second)
+    assert [row["name"] for row in rows] == ["beta", "gamma"]
+
+    # A node nobody has run reads as no run, rather than as the newest
+    # run belonging to somebody else.
+    operation, rows, returned = latest_run_rows(authority, snapshot, "node-never-run")
+    assert (operation, rows, returned) == ("", [], 0)
+
+    # The walk is bounded, so a node whose run has scrolled out of the
+    # bound reads as no run instead of getting slower forever.
+    operation, rows, returned = latest_run_rows(authority, snapshot, first, limit=1)
+    assert (operation, rows, returned) == ("", [], 0)
+
+def test_a_result_row_shows_every_field_the_host_returned():
+    """A row is shown whole, in a stable order, with nothing promoted.
+
+    This build cannot tell a workset from a sheet and should not try. The
+    shape of an answer belongs to the host that gave it, so choosing
+    which fields to show would be inventing a schema no host stated --
+    and the field left out is always the one somebody needed.
+
+    Stability matters as much as completeness: rows arriving with their
+    keys in a different order must read the same way down the panel, or
+    the same data looks like different data.
+    """
+    from nodelang.clean_visual_projection import _row_line
+
+    row = {
+        "editable": True, "id": 0, "name": "Workset1",
+        "open": True, "owner": "ahmed.fargaly",
+    }
+    line = _row_line(row)
+    for key, value in row.items():
+        assert ("%s: %s" % (key, value)) in line, (
+            "the row dropped %r, which some host thought worth returning"
+            % key
+        )
+
+    # The same row with its keys in another order reads identically.
+    shuffled = {
+        "owner": "ahmed.fargaly", "name": "Workset1", "open": True,
+        "id": 0, "editable": True,
+    }
+    assert _row_line(shuffled) == line, (
+        "key order changed how the row reads: %r vs %r"
+        % (_row_line(shuffled), line)
+    )
+
+    # A field this build has never heard of is shown like any other.
+    exotic = _row_line({"zeta": 1, "alpha": "x"})
+    assert exotic.index("alpha") < exotic.index("zeta")
+    assert "zeta: 1" in exotic
+
+def test_publishing_a_card_without_binding_it_is_detectable(tmp_path):
+    """A published card nobody can place must be findable before a click.
+
+    This is the trap that produced dead buttons twice in one night, and
+    it is invisible by construction: publishing succeeds, the library
+    lists the card, and nothing is wrong until somebody presses it. The
+    graph knows both facts -- what is published, and what is bound -- and
+    the gap between them is the answer.
+
+    So the check is courted from the failing side first. A definition
+    published and not yet bound must be REPORTED, because a check that
+    only ever returns an empty tuple would pass forever while the canvas
+    filled with cards that refuse.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_scope_interactions import (
+        revise_clean_scope_interactions, unbound_published_definitions,
+    )
+    from nodelang.unified_authority import declare_definition, promote_definition
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    scope = built.grand_map.root_id
+
+    assert unbound_published_definitions(
+        authority, scope, caller=caller
+    ) == (), "the provisioned runtime already has cards nobody can place"
+
+    declared = declare_definition(
+        authority, "Unbound card", {}, caller=caller,
+        command_id=str(_uuid.uuid4()), version="1",
+        presentation={"label": "Unbound card", "icon": "play"},
+    )
+    shared = promote_definition(
+        authority, declared.root_id, target_lifecycle="shared",
+        version="1-shared", evidence_roots=(declared.receipt_root,),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    promote_definition(
+        authority, declared.root_id, target_lifecycle="published",
+        version="1-published", evidence_roots=(shared.receipt_root,),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+
+    # Published, listed, and unplaceable. The check must say so.
+    assert declared.root_id in unbound_published_definitions(
+        authority, scope, caller=caller
+    ), "a card that cannot be placed was reported as fine"
+
+    revise_clean_scope_interactions(
+        authority, built.browser, scope,
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    assert unbound_published_definitions(
+        authority, scope, caller=caller
+    ) == (), "revising did not make the published card placeable"
+
+def test_a_run_that_answers_with_too_much_is_capped_and_says_so(tmp_path):
+    """A large answer is bounded, and the graph records that it was.
+
+    A row costs about fifty cells to persist, so a read that finds eight
+    thousand of something writes four hundred thousand cells on one
+    press. That is not a hypothetical: a card in the library did exactly
+    that and the runtime died mid-audit, having answered three questions
+    and then nothing.
+
+    Capping alone would be worse than the crash. A graph that quietly
+    held the first thousand rows while reading exactly like a graph
+    holding all eight thousand gives a confident wrong answer to every
+    later question, and nobody knows to doubt it. So both numbers are
+    recorded, and the court checks the honesty as hard as the bound.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_host_execution import (
+        PERSISTED_ROW_LIMIT, execute_host_operation,
+    )
+    from nodelang.clean_host_operations import (
+        compose_host_operations, install_host_operations,
+    )
+    from nodelang.unified_authority import _decode_data_value, relation_members
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    install_host_operations(
+        authority,
+        compose_host_operations([{
+            "op_id": "probe.many", "host": "probe", "kind": "read",
+            "label": "Many", "description": "d", "output_type": "row",
+            "destructive": False, "inputs": [],
+        }]),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+
+    def fields(root):
+        snapshot = authority.store.snapshot()
+        presentation = next(
+            m.participant_id for m in relation_members(snapshot, root)
+            if m.role_id == authority.role("presentation")
+        )
+        held = {}
+        for member in relation_members(snapshot, presentation):
+            if member.role_id != authority.role("property"):
+                continue
+            parts = relation_members(snapshot, member.participant_id)
+            key = next(
+                _decode_data_value(authority, snapshot, p.participant_id)
+                for p in parts if p.role_id == authority.role("name")
+            )
+            held[str(key)] = next(
+                _decode_data_value(authority, snapshot, p.participant_id)
+                for p in parts if p.role_id == authority.role("value")
+            )
+        return held
+
+    oversized = PERSISTED_ROW_LIMIT + 500
+    done = execute_host_operation(
+        authority, "probe.many", {}, caller=caller,
+        command_id=str(_uuid.uuid4()),
+        invoker=lambda op, args: {
+            "result": [{"id": index} for index in range(oversized)]
+        },
+    )
+    held = fields(done.root_id)
+    assert held["rows_returned"] == oversized, (
+        "the graph forgot how many rows the host actually found"
+    )
+    assert held["rows_recorded"] == PERSISTED_ROW_LIMIT
+    assert len(held["outcome"]["result"]) == PERSISTED_ROW_LIMIT, (
+        "the cap did not hold; one press can still flood the graph"
+    )
+
+    # An ordinary answer is untouched, and says so plainly.
+    small = execute_host_operation(
+        authority, "probe.many", {}, caller=caller,
+        command_id=str(_uuid.uuid4()),
+        invoker=lambda op, args: {"result": [{"id": 1}, {"id": 2}]},
+    )
+    held = fields(small.root_id)
+    assert held["rows_returned"] == 2 and held["rows_recorded"] == 2
+    assert len(held["outcome"]["result"]) == 2
+
+def test_a_capped_result_says_what_it_left_out_where_it_is_read():
+    """The panel that shows the rows is where the missing ones are named.
+
+    Capping is recorded in the graph, which protects later reasoning but
+    not the person looking at a list. A panel showing a thousand rows and
+    reading exactly like a panel showing all eight thousand is the same
+    confident wrong answer, just delivered to a human instead of a query.
+
+    So the summary carries both numbers whenever they differ, and carries
+    neither pretence nor apology when they do not.
+    """
+    from nodelang.clean_visual_projection import _run_summary
+
+    capped = _run_summary("revit.list_materials", 1000, 8121)
+    assert "1000" in capped and "8121" in capped, (
+        "a capped run reads like a whole one: %r" % capped
+    )
+    assert "revit.list_materials" in capped
+
+    whole = _run_summary("revit.list_floors", 219, 219)
+    assert "219" in whole
+    assert "showing" not in whole, (
+        "an answer that was not capped implied it was: %r" % whole
+    )
+
+    # A node that has never run states nothing rather than zero of zero.
+    assert _run_summary("", 0, 0) is None
+
+def test_rebinding_cannot_silently_rewrite_the_whole_graph(tmp_path):
+    """A revise that would write a million cells says so instead.
+
+    Revising the interaction set rewrites every binding for every scope,
+    so its cost tracks the whole catalogue rather than what changed. Four
+    of these took a 654 MB graph to 2.3 GB and a two-minute start to
+    thirteen minutes, and each one reported success in a second or two --
+    the damage only shows up at the NEXT boot, which is the worst place
+    for a cost to appear.
+
+    Nothing else in this system can write a million cells on one call.
+    The ceiling is not a fix for the shape; it is the thing that makes
+    the shape impossible to pay for by accident.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_scope_interactions import (
+        revise_clean_scope_interactions, unbound_published_definitions,
+    )
+    from nodelang.unified_authority import (
+        InvalidCell, declare_definition, promote_definition,
+    )
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    scope = built.grand_map.root_id
+
+    declared = declare_definition(
+        authority, "Ceiling probe", {}, caller=caller,
+        command_id=str(_uuid.uuid4()), version="1",
+        presentation={"label": "Ceiling probe", "icon": "play"},
+    )
+    shared = promote_definition(
+        authority, declared.root_id, target_lifecycle="shared",
+        version="1-shared", evidence_roots=(declared.receipt_root,),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+    promote_definition(
+        authority, declared.root_id, target_lifecycle="published",
+        version="1-published", evidence_roots=(shared.receipt_root,),
+        caller=caller, command_id=str(_uuid.uuid4()),
+    )
+
+    # A ceiling of nothing refuses, and the refusal states the real cost
+    # rather than a generic complaint.
+    try:
+        revise_clean_scope_interactions(
+            authority, built.browser, scope,
+            caller=caller, command_id=str(_uuid.uuid4()), cell_limit=0,
+        )
+    except InvalidCell as exc:
+        assert "cells" in str(exc), exc
+        assert "limit" in str(exc), exc
+    else:
+        raise AssertionError("a rebind of any size was permitted")
+
+    # Refusing must not half-write: the card is still unplaceable, which
+    # is a worse state to be silent about than to be stopped in.
+    assert declared.root_id in unbound_published_definitions(
+        authority, scope, caller=caller
+    )
+
+    # And a caller who accepts the cost deliberately still gets it.
+    revise_clean_scope_interactions(
+        authority, built.browser, scope,
+        caller=caller, command_id=str(_uuid.uuid4()), cell_limit=None,
+    )
+    assert unbound_published_definitions(
+        authority, scope, caller=caller
+    ) == ()
+
+def test_rebinding_unchanged_bindings_writes_almost_nothing(tmp_path):
+    """Revising with nothing new to bind must not rewrite the graph.
+
+    Identity used to be minted, so every rebind produced a fresh uuid for
+    the event, for each interaction and for each entry -- and a binding
+    that had not changed was written again as new cells. One rebind on the
+    founder graph wrote 1,133,504 of them, four of them made a 654 MB
+    graph 2.3 GB, and the bill only arrives at the next start.
+
+    A binding is fully determined by its scope, control, target and
+    capability. Two revises over the same bindings therefore produce the
+    same cells, and cells the graph already holds are not written again.
+    """
+    import uuid as _uuid
+
+    from nodelang.clean_scope_interactions import (
+        revise_clean_scope_interactions, unbound_published_definitions,
+    )
+    from nodelang.unified_authority import declare_definition, promote_definition
+
+    built, _provider = _provision_clean_runtime(tmp_path)
+    authority = built.location.authority
+    caller = built.caller
+    scope = built.grand_map.root_id
+
+    def publish(name):
+        declared = declare_definition(
+            authority, name, {}, caller=caller,
+            command_id=str(_uuid.uuid4()), version="1",
+            presentation={"label": name, "icon": "play"},
+        )
+        shared = promote_definition(
+            authority, declared.root_id, target_lifecycle="shared",
+            version="1-shared", evidence_roots=(declared.receipt_root,),
+            caller=caller, command_id=str(_uuid.uuid4()),
+        )
+        promote_definition(
+            authority, declared.root_id, target_lifecycle="published",
+            version="1-published", evidence_roots=(shared.receipt_root,),
+            caller=caller, command_id=str(_uuid.uuid4()),
+        )
+
+    publish("Rebind probe")
+    before = authority.store.snapshot().revision
+    revise_clean_scope_interactions(
+        authority, built.browser, scope,
+        caller=caller, command_id=str(_uuid.uuid4()), cell_limit=None,
+    )
+    first = authority.store.snapshot().revision
+    assert unbound_published_definitions(authority, scope, caller=caller) == ()
+
+    def written(from_revision, to_revision):
+        store = authority.store
+        return sum(
+            len(store.at(r).cells) - len(store.at(r - 1).cells)
+            for r in range(from_revision + 1, to_revision + 1)
+        )
+
+    grew_binding = written(before, first)
+
+    # Nothing has changed since, so a second revise has nothing to write.
+    # It is refused as a no-op, which is the honest answer -- or it writes
+    # far less than the first did, never the same again.
+    try:
+        revise_clean_scope_interactions(
+            authority, built.browser, scope,
+            caller=caller, command_id=str(_uuid.uuid4()), cell_limit=None,
+        )
+    except Exception as exc:
+        assert "already carry this source" in str(exc), exc
+    else:
+        second = authority.store.snapshot().revision
+        grew_again = written(first, second)
+        assert grew_again <= max(64, grew_binding // 4), (
+            "rebinding unchanged bindings still rewrote the graph: "
+            "%d cells against %d for the first bind"
+            % (grew_again, grew_binding)
+        )

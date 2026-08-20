@@ -40,7 +40,8 @@ def _bindings():
 def test_every_visible_control_has_one_openable_activation_and_condition():
     store, controls, _built, projected = _bindings()
     assert set(projected.bindings) == set(controls.control_roots)
-    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 15
+    # 16 = 15 + the Run control (host execution, 2026-08-20).
+    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 16
     for owner_root, binding in projected.bindings.items():
         assert binding.control_root == owner_root
         assert binding.capability_root in store.snapshot().cells
@@ -160,7 +161,7 @@ def test_binding_catalog_old_release_appends_protocol_and_bindings(monkeypatch):
         store.snapshot(), migrated.protocol, migrated.catalog_root
     )
 
-    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 15
+    assert len(projected.bindings) == len(CONTROL_BINDING_SPECS) == 16
     assert dict(old.binding_roots).items() <= dict(migrated.binding_roots).items()
     assert any(
         member.participant_id == CAPABILITY_RELATION_FORM

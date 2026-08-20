@@ -119,6 +119,13 @@ def compose_library_definition_template(
                 prefix + ":attribute:definition-root",
                 "data-universal-definition", identity,
             ),
+            # A library row is picked up and dropped where the founder
+            # points. The click on the + still places; the drag places AT
+            # the drop point (the client's drop handler reads this).
+            builder.attribute(
+                prefix + ":attribute:row-draggable", "draggable",
+                literal("row-draggable", "true"),
+            ),
             builder.attribute(
                 prefix + ":attribute:definition-title",
                 "title", description,

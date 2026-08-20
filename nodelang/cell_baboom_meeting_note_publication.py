@@ -101,7 +101,7 @@ def project_baboom_meeting_note_publication_protocol(
 ) -> BaboomMeetingNotePublicationProtocol:
     root_id = prefix + ":root"
     roles = MappingProxyType({name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES})
-    if {root_id, *roles.values()} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {root_id, *roles.values()}):
         raise InvalidCell("BABOOM meeting-note publication protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {roles["vocabulary-member"], roles["binding-member"]}

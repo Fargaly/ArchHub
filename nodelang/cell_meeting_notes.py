@@ -167,7 +167,7 @@ def project_baboom_meeting_notes_protocol(
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     capture_modes = _mapping_roots(prefix, "capture-mode", CAPTURE_MODE_NAMES)
     states = _mapping_roots(prefix, "state", STATE_NAMES)
-    if {root_id, *roles.values(), *capture_modes.values(), *states.values()} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {root_id, *roles.values(), *capture_modes.values(), *states.values()}):
         raise InvalidCell("BABOOM meeting-notes protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {roles["vocabulary-member"], roles["session-member"]}

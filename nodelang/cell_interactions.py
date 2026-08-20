@@ -497,7 +497,7 @@ class InteractionProjectionBroker:
         require_released: bool = False,
     ) -> InteractionProjectionHandle:
         required = {session_root, subject_root, view_root}
-        if required - set(snapshot.cells):
+        if any(_root not in snapshot.cells for _root in required):
             raise InvalidCell("projection authority root is missing")
         handle = InteractionProjectionHandle(_PROJECTION_MINT_KEY)
         with self._lock:
@@ -554,7 +554,15 @@ class InteractionProjectionBroker:
         lifetime_seconds: float = 60.0,
         now: float | None = None,
         budget: int = 10_000,
+        projected_interactions: tuple[Interaction, ...] | None = None,
     ) -> InteractionProjectionIssue:
+        """Issue a lease over these interactions for this snapshot.
+
+        ``projected_interactions`` lets a caller hand in the interactions it
+        already read and verified against this same protocol -- a server
+        whose interaction cells are process constants re-reads nothing per
+        revision. Every other check here still runs on the snapshot given.
+        """
         if lifetime_seconds <= 0 or lifetime_seconds > 300:
             raise ValueError("projection lease lifetime must be within five minutes")
         with self._lock:
@@ -579,14 +587,21 @@ class InteractionProjectionBroker:
             projected_bindings: dict[str, list[str]] = {
                 root_id: [] for root_id in controls
             }
-            projected_interactions = (
-                _read_interactions_with_verified_protocol(
-                    snapshot,
-                    protocol,
-                    interactions,
-                    budget=budget,
+            if projected_interactions is None:
+                projected_interactions = (
+                    _read_interactions_with_verified_protocol(
+                        snapshot,
+                        protocol,
+                        interactions,
+                        budget=budget,
+                    )
                 )
-            )
+            elif tuple(
+                item.root_id for item in projected_interactions
+            ) != interactions:
+                raise InvalidCell(
+                    "pre-read interactions do not match the projected set"
+                )
             for interaction in projected_interactions:
                 if interaction.control_root not in projected_bindings:
                     raise InvalidCell(
@@ -1408,7 +1423,7 @@ def release_interaction(
         interaction.release_signing_key_version_root,
         *interaction.evidence_roots,
     }
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("interaction release authority or evidence is missing")
     identity = authentication_broker.resolve(authentication_context)
     if identity.subject_root != reviewer_root:

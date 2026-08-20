@@ -42,7 +42,12 @@ CAPABILITY_EDIT_VALUE = "app:device-capability:edit-value"
 CAPABILITY_RELATION_MEMBERS = "app:device-capability:relation-members"
 CAPABILITY_TOPOLOGY = "app:device-capability:topology"
 CAPABILITY_TRANSITION = "app:device-capability:transition"
+# Running a declared host operation is its own capability. Folding it
+# into an existing one would let a control that may reach a machine
+# be granted by a permission written for something that cannot.
+CAPABILITY_EXECUTE = "app:device-capability:execute"
 CAPABILITIES = MappingProxyType({
+    "execute": CAPABILITY_EXECUTE,
     "view-section": CAPABILITY_VIEW_SECTION,
     "instantiate": CAPABILITY_INSTANTIATE,
     "scope": CAPABILITY_SCOPE,
@@ -72,12 +77,17 @@ OPERATORS = MappingProxyType({
 FACT_SCOPE_PARENT = "app:control-fact:scope-parent-present"
 FACT_SELECTION_COUNT = "app:control-fact:selection-count"
 FACT_FOCUS_COMPOSITION = "app:control-fact:focus-is-composition"
+# Whether the focused node declares a host operation. A canvas can
+# hold nodes that mean something and nodes that DO something, and a
+# control that acts on a machine must be able to tell them apart.
+FACT_FOCUS_OPERATION = "app:control-fact:focus-is-operation"
 FACT_CAN_UNDO = "app:control-fact:can-undo"
 FACT_CAN_REDO = "app:control-fact:can-redo"
 FACTS = MappingProxyType({
     "scope-parent-present": FACT_SCOPE_PARENT,
     "selection-count": FACT_SELECTION_COUNT,
     "focus-is-composition": FACT_FOCUS_COMPOSITION,
+    "focus-is-operation": FACT_FOCUS_OPERATION,
     "can-undo": FACT_CAN_UNDO,
     "can-redo": FACT_CAN_REDO,
 })
@@ -193,6 +203,20 @@ CONTROL_BINDING_SPECS = (
                 FactOperand("selection-count"), LiteralOperand("1"),
             )),
             ConditionSpec("truthy", (FactOperand("focus-is-composition"),)),
+        )),
+    ),
+    ControlBindingSpec(
+        "app:control:canvas:run",
+        "execute",
+        (),
+        # A Run offered where nothing runnable is selected is a control that
+        # lies about what the graph can do, so it appears only when exactly
+        # one node is focused and that node declares a host operation.
+        ConditionSpec("all", (
+            ConditionSpec("equal", (
+                FactOperand("selection-count"), LiteralOperand("1"),
+            )),
+            ConditionSpec("truthy", (FactOperand("focus-is-operation"),)),
         )),
     ),
     ControlBindingSpec(
@@ -673,6 +697,7 @@ __all__ = [
     "CAPABILITY_RELATION_FORM",
     "CAPABILITY_RELATION_MEMBERS",
     "CAPABILITY_TOPOLOGY",
+    "CAPABILITY_EXECUTE",
     "CAPABILITY_TRANSITION",
     "CAPABILITY_SCOPE",
     "CAPABILITY_VIEWPORT",
@@ -685,6 +710,7 @@ __all__ = [
     "ControlBindingProtocol",
     "ControlBindingSpec",
     "FACT_FOCUS_COMPOSITION",
+    "FACT_FOCUS_OPERATION",
     "FACT_CAN_UNDO",
     "FACT_CAN_REDO",
     "FACT_SCOPE_PARENT",

@@ -1278,6 +1278,37 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     await executeProjectedInteraction(button,topologyDeltaMode);
   }
   function renderStaticControls(projection) {
+    // The rail draws what the graph's catalogue declares for its zone,
+    // and only the controls that DO something here: Home fits the work,
+    // Search focuses the library. Chrome with nothing behind it does not
+    // render.
+    const rail=document.querySelector('.icon-rail');
+    const controls=projection.configuration?.design_system?.control_catalog
+      ?.controls || [];
+    if (rail && !rail.dataset.railBuilt) {
+      const actions={
+        'Home':() => {
+          const fit=document.querySelector('[data-universal-zoom="fit"]');
+          if (fit) fit.click();
+        },
+        'Search':() => {
+          const box=document.querySelector('[data-universal-library-search]');
+          if (box) { box.focus(); box.select?.(); }
+        },
+      };
+      controls.filter(control => control.zone === 'application-rail'
+          && actions[control.title]).forEach(control => {
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='rail-button';
+        button.dataset.universalControl=control.owner;
+        button.title=control.title;
+        button.setAttribute('aria-label',control.title);
+        button.addEventListener('click',actions[control.title]);
+        rail.append(button);
+      });
+      rail.dataset.railBuilt='true';
+    }
     document.querySelectorAll('.icon-rail [data-universal-control]').forEach(
       button => applyControlPresentation(
         button,button.dataset.universalControl,{showLabel:true,projection}
@@ -1409,7 +1440,15 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       throw new Error('Projection delta omitted mutable configuration state');
     }
     const merged={...baseProjection};
-    interactionDeltaFields.forEach(field => { merged[field]=result[field]; });
+    // The catalogue and authorization block travel only when they changed
+    // (topology deltas) or never (interaction deltas): absent means "what
+    // you hold still stands", not "cleared". Every other delta field is
+    // authoritative as sent -- absent clears it, exactly as before.
+    const heldWhenAbsent=new Set(['catalog','authorization']);
+    interactionDeltaFields.forEach(field => {
+      if (heldWhenAbsent.has(field) && !(field in result)) return;
+      merged[field]=result[field];
+    });
     merged.configuration={
       ...baseProjection.configuration,
       ...result.configuration_state,
@@ -1717,7 +1756,21 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   }
   function bindProjectedInteraction(control,controlRoot) {
     const binding=projectedInteraction(controlRoot);
-    if (!binding) return;
+    if (!binding) {
+      // A control the graph declared no interaction for cannot act -- with
+      // one honest exception: a control whose capability is served by this
+      // client alone. The viewport controls commit through the gesture
+      // path and never held an interaction; disabling them for that took
+      // Fit and Zoom away from every canvas at once.
+      const capability=controlPresentation(
+        control.dataset.universalControl,lastProjection
+      )?.activation?.capability;
+      if (capability === controlCapabilities.viewport) return;
+      control.dataset.universalInteractionMissing='true';
+      control.setAttribute('aria-disabled','true');
+      if ('disabled' in control) control.disabled=true;
+      return;
+    }
     control.dataset.universalInteraction=binding.interaction;
     control.dataset.universalInteractionControl=binding.control;
     control.dataset.universalInteractionEvent=binding.event;
@@ -1846,6 +1899,17 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
           ) === receiptMode ? receiptMode : projectionMode,
         };
         if (initialFacts !== null) payload.event_facts=initialFacts;
+        // A derived placement binding declares no inputs, but the drop
+        // still happened at a point. The point travels as the same
+        // event-fact shape; a server that expects declared facts ignores
+        // unknown sources, and the clean instantiate reads them.
+        if (!payload.event_facts && eventContext.placement
+            && Number.isFinite(eventContext.placement.x)) {
+          payload.event_facts=[
+            {source:'canvas-point-x',value:eventContext.placement.x},
+            {source:'canvas-point-y',value:eventContext.placement.y},
+          ];
+        }
         return payload;
       });
     let projection;
@@ -2111,7 +2175,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     'aria-controls','aria-label','aria-labelledby','aria-pressed',
     'aria-selected','autocomplete','disabled','hidden','id','maxlength','open',
     'placeholder','role','spellcheck','step','tabindex','title','type'
-  ]);
+  ,'draggable']);
   const descriptorBoolean=value => (
     value === true || value === 1 || value === '1'
     || value === 'true' || value === 'True'
@@ -2336,6 +2400,58 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       pan_y:padding+(usableHeight-bounds.height*zoom)/2-bounds.top*zoom,
       zoom,
     };
+  }
+  // A canvas that opens where no node is drawn is an empty program. The
+  // stored viewport is the operator's own choice and is honoured whenever it
+  // shows any of the work; when it shows none -- a pan left behind, a node
+  // placed outside it -- the graph's work is what the surface opens on.
+  // This corrects presentation only. Nothing is committed, so the operator's
+  // held viewport survives untouched until they pan for themselves, and the
+  // correction is offered once per opening rather than on every projection.
+  let openedOnWork=false;
+  function viewportShowsAnyNode(projection,canvas,viewport) {
+    if (!projection.nodes.length) return true;
+    const rect=canvas.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return true;
+    const width=projectedNodeWidth(projection);
+    return projection.nodes.some(node => {
+      const x=Number(node.x), y=Number(node.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+      const height=Array.isArray(node.ports)
+        ? projectedNodeHeight(node,projection) : 112;
+      const left=x*viewport.zoom+viewport.pan_x;
+      const top=y*viewport.zoom+viewport.pan_y;
+      const right=left+width*viewport.zoom;
+      const bottom=top+height*viewport.zoom;
+      return right > 0 && left < rect.width
+        && bottom > 0 && top < rect.height;
+    });
+  }
+  function viewportOverWork(projection,canvas) {
+    const held=projection.viewport;
+    if (openedOnWork) return held;
+    openedOnWork=true;
+    // A presentation-only correction must be incapable of taking the
+    // render down: any surprise in this projection's shape means the
+    // held viewport wins, exactly as if this function did not exist.
+    let fitted;
+    try {
+      if (viewportShowsAnyNode(projection,canvas,held)) return held;
+      fitted=fitViewport(projection,canvas);
+    } catch (error) {
+      return held;
+    }
+    // The correction must ALSO become what the projection believes, or
+    // the first wheel notch zooms from the stale stored viewport and
+    // throws every node off-screen again (the founder's first scroll did
+    // exactly that). The projection is replaced, never mutated, and the
+    // fitted viewport is committed once so the stored value stops being
+    // a landmine for the next open.
+    if (projection === lastProjection) {
+      lastProjection={...projection,viewport:fitted};
+    }
+    setTimeout(() => { commit({viewport:fitted}).catch(() => {}); },0);
+    return fitted;
   }
   function topologyAppendPlan(previous,projection) {
     if (!previous || previous.scope.current !== projection.scope.current) {
@@ -2634,7 +2750,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     layer.setAttribute('height',String(stageHeight));
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
-    applyViewport(canvas,projection.viewport);
+    applyViewport(canvas,viewportOverWork(projection,canvas));
     requestAnimationFrame(() => redraw(redrawSegments));
     return true;
   }
@@ -2718,7 +2834,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     layer.setAttribute('height',String(stageHeight));
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
-    applyViewport(canvas,projection.viewport);
+    applyViewport(canvas,viewportOverWork(projection,canvas));
     requestAnimationFrame(() => redraw(redrawSegments));
     return true;
   }
@@ -2907,7 +3023,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     reconcileKeyedChildren(stage,desiredStage);
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
-    applyViewport(canvas,projection.viewport);
+    applyViewport(canvas,viewportOverWork(projection,canvas));
     invalidateCanvasElementIndex();
     canvasElementIndexFor(canvas);
     requestAnimationFrame(() => redraw(redrawSegments));
@@ -3075,7 +3191,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       || previous.viewport.pan_y !== projection.viewport.pan_y
       || previous.viewport.zoom !== projection.viewport.zoom
     );
-    if (viewportChanged) applyViewport(canvas,projection.viewport);
+    if (viewportChanged) applyViewport(canvas,viewportOverWork(projection,canvas));
 
     const reconcileRelations=() => {
       if (lastProjection !== projection) return;
@@ -3634,8 +3750,13 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const adapterExecution=event.target.closest('[data-universal-adapter-execute]');
     if (adapterExecution && !adapterExecution.disabled) {
       event.preventDefault();
+      // A run carries its own identity. Without one the graph cannot
+      // tell a retry from a second run, so this path refused every
+      // press outright -- the button was drawn, wired, and answered
+      // with a complaint about a field only the caller can mint.
       const projection=await universalRequest('/api/universal/execute-adapter',{
         root:adapterExecution.dataset.root,
+        command_id:crypto.randomUUID(),
       });
       render(projection);
       return;
@@ -3703,7 +3824,15 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const definition=event.target.closest('[data-universal-definition]');
     if (definition) {
       event.preventDefault();
-      await commit({roots:[],focus:definition.dataset.universalDefinition});
+      // Selecting a library row is a local act: highlight it and let the
+      // + button and drag do the placing. Committing a focus for a
+      // definition that is not a member of the scope was refused on every
+      // click ("browser focus primary must be selected") and painted an
+      // error toast over the library.
+      const wasActive=definition.dataset.active === 'true';
+      document.querySelectorAll('[data-universal-definition]').forEach(
+        row => { delete row.dataset.active; });
+      if (!wasActive) definition.dataset.active='true';
       return;
     }
     const wire=event.target.closest('[data-universal-relation]');
@@ -3874,9 +4003,18 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     if (event.shiftKey) roots.delete(root);
     else if (event.ctrlKey || event.metaKey) roots.add(root);
     else { roots.clear(); roots.add(root); }
-    await commit({
-      roots:Array.from(roots),
-      focus:roots.has(root) ? root : Array.from(roots).at(-1),
+    const chosen=Array.from(roots);
+    const focus=roots.has(root) ? root : chosen.at(-1);
+    // Selection is a view fact. Painting it locally FIRST and letting the
+    // signed commit land behind the paint is the difference between a
+    // click that answers now and one that waits ~0.5s for a projection
+    // it already knows the shape of (SPEC 11.14 asks for 0.150s). The
+    // commit still happens, still signed, and its answer still
+    // reconciles -- a refusal repaints from the server, so the graph
+    // remains the authority for what is selected.
+    localCanvasSelection(chosen,focus);
+    commit({roots:chosen,focus}).catch(() => {
+      if (lastProjection) render(lastProjection);
     });
   });
   document.addEventListener('dragstart', event => {
@@ -4029,6 +4167,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const choices=sourcePort?.connect_choices;
     if (typeof sourcePort?.connect_control !== 'string'
         || !Array.isArray(choices) || !choices.length) return;
+    const direct=sourcePort.connect_control === 'direct:connect';
     const canvas=output.closest('.canvas');
     const stage=canvas?.querySelector('.canvas-stage');
     const layer=stage?.querySelector('.wire-layer');
@@ -4042,12 +4181,18 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     layer.append(preview);
     pendingWire={
       source:output.dataset.universalOutput,
-      sourceInterface:output.dataset.universalInterface,
+      sourceInterface:sourcePort.name,
       control:sourcePort.connect_control,
+      direct,
+      directTargets:direct
+        ? new Map(choices.map(choice => [choice.id,choice.interface]))
+        : null,
       candidateIndexes:new Map(choices.map((choice,index) => [choice.id,index])),
       preview,output,canvas,pointerId:event.pointerId
     };
-    markWireTargets(new Set(pendingWire.candidateIndexes.keys()));
+    markWireTargets(direct
+      ? new Set(choices.map(choice => 'decl:'+choice.id+':'+choice.interface))
+      : new Set(pendingWire.candidateIndexes.keys()));
     output.setPointerCapture?.(event.pointerId);
   });
   document.addEventListener('pointermove', event => {
@@ -4074,6 +4219,29 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       window.__archhubPointerOwner=null;
     }
     if (!target || target.dataset.universalInput === wire.source) return;
+    if (wire.direct) {
+      // A declared-socket wire: one explicit relation between the two
+      // nodes, made by the signed connect command; the fresh projection
+      // draws it like every other wire.
+      const targetNode=target.dataset.universalInput;
+      const targetInterface=wire.directTargets.get(targetNode)
+        ?? target.dataset.interfaceLabel
+        ?? target.dataset.universalInterface;
+      try {
+        const projection=await universalMutation(
+          '/api/universal/connect',() => ({
+            source:wire.source,
+            source_interface:wire.sourceInterface,
+            target:targetNode,
+            target_interface:String(targetInterface || ''),
+          }));
+        if (projection) render(projection);
+      } catch (error) {
+        showInteractionStatus(
+          error.message || 'The governed connect was rejected.');
+      }
+      return;
+    }
     const candidateIndex=wire.candidateIndexes.get(
       target.dataset.universalInterface);
     if (!Number.isSafeInteger(candidateIndex)) return;
@@ -4195,6 +4363,24 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   });
   document.addEventListener('change', async event => {
     if (projectionReconciliationDepth > 0) return;
+    // A rail field edit: the input's ui-key names the property row,
+    // the row names its owner and label, and the gesture path signs
+    // the same revise-instance the stem runner lands answers with.
+    const railInput=event.target.closest('.inspector .property-input');
+    const uiKey=railInput?.dataset?.uiKey || '';
+    if (railInput && uiKey.startsWith('property-input:') && lastProjection) {
+      const rowKey=uiKey.slice('property-input:'.length);
+      const row=(lastProjection.properties || []).find(item => (
+        item.relation === rowKey));
+      if (row && row.editable && row.owner && row.label) {
+        const answer=await universalMutation('/api/universal/gesture',
+          () => ({property:{
+            owner:row.owner,label:row.label,value:railInput.value,
+          }}));
+        if (answer) render(answer);
+        return;
+      }
+    }
     const contractRole=event.target.closest('[data-universal-contract-role]');
     if (contractRole && lastProjection) {
       if (!contractRole.dataset.universalInteraction) {
@@ -4227,6 +4413,25 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('keydown', event => {
+    // A key dispatched at the document itself has no element target, and
+    // Element.closest on it is a crash that takes every later listener's
+    // work down with it. No element under the key means none of these
+    // branches apply.
+    if (!(event.target instanceof Element)) return;
+    // Delete takes the selected cards off the canvas. The graph keeps
+    // their history; the scope simply stops holding them.
+    if (
+      (event.key === 'Delete' || event.key === 'Backspace')
+      && !event.target.closest('input,textarea,select')
+      && lastProjection?.selection?.length
+    ) {
+      event.preventDefault();
+      const removing=[...lastProjection.selection];
+      universalMutation('/api/universal/gesture',() => ({delete:removing}))
+        .then(answer => { if (answer) render(answer); })
+        .catch(error => showInteractionStatus(String(error.message || error)));
+      return;
+    }
     if (
       (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g'
       && !event.target.closest('input,textarea,select') && lastProjection
@@ -4242,7 +4447,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       action?.click();
       return;
     }
-    const scopedInput=event.target.closest(
+    const scopedInput=event.target.closest?.(
       '[data-universal-event-fact-input]');
     const scopedAction=scopedInput?.closest(
       '[data-universal-interaction-scope]')?.querySelector(

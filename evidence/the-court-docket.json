@@ -1,0 +1,3484 @@
+{
+ "sources": {
+  "SPEC 11": 17,
+  "Core Values": 10,
+  "100 layers": 100,
+  "Grand Map": 291
+ },
+ "items": [
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.1",
+   "text": "Uniform Cell: no second persisted semantic shape or side authority."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.2",
+   "text": "Authority coherence: no active contradiction; mutable facts are generated."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.3",
+   "text": "No hidden interpreter: graph path and any fast path are equivalent; deleting the fast path does not alter meaning."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.4",
+   "text": "One identity: every lens resolves the same roots and facts."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.5",
+   "text": "Explicit causality: rewiring authority changes behavior; deleting projection does not."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.6",
+   "text": "Persistent attention: signals, reasons, focus, obligations, and cursors recover after restart."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.7",
+   "text": "Replay: graph state reconstructs deterministically and effects do not repeat."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.8",
+   "text": "Attention security: hidden roots cannot influence visible output or context."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.9",
+   "text": "User control: a nontechnical user can understand cause, edit permitted state, undo, and recover without Floor knowledge."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.10",
+   "text": "Real interfaces: sockets, cables, relations, incidences, and n-ary cases are exact."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.11",
+   "text": "Properties: panels/editors are graph-projected and no tab is dead."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.12",
+   "text": "Composition: group, enter, breadcrumb, ungroup, and undo preserve identity and connectivity."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.13",
+   "text": "Interaction: selection, zoom, pan, drag, wire, keyboard, focus, and pointer capture pass in a real browser."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.14",
+   "text": "Performance: pointer frame p95 <= 16.7 ms, same-frame selection feedback, local mutation acknowledgement <= 100 ms, bounded scope entry <= 150 ms, and no steady-state long task over 50 ms on the reference machine."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.15",
+   "text": "Lifecycle/effect: independent states, receipts, reconciliation, conflicts, recovery, and compensation are proven."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.16",
+   "text": "Core Values: each value maps to a passing control or visible gap; no partial row is green."
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.17",
+   "text": "No false done: report exact revision, environment, evidence, open requirement, residual risk, and untested boundary. Security, privacy, data-loss, authority-coherence, and one-identity failures are release blockers. A lo"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-1",
+   "name": "Security is Sacred Trust",
+   "controls": "released authorization policy, signed identity relationships, protected route graph, browser sessions, device custody, admitted adapter catalogue",
+   "gap": "substantial/local; cloud KMS, distributed recovery, and full adapter set remain open"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-2",
+   "name": "Truth Over Comfort",
+   "controls": "immutable Cell history, digest-bound courts, Grand Map evidence references, explicit current-state reporting",
+   "gap": "partial; no universal completion-claim gate yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-3",
+   "name": "You Build It, You Own It",
+   "controls": "actor/provenance relations, lifecycle revisions, session ownership, relationship audit history",
+   "gap": "partial; operational owner/monitoring obligations are not universal yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-4",
+   "name": "Respect Every Second",
+   "controls": "browser publication court and local interaction measurements",
+   "gap": "partial; large-graph and complete workflow budgets remain open"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-5",
+   "name": "Architect Review is Mandatory",
+   "controls": "permission requests, founder authority, court-backed promotion",
+   "gap": "partial; risk classification to mandatory human review is not one released universal rule yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-6",
+   "name": "Solve Real Pain",
+   "controls": "Grand Map and active-work requirements",
+   "gap": "partial; user-pain evidence is not mandatory on every major feature proposal yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-7",
+   "name": "Simplicity Conquers Complexity",
+   "controls": "universal Cell floor, closed catalogue/composer authority, UI browser courts",
+   "gap": "partial; the visible authoring experience remains incomplete"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-8",
+   "name": "Test What You Ship",
+   "controls": "digest-bound court attestations and evidence-gated lifecycle promotion",
+   "gap": "substantial/local; all real hosts/cloud/deployment are not covered yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-9",
+   "name": "Break It Down, Iterate Fast",
+   "controls": "WIP lifecycle, immutable revisions, branches, grouping history, task leaves",
+   "gap": "substantial/local; unified Brain work assignment remains open"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-10",
+   "name": "Fix Root Causes",
+   "controls": "immutable history and anti-false-done courts",
+   "gap": "partial; recurrence detection and mandatory root-cause/control-update relation remain open"
+  },
+  {
+   "source": "100 layers",
+   "id": "L1",
+   "name": "The Physical Cell",
+   "proof_target": "Uniform-Cell and semantic-side-table courts inspect every persisted path and force reconstruction from Cells alone. [I02]",
+   "failure": "A persisted `kind=\"session\"` or nested `params` record creates a second ontology."
+  },
+  {
+   "source": "100 layers",
+   "id": "L2",
+   "name": "Meaning From Released Protocols",
+   "proof_target": "Rename, rewire, delete-fast-path, and graph-versus-host equivalence courts. [I02] [E04]",
+   "failure": "Renaming a node changes behavior because the renderer dispatches on its title."
+  },
+  {
+   "source": "100 layers",
+   "id": "L3",
+   "name": "Relations And Wires",
+   "proof_target": "Binary, n-ary, relation-of-relation, rewiring, encryption, provenance, and exact-incidence browser courts. [I02] [E01]",
+   "failure": "A two-endpoint SVG cable hides a validation gate and falsely implies direct authority."
+  },
+  {
+   "source": "100 layers",
+   "id": "L4",
+   "name": "Composition And Catalogue",
+   "proof_target": "Group/ungroup identity, released-definition binding, no hidden catalogue, and generic-instantiation courts. [I02] [E36] [E37]",
+   "failure": "The catalogue lists `Watcher`, `Database`, and `Session` as kernel-enforced node kinds."
+  },
+  {
+   "source": "100 layers",
+   "id": "L5",
+   "name": "Transactions, Revisions, And Lifecycle",
+   "proof_target": "Atomicity, stale-snapshot, independent-lifecycle, branch, merge, replay, and recovery courts. [I02] [E12] [E13]",
+   "failure": "Changing `status=\"published\"` mutates the only copy and destroys the reviewed version."
+  },
+  {
+   "source": "100 layers",
+   "id": "L6",
+   "name": "Authority And Security",
+   "proof_target": "Denial, revocation, confused-deputy, hidden-count, timing, cross-tenant, and relationship-causality courts. [I02] [E14] [E15] [E16]",
+   "failure": "The server loads all roots and filters the response after ranking."
+  },
+  {
+   "source": "100 layers",
+   "id": "L7",
+   "name": "External Effects And Adapters",
+   "proof_target": "Admission, least-privilege, idempotency, ambiguity, reconciliation, revocation, and compensation courts. [I02] [E20] [E29]",
+   "failure": "An adapter sets `done=true` after receiving HTTP 200."
+  },
+  {
+   "source": "100 layers",
+   "id": "L8",
+   "name": "Brain, Attention, And Agents",
+   "proof_target": "Restart, cursor, assignment, identity, context-source, provider-replacement, and no-side-channel courts. [I02] [I03] [E45]",
+   "failure": "A Python Brain database and JSON Workshop copy the same task status and disagree."
+  },
+  {
+   "source": "100 layers",
+   "id": "L9",
+   "name": "UI And Lawful Lenses",
+   "proof_target": "Same-root, no-dead-tab, direct-manipulation, accessibility, exact-interface, and real-browser courts. [I02] [I04] [E32] [E33]",
+   "failure": "A tab is visible but has no graph interaction or commit path."
+  },
+  {
+   "source": "100 layers",
+   "id": "L10",
+   "name": "Cloud, Devices, And Migration",
+   "proof_target": "Fencing, split-brain, two-device continuity, offline branch, restore, digest equality, and legacy-retirement courts. [I02] [I06] [I07] [E24]",
+   "failure": "Local SQLite and cloud PostgreSQL both accept independent writes to `app:archhub`."
+  },
+  {
+   "source": "100 layers",
+   "id": "L11",
+   "name": "Stable Identity And Canonical Bytes",
+   "proof_target": "Golden vectors, cross-language encoding, mutation, non-canonical rejection, and digest-domain courts. [E02] [E07] [E09]",
+   "failure": "Signing JSON succeeds at write time but fails after key ordering or number representation changes."
+  },
+  {
+   "source": "100 layers",
+   "id": "L12",
+   "name": "Snapshot And Commit Chain",
+   "proof_target": "Chain reconstruction, fork detection, policy/protocol binding, corruption, and independent witness courts. [I06] [E11]",
+   "failure": "Two stores both report revision 1043 but contain different Cells."
+  },
+  {
+   "source": "100 layers",
+   "id": "L13",
+   "name": "Signed Bootstrap And Trusted Base",
+   "proof_target": "Wrong signer, wrong root, downgrade, missing root, rollback, and reproducible-bootstrap courts. [I01] [I02] [E41] [E42]",
+   "failure": "Host code recognizes `Brain` and `Session` while claiming the graph is self-describing."
+  },
+  {
+   "source": "100 layers",
+   "id": "L14",
+   "name": "Pattern, Binding, And Rewrite",
+   "proof_target": "Alpha-renaming, exact bindings, guard denial, budget, deterministic failure, and host-equivalence courts. [E04] [E05] [E06]",
+   "failure": "A string `op=\"topsis\"` selects a hidden algorithm."
+  },
+  {
+   "source": "100 layers",
+   "id": "L15",
+   "name": "Executable Interfaces And Relations",
+   "proof_target": "Cardinality, direction, n-ary, transform, gate, encryption, and incompatible-wire denial courts. [I02] [E38] [E40]",
+   "failure": "Two sockets connect because both are colored blue."
+  },
+  {
+   "source": "100 layers",
+   "id": "L16",
+   "name": "Incremental Evaluation And Persistent Attention",
+   "proof_target": "Dependency completeness, stale-cache, crash-between-commit- and-reaction, deduplication, and performance courts. [I02] [I03]",
+   "failure": "A memoized dependent returns stale data because invalidation removed only the edited Cell."
+  },
+  {
+   "source": "100 layers",
+   "id": "L17",
+   "name": "Information-Flow Security",
+   "proof_target": "Noninterference, cache-key, ranking, timing, embedding, revocation, and cross-audience courts. [E14] [E15] [E16]",
+   "failure": "Search embeds all projects, then masks forbidden result labels."
+  },
+  {
+   "source": "100 layers",
+   "id": "L18",
+   "name": "Effect Uncertainty And Reconciliation",
+   "proof_target": "Timeout-before-send, timeout-after-send, duplicate response, replay, compensation, and provider-drift courts. [E28] [E29]",
+   "failure": "Automatic retry creates a duplicate charge."
+  },
+  {
+   "source": "100 layers",
+   "id": "L19",
+   "name": "Replication And Offline Work",
+   "proof_target": "Partition, leader loss, stale writer, epoch fencing, branch, explicit merge, and convergence courts. [E24] [E25] [E26]",
+   "failure": "A disconnected device publishes a stale permission change as current authority."
+  },
+  {
+   "source": "100 layers",
+   "id": "L20",
+   "name": "Proof, Release, And Independent Truth",
+   "proof_target": "SLSA/in-toto provenance, independent judgment, real-artifact courts, open-gap honesty, and deployment-round-trip evidence. [E41] [E42]",
+   "failure": "The implementation author cites self-written unit tests as proof the cloud product works."
+  },
+  {
+   "source": "100 layers",
+   "id": "L21",
+   "name": "Cell Identity Generation",
+   "proof_target": "Collision simulation, cross-device generation, import preservation, rename, clone-policy, and non-guessability courts. [I02]",
+   "failure": "Copying a project regenerates IDs and silently breaks provenance."
+  },
+  {
+   "source": "100 layers",
+   "id": "L22",
+   "name": "Null Cell And Terminal Boundary",
+   "proof_target": "Immutability, cross-store identity, migration, corruption, and no-semantic-dispatch courts. [I02]",
+   "failure": "Different replicas use different null IDs and derive different digests."
+  },
+  {
+   "source": "100 layers",
+   "id": "L23",
+   "name": "Atom Codec Registry",
+   "proof_target": "Golden vectors, alternate-encoding rejection, codec rewiring, missing-codec, downgrade, and generic-path equivalence courts. [E07] [E08]",
+   "failure": "The first atom byte is a hidden enum that makes the kernel select `string`, `number`, or `function`."
+  },
+  {
+   "source": "100 layers",
+   "id": "L24",
+   "name": "Text And Unicode",
+   "proof_target": "Multilingual round-trip, normalization collision, invalid UTF-8, bidirectional display, search equivalence, and signature courts. [E07]",
+   "failure": "A browser normalizes text differently from the server and invalidates a signed commit."
+  },
+  {
+   "source": "100 layers",
+   "id": "L25",
+   "name": "Numbers, Units, And Precision",
+   "proof_target": "Unit mismatch, dimensional analysis, exact decimal, rounding, tolerance, overflow, NaN, and cross-language courts. [E07] [E38]",
+   "failure": "BIM geometry assumes metres while the receiving adapter assumes millimetres."
+  },
+  {
+   "source": "100 layers",
+   "id": "L26",
+   "name": "Time, Clocks, And Causality",
+   "proof_target": "Clock skew, timezone, monotonic rollback, concurrent branch, expiry, replay-window, and causality courts. [E10] [E17]",
+   "failure": "Last-write-wins selects a change because one laptop clock is four hours ahead."
+  },
+  {
+   "source": "100 layers",
+   "id": "L27",
+   "name": "Structured Data Normalization",
+   "proof_target": "Blob-size, forbidden-key, decomposition, round-trip, field-level authority, and no-hidden-dispatch courts. [I02] [E03]",
+   "failure": "A database node stores its schema, permissions, queries, and rows in one opaque JSON atom."
+  },
+  {
+   "source": "100 layers",
+   "id": "L28",
+   "name": "Geometry, Images, And Documents",
+   "proof_target": "Hash mismatch, coordinate transform, format validation, lineage, access, preview derivation, and round-trip courts. [E38] [E39] [E40]",
+   "failure": "Replacing a file under the same path changes reality without a new graph revision."
+  },
+  {
+   "source": "100 layers",
+   "id": "L29",
+   "name": "Content-Addressed Blob Custody",
+   "proof_target": "Digest, truncation, substitution, encryption, tier placement, replication, retention, and restore courts. [E11] [E43]",
+   "failure": "A public URL later serves different bytes while the graph still calls it approved."
+  },
+  {
+   "source": "100 layers",
+   "id": "L30",
+   "name": "Physical Store, Reachability, And Reclamation",
+   "proof_target": "Reachability, legal hold, branch, checkpoint, compaction, crash, restore, and semantic-equivalence courts. [E11] [E12]",
+   "failure": "Database vacuum removes Cells still reachable through an archived evidence bundle."
+  },
+  {
+   "source": "100 layers",
+   "id": "L31",
+   "name": "Protocol Registry And Revision Binding",
+   "proof_target": "Exact revision, supersession, missing protocol, downgrade, compatibility, and deletion-of-compiled-path courts. [I02] [E03]",
+   "failure": "Restart loads the newest protocol by title and reinterprets historical facts."
+  },
+  {
+   "source": "100 layers",
+   "id": "L32",
+   "name": "Structural Pattern Language",
+   "proof_target": "Variable binding, cycles, absence, n-ary structure, authorization, complexity, and timeout courts. [E03] [E04]",
+   "failure": "Regex over serialized graph text bypasses incidence identity and policy."
+  },
+  {
+   "source": "100 layers",
+   "id": "L33",
+   "name": "Explicit Binding Environment",
+   "proof_target": "Stable root, snapshot mismatch, duplicate variable, hidden root, replay, and explanation courts. [E04] [E01]",
+   "failure": "A rule output cannot explain which hidden candidate was selected."
+  },
+  {
+   "source": "100 layers",
+   "id": "L34",
+   "name": "Guards And Constraints",
+   "proof_target": "Server-side enforcement, boundary, mixed unit, stale constraint, indeterminate, explanation, and bypass courts. [E03]",
+   "failure": "The browser blocks invalid input but an agent API writes it directly."
+  },
+  {
+   "source": "100 layers",
+   "id": "L35",
+   "name": "Rewrite Construction",
+   "proof_target": "Atomic proposal, identity preservation, dangling link, deterministic ordering, stale target, and rollback courts. [I02] [E05]",
+   "failure": "The first half of a rewrite persists before the second half fails."
+  },
+  {
+   "source": "100 layers",
+   "id": "L36",
+   "name": "Rule Competition And Confluence",
+   "proof_target": "Critical-pair, fairness, deterministic order, starvation, explicit-choice, and replay courts. [E04] [E05]",
+   "failure": "Thread timing decides which rule wins."
+  },
+  {
+   "source": "100 layers",
+   "id": "L37",
+   "name": "Termination And Resource Budgets",
+   "proof_target": "Cycle, depth, cardinality, CPU, memory, cancellation, fairness, and no-partial-commit courts. [I02]",
+   "failure": "One cyclic rule consumes the machine and blocks unrelated work."
+  },
+  {
+   "source": "100 layers",
+   "id": "L38",
+   "name": "Incidence Identity And Arbitrary Arity",
+   "proof_target": "Repeated participant, n-ary, order, role change, relation-of-relation, and identity-preserving rewire courts. [I02] [E01]",
+   "failure": "A set of participant IDs collapses duplicate roles."
+  },
+  {
+   "source": "100 layers",
+   "id": "L39",
+   "name": "Interface Compatibility And Adaptation",
+   "proof_target": "Exact, convertible, lossy, forbidden, authority, version, and explanation courts. [E03] [E35]",
+   "failure": "Automatic coercion silently rounds monetary decimals to binary floats."
+  },
+  {
+   "source": "100 layers",
+   "id": "L40",
+   "name": "Composition Boundary And Scope",
+   "proof_target": "Membership, public interface, enter/breadcrumb, ungroup, external connectivity, authority, and undo courts. [I02] [I04]",
+   "failure": "Grouping copies children into a new nested store and breaks external wires."
+  },
+  {
+   "source": "100 layers",
+   "id": "L41",
+   "name": "Command And Proposal Envelope",
+   "proof_target": "Target binding, base mismatch, replay, cross-session, idempotency, cancellation, and explanation courts. [I02] [E17]",
+   "failure": "A delayed command edits whichever node is currently selected."
+  },
+  {
+   "source": "100 layers",
+   "id": "L42",
+   "name": "Read Set, Write Set, And Conflict Surface",
+   "proof_target": "Lost update, write skew, omitted read, unrelated change, revocation race, and deterministic retry courts. [E12] [E13]",
+   "failure": "A permission decision commits after the membership it read was revoked."
+  },
+  {
+   "source": "100 layers",
+   "id": "L43",
+   "name": "Serializable Commit",
+   "proof_target": "Write skew, phantom, stale retry, one-use, crash, multi-connection, and serial-history courts. [E12] [E13]",
+   "failure": "Both transactions independently observe `unused` and commit `used`."
+  },
+  {
+   "source": "100 layers",
+   "id": "L44",
+   "name": "Snapshot Construction And Digest",
+   "proof_target": "Full reconstruction, ordering independence, omitted-root, corruption, cross-store, and cross-language courts. [E07] [E11]",
+   "failure": "Digest covers changed rows but omits the policy root used to authorize them."
+  },
+  {
+   "source": "100 layers",
+   "id": "L45",
+   "name": "Branches And Heads",
+   "proof_target": "Base binding, independent advance, visibility, ownership, stale merge, deletion retention, and recovery courts. [I02] [E11]",
+   "failure": "A branch name is a filesystem folder with no graph ancestry or authority."
+  },
+  {
+   "source": "100 layers",
+   "id": "L46",
+   "name": "Merge And Preserved Conflict",
+   "proof_target": "Three-way merge, no lost update, conflict visibility, protocol mismatch, authorization, and replay courts. [E25] [E26]",
+   "failure": "A newer timestamp silently discards the checker-approved value."
+  },
+  {
+   "source": "100 layers",
+   "id": "L47",
+   "name": "Undo, Restore, Reversal, And Compensation",
+   "proof_target": "Inverse validity, intervening edits, irreversible effect, compensation failure, restore, history, and authority courts. [I02] [E28]",
+   "failure": "Undo deletes the only evidence that a payment request occurred."
+  },
+  {
+   "source": "100 layers",
+   "id": "L48",
+   "name": "WIP, Shared, Published, And Archived",
+   "proof_target": "Exact revision, independent views, approval, suitability, supersession, export digest, and no-bidirectional-sync courts. [I02] [E38]",
+   "failure": "Three folders contain copies and a sync task overwrites the issued one."
+  },
+  {
+   "source": "100 layers",
+   "id": "L49",
+   "name": "Independent State Axes",
+   "proof_target": "Orthogonality, unauthorized cross-axis change, summary derivation, history, and no-status-string courts. [I02]",
+   "failure": "`status=\"complete\"` falsely implies tested, published, deployed, and externally successful."
+  },
+  {
+   "source": "100 layers",
+   "id": "L50",
+   "name": "Durable History, Checkpoint, And Recovery",
+   "proof_target": "Torn write, ambiguous response, owner death, stale descriptor, checkpoint corruption, full replay, and restore courts. [I06]",
+   "failure": "A checkpoint reports `active` for a dead process and blocks legitimate recovery."
+  },
+  {
+   "source": "100 layers",
+   "id": "L51",
+   "name": "Human And Organizational Identity Roots",
+   "proof_target": "Issuer collision, subject change, multi-provider binding, membership revocation, recovery, and audit courts. [I07] [E18]",
+   "failure": "Email address alone becomes permanent identity and is reassigned."
+  },
+  {
+   "source": "100 layers",
+   "id": "L52",
+   "name": "Device Identity And Key Custody",
+   "proof_target": "Pairing consent, proof possession, replay, key export, revocation, rotation, first-device recovery, and lost-device courts. [I07] [E17] [E19]",
+   "failure": "Completing OIDC automatically enrolls an attacker-controlled new device."
+  },
+  {
+   "source": "100 layers",
+   "id": "L53",
+   "name": "Session And Delegation",
+   "proof_target": "Audience, method/URI binding, nonce, replay, expiry, narrowing, revocation, and cross-device courts. [E17] [E18]",
+   "failure": "A token copied from logs works from another device and audience."
+  },
+  {
+   "source": "100 layers",
+   "id": "L54",
+   "name": "Relationship-Aware Authorization",
+   "proof_target": "Causal consistency, delegation, separation of duties, recursive groups, revocation, cycle, and cache courts. [E15] [E16]",
+   "failure": "`role=\"admin\"` in a client payload grants authority."
+  },
+  {
+   "source": "100 layers",
+   "id": "L55",
+   "name": "Policy Definition, Release, And Evaluation",
+   "proof_target": "Exact revision, priority, conflict, default deny, rollback, emergency policy, and compiled-path equivalence courts. [I01] [I05]",
+   "failure": "Editing a Python allowlist retroactively changes audit interpretation."
+  },
+  {
+   "source": "100 layers",
+   "id": "L56",
+   "name": "Authorized Projection And Noninterference",
+   "proof_target": "Counts, ordering, timing, cache, error, embedding, telemetry, and cross-audience noninterference courts. [I02] [E14]",
+   "failure": "Error text reveals a forbidden root exists."
+  },
+  {
+   "source": "100 layers",
+   "id": "L57",
+   "name": "Privacy Tier And Tenant Partition",
+   "proof_target": "Tier crossing, prompt, working tree, history, backup, telemetry, redaction, and deletion courts. [I01] [I05]",
+   "failure": "A sanitized summary retains a client identifier in hidden metadata."
+  },
+  {
+   "source": "100 layers",
+   "id": "L58",
+   "name": "Secret And Key Reference Boundary",
+   "proof_target": "Log/prompt/argv/URL leakage, wrong key version, rotation, revocation, inaccessible custody, and redacted error courts. [I02] [E20] [E22]",
+   "failure": "A `secret_ref` atom contains a vault URI with embedded token."
+  },
+  {
+   "source": "100 layers",
+   "id": "L59",
+   "name": "Adapter Admission And Least Privilege",
+   "proof_target": "Unknown adapter/action, digest change, sandbox escape, confused deputy, budget, revocation, transport security, and audit courts. [E20] [E21] [E43]",
+   "failure": "An MCP server advertises a new destructive tool and becomes automatically callable."
+  },
+  {
+   "source": "100 layers",
+   "id": "L60",
+   "name": "Audit, Revocation, Incident, And Recovery",
+   "proof_target": "Immediate denial, cache purge, key rotation, incident lineage, partial outage, recovery, and independent closure courts. [E14] [E23]",
+   "failure": "Revocation updates one token table but cached authorization continues allowing writes."
+  },
+  {
+   "source": "100 layers",
+   "id": "L61",
+   "name": "Signal",
+   "proof_target": "Source revision, audience, deduplication, restart, out-of-order delivery, and hidden-root courts. [I02] [I03]",
+   "failure": "A filesystem watcher emits `changed` before the graph commit and creates false work."
+  },
+  {
+   "source": "100 layers",
+   "id": "L62",
+   "name": "Candidate Admission",
+   "proof_target": "Unauthorized influence, duplicate, stale source, poisoning, trust downgrade, and timing courts. [I02] [E14]",
+   "failure": "An embedding search scores all content and masks disallowed results afterward."
+  },
+  {
+   "source": "100 layers",
+   "id": "L63",
+   "name": "Attention Ordering",
+   "proof_target": "Priority order, reason visibility, fairness, starvation, pinning, expiry, and model-non-authority courts. [I02] [I05] [E45]",
+   "failure": "A high model similarity score hides a failed security court."
+  },
+  {
+   "source": "100 layers",
+   "id": "L64",
+   "name": "Focus And Bounded Working Set",
+   "proof_target": "Restart, interruption, resume, bounded size, unauthorized root, user override, and drift courts. [I02] [I03]",
+   "failure": "Every new message replaces the only context with no recovery history."
+  },
+  {
+   "source": "100 layers",
+   "id": "L65",
+   "name": "Obligation, Work, And Dependency",
+   "proof_target": "Traceability, dependency, claim exclusivity, multi-agent, block, evidence, independent closure, and reopen courts. [I02] [I05]",
+   "failure": "An agent marks a task complete in chat while the Grand Map requirement remains unresolved."
+  },
+  {
+   "source": "100 layers",
+   "id": "L66",
+   "name": "Decision And Outcome",
+   "proof_target": "Alternative preservation, authority, evidence, policy revision, outcome distinction, reversal, and explanation courts. [E01]",
+   "failure": "Ranking output silently becomes the selected design."
+  },
+  {
+   "source": "100 layers",
+   "id": "L67",
+   "name": "Agent Session Composition",
+   "proof_target": "Exact caller identity, enrollment race, claim isolation, provider handoff, revocation, restart, and no-self-minted-authority courts. [I02]",
+   "failure": "Every CLI process claims `agent=\"claude\"` and overwrites another session's scope."
+  },
+  {
+   "source": "100 layers",
+   "id": "L68",
+   "name": "Model Context, Tools, Cost, And Evidence",
+   "proof_target": "Source authority, prompt injection, tool denial, context classification, cost budget, hallucination, and independent-verification courts. [E45]",
+   "failure": "Prompt injection in a document broadens the agent's write scope."
+  },
+  {
+   "source": "100 layers",
+   "id": "L69",
+   "name": "Workshop Coordination",
+   "proof_target": "Authenticated message, exclusive/disjoint claim, shared source, forced gate, handoff, independent judgment, restart, and no-side-channel courts. [I01] [I03]",
+   "failure": "Python stores a JSON meeting room and projects it into Cells only for display."
+  },
+  {
+   "source": "100 layers",
+   "id": "L70",
+   "name": "Core Values As Executable Governance",
+   "proof_target": "Ten-value mapping, control effectiveness, visible gaps, founder review, owner, latency, real-artifact, and no-false-green courts. [I05]",
+   "failure": "A dashboard shows Core Values green because each name appears in documentation."
+  },
+  {
+   "source": "100 layers",
+   "id": "L71",
+   "name": "Lens Query And Visibility Depth",
+   "proof_target": "Same root, depth, authorization, no duplicate truth, progressive disclosure, and inaccessible-Floor courts. [I02] [I04]",
+   "failure": "A request for `?debug=true` exposes raw T2 identities."
+  },
+  {
+   "source": "100 layers",
+   "id": "L72",
+   "name": "Scope Navigation And Breadcrumbs",
+   "proof_target": "Double-click, keyboard, breadcrumb, back, root identity, authorization, restart, and latency courts. [I02] [E32]",
+   "failure": "An Open button loads a separate HTML dashboard."
+  },
+  {
+   "source": "100 layers",
+   "id": "L73",
+   "name": "Canvas Coordinates And Transform Stack",
+   "proof_target": "DPI, zoom, scroll, nested scope, transform inverse, resize, and pixel-alignment browser courts. [E32]",
+   "failure": "Browser-client coordinates are compared directly with world-space node bounds."
+  },
+  {
+   "source": "100 layers",
+   "id": "L74",
+   "name": "Selection And Marquee Semantics",
+   "proof_target": "Direction, modifiers, empty click, overlap, wire/node, pointer cancel, rapid gesture, and same-frame feedback courts. [I02] [E32]",
+   "failure": "Pointer-up emits a no-op server mutation that delays double-click scope entry."
+  },
+  {
+   "source": "100 layers",
+   "id": "L75",
+   "name": "Node Presentation As Editable Composition",
+   "proof_target": "Style edit, inheritance, definition/instance separation, theme, zoom LOD, accessibility contrast, and no-title-dispatch courts. [E35]",
+   "failure": "A React component chooses purple because the node title equals `Brain`."
+  },
+  {
+   "source": "100 layers",
+   "id": "L76",
+   "name": "Socket And Public Interface Rendering",
+   "proof_target": "Exact root, hit target, label, compatibility, hidden interface, authority, keyboard wiring, and zoom courts. [I02] [I04]",
+   "failure": "A decorative dot accepts any cable and lets the server guess."
+  },
+  {
+   "source": "100 layers",
+   "id": "L77",
+   "name": "Wire Rendering And Manipulation",
+   "proof_target": "Exact identity, n-ary, relation-of-relation, marker, rewire, undo, hit testing, and dense-graph performance courts. [I02] [E40]",
+   "failure": "Wires are drawn from a copied `edges[]` list with no graph relation identities."
+  },
+  {
+   "source": "100 layers",
+   "id": "L78",
+   "name": "Properties Rail And Editor Discovery",
+   "proof_target": "Panel discovery, no dead tab, mixed value, atomic multi-edit, constraints, authority, remote update, and undo courts. [I02] [E03]",
+   "failure": "A tab appears but reads a stale server dictionary and cannot commit."
+  },
+  {
+   "source": "100 layers",
+   "id": "L79",
+   "name": "Catalogue, Search, And Composer",
+   "proof_target": "Released-only, exact revision, search metadata, instantiate, open/edit, agent restriction, and no-second-catalogue courts. [I02] [E36] [E37]",
+   "failure": "The left rail is a domain index while node creation remains a generic `role` form."
+  },
+  {
+   "source": "100 layers",
+   "id": "L80",
+   "name": "Accessibility, Locality, And Interaction Performance",
+   "proof_target": "WCAG/ARIA, keyboard, screen reader, 16.7 ms frame, 100 ms mutation, 150 ms scope, no long task, and unchanged browser courts. [I02] [E32] [E33] [E34]",
+   "failure": "A test shortens waits to pass while real scope entry remains 300 ms and keyboard users cannot connect nodes."
+  },
+  {
+   "source": "100 layers",
+   "id": "L81",
+   "name": "Effect Intent And Authorization",
+   "proof_target": "Exact target, scope, stale state, grant consumption, unauthorized proposal, budget, and no-command-string courts. [I02] [E20]",
+   "failure": "Model output containing `rm` is passed directly to a terminal."
+  },
+  {
+   "source": "100 layers",
+   "id": "L82",
+   "name": "Attempt Identity And Idempotency",
+   "proof_target": "Duplicate send, lost response, callback replay, restart, provider without idempotency, and operator retry courts. [E28] [E29]",
+   "failure": "A retry generates a new key after the first response was lost."
+  },
+  {
+   "source": "100 layers",
+   "id": "L83",
+   "name": "Provider Outcome And Reconciliation",
+   "proof_target": "Forged callback, stale query, mismatch, pending, reversal, compensation, and unresolved-state courts. [E29] [E30]",
+   "failure": "Local `succeeded` remains green after provider reversal."
+  },
+  {
+   "source": "100 layers",
+   "id": "L84",
+   "name": "Domain Adapter Boundary",
+   "proof_target": "Domain-neutral envelope, exact action, version, sandbox, no-workflow-in-adapter, real-host artifact, and revocation courts. [I02] [E20] [E38]",
+   "failure": "`if project == BBC4` selects hidden behavior in the adapter."
+  },
+  {
+   "source": "100 layers",
+   "id": "L85",
+   "name": "Remote Authority And Consensus",
+   "proof_target": "Quorum loss, stale leader, epoch fencing, deterministic apply, membership change, clock independence, partition trade-off, and recovery courts. [E24] [E27]",
+   "failure": "Two regions each accept release promotion during a network split."
+  },
+  {
+   "source": "100 layers",
+   "id": "L86",
+   "name": "Local Replica, Offline Branch, And Sync",
+   "proof_target": "First sync, incremental sync, interruption, tamper, stale base, conflict, revocation, and two-device continuity courts. [I07] [E25] [E26]",
+   "failure": "Offline UI labels its branch Published and broadcasts it."
+  },
+  {
+   "source": "100 layers",
+   "id": "L87",
+   "name": "Artifact Transport And Delivery",
+   "proof_target": "Resume, corruption, substitution, unauthorized range, expiry, incomplete object, CDN visibility, and restore courts. [E43]",
+   "failure": "A partial object becomes visible because metadata commit occurred first."
+  },
+  {
+   "source": "100 layers",
+   "id": "L88",
+   "name": "Events, Subscriptions, And Backpressure",
+   "proof_target": "Duplicate, out-of-order, loss, crash-before/after-cursor, backpressure, slow subscriber, and unauthorized filter courts. [E30]",
+   "failure": "Cursor advances before processing and permanently loses an obligation."
+  },
+  {
+   "source": "100 layers",
+   "id": "L89",
+   "name": "Runtime Ownership, Singleton, And Supervision",
+   "proof_target": "Duplicate spawn, stale PID, lease theft, crash, start race, health, supervised reuse, and failover courts. [I06]",
+   "failure": "Descriptor says active although PID is dead, while a new runtime cannot acquire an owner fence."
+  },
+  {
+   "source": "100 layers",
+   "id": "L90",
+   "name": "Observability, Capacity, Backup, And Disaster Recovery",
+   "proof_target": "Redaction, metric truth, saturation, leak, backup corruption, restore equality, RPO/RTO, and regional-failure courts. [E31] [E44]",
+   "failure": "Backup job is green for a year but no restore has ever run."
+  },
+  {
+   "source": "100 layers",
+   "id": "L91",
+   "name": "Requirement And Grand Map Traceability",
+   "proof_target": "Bidirectional trace, source authority, dependency, current evidence, open gap, generated status, and no-hand-count courts. [I01] [I05]",
+   "failure": "A roadmap says complete because a file exists."
+  },
+  {
+   "source": "100 layers",
+   "id": "L92",
+   "name": "Architecture Decision And Supersession",
+   "proof_target": "Precedence, contradiction, current primary sources, red courts-before-code, approval, supersession, and generated-contract courts. [I01]",
+   "failure": "A model-room transcript silently changes the product architecture."
+  },
+  {
+   "source": "100 layers",
+   "id": "L93",
+   "name": "Threat Model And Security Court",
+   "proof_target": "STRIDE/abuse coverage as applicable, negative paths, boundary attack, residual risk, incident route, and independent judgment. [E14] [E44]",
+   "failure": "Encryption is cited while authorization and key exfiltration are untested."
+  },
+  {
+   "source": "100 layers",
+   "id": "L94",
+   "name": "Model, Property, Fuzz, And Differential Courts",
+   "proof_target": "Mutation score, seed replay, generic equivalence, state coverage, no mocked subject, skip honesty, and independent oracle courts. [E41]",
+   "failure": "Test mocks the exact mechanism it claims to validate."
+  },
+  {
+   "source": "100 layers",
+   "id": "L95",
+   "name": "Real Artifact, Browser, Host, And Performance Courts",
+   "proof_target": "Functional path, visual screenshot, accessibility, network, host, restart, performance distribution, and no-live-process-impact courts. [I02]",
+   "failure": "Fixed sleep is shortened until a flaky test turns green."
+  },
+  {
+   "source": "100 layers",
+   "id": "L96",
+   "name": "Build Provenance, SBOM, And Artifact Attestation",
+   "proof_target": "Reproducibility where promised, signature, subject digest, dependency completeness, tamper, builder identity, and transparency courts. [E41] [E42] [E43]",
+   "failure": "A manually copied executable is uploaded beside valid source."
+  },
+  {
+   "source": "100 layers",
+   "id": "L97",
+   "name": "Independent Verification And Stewardship",
+   "proof_target": "Identity separation, exact rerun, evidence access, finding resolution, conflict-of-interest, and founder threshold courts. [I01]",
+   "failure": "Builder writes the court, changes the implementation, runs it, and declares independent proof."
+  },
+  {
+   "source": "100 layers",
+   "id": "L98",
+   "name": "Promotion, Release, And Deployment Selection",
+   "proof_target": "Exact revision, full gates, signature, environment, round trip, rollback, monitoring, and no-state-collapse courts. [I02] [E41]",
+   "failure": "HTTP 200 on a website is reported as the complete product shipped."
+  },
+  {
+   "source": "100 layers",
+   "id": "L99",
+   "name": "Capability Migration And Legacy Consumption",
+   "proof_target": "Authority inventory, dual-write denial, digest/parity, no-fallback, restart, cutover, ratchet, and archive-manifest courts. [I01] [I02]",
+   "failure": "New UI reads Cells but still writes legacy JSON on one path."
+  },
+  {
+   "source": "100 layers",
+   "id": "L100",
+   "name": "Constitutional Continuity And Controlled Evolution",
+   "proof_target": "Root continuity, backward interpretation, explicit break, migration, deprecation, retention, owner succession, disaster recovery, source preservation, and founder-approved constitutional courts. [I01] [I05]",
+   "failure": "An agent calls a new framework \"modernization,\" rewrites history, and creates another authority."
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_design_tokens",
+   "domain": "UI & Design System",
+   "name": "Design Tokens",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_engine",
+   "domain": "UI & Design System",
+   "name": "Theme Engine",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_forge",
+   "domain": "UI & Design System",
+   "name": "Theme: Forge",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_blueprint",
+   "domain": "UI & Design System",
+   "name": "Theme: Blueprint",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_vellum",
+   "domain": "UI & Design System",
+   "name": "Theme: Vellum",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_a11y_overlay",
+   "domain": "UI & Design System",
+   "name": "A11y Token Overlay",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_sidebar_rail",
+   "domain": "UI & Design System",
+   "name": "Sidebar Rail",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_composer_bar",
+   "domain": "UI & Design System",
+   "name": "Composer Bar",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/agents/composer_agent.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_account_chip",
+   "domain": "UI & Design System",
+   "name": "Account Chip",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_node_card",
+   "domain": "UI & Design System",
+   "name": "Node Card Component",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_modal_system",
+   "domain": "UI & Design System",
+   "name": "Modal / Panel System",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_voice_lint",
+   "domain": "UI & Design System",
+   "name": "Voice / Microcopy Lint",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_command_palette",
+   "domain": "UI & Design System",
+   "name": "Command Palette",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_node_authoring",
+   "domain": "UI & Design System",
+   "name": "UI-as-Node Authoring",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_authoring",
+   "domain": "UI & Design System",
+   "name": "Theme-as-Node Authoring",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_app_is_graph",
+   "domain": "UI & Design System",
+   "name": "App UI Is The Graph",
+   "claimed_status": "vision",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_watcher_node",
+   "domain": "UI & Design System",
+   "name": "Watcher Node",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_dragdrop_elements",
+   "domain": "UI & Design System",
+   "name": "Edit Elements In The Node",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_save_sync",
+   "domain": "UI & Design System",
+   "name": "Save = Live, No Turnaround",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_color_slice_demo",
+   "domain": "UI & Design System",
+   "name": "Room-One Color Proof",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_lm_graph_state",
+   "domain": "Canvas & Graph Engine",
+   "name": "LM_GRAPH State Store",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_node_view",
+   "domain": "Canvas & Graph Engine",
+   "name": "NodeView Renderer",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_wire_layer",
+   "domain": "Canvas & Graph Engine",
+   "name": "WireLayer (typed edges)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_typed_ports",
+   "domain": "Canvas & Graph Engine",
+   "name": "Typed Ports / Sockets",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_cook_engine",
+   "domain": "Canvas & Graph Engine",
+   "name": "Cook Engine (lazy-dirty-cached)",
+   "claimed_status": "live",
+   "evidence_ref": "test:10.PRODUCT/12.PRODUCTION/node_runtime/tests_replica/test_forcing_one_table.py::test_cook_engine_is_lazy_dirty_cached_and_snapshots_only_the_graph",
+   "last_verified": "2026-07-15"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_dirty_cascade",
+   "domain": "Canvas & Graph Engine",
+   "name": "Dirty Cascade",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_run_node",
+   "domain": "Canvas & Graph Engine",
+   "name": "run_node / Rerun",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_inline_param_edit",
+   "domain": "Canvas & Graph Engine",
+   "name": "Inline Param Edit",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_drag_rewire",
+   "domain": "Canvas & Graph Engine",
+   "name": "Drag-Rewire + Cycle Guard",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_pan_zoom",
+   "domain": "Canvas & Graph Engine",
+   "name": "Pan / Zoom Viewport",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_multiselect",
+   "domain": "Canvas & Graph Engine",
+   "name": "Multiselect + Marquee",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_groups",
+   "domain": "Canvas & Graph Engine",
+   "name": "Groups / Collapse",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_resnap_repair",
+   "domain": "Canvas & Graph Engine",
+   "name": "Wire Resnap / Repair",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_bump_graph",
+   "domain": "Canvas & Graph Engine",
+   "name": "bumpGraph Repaint Bus",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_interpret",
+   "domain": "Canvas & Graph Engine",
+   "name": "Interpret Runtime",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/executor.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_group_runs",
+   "domain": "Canvas & Graph Engine",
+   "name": "Group Runs As A Node",
+   "claimed_status": "vision",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/executor.py",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_incremental",
+   "domain": "Canvas & Graph Engine",
+   "name": "Incremental Recompute",
+   "claimed_status": "vision",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/executor.py",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_freeze_history",
+   "domain": "Canvas & Graph Engine",
+   "name": "Freeze + History In Engine",
+   "claimed_status": "vision",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/web_ui/studio-lm.jsx",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_scale_is_group",
+   "domain": "Canvas & Graph Engine",
+   "name": "Scale = Grouping",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_grammar",
+   "domain": "Nodes System",
+   "name": "Node Grammar",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_category_taxonomy",
+   "domain": "Nodes System",
+   "name": "Category Taxonomy",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_typed_ports",
+   "domain": "Nodes System",
+   "name": "Typed Inputs / Outputs",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_config_schema",
+   "domain": "Nodes System",
+   "name": "Config Schema (Knobs)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_library_search",
+   "domain": "Nodes System",
+   "name": "Library Search (search-before-create)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_library_create",
+   "domain": "Nodes System",
+   "name": "Library Create + Register",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_validator",
+   "domain": "Nodes System",
+   "name": "Modular-Spec Validator",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_smith",
+   "domain": "Nodes System",
+   "name": "Node Smith",
+   "claimed_status": "live",
+   "evidence_ref": "worker:built 'filter_tall_items' · ran {'items': [{'height': 2}, {'height': 4}, {'height': 5}]} -> {'tall': [{'height': 4}, {'height': 5}], 'count': 2}",
+   "last_verified": "2026-06-24"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_sandbox",
+   "domain": "Nodes System",
+   "name": "Execution Sandbox",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_custom_register",
+   "domain": "Nodes System",
+   "name": "Custom Node Registry",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_skill_node",
+   "domain": "Nodes System",
+   "name": "Skill Node",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_subgraph",
+   "domain": "Nodes System",
+   "name": "Subgraph (Node-of-Nodes)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_param_promote",
+   "domain": "Nodes System",
+   "name": "Param to Socket Promote",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_runner",
+   "domain": "Nodes System",
+   "name": "Graph Runner (cook)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/workflows/node_grammar.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_floor_iterate",
+   "domain": "Nodes System",
+   "name": "Floor - Iterate",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_floor_aggregate",
+   "domain": "Nodes System",
+   "name": "Floor - Aggregate",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_floor_reference",
+   "domain": "Nodes System",
+   "name": "Floor - Reference",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_grammar_homoiconic_types",
+   "domain": "Nodes System",
+   "name": "Types Are Nodes",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_grammar_effect_split",
+   "domain": "Nodes System",
+   "name": "Pure vs Effectful",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_typed_wire",
+   "domain": "Nodes System",
+   "name": "Typed Wire",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_geometry",
+   "domain": "Nodes System",
+   "name": "Floor Value - Geometry",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_image_media",
+   "domain": "Nodes System",
+   "name": "Floor Value - Image / Media",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_ui_element",
+   "domain": "Nodes System",
+   "name": "Floor Value - UI Element",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_decision_score",
+   "domain": "Nodes System",
+   "name": "Decision / Valuation Node",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_decision_fuzzy",
+   "domain": "Nodes System",
+   "name": "Linguistic Decision Node",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_autotune",
+   "domain": "Nodes System",
+   "name": "Constrained Auto-Tune",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_router",
+   "domain": "Models & Agents",
+   "name": "LLM Router",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_registry",
+   "domain": "Models & Agents",
+   "name": "Model Registry",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_claude",
+   "domain": "Models & Agents",
+   "name": "Claude (Anthropic)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_openai",
+   "domain": "Models & Agents",
+   "name": "OpenAI (GPT)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_gemini",
+   "domain": "Models & Agents",
+   "name": "Google (Gemini)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_local",
+   "domain": "Models & Agents",
+   "name": "Local Models",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_cli_sub",
+   "domain": "Models & Agents",
+   "name": "CLI Subscriptions",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_keys",
+   "domain": "Models & Agents",
+   "name": "Provider Keys & Auth",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_blocklist",
+   "domain": "Models & Agents",
+   "name": "Failure Classifier & Cooldown",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_tool_engine",
+   "domain": "Models & Agents",
+   "name": "Tool Engine",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_composer",
+   "domain": "Models & Agents",
+   "name": "Composer Agent",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/agents/composer_agent.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_mode_gate",
+   "domain": "Models & Agents",
+   "name": "Write Approval Gate",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_agent_step",
+   "domain": "Models & Agents",
+   "name": "agent_step Primitives",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_usage",
+   "domain": "Models & Agents",
+   "name": "Usage & Cost Meter",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_model_ai_primitives",
+   "domain": "Models & Agents",
+   "name": "AI Calls = Effectful Primitives",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_model_build_agent",
+   "domain": "Models & Agents",
+   "name": "The Build Agent",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/agents/composer_agent.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_daemon",
+   "domain": "Brain & Memory",
+   "name": "Brain Daemon :8473",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_owner_binding",
+   "domain": "Brain & Memory",
+   "name": "Owner Binding",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_fact_store",
+   "domain": "Brain & Memory",
+   "name": "Fact Store (brain.db)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_layers",
+   "domain": "Brain & Memory",
+   "name": "Layered Scopes",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_write",
+   "domain": "Brain & Memory",
+   "name": "Write / Observe",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_embeddings",
+   "domain": "Brain & Memory",
+   "name": "Embedding Index",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_context_recall",
+   "domain": "Brain & Memory",
+   "name": "Context Recall",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_skills",
+   "domain": "Brain & Memory",
+   "name": "Skill Library",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_reflexion",
+   "domain": "Brain & Memory",
+   "name": "Reflexion Worker",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_secrets",
+   "domain": "Brain & Memory",
+   "name": "Secret Vault (op://)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_personal_cloud_sync",
+   "domain": "Brain & Memory",
+   "name": "Personal Cloud Sync",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_firm_federation",
+   "domain": "Brain & Memory",
+   "name": "Firm Federation",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_community",
+   "domain": "Brain & Memory",
+   "name": "Community Brain",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_court_gate",
+   "domain": "Brain & Memory",
+   "name": "Verify Gate (ROMA Court)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_explorer",
+   "domain": "Brain & Memory",
+   "name": "Brain Explorer / Folders",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_court_engine",
+   "domain": "Brain & Memory",
+   "name": "Court Tree = Build Engine",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_memory_is_nodes",
+   "domain": "Brain & Memory",
+   "name": "Memory Is Nodes",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/server.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_learns_per_slice",
+   "domain": "Brain & Memory",
+   "name": "Learns Per Slice",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_always_inject",
+   "domain": "Brain & Memory",
+   "name": "Always-Inject, Not Recall",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_hybrid_recall",
+   "domain": "Brain & Memory",
+   "name": "Hybrid Recall (BM25 + dense)",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_graphrag_explain",
+   "domain": "Brain & Memory",
+   "name": "Explainable Graph-RAG",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_drift_monitor",
+   "domain": "Brain & Memory",
+   "name": "Staleness / Drift Monitor",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_partial_pooling",
+   "domain": "Brain & Memory",
+   "name": "Partial-Pooling Merge",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_diligence",
+   "domain": "Brain & Memory",
+   "name": "Diligence Gate (never-reward-short)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/diligence.py",
+   "last_verified": "2026-07-02"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_contract",
+   "domain": "Connectors",
+   "name": "Connector Contract (the spine)",
+   "claimed_status": "live",
+   "evidence_ref": "runtime:connectors.load_all_connectors()->19conn/153ops",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_op_node",
+   "domain": "Connectors",
+   "name": "Connector Op (the unit user turns)",
+   "claimed_status": "live",
+   "evidence_ref": "runtime:connectors.load_all_connectors()->19conn/153ops",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_param_spec",
+   "domain": "Connectors",
+   "name": "Op Parameter (the editable knob)",
+   "claimed_status": "live",
+   "evidence_ref": "runtime:load_all_connectors()->19conn/153ops",
+   "last_verified": "2026-06-24"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_host_picker",
+   "domain": "Connectors",
+   "name": "Host Picker (16 hosts)",
+   "claimed_status": "live",
+   "evidence_ref": "runtime:connectors.load_all_connectors()->19conn/153ops",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_probe",
+   "domain": "Connectors",
+   "name": "Status Probe (honest 4-state)",
+   "claimed_status": "live",
+   "evidence_ref": "runtime:load_all_connectors()->19conn/153ops",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_health_daemon",
+   "domain": "Connectors",
+   "name": "Health Daemon (5s heartbeat)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/connectors/base.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_broker",
+   "domain": "Connectors",
+   "name": "Loopback Broker (in-process bridge)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/connectors/base.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_self_heal",
+   "domain": "Connectors",
+   "name": "Self-Heal (auto-revive)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/connectors/base.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_op_result",
+   "domain": "Connectors",
+   "name": "Op Result (what flows out)",
+   "claimed_status": "live",
+   "evidence_ref": "runtime:connectors.load_all_connectors()->19conn/153ops",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_auto_build",
+   "domain": "Connectors",
+   "name": "Auto-Build Connector (ask → built)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/auto_build.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_registry",
+   "domain": "Connectors",
+   "name": "Connector Registry (the roster)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/connectors/base.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_approval_gate",
+   "domain": "Connectors",
+   "name": "Write Approval Gate",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/connectors/base.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_panel",
+   "domain": "Connectors",
+   "name": "Connector Panel (the surface)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/connectors/base.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_auth",
+   "domain": "Connectors",
+   "name": "Auth / Credentials (op:// refs)",
+   "claimed_status": "live",
+   "evidence_ref": "runtime:load_all_connectors()->19conn/153ops",
+   "last_verified": "2026-06-24"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_conn_effect_primitives",
+   "domain": "Connectors",
+   "name": "Connectors = Effect Primitives",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/connectors/base.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_conn_freeze_gated",
+   "domain": "Connectors",
+   "name": "Effects Are Freeze-Gated",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_session_object",
+   "domain": "Sessions & Graphs",
+   "name": "Session Object (.archhub-session.json)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_param_pool",
+   "domain": "Sessions & Graphs",
+   "name": "Parameter Pool",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_chain_state",
+   "domain": "Sessions & Graphs",
+   "name": "Chain State Machine",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_autosave",
+   "domain": "Sessions & Graphs",
+   "name": "Debounced Autosave",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_save_guard",
+   "domain": "Sessions & Graphs",
+   "name": "Save Guard + Round-Trip Verify",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_graph_migrator",
+   "domain": "Sessions & Graphs",
+   "name": "Graph ↔ lmGraph Migrator",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_threads_rail",
+   "domain": "Sessions & Graphs",
+   "name": "Threads Rail",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_open_session",
+   "domain": "Sessions & Graphs",
+   "name": "Open / Resume Session",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_pin",
+   "domain": "Sessions & Graphs",
+   "name": "Pin / Favourite",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_version_history",
+   "domain": "Sessions & Graphs",
+   "name": "Version History",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_clear_graph",
+   "domain": "Sessions & Graphs",
+   "name": "Clear / Empty Persist",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_cloud_sync",
+   "domain": "Sessions & Graphs",
+   "name": "Cloud Session Sync",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_share_export",
+   "domain": "Sessions & Graphs",
+   "name": "Share / Export Bundle",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_replay",
+   "domain": "Sessions & Graphs",
+   "name": "Repeat / Replay Run",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_wip",
+   "domain": "Sessions & Graphs",
+   "name": "WIP - Local Graph",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_central",
+   "domain": "Sessions & Graphs",
+   "name": "Central - Shared Truth",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_federated",
+   "domain": "Sessions & Graphs",
+   "name": "Federated - Linked Models",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_history_tree",
+   "domain": "Sessions & Graphs",
+   "name": "History Tree - Revert",
+   "claimed_status": "partial",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_node_id_eq_element_id",
+   "domain": "Sessions & Graphs",
+   "name": "Node Id = Element Id",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_intent_ask",
+   "domain": "Self-Extension & Court",
+   "name": "Intent Ask",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_agency_gate",
+   "domain": "Self-Extension & Court",
+   "name": "User-Agency Gate",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_atomize",
+   "domain": "Self-Extension & Court",
+   "name": "Atomize",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_req_tree",
+   "domain": "Self-Extension & Court",
+   "name": "Requirement Tree",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_library_first",
+   "domain": "Self-Extension & Court",
+   "name": "Library-First Search",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_composer_build",
+   "domain": "Self-Extension & Court",
+   "name": "Composer Build (local)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/agents/composer_agent.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_executor",
+   "domain": "Self-Extension & Court",
+   "name": "Executor (does work)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_lens_artifact",
+   "domain": "Self-Extension & Court",
+   "name": "Lens 1 - Artifact",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_lens_diligence",
+   "domain": "Self-Extension & Court",
+   "name": "Lens 2 - Diligence",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_lens_independence",
+   "domain": "Self-Extension & Court",
+   "name": "Lens 3 - Independence",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_convene_court",
+   "domain": "Self-Extension & Court",
+   "name": "ROMA Court (jury)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_settle",
+   "domain": "Self-Extension & Court",
+   "name": "Settle Verdict",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_learn_fact",
+   "domain": "Self-Extension & Court",
+   "name": "Learn Fact",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_signal",
+   "domain": "Self-Extension & Court",
+   "name": "court_verdict Signal",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_promote",
+   "domain": "Self-Extension & Court",
+   "name": "Promote Local to Official",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_real_app",
+   "domain": "Self-Extension & Court",
+   "name": "Gate - On The Real App",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_reversible",
+   "domain": "Self-Extension & Court",
+   "name": "Gate - Reversible",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_loop_dry",
+   "domain": "Self-Extension & Court",
+   "name": "Gate - Loop Until Dry",
+   "claimed_status": "vision",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_court_refute",
+   "domain": "Self-Extension & Court",
+   "name": "Gate - Court Refutes",
+   "claimed_status": "vision",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/court_harness.py",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_proof_seen",
+   "domain": "Self-Extension & Court",
+   "name": "Gate - Proof You See",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_impossible_state",
+   "domain": "Self-Extension & Court",
+   "name": "Impossible-State Gate",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_confidence_gate",
+   "domain": "Self-Extension & Court",
+   "name": "Calibrated Confidence Gate",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_spec_tests",
+   "domain": "Self-Extension & Court",
+   "name": "Spec-Derived Tests",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_tail_coverage",
+   "domain": "Self-Extension & Court",
+   "name": "Tail + Coverage Scoring",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_loop_governor",
+   "domain": "Self-Extension & Court",
+   "name": "Loop Viability Governor",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_verdict_writeback",
+   "domain": "Self-Extension & Court",
+   "name": "Verdict → Graph Writeback",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_juror_diversity",
+   "domain": "Self-Extension & Court",
+   "name": "Juror Diversity + Confidence Vote",
+   "claimed_status": "planned",
+   "evidence_ref": "journalclub: Khandakar et al., Healthcare Analytics, DOI 10.1016/j.health.2026.100449 (ensemble DR); Condorcet jury theorem",
+   "last_verified": "2026-07-02"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_content_source",
+   "domain": "Website & Marketing",
+   "name": "Content Source (repo facts)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_from_brain",
+   "domain": "Website & Marketing",
+   "name": "Brain Skill Export",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_changelog_parser",
+   "domain": "Website & Marketing",
+   "name": "Changelog Parser",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_build_info",
+   "domain": "Website & Marketing",
+   "name": "Build-Info Stamper",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_pricing_node",
+   "domain": "Website & Marketing",
+   "name": "Pricing Tiers",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_page_renderer",
+   "domain": "Website & Marketing",
+   "name": "Astro Page Renderer",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_voice_lint",
+   "domain": "Website & Marketing",
+   "name": "Voice / Microcopy Lint",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_seo_meta",
+   "domain": "Website & Marketing",
+   "name": "SEO + Meta / Schema",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_download_cta",
+   "domain": "Website & Marketing",
+   "name": "Download CTA",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_signin_gateway",
+   "domain": "Website & Marketing",
+   "name": "Sign-in / Signup Gateway",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_fly_deploy",
+   "domain": "Website & Marketing",
+   "name": "Fly Deploy Host",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_analytics",
+   "domain": "Website & Marketing",
+   "name": "Marketing Analytics",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_blog_node",
+   "domain": "Website & Marketing",
+   "name": "Blog / Release Notes",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_contributors",
+   "domain": "Website & Marketing",
+   "name": "Contributors / Community Wall",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/web/src",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_identity",
+   "domain": "Users, Accounts & Auth",
+   "name": "Identity (who is asking)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_signup_register",
+   "domain": "Users, Accounts & Auth",
+   "name": "Sign up / register",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_magic_link",
+   "domain": "Users, Accounts & Auth",
+   "name": "Magic-link email",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_pkce_exchange",
+   "domain": "Users, Accounts & Auth",
+   "name": "PKCE code exchange",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_google_oauth",
+   "domain": "Users, Accounts & Auth",
+   "name": "Sign in with Google",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_idtoken_verify",
+   "domain": "Users, Accounts & Auth",
+   "name": "id_token verify (JWKS RS256)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_session_token",
+   "domain": "Users, Accounts & Auth",
+   "name": "Session token (bearer)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/session_io.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_token_guard",
+   "domain": "Users, Accounts & Auth",
+   "name": "Token guard (require_user)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_logout_revoke",
+   "domain": "Users, Accounts & Auth",
+   "name": "Logout / revoke sessions",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_brain_provision",
+   "domain": "Users, Accounts & Auth",
+   "name": "Brain provision on first auth",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_firm",
+   "domain": "Users, Accounts & Auth",
+   "name": "Firm / company",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_roles",
+   "domain": "Users, Accounts & Auth",
+   "name": "Roles & membership gate",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_seats",
+   "domain": "Users, Accounts & Auth",
+   "name": "Seats (à-la-carte)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_invite",
+   "domain": "Users, Accounts & Auth",
+   "name": "Invite teammate",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_invite_accept",
+   "domain": "Users, Accounts & Auth",
+   "name": "Accept invite (email-bound)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_account_chip",
+   "domain": "Users, Accounts & Auth",
+   "name": "Account chip",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_owner_transfer",
+   "domain": "Users, Accounts & Auth",
+   "name": "Transfer ownership",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/cloud_backend/google_auth.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_plan_catalog",
+   "domain": "Monetization",
+   "name": "Plan Catalog",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_entitlements",
+   "domain": "Monetization",
+   "name": "Entitlement Resolver",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_usage_meter",
+   "domain": "Monetization",
+   "name": "Usage Meter",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_quota_gate",
+   "domain": "Monetization",
+   "name": "Quota Gate",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_free_llm_key",
+   "domain": "Monetization",
+   "name": "Free-Tier LLM Key",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_byo_key_gate",
+   "domain": "Monetization",
+   "name": "BYO-Key Gate",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_stripe_billing",
+   "domain": "Monetization",
+   "name": "Stripe Billing",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_webhook_sync",
+   "domain": "Monetization",
+   "name": "Billing Webhook Sync",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_upgrade_flow",
+   "domain": "Monetization",
+   "name": "Upgrade Flow",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_firm_seats",
+   "domain": "Monetization",
+   "name": "Firm Seats & Pooling",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_marketplace_rev",
+   "domain": "Monetization",
+   "name": "Marketplace Revenue Share",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_project_billing",
+   "domain": "Monetization",
+   "name": "Project Monetization Node",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_account_chip",
+   "domain": "Monetization",
+   "name": "Account & Usage Chip",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_dunning",
+   "domain": "Monetization",
+   "name": "Dunning & Downgrade",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_revenue_ledger",
+   "domain": "Monetization",
+   "name": "Revenue Ledger",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_gate",
+   "domain": "Founder Cockpit",
+   "name": "Founder-Only Gate",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_command_bar",
+   "domain": "Founder Cockpit",
+   "name": "Natural-Language Command Bar",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_agent_loop",
+   "domain": "Founder Cockpit",
+   "name": "Cockpit Agent (reason→tool→observe)",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_keyword_router",
+   "domain": "Founder Cockpit",
+   "name": "Offline Keyword Router",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/app/llm_router.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_read_tools",
+   "domain": "Founder Cockpit",
+   "name": "Read Tools (run immediately)",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_user_db_view",
+   "domain": "Founder Cockpit",
+   "name": "User Database View",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_live_metrics",
+   "domain": "Founder Cockpit",
+   "name": "Live Metrics Panel",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_write_preview",
+   "domain": "Founder Cockpit",
+   "name": "Gated-Write Preview Card",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_purge_users",
+   "domain": "Founder Cockpit",
+   "name": "Purge Test Users",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_kill_switch",
+   "domain": "Founder Cockpit",
+   "name": "Kill Switches / Founder Flags",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_withheld",
+   "domain": "Founder Cockpit",
+   "name": "Withheld Actions (founder-hands-only)",
+   "claimed_status": "live",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/node_runtime/tests_domains/test_cockpit.py",
+   "last_verified": "2026-07-15"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_audit_log",
+   "domain": "Founder Cockpit",
+   "name": "Audit Log",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_direct_agent",
+   "domain": "Founder Cockpit",
+   "name": "Direct the Self-Extend Agent",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_secret_redactor",
+   "domain": "Founder Cockpit",
+   "name": "Secret Redactor",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cockpit_surface",
+   "domain": "Founder Cockpit",
+   "name": "Cockpit = First Surface",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_fly_app",
+   "domain": "Cloud & Infra",
+   "name": "Fly Cloud Host",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_persistent_db",
+   "domain": "Cloud & Infra",
+   "name": "Persistent SQLite (/data)",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_healthz",
+   "domain": "Cloud & Infra",
+   "name": "Health Check",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_auth",
+   "domain": "Cloud & Infra",
+   "name": "Auth & Tokens",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_llm_proxy",
+   "domain": "Cloud & Infra",
+   "name": "LLM Proxy",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_quota",
+   "domain": "Cloud & Infra",
+   "name": "Quota Gate",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_brain_replica",
+   "domain": "Cloud & Infra",
+   "name": "Brain Replica Sync",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_sync_client",
+   "domain": "Cloud & Infra",
+   "name": "Desktop Sync Client",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_brain_portal",
+   "domain": "Cloud & Infra",
+   "name": "Cloud Brain Portal",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_release_updater",
+   "domain": "Cloud & Infra",
+   "name": "Release Updater",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_deploy_pipeline",
+   "domain": "Cloud & Infra",
+   "name": "Deploy Pipeline",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_email_sender",
+   "domain": "Cloud & Infra",
+   "name": "Transactional Email",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_dns",
+   "domain": "Cloud & Infra",
+   "name": "DNS & Mail Routing",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_billing",
+   "domain": "Cloud & Infra",
+   "name": "Billing & Plans",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cloud_central_home",
+   "domain": "Cloud & Infra",
+   "name": "Central Lives In The Cloud",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_share_card",
+   "domain": "Community & Federation",
+   "name": "Share to Community",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_tier_gate",
+   "domain": "Community & Federation",
+   "name": "Tier Gate (exclusive vs knowledge)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_redaction_promote",
+   "domain": "Community & Federation",
+   "name": "Promote + Redact",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_firm_outbox",
+   "domain": "Community & Federation",
+   "name": "Firm Outbox (ActivityPub)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_subscribe",
+   "domain": "Community & Federation",
+   "name": "Subscribe to Peer Firm",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_poller",
+   "domain": "Community & Federation",
+   "name": "Community Poller",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_incoming_eval",
+   "domain": "Community & Federation",
+   "name": "Incoming Pattern Judge",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_quarantine",
+   "domain": "Community & Federation",
+   "name": "Quarantine Buffer",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_create_group",
+   "domain": "Community & Federation",
+   "name": "Create Community Group",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_join_code",
+   "domain": "Community & Federation",
+   "name": "Join-Code Issue + Verify",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fanout_export",
+   "domain": "Community & Federation",
+   "name": "Fanout Export",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fanout_apply",
+   "domain": "Community & Federation",
+   "name": "Fanout Apply (inbound merge)",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/12.PRODUCTION/personal-brain-mcp/src/personal_brain/community.py",
+   "last_verified": "2026-06-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_marketplace",
+   "domain": "Community & Federation",
+   "name": "Marketplace Listing",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_watershed",
+   "domain": "Community & Federation",
+   "name": "Collective-Mind Watershed",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_comm_federation",
+   "domain": "Community & Federation",
+   "name": "Federation Across Users",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_prov_ledger",
+   "domain": "Community & Federation",
+   "name": "Provenance Ledger (W3C PROV)",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_trust_egtrl",
+   "domain": "Community & Federation",
+   "name": "Decentralized Trust (EGT-RL)",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fingerprint_match",
+   "domain": "Community & Federation",
+   "name": "Private Peer Matching",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fair_propagation",
+   "domain": "Community & Federation",
+   "name": "Fairness-Constrained Promotion",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_claude",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Orchestrator · Claude session",
+   "claimed_status": "live",
+   "evidence_ref": "runtime: a live Claude Code chat is driving this map",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_agent_build",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Builder Agent",
+   "claimed_status": "live",
+   "evidence_ref": "worker: built filter_tall_items, ran 3->2",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_agent_court",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Court Agent",
+   "claimed_status": "live",
+   "evidence_ref": "worker: broken node REFUSED, working node LIVE",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_live",
+   "domain": "Orchestration (Agent layer)",
+   "name": "→ the map goes live",
+   "claimed_status": "live",
+   "evidence_ref": "",
+   "last_verified": ""
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_one_primitive",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Law - One Primitive",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_group_only",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Law - Grouping Is The Only Op",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_interpret",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Law - Interpret All The Way",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_all_the_way",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Law - Nodes All The Way",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_prog_no80",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Method - No 80%",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_prog_plan_first",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Method - Plan Into The Map First",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice0_plan",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Slice 0 - Plan",
+   "claimed_status": "partial",
+   "evidence_ref": "C:\\Users\\fargaly\\00.ARCHUB\\30.KNOWLEDGE\\grand-map\\data\\grand_domains.json",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice1_room1",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Slice 1 - Room One",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice2_button",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Slice 2 - A Button",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice3_panel",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Slice 3 - A Panel",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice4_session",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Slice 4 - A Session",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice5_app",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Slice 5 - The Whole App",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_fork_bulldoze",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Fork - Extend Or Bulldoze",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_roles",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Roles - Who",
+   "claimed_status": "vision",
+   "evidence_ref": "",
+   "last_verified": "2026-06-30"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orchestration_anti_redundancy",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Anti-Redundancy Coordination",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orchestration_model_routing",
+   "domain": "Orchestration (Agent layer)",
+   "name": "Per-Agent Model Routing",
+   "claimed_status": "vision",
+   "evidence_ref": "file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md",
+   "last_verified": "2026-07-01"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_assistant",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM - ArchHub Capability Assistant",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md; file:10.PRODUCT/13.NODE-LANGUAGE/SPEC.md; file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_baboom_steward.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_meeting_notes.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_baboom_meeting_note_publication.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_mcp_broker.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_work_handoff.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/model_execution_broker.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_universal_workshop_assignments.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_universal_baboom_cognition_planner.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_observe",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Observe",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_activity.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_baboom_steward.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_attention",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Attention Router",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_application_machine_transport.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md; file:30.KNOWLEDGE/strategy/baboom-founder-feedback-learning-contract-2026-07-23.md",
+   "last_verified": "2026-07-23"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_voice",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Voice and Task Input",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/baboom_native_voice.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/baboom_native_companion.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_capability_projection",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Capability Projection",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/model_execution_broker.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_model_execution.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_mcp_broker.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_universal_baboom_cognition_planner.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_approval",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Approval Gate",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/SPEC.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_execute",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Bounded Execution",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_model_execution.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_baboom_connector_execution.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_work_handoff.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_receipt",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Receipt Ledger",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/SPEC.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_work_handoff.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_model_execution.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_baboom_connector_execution.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_presence",
+   "domain": "Orchestration (Agent layer)",
+   "name": "BABOOM Living Presence",
+   "claimed_status": "partial",
+   "evidence_ref": "file:10.PRODUCT/13.NODE-LANGUAGE/BABOOM.md; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/baboom_native_companion.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/baboom_native_runtime.py; file:10.PRODUCT/13.NODE-LANGUAGE/nodelang/universal_application.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_native_companion.py; file:10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_native_runtime.py; file:30.KNOWLEDGE/strategy/baboom-parallel-domain-contracts-2026-07-22.md",
+   "last_verified": "2026-07-22"
+  }
+ ]
+}

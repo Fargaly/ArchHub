@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass
 from types import MappingProxyType
+from weakref import WeakKeyDictionary
 from typing import Mapping
 
 from .cell_attention import active_focus, open_attention_protocol
@@ -14,6 +15,7 @@ from .unified_authority import (
     DefinitionProjection,
     UnifiedAuthority,
     composition_root,
+    _project_instance,
     read_definition,
     read_scope_level,
     read_view_session_state,
@@ -87,6 +89,10 @@ class LensNode:
     icon_root: str | None = None
     color_token_root: str | None = None
     position_root: str | None = None
+    # The host operation this node runs, when its definition declares one.
+    # A canvas holds nodes that describe something and nodes that DO
+    # something, and only the node itself can say which it is.
+    operation: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +111,7 @@ class LensCatalogueItem:
     parameters: Mapping[str, object]
     interfaces: Mapping[str, object]
     presentation: Mapping[str, object]
+    rules: Mapping[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +150,7 @@ def _definition_item(definition: DefinitionProjection) -> LensCatalogueItem:
         MappingProxyType(dict(definition.contracts["parameters"])),
         MappingProxyType(dict(definition.contracts["interfaces"])),
         MappingProxyType(dict(definition.contracts["presentation"])),
+        MappingProxyType(dict(definition.contracts.get("rules") or {})),
     )
 
 
@@ -210,14 +218,43 @@ def _interface_binding(
     }
 
 
+# The published catalogue is the same 97 definitions on every click;
+# reading them per projection cost 0.640s of a 0.75s lens. Entries are
+# dropped by what a commit TOUCHES, so a publish or a revision is seen
+# immediately while a focus click keeps the read.
+_CATALOGUE_MEMOS: "WeakKeyDictionary" = WeakKeyDictionary()
+
+
 def _catalogue(
     authority: UnifiedAuthority,
     caller: CallerCommandCapability,
 ) -> tuple[LensCatalogueItem, ...]:
+    # Revision-keyed. An enumerated read set was tried and PROVED wrong:
+    # installing thirty definitions touched nothing the walk had listed,
+    # so the entry survived and the library never showed them. One
+    # revision, one answer.
+    revision = authority.store.revision
+    entry = _CATALOGUE_MEMOS.get(authority.store)
+    if entry is None or entry[0] != revision:
+        entry = (revision, {})
+        _CATALOGUE_MEMOS[authority.store] = entry
+    held = entry[1].get(caller.actor_root)
+    if held is not None:
+        return held
+    items = _catalogue_uncached(authority, caller)
+    entry[1][caller.actor_root] = items
+    return items
+
+
+def _catalogue_uncached(
+    authority: UnifiedAuthority,
+    caller: CallerCommandCapability,
+) -> tuple[LensCatalogueItem, ...]:
+    snapshot = authority.store.snapshot()
     roots = sorted(
         member.participant_id
         for member in relation_members(
-            authority.store.snapshot(), authority.manifest.catalogue_root
+            snapshot, authority.manifest.catalogue_root
         )
         if member.role_id == authority.role("definition")
     )
@@ -225,7 +262,9 @@ def _catalogue(
         _definition_item(read_definition(authority, root, caller=caller))
         for root in roots
     )
-    return tuple(sorted(items, key=lambda item: (item.name.casefold(), item.root_id)))
+    return tuple(sorted(
+        items, key=lambda item: (item.name.casefold(), item.root_id)
+    ))
 
 
 def _properties(
@@ -255,6 +294,11 @@ def _properties(
     return tuple(projected)
 
 
+# Phase costs of the last projection, for the owner to log. A lens that
+# is slow is slow SOMEWHERE; without this the number is a mystery.
+LAST_LENS_PHASES: dict = {}
+
+
 def project_unified_scope(
     authority: UnifiedAuthority,
     scope_root: str,
@@ -262,6 +306,7 @@ def project_unified_scope(
     caller: CallerCommandCapability,
     view_root: str | None = None,
     at_revision: int | None = None,
+    resolve_relation_ends: bool = True,
 ) -> UnifiedScopeLens:
     """Project one bounded scope without adding product-name dispatch."""
     if at_revision is None:
@@ -269,7 +314,17 @@ def project_unified_scope(
     else:
         if type(at_revision) is not int or at_revision < 0:
             raise InvalidCell("scope revision is invalid")
-        snapshot = authority.store.at(at_revision)
+        # Asking for the head revision IS the head snapshot. Routing it
+        # through at() walked the delta chain and re-verified the head on
+        # every click -- 0.75s of a canvas the founder is owed in 0.150s
+        # (SPEC 11.14) -- to arrive at the snapshot already in hand.
+        current = authority.store.snapshot()
+        snapshot = (
+            current if at_revision == current.revision
+            else authority.store.at(at_revision)
+        )
+    import time as _lens_time
+    _p0 = _lens_time.perf_counter()
     level = read_scope_level(
         authority,
         scope_root,
@@ -286,22 +341,49 @@ def project_unified_scope(
             raise InvalidCell("view session root does not belong to the caller")
         protocol = open_attention_protocol(snapshot)
         focus = active_focus(snapshot, protocol, session_root=view_root)
-        if focus is not None:
-            if focus.scope_root != scope_root:
-                raise InvalidCell("active focus scope drifted")
+        # A session carries one active focus, and it belongs to the scope it
+        # was taken in. Refusing to project a different scope because of it
+        # made one selection permanent: after a single click the canvas
+        # could never open anywhere else, across restarts, because the
+        # session is reused. A focus from elsewhere is simply not this
+        # scope's focus, and this scope opens with nothing selected.
+        #
+        # A focus that DOES claim this scope must still name roots this
+        # scope shows; that refusal stays, because a selection pointing at
+        # roots outside what is drawn is a claim about this scope that the
+        # scope contradicts.
+        if focus is not None and focus.scope_root == scope_root:
             visible = frozenset(level.composition_roots)
             if not set(focus.selected_roots).issubset(visible):
                 raise InvalidCell("active focus selection is outside the projected scope")
             selected_root = focus.primary_root
             selected_roots = focus.selected_roots
-    relations = tuple(
-        LensRelation(
-            relation.root_id,
-            relation.participants,
-            MappingProxyType(dict(relation.properties)),
+    _p1 = _lens_time.perf_counter()
+    level_roots = frozenset(level.composition_roots)
+    owner = _level_owner_index(authority, snapshot, level.composition_roots)
+    projected_relations = []
+    for relation in level.relations.values():
+        # A canvas rolls relation ends up to the cards it draws and
+        # drops what cannot land on one -- a line to nowhere is not a
+        # line. A textual lens (the workshop) reads the graph's own
+        # participants; resolution is a drawing rule, so the entry
+        # point that draws is the one that asks for it.
+        if resolve_relation_ends:
+            participants = _resolved_participants(
+                relation.participants, owner, level_roots
+            )
+            if participants is None:
+                continue
+        else:
+            participants = tuple(relation.participants)
+        projected_relations.append(
+            LensRelation(
+                relation.root_id,
+                participants,
+                MappingProxyType(dict(relation.properties)),
+            )
         )
-        for relation in level.relations.values()
-    )
+    relations = tuple(projected_relations)
     role_names = {authority.role(name): name for name in authority.roles}
     ports: dict[str, list[LensPort]] = {
         root: [] for root in level.composition_roots
@@ -348,6 +430,7 @@ def project_unified_scope(
                 interface.get("authority_roots", ()),
             ))
 
+    _p2 = _lens_time.perf_counter()
     nodes: list[LensNode] = []
     # Where a composition sits is a graph fact the scope holds, not a
     # number a projector picks. A composition that has never been placed
@@ -373,7 +456,7 @@ def project_unified_scope(
                 (),
                 (),
                 tuple(sorted(ports[root], key=lambda item: item.relation_root)),
-                True,
+                _opens_onto_something(authority, snapshot, root),
                 None,
                 None,
                 None,
@@ -421,7 +504,7 @@ def project_unified_scope(
                 ),
             ),
             tuple(sorted(ports[root], key=lambda item: item.relation_root)),
-            True,
+            _opens_onto_something(authority, snapshot, root),
             presentation_root,
             presentation.get("icon"),
             presentation.get("token"),
@@ -434,7 +517,13 @@ def project_unified_scope(
             presentation_identities.get("icon", {}).get("property_root"),
             presentation_identities.get("token", {}).get("property_root"),
             presentation_identities.get("position", {}).get("property_root"),
+            (
+                rules.get("operation")
+                if isinstance(rules.get("operation"), str)
+                else None
+            ),
         ))
+    _p3 = _lens_time.perf_counter()
     viewport, design_tokens = (
         read_view_session_state(
             authority,
@@ -454,15 +543,50 @@ def project_unified_scope(
         authority.manifest.graph_id,
         level.revision,
         scope_root,
-        level.label,
+        _scope_title(authority, snapshot, scope_root, level.label, caller),
         selected_root,
         selected_roots,
         tuple(nodes),
         relations,
-        _catalogue(authority, caller),
+        _catalogue_timed(authority, caller, _p0, _p1, _p2, _p3),
         MappingProxyType(viewport),
         MappingProxyType(design_tokens),
     )
+
+
+def _scope_title(authority, snapshot, scope_root, label, caller):
+    """What the scope the founder stands in is called.
+
+    A composition carries its own label. An instance -- every Grand Map
+    domain the import placed -- does not: its name is the label its
+    definition declares, or the instance's own title property when the
+    definition names all its instances alike. That is exactly the rule a
+    card on the canvas follows, so the heading over a scope must read the
+    same as the card that was double-clicked to enter it. Falling back to
+    "Scope" drew a nameless heading over a domain whose card was named.
+    """
+    if label is not None:
+        return label
+    try:
+        instance = _project_instance(authority, snapshot, scope_root)
+    except InvalidCell:
+        return None
+    definition_root = instance.get("definition")
+    values = instance.get("values")
+    if type(definition_root) is not str or not isinstance(values, Mapping):
+        return None
+    definition = read_definition(authority, definition_root, caller=caller)
+    presentation = definition.contracts["presentation"]
+    declared = presentation.get("label", definition.name)
+    if type(declared) is not str or not declared.strip():
+        return None
+    declared = declared.strip()
+    if declared != definition.name:
+        return declared
+    title = values.get("title")
+    if type(title) is str and title.strip():
+        return title.strip()
+    return declared
 
 
 def project_workshop_lens(
@@ -474,7 +598,92 @@ def project_workshop_lens(
         authority,
         composition_root(authority, "Workshop", caller=caller),
         caller=caller,
+        resolve_relation_ends=False,
     )
+
+
+def _opens_onto_something(authority, snapshot, root: str) -> bool:
+    """Whether entering this node would show anything.
+
+    Every node claimed to be openable, so every card offered to expand and
+    every expansion landed on an empty canvas. Openable is not a property
+    of being a node; it is a fact about whether this node holds members the
+    level below would draw, and it is read from the graph like any other
+    fact rather than asserted here.
+    """
+    try:
+        for member in read_relation(snapshot, root, budget=4096):
+            if member.role_id == authority.role("composition"):
+                return True
+    except InvalidCell:
+        return False
+    return False
+
+
+def _level_owner_index(
+    authority,
+    snapshot,
+    composition_roots,
+    budget: int = 200_000,
+) -> dict[str, str]:
+    """Which card on this level contains each root beneath it.
+
+    A relation between two requirements inside two domains is a relation
+    between those domains as far as this level can see. Without this the
+    level drew fifteen domain cards and four hundred and eighty five lines
+    whose endpoints were all one level further down, so not one line had
+    anything to connect and the domains looked unrelated.
+    """
+    # Descend containment only. Following every participant instead walks
+    # out through the relations themselves into shared definitions and
+    # values, and the first card reached claims the whole graph -- which
+    # drew every line on this level converging on one card.
+    composition = authority.role("composition")
+    owner: dict[str, str] = {}
+    remaining = budget
+    for card in composition_roots:
+        pending = [card]
+        seen = {card}
+        while pending and remaining > 0:
+            current = pending.pop()
+            owner.setdefault(current, card)
+            try:
+                members = read_relation(snapshot, current, budget=4096)
+            except InvalidCell:
+                continue
+            for member in members:
+                remaining -= 1
+                if member.role_id != composition:
+                    continue
+                child = member.participant_id
+                if child in seen:
+                    continue
+                seen.add(child)
+                pending.append(child)
+    return owner
+
+
+def _resolved_participants(participants, owner, level_roots):
+    """Move a relation's ends up to the cards this level actually draws.
+
+    A participant already on the level keeps its own identity. One below
+    the level is answered for by the card containing it. One outside the
+    region entirely cannot be drawn here and drops the relation, because a
+    line to nowhere is not a line.
+    """
+    resolved = []
+    for role, root in participants:
+        if root in level_roots:
+            resolved.append((role, root))
+            continue
+        holder = owner.get(root)
+        if holder is None:
+            return None
+        resolved.append((role, holder))
+    ends = {root for _, root in resolved}
+    if len(ends) < 2:
+        return None
+    return tuple(resolved)
 
 
 def scope_lens_payload(lens: UnifiedScopeLens) -> dict[str, object]:
@@ -510,3 +719,20 @@ __all__ = [
     "project_workshop_lens",
     "scope_lens_payload",
 ]
+
+
+def _catalogue_timed(authority, caller, p0, p1, p2, p3):
+    """Read the catalogue, and publish what every lens phase cost."""
+    import time as _lens_time
+    start = _lens_time.perf_counter()
+    catalogue = _catalogue(authority, caller)
+    done = _lens_time.perf_counter()
+    LAST_LENS_PHASES.clear()
+    LAST_LENS_PHASES.update({
+        "level": p1 - p0,
+        "relations": p2 - p1,
+        "nodes": p3 - p2,
+        "view": start - p3,
+        "catalogue": done - start,
+    })
+    return catalogue

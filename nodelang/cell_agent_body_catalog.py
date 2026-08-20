@@ -108,7 +108,7 @@ def project_agent_body_catalog_protocol(
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     root_id = prefix + ":root"
     registry_root = prefix + ":registry"
-    if {root_id, registry_root, *roles.values()} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {root_id, registry_root, *roles.values()}):
         raise InvalidCell("agent-body catalog protocol is incomplete")
     expected = tuple(roles.values())
     for relation_root, label in ((root_id, "vocabulary"), (registry_root, "registry")):
@@ -166,7 +166,7 @@ def compose_agent_body_catalog_entry(
     required = {
         body_root, control_root, policy_root, grand_map_node_root, *devices,
     }
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("agent-body catalog entry references a missing root")
     value_cells = {
         "runtime": _terminal(entry_id + ":runtime", runtime),

@@ -27,6 +27,7 @@ from .cell_protocols import read_relation
 from .cell_source_assembly import SourceCellBatch, remap_source_cells, source_modules_digest
 from .clean_browser_authority import CleanBrowserAuthority
 from .unified_authority import (
+    read_definition,
     CODEC_NAME,
     COMMAND_BUDGET,
     CallerCommandCapability,
@@ -47,10 +48,19 @@ from .unified_authority import (
     read_scope_level,
     validate_composition,
 )
-from .cell_control_bindings import CAPABILITY_SCOPE
+from .cell_control_bindings import (
+    CAPABILITY_COMPOSITION,
+    CAPABILITY_EXECUTE,
+    CAPABILITY_INSTANTIATE,
+    CAPABILITY_SCOPE,
+)
+from .clean_subsystem_revision import replace_interface_subsystem
 from .universal_cell import NULL_CELL_ID, Cell, InvalidCell, Snapshot
 
 
+CONTROL_RUN = "app:control:canvas:run"
+CONTROL_GROUP = "app:control:canvas:group"
+CONTROL_UNGROUP = "app:control:canvas:ungroup"
 CLEAN_SCOPE_INTERACTIONS_LABEL = "ArchHub clean scope interactions"
 CLEAN_SCOPE_INTERACTIONS_VERSION = "clean-scope-interactions/v1"
 _SOURCE_PREFIX = "source:clean-scope-interactions"
@@ -79,6 +89,42 @@ class CleanScopeInteractions:
 
     def binding_for(self, scope_root: str, control_root: str) -> ScopeOpenBinding | None:
         return self.bindings.get(scope_root, {}).get(control_root)
+
+    @property
+    def root_scope(self) -> str | None:
+        """The door: the one scope every other scope can open the way back to.
+
+        Not stored -- read off the set itself, so an installed table and a
+        derivation answer alike. With one scope it is that scope; with
+        many, it is the scope that is the target of a binding from every
+        other scope (the way-back binding each scope below it carries).
+        """
+        held = _ROOT_SCOPE_MEMO.get(id(self))
+        if held is not None and held[0] is self:
+            return held[1]
+        keys = tuple(self.bindings)
+        door: str | None = None
+        if len(keys) == 1:
+            door = keys[0]
+        else:
+            targets_by_scope = {
+                scope: {item.target_root for item in controls.values()}
+                for scope, controls in self.bindings.items()
+            }
+            for scope in keys:
+                if all(
+                    scope in targets_by_scope[other]
+                    for other in keys if other != scope
+                ):
+                    door = scope
+                    break
+        if len(_ROOT_SCOPE_MEMO) >= 8:
+            _ROOT_SCOPE_MEMO.pop(next(iter(_ROOT_SCOPE_MEMO)))
+        _ROOT_SCOPE_MEMO[id(self)] = (self, door)
+        return door
+
+
+_ROOT_SCOPE_MEMO: dict[int, tuple["CleanScopeInteractions", str | None]] = {}
 
 
 def _compile_protocol_source() -> tuple[tuple[Cell, ...], InteractionProtocol]:
@@ -113,6 +159,19 @@ def _compile_protocol_source() -> tuple[tuple[Cell, ...], InteractionProtocol]:
     )
 
 
+# Identity derived from what a thing IS, not from when it was written.
+# Every rebind used to mint a fresh uuid for the event, for each
+# interaction, and for each entry -- so a binding that had not changed
+# still became new cells, and one rebind wrote 1,133,504 of them. Two
+# rebinds of the same bindings now produce the same identities, and the
+# store already holds those cells.
+_IDENTITY_NAMESPACE = uuid.UUID("6f2a1d3e-7c4b-5a89-9e01-2b3c4d5e6f70")
+
+
+def _derived_id(graph_id: str, *parts: str) -> str:
+    return str(uuid.uuid5(_IDENTITY_NAMESPACE, "::".join((graph_id, *parts))))
+
+
 def _entry_cells(
     authority: UnifiedAuthority,
     label: str,
@@ -124,7 +183,9 @@ def _entry_cells(
         label,
         shape_root=authority.shape("value"),
     )
-    entry_root = new_id()
+    entry_root = _derived_id(
+        authority.manifest.graph_id, "entry", label, target_root
+    )
     cells = typed_relation_cells(
         entry_root,
         authority.role("conforms-to"),
@@ -167,11 +228,21 @@ def _binding_specs(
     authority: UnifiedAuthority,
     scope_root: str,
     caller: CallerCommandCapability,
-) -> tuple[tuple[str, str, str], ...]:
+) -> tuple[tuple[str, str, str, str], ...]:
     snapshot = authority.store.snapshot()
+    published = tuple(
+        member.participant_id
+        for member in read_relation(
+            snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
+        )
+        if member.role_id == authority.role("definition")
+        and read_definition(
+            authority, member.participant_id, caller=caller
+        ).lifecycle == "published"
+    )
     queue = [scope_root]
     seen: set[str] = set()
-    specs: list[tuple[str, str, str]] = []
+    specs: list[tuple[str, str, str, str]] = []
     while queue:
         current = queue.pop(0)
         if current in seen:
@@ -186,13 +257,98 @@ def _binding_specs(
             budget=COMMAND_BUDGET,
         )
         for target_root in sorted(level.composition_roots):
-            specs.append((current, target_root, target_root))
+            # A scope that lists itself would produce an interaction whose
+            # two inputs are the same root, and an interaction that repeats
+            # a participant is refused on read -- which makes the whole
+            # installed set unreadable, not just that one entry. Opening a
+            # scope into itself is not an interaction anyone can take.
+            if target_root == current:
+                continue
+            specs.append((current, target_root, target_root, CAPABILITY_SCOPE))
             if target_root not in seen:
                 queue.append(target_root)
+        # Opening a scope is not the only thing a scope affords. Running
+        # what is focused is a second one, and the client will not activate
+        # a control the graph has declared no interaction for -- so a Run
+        # button with no interaction behind it is a button that does
+        # nothing, silently. Which node it runs is decided by the focus at
+        # the moment it is pressed, so the interaction belongs to the
+        # scope rather than to any one node in it.
+        specs.append((current, CONTROL_RUN, CONTROL_RUN, CAPABILITY_EXECUTE))
+        # Grouping the selection and dissolving a group are scope acts the
+        # toolbar declares; without interactions behind them the buttons
+        # were chrome. What they act on is the graph-held focus, read at
+        # submit time.
+        specs.append((
+            current, CONTROL_GROUP, CONTROL_GROUP, CAPABILITY_COMPOSITION,
+        ))
+        specs.append((
+            current, CONTROL_UNGROUP, CONTROL_UNGROUP, CAPABILITY_COMPOSITION,
+        ))
+        # Placing a definition from the library is a third thing a scope
+        # affords, and the client will not activate a place control that
+        # the graph declared no interaction for. Each published definition
+        # is its own control here, the same way each node is its own
+        # control for opening.
+        for definition_root in published:
+            if definition_root == current:
+                continue
+            specs.append((
+                current, definition_root, definition_root,
+                CAPABILITY_INSTANTIATE,
+            ))
+        # The way back. Entering a domain was a one-way door: the trail
+        # held only the scope the founder stood in, and the graph had
+        # declared no interaction that opens the map again, so the
+        # breadcrumb drew nothing to press. Opening the door scope from any
+        # scope below it is the same kind of act as opening a child, and
+        # it is derived here the same way.
+        if current != scope_root:
+            specs.append((current, scope_root, scope_root, CAPABILITY_SCOPE))
     return tuple(specs)
 
 
-def _source_digest(binding_specs: tuple[tuple[str, str, str], ...]) -> str:
+def unbound_published_definitions(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    *,
+    caller: CallerCommandCapability,
+) -> tuple[str, ...]:
+    """Published definitions the installed set cannot place in this scope.
+
+    Publishing a definition and binding it are two acts. The library
+    lists what is published; only what is bound can be placed. Do the
+    first without the second and the canvas fills with cards that
+    refuse -- no error anywhere, because nothing is wrong until somebody
+    clicks.
+
+    This is the question an operator has after publishing anything, and
+    the answer nobody could get before: the empty tuple means the
+    library is honest.
+    """
+    snapshot = authority.store.snapshot()
+    published = tuple(
+        member.participant_id
+        for member in read_relation(
+            snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
+        )
+        if member.role_id == authority.role("definition")
+        and read_definition(
+            authority, member.participant_id, caller=caller
+        ).lifecycle == "published"
+    )
+    try:
+        installed = open_clean_scope_interactions(authority, caller=caller)
+    except InvalidCell:
+        return published
+    bound = set(installed.bindings.get(scope_root, {}))
+    return tuple(
+        definition_root for definition_root in published
+        if definition_root not in bound and definition_root != scope_root
+    )
+
+
+def _source_digest(binding_specs: tuple[tuple[str, str, str, str], ...]) -> str:
     module_digest = source_modules_digest(
         CLEAN_SCOPE_INTERACTIONS_VERSION,
         (sys.modules[__name__], cell_interactions),
@@ -210,7 +366,7 @@ def _interaction_sets_in_interface(
     snapshot: Snapshot,
     interface_root: str,
 ) -> tuple[CleanScopeInteractions, ...]:
-    members = read_relation(snapshot, interface_root, budget=10_000)
+    members = read_relation(snapshot, interface_root, budget=COMMAND_BUDGET)
     roots = tuple(
         member.participant_id
         for member in members
@@ -232,7 +388,13 @@ def _read_scope_interactions(
     snapshot: Snapshot,
     root_id: str,
 ) -> CleanScopeInteractions | None:
-    composition = validate_composition(authority, snapshot, root_id)
+    # The installed set is a command-scale structure: one entry per scope
+    # per control, across every scope the canvas can reach. Reading it at
+    # the ten-thousand-cell default refused the whole set once it grew,
+    # and a set that cannot be read is a canvas where no control works.
+    composition = validate_composition(
+        authority, snapshot, root_id, budget=COMMAND_BUDGET
+    )
     if composition.protocol_root != authority.shape("composition"):
         return None
     members = composition.members
@@ -297,6 +459,193 @@ def _read_scope_interactions(
             scope_root: MappingProxyType(controls)
             for scope_root, controls in bindings.items()
         }),
+    )
+
+
+WRITTEN_CELL_LIMIT = 250_000
+
+
+def revise_clean_scope_interactions(
+    authority: UnifiedAuthority,
+    browser: CleanBrowserAuthority,
+    scope_root: str,
+    *,
+    caller: CallerCommandCapability,
+    command_id: str,
+    cell_limit: int | None = WRITTEN_CELL_LIMIT,
+) -> CleanScopeInteractions:
+    """Carry a newer interaction source onto a graph that holds an older one.
+
+    Installing refuses a source it did not already have, so without this a
+    graph could never be told about an interaction that did not exist when
+    it was first installed -- a control added later would be a button the
+    client refuses to activate, silently, forever.
+    """
+    binding_specs = _binding_specs(authority, scope_root, caller)
+    source_digest = _source_digest(binding_specs)
+    snapshot = authority.store.snapshot()
+    interface_root = composition_root(authority, "Interface", caller=caller)
+    installed = _interaction_sets_in_interface(
+        authority, snapshot, interface_root
+    )
+    if not installed:
+        raise InvalidCell("no clean scope interaction set is installed to revise")
+    held = installed[0]
+    if held.source_digest == source_digest:
+        raise InvalidCell(
+            "the installed clean scope interactions already carry this source"
+        )
+    protocol_cells, protocol = _compile_protocol_source()
+    event_root = _derived_id(
+        authority.manifest.graph_id, "event", _EVENT_LABEL
+    )
+    event_cell = Cell(event_root, NULL_CELL_ID, NULL_CELL_ID, _EVENT_LABEL.encode("utf-8"))
+    interaction_batch = SourceCellBatch()
+    bindings: dict[str, dict[str, ScopeOpenBinding]] = {}
+    for current_scope, control_root, target_root, capability_root in binding_specs:
+        interaction_root = _derived_id(
+            authority.manifest.graph_id, "interaction",
+            current_scope, control_root, target_root, capability_root,
+        )
+        build_interaction(
+            authority.store,
+            protocol,
+            interaction_id=interaction_root,
+            control_root=control_root,
+            event_root=event_root,
+            target_root=browser.root_id,
+            input_roots=(current_scope, target_root),
+            action_root=capability_root,
+            subject_root=caller.actor_root,
+            policy_root=authority.manifest.policy_root,
+            authorization_action_root=authority.role("composition"),
+            authorization_object_root=target_root,
+            # The proof asks whether the subject may compose the target
+            # within a scope that holds it. A child is held by the scope it
+            # is opened from; the door -- the way back, opened from a scope
+            # below it -- is held by itself.
+            authorization_scope_roots=(
+                authority.manifest.application_root,
+                target_root if target_root == scope_root else current_scope,
+            ),
+            version="0.1.0",
+            batch=interaction_batch,
+        )
+        bindings.setdefault(current_scope, {})[control_root] = ScopeOpenBinding(
+            current_scope,
+            control_root,
+            target_root,
+            interaction_root,
+        )
+
+    cells: list[Cell] = [*protocol_cells, event_cell, *interaction_batch.cells]
+    for declared_root, declared_label in (
+        (CAPABILITY_SCOPE, b"scope"),
+        (CAPABILITY_EXECUTE, b"execute"),
+        # A scope-open binding names a node that already exists, so its
+        # control needs no cell of its own. The Run control is named by the
+        # catalogue rather than by the canvas, so the graph has to carry
+        # its identity or every interaction pointing at it dangles.
+        (CONTROL_RUN, b"run"),
+        (CONTROL_GROUP, b"group"),
+        (CONTROL_UNGROUP, b"ungroup"),
+        (CAPABILITY_INSTANTIATE, b"instantiate"),
+        (CAPABILITY_COMPOSITION, b"composition"),
+    ):
+        if declared_root not in snapshot.cells:
+            cells.append(
+                Cell(declared_root, NULL_CELL_ID, NULL_CELL_ID, declared_label)
+            )
+    entries: list[str] = []
+    for category, roots in (
+        ("role", protocol.roles),
+        ("state", protocol.states),
+    ):
+        for name, target in sorted(roots.items()):
+            entry_root, entry_cells = _entry_cells(
+                authority, f"{category}/{name}", target
+            )
+            entries.append(entry_root)
+            cells.extend(entry_cells)
+    event_entry_root, event_entry_cells = _entry_cells(
+        authority,
+        f"event/{_EVENT_LABEL}",
+        event_root,
+    )
+    entries.append(event_entry_root)
+    cells.extend(event_entry_cells)
+    for current_scope, control_bindings in sorted(bindings.items()):
+        for control_root, binding in sorted(control_bindings.items()):
+            entry_root, entry_cells = _entry_cells(
+                authority,
+                f"binding/{current_scope}/{control_root}/{binding.target_root}",
+                binding.interaction_root,
+            )
+            entries.append(entry_root)
+            cells.extend(entry_cells)
+    label_root, label_cells = build_value(
+        authority.roles,
+        authority.codecs[CODEC_NAME],
+        CLEAN_SCOPE_INTERACTIONS_LABEL,
+        shape_root=authority.shape("value"),
+    )
+    digest_root, digest_cells = build_value(
+        authority.roles,
+        authority.codecs[CODEC_NAME],
+        source_digest,
+        shape_root=authority.shape("value"),
+    )
+    root_id = new_id()
+    root_cells = typed_relation_cells(
+        root_id,
+        authority.role("conforms-to"),
+        authority.shape("composition"),
+        (
+            (authority.role("label"), label_root),
+            (authority.role("content-digest"), digest_root),
+            (authority.role("protocol-definition"), protocol.root_id),
+            *((authority.role("item"), entry) for entry in entries),
+        ),
+    )
+    written = len(cells) + len(label_cells) + len(digest_cells) + len(root_cells)
+    if cell_limit is not None and written > cell_limit:
+        # This rewrites every binding for every scope, so its cost grows
+        # with the whole catalogue rather than with what changed. Four of
+        # these turned a 654 MB graph into 2.3 GB and a two-minute start
+        # into thirteen. Nothing else in the system can write a million
+        # cells on one call, and nothing was watching this one.
+        raise InvalidCell(
+            "revising the interaction set would write %d cells, over the "
+            "%d limit; the set rewrites every binding for every scope, so "
+            "pass cell_limit to accept the cost deliberately"
+            % (written, cell_limit)
+        )
+    receipt = replace_interface_subsystem(
+        authority,
+        caller=caller,
+        command_id=command_id,
+        intent="revise-clean-scope-interactions",
+        held_root=held.root_id,
+        replacement_root=root_id,
+        replacement_cells=(
+            *cells, *label_cells, *digest_cells, *root_cells
+        ),
+        source_digest=source_digest,
+    )
+    current = authority.store.snapshot()
+    revised = _read_scope_interactions(authority, current, root_id)
+    if revised is None:
+        raise InvalidCell("revised clean scope interaction set is invalid")
+    return CleanScopeInteractions(
+        revised.graph_id,
+        revised.root_id,
+        revised.protocol,
+        revised.event_root,
+        revised.source_digest,
+        revised.revision,
+        False,
+        getattr(receipt, "root_id", None),
+        revised.bindings,
     )
 
 
@@ -375,12 +724,17 @@ def install_clean_scope_interactions(
         )
 
     protocol_cells, protocol = _compile_protocol_source()
-    event_root = new_id()
+    event_root = _derived_id(
+        authority.manifest.graph_id, "event", _EVENT_LABEL
+    )
     event_cell = Cell(event_root, NULL_CELL_ID, NULL_CELL_ID, _EVENT_LABEL.encode("utf-8"))
     interaction_batch = SourceCellBatch()
     bindings: dict[str, dict[str, ScopeOpenBinding]] = {}
-    for current_scope, control_root, target_root in binding_specs:
-        interaction_root = new_id()
+    for current_scope, control_root, target_root, capability_root in binding_specs:
+        interaction_root = _derived_id(
+            authority.manifest.graph_id, "interaction",
+            current_scope, control_root, target_root, capability_root,
+        )
         build_interaction(
             authority.store,
             protocol,
@@ -389,14 +743,18 @@ def install_clean_scope_interactions(
             event_root=event_root,
             target_root=browser.root_id,
             input_roots=(current_scope, target_root),
-            action_root=CAPABILITY_SCOPE,
+            action_root=capability_root,
             subject_root=caller.actor_root,
             policy_root=authority.manifest.policy_root,
             authorization_action_root=authority.role("composition"),
             authorization_object_root=target_root,
+            # The proof asks whether the subject may compose the target
+            # within a scope that holds it. A child is held by the scope it
+            # is opened from; the door -- the way back, opened from a scope
+            # below it -- is held by itself.
             authorization_scope_roots=(
                 authority.manifest.application_root,
-                current_scope,
+                target_root if target_root == scope_root else current_scope,
             ),
             version="0.1.0",
             batch=interaction_batch,
@@ -409,13 +767,23 @@ def install_clean_scope_interactions(
         )
 
     cells: list[Cell] = [*protocol_cells, event_cell, *interaction_batch.cells]
-    if CAPABILITY_SCOPE not in snapshot.cells:
-        # The scope capability is the graph-held action every binding points
-        # at; the first install must create it or the interaction relation
-        # would reference a dangling identity.
-        cells.append(
-            Cell(CAPABILITY_SCOPE, NULL_CELL_ID, NULL_CELL_ID, b"scope")
-        )
+    for declared_root, declared_label in (
+        (CAPABILITY_SCOPE, b"scope"),
+        (CAPABILITY_EXECUTE, b"execute"),
+        # A scope-open binding names a node that already exists, so its
+        # control needs no cell of its own. The Run control is named by the
+        # catalogue rather than by the canvas, so the graph has to carry
+        # its identity or every interaction pointing at it dangles.
+        (CONTROL_RUN, b"run"),
+        (CONTROL_GROUP, b"group"),
+        (CONTROL_UNGROUP, b"ungroup"),
+        (CAPABILITY_INSTANTIATE, b"instantiate"),
+        (CAPABILITY_COMPOSITION, b"composition"),
+    ):
+        if declared_root not in snapshot.cells:
+            cells.append(
+                Cell(declared_root, NULL_CELL_ID, NULL_CELL_ID, declared_label)
+            )
     entries: list[str] = []
     for category, roots in (
         ("role", protocol.roles),
@@ -505,6 +873,121 @@ def install_clean_scope_interactions(
     )
 
 
+def derive_clean_scope_interactions(
+    authority: UnifiedAuthority,
+    browser: CleanBrowserAuthority,
+    scope_root: str,
+    *,
+    caller: CallerCommandCapability,
+) -> tuple[CleanScopeInteractions, tuple[Cell, ...]]:
+    """The exact set revise would persist, computed instead of written.
+
+    Every interaction the installed table holds is already built from
+    derived identities -- the same (scope, control, target, capability)
+    always names the same cells. That makes the whole table a projection
+    of graph facts it merely repeats: the scope tree and the published
+    catalogue. Four persisted copies of that projection are 78%% of the
+    live graph and the reason it boots in minutes.
+
+    This computes the same cells and the same bindings without committing
+    anything. The equivalence court holds it cell-for-cell against the
+    installed table; once the read path consumes this, the table is
+    redundant state a compaction can drop.
+    """
+    binding_specs = _binding_specs(authority, scope_root, caller)
+    source_digest = _source_digest(binding_specs)
+    snapshot = authority.store.snapshot()
+    protocol_cells, protocol = _compile_protocol_source()
+    event_root = _derived_id(
+        authority.manifest.graph_id, "event", _EVENT_LABEL
+    )
+    event_cell = Cell(
+        event_root, NULL_CELL_ID, NULL_CELL_ID, _EVENT_LABEL.encode("utf-8")
+    )
+    interaction_batch = SourceCellBatch()
+    bindings: dict[str, dict[str, ScopeOpenBinding]] = {}
+    for current_scope, control_root, target_root, capability_root in binding_specs:
+        interaction_root = _derived_id(
+            authority.manifest.graph_id, "interaction",
+            current_scope, control_root, target_root, capability_root,
+        )
+        build_interaction(
+            authority.store,
+            protocol,
+            interaction_id=interaction_root,
+            control_root=control_root,
+            event_root=event_root,
+            target_root=browser.root_id,
+            input_roots=(current_scope, target_root),
+            action_root=capability_root,
+            subject_root=caller.actor_root,
+            policy_root=authority.manifest.policy_root,
+            authorization_action_root=authority.role("composition"),
+            authorization_object_root=target_root,
+            # The proof asks whether the subject may compose the target
+            # within a scope that holds it. A child is held by the scope it
+            # is opened from; the door -- the way back, opened from a scope
+            # below it -- is held by itself.
+            authorization_scope_roots=(
+                authority.manifest.application_root,
+                target_root if target_root == scope_root else current_scope,
+            ),
+            version="0.1.0",
+            batch=interaction_batch,
+        )
+        bindings.setdefault(current_scope, {})[control_root] = ScopeOpenBinding(
+            current_scope,
+            control_root,
+            target_root,
+            interaction_root,
+        )
+    derived_root = _derived_id(
+        authority.manifest.graph_id, "derived-scope-interactions", source_digest
+    )
+    declared_cells: list[Cell] = []
+    for declared_root, declared_label in (
+        (CAPABILITY_SCOPE, b"scope"),
+        (CAPABILITY_EXECUTE, b"execute"),
+        # Interactions name these controls and capabilities directly. A
+        # graph whose installed-table era persisted them resolves against
+        # the raw store; a graph that never installed them -- the live one
+        # after the table retired -- has no cell behind the name, so every
+        # interaction pointing at one dangles unless the derived set
+        # carries the identity. Unlike revise and install, nothing here is
+        # committed, so sourcing is unconditional: when the graph already
+        # holds the cell the derived copy shadows it with identical
+        # content, and when it does not the identity still resolves.
+        (CONTROL_RUN, b"run"),
+        (CONTROL_GROUP, b"group"),
+        (CONTROL_UNGROUP, b"ungroup"),
+        (CAPABILITY_INSTANTIATE, b"instantiate"),
+        (CAPABILITY_COMPOSITION, b"composition"),
+    ):
+        declared_cells.append(
+            Cell(declared_root, NULL_CELL_ID, NULL_CELL_ID, declared_label)
+        )
+    cells = (
+        *protocol_cells, event_cell, *interaction_batch.cells, *declared_cells
+    )
+    return (
+        CleanScopeInteractions(
+            authority.manifest.graph_id,
+            derived_root,
+            protocol,
+            event_root,
+            source_digest,
+            snapshot.revision,
+            False,
+            None,
+            MappingProxyType({
+                held_scope: MappingProxyType(controls)
+                for held_scope, controls in bindings.items()
+            }),
+        ),
+        cells,
+    )
+
+
 def open_clean_scope_interactions(
     authority: UnifiedAuthority,
     *,
@@ -547,8 +1030,15 @@ def submit_clean_scope_interaction(
     expected_revision: int,
     projected_canvas: Mapping[str, object],
     caller: CallerCommandCapability,
+    read_snapshot: Snapshot | None = None,
 ) -> CommandResult:
-    """Execute one preinstalled scope-open interaction through a signed receipt."""
+    """Execute one preinstalled scope-open interaction through a signed receipt.
+
+    `read_snapshot` is the snapshot the interaction is READ from. When the
+    bindings are derived rather than persisted, the interaction cells live
+    only in an overlay the server holds; the commit itself still runs
+    against the graph's own snapshot and writes only its receipt.
+    """
     snapshot = authority.store.snapshot()
     # An exact retry of a command that already succeeded must return its
     # existing receipt. The command identity embeds the base revision, and a
@@ -585,14 +1075,15 @@ def submit_clean_scope_interaction(
     # which is the failure this rebuild exists to remove. The full audit
     # stays available for authority open and for the courts.
     verify_exact_authority_head(authority, snapshot)
+    reading = snapshot if read_snapshot is None else read_snapshot
     lease = projection_broker.resolve(
         projection_handle,
-        snapshot,
+        reading,
         expected_revision=expected_revision,
         control_root=control_root,
         interaction_root=interaction_root,
     )
-    interaction = read_interaction(snapshot, interactions.protocol, interaction_root)
+    interaction = read_interaction(reading, interactions.protocol, interaction_root)
     if interaction.event_root != event_root:
         raise InvalidCell("scope interaction event drifted")
     if (
@@ -639,7 +1130,15 @@ def submit_clean_scope_interaction(
         intent="submit-clean-scope-interaction",
         request_digest=request_digest,
         object_root=target_scope,
-        scope_root=current_scope,
+        # The policy asks whether the subject may act on the target within
+        # a scope that holds it. Opening a child is proven within the scope
+        # it is opened from; opening the door from a scope below it -- the
+        # way back -- is proven within the door itself, which holds both.
+        scope_root=(
+            target_scope
+            if target_scope == interactions.root_scope
+            else current_scope
+        ),
         budget=COMMAND_BUDGET,
     )
     existing = find_receipt(
@@ -694,6 +1193,9 @@ def submit_clean_scope_interaction(
 
 
 __all__ = [
+    "WRITTEN_CELL_LIMIT",
+    "derive_clean_scope_interactions",
+    "unbound_published_definitions",
     "CLEAN_SCOPE_INTERACTIONS_LABEL",
     "CLEAN_SCOPE_INTERACTIONS_VERSION",
     "CleanScopeInteractions",

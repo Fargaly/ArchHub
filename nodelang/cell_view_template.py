@@ -80,6 +80,18 @@ OPERATION_NAMES = (
 _MISSING = object()
 
 
+def _truthy(value: object) -> bool:
+    """What a template condition treats as true.
+
+    ``bool(_MISSING)`` is True because the sentinel is a plain object, so
+    every choose over an absent field took the TRUE branch: each library
+    row rendered as selected, and a card whose fallback was the atom
+    ``False`` read "ASSEMBLY" forever. Absent and null are false; every
+    held value keeps Python's own truth.
+    """
+    return value is not _MISSING and value is not None and bool(value)
+
+
 @dataclass(frozen=True, slots=True)
 class ViewTemplateProtocol:
     root_id: str
@@ -152,7 +164,7 @@ def open_view_template_protocol(
         *protocol.roles.values(),
         *protocol.operations.values(),
     }
-    if expected - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in expected):
         raise InvalidCell("view-template protocol is incomplete")
     members = read_relation(snapshot, protocol.root_id, budget=128)
     vocabulary = {
@@ -499,6 +511,33 @@ def _track_relation_dependencies(
         cursor = chain.link1
 
 
+def evaluate_view_expression(
+    snapshot: Snapshot,
+    protocol: ViewTemplateProtocol,
+    expression_root: str,
+    projection: Mapping[str, Any],
+    *,
+    budget: int = 250_000,
+    repeat_limit: int = 2_000,
+) -> object:
+    """The VALUE one released graph expression denotes over a projection.
+
+    The same interpreter a template renders with, asked for the value
+    instead of a descriptor. A node computes what its released definition
+    SAYS it computes -- SPEC 4.1 -- rather than what a Python branch on
+    its engine name decides.
+    """
+    return render_view_template(
+        snapshot,
+        protocol,
+        expression_root,
+        projection,
+        budget=budget,
+        repeat_limit=repeat_limit,
+        value_only=True,
+    )
+
+
 def render_view_template(
     snapshot: Snapshot,
     protocol: ViewTemplateProtocol,
@@ -507,6 +546,7 @@ def render_view_template(
     *,
     budget: int = 250_000,
     repeat_limit: int = 2_000,
+    value_only: bool = False,
 ) -> list[dict[str, object]]:
     """Interpret one released graph template into safe disposable descriptors."""
     from .inspector_descriptor import descriptor
@@ -672,7 +712,7 @@ def render_view_template(
         elif operation in (
             protocol.operation("and"), protocol.operation("or")
         ):
-            values = tuple(bool(evaluate(root)) for root in arguments)
+            values = tuple(_truthy(evaluate(root)) for root in arguments)
             result = (
                 all(values) if operation == protocol.operation("and")
                 else any(values)
@@ -680,12 +720,12 @@ def render_view_template(
         elif operation == protocol.operation("not"):
             if len(arguments) != 1:
                 raise InvalidCell("not expression needs one argument")
-            result = not bool(evaluate(arguments[0]))
+            result = not _truthy(evaluate(arguments[0]))
         elif operation == protocol.operation("choose"):
             if len(arguments) != 3:
                 raise InvalidCell("choose expression needs three arguments")
             result = evaluate(
-                arguments[1] if bool(evaluate(arguments[0]))
+                arguments[1] if _truthy(evaluate(arguments[0]))
                 else arguments[2]
             )
         elif operation == protocol.operation("fallback"):
@@ -1120,6 +1160,8 @@ def render_view_template(
         active_templates.remove(root_id)
         return projected
 
+    if value_only:
+        return expression(template_root, None, None, set())
     return render(template_root)
 
 
@@ -1131,6 +1173,7 @@ __all__ = [
     "compose_view_template_protocol",
     "is_view_template",
     "open_view_template_protocol",
+    "evaluate_view_expression",
     "render_view_template",
     "view_template_projection_scope",
     "with_view_template_projection_scope",

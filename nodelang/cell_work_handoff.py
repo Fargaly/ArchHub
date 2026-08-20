@@ -171,7 +171,7 @@ def project_work_handoff_protocol(
         name: "%s:receipt-kind:%s" % (prefix, name)
         for name in RECEIPT_KINDS
     }
-    if {root_id, *roles.values(), *states.values(), *receipt_kinds.values()} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {root_id, *roles.values(), *states.values(), *receipt_kinds.values()}):
         raise InvalidCell("work-handoff protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {

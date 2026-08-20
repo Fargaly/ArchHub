@@ -158,7 +158,7 @@ def project_compliance_protocol(
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     states = {name: "%s:state:%s" % (prefix, name) for name in STATE_NAMES}
     required = {root_id, registry_root, *roles.values(), *states.values()}
-    if required - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required):
         raise InvalidCell("compliance protocol is incomplete")
     expected_vocabulary = set((*roles.values(), *states.values()))
     for relation_root, registry in ((root_id, False), (registry_root, True)):
@@ -211,7 +211,7 @@ def read_compliance_observation(
     predecessor = _optional(
         members, protocol.role("observation-predecessor"), "predecessor"
     )
-    if {subject, policy, evidence} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {subject, policy, evidence}):
         raise InvalidCell("compliance observation references a missing root")
     if result not in set(protocol.states.values()):
         raise InvalidCell("compliance result is outside the protocol")
@@ -304,7 +304,7 @@ def record_compliance_observation(
     ):
         raise InvalidCell("compliance freshness window is outside policy")
     snapshot = store.snapshot()
-    if {subject_root, policy_root, evidence_root} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {subject_root, policy_root, evidence_root}):
         raise InvalidCell("compliance subject, policy, and evidence must exist")
     observations = list_compliance_observations(snapshot, protocol)
     if any(item.evidence_root == evidence_root for item in observations):

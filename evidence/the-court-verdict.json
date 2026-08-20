@@ -1,0 +1,94 @@
+{
+  "court": "the-court",
+  "url": "http://127.0.0.1:8475",
+  "started_at": "2026-08-19T12:10:17.425Z",
+  "checks": [
+    {
+      "name": "open: first screen shows the work (SPEC 7.1)",
+      "pass": true,
+      "measured": "13 visible of 15 cards, 330 wires",
+      "bar": "visible > 0"
+    },
+    {
+      "name": "open: time to first painted node",
+      "pass": true,
+      "measured": "20953 ms",
+      "bar": "< 60000 ms (sign-in + canvas)"
+    },
+    {
+      "name": "open: no hashes on Use cards (SPEC 6.1)",
+      "pass": true,
+      "measured": "0 cards show a hash; heading='Accepted requirement source 460fafd5c1fa'",
+      "bar": "0"
+    },
+    {
+      "name": "open: entry scope is the map, not a lobby",
+      "pass": true,
+      "measured": "15 openable domain cards",
+      "bar": ">= 10"
+    },
+    {
+      "name": "wheel: zoom OUT reduces zoom",
+      "pass": true,
+      "measured": "1.030 -> 0.887",
+      "bar": "zoom decreases"
+    },
+    {
+      "name": "wheel: work stays on screen after one notch",
+      "pass": true,
+      "measured": "14 visible after wheel",
+      "bar": "> 0"
+    },
+    {
+      "name": "wheel: five notches out still shows the work",
+      "pass": true,
+      "measured": "15 visible at zoom 0.763",
+      "bar": "> 0"
+    },
+    {
+      "name": "fit: shows every card",
+      "pass": true,
+      "measured": "15/15",
+      "bar": "all"
+    },
+    {
+      "name": "enter: double-click opens the domain",
+      "pass": true,
+      "measured": "'Accepted requirement source 46' -> 'UI & Design System' via Domain compositionUI & Design SystemDoub",
+      "bar": "heading changes"
+    },
+    {
+      "name": "enter: the domain has its requirements",
+      "pass": true,
+      "measured": "20 cards, 46 wires",
+      "bar": ">= 5 cards"
+    },
+    {
+      "name": "enter: scope entry round-trip",
+      "pass": true,
+      "measured": "2230 ms",
+      "bar": "<= 5000 ms (SPEC 11.14 wants 150 ms local ack)"
+    },
+    {
+      "name": "enter: breadcrumb returns to the map",
+      "pass": true,
+      "measured": "1 crumb(s); 'Accepted requirement source 46' after 2046 ms",
+      "bar": "same heading as before, within 15 s"
+    },
+    {
+      "name": "pointer: frame p95 (SPEC 11.14)",
+      "pass": true,
+      "measured": "16.9 ms",
+      "bar": "<= 16.7 ms (judged at 2x for headless)"
+    }
+  ],
+  "finished_at": "2026-08-19T12:10:49.596Z",
+  "page_errors": [
+    {
+      "kind": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    }
+  ],
+  "passed": 13,
+  "failed": 0
+}

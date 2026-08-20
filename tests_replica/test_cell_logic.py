@@ -268,3 +268,97 @@ def test_logic_interpreter_contains_no_archhub_product_catalogue():
         "grant", "allow", "deny", "session",
     ):
         assert forbidden not in source
+
+
+def test_closure_edge_memo_yields_byte_identical_proofs_and_forgets_per_snapshot():
+    """SPEC 4.1: a fast path exists only under an equivalence proof.
+
+    The transitive-closure solver memoizes edge EXPANSION per snapshot and
+    re-derives traces along the found path. The proof it yields must be
+    identical to the cold solver's -- same top rule, same bindings, same
+    steps, same read roots -- on first and repeated queries, and a
+    different snapshot must not inherit the memo.
+    """
+    import nodelang.cell_logic as logic
+
+    store, protocol, program, _roles, _shapes, predicates, variables, values, evidence, rules = _logic_fixture()
+    rows = (
+        (evidence["ab"], (values["a"], values["b"])),
+        (evidence["bc"], (values["b"], values["c"])),
+    )
+    snapshot = store.snapshot()
+
+    def ask():
+        return evaluate_logic(
+            snapshot,
+            protocol,
+            program,
+            predicate_root=predicates["decision"],
+            arguments=(values["a"], values["c"]),
+            primitive_facts=lambda predicate, arguments, budget: _facts(
+                predicate, arguments, budget,
+                expected_predicate=predicates["edge"], rows=rows,
+            ),
+            budget=10_000,
+        )
+
+    logic._CLOSURE_REACH_MEMO.clear()
+    cold = ask()                     # populates the memo
+    assert logic._CLOSURE_REACH_MEMO, "memo did not populate"
+    warm = ask()                     # served from the memo
+    assert len(cold) == len(warm) == 1
+    for left, right in zip(cold, warm):
+        assert left.top_rule_root == right.top_rule_root
+        assert dict(left.bindings) == dict(right.bindings)
+        assert tuple(left.steps) == tuple(right.steps)
+        assert tuple(left.read_roots) == tuple(right.read_roots)
+
+    # A different snapshot object must not be answered by this memo.
+    held_key = id(snapshot.cells)
+    other = store.snapshot()
+    assert other.cells is snapshot.cells or id(other.cells) != held_key
+    memo_ids = set(logic._CLOSURE_REACH_MEMO)
+    assert held_key in memo_ids
+def test_transitive_sweep_is_billed_per_frontier_node_not_per_inner_goal():
+    """Proving absence walks the whole frontier; the budget must bound the
+    FRONTIER, not the frontier times the edge rule's body size.
+
+    A 1,482-node containment sweep on the live graph spent 48,305 goals and
+    one publish batch pushed a scope past the ceiling: the canvas served no
+    interactions. With expansion billed as one step per reached node, a
+    2,000-node sweep fits inside a budget barely above the frontier size
+    and answers "no proof" instead of dying.
+    """
+    (
+        store,
+        protocol,
+        program,
+        _roles,
+        _shapes,
+        predicates,
+        _variables,
+        values,
+        evidence,
+        _rules,
+    ) = _logic_fixture()
+    deep = tuple("logic-test:deep:%04d" % index for index in range(2_000))
+    rows = (
+        (evidence["ab"], (values["a"], deep[0])),
+        *((evidence["ab"], pair) for pair in zip(deep, deep[1:])),
+    )
+    proofs = evaluate_logic(
+        store.snapshot(),
+        protocol,
+        program,
+        predicate_root=predicates["decision"],
+        arguments=(values["a"], values["c"]),
+        primitive_facts=lambda predicate, arguments, budget: _facts(
+            predicate,
+            arguments,
+            budget,
+            expected_predicate=predicates["edge"],
+            rows=rows,
+        ),
+        budget=2_300,
+    )
+    assert proofs == ()

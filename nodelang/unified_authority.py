@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from types import MappingProxyType
+from weakref import WeakKeyDictionary
 from typing import Iterable, Mapping, Protocol
 import uuid
 
@@ -33,6 +34,12 @@ from .cell_protocols import (
     read_relation,
 )
 from .cell_revision_checkpoint import snapshot_digest
+from .cell_set_digest import (
+    accumulator_add as _accumulator_add,
+    accumulator_remove as _accumulator_remove,
+    is_v2_digest as _is_v2_digest,
+    snapshot_digest_v2 as _snapshot_digest_v2,
+)
 from .cell_sequence import build_cell_sequence, read_cell_sequence
 from .cell_secret_keys import SigningKeyProvider
 from .universal_cell import (
@@ -714,6 +721,16 @@ def _resolve_protocol(
     return replace(base, shapes=MappingProxyType(shapes), logic=logic)
 
 
+# One projection validates every member against the same released
+# protocol; re-walking the protocol and shape relations per member made
+# validation 0.53s of a 0.9s click (1,535 calls for 26 cards). The
+# result is pure over (snapshot contents, root), so the latest
+# snapshot's answers are kept and dropped wholesale when the snapshot
+# changes. Only reads are cached; refusals are never cached, so a
+# repaired graph is re-judged.
+_VALIDATE_COMPOSITION_MEMOS: "WeakKeyDictionary" = WeakKeyDictionary()
+
+
 def validate_composition(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
@@ -722,6 +739,27 @@ def validate_composition(
     budget: int = 10_000,
 ) -> CompositionProjection:
     """Validate one composition only from its graph-held structural protocol."""
+    entry = _VALIDATE_COMPOSITION_MEMOS.get(authority.store)
+    if entry is None or entry[0] != snapshot.revision:
+        entry = (snapshot.revision, {})
+        _VALIDATE_COMPOSITION_MEMOS[authority.store] = entry
+    held = entry[1].get(root_id)
+    if held is not None:
+        return held
+    projection = _validate_composition_uncached(
+        authority, snapshot, root_id, budget=budget
+    )
+    entry[1][root_id] = projection
+    return projection
+
+
+def _validate_composition_uncached(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    root_id: str,
+    *,
+    budget: int = 10_000,
+) -> CompositionProjection:
     members = read_relation(snapshot, root_id, budget=budget)
     conforming = tuple(
         member.participant_id
@@ -876,6 +914,51 @@ def _normalized_snapshot_digest(
         _SNAPSHOT_DIGEST_CACHE.pop(next(iter(_SNAPSHOT_DIGEST_CACHE)))
     _SNAPSHOT_DIGEST_CACHE[key] = (snapshot.cells, digest)
     return digest
+
+
+def _committed_head_digest(
+    authority: UnifiedAuthority,
+    base: Snapshot,
+    *,
+    create: Iterable[Cell],
+    replace: Iterable[Cell],
+    blank_atom_roots: Iterable[str],
+) -> str:
+    """The v2 head digest of the snapshot this commit publishes.
+
+    v1 hashed every cell of the projected snapshot in sorted order: on the
+    founder's graph that was tens of seconds to sign a pan, and the same
+    again to verify the head at the next open. v2 commits to the same set
+    through the store's additive accumulator, so a commit's digest costs
+    the cells it writes. The formula travels in the recorded value itself
+    ("v2:" prefix); heads recorded before it still verify under v1.
+    """
+    accumulator = authority.store.set_accumulator_after(
+        base,
+        create=create,
+        replace=replace,
+        blank_atom_roots=blank_atom_roots,
+    )
+    return _snapshot_digest_v2(base.revision + 1, accumulator)
+
+
+def _expected_head_digest(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    blank_atom_roots: Iterable[str],
+    recorded: object,
+) -> str:
+    """Recompute a head's snapshot digest under the formula it recorded."""
+    blank = tuple(blank_atom_roots)
+    if not _is_v2_digest(recorded):
+        return _normalized_snapshot_digest(snapshot, blank)
+    accumulator = authority.store.set_accumulator(snapshot)
+    held = tuple(snapshot.cells[root] for root in blank)
+    accumulator = _accumulator_add(
+        _accumulator_remove(accumulator, held),
+        (Cell(cell.id, cell.link0, cell.link1, b"") for cell in held),
+    )
+    return _snapshot_digest_v2(snapshot.revision, accumulator)
 
 
 def _value_payload_root(
@@ -1040,14 +1123,14 @@ def _commit_signed_change(
         ))
     all_create = (*created, *head_cells, *index_patch.create)
     all_replace = (*replaced, *index_patch.replace)
-    projected = overlay_read_snapshot(
+    normalized_digest = _committed_head_digest(
+        authority,
         snapshot,
         create=all_create,
         replace=all_replace,
-    )
-    normalized_digest = _normalized_snapshot_digest(
-        projected,
-        (payload_roots["snapshot-digest"], payload_roots["signature"]),
+        blank_atom_roots=(
+            payload_roots["snapshot-digest"], payload_roots["signature"],
+        ),
     )
     payload = _head_payload(
         authority,
@@ -1072,11 +1155,29 @@ def _commit_signed_change(
         else cell
         for cell in all_create
     )
-    return authority.store.commit(
+    committed_revision = authority.store.commit(
         snapshot.revision,
         create=final_create,
         replace=all_replace,
     )
+    # The digest this head signs was just computed over exactly the cells
+    # the commit published (the two filled payload atoms are blanked on
+    # both sides). Recomputing it on the next authenticated request walks
+    # and hashes every cell in the graph again -- on the live graph that
+    # is tens of seconds per command, and it is what made every canvas
+    # gesture cost close to a minute. The memo holds the committed mapping
+    # itself, so it can never answer for a snapshot that no longer exists;
+    # everything else about head verification still runs for real.
+    committed = authority.store.snapshot()
+    if committed.revision == revision:
+        blank = frozenset((
+            payload_roots["snapshot-digest"], payload_roots["signature"],
+        ))
+        key = (id(committed.cells), committed.revision, blank)
+        if len(_SNAPSHOT_DIGEST_CACHE) >= 8:
+            _SNAPSHOT_DIGEST_CACHE.pop(next(iter(_SNAPSHOT_DIGEST_CACHE)))
+        _SNAPSHOT_DIGEST_CACHE[key] = (committed.cells, normalized_digest)
+    return committed_revision
 
 
 def _verify_authority_head(
@@ -1114,9 +1215,11 @@ def _verify_authority_head(
         or values["key-fingerprint"] != authority.manifest.key_fingerprint
     ):
         raise InvalidCell("current authority head signing identity does not match")
-    expected_digest = _normalized_snapshot_digest(
+    expected_digest = _expected_head_digest(
+        authority,
         snapshot,
         (payload_roots["snapshot-digest"], payload_roots["signature"]),
+        values["snapshot-digest"],
     )
     if values["snapshot-digest"] != expected_digest:
         raise InvalidCell("current authority head snapshot digest does not match")
@@ -1184,8 +1287,19 @@ def _verify_exact_snapshot_head_uncached(
     _verify_authority_head(authority, snapshot, current.participant_id)
 
 
-def _verify_current_head(authority: UnifiedAuthority, snapshot: Snapshot) -> None:
-    """Audit every signed revision from the selected head to bootstrap."""
+def _verify_current_head(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    floor: tuple[int, str, str] | None = None,
+) -> None:
+    """Audit every signed revision from the selected head to bootstrap.
+
+    A floor is a head this generation already audited to bootstrap: its
+    revision, its root, and the digest of its stored record. Reaching it
+    ends the walk, because the store is append-only and the caller has
+    already confirmed the prefix under it is the same prefix. Passing no
+    floor is the full audit, and that is what the explicit audit does.
+    """
     current = _current_head_member(authority, snapshot)
     if current is None:
         if snapshot.revision == authority.manifest.accepted_revision:
@@ -1194,11 +1308,20 @@ def _verify_current_head(authority: UnifiedAuthority, snapshot: Snapshot) -> Non
     head_root = current.participant_id
     expected_revision = snapshot.revision
     seen: set[str] = set()
+    # Rebuilding a snapshot is the whole cost of one step of this walk, and
+    # the parent snapshot this step reads is, by construction, the snapshot
+    # the next step audits. Building it twice made a restart read the graph
+    # once per revision twice over.
+    carried: Snapshot | None = None
     while True:
         if head_root in seen:
             raise InvalidCell("authority head ancestry contains a cycle")
         seen.add(head_root)
-        historical = authority.store.at(expected_revision)
+        historical = (
+            carried if carried is not None
+            else authority.store.at(expected_revision)
+        )
+        carried = None
         historical_current = _current_head_member(authority, historical)
         if (
             historical_current is None
@@ -1248,8 +1371,16 @@ def _verify_current_head(authority: UnifiedAuthority, snapshot: Snapshot) -> Non
         )
         if parent_digest != expected_parent_digest:
             raise InvalidCell("authority head parent digest does not match")
+        if (
+            floor is not None
+            and parent_revision == floor[0]
+            and parent_root == floor[1]
+            and expected_parent_digest == floor[2]
+        ):
+            return
         head_root = parent_root
         expected_revision = parent_revision
+        carried = parent_snapshot
 
 
 def audit_authority_history(authority: UnifiedAuthority) -> None:
@@ -1952,6 +2083,7 @@ def open_unified_authority(
     store: CellStore,
     manifest: BootstrapManifest,
     key_provider: SigningKeyProvider,
+    accepted_proof=None,
 ) -> UnifiedAuthority:
     """Verify a signed bootstrap and open the exact same persisted authority."""
     _validate_manifest_shape(manifest)
@@ -1968,9 +2100,35 @@ def open_unified_authority(
         raise InvalidCell("bootstrap manifest signature is invalid")
     if store.revision < manifest.accepted_revision:
         raise InvalidCell("Cell store predates the accepted bootstrap")
-    accepted = store.at(manifest.accepted_revision)
-    if snapshot_digest(accepted) != manifest.accepted_snapshot_digest:
-        raise InvalidCell("accepted bootstrap snapshot digest does not match")
+    # Rebuilding and hashing the accepted snapshot is the whole cost of
+    # opening a large graph, and it re-proves a fact about a revision that
+    # cannot change. A proof carried by the generation lets an unchanged
+    # history skip it; a changed history does not match and pays in full.
+    proof_key = None
+    if accepted_proof is not None:
+        proof_key = accepted_proof.fingerprint(
+            store, manifest.accepted_revision
+        )
+        if accepted_proof.proven(
+            proof_key, manifest.accepted_snapshot_digest
+        ):
+            proof_key = None
+        else:
+            accepted = store.at(manifest.accepted_revision)
+            if snapshot_digest(accepted) != manifest.accepted_snapshot_digest:
+                raise InvalidCell(
+                    "accepted bootstrap snapshot digest does not match"
+                )
+            accepted_proof.record(
+                proof_key, manifest.accepted_snapshot_digest
+            )
+            proof_key = None
+    else:
+        accepted = store.at(manifest.accepted_revision)
+        if snapshot_digest(accepted) != manifest.accepted_snapshot_digest:
+            raise InvalidCell(
+                "accepted bootstrap snapshot digest does not match"
+            )
     required = {
         manifest.application_root,
         manifest.protocol_root,
@@ -1985,9 +2143,39 @@ def open_unified_authority(
     if not required.issubset(store.snapshot().cells):
         raise InvalidCell("bootstrap root is missing from the current graph")
     authority = _resolve_protocol(store, manifest, key_provider)
-    if not required.issubset(reachable_roots(store.snapshot(), manifest.application_root)):
+    if not roots_are_reachable(
+        store.snapshot(), manifest.application_root, required, store=store
+    ):
         raise InvalidCell("bootstrap roots do not share one application root")
-    _verify_current_head(authority, store.snapshot())
+    # Verifying the current head hashes every cell in the graph. On a
+    # large graph that is the entire cost of starting, and it re-proves a
+    # head that has not moved since the last time it was proven. The proof
+    # carried by the generation records which head, at which revision, over
+    # which append-only prefix, was verified; anything different pays in
+    # full.
+    current = store.snapshot()
+    head_key = None
+    if accepted_proof is not None:
+        head_key = accepted_proof.head_fingerprint(store, current.revision)
+    if head_key is not None and accepted_proof.head_proven(head_key):
+        return authority
+    floor = None
+    if accepted_proof is not None:
+        proven_revision = accepted_proof.head_floor_revision(store)
+        if proven_revision is not None and proven_revision < current.revision:
+            historical = store.at(proven_revision)
+            member = _current_head_member(authority, historical)
+            if member is not None:
+                floor = (
+                    proven_revision,
+                    member.participant_id,
+                    _stored_head_record_digest(
+                        authority, historical, member.participant_id
+                    ),
+                )
+    _verify_current_head(authority, current, floor)
+    if head_key is not None:
+        accepted_proof.record_head(head_key)
     return authority
 
 
@@ -2275,6 +2463,16 @@ def _build_property(
     )
 
 
+def build_contract(*args, **kwargs):
+    """Build the cells for a nested mapping, as a signed command would.
+
+    A receipt for an effect carries what was asked and what came back,
+    and both are nested. build_value takes scalars only, so an effect
+    recorded through it could keep no detail of itself.
+    """
+    return _build_contract(*args, **kwargs)
+
+
 def _build_contract(
     authority: UnifiedAuthority,
     values: Mapping[str, object],
@@ -2473,13 +2671,39 @@ def _validate_composition_scope(
         raise InvalidCell("scope is not an openable composition")
 
 
+_DEFINITION_CACHE: dict[tuple[int, str, str, str], tuple[object, object]] = {}
+
+
 def read_definition(
     authority: UnifiedAuthority,
     definition_root: str,
     *,
     caller: CallerCommandCapability,
 ) -> DefinitionProjection:
+    """Read one definition, authorized, as of now.
+
+    A canvas asks for the same definitions again and again -- once for the
+    library row, once for the node made from it, once for whether it may be
+    placed -- and each ask re-authorized and re-walked the same unchanged
+    cells. A definition cannot change while the graph does not, so the
+    answer is remembered against the exact cell mapping it was read from
+    and against the caller it was authorized for. A different caller asks
+    again, because the authorization is theirs and not the graph's.
+    """
     snapshot = authority.store.snapshot()
+    key = (
+        id(snapshot.cells),
+        definition_root,
+        getattr(caller, "actor_root", ""),
+        getattr(caller, "session_root", ""),
+    )
+    held = _DEFINITION_CACHE.get(key)
+    if held is not None:
+        cells, projection = held
+        # Identity, not equality: an id can be reused once its object is
+        # gone, so the mapping itself has to still be the same object.
+        if cells is snapshot.cells:
+            return projection
     _authorize_semantic_read(
         authority,
         snapshot,
@@ -2542,7 +2766,7 @@ def read_definition(
     }
     if digest != _digest(reconstructed):
         raise InvalidCell("definition content digest does not match its graph")
-    return DefinitionProjection(
+    projection = DefinitionProjection(
         definition_root,
         revision_root,
         name,
@@ -2553,6 +2777,13 @@ def read_definition(
         evidence_roots,
         MappingProxyType(contract_roots),
     )
+    if len(_DEFINITION_CACHE) >= 4096:
+        # Bounded: a long-lived runtime reads many definitions across many
+        # revisions, and a cache that only grows is a leak wearing a
+        # cache's clothes.
+        _DEFINITION_CACHE.clear()
+    _DEFINITION_CACHE[key] = (snapshot.cells, projection)
+    return projection
 
 
 def _caller_key_fingerprint(public_key: bytes) -> str:
@@ -2692,6 +2923,39 @@ def _credential_public_key(
     return public_key, fingerprint
 
 
+# The policy walk asks for the same relation's members thousands of times
+# per evaluation and hundreds of evaluations per boot; a snapshot is
+# immutable, so a relation's member facts are a pure function of
+# (snapshot, relation root). The memo HOLDS the mapping it keys on -- an
+# id is stable only while its object lives -- and a new snapshot starts a
+# new memo. Bounded to a handful of snapshots; a write publishes a new
+# mapping and the old memo falls away.
+_POLICY_MEMBER_MEMO: dict[int, tuple[Mapping[str, Cell], dict]] = {}
+
+
+def _policy_members(snapshot: Snapshot, relation_root: str, budget: int):
+    key = id(snapshot.cells)
+    held = _POLICY_MEMBER_MEMO.get(key)
+    if held is None or held[0] is not snapshot.cells:
+        if len(_POLICY_MEMBER_MEMO) >= 4:
+            _POLICY_MEMBER_MEMO.pop(next(iter(_POLICY_MEMBER_MEMO)))
+        held = (snapshot.cells, {})
+        _POLICY_MEMBER_MEMO[key] = held
+    memo = held[1]
+    facts = memo.get(relation_root)
+    if facts is None:
+        facts = tuple(
+            (
+                member.incidence_id,
+                member.role_id,
+                member.participant_id,
+            )
+            for member in read_relation(snapshot, relation_root, budget=budget)
+        )
+        memo[relation_root] = facts
+    return facts
+
+
 def _policy_primitive_facts(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
@@ -2720,26 +2984,18 @@ def _policy_primitive_facts(
         if relation_root not in snapshot.cells:
             return ()
         facts: list[PrimitiveFact] = []
-        for member in read_relation(snapshot, relation_root, budget=budget):
-            fact_arguments = (
-                relation_root,
-                member.role_id,
-                member.participant_id,
-            )
-            if any(
-                expected is not None and expected != actual
-                for expected, actual in zip(arguments, fact_arguments)
-            ):
+        want_role, want_participant = arguments[1], arguments[2]
+        for incidence_id, role_id, participant_id in _policy_members(
+            snapshot, relation_root, budget
+        ):
+            if want_role is not None and want_role != role_id:
+                continue
+            if want_participant is not None and want_participant != participant_id:
                 continue
             facts.append(PrimitiveFact(
-                member.incidence_id,
-                fact_arguments,
-                (
-                    relation_root,
-                    member.incidence_id,
-                    member.role_id,
-                    member.participant_id,
-                ),
+                incidence_id,
+                (relation_root, role_id, participant_id),
+                (relation_root, incidence_id, role_id, participant_id),
             ))
         return tuple(facts)
 
@@ -3853,6 +4109,42 @@ def revoke_session(
     )
 
 
+def published_definition_named(
+    authority: UnifiedAuthority,
+    name: str,
+    *,
+    caller: CallerCommandCapability,
+) -> str | None:
+    """The root of the one PUBLISHED catalogue definition called ``name``.
+
+    An installer that re-runs its exact commands at every boot only to find
+    the receipts it left re-projects each command at its original revision
+    -- on the founder's graph, 16 s and 37 s at every start for definitions
+    that were published weeks ago. The catalogue the audited head holds
+    already answers the question. None when the name is absent or held by
+    more than one published definition, so the caller falls back to its
+    exact replay and nothing is guessed.
+    """
+    snapshot = authority.store.snapshot()
+    found: list[str] = []
+    for member in read_relation(
+        snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
+    ):
+        if member.role_id != authority.role("definition"):
+            continue
+        try:
+            definition = read_definition(
+                authority, member.participant_id, caller=caller
+            )
+        except InvalidCell:
+            continue
+        if definition.name == name and definition.lifecycle == "published":
+            found.append(definition.root_id)
+    if len(found) != 1:
+        return None
+    return found[0]
+
+
 def declare_definition(
     authority: UnifiedAuthority,
     name: str,
@@ -3946,6 +4238,7 @@ def declare_definition(
 
 
 PANEL_AUDIENCE = "any"
+DEFAULT_SCOPE_PANELS = (("Properties", "properties"),)
 
 
 def _scope_applicability(
@@ -4055,14 +4348,27 @@ def _build_scope_panels(
             label,
             shape_root=authority.shape("value"),
         )
+        # A presentation contract declares panels by name. That released
+        # shape carries labels and nothing else, and what such a panel
+        # shows is the definition's own fields -- so the panel is written
+        # saying so. Reading it back is then the same for every panel,
+        # and no projector has to decide what an unstated tab presents.
+        presenter_root, presenter_cells = _build_value(
+            authority.roles,
+            codec_root,
+            "properties",
+            shape_root=authority.shape("value"),
+        )
         panel_root = _new_id()
         create.extend(label_cells)
+        create.extend(presenter_cells)
         create.extend(_typed_relation_cells(
             panel_root,
             authority.role("conforms-to"),
             authority.shape("composition"),
             (
                 (authority.role("label"), label_root),
+                (authority.role("presentation"), presenter_root),
                 (authority.role("definition"), definition_root),
             ),
         ))
@@ -4223,6 +4529,320 @@ def read_composition_placements(
         root: _property_values(authority, snapshot, index[root])
         for root in subjects
     }
+
+
+def group_compositions(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    member_roots: Iterable[str],
+    *,
+    label: str,
+    caller: CallerCommandCapability,
+    command_id: str,
+) -> CommandResult:
+    """Fold selected scope members into one new openable composition.
+
+    The group is an ordinary composition -- the same shape every Grand Map
+    domain has -- holding the selected roots as its members; the scope
+    stops holding them directly and holds the group. One signed commit:
+    the members' incidences move, nothing is deleted, and ungroup reverses
+    it with the same machinery.
+    """
+    members = tuple(dict.fromkeys(
+        str(root) for root in member_roots if str(root).strip()
+    ))
+    if len(members) < 2:
+        raise InvalidCell("a group needs at least two members")
+    if type(label) is not str or not label.strip():
+        raise InvalidCell("a group needs a label")
+    request_digest = _digest({
+        "intent": "group-compositions",
+        "scope": scope_root,
+        "members": members,
+        "label": label,
+    })
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="group-compositions",
+        request_digest=request_digest,
+        object_root=scope_root,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            existing.result_root, existing.result_revision, True, 0, 0,
+            existing.root_id,
+        )
+    held = {
+        member.participant_id: member.incidence_id
+        for member in read_relation(snapshot, scope_root, budget=COMMAND_BUDGET)
+        if member.role_id == authority.role("composition")
+    }
+    missing = [root for root in members if root not in held]
+    if missing:
+        raise InvalidCell("group members must all be members of this scope")
+    group_root = _new_id()
+    cells = list(_labelled_composition_cells(
+        authority,
+        group_root,
+        label.strip(),
+        tuple((authority.role("composition"), root) for root in members),
+    ))
+    removal = prepare_remove_relation_members(
+        snapshot,
+        scope_root,
+        tuple(held[root] for root in members),
+        budget=COMMAND_BUDGET,
+    )
+    staged = overlay_read_snapshot(snapshot, replace=removal.replace)
+    staged = Snapshot(snapshot.revision, staged.cells)
+    scope_patch = _append_relation_member(
+        staged,
+        scope_root,
+        authority.role("composition"),
+        group_root,
+    )
+    # The removal and the append can touch the same chain cell (the tail
+    # being relinked twice). The append was computed on the staged
+    # snapshot, so its value already carries the removal's change: for an
+    # overlapping id the append's cell is the true final state.
+    merged_replace: dict[str, Cell] = {
+        cell.id: cell for cell in removal.replace
+    }
+    for cell in scope_patch.replace:
+        merged_replace[cell.id] = cell
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=(*cells, *scope_patch.create),
+        resource_replace=tuple(merged_replace.values()),
+        authenticated=authenticated,
+        result_root=group_root,
+        policy_proof=policy_proof,
+    )
+
+
+def add_composition_member(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    composition_root_id: str,
+    *,
+    caller: CallerCommandCapability,
+    command_id: str,
+) -> CommandResult:
+    """Hold an existing composition as a member of a scope.
+
+    The inverse of remove_composition_member, and the second half of
+    ungroup: the composition already exists with its own history; the
+    scope's relation chain gains one incidence, signed and receipted.
+    """
+    request_digest = _digest({
+        "intent": "add-composition-member",
+        "scope": scope_root,
+        "composition": composition_root_id,
+    })
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="add-composition-member",
+        request_digest=request_digest,
+        object_root=composition_root_id,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            composition_root_id, existing.result_revision, True, 0, 0,
+            existing.root_id,
+        )
+    already = any(
+        member.role_id == authority.role("composition")
+        and member.participant_id == composition_root_id
+        for member in read_relation(snapshot, scope_root, budget=COMMAND_BUDGET)
+    )
+    if already:
+        raise InvalidCell("the composition is already a member of this scope")
+    patch = _append_relation_member(
+        snapshot,
+        scope_root,
+        authority.role("composition"),
+        composition_root_id,
+    )
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=tuple(patch.create),
+        resource_replace=tuple(patch.replace),
+        authenticated=authenticated,
+        result_root=composition_root_id,
+        policy_proof=policy_proof,
+    )
+
+
+def ungroup_composition(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    group_root: str,
+    *,
+    caller: CallerCommandCapability,
+    command_id: str,
+) -> CommandResult:
+    """Dissolve one grouped composition back into its scope.
+
+    A sequence of the same small signed commands that built it: each
+    member leaves the group and joins the scope, then the scope stops
+    holding the group. Every step is receipted and idempotent under a
+    command id derived from this one, so a retry resumes where it
+    stopped; nothing is deleted.
+    """
+    snapshot = authority.store.snapshot()
+    group = validate_composition(authority, snapshot, group_root)
+    if group.protocol_root != authority.shape("composition"):
+        raise InvalidCell("only a composition can be ungrouped")
+    member_roots = tuple(
+        member.participant_id
+        for member in group.members
+        if member.role_id == authority.role("composition")
+    )
+    in_scope = any(
+        member.role_id == authority.role("composition")
+        and member.participant_id == group_root
+        for member in read_relation(snapshot, scope_root, budget=COMMAND_BUDGET)
+    )
+    if not in_scope:
+        raise InvalidCell("the group is not a member of this scope")
+    if not member_roots:
+        raise InvalidCell("the group holds no members to release")
+
+    def step_id(step: str) -> str:
+        return str(uuid.uuid5(_UNGROUP_NAMESPACE, command_id + ":" + step))
+
+    for root in member_roots:
+        # Adopt before release: policy proves an act on a root that is
+        # REACHABLE within the claimed scope, and a root released first
+        # belongs nowhere for a moment -- the adopt was denied exactly
+        # there. Held by both for one revision, then the group lets go.
+        try:
+            add_composition_member(
+                authority, scope_root, root,
+                caller=caller, command_id=step_id("adopt:" + root),
+            )
+        except InvalidCell as error:
+            if "already a member" not in str(error):
+                raise
+        try:
+            remove_composition_member(
+                authority, group_root, root,
+                caller=caller, command_id=step_id("release:" + root),
+            )
+        except InvalidCell as error:
+            if "not a member" not in str(error):
+                raise
+    return remove_composition_member(
+        authority, scope_root, group_root,
+        caller=caller, command_id=step_id("dissolve"),
+    )
+
+
+_UNGROUP_NAMESPACE = uuid.UUID("7f1cf7e7-40cb-49a5-a8b6-6f2ab77a9f2a")
+
+
+def remove_composition_member(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    composition_root_id: str,
+    *,
+    caller: CallerCommandCapability,
+    command_id: str,
+) -> CommandResult:
+    """Take one composition off the canvas of its scope.
+
+    The graph could place a card and never take one back: no command
+    detached a scope member, so every test placement stayed on the
+    founder's map for good. History is kept -- the member's incidence is
+    unlinked from the scope's relation chain (the kernel's own
+    prepare_remove_relation_members), the composition and its revisions
+    remain reachable from their own receipts, and a later audit still
+    replays the revision that added it. Same signed, receipted, policy-
+    proven path as placing.
+    """
+    request_digest = _digest({
+        "intent": "remove-composition-member",
+        "scope": scope_root,
+        "composition": composition_root_id,
+    })
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="remove-composition-member",
+        request_digest=request_digest,
+        object_root=composition_root_id,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            composition_root_id, existing.result_revision, True, 0, 0,
+            existing.root_id,
+        )
+    incidences = tuple(
+        member.incidence_id
+        for member in read_relation(snapshot, scope_root, budget=COMMAND_BUDGET)
+        if member.role_id == authority.role("composition")
+        and member.participant_id == composition_root_id
+    )
+    if not incidences:
+        raise InvalidCell("composition is not a member of this scope")
+    patch = prepare_remove_relation_members(
+        snapshot, scope_root, incidences, budget=COMMAND_BUDGET
+    )
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=(),
+        resource_replace=tuple(patch.replace),
+        authenticated=authenticated,
+        result_root=composition_root_id,
+        policy_proof=policy_proof,
+    )
 
 
 def place_composition(
@@ -4589,6 +5209,8 @@ def install_scope_panels(
     caller: CallerCommandCapability,
     command_id: str,
     audience: str = PANEL_AUDIENCE,
+    panels: tuple[str, ...] = DEFAULT_SCOPE_PANELS,
+    definition_roots: tuple[str, ...] | None = None,
 ) -> CommandResult:
     """Give an existing scope the panel applicability newer imports seed.
 
@@ -4610,10 +5232,24 @@ def install_scope_panels(
     old one as its predecessor. History stays honest -- the graph records
     that the feature arrived, rather than pretending it was always there.
     """
+    if not panels:
+        raise InvalidCell("scope panels must be named")
+    for entry in panels:
+        label, presenter = (
+            entry if isinstance(entry, tuple) else (entry, "")
+        )
+        if type(label) is not str or not label.strip():
+            raise InvalidCell("scope panels must be named")
+        if isinstance(entry, tuple) and (
+            type(presenter) is not str or not presenter.strip()
+        ):
+            raise InvalidCell("a scope panel names no presenter")
     request_digest = _digest({
         "intent": "install-scope-panels",
         "scope": scope_root,
         "audience": audience,
+        "panels": list(panels),
+        "definitions": sorted(definition_roots or ()),
     })
     snapshot = authority.store.snapshot()
     authenticated, policy_proof = _validate_command_participants(
@@ -4646,11 +5282,20 @@ def install_scope_panels(
             existing.root_id,
         )
     _validate_composition_scope(authority, snapshot, scope_root)
-    definition_roots = tuple(dict.fromkeys(
-        member.participant_id
-        for member in read_relation(snapshot, scope_root, budget=COMMAND_BUDGET)
-        if member.role_id == authority.role("definition")
-    ))
+    # A caller may name the definitions. The panels a scope shows are read
+    # from the definitions of the nodes standing in it, and those are not
+    # always the definitions the scope lists as members -- an operation
+    # placed from the catalogue is one such node.
+    if definition_roots is None:
+        definition_roots = tuple(dict.fromkeys(
+            member.participant_id
+            for member in read_relation(
+                snapshot, scope_root, budget=COMMAND_BUDGET
+            )
+            if member.role_id == authority.role("definition")
+        ))
+    else:
+        definition_roots = tuple(dict.fromkeys(definition_roots))
     if not definition_roots:
         raise InvalidCell("scope holds no definitions to give panels to")
     projections = {
@@ -4670,6 +5315,99 @@ def install_scope_panels(
         )
     )
     if not pending:
+        # The applicability is installed, but its panels may predate the
+        # rule that a tab names what it presents. Such a panel is no
+        # longer offered at all, so repairing it here is the difference
+        # between a scope with tabs and a scope with none. The caller
+        # states the mapping; nothing is guessed from the label.
+        declared = {
+            label: presenter
+            for label, presenter in (
+                entry if isinstance(entry, tuple) else (entry, "")
+                for entry in panels
+            )
+            if presenter
+        }
+        repair: list[Cell] = []
+        repaired: list[Cell] = []
+        for definition_root, projection in projections.items():
+            found = _scope_applicability(
+                authority, snapshot, projection.revision_root
+            )
+            if found is None:
+                continue
+            for member in read_relation(
+                snapshot, found[0], budget=COMMAND_BUDGET
+            ):
+                if member.role_id != authority.role("object"):
+                    continue
+                panel_root = member.participant_id
+                members = read_relation(
+                    snapshot, panel_root, budget=COMMAND_BUDGET
+                )
+                held = [
+                    each for each in members
+                    if each.role_id == authority.role("presentation")
+                ]
+                labels = [
+                    _decode_data_value(authority, snapshot, each.participant_id)
+                    for each in members
+                    if each.role_id == authority.role("label")
+                ]
+                presenter = declared.get(str(labels[0])) if labels else None
+                if not presenter:
+                    continue
+                if held:
+                    # A panel that already names a presenter is repaired
+                    # only when the caller states a different one. The
+                    # tab is then repointed rather than given a second
+                    # declaration, because two answers is worse than none.
+                    current_presenter = _decode_data_value(
+                        authority, snapshot, held[0].participant_id
+                    )
+                    if str(current_presenter) == presenter:
+                        continue
+                    moved_root, moved_cells = _build_value(
+                        authority.roles,
+                        authority.codecs[CODEC_NAME],
+                        presenter,
+                        shape_root=authority.shape("value"),
+                    )
+                    repair.extend(moved_cells)
+                    incidence = snapshot.cells[held[0].incidence_id]
+                    repaired.append(Cell(
+                        incidence.id,
+                        incidence.link0,
+                        moved_root,
+                        incidence.atom,
+                    ))
+                    continue
+                presenter_root, presenter_cells = _build_value(
+                    authority.roles,
+                    authority.codecs[CODEC_NAME],
+                    presenter,
+                    shape_root=authority.shape("value"),
+                )
+                repair.extend(presenter_cells)
+                widened = _append_relation_member(
+                    snapshot,
+                    panel_root,
+                    authority.role("presentation"),
+                    presenter_root,
+                )
+                repair.extend(widened.create)
+                repaired.extend(widened.replace)
+            break
+        if repair or repaired:
+            return _commit_with_receipt(
+                authority,
+                snapshot,
+                resource_create=tuple(repair),
+                resource_replace=tuple(repaired),
+                authenticated=authenticated,
+                result_root=scope_root,
+                policy_proof=policy_proof,
+            )
         # The feature is fully installed. Repeating the command must not
         # stack a second applicability relation onto every revision.
         return CommandResult(
@@ -4708,14 +5446,54 @@ def install_scope_panels(
         )
         applicability_root = _new_id()
         create.extend(audience_cells)
+        # The tabs themselves are graph compositions carrying their label,
+        # and the applicability names them as its objects. Minting the
+        # relation without them produced an applicability no reader could
+        # turn into a panel: the repair ran, reported success, and the
+        # inspector stayed empty.
+        panel_members: list[tuple[str, str]] = [
+            (authority.role("scope"), scope_root),
+            (authority.role("audience"), audience_root),
+        ]
+        for entry in panels:
+            # A panel may name what it presents. A tab that does not is a
+            # tab whose content the projector would have to decide for it,
+            # and deciding for the graph is how every panel ended up
+            # showing the same thing.
+            label, presenter = (
+                entry if isinstance(entry, tuple) else (entry, entry.lower())
+            )
+            label_root, label_cells = _build_value(
+                authority.roles,
+                authority.codecs[CODEC_NAME],
+                label,
+                shape_root=authority.shape("value"),
+            )
+            presenter_root, presenter_cells = _build_value(
+                authority.roles,
+                authority.codecs[CODEC_NAME],
+                presenter,
+                shape_root=authority.shape("value"),
+            )
+            panel_root = _new_id()
+            create.extend(label_cells)
+            create.extend(presenter_cells)
+            create.extend(_typed_relation_cells(
+                panel_root,
+                authority.role("conforms-to"),
+                authority.shape("composition"),
+                (
+                    (authority.role("label"), label_root),
+                    (authority.role("presentation"), presenter_root),
+                    (authority.role("definition"), definition_roots[0]),
+                ),
+            ))
+            panel_members.append((authority.role("object"), panel_root))
         create.extend(_typed_relation_cells(
             applicability_root,
             authority.role("conforms-to"),
             authority.shape("relation"),
-            (
-                (authority.role("scope"), scope_root),
-                (authority.role("audience"), audience_root),
-            ),
+            tuple(panel_members),
         ))
     else:
         applicability_root = shared_root
@@ -5754,7 +6532,7 @@ def revise_relation_node(
     required_roots = {relation_root}
     required_roots.update(member.role_root for member in normalized)
     required_roots.update(member.participant_root for member in normalized)
-    if required_roots - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in required_roots):
         raise InvalidCell("relation revision member root is missing")
     current_by_incidence = {
         member.incidence_id: member for member in current_members
@@ -6063,6 +6841,15 @@ def read_contained_scope(
     )
 
 
+# A level read is pure over (what it read, container, scope, caller).
+# Entries are dropped by commit-touched roots, not by revision: a focus
+# commit touches attention cells and leaves the level's entries alive,
+# which is the difference between a 0.15s click and a 1.2s one. Keyed
+# by caller so authorization is never shared; refusals raise before
+# anything is stored.
+_SCOPE_LEVEL_MEMOS: "WeakKeyDictionary" = WeakKeyDictionary()
+
+
 def read_scope_level(
     authority: UnifiedAuthority,
     container_root: str,
@@ -6073,6 +6860,42 @@ def read_scope_level(
     budget: int = COMMAND_BUDGET,
 ) -> ScopeLevelProjection:
     """Read only the direct children and relations of one authorized scope."""
+    # Revision-keyed, not touched-keyed: a level read walks relations
+    # this function cannot enumerate, and a memo whose read set is a
+    # guess serves a scope that no longer holds what it shows -- a
+    # placed node reported "not a member" the moment it landed. One
+    # revision, one answer; a commit ends every entry.
+    revision = authority.store.revision
+    entry = _SCOPE_LEVEL_MEMOS.get(authority.store)
+    if entry is None or entry[0] != revision:
+        entry = (revision, {})
+        _SCOPE_LEVEL_MEMOS[authority.store] = entry
+    normalized_at = (
+        None if at_revision == revision else at_revision
+    )
+    memo_key = (
+        container_root, scope_root, caller.actor_root, normalized_at
+    )
+    held = entry[1].get(memo_key)
+    if held is not None:
+        return held
+    projection = _read_scope_level_uncached(
+        authority, container_root, scope_root=scope_root, caller=caller,
+        at_revision=at_revision, budget=budget,
+    )
+    entry[1][memo_key] = projection
+    return projection
+
+
+def _read_scope_level_uncached(
+    authority: UnifiedAuthority,
+    container_root: str,
+    *,
+    scope_root: str,
+    caller: CallerCommandCapability,
+    at_revision: int | None = None,
+    budget: int = COMMAND_BUDGET,
+) -> ScopeLevelProjection:
     if budget < 1:
         raise InvalidCell("scope level budget is invalid")
     current = authority.store.snapshot()
@@ -6157,6 +6980,101 @@ def read_scope_level(
     )
 
 
+def _remembered_reachability(store, revision, root_id, required):
+    """A revision-bound note that these roots were already proven here.
+
+    Proving nine roots reachable walked half a million cells on every
+    open. The answer cannot change while the revision does not, so it
+    is kept beside the graph as an accelerator: deleting it costs one
+    slow open and changes no meaning (SPEC 3.1.6).
+    """
+    accelerators = getattr(store, "_accelerators", None)
+    if accelerators is None:
+        return None
+    try:
+        connection = accelerators()
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS reachability_proofs ("
+            "revision INTEGER NOT NULL, root TEXT NOT NULL, "
+            "required TEXT NOT NULL, PRIMARY KEY (root, required))"
+        )
+        return connection
+    except Exception:  # noqa: BLE001 - an accelerator may never refuse a read
+        return None
+
+
+def roots_are_reachable(
+    snapshot: Snapshot,
+    root_id: str,
+    required: frozenset[str] | set[str],
+    *,
+    store=None,
+) -> bool:
+    """Whether every required root sits in the region under one root.
+
+    Opening the authority asked for the WHOLE reachable region and then
+    tested nine roots against it, so every start walked the entire graph --
+    three hundred thousand cells and minutes of it -- to answer a question
+    about nine. The walk stops as soon as all nine are found, which on a
+    real graph is immediately, and still walks everything when one is
+    genuinely absent because that is the only way to prove absence.
+    """
+    if root_id not in snapshot.cells:
+        raise InvalidCell("root is missing")
+    outstanding = set(required)
+    outstanding.discard(root_id)
+    if not outstanding:
+        return True
+    wanted = ",".join(sorted(outstanding))
+    remembered = _remembered_reachability(
+        store, snapshot.revision, root_id, wanted
+    )
+    if remembered is not None:
+        row = remembered.execute(
+            "SELECT revision FROM reachability_proofs "
+            "WHERE root = ? AND required = ?",
+            (root_id, wanted),
+        ).fetchone()
+        if row is not None and int(row[0]) == int(snapshot.revision):
+            return True
+    pending = [root_id]
+    found: set[str] = set()
+    # A lazily read head answers one row per query; asking it for the
+    # whole frontier at once turns half a million round trips into a
+    # few hundred statements.
+    warm = getattr(snapshot.cells, "prefetch", None)
+    while pending:
+        if warm is not None and len(pending) > 1:
+            warm([
+                key for key in pending
+                if key != NULL_CELL_ID and key not in found
+            ])
+        frontier, pending = pending, []
+        for current in frontier:
+            if current == NULL_CELL_ID or current in found:
+                continue
+            cell = snapshot.cells.get(current)
+            if cell is None:
+                raise InvalidCell("graph contains a dangling link")
+            found.add(current)
+            outstanding.discard(current)
+            if not outstanding:
+                if remembered is not None:
+                    try:
+                        remembered.execute(
+                            "INSERT OR REPLACE INTO reachability_proofs "
+                            "(revision, root, required) VALUES (?, ?, ?)",
+                            (int(snapshot.revision), root_id, wanted),
+                        )
+                        remembered.commit()
+                    except Exception:  # noqa: BLE001
+                        pass
+                return True
+            pending.append(cell.link0)
+            pending.append(cell.link1)
+    return False
+
+
 def reachable_roots(snapshot: Snapshot, root_id: str) -> frozenset[str]:
     """Return the exact region reachable through raw physical links."""
     if root_id not in snapshot.cells:
@@ -6219,6 +7137,7 @@ __all__ = [
     "digest",
     "new_id",
     "typed_relation_cells",
+    "build_contract",
     "build_value",
     "append_relation_member",
     "append_relation_members",

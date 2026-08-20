@@ -177,7 +177,7 @@ def project_baboom_activity_protocol(
     root_id = prefix + ":root"
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     app_roots = _app_roots(prefix)
-    if {root_id, *roles.values(), *app_roots.values()} - set(snapshot.cells):
+    if any(_root not in snapshot.cells for _root in {root_id, *roles.values(), *app_roots.values()}):
         raise InvalidCell("BABOOM activity protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)
     allowed = {roles["vocabulary-member"], roles["activity-member"]}

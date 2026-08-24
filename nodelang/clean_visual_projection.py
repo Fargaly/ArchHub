@@ -592,6 +592,28 @@ def _property_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     ]
 
 
+def _selected_relation(lens: Mapping[str, object]):
+    """The relation the founder picked, when the selection names one."""
+    selected_root = lens.get("selected_root")
+    if type(selected_root) is not str or not selected_root:
+        return None
+    return next(
+        (item for item in lens.get("relations", ())
+         if item["root_id"] == selected_root),
+        None,
+    )
+
+
+def _relation_end_label(lens: Mapping[str, object], root: str) -> str:
+    """What a wire's end is called on this canvas."""
+    node = next(
+        (item for item in lens["nodes"] if item["root_id"] == root), None,
+    )
+    if node is None:
+        return root[:12]
+    return _node_title(node)
+
+
 def _selected_node(lens: Mapping[str, object]) -> Mapping[str, object] | None:
     selected_root = lens.get("selected_root")
     if type(selected_root) is not str or not selected_root:
@@ -1166,7 +1188,51 @@ def _project_clean_visual_canvas_unscoped(
 
     scope_panels = _scope_panel_rows(authority, lens)
     selected = _selected_node(lens)
-    if selected is None:
+    selected_relation = _selected_relation(lens) if selected is None else None
+    if selected is None and selected_relation is not None:
+        # A wire the founder picked says what it joins and why. Without
+        # this the inspector answered nothing for a selected relation, so
+        # every line on the canvas was a shell: it could not be read, and
+        # a thing that cannot be read cannot be judged wrong.
+        selected_root = selected_relation["root_id"]
+        selected_title = "Relation"
+        properties = _property_rows([
+            {
+                "relation": "%s:%s" % (selected_root, name),
+                "name": name,
+                "value": value,
+                "editor": None,
+                "constraints": {},
+                "property_root": "",
+                "owner_root": "",
+                "name_root": "",
+                "value_root": "",
+                "history_root": None,
+                "predecessor_root": None,
+                "presentation_root": None,
+            }
+            for name, value in sorted(
+                (str(key), item)
+                for key, item in selected_relation["properties"].items()
+            )
+        ] + [
+            {
+                "relation": "%s:end:%s" % (selected_root, role),
+                "name": str(role),
+                "value": _relation_end_label(lens, root),
+                "editor": None,
+                "constraints": {},
+                "property_root": "",
+                "owner_root": "",
+                "name_root": "",
+                "value_root": "",
+                "history_root": None,
+                "predecessor_root": None,
+                "presentation_root": None,
+            }
+            for role, root in selected_relation["participants"]
+        ])
+    elif selected is None:
         selected_root = None
         selected_title = None
         properties = []

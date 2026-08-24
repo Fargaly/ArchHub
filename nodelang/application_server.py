@@ -1419,7 +1419,12 @@ class _CleanAuthorityHttpServer:
                 scope_root=self.clean_scope_root,
                 caller=self.clean_caller,
             )
-            members = set(level.composition_roots)
+            # A wire is a member of this scope too, and taking one off the
+            # canvas was refused outright -- the founder could draw a
+            # relation and then had no way to remove it. Both kinds of
+            # member leave by the same signed release.
+            members = set(level.composition_roots) | set(level.relations)
+            visible_selection = self._held_selection(binding)
             wanted = [
                 str(root) for root in removing
                 if isinstance(root, str) and root in members
@@ -1444,6 +1449,33 @@ class _CleanAuthorityHttpServer:
                     self.clean_authority,
                     self.clean_scope_root,
                     root,
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
+            # A selection is a claim about what this scope shows, and the
+            # projection refuses one that names a root the scope no longer
+            # holds -- rightly. Deleting the selected card therefore took
+            # the WHOLE canvas down with a 403 ("active focus selection is
+            # outside the projected scope") and left the node in place.
+            # What was deleted leaves the selection in the same act.
+            from .clean_browser_authority import revise_clean_browser_focus
+
+            remaining = [
+                root for root in visible_selection if root not in leaving
+            ]
+            # An empty selection is not a focus this protocol can carry --
+            # a primary must be one of the selected -- so when the last
+            # selected card leaves, the focus is simply left behind and
+            # the projection stops honouring what the scope no longer
+            # holds.
+            if remaining and len(remaining) != len(visible_selection):
+                revise_clean_browser_focus(
+                    self.clean_authority,
+                    self.clean_browser_authority,
+                    binding.session_root,
+                    scope_root=self.clean_scope_root,
+                    selected_roots=remaining,
+                    primary_root=(remaining[-1] if remaining else ""),
                     caller=self.clean_caller,
                     command_id=str(_uuid.uuid4()),
                 )
@@ -2297,6 +2329,22 @@ class _CleanAuthorityHttpServer:
         self._interaction_scope_index = None
         self._verified_interaction_reads = {}
         self._clean_projection_cache.clear()
+
+    def _held_selection(self, binding) -> list[str]:
+        """What this view says it is holding, as the graph records it."""
+        from .cell_attention import active_focus, open_attention_protocol
+
+        try:
+            snapshot = self.clean_authority.store.snapshot()
+            protocol = open_attention_protocol(snapshot)
+            focus = active_focus(
+                snapshot, protocol, session_root=binding.view_root
+            )
+        except Exception:
+            return []
+        if focus is None:
+            return []
+        return [str(root) for root in focus.selected_roots]
 
     def _standing_scope(self, binding) -> str:
         """The scope the founder is STANDING in, not the one they entered by.

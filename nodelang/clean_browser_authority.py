@@ -921,7 +921,11 @@ def revise_clean_browser_focus(
         at_revision=snapshot.revision,
         budget=COMMAND_BUDGET,
     )
-    visible = frozenset(scope.composition_roots)
+    # What a scope SHOWS is its cards and the wires between them. Holding
+    # only the cards meant a wire could never be selected -- clicking one
+    # was refused here -- and a line nobody can pick is a line nobody can
+    # read or remove.
+    visible = frozenset(scope.composition_roots) | frozenset(scope.relations)
     if not set(selected).issubset(visible):
         raise InvalidCell("browser focus selection is outside the current scope")
     protocol = open_attention_protocol(snapshot)

@@ -2281,6 +2281,35 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       requestAnimationFrame(() => { inspector.scrollTop=0; });
     }
   }
+  function freeCanvasPoint(wanted) {
+    const projection=lastProjection;
+    if (!projection || !projection.nodes?.length) return wanted;
+    const width=projectedNodeWidth(projection);
+    const taken=projection.nodes.map(node => ({
+      x:Number(node.x) || 0,
+      y:Number(node.y) || 0,
+      height:projectedNodeHeight(node,projection),
+    }));
+    const clear=(x,y) => !taken.some(node =>
+      Math.abs(node.x - x) < width + 16
+      && Math.abs(node.y - y) < node.height + 16);
+    if (clear(wanted.x,wanted.y)) return wanted;
+    // Outward in rings, so the card lands as near to where the founder
+    // was looking as an empty place allows.
+    const stepX=width + 40;
+    const stepY=Math.max(...taken.map(node => node.height)) + 40;
+    for (let ring=1; ring <= 12; ring++) {
+      for (let dx=-ring; dx <= ring; dx++) {
+        for (let dy=-ring; dy <= ring; dy++) {
+          if (Math.max(Math.abs(dx),Math.abs(dy)) !== ring) continue;
+          const x=wanted.x + dx*stepX;
+          const y=wanted.y + dy*stepY;
+          if (clear(x,y)) return {x,y};
+        }
+      }
+    }
+    return wanted;
+  }
   function renderToolbar(projection) {
     const toolbar=document.querySelector('.canvas-toolbar');
     if (!toolbar) return;
@@ -2419,32 +2448,11 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
           : match ? 'Enter places ' + match.name
           : 'no node called that');
       });
-      box.addEventListener('keydown',async keyEvent => {
-        if (keyEvent.key === 'Escape') {
-          box.value=''; composerHint(''); box.blur(); return;
-        }
-        if (keyEvent.key !== 'Enter') return;
-        keyEvent.preventDefault();
-        keyEvent.stopPropagation();
-        const match=composerMatch(box.value);
-        if (!match) { composerHint('no node called that'); return; }
-        const viewport=lastProjection?.viewport;
-        const middle=viewport ? {
-          x:(canvasSurface.clientWidth/2 - viewport.pan_x)/viewport.zoom,
-          y:(canvasSurface.clientHeight/2 - viewport.pan_y)/viewport.zoom,
-        } : null;
-        const control=document.createElement('button');
-        bindProjectedInteraction(control,match.id);
-        composerHint('placing ' + match.name + '…');
-        try {
-          await executeProjectedInteraction(control,interactionDeltaMode,
-            middle ? {placement:middle} : {});
-          box.value='';
-          composerHint('placed ' + match.name);
-        } catch (error) {
-          composerHint(String(error.message || error));
-        }
-      });
+      // One Enter, one node. This input had TWO handlers -- this one and
+      // the capture-phase listener below, which exists because a canvas
+      // listener upstream stops key propagation -- so every Enter placed
+      // the node twice, once at the raw centre and once beside it. The
+      // capture-phase listener is the one that always runs.
     }
     if (composer) composer.hidden=false;
     // The composer is client-made chrome and the toolbar is graph-held, so
@@ -2696,6 +2704,14 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const hit=keyed(svgElement('path',{
       class:'wire-hit',...relationAttributes,
     }),'canvas:wire-hit:'+wire.id+':'+wire.segment);
+    // The hit line is fourteen pixels wide and took no pointer at all:
+    // the layer it lives in is pointer-events:none and the stylesheet the
+    // graph holds never turned it back on for the line itself. Every wire
+    // on the canvas was therefore unclickable -- a shell you could see and
+    // not touch. It takes the pointer along its own stroke, and nowhere
+    // else, so the canvas underneath is unaffected.
+    hit.style.pointerEvents='stroke';
+    hit.style.cursor='pointer';
     const path=keyed(svgElement('path',{
       class:'wire-line universal-wire',...relationAttributes,
     }),'canvas:wire:'+wire.id+':'+wire.segment);
@@ -3967,7 +3983,12 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const wire=event.target.closest('[data-universal-relation]');
     if (wire) {
       event.preventDefault(); event.stopPropagation();
-      await commit({roots:[],focus:wire.dataset.universalRelation});
+      // A focus names one of the selected, so a wire is selected the same
+      // way a card is. Sending an empty selection with a focus was
+      // refused by the protocol ("browser focus primary must be
+      // selected"), which is why clicking a wire answered nothing.
+      const root=wire.dataset.universalRelation;
+      await commit({roots:root ? [root] : [],focus:root});
       return;
     }
     const authority=event.target.closest('[data-authority-relationship]');
@@ -4552,10 +4573,12 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     if (
       (event.key === 'Delete' || event.key === 'Backspace')
       && !event.target.closest('input,textarea,select')
-      && lastProjection?.selection?.length
+      && (selectedWire || lastProjection?.selection?.length)
     ) {
       event.preventDefault();
-      const removing=[...lastProjection.selection];
+      const removing=selectedWire
+        ? [selectedWire] : [...lastProjection.selection];
+      selectedWire=null;
       universalMutation('/api/universal/gesture',() => ({delete:removing}))
         .then(answer => { if (answer) render(answer); })
         .catch(error => showInteractionStatus(String(error.message || error)));
@@ -4594,6 +4617,30 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         '[data-universal-relation-form-submit]')?.click();
     }
   });
+  // Which wire the founder is holding. A relation is a member of the
+  // scope like a card is, but nothing could pick one: clicking a wire did
+  // nothing, so a wire drawn by mistake could never be taken off the
+  // canvas. The pick is a view fact this page holds -- the graph's focus
+  // protocol carries card selections -- and Delete acts on it.
+  let selectedWire=null;
+  function paintSelectedWire() {
+    document.querySelectorAll('[data-universal-relation]').forEach(wire => {
+      wire.dataset.selected=(
+        wire.dataset.universalRelation === selectedWire) ? 'True' : 'False';
+    });
+  }
+  document.addEventListener('pointerdown', event => {
+    const wire=event.target.closest('[data-universal-relation]');
+    if (!wire) {
+      if (selectedWire && event.target.closest('.canvas[data-universal="true"]')) {
+        selectedWire=null;
+        paintSelectedWire();
+      }
+      return;
+    }
+    selectedWire=wire.dataset.universalRelation || null;
+    paintSelectedWire();
+  },true);
   document.addEventListener('mouseover', event => {
     const card=event.target.closest('[data-universal-root]');
     if (!card || card.contains(event.relatedTarget)) return;
@@ -5067,10 +5114,14 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     if (!match) { composerHint('no node called that'); return; }
     const canvas=document.querySelector('.canvas');
     const viewport=lastProjection?.viewport;
-    const middle=canvas && viewport ? {
+    // The middle of the view, and then the nearest free space beside it:
+    // placing straight into the centre dropped the new card on top of
+    // whatever was already there, and a card under a card cannot be
+    // clicked at all.
+    const middle=canvas && viewport ? freeCanvasPoint({
       x:(canvas.clientWidth/2 - viewport.pan_x)/viewport.zoom,
       y:(canvas.clientHeight/2 - viewport.pan_y)/viewport.zoom,
-    } : null;
+    }) : null;
     const control=document.createElement('button');
     bindProjectedInteraction(control,match.id);
     try {

@@ -4933,10 +4933,16 @@ def remove_composition_member(
             composition_root_id, existing.result_revision, True, 0, 0,
             existing.root_id,
         )
+    # A scope holds cards under the composition role and wires under the
+    # relation role. Only the first could be taken back, so a wire drawn
+    # by mistake stayed on the founder's canvas for good -- and the delete
+    # gesture answered "composition is not a member of this scope" for a
+    # line the scope was plainly showing. Either kind leaves the same way.
+    held_roles = (authority.role("composition"), authority.role("relation"))
     incidences = tuple(
         member.incidence_id
         for member in read_relation(snapshot, scope_root, budget=COMMAND_BUDGET)
-        if member.role_id == authority.role("composition")
+        if member.role_id in held_roles
         and member.participant_id == composition_root_id
     )
     if not incidences:

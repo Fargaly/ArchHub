@@ -394,16 +394,29 @@ def project_unified_scope(
         # session is reused. A focus from elsewhere is simply not this
         # scope's focus, and this scope opens with nothing selected.
         #
-        # A focus that DOES claim this scope must still name roots this
-        # scope shows; that refusal stays, because a selection pointing at
-        # roots outside what is drawn is a claim about this scope that the
-        # scope contradicts.
+        # A focus that DOES claim this scope is honoured only for the roots
+        # this scope actually shows.
         if focus is not None and focus.scope_root == scope_root:
-            visible = frozenset(level.composition_roots)
-            if not set(focus.selected_roots).issubset(visible):
-                raise InvalidCell("active focus selection is outside the projected scope")
-            selected_root = focus.primary_root
-            selected_roots = focus.selected_roots
+            # A wire is shown by this scope as much as a card is, and the
+            # founder must be able to pick one: a line you cannot select
+            # is a line you cannot read or remove.
+            visible = (
+                frozenset(level.composition_roots) | frozenset(level.relations)
+            )
+            # A selection is a view's claim about what this scope shows,
+            # and a claim the scope contradicts is not honoured. It is not
+            # fatal either: deleting a selected card leaves exactly this
+            # state for a moment, and refusing made the WHOLE canvas 403
+            # -- the founder's graph became unreadable because a card they
+            # had just removed was still named by their session. What the
+            # scope no longer holds is simply no longer selected.
+            selected_roots = tuple(
+                root for root in focus.selected_roots if root in visible
+            )
+            selected_root = (
+                focus.primary_root if focus.primary_root in visible
+                else (selected_roots[-1] if selected_roots else None)
+            )
     _p1 = _lens_time.perf_counter()
     level_roots = frozenset(level.composition_roots)
     owner = _level_owner_index(authority, snapshot, level.composition_roots)

@@ -2407,7 +2407,15 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         });
         composerHint('arranging ' + ordered.length + ' cards…');
         try {
-          await commit({positions});
+          const answer=await commit({positions});
+          // And show what was arranged. Laying the cards out and leaving
+          // the view where it was put the first row above the canvas, so
+          // an Arrange could end with four cards out of sight.
+          const surface=document.querySelector('.canvas');
+          const projection=answer || lastProjection;
+          if (surface && projection) {
+            await commit({viewport:fitViewport(projection,surface)});
+          }
           composerHint('arranged ' + ordered.length + ' cards');
         } catch (error) {
           composerHint(String(error.message || error));

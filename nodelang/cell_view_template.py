@@ -92,6 +92,8 @@ OPERATION_NAMES = (
     "keep-where",
     "slice",
     "append",
+    "value-of",
+    "list-of",
 )
 
 _MISSING = object()
@@ -772,6 +774,18 @@ def render_view_template(
             if len(arguments) != 1:
                 raise InvalidCell("upper expression needs one argument")
             result = str(evaluate(arguments[0])).upper()
+        elif operation == protocol.operation("list-of"):
+            # A list nobody filled is the empty LIST; emptiness has a type.
+            held_list = evaluate(arguments[0]) if arguments else _MISSING
+            result = (
+                list(held_list) if isinstance(held_list, (list, tuple)) else []
+            )
+        elif operation == protocol.operation("value-of"):
+            # A setting nobody set reads as empty, not as absence: a constant
+            # with no value is the empty value, which is what every reader of
+            # it already assumes.
+            held_value = evaluate(arguments[0]) if arguments else _MISSING
+            result = "" if held_value is _MISSING else held_value
         elif operation == protocol.operation("pluck"):
             values = evaluate(arguments[0]) if arguments else ()
             field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""

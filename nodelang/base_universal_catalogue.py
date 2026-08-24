@@ -344,6 +344,14 @@ GRAPH_EXPRESSIONS = {
         "items_out",
     ),
     "shape.concat": ("append", (("in", "a"), ("in", "b")), "items_out"),
+    # A constant IS its setting; a watcher and a reroute ARE what reaches
+    # them. Saying so in the graph costs one expression each and removes
+    # four more Python branches.
+    "data.constant": ("value-of", (("param", "value"),), "value"),
+    "input.parameter": ("value-of", (("param", "value"),), "value"),
+    "data.list": ("list-of", (("param", "value"),), "value"),
+    "watch.preview": ("value-of", (("in", "in"),), "out"),
+    "reroute": ("value-of", (("in", "in"),), "out"),
 }
 
 

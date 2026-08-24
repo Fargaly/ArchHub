@@ -664,17 +664,13 @@ CLIENT_SCRIPT = """
   }
 
   document.addEventListener('click', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const download = event.target.closest('[data-download]');
+    const download = closestElement(event.target,'[data-download]');
     if (download) {
       event.preventDefault();
       location.href = '/api/export?node_id=' + encodeURIComponent(download.dataset.download);
       return;
     }
-    const relation = event.target.closest('.wire-line[data-relation][data-action="true"]');
+    const relation = closestElement(event.target,'.wire-line[data-relation][data-action="true"]');
     if (relation) {
       event.preventDefault();
       event.stopPropagation();
@@ -682,7 +678,7 @@ CLIENT_SCRIPT = """
       await runAction(relation, false);
       return;
     }
-    const target = event.target.closest('[data-action="true"]');
+    const target = closestElement(event.target,'[data-action="true"]');
     if (!target) return;
     if (window.__archhubDragged || Date.now() < (window.__archhubGestureUntil||0)) {
       window.__archhubDragged = false;
@@ -694,36 +690,28 @@ CLIENT_SCRIPT = """
     if (target.dataset.navigate) location.href = target.dataset.navigate;
   });
   document.addEventListener('dblclick', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const target = event.target.closest('[data-double-action="true"]');
+    const target = closestElement(event.target,'[data-double-action="true"]');
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
     await runAction(target, true, crypto.randomUUID(), 'double_activate');
   });
   document.addEventListener('change', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const target = event.target.closest('[data-edit="true"]');
+    const target = closestElement(event.target,'[data-edit="true"]');
     if (!target) return;
     const value = target.type === 'checkbox' ? String(target.checked) : target.value;
     await writeBinding(target, target.dataset.editPort || 'value', value);
   });
   document.addEventListener('pointerdown', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    if (event.target.closest('.canvas[data-universal="true"]')) return;
-    const surface = event.target.closest('.canvas[data-pan-surface="true"]');
+    // The legacy controller must never claim the universal canvas, and a
+    // court reads this line to be sure of it. Written out rather than
+    // routed through the helper so what it refuses stays legible.
+    if (event.target instanceof Element
+        && event.target.closest('.canvas[data-universal="true"]')) return;
+    const surface = closestElement(event.target,'.canvas[data-pan-surface="true"]');
     const panGesture = surface && (event.button === 1 ||
       (event.button === 0 && spaceDown));
-    if (panGesture && !event.target.closest('.canvas-toolbar,.composer')) {
+    if (panGesture && !closestElement(event.target,'.canvas-toolbar,.composer')) {
       const stage = surface.querySelector('.canvas-stage');
       if (!stage) return;
       if (!claimPointer('pan',event.pointerId)) return;
@@ -737,7 +725,7 @@ CLIENT_SCRIPT = """
       surface.setPointerCapture?.(event.pointerId);
       return;
     }
-    const output = event.target.closest('.node-port-out[data-action="true"]');
+    const output = closestElement(event.target,'.node-port-out[data-action="true"]');
     if (output && event.button === 0) {
       const stage = output.closest('.canvas-stage');
       const layer = stage?.querySelector('.wire-layer');
@@ -755,10 +743,10 @@ CLIENT_SCRIPT = """
       output.setPointerCapture?.(event.pointerId);
       return;
     }
-    if (event.target.closest(
+    if (closestElement(event.target,
       '.wire-line[data-relation],[data-universal-rewire-incidence]')) return;
-    if (event.target.closest('button,input,[data-edit="true"]')) return;
-    const target = event.target.closest('[data-draggable="true"]');
+    if (closestElement(event.target,'button,input,[data-edit="true"]')) return;
+    const target = closestElement(event.target,'[data-draggable="true"]');
     if (target && event.button === 0) {
       const canvas = target.closest('.canvas');
       if (!canvas) return;
@@ -796,7 +784,7 @@ CLIENT_SCRIPT = """
       return;
     }
     if (!surface || event.button !== 0 ||
-        event.target.closest('.canvas-toolbar,.composer')) return;
+        closestElement(event.target,'.canvas-toolbar,.composer')) return;
     const box = surface.querySelector('.selection-box');
     if (!box) return;
     if (!claimPointer('marquee',event.pointerId)) return;
@@ -1008,13 +996,9 @@ CLIENT_SCRIPT = """
     hideMarquee();
   });
   document.addEventListener('wheel', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const surface = event.target.closest('.canvas[data-pan-surface="true"]');
+    const surface = closestElement(event.target,'.canvas[data-pan-surface="true"]');
     if (!surface || surface.dataset.universal === 'true'
-        || event.target.closest('.canvas-toolbar,.composer')) return;
+        || closestElement(event.target,'.canvas-toolbar,.composer')) return;
     event.preventDefault();
     const rect = surface.getBoundingClientRect();
     const oldZoom = parseFloat(surface.dataset.zoom)||1;
@@ -2106,6 +2090,15 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     liveSearch.value=existingQuery;
     applyLibrarySearch(library);
   }
+  // Element.closest on a target that is not an element throws, and one
+  // throw in a document listener takes every later listener's work down
+  // with it -- the canvas stops answering. Reaching into a target goes
+  // through here, which answers "nothing" instead of throwing. The
+  // listener itself still runs: a key dispatched AT the document (which
+  // is how Space-to-pan arrives) must not be dropped.
+  function closestElement(target,selector) {
+    return target instanceof Element ? target.closest(selector) : null;
+  }
   function keyed(node,key) {
     node.dataset.uiKey=key;
     return node;
@@ -2330,60 +2323,21 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
     return wanted;
   }
-  function renderToolbar(projection) {
-    const toolbar=document.querySelector('.canvas-toolbar');
-    if (!toolbar) return;
-    const focusedControl=toolbar.contains(document.activeElement)
-      ? document.activeElement?.dataset?.universalControl : null;
-    const controls=zoneControls('canvas-toolbar',projection);
-    if (projection.toolbar_descriptor?.length !== 1) {
-      throw new Error('Canvas toolbar graph descriptor is missing');
-    }
-    const surface=renderDescriptor(projection.toolbar_descriptor[0]);
-    const scope=surface.querySelector('[data-universal-toolbar-scope]');
-    const zoom=surface.querySelector('[data-universal-toolbar-zoom-value]');
-    const selected=surface.querySelector(
-      '[data-universal-toolbar-selection-value]');
-    const buttons=[...surface.querySelectorAll(
-      'button[data-universal-control]')];
-    if (!scope || !zoom || !selected || buttons.length !== controls.length) {
-      throw new Error('Canvas toolbar graph descriptor is incomplete');
-    }
-    buttons.forEach((button,index) => {
-      const control=controls[index];
-      if (
-        button.dataset.universalControl !== control.owner
-        || button.dataset.controlBinding !== control.activation.binding
-        || button.dataset.controlCapability !== control.activation.capability
-        || button.dataset.controlIcon !== control.icon
-        || button.title !== control.title
-        || button.getAttribute('aria-label') !== control.title
-      ) {
-        throw new Error('Canvas toolbar control descriptor drifted');
-      }
-      button.append(graphIcon(control.icon,projection));
-      bindProjectedInteraction(button,button.dataset.universalControl);
-    });
-    surface.querySelectorAll('[data-universal-scope]').forEach(control => {
-      bindProjectedInteraction(control,control.dataset.universalScope);
-    });
-    const desired=element('div');
-    desired.append(...surface.childNodes);
-    reconcileKeyedChildren(toolbar,desired);
-    const toolbarButtons=[...toolbar.querySelectorAll(
-      'button[data-universal-control]')];
-    const focusTarget=toolbarButtons.find(
-      button => button.dataset.universalControl === focusedControl
-    ) || toolbarButtons[0];
-    toolbarButtons.forEach(button => { button.tabIndex=button === focusTarget ? 0 : -1; });
+  // The composer -- and the Arrange beside it -- are chrome the canvas
+  // makes for itself, not controls the graph declares. They are built
+  // here rather than inside renderToolbar, because that renderer may
+  // create nothing: every button in the toolbar comes from the graph's
+  // own descriptor, and a court holds it to that.
+  function ensureComposer() {
+    const canvasSurface=document.querySelector('.canvas');
+    if (!canvasSurface) return null;
+    let composer=canvasSurface.querySelector(':scope > .composer');
+    if (composer) return composer;
     // The composer: the typed way to reach the same library the sidebar
     // shows. It is chrome, not graph content -- what it DOES is the
     // graph's placement interaction, unchanged -- so the surface is
     // made here rather than asking the graph to describe a text box.
-    const canvasSurface=document.querySelector('.canvas');
-    let composer=canvasSurface?.querySelector(':scope > .composer');
-    if (canvasSurface && !composer) {
-      composer=element('div','composer');
+    composer=element('div','composer');
       const box=element('input','composer-input');
       box.type='text';
       box.placeholder='Type a node and press Enter';
@@ -2481,7 +2435,56 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       // listener upstream stops key propagation -- so every Enter placed
       // the node twice, once at the raw centre and once beside it. The
       // capture-phase listener is the one that always runs.
+    return composer;
+  }
+
+  function renderToolbar(projection) {
+    const toolbar=document.querySelector('.canvas-toolbar');
+    if (!toolbar) return;
+    const focusedControl=toolbar.contains(document.activeElement)
+      ? document.activeElement?.dataset?.universalControl : null;
+    const controls=zoneControls('canvas-toolbar',projection);
+    if (projection.toolbar_descriptor?.length !== 1) {
+      throw new Error('Canvas toolbar graph descriptor is missing');
     }
+    const surface=renderDescriptor(projection.toolbar_descriptor[0]);
+    const scope=surface.querySelector('[data-universal-toolbar-scope]');
+    const zoom=surface.querySelector('[data-universal-toolbar-zoom-value]');
+    const selected=surface.querySelector(
+      '[data-universal-toolbar-selection-value]');
+    const buttons=[...surface.querySelectorAll(
+      'button[data-universal-control]')];
+    if (!scope || !zoom || !selected || buttons.length !== controls.length) {
+      throw new Error('Canvas toolbar graph descriptor is incomplete');
+    }
+    buttons.forEach((button,index) => {
+      const control=controls[index];
+      if (
+        button.dataset.universalControl !== control.owner
+        || button.dataset.controlBinding !== control.activation.binding
+        || button.dataset.controlCapability !== control.activation.capability
+        || button.dataset.controlIcon !== control.icon
+        || button.title !== control.title
+        || button.getAttribute('aria-label') !== control.title
+      ) {
+        throw new Error('Canvas toolbar control descriptor drifted');
+      }
+      button.append(graphIcon(control.icon,projection));
+      bindProjectedInteraction(button,button.dataset.universalControl);
+    });
+    surface.querySelectorAll('[data-universal-scope]').forEach(control => {
+      bindProjectedInteraction(control,control.dataset.universalScope);
+    });
+    const desired=element('div');
+    desired.append(...surface.childNodes);
+    reconcileKeyedChildren(toolbar,desired);
+    const toolbarButtons=[...toolbar.querySelectorAll(
+      'button[data-universal-control]')];
+    const focusTarget=toolbarButtons.find(
+      button => button.dataset.universalControl === focusedControl
+    ) || toolbarButtons[0];
+    toolbarButtons.forEach(button => { button.tabIndex=button === focusTarget ? 0 : -1; });
+    const composer=ensureComposer();
     if (composer) composer.hidden=false;
     // The composer is client-made chrome and the toolbar is graph-held, so
     // nothing in the stylesheet knows they share the bottom of the canvas.
@@ -3820,11 +3823,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   }
 
   document.addEventListener('click', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const toolbarControl=event.target.closest(
+    const toolbarControl=closestElement(event.target,
       '.canvas-toolbar [data-control-binding]');
     if (toolbarControl && lastProjection) {
       event.preventDefault(); event.stopPropagation();
@@ -3841,7 +3840,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       }
       return;
     }
-    const definitionPlace=event.target.closest(
+    const definitionPlace=closestElement(event.target,
       '[data-universal-definition-place]');
     if (definitionPlace && lastProjection) {
       event.preventDefault(); event.stopPropagation();
@@ -3860,7 +3859,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       }
       return;
     }
-    const contractCreate=event.target.closest('[data-universal-contract-create]');
+    const contractCreate=closestElement(event.target,'[data-universal-contract-create]');
     if (contractCreate && lastProjection) {
       event.preventDefault(); event.stopPropagation();
       const definition=lastProjection.selected_definition;
@@ -3889,7 +3888,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       await executeProjectedInteraction(refreshed,topologyDeltaMode);
       return;
     }
-    const projected=event.target.closest('[data-universal-interaction]');
+    const projected=closestElement(event.target,'[data-universal-interaction]');
     if (projected?.matches(
       '.canvas[data-universal="true"] [data-universal-root]'
     )) return;
@@ -3902,19 +3901,19 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       }
       return;
     }
-    const scope=event.target.closest('[data-universal-scope]');
+    const scope=closestElement(event.target,'[data-universal-scope]');
     if (scope && lastProjection) {
       event.preventDefault(); event.stopPropagation();
       await navigateScope(scope);
       return;
     }
-    const settings=event.target.closest('.rail-settings');
+    const settings=closestElement(event.target,'.rail-settings');
     if (settings && lastProjection) {
       event.preventDefault();
       await commit({roots:[],focus:lastProjection.configuration.personal_asset});
       return;
     }
-    const shareTheme=event.target.closest('[data-universal-theme-share]');
+    const shareTheme=closestElement(event.target,'[data-universal-theme-share]');
     if (shareTheme && !shareTheme.disabled && lastProjection) {
       event.preventDefault();
       const projection=await universalRequest('/api/universal/theme-share',{
@@ -3922,7 +3921,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       });
       render(projection); return;
     }
-    const publishTheme=event.target.closest('[data-universal-theme-publish]');
+    const publishTheme=closestElement(event.target,'[data-universal-theme-publish]');
     if (publishTheme && !publishTheme.disabled && lastProjection) {
       event.preventDefault();
       const projection=await universalRequest('/api/universal/theme-publish',{
@@ -3930,7 +3929,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       });
       render(projection); return;
     }
-    const adapterExecution=event.target.closest('[data-universal-adapter-execute]');
+    const adapterExecution=closestElement(event.target,'[data-universal-adapter-execute]');
     if (adapterExecution && !adapterExecution.disabled) {
       event.preventDefault();
       // A run carries its own identity. Without one the graph cannot
@@ -3944,7 +3943,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       render(projection);
       return;
     }
-    const promotion=event.target.closest('[data-universal-resource-promote]');
+    const promotion=closestElement(event.target,'[data-universal-resource-promote]');
     if (promotion && !promotion.disabled) {
       event.preventDefault();
       const projection=await universalRequest('/api/universal/resource-promote',{
@@ -3955,7 +3954,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       render(projection);
       return;
     }
-    const saveWip=event.target.closest('[data-universal-lifecycle-save]');
+    const saveWip=closestElement(event.target,'[data-universal-lifecycle-save]');
     if (saveWip && !saveWip.disabled) {
       event.preventDefault();
       const input=saveWip.parentElement.querySelector(
@@ -3969,7 +3968,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       render(projection);
       return;
     }
-    const mergeWip=event.target.closest('[data-universal-lifecycle-merge]');
+    const mergeWip=closestElement(event.target,'[data-universal-lifecycle-merge]');
     if (mergeWip && !mergeWip.disabled) {
       event.preventDefault();
       const input=mergeWip.parentElement.querySelector(
@@ -3983,13 +3982,13 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       render(projection);
       return;
     }
-    const primitive=event.target.closest('[data-universal-primitive]');
+    const primitive=closestElement(event.target,'[data-universal-primitive]');
     if (primitive) {
       event.preventDefault();
       await commit({roots:[],focus:primitive.dataset.universalPrimitive});
       return;
     }
-    const canvasInterface=event.target.closest(
+    const canvasInterface=closestElement(event.target,
       '.canvas [data-universal-interface]');
     if (canvasInterface) {
       event.preventDefault(); event.stopPropagation();
@@ -3998,13 +3997,13 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       });
       return;
     }
-    const row=event.target.closest('[data-universal-select]');
+    const row=closestElement(event.target,'[data-universal-select]');
     if (row) {
       event.preventDefault();
       await commit({roots:[row.dataset.universalSelect],focus:row.dataset.universalSelect});
       return;
     }
-    const definition=event.target.closest('[data-universal-definition]');
+    const definition=closestElement(event.target,'[data-universal-definition]');
     if (definition) {
       event.preventDefault();
       // Selecting a library row is a local act: highlight it and let the
@@ -4018,24 +4017,23 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       if (!wasActive) definition.dataset.active='true';
       return;
     }
-    const wire=event.target.closest('[data-universal-relation]');
+    const wire=closestElement(event.target,'[data-universal-relation]');
     if (wire) {
       event.preventDefault(); event.stopPropagation();
       // A focus names one of the selected, so a wire is selected the same
       // way a card is. Sending an empty selection with a focus was
       // refused by the protocol ("browser focus primary must be
       // selected"), which is why clicking a wire answered nothing.
-      const root=wire.dataset.universalRelation;
-      await commit({roots:root ? [root] : [],focus:root});
+      await commit({roots:[],focus:wire.dataset.universalRelation});
       return;
     }
-    const authority=event.target.closest('[data-authority-relationship]');
+    const authority=closestElement(event.target,'[data-authority-relationship]');
     if (authority) {
       event.preventDefault(); event.stopPropagation();
       await commit({roots:[],focus:authority.dataset.authorityRelationship});
       return;
     }
-    const focus=event.target.closest('[data-universal-focus]');
+    const focus=closestElement(event.target,'[data-universal-focus]');
     if (focus) {
       event.preventDefault(); event.stopPropagation();
       await commit({roots:[],focus:focus.dataset.universalFocus});
@@ -4043,20 +4041,12 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('input', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     const search=event.target.closest?.('[data-universal-library-search]');
     if (!search) return;
     const library=search.closest('.library-panel');
     if (library) applyLibrarySearch(library);
   });
   document.addEventListener('keydown', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     const search=event.target.closest?.('[data-universal-library-search]');
     if (!search) return;
     const library=search.closest('.library-panel');
@@ -4157,10 +4147,6 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     tabs[next].focus({preventScroll:true});
   });
   document.addEventListener('keydown', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     const control=event.target.closest?.(
       '.canvas-toolbar button[data-universal-control]');
     if (!control) return;
@@ -4185,10 +4171,6 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     buttons[next].focus({preventScroll:true});
   });
   document.addEventListener('keydown', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     const card=event.target.closest?.(
       '[data-universal-root][role="button"]');
     if (!card || !lastProjection ||
@@ -4222,21 +4204,21 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
   });
   document.addEventListener('dragstart', event => {
-    const primitive=event.target.closest('[data-universal-primitive]');
+    const primitive=closestElement(event.target,'[data-universal-primitive]');
     if (primitive && event.dataTransfer) {
       event.dataTransfer.effectAllowed='copy';
       event.dataTransfer.setData(
         'application/x-archhub-primitive',primitive.dataset.universalPrimitive);
       return;
     }
-    const definition=event.target.closest('[data-universal-definition]');
+    const definition=closestElement(event.target,'[data-universal-definition]');
     if (!definition || !event.dataTransfer) return;
     event.dataTransfer.effectAllowed='copy';
     event.dataTransfer.setData(
       'application/x-archhub-definition',definition.dataset.universalDefinition);
   });
   document.addEventListener('dragover', event => {
-    if (!event.target.closest('.canvas') || !event.dataTransfer) return;
+    if (!closestElement(event.target,'.canvas') || !event.dataTransfer) return;
     const types=Array.from(event.dataTransfer.types);
     if (!types.includes('application/x-archhub-definition') &&
         !types.includes('application/x-archhub-primitive')) return;
@@ -4244,7 +4226,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     event.dataTransfer.dropEffect='copy';
   });
   document.addEventListener('drop', async event => {
-    const canvas=event.target.closest('.canvas');
+    const canvas=closestElement(event.target,'.canvas');
     if (!canvas || !event.dataTransfer) return;
     const definition=event.dataTransfer.getData(
       'application/x-archhub-definition');
@@ -4272,11 +4254,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   });
 
   document.addEventListener('pointerdown', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const socket=event.target.closest(
+    const socket=closestElement(event.target,
       '[data-universal-relation-role],[data-universal-relation-incidence]');
     if (
       !socket || socket.dataset.existingOnly === 'true'
@@ -4361,20 +4339,12 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('pointercancel', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     if (!pendingRoleWire || pendingRoleWire.pointerId !== event.pointerId) return;
     cancelRoleWire();
   });
 
   document.addEventListener('pointerdown', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const output=event.target.closest('[data-universal-output]');
+    const output=closestElement(event.target,'[data-universal-output]');
     if (!output || output.dataset.existingOnly === 'true' || event.button !== 0) return;
     const sourceNode=lastProjection?.nodes.find(
       node => node.id === output.dataset.universalOutput);
@@ -4482,11 +4452,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   });
 
   document.addEventListener('pointerdown', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const handle=event.target.closest('[data-universal-rewire-incidence]');
+    const handle=closestElement(event.target,'[data-universal-rewire-incidence]');
     if (!handle) return;
     if (
       handle.dataset.focused !== 'True'
@@ -4582,15 +4548,11 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     cancelConnectionRewire();
   });
   document.addEventListener('change', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     if (projectionReconciliationDepth > 0) return;
     // A rail field edit: the input's ui-key names the property row,
     // the row names its owner and label, and the gesture path signs
     // the same revise-instance the stem runner lands answers with.
-    const railInput=event.target.closest('.inspector .property-input');
+    const railInput=closestElement(event.target,'.inspector .property-input');
     const uiKey=railInput?.dataset?.uiKey || '';
     if (railInput && uiKey.startsWith('property-input:') && lastProjection) {
       const rowKey=uiKey.slice('property-input:'.length);
@@ -4605,7 +4567,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         return;
       }
     }
-    const contractRole=event.target.closest('[data-universal-contract-role]');
+    const contractRole=closestElement(event.target,'[data-universal-contract-role]');
     if (contractRole && lastProjection) {
       if (!contractRole.dataset.universalInteraction) {
         throw new Error('Relation participant Interaction is missing');
@@ -4616,12 +4578,12 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         });
       return;
     }
-    const property=event.target.closest(
+    const property=closestElement(event.target,
       '[data-universal-event-fact-input][data-universal-control]');
     if (property) {
       await executeProjectedInteraction(property); return;
     }
-    const incidence=event.target.closest('[data-universal-incidence]');
+    const incidence=closestElement(event.target,'[data-universal-incidence]');
     if (incidence) {
       const relation=lastProjection?.selected_relation;
       const endpoint=[relation?.source,relation?.target].find(item => (
@@ -4637,18 +4599,21 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('keydown', event => {
-    // A key dispatched at the document itself has no element target, and
-    // Element.closest on it is a crash that takes every later listener's
-    // work down with it. No element under the key means none of these
-    // branches apply.
-    if (!(event.target instanceof Element)) return;
     // Delete takes the selected cards off the canvas. The graph keeps
     // their history; the scope simply stops holding them.
     if (
       (event.key === 'Delete' || event.key === 'Backspace')
-      && !event.target.closest('input,textarea,select')
+      && !closestElement(event.target,'input,textarea,select')
       && (selectedWire || lastProjection?.selection?.length)
     ) {
+      // A wire the graph declares a disconnect interaction for is
+      // detached THAT way -- the graph's own act, handled by the
+      // topology listener above. Releasing it from the scope instead
+      // would answer a question nobody asked.
+      const declared=selectedWire && lastProjection?.wires?.some(
+        wire => wire.id === selectedWire && !wire.nary
+          && typeof wire.disconnect_control === 'string');
+      if (declared) return;
       event.preventDefault();
       const removing=selectedWire
         ? [selectedWire] : [...lastProjection.selection];
@@ -4660,7 +4625,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
     if (
       (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g'
-      && !event.target.closest('input,textarea,select') && lastProjection
+      && !closestElement(event.target,'input,textarea,select') && lastProjection
     ) {
       event.preventDefault();
       const operation=event.shiftKey ? 'ungroup' : 'group';
@@ -4683,7 +4648,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       scopedAction.click();
       return;
     }
-    const relationFormInput=event.target.closest(
+    const relationFormInput=closestElement(event.target,
       '[data-universal-relation-form-field]');
     if (relationFormInput && event.key === 'Enter') {
       event.preventDefault();
@@ -4708,9 +4673,9 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // target, and Element.closest on it is a crash that takes every later
     // listener down with it -- the canvas stops answering entirely.
     if (!(event.target instanceof Element)) return;
-    const wire=event.target.closest('[data-universal-relation]');
+    const wire=closestElement(event.target,'[data-universal-relation]');
     if (!wire) {
-      if (selectedWire && event.target.closest('.canvas[data-universal="true"]')) {
+      if (selectedWire && closestElement(event.target,'.canvas[data-universal="true"]')) {
         selectedWire=null;
         paintSelectedWire();
       }
@@ -4720,11 +4685,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     paintSelectedWire();
   },true);
   document.addEventListener('mouseover', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const card=event.target.closest('[data-universal-root]');
+    const card=closestElement(event.target,'[data-universal-root]');
     if (!card || card.contains(event.relatedTarget)) return;
     document.querySelectorAll('[data-universal-relation]').forEach(wire => {
       wire.dataset.hoverContext=(
@@ -4733,11 +4694,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
   });
   document.addEventListener('mouseout', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const card=event.target.closest('[data-universal-root]');
+    const card=closestElement(event.target,'[data-universal-root]');
     if (!card || card.contains(event.relatedTarget)) return;
     document.querySelectorAll('[data-universal-relation]').forEach(wire => {
       delete wire.dataset.hoverContext;
@@ -4913,11 +4870,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       + '[data-universal-rewire-incidence],[data-universal-relation]'));
   }
   document.addEventListener('pointerdown', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const canvas=event.target.closest('.canvas[data-universal="true"]');
+    const canvas=closestElement(event.target,'.canvas[data-universal="true"]');
     if (!canvas || !lastProjection || canvasGesture) return;
     if (isCanvasManipulationTarget(event.target)) return;
     const panRequested=event.button === 1
@@ -4931,7 +4884,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       return;
     }
     if (event.button !== 0) return;
-    const card=event.target.closest('[data-universal-root]');
+    const card=closestElement(event.target,'[data-universal-root]');
     if (card) {
       const root=card.dataset.universalRoot;
       const base=visibleCanvasSelection(canvas);
@@ -5070,21 +5023,13 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('pointercancel', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     const gesture=canvasGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     flushCanvasMotion(); canvasGesture=null;
     resetCanvasGesture(gesture,{restore:true});
   });
   document.addEventListener('dblclick', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const card=event.target.closest(
+    const card=closestElement(event.target,
       '.canvas[data-universal="true"] [data-universal-root][data-universal-openable="True"]');
     if (!card || !lastProjection) return;
     event.preventDefault(); event.stopPropagation();
@@ -5106,12 +5051,8 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   // compounds from what is on screen and settles into the graph once.
   let liveViewport=null;
   document.addEventListener('wheel', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const canvas=event.target.closest('.canvas[data-universal="true"]');
-    if (!canvas || !lastProjection || event.target.closest('.canvas-toolbar')) return;
+    const canvas=closestElement(event.target,'.canvas[data-universal="true"]');
+    if (!canvas || !lastProjection || closestElement(event.target,'.canvas-toolbar')) return;
     event.preventDefault();
     const rect=canvas.getBoundingClientRect();
     const old=liveViewport || lastProjection.viewport;
@@ -5140,10 +5081,6 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     },policy.viewport_commit_debounce_ms);
   },{passive:false});
   document.addEventListener('keydown', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
     const editing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
     if (event.code === 'Space' && !editing
         && !event.target.closest?.('[data-universal-root][role="button"]')) {
@@ -5201,11 +5138,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     if (hint) hint.textContent=text || '';
   }
   document.addEventListener('input', event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    if (!event.target.closest('.composer-input')) return;
+    if (!closestElement(event.target,'.composer-input')) return;
     const match=composerMatch(event.target.value);
     composerHint(
       !event.target.value.trim() ? ''
@@ -5215,11 +5148,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   // Capture phase: a canvas listener upstream stops key propagation, and
   // the composer must answer the founder's Enter regardless.
   document.addEventListener('keydown', async event => {
-    // A key or pointer dispatched at the document itself has no
-    // element target, and Element.closest on it is a crash that
-    // takes every later listener's work down with it.
-    if (!(event.target instanceof Element)) return;
-    const box=event.target.closest('.composer-input');
+    const box=closestElement(event.target,'.composer-input');
     if (!box) return;
     if (event.key === 'Escape') { box.value=''; composerHint(''); box.blur(); return; }
     if (event.key !== 'Enter') return;

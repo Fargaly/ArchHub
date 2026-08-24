@@ -1549,6 +1549,12 @@ class _CleanAuthorityHttpServer:
                     focus if type(focus) is str and focus
                     else (roots[-1] if roots else "")
                 )
+                # A focus IS a selection of one. Clicking a wire sends the
+                # focus alone -- the shape every surface has always used --
+                # and the focus protocol requires the primary to be among
+                # the selected, so an empty list refused the click.
+                if primary and not roots:
+                    roots = [primary]
                 if not primary:
                     # An empty click clears nothing the graph holds; the
                     # projection the view already has is the answer.

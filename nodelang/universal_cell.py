@@ -828,7 +828,12 @@ class InterprocessOwnerFence:
 class _SqliteJournal:
     """Durable implementation machinery; rows contain only Cell versions."""
 
+    # Declared, not probed. Asking an object whether it answers to a NAME
+    # is choosing behaviour from a string, which is the one thing the
+    # execution floor may not do (SPEC 4.1); a capability a journal has is
+    # a value it carries.
     supports_lazy_history = True
+    append_only_fence_present = False
 
     def __init__(
         self,
@@ -906,6 +911,7 @@ class _SqliteJournal:
                     "SELECT name FROM sqlite_master WHERE type = 'trigger'"
                 )
             }
+            self.append_only_fence_present = True
             self._fence_was_present = {
                 "cell_versions_append_only_update",
                 "cell_versions_append_only_delete",
@@ -1104,7 +1110,7 @@ class _SqliteJournal:
                 (str(c), str(l0), str(l1), bytes(a))
                 for c, l0, l1, a in genesis_rows
             ] == [(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")]
-            fenced = bool(getattr(self, "_fence_was_present", False))
+            fenced = bool(self.append_only_fence_present)
             if (
                 fenced
                 and genesis_honest
@@ -1669,7 +1675,7 @@ class _SqliteHistoryReader:
         drop the triggers; then the accelerators must not trust counts,
         and every proof re-hashes the rows it covers.
         """
-        return bool(getattr(self._journal, "_fence_was_present", False))
+        return bool(self._journal.append_only_fence_present)
 
     def accepted_prefix_fingerprint(self, revision: int) -> tuple[int, int, str]:
         """Count, newest row, and content digest of the versions at or
@@ -2301,11 +2307,9 @@ class CellStore:
             }
         else:
             try:
-                load_head = getattr(self._journal, "load_head", None)
-                if (
-                    getattr(self._journal, "supports_lazy_history", False)
-                    and callable(load_head)
-                ):
+                journal = self._journal
+                load_head = getattr(journal, "load_head", None)
+                if journal.supports_lazy_history and callable(load_head):
                     loaded = load_head()
                     self._validate_loaded_head(loaded)
                     self._cells = (
@@ -2471,11 +2475,9 @@ class CellStore:
     ]:
         if self._journal is None:
             raise InvalidCell("durable Cell journal is unavailable")
-        load_head = getattr(self._journal, "load_head", None)
-        if (
-            getattr(self._journal, "supports_lazy_history", False)
-            and callable(load_head)
-        ):
+        journal = self._journal
+        load_head = getattr(journal, "load_head", None)
+        if journal.supports_lazy_history and callable(load_head):
             loaded = load_head()
             self._validate_loaded_head(loaded)
             return loaded
@@ -2759,7 +2761,7 @@ class CellStore:
     def retention_stats(self) -> Mapping[str, int]:
         """Expose bounded physical retention without interpreting the graph."""
         with self._lock:
-            version_count = (
+            version_rows = (
                 self._history_reader.version_count()
                 if self._history_reader is not None
                 else sum(
@@ -2775,7 +2777,7 @@ class CellStore:
             return MappingProxyType({
                 "revision_count": revision_count,
                 "current_cell_count": len(self._cells),
-                "version_cell_count": version_count,
+                "version_cell_count": version_rows,
                 "resident_history_version_cell_count": sum(
                     len(changed) for changed in self._versions.values()
                 ),
@@ -3050,7 +3052,7 @@ class CellStore:
         pass and changes no meaning.
         """
         journal = self._journal
-        if journal is None or not getattr(journal, "_fence_was_present", False):
+        if journal is None or not journal.append_only_fence_present:
             return None
         try:
             accelerators = journal._accelerators()

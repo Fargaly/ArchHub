@@ -12,6 +12,21 @@ NODELANG = ROOT / "nodelang"
 # identities. Product behavior belongs in graph assemblies, never in this floor.
 EXECUTION_FLOOR_MODULES = {
     "universal_cell.py",
+    # A rule about whether a remembered read is still true: it reads the
+    # journal's own record of what moved and knows nothing about any
+    # product, which is what puts it on the floor rather than in a lens.
+    "cell_read_memo.py",
+    # Nine modules shipped unclassified, which is the one thing this court
+    # exists to prevent -- an unlisted module is a module no rule was ever
+    # applied to. Each is placed by what it IS: bounded machinery over the
+    # Cell floor that names no product goes on the floor; anything that
+    # composes a presentation for a founder to read is assembly or lens.
+    "cell_cde_authority.py",
+    "cell_device_pairing.py",
+    "cell_logic.py",
+    "cell_replay_policy_authority.py",
+    "cell_sequence.py",
+    "cell_set_digest.py",
     "cell_adapters.py",
     "cell_attestations.py",
     "cell_authorization.py",
@@ -56,6 +71,9 @@ EXECUTION_FLOOR_MODULES = {
 # They may name their domain, but do not expand the physical execution floor.
 GRAPH_ASSEMBLY_OR_LENS_MODULES = {
     "cell_agent_body.py",
+    "cell_result_view.py",
+    "cell_run_view.py",
+    "cell_source_assembly.py",
     "cell_agent_cognition.py",
     "cell_application_ui.py",
     "cell_attention.py",

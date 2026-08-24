@@ -13,7 +13,13 @@ from nodelang.map_import import load_map  # noqa: E402
 def test_overlay_covers_every_map_node_with_executable_node_native_gate():
     overlay = build_overlay()
     expected = sum(len(domain['nodes']) for domain in load_map())
-    assert len(overlay['containers']) == expected == 282
+    # Coverage is the claim: every node the map holds gets a container.
+    # The second number was the map's size on the day this was written,
+    # and it froze the map -- adding a node turned this red for a reason
+    # that has nothing to do with what the court is for. It stays as a
+    # FLOOR, so silently losing nodes is still caught.
+    assert len(overlay['containers']) == expected
+    assert expected >= 282, expected
     for container in overlay['containers'].values():
         assert container['tier'] == 'T1'
         assert container['gate_kind'] == 'pytest'

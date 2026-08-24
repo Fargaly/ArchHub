@@ -239,35 +239,21 @@ def _published_definitions(
     authority: UnifiedAuthority,
     caller: CallerCommandCapability,
 ) -> tuple[str, ...]:
-    store = authority.store
-    snapshot = store.snapshot()
-    memos = _PUBLISHED_MEMOS.get(store)
-    if memos is None:
-        memos = {}
-        _PUBLISHED_MEMOS[store] = memos
-    published: list[str] = []
-    for member in read_relation(
-        snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
-    ):
-        if member.role_id != authority.role("definition"):
-            continue
-        root = member.participant_id
-        key = (root, caller.actor_root)
-        held = memos.get(key)
-        if held is not None and read_set_unchanged(store, held[0], held[2]):
-            memos[key] = (store.revision, held[1], held[2])
-            if held[1]:
-                published.append(root)
-            continue
-        projection = read_definition(authority, root, caller=caller)
-        is_published = projection.lifecycle == "published"
-        memos[key] = (
-            store.revision, is_published,
-            frozenset({root, projection.revision_root}),
-        )
-        if is_published:
-            published.append(root)
-    return tuple(published)
+    """Every published catalogue definition, in one stable order.
+
+    Which definitions are published is the same question the authority
+    already answers for installers, and it answers it by reading names
+    and lifecycles rather than building a whole projection per
+    definition -- 3.7s of every start here, for a set that decides only
+    which cards may be placed.
+    """
+    from .unified_authority import _published_names
+
+    return tuple(sorted(
+        root
+        for roots in _published_names(authority, caller).values()
+        for root in roots
+    ))
 
 
 def _binding_specs(

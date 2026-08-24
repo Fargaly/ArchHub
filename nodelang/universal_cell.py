@@ -274,7 +274,9 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
     were actually asked for; cap it if a session ever walks the whole graph.
     """
 
-    __slots__ = ("_reader", "_overlay", "_base_count", "_created_count")
+    __slots__ = (
+        "_reader", "_overlay", "_base_count", "_created_count", "_removed",
+    )
 
     def __init__(
         self,
@@ -282,11 +284,13 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
         overlay: "HashTrieMap | None" = None,
         base_count: int = 0,
         created_count: int = 0,
+        removed: frozenset[str] = frozenset(),
     ) -> None:
         self._reader = reader
         self._overlay = HashTrieMap() if overlay is None else overlay
         self._base_count = base_count
         self._created_count = created_count
+        self._removed = removed
 
     def with_delta(self, delta: Mapping[str, Cell]) -> "_LazyHeadCellMap":
         created = sum(1 for key in delta if key not in self)
@@ -295,6 +299,38 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
             self._overlay.update(delta),
             self._base_count,
             self._created_count + created,
+            self._removed - frozenset(delta),
+        )
+
+    def with_step_back(
+        self,
+        restored: Mapping[str, Cell],
+        removed: Iterable[str],
+    ) -> "_LazyHeadCellMap":
+        """The revision below this one, still read on demand.
+
+        Auditing a head walks downwards one revision at a time, and each
+        step differs from the one above by the handful of cells that
+        revision wrote. Lifting the head into a trie to apply that handful
+        read all five and three quarter million rows on the first step:
+        a hundred and fifty seconds, paid on every start whose proof a
+        single gesture had invalidated. A step is now the size of its own
+        change, whatever the graph weighs.
+        """
+        gone = frozenset(removed)
+        overlay = self._overlay.update(restored)
+        for cell_id in gone:
+            overlay = overlay.discard(cell_id)
+        created = sum(
+            1 for key in restored
+            if key not in self._overlay and self._reader.read(key) is None
+        )
+        return _LazyHeadCellMap(
+            self._reader,
+            overlay,
+            self._base_count,
+            self._created_count + created - len(gone),
+            (self._removed | gone) - frozenset(restored),
         )
 
     def prefetch_region(self, root_id: str, limit: int = 400_000) -> int:
@@ -311,6 +347,8 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
         held = self._overlay.get(key)
         if held is not None:
             return held
+        if key in self._removed:
+            raise KeyError(key)
         cell = self._reader.read(key)
         if cell is None:
             raise KeyError(key)
@@ -319,12 +357,18 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
-        return key in self._overlay or self._reader.read(key) is not None
+        if key in self._overlay:
+            return True
+        if key in self._removed:
+            return False
+        return self._reader.read(key) is not None
 
     def get(self, key, default=None):
         held = self._overlay.get(key)
         if held is not None:
             return held
+        if key in self._removed:
+            return default
         cell = self._reader.read(key) if isinstance(key, str) else None
         return default if cell is None else cell
 
@@ -334,7 +378,7 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
             seen.add(key)
             yield key
         for key in self._reader.stream_ids():
-            if key not in seen:
+            if key not in seen and key not in self._removed:
                 yield key
 
     def __len__(self) -> int:
@@ -1205,7 +1249,17 @@ class _SqliteJournal:
                 raise InvalidCell("durable current Cell index is inconsistent")
         history = _SqliteHistoryReader(self, latest, previous.hex())
         return LoadedJournalHead(
-            cells=MappingProxyType(current),
+            # A proxy AROUND the lazy head is not the lazy head: every
+            # consumer that asks "is this read on demand?" is answered no
+            # and falls back to reading the whole graph. One step of a
+            # head audit lifted 5.79 million rows into a trie for the sake
+            # of two hundred and ninety-one changed cells -- 115.5s of the
+            # 121s open. The loading map is already immutable once
+            # published; the store publishes it.
+            cells=(
+                current if isinstance(current, _LoadingHeadMap)
+                else MappingProxyType(current)
+            ),
             revision=latest,
             revision_chain_digest=previous.hex(),
             history=history,
@@ -1438,7 +1492,10 @@ class _SqliteHistoryReader:
         # dense base is lifted into a trie once (a boot's first step) and
         # every step below it is then the size of its own change.
         base = later.cells
-        if isinstance(base, _OverlayCellMap):
+        lazy_base = base if isinstance(base, _LazyHeadCellMap) else None
+        if lazy_base is not None:
+            trie = None
+        elif isinstance(base, _OverlayCellMap):
             trie = base._cells
         elif isinstance(base, HashTrieMap):
             trie = base
@@ -1477,10 +1534,13 @@ class _SqliteHistoryReader:
         removed = tuple(
             cell_id for cell_id in changed if cell_id not in restored
         )
-        trie = trie.update(restored_cells)
-        for cell_id in removed:
-            trie = trie.discard(cell_id)
-        cells = _OverlayCellMap._from_trie(trie)
+        if lazy_base is not None:
+            cells = lazy_base.with_step_back(restored_cells, removed)
+        else:
+            trie = trie.update(restored_cells)
+            for cell_id in removed:
+                trie = trie.discard(cell_id)
+            cells = _OverlayCellMap._from_trie(trie)
         if NULL_CELL_ID not in cells:
             raise InvalidCell(
                 "revision %s has no distinguished null Cell" % target

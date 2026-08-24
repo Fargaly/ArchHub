@@ -2086,6 +2086,34 @@ def open_unified_authority(
     accepted_proof=None,
 ) -> UnifiedAuthority:
     """Verify a signed bootstrap and open the exact same persisted authority."""
+    import time as _time
+    _phase = _time.perf_counter()
+    _phases: list[tuple[str, float]] = []
+
+    def _mark(name: str) -> None:
+        nonlocal _phase
+        now = _time.perf_counter()
+        _phases.append((name, now - _phase))
+        _phase = now
+
+    def _report() -> None:
+        # An open that costs minutes must say WHERE, or every cut is a
+        # guess. One line per open beside the owner's boot log.
+        try:
+            import os as _os
+            path = _os.path.join(
+                _os.path.dirname(_os.path.dirname(str(store.database_path))),
+                "..", "boot-timing.log",
+            )
+            with open(path, "a", encoding="utf-8") as log:
+                log.write("%s  open detail: %s%s" % (
+                    _time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "  ".join("%s %.1fs" % item for item in _phases),
+                    chr(10),
+                ))
+        except Exception:
+            pass
+
     _validate_manifest_shape(manifest)
     if key_provider.key_fingerprint(
         manifest.key_id, manifest.key_version
@@ -2098,6 +2126,7 @@ def open_unified_authority(
         manifest.signature,
     ):
         raise InvalidCell("bootstrap manifest signature is invalid")
+    _mark("signature")
     if store.revision < manifest.accepted_revision:
         raise InvalidCell("Cell store predates the accepted bootstrap")
     # Rebuilding and hashing the accepted snapshot is the whole cost of
@@ -2129,6 +2158,7 @@ def open_unified_authority(
             raise InvalidCell(
                 "accepted bootstrap snapshot digest does not match"
             )
+    _mark("accepted proof")
     required = {
         manifest.application_root,
         manifest.protocol_root,
@@ -2142,11 +2172,14 @@ def open_unified_authority(
     }
     if not required.issubset(store.snapshot().cells):
         raise InvalidCell("bootstrap root is missing from the current graph")
+    _mark("required roots")
     authority = _resolve_protocol(store, manifest, key_provider)
+    _mark("resolve protocol")
     if not roots_are_reachable(
         store.snapshot(), manifest.application_root, required, store=store
     ):
         raise InvalidCell("bootstrap roots do not share one application root")
+    _mark("reachability")
     # Verifying the current head hashes every cell in the graph. On a
     # large graph that is the entire cost of starting, and it re-proves a
     # head that has not moved since the last time it was proven. The proof
@@ -2158,13 +2191,18 @@ def open_unified_authority(
     if accepted_proof is not None:
         head_key = accepted_proof.head_fingerprint(store, current.revision)
     if head_key is not None and accepted_proof.head_proven(head_key):
+        _mark("head proof hit")
+        _report()
         return authority
     floor = None
     if accepted_proof is not None:
         proven_revision = accepted_proof.head_floor_revision(store)
+        _mark("floor revision")
         if proven_revision is not None and proven_revision < current.revision:
             historical = store.at(proven_revision)
+            _mark("floor snapshot")
             member = _current_head_member(authority, historical)
+            _mark("floor member")
             if member is not None:
                 floor = (
                     proven_revision,
@@ -2173,9 +2211,13 @@ def open_unified_authority(
                         authority, historical, member.participant_id
                     ),
                 )
+                _mark("floor digest")
+    _mark("head floor")
     _verify_current_head(authority, current, floor)
+    _mark("verify head")
     if head_key is not None:
         accepted_proof.record_head(head_key)
+    _report()
     return authority
 
 

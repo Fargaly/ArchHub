@@ -20,6 +20,7 @@ import pytest
 from nodelang.cell_set_digest import (
     DIGEST_V2_PREFIX, is_v2_digest, set_accumulator,
 )
+from nodelang.cell_revision_checkpoint import snapshot_digest
 from nodelang.universal_cell import Cell, InvalidCell, Snapshot
 
 
@@ -94,8 +95,16 @@ def test_a_v2_head_verifies_and_one_tampered_atom_fails_it(tmp_path):
         )
         forged = Snapshot(snapshot.revision, forged_cells)
         _HEAD_VERDICT_CACHE.clear()
-        with pytest.raises(InvalidCell, match="snapshot digest does not match"):
+        # A refusal is the claim, not one particular sentence: which cell
+        # a head holds first is physical machinery (a lazily read head
+        # yields its overlay before the journal's rows), and a tampered
+        # atom can be refused by the payload rule before the digest rule
+        # ever runs. Both are the same fact -- this snapshot is not the
+        # one that was signed -- so the digest is asserted directly beside
+        # the refusal rather than inferred from the message.
+        with pytest.raises(InvalidCell):
             _verify_exact_snapshot_head(authority, forged)
+        assert snapshot_digest(forged) != recorded
     finally:
         _HEAD_VERDICT_CACHE.clear()
         authority.store.close()

@@ -264,9 +264,10 @@ def _open_generation(
         with (root / "boot-timing.log").open("a", encoding="utf-8") as log:
             log.write(
                 "%s  open phases: store load %.1fs  authority open %.1fs  "
-                "(cells=%d rev=%s)" % (
+                "(cells=%d rev=%s head=%s)" % (
                     _time.strftime("%Y-%m-%d %H:%M:%S"), _t1 - _t0, _t2 - _t1,
                     len(store.snapshot().cells), store.revision,
+                    type(store.snapshot().cells).__name__,
                 ) + chr(10)
             )
     except OSError:

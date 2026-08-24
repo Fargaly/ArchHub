@@ -4156,6 +4156,83 @@ def revoke_session(
     )
 
 
+_CATALOGUE_NAME_INDEX: "WeakValueDictionary | dict" = {}
+
+
+def _published_names(
+    authority: UnifiedAuthority,
+    caller: CallerCommandCapability,
+) -> Mapping[str, tuple[str, ...]]:
+    """Every published catalogue definition, by name, read once.
+
+    Installers ask this question a definition at a time -- the base
+    catalogue alone asks it thirty-one times -- and each ask walked the
+    whole catalogue. Asking a hundred definitions their NAME by building a
+    hundred whole projections reads every parameter, interface and
+    evidence root of each: 40ms apiece for a few bytes of answer, and 25.7s
+    of a start once the projections were no longer left in a cache by
+    somebody else's walk.
+
+    The index is built once per graph state, for THIS caller: every
+    definition in it passed the same authorization the full read performs,
+    so nothing is answered here that a full read would have refused.
+    """
+    snapshot = authority.store.snapshot()
+    key = (
+        id(snapshot.cells),
+        getattr(caller, "actor_root", ""),
+        getattr(caller, "session_root", ""),
+    )
+    held = _CATALOGUE_NAME_INDEX.get(key)
+    if held is not None and held[0] is snapshot.cells:
+        return held[1]
+    warm = getattr(snapshot.cells, "prefetch_region", None)
+    if warm is not None:
+        warm(authority.manifest.catalogue_root)
+    published: dict[str, list[str]] = {}
+    for member in read_relation(
+        snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
+    ):
+        if member.role_id != authority.role("definition"):
+            continue
+        try:
+            _authorize_semantic_read(
+                authority,
+                snapshot,
+                caller,
+                object_root=member.participant_id,
+                scope_root=authority.manifest.catalogue_root,
+                budget=COMMAND_BUDGET,
+            )
+            revision_root = _definition_revision_root(
+                authority, snapshot, member.participant_id
+            )
+            held_name = _decode_value(
+                authority,
+                snapshot,
+                _single_member(snapshot, revision_root, authority.role("label")),
+            )
+            lifecycle_root = _single_member(
+                snapshot, revision_root, authority.role("lifecycle")
+            )
+        except InvalidCell:
+            continue
+        lifecycle = next(
+            (state for state, root in authority.states.items()
+             if root == lifecycle_root),
+            None,
+        )
+        if lifecycle != "published" or type(held_name) is not str:
+            continue
+        published.setdefault(held_name, []).append(member.participant_id)
+    index = MappingProxyType({
+        held_name: tuple(roots) for held_name, roots in published.items()
+    })
+    _CATALOGUE_NAME_INDEX.clear()
+    _CATALOGUE_NAME_INDEX[key] = (snapshot.cells, index)
+    return index
+
+
 def published_definition_named(
     authority: UnifiedAuthority,
     name: str,
@@ -4172,21 +4249,7 @@ def published_definition_named(
     more than one published definition, so the caller falls back to its
     exact replay and nothing is guessed.
     """
-    snapshot = authority.store.snapshot()
-    found: list[str] = []
-    for member in read_relation(
-        snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
-    ):
-        if member.role_id != authority.role("definition"):
-            continue
-        try:
-            definition = read_definition(
-                authority, member.participant_id, caller=caller
-            )
-        except InvalidCell:
-            continue
-        if definition.name == name and definition.lifecycle == "published":
-            found.append(definition.root_id)
+    found = list(_published_names(authority, caller).get(name, ()))
     if len(found) != 1:
         return None
     return found[0]

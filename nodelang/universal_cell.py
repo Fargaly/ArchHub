@@ -333,9 +333,11 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
             (self._removed | gone) - frozenset(restored),
         )
 
-    def prefetch_region(self, root_id: str, limit: int = 400_000) -> int:
-        """Warm one whole region in a single statement."""
-        return self._reader.prefetch_region(root_id, limit)
+    def prefetch_region(
+        self, root_id: str, limit: int = 400_000, depth: int = 8
+    ) -> int:
+        """Warm one root's neighbourhood in a single statement."""
+        return self._reader.prefetch_region(root_id, limit, depth)
 
     def prefetch(self, cell_ids) -> None:
         """Warm many cells at once; a no-op for what is already held."""
@@ -504,30 +506,58 @@ class _HeadRowReader:
                 if cell_id not in seen:
                     self._missing.add(cell_id)
 
-    def prefetch_region(self, root_id: str, limit: int = 400_000) -> int:
-        """Warm everything under one root with a single statement.
+    def prefetch_region(
+        self, root_id: str, limit: int = 400_000, depth: int = 8
+    ) -> int:
+        """Warm one root's neighbourhood, one level per statement.
 
-        Following links one query at a time is a round trip per cell;
-        sqlite can walk the region itself and hand back the rows.
+        Following links one query at a time is a round trip per cell, so
+        the walk belongs in sqlite. Unbounded, though, that walk IS the
+        whole graph -- every cell links to the ones it names -- and
+        warming the map root reached 5.79 million cells and cost 25.2s of
+        every scope entry to serve a screen that reads a few thousand.
+
+        A level at a time, rather than one recursive statement: a
+        recursive CTE carrying a depth column cannot fold the same cell
+        reached at two depths into one row, so it returns a cell once per
+        path and fills the row cap with duplicates. Each level here is one
+        statement over the ids that level actually names, and a cell
+        already held is never asked for again.
         """
-        rows = self._connection.execute(
-            "WITH RECURSIVE region(cell_id, link0, link1, atom) AS ("
-            "  SELECT cell_id, link0, link1, atom FROM current_cells "
-            "   WHERE cell_id = ?"
-            "  UNION "
-            "  SELECT c.cell_id, c.link0, c.link1, c.atom "
-            "    FROM current_cells c JOIN region r "
-            "      ON c.cell_id = r.link0 OR c.cell_id = r.link1"
-            ") SELECT cell_id, link0, link1, atom FROM region LIMIT ?",
-            (root_id, int(limit)),
-        ).fetchall()
-        for cell_id, link0, link1, atom in rows:
-            key = str(cell_id)
-            if key not in self._cache:
-                self._cache[key] = Cell(
-                    key, str(link0), str(link1), bytes(atom)
-                )
-        return len(rows)
+        held = self._cache
+        frontier = [str(root_id)]
+        seen: set[str] = set()
+        found = 0
+        for _level in range(max(0, int(depth)) + 1):
+            wanted = [
+                cell_id for cell_id in dict.fromkeys(frontier)
+                if cell_id not in seen
+            ]
+            if not wanted or found >= limit:
+                break
+            seen.update(wanted)
+            following: list[str] = []
+            for start in range(0, len(wanted), 500):
+                selected = wanted[start:start + 500]
+                placeholders = ",".join("?" for _ in selected)
+                rows = self._connection.execute(
+                    "SELECT cell_id, link0, link1, atom FROM current_cells "
+                    "WHERE cell_id IN (" + placeholders + ")",
+                    tuple(selected),
+                ).fetchall()
+                for cell_id, link0, link1, atom in rows:
+                    key = str(cell_id)
+                    if key not in held:
+                        held[key] = Cell(
+                            key, str(link0), str(link1), bytes(atom)
+                        )
+                    found += 1
+                    following.append(str(link0))
+                    following.append(str(link1))
+                if found >= limit:
+                    break
+            frontier = following
+        return found
 
     def forget(self, cell_id: str) -> None:
         self._missing.discard(cell_id)
@@ -1419,6 +1449,26 @@ class _SqliteHistoryReader:
         ):
             raise InvalidCell("unknown revision %r" % revision)
         return revision
+
+    def cells_written_since(
+        self, revision: int
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Identity and incidence of every cell written above a revision.
+
+        What a memo needs to know is not "did the graph move" -- it always
+        moves -- but "did anything I READ move". The journal already knows
+        exactly what each revision wrote, and the append-only rule means
+        nothing below can change, so this is the whole question in one
+        indexed statement.
+        """
+        return tuple(
+            (str(row[0]), str(row[1]), str(row[2]))
+            for row in self._journal._connection.execute(
+                "SELECT DISTINCT cell_id, link0, link1 FROM cell_versions "
+                "WHERE revision>?",
+                (int(revision),),
+            )
+        )
 
     def revision_cells(self, revision: int) -> tuple[Cell, ...]:
         target = self._admit_revision(revision)

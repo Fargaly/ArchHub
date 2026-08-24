@@ -244,6 +244,7 @@ from .clean_browser_authority import (
     verify_clean_browser_session,
 )
 from .clean_scope_interactions import (
+    clean_scope_source_digest,
     derive_clean_scope_interactions,
     open_clean_scope_interactions,
     submit_clean_scope_interaction,
@@ -824,12 +825,19 @@ class _CleanAuthorityHttpServer:
         # source of the binding map.
         import time as _time
         _d0 = _time.perf_counter()
+        # Only the scope in front of the founder, and the children it can
+        # open. Expanding the whole tree derived 31,480 bindings over 318
+        # scopes -- 1,290,811 cells, 12.7s of every start -- to serve one
+        # screen. A scope is expanded when it is stood in.
+        self._derived_scope_roots = (scope_root,)
         try:
             derived, derived_cells = derive_clean_scope_interactions(
                 authority,
                 browser_authority,
                 scope_root,
                 caller=scope_caller,
+                roots=self._derived_scope_roots,
+                depth=1,
             )
         except InvalidCell:
             # A scope root the graph does not hold, or one this caller
@@ -845,8 +853,19 @@ class _CleanAuthorityHttpServer:
             )
         except Exception:
             installed = None
-        if installed is not None and derived is not None and (
-            installed.source_digest != derived.source_digest
+        # The table covers the whole tree, so its staleness is judged
+        # against the whole tree -- never against the one scope this
+        # server built cells for, which would call every table stale.
+        whole_digest = None
+        if installed is not None:
+            try:
+                whole_digest = clean_scope_source_digest(
+                    authority, scope_root, caller=scope_caller,
+                )
+            except InvalidCell:
+                whole_digest = None
+        if installed is not None and (
+            whole_digest is None or installed.source_digest != whole_digest
         ):
             # The table was written for an older scope tree or catalogue.
             # The derivation reads the graph as it is now; the stale table
@@ -858,8 +877,18 @@ class _CleanAuthorityHttpServer:
             () if installed is not None else derived_cells
         )
         self._record_gesture_timing(
-            "boot: derive interactions + open table %.1fs (derived cells=%d)"
-            % (_time.perf_counter() - _d0, len(derived_cells or ()))
+            "boot: derive interactions + open table %.1fs "
+            "(derived cells=%d scopes=%d bindings=%d)"
+            % (
+                _time.perf_counter() - _d0, len(derived_cells or ()),
+                len(getattr(derived, "bindings", {}) or {}),
+                sum(
+                    len(controls)
+                    for controls in (
+                        getattr(derived, "bindings", {}) or {}
+                    ).values()
+                ),
+            )
         )
         self.clean_interaction_broker = InteractionProjectionBroker()
         self._clean_projection_handles: dict[str, object] = {}
@@ -2109,11 +2138,19 @@ class _CleanAuthorityHttpServer:
         # judges is measured here rather than guessed from outside.
         import time as _time
         _t0 = _time.perf_counter()
+        # Standing in a scope is what makes its controls needed, so this is
+        # where a scope entered for the first time is derived.
+        self._expand_scope_interactions(root_id)
+        _e1 = _time.perf_counter()
         # One statement warms this scope's region; without it the first
         # projection after a start pays a round trip per cell.
         warm = getattr(self.authority.store.snapshot().cells, "prefetch_region", None)
         if warm is not None:
             warm(root_id)
+        _e2 = _time.perf_counter()
+        self._record_gesture_timing(
+            "scope entry expand=%.3fs warm=%.3fs" % (_e1 - _t0, _e2 - _e1)
+        )
         lens = scope_lens_payload(
             project_unified_scope(
                 self.clean_authority,
@@ -2188,6 +2225,39 @@ class _CleanAuthorityHttpServer:
             self._clean_projection_handles[binding.session_root] = handle
         return handle
 
+    def _expand_scope_interactions(self, scope_root: str) -> None:
+        """Derive the interactions of a scope the founder has just entered.
+
+        Standing in a scope is what makes its controls needed. Deriving it
+        on entry costs that scope's own bindings; deriving every scope at
+        start cost the whole tree to serve one screen.
+        """
+        held = self.clean_scope_interactions
+        if not scope_root or (held is not None and scope_root in held.bindings):
+            return
+        if scope_root in self._derived_scope_roots:
+            return
+        roots = self._derived_scope_roots + (scope_root,)
+        try:
+            derived, derived_cells = derive_clean_scope_interactions(
+                self.clean_authority,
+                self.clean_browser_authority,
+                self.clean_scope_root,
+                caller=self.clean_caller,
+                roots=roots,
+                depth=1,
+            )
+        except InvalidCell:
+            return
+        self._derived_scope_roots = roots
+        self.clean_scope_interactions = derived
+        self._derived_interaction_cells = derived_cells
+        self._interaction_snapshot_cache = None
+        self._derived_overlay_parts = None
+        self._interaction_scope_index = None
+        self._verified_interaction_reads = {}
+        self._clean_projection_cache.clear()
+
     def _scope_interaction_bindings(
         self,
         scope_root: str,
@@ -2238,6 +2308,8 @@ class _CleanAuthorityHttpServer:
                 self.clean_browser_authority,
                 self.clean_scope_root,
                 caller=self.clean_caller,
+                roots=self._derived_scope_roots,
+                depth=1,
             )
         except InvalidCell:
             return
@@ -2335,6 +2407,8 @@ class _CleanAuthorityHttpServer:
                     self.clean_browser_authority,
                     self.clean_scope_root,
                     caller=self.clean_caller,
+                    roots=self._derived_scope_roots,
+                    depth=1,
                 )
                 fresh_digest = fresh.source_digest
                 self._read_set_digest_cache = (snapshot.cells, fresh_digest)

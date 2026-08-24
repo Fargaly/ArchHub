@@ -7,6 +7,7 @@ from weakref import WeakKeyDictionary
 from typing import Mapping
 
 from .cell_attention import active_focus, open_attention_protocol
+from .cell_read_memo import read_set_unchanged
 from .cell_protocols import read_relation
 from .unified_authority import (
     read_composition_placements,
@@ -242,14 +243,21 @@ def _catalogue(
     held = entry[1].get(caller.actor_root)
     if held is not None:
         return held
-    warm = getattr(
-        authority.store.snapshot().cells, "prefetch_region", None
-    )
-    if warm is not None:
-        warm(authority.manifest.catalogue_root)
     items, _walked = _catalogue_uncached(authority, caller)
     entry[1][caller.actor_root] = items
     return items
+
+
+# WHICH definitions the catalogue holds is one cheap relation read; WHAT
+# each of them says is 97 definition projections, and that is where 24.8s
+# of a 51.4s scope entry went. The membership is read every time -- a
+# publish must be seen at once -- and each definition is kept until a
+# commit writes a cell that IS one it read, or POINTS AT one (a new
+# revision cell for a definition names the definition root, and that is
+# how two earlier id-only enumerations missed a change).
+LAST_LENS_PHASES: dict = {}
+
+_DEFINITION_MEMOS: "WeakKeyDictionary" = WeakKeyDictionary()
 
 
 def _catalogue_uncached(authority, caller):
@@ -257,20 +265,50 @@ def _catalogue_uncached(authority, caller):
     from .cell_protocols import read_relation
 
     snapshot = authority.store.snapshot()
+    store = authority.store
     members = relation_members(snapshot, authority.manifest.catalogue_root)
+    # Warming the whole catalogue region is one statement instead of a
+    # round trip per cell -- worth 24.8s when the definitions must be
+    # read, and exactly 24.8s of waste when every one of them is already
+    # known. It is paid on the first definition that actually needs it.
+    warmed = False
+
+    def warm_once():
+        nonlocal warmed
+        if warmed:
+            return
+        warmed = True
+        warm = getattr(snapshot.cells, "prefetch_region", None)
+        if warm is not None:
+            warm(authority.manifest.catalogue_root)
     walked = {member.incidence_id for member in members}
     roots = sorted(
         member.participant_id for member in members
         if member.role_id == authority.role("definition")
     )
+    memos = _DEFINITION_MEMOS.get(store)
+    if memos is None:
+        memos = {}
+        _DEFINITION_MEMOS[store] = memos
     items = []
     for root in roots:
+        key = (root, caller.actor_root)
+        held = memos.get(key)
+        if held is not None and read_set_unchanged(store, held[0], held[2]):
+            memos[key] = (store.revision, held[1], held[2])
+            items.append(held[1])
+            walked |= held[2]
+            continue
+        warm_once()
         projection = read_definition(authority, root, caller=caller)
-        items.append(_definition_item(projection))
-        walked.add(projection.revision_root)
+        item = _definition_item(projection)
+        seen = {root, projection.revision_root}
         for member in read_relation(snapshot, root, budget=10_000):
-            walked.add(member.incidence_id)
-            walked.add(member.participant_id)
+            seen.add(member.incidence_id)
+            seen.add(member.participant_id)
+        memos[key] = (store.revision, item, frozenset(seen))
+        items.append(item)
+        walked |= seen
     return tuple(sorted(
         items, key=lambda item: (item.name.casefold(), item.root_id)
     )), frozenset(walked)
@@ -305,7 +343,6 @@ def _properties(
 
 # Phase costs of the last projection, for the owner to log. A lens that
 # is slow is slow SOMEWHERE; without this the number is a mystery.
-LAST_LENS_PHASES: dict = {}
 
 
 def project_unified_scope(

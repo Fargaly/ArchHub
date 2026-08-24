@@ -2341,7 +2341,73 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       box.setAttribute('aria-label','Composer');
       box.autocomplete='off';
       box.spellcheck=false;
-      composer.append(box,element('div','composer-hint'));
+      // Arrange: the graph holds each card's position, and an import that
+      // placed twenty-six domains left nine of them under another card --
+      // 57 overlapping pairs, and elementFromPoint on nine of them
+      // answered a DIFFERENT card, so those nine could not be clicked,
+      // wired or grouped at all. This lays the scope out on a grid
+      // through the SAME signed positions gesture a drag uses; nothing
+      // moves unless the founder asks for it.
+      const arrange=element('button','composer-arrange');
+      arrange.type='button';
+      arrange.textContent='Arrange';
+      arrange.title='Lay out this scope so no card covers another';
+      arrange.addEventListener('click',async () => {
+        if (!lastProjection || !lastProjection.nodes.length) return;
+        const width=projectedNodeWidth(lastProjection);
+        const columnStep=width+56;
+        const surface=document.querySelector('.canvas');
+        const zoom=lastProjection.viewport?.zoom || 1;
+        const usable=Math.max(
+          columnStep*2,
+          ((surface?.clientWidth || 1280)/zoom)-96,
+        );
+        const columns=Math.max(1,Math.floor(usable/columnStep));
+        const rowStep=Math.max(...lastProjection.nodes.map(
+          node => projectedNodeHeight(node,lastProjection)))+56;
+        // Keep the founder's arrangement as far as it goes: cards are
+        // laid out in the order they already read on screen.
+        const ordered=[...lastProjection.nodes].sort((a,b) =>
+          (Number(a.y)-Number(b.y)) || (Number(a.x)-Number(b.x)));
+        const positions={};
+        ordered.forEach((node,index) => {
+          positions[node.id]={
+            x:60+(index % columns)*columnStep,
+            y:60+Math.floor(index/columns)*rowStep,
+          };
+        });
+        composerHint('arranging ' + ordered.length + ' cards…');
+        try {
+          await commit({positions});
+          composerHint('arranged ' + ordered.length + ' cards');
+        } catch (error) {
+          composerHint(String(error.message || error));
+        }
+      });
+      // The stylesheet is graph-held and knows only about the input, so
+      // the row that holds both is laid out here, where it is made.
+      // The panel is a backdrop, not a target: three cards sat under it
+      // and elementFromPoint answered DIV.composer, so a click meant for
+      // a card hit empty chrome. Only the things you can actually press
+      // take the pointer.
+      composer.style.pointerEvents='none';
+      const row=element('div','composer-row');
+      row.style.pointerEvents='auto';
+      row.style.display='flex';
+      row.style.alignItems='center';
+      row.style.gap='8px';
+      box.style.flex='1';
+      box.style.minWidth='0';
+      arrange.style.flex='0 0 auto';
+      arrange.style.height='28px';
+      arrange.style.padding='0 12px';
+      arrange.style.borderRadius='5px';
+      arrange.style.border='1px solid var(--line)';
+      arrange.style.background='var(--bg)';
+      arrange.style.color='var(--ink-soft)';
+      arrange.style.cursor='pointer';
+      row.append(box,arrange);
+      composer.append(row,element('div','composer-hint'));
       canvasSurface.append(composer);
       // Bound to the element itself: document-level listeners in this
       // page compete over keys, and the founder's Enter must not depend

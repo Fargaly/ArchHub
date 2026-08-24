@@ -214,12 +214,24 @@ def _build_canvas_server(location, host: str, port: int):
     from .runtime_caller_capability import WindowsDpapiCallerKeyStore
     from .unified_authority import composition_root
 
+    import time as _time
+    _at = _time.perf_counter()
+    _steps = []
+
+    def _step(name):
+        nonlocal _at
+        now = _time.perf_counter()
+        _steps.append((name, now - _at))
+        _at = now
+
     authority = location.authority
     key_store = WindowsDpapiCallerKeyStore(
         WindowsDpapiCallerKeyStore.default_path()
     )
     caller = key_store.bind_bootstrap(authority, "founder.bootstrap")
+    _step("bind caller")
     browser = open_clean_browser_authority(authority, caller=caller)
+    _step("browser authority")
     provider = WindowsDpapiSigningKeyProvider(
         WindowsDpapiSigningKeyProvider.default_path()
     )
@@ -229,6 +241,7 @@ def _build_canvas_server(location, host: str, port: int):
     # relation it carried pointed at something the canvas never drew: a
     # screen of unconnected cards and hundreds of wires with no endpoints.
     scope = composition_root(authority, "Grand Map", caller=caller)
+    _step("grand map scope")
     # Which region the canvas opens on is an operator's choice, and this is
     # the entry point where naming one is a declaration rather than a trap.
     chosen = os.environ.get("ARCHHUB_CANVAS_SCOPE", "").strip()
@@ -259,7 +272,7 @@ def _build_canvas_server(location, host: str, port: int):
             )
         return adapter(op_id, arguments)
 
-    return ApplicationServer.from_unified_authority(
+    server = ApplicationServer.from_unified_authority(
         authority,
         browser_authority=browser,
         scope_caller=caller,
@@ -269,6 +282,21 @@ def _build_canvas_server(location, host: str, port: int):
         port=port,
         host_invoker=reach_host,
     )
+    _step("application server")
+    # What standing the canvas costs, step by step, in the same log the
+    # owner keeps its boot phases in.
+    try:
+        with (location.root / "boot-timing.log").open(
+            "a", encoding="utf-8"
+        ) as log:
+            log.write("%s  canvas detail: %s%s" % (
+                _time.strftime("%Y-%m-%d %H:%M:%S"),
+                "  ".join("%s %.1fs" % item for item in _steps),
+                chr(10),
+            ))
+    except OSError:
+        pass
+    return server
 
 
 def main() -> int:

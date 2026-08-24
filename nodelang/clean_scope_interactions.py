@@ -13,6 +13,9 @@ import uuid
 from types import MappingProxyType
 from typing import Mapping
 
+from weakref import WeakKeyDictionary
+
+from .cell_read_memo import read_set_unchanged
 from . import cell_interactions
 from .cell_interactions import (
     InteractionProjectionBroker,
@@ -224,27 +227,74 @@ def _read_entry(
     return label, target_root
 
 
+# Which definitions are published is the same answer for every scope and
+# every click, and reading it walks the whole catalogue: 26s of a scope
+# entry on the founder's graph. It is kept until a commit touches it --
+# by identity or by incidence, so a publish invalidates it (see
+# cell_read_memo for why ids alone were not enough).
+_PUBLISHED_MEMOS: "WeakKeyDictionary" = WeakKeyDictionary()
+
+
+def _published_definitions(
+    authority: UnifiedAuthority,
+    caller: CallerCommandCapability,
+) -> tuple[str, ...]:
+    store = authority.store
+    snapshot = store.snapshot()
+    memos = _PUBLISHED_MEMOS.get(store)
+    if memos is None:
+        memos = {}
+        _PUBLISHED_MEMOS[store] = memos
+    published: list[str] = []
+    for member in read_relation(
+        snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
+    ):
+        if member.role_id != authority.role("definition"):
+            continue
+        root = member.participant_id
+        key = (root, caller.actor_root)
+        held = memos.get(key)
+        if held is not None and read_set_unchanged(store, held[0], held[2]):
+            memos[key] = (store.revision, held[1], held[2])
+            if held[1]:
+                published.append(root)
+            continue
+        projection = read_definition(authority, root, caller=caller)
+        is_published = projection.lifecycle == "published"
+        memos[key] = (
+            store.revision, is_published,
+            frozenset({root, projection.revision_root}),
+        )
+        if is_published:
+            published.append(root)
+    return tuple(published)
+
+
 def _binding_specs(
     authority: UnifiedAuthority,
     scope_root: str,
     caller: CallerCommandCapability,
+    *,
+    roots: tuple[str, ...] | None = None,
+    depth: int | None = None,
 ) -> tuple[tuple[str, str, str, str], ...]:
+    """The (scope, control, target, capability) rows a set of scopes affords.
+
+    `roots` are the scopes to expand and `depth` how far below each to go.
+    Expanding the whole tree from the door derived 31,480 bindings over 318
+    scopes -- 1,290,811 cells, 12.7s of every start -- to serve one screen
+    that can only act on the scope in front of the founder. A scope is
+    expanded when it is stood in.
+    """
     snapshot = authority.store.snapshot()
-    published = tuple(
-        member.participant_id
-        for member in read_relation(
-            snapshot, authority.manifest.catalogue_root, budget=COMMAND_BUDGET
-        )
-        if member.role_id == authority.role("definition")
-        and read_definition(
-            authority, member.participant_id, caller=caller
-        ).lifecycle == "published"
-    )
-    queue = [scope_root]
+    published = _published_definitions(authority, caller)
+    queue: list[tuple[str, int]] = [
+        (root, 0) for root in (roots if roots is not None else (scope_root,))
+    ]
     seen: set[str] = set()
     specs: list[tuple[str, str, str, str]] = []
     while queue:
-        current = queue.pop(0)
+        current, level_depth = queue.pop(0)
         if current in seen:
             continue
         seen.add(current)
@@ -265,8 +315,10 @@ def _binding_specs(
             if target_root == current:
                 continue
             specs.append((current, target_root, target_root, CAPABILITY_SCOPE))
-            if target_root not in seen:
-                queue.append(target_root)
+            if target_root not in seen and (
+                depth is None or level_depth + 1 < depth
+            ):
+                queue.append((target_root, level_depth + 1))
         # Opening a scope is not the only thing a scope affords. Running
         # what is focused is a second one, and the client will not activate
         # a control the graph has declared no interaction for -- so a Run
@@ -873,12 +925,33 @@ def install_clean_scope_interactions(
     )
 
 
+def clean_scope_source_digest(
+    authority: UnifiedAuthority,
+    scope_root: str,
+    *,
+    caller: CallerCommandCapability,
+) -> str:
+    """What an installed table would have to match to still be current.
+
+    Whether the persisted table is stale is a question about the WHOLE
+    scope tree, and it stays that question even when only one scope's
+    cells are built: comparing a table for 318 scopes against a
+    derivation for one would call every table stale and throw away a
+    graph's installed interactions. The specs are the cheap half of a
+    derivation -- the tree walk and the published list, both memoised --
+    so the question is answered without building 1,290,811 cells.
+    """
+    return _source_digest(_binding_specs(authority, scope_root, caller))
+
+
 def derive_clean_scope_interactions(
     authority: UnifiedAuthority,
     browser: CleanBrowserAuthority,
     scope_root: str,
     *,
     caller: CallerCommandCapability,
+    roots: tuple[str, ...] | None = None,
+    depth: int | None = None,
 ) -> tuple[CleanScopeInteractions, tuple[Cell, ...]]:
     """The exact set revise would persist, computed instead of written.
 
@@ -894,7 +967,9 @@ def derive_clean_scope_interactions(
     installed table; once the read path consumes this, the table is
     redundant state a compaction can drop.
     """
-    binding_specs = _binding_specs(authority, scope_root, caller)
+    binding_specs = _binding_specs(
+        authority, scope_root, caller, roots=roots, depth=depth,
+    )
     source_digest = _source_digest(binding_specs)
     snapshot = authority.store.snapshot()
     protocol_cells, protocol = _compile_protocol_source()

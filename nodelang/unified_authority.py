@@ -2170,7 +2170,12 @@ def open_unified_authority(
         manifest.principal_root,
         manifest.bootstrap_session_root,
     }
-    if not required.issubset(store.snapshot().cells):
+    # Nine lookups, not a walk: set.issubset(mapping) ITERATES the
+    # mapping, so asking whether nine roots are present read all 5.77
+    # million head rows -- 3.2s of every open to answer nine questions
+    # the journal can answer by primary key.
+    head_cells = store.snapshot().cells
+    if any(root not in head_cells for root in required):
         raise InvalidCell("bootstrap root is missing from the current graph")
     _mark("required roots")
     authority = _resolve_protocol(store, manifest, key_provider)

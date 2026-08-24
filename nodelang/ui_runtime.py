@@ -4824,8 +4824,23 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
        });
       return;
     }
-    const box=canvas.querySelector('.selection-box');
-    if (!box) return;
+    // Dragging across empty canvas is how anyone selects several nodes,
+    // and it did nothing at all: the rectangle it paints into is looked
+    // up here and this canvas holds none, so the gesture returned before
+    // it began. The rectangle is transient chrome -- it exists while a
+    // pointer is down and never after -- so the canvas makes its own.
+    let box=canvas.querySelector('.selection-box');
+    if (!box) {
+      box=element('div','selection-box');
+      box.style.position='absolute';
+      box.style.display='none';
+      box.style.pointerEvents='none';
+      box.style.zIndex='6';
+      box.style.border='1px solid var(--accent)';
+      box.style.background='color-mix(in srgb,var(--accent) 12%,transparent)';
+      box.style.borderRadius='2px';
+      (canvas.querySelector('.canvas-stage') || canvas).append(box);
+    }
     event.preventDefault();
     const base=visibleCanvasSelection(canvas);
     startCanvasGesture('marquee',event,{

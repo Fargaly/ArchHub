@@ -397,10 +397,20 @@ def _read_visual_system(
         if not name or name in target_map:
             raise InvalidCell("visual system entry name is invalid or duplicated")
         target_map[name] = target
-    if set(role_roots) != set(ROLE_NAMES):
-        raise InvalidCell("visual role vocabulary is incomplete")
-    if set(operation_roots) != set(OPERATION_NAMES):
-        raise InvalidCell("visual operation vocabulary is incomplete")
+    # A system SERVED must speak the whole current vocabulary. A system
+    # being read in order to REVISE it is by definition older: extending
+    # the vocabulary made the installed system unreadable by the very
+    # function meant to carry it forward, so the graph could not be
+    # upgraded and the canvas served nothing.
+    if require_current_catalogue:
+        if set(role_roots) != set(ROLE_NAMES):
+            raise InvalidCell("visual role vocabulary is incomplete")
+        if set(operation_roots) != set(OPERATION_NAMES):
+            raise InvalidCell("visual operation vocabulary is incomplete")
+    elif not set(role_roots) <= set(ROLE_NAMES) or not set(
+        operation_roots
+    ) <= set(OPERATION_NAMES):
+        raise InvalidCell("visual vocabulary is not a subset of the release")
     # A runtime must hold exactly the templates it knows how to draw, so
     # opening one to render with is strict. Revising is the opposite
     # situation: the installed system is EXPECTED to be older than the

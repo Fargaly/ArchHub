@@ -664,6 +664,10 @@ CLIENT_SCRIPT = """
   }
 
   document.addEventListener('click', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const download = event.target.closest('[data-download]');
     if (download) {
       event.preventDefault();
@@ -690,6 +694,10 @@ CLIENT_SCRIPT = """
     if (target.dataset.navigate) location.href = target.dataset.navigate;
   });
   document.addEventListener('dblclick', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const target = event.target.closest('[data-double-action="true"]');
     if (!target) return;
     event.preventDefault();
@@ -697,12 +705,20 @@ CLIENT_SCRIPT = """
     await runAction(target, true, crypto.randomUUID(), 'double_activate');
   });
   document.addEventListener('change', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const target = event.target.closest('[data-edit="true"]');
     if (!target) return;
     const value = target.type === 'checkbox' ? String(target.checked) : target.value;
     await writeBinding(target, target.dataset.editPort || 'value', value);
   });
   document.addEventListener('pointerdown', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     if (event.target.closest('.canvas[data-universal="true"]')) return;
     const surface = event.target.closest('.canvas[data-pan-surface="true"]');
     const panGesture = surface && (event.button === 1 ||
@@ -992,6 +1008,10 @@ CLIENT_SCRIPT = """
     hideMarquee();
   });
   document.addEventListener('wheel', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const surface = event.target.closest('.canvas[data-pan-surface="true"]');
     if (!surface || surface.dataset.universal === 'true'
         || event.target.closest('.canvas-toolbar,.composer')) return;
@@ -3800,6 +3820,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   }
 
   document.addEventListener('click', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const toolbarControl=event.target.closest(
       '.canvas-toolbar [data-control-binding]');
     if (toolbarControl && lastProjection) {
@@ -4019,12 +4043,20 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('input', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const search=event.target.closest?.('[data-universal-library-search]');
     if (!search) return;
     const library=search.closest('.library-panel');
     if (library) applyLibrarySearch(library);
   });
   document.addEventListener('keydown', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const search=event.target.closest?.('[data-universal-library-search]');
     if (!search) return;
     const library=search.closest('.library-panel');
@@ -4125,6 +4157,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     tabs[next].focus({preventScroll:true});
   });
   document.addEventListener('keydown', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const control=event.target.closest?.(
       '.canvas-toolbar button[data-universal-control]');
     if (!control) return;
@@ -4149,6 +4185,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     buttons[next].focus({preventScroll:true});
   });
   document.addEventListener('keydown', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const card=event.target.closest?.(
       '[data-universal-root][role="button"]');
     if (!card || !lastProjection ||
@@ -4232,6 +4272,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   });
 
   document.addEventListener('pointerdown', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const socket=event.target.closest(
       '[data-universal-relation-role],[data-universal-relation-incidence]');
     if (
@@ -4317,11 +4361,19 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('pointercancel', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     if (!pendingRoleWire || pendingRoleWire.pointerId !== event.pointerId) return;
     cancelRoleWire();
   });
 
   document.addEventListener('pointerdown', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const output=event.target.closest('[data-universal-output]');
     if (!output || output.dataset.existingOnly === 'true' || event.button !== 0) return;
     const sourceNode=lastProjection?.nodes.find(
@@ -4430,6 +4482,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   });
 
   document.addEventListener('pointerdown', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const handle=event.target.closest('[data-universal-rewire-incidence]');
     if (!handle) return;
     if (
@@ -4526,6 +4582,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     cancelConnectionRewire();
   });
   document.addEventListener('change', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     if (projectionReconciliationDepth > 0) return;
     // A rail field edit: the input's ui-key names the property row,
     // the row names its owner and label, and the gesture path signs
@@ -4644,6 +4704,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
   }
   document.addEventListener('pointerdown', event => {
+    // A pointer event dispatched at the document itself has no element
+    // target, and Element.closest on it is a crash that takes every later
+    // listener down with it -- the canvas stops answering entirely.
+    if (!(event.target instanceof Element)) return;
     const wire=event.target.closest('[data-universal-relation]');
     if (!wire) {
       if (selectedWire && event.target.closest('.canvas[data-universal="true"]')) {
@@ -4656,6 +4720,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     paintSelectedWire();
   },true);
   document.addEventListener('mouseover', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const card=event.target.closest('[data-universal-root]');
     if (!card || card.contains(event.relatedTarget)) return;
     document.querySelectorAll('[data-universal-relation]').forEach(wire => {
@@ -4665,6 +4733,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
   });
   document.addEventListener('mouseout', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const card=event.target.closest('[data-universal-root]');
     if (!card || card.contains(event.relatedTarget)) return;
     document.querySelectorAll('[data-universal-relation]').forEach(wire => {
@@ -4841,6 +4913,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       + '[data-universal-rewire-incidence],[data-universal-relation]'));
   }
   document.addEventListener('pointerdown', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const canvas=event.target.closest('.canvas[data-universal="true"]');
     if (!canvas || !lastProjection || canvasGesture) return;
     if (isCanvasManipulationTarget(event.target)) return;
@@ -4994,12 +5070,20 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
   });
   document.addEventListener('pointercancel', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const gesture=canvasGesture;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     flushCanvasMotion(); canvasGesture=null;
     resetCanvasGesture(gesture,{restore:true});
   });
   document.addEventListener('dblclick', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const card=event.target.closest(
       '.canvas[data-universal="true"] [data-universal-root][data-universal-openable="True"]');
     if (!card || !lastProjection) return;
@@ -5022,6 +5106,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   // compounds from what is on screen and settles into the graph once.
   let liveViewport=null;
   document.addEventListener('wheel', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const canvas=event.target.closest('.canvas[data-universal="true"]');
     if (!canvas || !lastProjection || event.target.closest('.canvas-toolbar')) return;
     event.preventDefault();
@@ -5052,6 +5140,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     },policy.viewport_commit_debounce_ms);
   },{passive:false});
   document.addEventListener('keydown', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const editing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
     if (event.code === 'Space' && !editing
         && !event.target.closest?.('[data-universal-root][role="button"]')) {
@@ -5109,6 +5201,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     if (hint) hint.textContent=text || '';
   }
   document.addEventListener('input', event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     if (!event.target.closest('.composer-input')) return;
     const match=composerMatch(event.target.value);
     composerHint(
@@ -5119,6 +5215,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   // Capture phase: a canvas listener upstream stops key propagation, and
   // the composer must answer the founder's Enter regardless.
   document.addEventListener('keydown', async event => {
+    // A key or pointer dispatched at the document itself has no
+    // element target, and Element.closest on it is a crash that
+    // takes every later listener's work down with it.
+    if (!(event.target instanceof Element)) return;
     const box=event.target.closest('.composer-input');
     if (!box) return;
     if (event.key === 'Escape') { box.value=''; composerHint(''); box.blur(); return; }

@@ -111,6 +111,24 @@ def main() -> int:
 
     view.loadFinished.connect(_remember)
 
+    def _boot_surface_gone() -> bool:
+        """True when the owner has handed the port to the canvas."""
+        try:
+            import urllib.request
+
+            with urllib.request.urlopen(
+                "http://127.0.0.1:8475/api/universal/boot", timeout=0.5
+            ) as answer:
+                return answer.status != 200
+        except Exception:
+            return True
+
+    def _reload_if_stale(is_boot_screen: object) -> None:
+        if not is_boot_screen:
+            return
+        if _boot_surface_gone():
+            view.load(QUrl("http://127.0.0.1:8475/"))
+
     def _retry() -> None:
         answering = _canvas_answers()
         if not answering:
@@ -119,6 +137,16 @@ def main() -> int:
             return
         if not loaded["ok"]:
             view.load(QUrl("http://127.0.0.1:8475/"))
+            return
+        # A page that loaded fine can still be the wrong page: the boot
+        # screen the owner served before it handed the port to the canvas.
+        # It waits for the handover itself, but a window left open across
+        # an upgrade is running the boot script it was served BEFORE the
+        # change -- and that one waits forever. The shell asks the page
+        # what it is and brings it forward.
+        view.page().runJavaScript(
+            "!!document.getElementById('phase')", _reload_if_stale
+        )
 
     timer = QTimer(window)
     timer.timeout.connect(_retry)

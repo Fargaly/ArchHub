@@ -80,14 +80,25 @@ font-size:11px;color:#8b8f8c;font-variant-numeric:tabular-nums}
   <div class="line"><span id="phase">opening the graph</span><span id="elapsed"></span></div>
 </div>
 <script>
+// The port changes hands when the canvas stands: this page stops being
+// served and /api/universal/boot stops answering. Treating that only as
+// "try again" left the founder looking at the boot screen forever after
+// the graph was already open, so a run of failures IS the handover.
+let missed=0;
 async function tick(){
   try{
-    const state=await (await fetch('/api/universal/boot',{cache:'no-store'})).json();
+    const answer=await fetch('/api/universal/boot',{cache:'no-store'});
+    if(!answer.ok){throw new Error('boot surface has handed over');}
+    const state=await answer.json();
+    missed=0;
     if(state.done){location.reload();return;}
     const live=state.phases.filter(p=>p.seconds===null).at(-1);
     document.getElementById('phase').textContent=live?live.label:'opening the graph';
     document.getElementById('elapsed').textContent=state.elapsed+'s';
-  }catch(error){/* the port is changing hands; the next tick finds it */}
+  }catch(error){
+    missed+=1;
+    if(missed>=3){location.reload();return;}
+  }
   setTimeout(tick,500);
 }
 tick();

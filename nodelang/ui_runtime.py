@@ -2327,8 +2327,60 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       button => button.dataset.universalControl === focusedControl
     ) || toolbarButtons[0];
     toolbarButtons.forEach(button => { button.tabIndex=button === focusTarget ? 0 : -1; });
-    const composer=document.querySelector('.canvas > .composer');
-    if (composer) composer.hidden=true;
+    // The composer: the typed way to reach the same library the sidebar
+    // shows. It is chrome, not graph content -- what it DOES is the
+    // graph's placement interaction, unchanged -- so the surface is
+    // made here rather than asking the graph to describe a text box.
+    const canvasSurface=document.querySelector('.canvas');
+    let composer=canvasSurface?.querySelector(':scope > .composer');
+    if (canvasSurface && !composer) {
+      composer=element('div','composer');
+      const box=element('input','composer-input');
+      box.type='text';
+      box.placeholder='Type a node and press Enter';
+      box.setAttribute('aria-label','Composer');
+      box.autocomplete='off';
+      box.spellcheck=false;
+      composer.append(box,element('div','composer-hint'));
+      canvasSurface.append(composer);
+      // Bound to the element itself: document-level listeners in this
+      // page compete over keys, and the founder's Enter must not depend
+      // on winning that race.
+      box.addEventListener('input',() => {
+        const match=composerMatch(box.value);
+        composerHint(
+          !box.value.trim() ? ''
+          : match ? 'Enter places ' + match.name
+          : 'no node called that');
+      });
+      box.addEventListener('keydown',async keyEvent => {
+        if (keyEvent.key === 'Escape') {
+          box.value=''; composerHint(''); box.blur(); return;
+        }
+        if (keyEvent.key !== 'Enter') return;
+        keyEvent.preventDefault();
+        keyEvent.stopPropagation();
+        const match=composerMatch(box.value);
+        if (!match) { composerHint('no node called that'); return; }
+        const viewport=lastProjection?.viewport;
+        const middle=viewport ? {
+          x:(canvasSurface.clientWidth/2 - viewport.pan_x)/viewport.zoom,
+          y:(canvasSurface.clientHeight/2 - viewport.pan_y)/viewport.zoom,
+        } : null;
+        const control=document.createElement('button');
+        bindProjectedInteraction(control,match.id);
+        composerHint('placing ' + match.name + '…');
+        try {
+          await executeProjectedInteraction(control,interactionDeltaMode,
+            middle ? {placement:middle} : {});
+          box.value='';
+          composerHint('placed ' + match.name);
+        } catch (error) {
+          composerHint(String(error.message || error));
+        }
+      });
+    }
+    if (composer) composer.hidden=false;
   }
   function projectedNodeWidth(projection) {
     const value=projection.configuration?.design_system?.components
@@ -4870,6 +4922,65 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   window.addEventListener('blur', () => { canvasSpaceDown=false; });
   window.addEventListener('resize',() => requestAnimationFrame(redraw));
   refresh();
+  // The composer: name a node, press Enter, it lands in the middle of what
+  // you are looking at. It places the SAME graph-held definition the library
+  // places, through the same signed interaction -- typing is another way to
+  // reach it, never a second way to create things.
+  function composerMatch(query) {
+    const wanted=String(query || '').trim().toLocaleLowerCase();
+    if (!wanted || !lastProjection) return null;
+    const items=lastProjection.catalog || [];
+    return items.find(item =>
+      String(item.name || '').toLocaleLowerCase() === wanted)
+      || items.find(item =>
+        String(item.name || '').toLocaleLowerCase().startsWith(wanted))
+      || null;
+  }
+  function composerHint(text) {
+    let hint=document.querySelector('.composer-hint');
+    if (!hint) {
+      const bar=document.querySelector('.canvas > .composer');
+      if (!bar) return;
+      hint=element('div','composer-hint');
+      bar.append(hint);
+    }
+    if (hint) hint.textContent=text || '';
+  }
+  document.addEventListener('input', event => {
+    if (!event.target.closest('.composer-input')) return;
+    const match=composerMatch(event.target.value);
+    composerHint(
+      !event.target.value.trim() ? ''
+      : match ? 'Enter places ' + match.name
+      : 'no node called that');
+  });
+  // Capture phase: a canvas listener upstream stops key propagation, and
+  // the composer must answer the founder's Enter regardless.
+  document.addEventListener('keydown', async event => {
+    const box=event.target.closest('.composer-input');
+    if (!box) return;
+    if (event.key === 'Escape') { box.value=''; composerHint(''); box.blur(); return; }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const match=composerMatch(box.value);
+    if (!match) { composerHint('no node called that'); return; }
+    const canvas=document.querySelector('.canvas');
+    const viewport=lastProjection?.viewport;
+    const middle=canvas && viewport ? {
+      x:(canvas.clientWidth/2 - viewport.pan_x)/viewport.zoom,
+      y:(canvas.clientHeight/2 - viewport.pan_y)/viewport.zoom,
+    } : null;
+    const control=document.createElement('button');
+    bindProjectedInteraction(control,match.id);
+    try {
+      await executeProjectedInteraction(control,interactionDeltaMode,
+        middle ? {placement:middle} : {});
+      box.value='';
+      composerHint('placed ' + match.name);
+    } catch (error) {
+      composerHint(String(error.message || error));
+    }
+  }, true);
 })();
 """
 

@@ -324,9 +324,26 @@ def _reconcile_status_parameter(
 # operation to that vocabulary is a protocol change with its own court, not
 # something this table may assume.
 GRAPH_EXPRESSIONS = {
-    "shape.count": ("length", "items", "count"),
-    "shape.unique": ("unique", "items", "items_out"),
-    "shape.flatten": ("flatten", "items", "items_out"),
+    # engine: (operation, arguments, output interface)
+    # An argument is ("in", interface) for a wired input, or ("param", name)
+    # for the node's own parameter -- a node that sorts BY something says
+    # which, in the graph.
+    "shape.count": ("length", (("in", "items"),), "count"),
+    "shape.unique": ("unique", (("in", "items"),), "items_out"),
+    "shape.flatten": ("flatten", (("in", "items"),), "items_out"),
+    "shape.pluck": ("pluck", (("in", "items"), ("param", "field")), "values"),
+    "shape.sort": (
+        "sort-by",
+        (("in", "items"), ("param", "by"), ("param", "direction")),
+        "items_out",
+    ),
+    "shape.group": ("group-by", (("in", "items"), ("param", "by")), "groups"),
+    "shape.slice": (
+        "slice",
+        (("in", "items"), ("param", "count"), ("param", "from")),
+        "items_out",
+    ),
+    "shape.concat": ("append", (("in", "a"), ("in", "b")), "items_out"),
 }
 
 
@@ -351,16 +368,29 @@ def install_stem_expressions(
         held = GRAPH_EXPRESSIONS.get(entry["engine"])
         if held is None:
             continue
-        operation, source, output = held
+        operation, arguments, _output = held
         prefix = "app:stem-expression:%s" % entry["engine"]
         if ("%s:expression" % prefix) in snapshot.cells:
             built[entry["engine"]] = "%s:expression" % prefix
             continue
-        segment = builder.atom("%s:segment" % prefix, source)
         root = builder.expression("%s:root" % prefix, "root")
-        argument = builder.expression("%s:input" % prefix, "path", (root, segment))
+        parts = []
+        for index, (kind, name) in enumerate(arguments):
+            if kind == "in":
+                segment = builder.atom("%s:seg%d" % (prefix, index), name)
+                parts.append(builder.expression(
+                    "%s:arg%d" % (prefix, index), "path", (root, segment)
+                ))
+            else:
+                holder = builder.atom(
+                    "%s:param%d" % (prefix, index), "parameters"
+                )
+                named = builder.atom("%s:name%d" % (prefix, index), name)
+                parts.append(builder.expression(
+                    "%s:arg%d" % (prefix, index), "path", (root, holder, named)
+                ))
         built[entry["engine"]] = builder.expression(
-            "%s:expression" % prefix, operation, (argument,)
+            "%s:expression" % prefix, operation, tuple(parts)
         )
         pending.append(entry["engine"])
     if pending:

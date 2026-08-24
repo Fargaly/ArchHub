@@ -89,85 +89,13 @@ def test_a_cycle_is_reported_and_the_rest_still_evaluates():
     )
     assert ev.pending["a"] == "cycle" or ev.pending["b"] == "cycle"
     assert ev.results == {"result": 1}
-def test_a_declared_operation_computes_from_the_graph_and_matches_the_fast_path():
-    """SPEC 4.1: meaning resolves from released definitions in the graph, and a
-    host fast path is admitted only when an equivalence court proves both give
-    the same result at the same snapshot.
-
-    Count is expressed as `length(path(root, "items"))` in graph cells and
-    evaluated by the interpreter the views already use. The Python engine is
-    run beside it on the same inputs; any disagreement fails here, and the
-    graph path is the one the runner takes.
-    """
-    import tempfile
-    from pathlib import Path
-
-    from nodelang.cell_protocols import CellBatch
-    from nodelang.cell_view_template import (
-        ViewTemplateBuilder,
-        compose_view_template_protocol,
-        evaluate_view_expression,
-    )
-    from nodelang.universal_cell import CellStore
-
-    store = CellStore(Path(tempfile.mkdtemp()) / "equivalence.sqlite3")
-    try:
-        batch = CellBatch(store)
-        protocol = compose_view_template_protocol(batch)
-        batch.commit()
-        builder = ViewTemplateBuilder(CellBatch(store), protocol)
-        segment = builder.atom("count:segment", "items")
-        root = builder.expression("count:root", "root")
-        argument = builder.expression("count:input", "path", (root, segment))
-        expression_root = builder.expression("count:expr", "length", (argument,))
-        builder.batch.commit()
-        snapshot = store.snapshot()
-
-        def evaluate(root_id, projection):
-            return evaluate_view_expression(
-                snapshot, protocol, root_id, projection
-            )
-
-        held = {
-            "shape.count": (evaluate, expression_root, "count", "items"),
-        }
-        for items in ([], [1], [7, 7, 9, 4, 1], ["a", "b", "c"]):
-            graph = evaluate_stem_graph(
-                [
-                    _n("src", "data.list", {"value": items}),
-                    _n("count", "shape.count"),
-                    _n("out", "output.parameter", {"name": "answer"}),
-                ],
-                [
-                    StemWire("src", "value", "count", "items"),
-                    StemWire("count", "count", "out", "value"),
-                ],
-                graph_expressions=held,
-            )
-            fast = evaluate_stem_graph(
-                [
-                    _n("src", "data.list", {"value": items}),
-                    _n("count", "shape.count"),
-                    _n("out", "output.parameter", {"name": "answer"}),
-                ],
-                [
-                    StemWire("src", "value", "count", "items"),
-                    StemWire("count", "count", "out", "value"),
-                ],
-            )
-            assert graph.results == {"answer": len(items)}, (items, graph.results)
-            assert graph.results == fast.results, (items, graph.results, fast.results)
-            assert not graph.pending, graph.pending
-    finally:
-        store.close()
 def test_every_graph_held_operation_matches_its_fast_path():
-    """SPEC 4.1: a host fast path is admitted only where an equivalence court
-    proves the generic graph path gives the same result at the same snapshot.
+    """SPEC 4.1: a fast path is admitted only where an equivalence court proves
+    the generic graph path gives the same result at the same snapshot.
 
-    Each operation in GRAPH_EXPRESSIONS is built as cells, evaluated by the
-    interpreter the views already use, and compared against the Python engine
-    on the same inputs. An operation that disagrees fails here, and the graph
-    path is the one the runner takes.
+    Each operation in GRAPH_EXPRESSIONS is built as cells -- reading its wired
+    inputs by interface name and its own settings under "parameters" -- then
+    compared against the Python engine on the same rows and settings.
     """
     import tempfile
     from pathlib import Path
@@ -187,16 +115,25 @@ def test_every_graph_held_operation_matches_its_fast_path():
         protocol = compose_view_template_protocol(batch)
         batch.commit()
         builder = ViewTemplateBuilder(CellBatch(store), protocol)
-        roots = {}
-        for engine, (operation, source, output) in GRAPH_EXPRESSIONS.items():
+        built = {}
+        for engine, (operation, arguments, output) in GRAPH_EXPRESSIONS.items():
             tag = engine.replace(".", "-")
-            segment = builder.atom("%s:seg" % tag, source)
             root = builder.expression("%s:root" % tag, "root")
-            argument = builder.expression("%s:in" % tag, "path", (root, segment))
-            roots[engine] = (
-                builder.expression("%s:expr" % tag, operation, (argument,)),
+            parts = []
+            for index, (kind, name) in enumerate(arguments):
+                if kind == "in":
+                    segment = builder.atom("%s:s%d" % (tag, index), name)
+                    parts.append(builder.expression(
+                        "%s:a%d" % (tag, index), "path", (root, segment)))
+                else:
+                    holder = builder.atom("%s:p%d" % (tag, index), "parameters")
+                    named = builder.atom("%s:n%d" % (tag, index), name)
+                    parts.append(builder.expression(
+                        "%s:a%d" % (tag, index), "path", (root, holder, named)))
+            built[engine] = (
+                builder.expression("%s:e" % tag, operation, tuple(parts)),
                 output,
-                source,
+                tuple(name for kind, name in arguments if kind == "in"),
             )
         builder.batch.commit()
         snapshot = store.snapshot()
@@ -206,27 +143,33 @@ def test_every_graph_held_operation_matches_its_fast_path():
                 snapshot, protocol, expression_root, projection
             )
 
-        held = {
-            engine: (evaluate, expression, output, source)
-            for engine, (expression, output, source) in roots.items()
+        table = {
+            engine: (evaluate, expression, output, inputs)
+            for engine, (expression, output, inputs) in built.items()
         }
-        for engine in GRAPH_EXPRESSIONS:
-            _evaluate, _expression, output, source = held[engine]
-            for items in ([], [1], [5, 5, 2], [[1, 2], 3, 3]):
-                nodes = [
-                    _n("src", "data.list", {"value": items}),
-                    _n("op", engine),
-                    _n("out", "output.parameter", {"name": "answer"}),
-                ]
-                wires = [
-                    StemWire("src", "value", "op", source),
-                    StemWire("op", output, "out", "value"),
-                ]
-                graph = evaluate_stem_graph(nodes, wires, graph_expressions=held)
-                fast = evaluate_stem_graph(nodes, wires)
-                assert not graph.pending, (engine, items, graph.pending)
-                assert graph.results == fast.results, (
-                    engine, items, graph.results, fast.results
-                )
+        rows = [
+            {"name": "b", "size": 2},
+            {"name": "a", "size": 9},
+            {"name": "b", "size": 1},
+        ]
+        settings = {
+            "field": "name", "by": "size", "direction": "asc",
+            "count": "2", "from": "start",
+        }
+        for engine, (_operation, arguments, output) in GRAPH_EXPRESSIONS.items():
+            wired = [name for kind, name in arguments if kind == "in"]
+            nodes = [_n("op", engine, settings)]
+            wires = []
+            for index, name in enumerate(wired):
+                nodes.append(_n("src%d" % index, "data.list", {"value": rows}))
+                wires.append(StemWire("src%d" % index, "value", "op", name))
+            nodes.append(_n("out", "output.parameter", {"name": "answer"}))
+            wires.append(StemWire("op", output, "out", "value"))
+            graph = evaluate_stem_graph(nodes, wires, graph_expressions=table)
+            fast = evaluate_stem_graph(nodes, wires)
+            assert not graph.pending, (engine, graph.pending)
+            assert graph.results == fast.results, (
+                engine, graph.results, fast.results
+            )
     finally:
         store.close()

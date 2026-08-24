@@ -331,8 +331,11 @@ def _run_shape(engine, node, feeds, params, display, pending):
         for item in items:
             groups.setdefault(str(_field(item, by)), []).append(item)
         display[root] = "%d groups" % len(groups)
+        # Sorted by key: a graph that answers in insertion order answers
+        # differently for the same facts arriving in another order.
         return {"groups": [
-            {"key": key, "items": held} for key, held in groups.items()
+            {"key": key, "items": held}
+            for key, held in sorted(groups.items())
         ]}
     if engine in ("shape.filter", "shape.map"):
         # The predicate and the expression are founder text, and this version
@@ -386,11 +389,21 @@ def _filtered(items, rule):
 
 
 def _run_graph_expression(node, held, feeds, display, results, pending):
-    """Evaluate one released expression over this node's wired inputs."""
-    evaluate, expression_root, output_name, source_name = held
-    if source_name not in feeds:
-        pending[node.root_id] = "input %s is not wired" % source_name
-        return None
-    value = evaluate(expression_root, {source_name: feeds[source_name]})
+    """Evaluate one released expression over this node's inputs.
+
+    The expression reads wired values by interface name and the node's
+    own settings under "parameters", so a Sort node that sorts by a field
+    reads which field from the same projection.
+    """
+    evaluate, expression_root, output_name, required = held
+    for name in required:
+        if name not in feeds:
+            pending[node.root_id] = "input %s is not wired" % name
+            return None
+    projection = dict(feeds)
+    projection["parameters"] = {
+        str(name): value for name, value in node.parameters.items()
+    }
+    value = evaluate(expression_root, projection)
     display[node.root_id] = _display(value)
     return {output_name: value}

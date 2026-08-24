@@ -83,9 +83,25 @@ OPERATION_NAMES = (
     "reverse",
     "first",
     "last",
+    # A node that sorts, groups, filters or plucks names the FIELD and
+    # the direction it works by; without these the graph cannot say what
+    # such a node means and a Python branch answers for it (SPEC 4.1).
+    "pluck",
+    "sort-by",
+    "group-by",
+    "keep-where",
+    "slice",
+    "append",
 )
 
 _MISSING = object()
+
+
+def _as_text(value: object) -> str:
+    """What a parameter says, as text, with absence reading as empty."""
+    if value is _MISSING or value is None:
+        return ""
+    return str(value)
 
 
 def _truthy(value: object) -> bool:
@@ -756,6 +772,71 @@ def render_view_template(
             if len(arguments) != 1:
                 raise InvalidCell("upper expression needs one argument")
             result = str(evaluate(arguments[0])).upper()
+        elif operation == protocol.operation("pluck"):
+            values = evaluate(arguments[0]) if arguments else ()
+            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
+            result = [
+                item.get(field) if isinstance(item, Mapping) else _MISSING
+                for item in (values if isinstance(values, (list, tuple)) else ())
+            ]
+        elif operation == protocol.operation("sort-by"):
+            values = list(evaluate(arguments[0]) or ()) if arguments else []
+            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
+            descending = (
+                _as_text(evaluate(arguments[2])).strip().lower() == "desc"
+                if len(arguments) > 2 else False
+            )
+
+            def _key(item):
+                held = (
+                    item.get(field) if isinstance(item, Mapping) and field
+                    else item
+                )
+                return (held is None, str(held))
+
+            result = sorted(values, key=_key, reverse=descending)
+        elif operation == protocol.operation("group-by"):
+            values = evaluate(arguments[0]) if arguments else ()
+            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
+            groups: dict[str, list] = {}
+            for item in (values if isinstance(values, (list, tuple)) else ()):
+                held = (
+                    item.get(field) if isinstance(item, Mapping) and field
+                    else item
+                )
+                groups.setdefault(str(held), []).append(item)
+            result = [
+                {"key": key, "items": items}
+                for key, items in sorted(groups.items())
+            ]
+        elif operation == protocol.operation("keep-where"):
+            values = evaluate(arguments[0]) if arguments else ()
+            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
+            wanted = _as_text(evaluate(arguments[2])) if len(arguments) > 2 else ""
+            result = [
+                item for item in (
+                    values if isinstance(values, (list, tuple)) else ()
+                )
+                if str(
+                    item.get(field) if isinstance(item, Mapping) and field
+                    else item
+                ) == wanted
+            ]
+        elif operation == protocol.operation("slice"):
+            values = list(evaluate(arguments[0]) or ()) if arguments else []
+            count = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else "10"
+            take = int(count) if count.strip().lstrip("-").isdigit() else 10
+            from_end = (
+                _as_text(evaluate(arguments[2])).strip().lower() == "end"
+                if len(arguments) > 2 else False
+            )
+            result = values[-take:] if from_end else values[:take]
+        elif operation == protocol.operation("append"):
+            left = list(evaluate(arguments[0]) or ()) if arguments else []
+            right = (
+                list(evaluate(arguments[1]) or ()) if len(arguments) > 1 else []
+            )
+            result = left + right
         elif operation == protocol.operation("unique"):
             values = evaluate(arguments[0]) if arguments else ()
             seen = []

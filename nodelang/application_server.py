@@ -1040,7 +1040,7 @@ class _CleanAuthorityHttpServer:
         the vocabulary still cannot say. A graph that holds no expressions
         yet simply gets the engines, so this never refuses a Run.
         """
-        from .base_universal_catalogue import GRAPH_BRANCHES, GRAPH_EXPRESSIONS
+        from .base_universal_catalogue import GRAPH_EXPRESSIONS
         from .cell_view_template import evaluate_view_expression
         from .clean_visual_authority import open_clean_visual_system
 
@@ -1071,22 +1071,57 @@ class _CleanAuthorityHttpServer:
                 ((output, root),),
                 tuple(name for kind, name in arguments if kind == "in"),
             )
-        for engine, (required, outputs) in GRAPH_BRANCHES.items():
-            built = []
-            for output, _operation, _arguments in outputs:
-                root = "app:stem-branch:%s:%s" % (engine, output)
-                if root not in snapshot.cells:
-                    built = []
-                    break
-                built.append((output, root))
-            if built:
-                table[engine] = (
-                    evaluate,
-                    tuple(built),
-                    tuple(name for kind, name in required if kind == "in"),
-                )
+        # Branching operations were part of a vocabulary extension that was
+        # backed out; the table they were read from no longer exists, and
+        # importing it took the whole Run down with a 500. Their engines
+        # answer in Python until an expression form exists that a graph can
+        # actually say.
         self._stem_expression_cache = (snapshot.revision, table)
         return table
+
+    def _revise_instance_adopting(self, instance_root, changes, *, scope_root):
+        """Revise one instance, adopting its definition's current revision.
+
+        An instance names the revision it was made from, and every edit is
+        refused once that revision is superseded. Publishing a new Number
+        therefore froze every Number already on the canvas -- and a Run
+        could not land its answers either, so the graph computed values it
+        had nowhere to put. Adopting is a signed act that keeps the node's
+        identity and every override the new revision still declares; an
+        override it dropped is refused by name and nothing is decided
+        behind the founder's back.
+        """
+        import uuid as _uuid
+
+        from .unified_authority import adopt_definition_revision, revise_instance
+
+        try:
+            return revise_instance(
+                self.clean_authority,
+                instance_root,
+                changes,
+                scope_root=scope_root,
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+        except InvalidCell as exc:
+            if "definition revision is no longer current" not in str(exc):
+                raise
+        adopt_definition_revision(
+            self.clean_authority,
+            instance_root,
+            scope_root=scope_root,
+            caller=self.clean_caller,
+            command_id=str(_uuid.uuid4()),
+        )
+        return revise_instance(
+            self.clean_authority,
+            instance_root,
+            changes,
+            scope_root=scope_root,
+            caller=self.clean_caller,
+            command_id=str(_uuid.uuid4()),
+        )
 
     def _clean_run_stem_graph(self, binding, payload):
         """Evaluate the scope's stem graph and land what it produced.
@@ -1166,13 +1201,10 @@ class _CleanAuthorityHttpServer:
             if rows.get("status") == answer:
                 continue
             try:
-                revise_instance(
-                    self.clean_authority,
+                self._revise_instance_adopting(
                     root,
                     {"status": answer},
                     scope_root=self.clean_scope_root,
-                    caller=self.clean_caller,
-                    command_id=str(_uuid.uuid4()),
                 )
             except InvalidCell as refusal:
                 # An instance pinned to a definition revision that
@@ -1422,6 +1454,7 @@ class _CleanAuthorityHttpServer:
             import uuid as _uuid
 
             from .unified_authority import (
+                adopt_definition_revision,
                 read_scope_level,
                 revise_instance,
             )
@@ -1435,23 +1468,30 @@ class _CleanAuthorityHttpServer:
                 or type(value) is not str
             ):
                 raise CleanGestureRefused("property edit is invalid")
+            standing = self._standing_scope(binding)
+            self._expand_scope_interactions(standing)
             level = read_scope_level(
                 self.clean_authority,
-                self.clean_scope_root,
-                scope_root=self.clean_scope_root,
+                standing,
+                scope_root=standing,
                 caller=self.clean_caller,
             )
             if owner_root not in set(level.composition_roots):
+                # Name both, or the founder is told only that something is
+                # wrong with a card they can see and select.
                 raise CleanGestureRefused(
-                    "property edit target is not held by this scope"
+                    "property edit target %s is not held by scope %s "
+                    "(members=%d first=%s)"
+                    % (
+                        owner_root[:12], standing[:12],
+                        len(level.composition_roots),
+                        ",".join(
+                            root[:8] for root in level.composition_roots[:4]
+                        ),
+                    )
                 )
-            revise_instance(
-                self.clean_authority,
-                owner_root,
-                {label: value},
-                scope_root=self.clean_scope_root,
-                caller=self.clean_caller,
-                command_id=str(_uuid.uuid4()),
+            self._revise_instance_adopting(
+                owner_root, {label: value}, scope_root=standing,
             )
             return self._gesture_answer(binding, body)
         if positions is None and viewport is None:
@@ -2257,6 +2297,32 @@ class _CleanAuthorityHttpServer:
         self._interaction_scope_index = None
         self._verified_interaction_reads = {}
         self._clean_projection_cache.clear()
+
+    def _standing_scope(self, binding) -> str:
+        """The scope the founder is STANDING in, not the one they entered by.
+
+        A gesture is taken where the founder is looking. Every act here
+        was checked against the door instead, so editing a property from
+        inside any domain was refused -- "property edit target is not
+        held by this scope" -- for a card the founder could see, select
+        and read. The view's own focus records the scope it was taken in;
+        that is the answer, and the door is the answer when there is no
+        focus yet.
+        """
+        from .cell_attention import active_focus, open_attention_protocol
+
+        try:
+            snapshot = self.clean_authority.store.snapshot()
+            protocol = open_attention_protocol(snapshot)
+            focus = active_focus(
+                snapshot, protocol, session_root=binding.view_root
+            )
+        except Exception:
+            return self.clean_scope_root
+        scope = getattr(focus, "scope_root", None) if focus is not None else None
+        if type(scope) is str and scope and scope in snapshot.cells:
+            return scope
+        return self.clean_scope_root
 
     def _scope_interaction_bindings(
         self,

@@ -102,6 +102,19 @@ def _scope_panel_rows(
                     continue
                 if type(presenter) is not str or not presenter.strip():
                     continue
+                # A tab is a place to look, and two declarations of the
+                # same place are the same place. Every definition on a
+                # canvas declares its own panel, so a scope holding five
+                # kinds of node showed five tabs all reading "Properties",
+                # all presenting the same thing. Same label AND same
+                # presenter is one tab; anything the founder could tell
+                # apart still gets its own.
+                if any(
+                    row["label"] == str(label)
+                    and row["presenter"] == presenter.strip()
+                    for row in rows
+                ):
+                    continue
                 rows.append({
                     "id": panel_root,
                     "label": str(label),
@@ -547,7 +560,13 @@ def _property_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     return [
         {
             "relation": row.get("property_root") or row["relation"],
-            "owner": row.get("owner_root") or row["relation"],
+            # The owner is WHO holds the property, and a row key is not
+            # anybody: falling back to it sent "<root>:value" as the owner
+            # of every edit, and the server refused each one as a target
+            # its scope does not hold -- for a card the founder had just
+            # selected. A row with no owner is not editable rather than
+            # editable against a name nothing answers to.
+            "owner": row.get("owner_root") or "",
             "property_root": row.get("property_root"),
             "name_root": row.get("name_root"),
             "value_root": row.get("value_root"),
@@ -1170,7 +1189,10 @@ def _project_clean_visual_canvas_unscoped(
                 "editor": row["editor"],
                 "constraints": row["constraints"],
                 "property_root": row["property_root"],
-                "owner_root": row["owner_root"],
+                # Which node the row belongs to is known here even when the
+                # property cell does not name it: it is the node whose
+                # panel this is.
+                "owner_root": row["owner_root"] or selected_root,
                 "name_root": row["name_root"],
                 "value_root": row["value_root"],
                 "history_root": row.get("history_root"),

@@ -6384,6 +6384,128 @@ def revise_instance(
     )
 
 
+def adopt_definition_revision(
+    authority: UnifiedAuthority,
+    instance_root: str,
+    *,
+    scope_root: str,
+    caller: CallerCommandCapability,
+    command_id: str,
+) -> CommandResult:
+    """Move one instance onto its definition's current revision.
+
+    An instance names the definition revision it was made from, and every
+    edit is refused once that revision is superseded: "instance definition
+    revision is no longer current". Publishing a new revision of Number
+    therefore froze every Number on the founder's canvas -- selectable,
+    readable, uneditable, with no way back short of deleting the node.
+
+    Adopting is that way back, and it is a signed act rather than a
+    silent repair: the instance keeps its identity and every override
+    whose parameter the new revision still declares. An override the new
+    revision dropped is refused by name, because deciding what happens to
+    the founder's value is the founder's decision, not this function's.
+    """
+    request = {
+        "intent": "adopt-definition-revision",
+        "instance": instance_root,
+        "scope": scope_root,
+    }
+    request_digest = _digest(request)
+    snapshot = authority.store.snapshot()
+    authenticated, policy_proof = _validate_command_participants(
+        authority,
+        snapshot,
+        caller,
+        command_id,
+        intent="adopt-definition-revision",
+        request_digest=request_digest,
+        object_root=instance_root,
+        scope_root=scope_root,
+        budget=COMMAND_BUDGET,
+    )
+    existing = _find_receipt(
+        authority,
+        snapshot,
+        authenticated.actor_root,
+        authenticated.session_root,
+        command_id,
+    )
+    if existing is not None:
+        if existing.request_digest != request_digest:
+            raise InvalidCell("idempotency key was reused with another request")
+        return CommandResult(
+            existing.result_root,
+            existing.result_revision,
+            True,
+            0,
+            0,
+            existing.root_id,
+        )
+    _validate_composition_scope(authority, snapshot, scope_root)
+    instance = validate_composition(authority, snapshot, instance_root)
+    if instance.protocol_root != authority.shape("instance"):
+        raise InvalidCell("instance revision target has the wrong protocol")
+    definition_root = _single_member(
+        snapshot, instance_root, authority.role("definition")
+    )
+    held_revision = _single_member(
+        snapshot, instance_root, authority.role("definition-revision")
+    )
+    definition = read_definition(authority, definition_root, caller=caller)
+    if definition.revision_root == held_revision:
+        raise InvalidCell("instance already names the current definition")
+    declared = definition.contracts["parameters"]
+    if not isinstance(declared, Mapping):
+        raise InvalidCell("instance definition parameters are invalid")
+    retained_members: list[tuple[str, str]] = []
+    dropped: list[str] = []
+    for member in instance.members:
+        if member.role_id == authority.role("conforms-to"):
+            continue
+        if member.role_id == authority.role("definition-revision"):
+            retained_members.append(
+                (member.role_id, definition.revision_root)
+            )
+            continue
+        if member.role_id != authority.role("override"):
+            retained_members.append((member.role_id, member.participant_id))
+            continue
+        name_root = _single_member(
+            snapshot, member.participant_id, authority.role("name")
+        )
+        name = _decode_scalar_leaf(snapshot, name_root)
+        if type(name) is not str:
+            raise InvalidCell("instance override name is invalid")
+        if name not in declared:
+            dropped.append(name)
+            continue
+        retained_members.append((member.role_id, member.participant_id))
+    if dropped:
+        raise InvalidCell(
+            "the current definition no longer declares %s"
+            % ", ".join(sorted(dropped))
+        )
+    rebuilt = _typed_relation_cells(
+        instance_root,
+        authority.role("conforms-to"),
+        authority.shape("instance"),
+        retained_members,
+    )
+    replacement = next(cell for cell in rebuilt if cell.id == instance_root)
+    return _commit_with_receipt(
+        authority,
+        snapshot,
+        resource_create=tuple(
+            cell for cell in rebuilt if cell.id != instance_root
+        ),
+        resource_replace=(replacement,),
+        authenticated=authenticated,
+        result_root=instance_root,
+        policy_proof=policy_proof,
+    )
+
+
 def create_relation_node(
     authority: UnifiedAuthority,
     participants: Iterable[tuple[str, str]],

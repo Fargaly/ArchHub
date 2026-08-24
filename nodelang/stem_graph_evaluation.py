@@ -395,7 +395,7 @@ def _run_graph_expression(node, held, feeds, display, results, pending):
     own settings under "parameters", so a Sort node that sorts by a field
     reads which field from the same projection.
     """
-    evaluate, expression_root, output_name, required = held
+    evaluate, outputs, required = held
     for name in required:
         if name not in feeds:
             pending[node.root_id] = "input %s is not wired" % name
@@ -404,6 +404,17 @@ def _run_graph_expression(node, held, feeds, display, results, pending):
     projection["parameters"] = {
         str(name): value for name, value in node.parameters.items()
     }
-    value = evaluate(expression_root, projection)
-    display[node.root_id] = _display(value)
-    return {output_name: value}
+    produced = {}
+    for output_name, expression_root in outputs:
+        value = evaluate(expression_root, projection)
+        # An output whose expression says nothing carries nothing; the
+        # branch not taken is silent rather than empty.
+        from .cell_view_template import NO_VALUE
+
+        if value is NO_VALUE:
+            continue
+        produced[output_name] = value
+    display[node.root_id] = _display(
+        next(iter(produced.values())) if produced else ""
+    )
+    return produced

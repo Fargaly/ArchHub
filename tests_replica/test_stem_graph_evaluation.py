@@ -143,8 +143,9 @@ def test_every_graph_held_operation_matches_its_fast_path():
                 snapshot, protocol, expression_root, projection
             )
 
+        # One expression per output, which is what the runner takes now.
         table = {
-            engine: (evaluate, expression, output, inputs)
+            engine: (evaluate, ((output, expression),), inputs)
             for engine, (expression, output, inputs) in built.items()
         }
         rows = [
@@ -170,6 +171,89 @@ def test_every_graph_held_operation_matches_its_fast_path():
             assert not graph.pending, (engine, graph.pending)
             assert graph.results == fast.results, (
                 engine, graph.results, fast.results
+            )
+    finally:
+        store.close()
+def test_a_branching_operation_routes_from_the_graph_and_matches_the_fast_path():
+    """A node whose ports differ by branch says so in the graph too.
+
+    control.if carries the value on "true" or on "false" and says nothing on
+    the other; the branch not taken is silent, not empty. Both branches are
+    held against the Python engine.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from nodelang.base_universal_catalogue import GRAPH_BRANCHES
+    from nodelang.cell_protocols import CellBatch
+    from nodelang.cell_view_template import (
+        ViewTemplateBuilder,
+        compose_view_template_protocol,
+        evaluate_view_expression,
+    )
+    from nodelang.universal_cell import CellStore
+
+    store = CellStore(Path(tempfile.mkdtemp()) / "branch.sqlite3")
+    try:
+        batch = CellBatch(store)
+        protocol = compose_view_template_protocol(batch)
+        batch.commit()
+        builder = ViewTemplateBuilder(CellBatch(store), protocol)
+        table = {}
+        for engine, (required, outputs) in GRAPH_BRANCHES.items():
+            tag = engine.replace(".", "-")
+            root = builder.expression("%s:root" % tag, "root")
+            built = []
+            for output, operation, arguments in outputs:
+                parts = []
+                for index, (kind, name) in enumerate(arguments):
+                    key = "%s:%s%d" % (tag, output, index)
+                    if kind == "in":
+                        segment = builder.atom(key + ":s", name)
+                        parts.append(builder.expression(key, "path", (root, segment)))
+                    elif kind == "param":
+                        holder = builder.atom(key + ":p", "parameters")
+                        named = builder.atom(key + ":n", name)
+                        parts.append(builder.expression(
+                            key, "path", (root, holder, named)))
+                    else:
+                        parts.append(builder.expression(key, name))
+                built.append((
+                    output,
+                    builder.expression("%s:%s" % (tag, output), operation, tuple(parts)),
+                ))
+            table[engine] = (
+                built, tuple(name for kind, name in required if kind == "in")
+            )
+        builder.batch.commit()
+        snapshot = store.snapshot()
+
+        def evaluate(expression_root, projection):
+            return evaluate_view_expression(
+                snapshot, protocol, expression_root, projection
+            )
+
+        held = {
+            engine: (evaluate, outputs, required)
+            for engine, (outputs, required) in table.items()
+        }
+        for condition in (True, False):
+            nodes = [
+                _n("v", "data.constant", {"value": "42"}),
+                _n("c", "data.constant", {"value": "true" if condition else "false"}),
+                _n("gate", "control.if"),
+                _n("out", "output.parameter", {"name": "answer"}),
+            ]
+            wires = [
+                StemWire("v", "value", "gate", "value"),
+                StemWire("c", "value", "gate", "condition"),
+                StemWire("gate", "true" if condition else "false", "out", "value"),
+            ]
+            graph = evaluate_stem_graph(nodes, wires, graph_expressions=held)
+            fast = evaluate_stem_graph(nodes, wires)
+            assert graph.results == {"answer": 42}, (condition, graph.results)
+            assert graph.results == fast.results, (
+                condition, graph.results, fast.results
             )
     finally:
         store.close()

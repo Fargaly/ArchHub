@@ -352,6 +352,26 @@ GRAPH_EXPRESSIONS = {
     "data.list": ("list-of", (("param", "value"),), "value"),
     "watch.preview": ("value-of", (("in", "in"),), "out"),
     "reroute": ("value-of", (("in", "in"),), "out"),
+    "trigger.emit": ("literal-true", (), "out"),
+}
+
+# Operations whose ports differ by branch: one expression per output, and
+# an output whose expression says nothing carries nothing. A branch not
+# taken is silent, which is what "the false port" means.
+GRAPH_BRANCHES = {
+    "control.if": (
+        (("in", "value"),),
+        (
+            ("true", "choose", (("in", "condition"), ("in", "value"),
+                                ("op", "nothing"))),
+            ("false", "choose", (("in", "condition"), ("op", "nothing"),
+                                 ("in", "value"))),
+        ),
+    ),
+    "control.merge": (
+        (),
+        ((("value"), "coalesce", (("in", "a"), ("in", "b"))),),
+    ),
 }
 
 

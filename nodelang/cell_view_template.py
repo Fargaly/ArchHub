@@ -94,9 +94,15 @@ OPERATION_NAMES = (
     "append",
     "value-of",
     "list-of",
+    "nothing",
+    "coalesce",
+    "literal-true",
 )
 
 _MISSING = object()
+# What an expression denotes when it denotes no value at all. Public so a
+# reader can tell "no value" from the empty value without sniffing reprs.
+NO_VALUE = _MISSING
 
 
 def _as_text(value: object) -> str:
@@ -774,6 +780,19 @@ def render_view_template(
             if len(arguments) != 1:
                 raise InvalidCell("upper expression needs one argument")
             result = str(evaluate(arguments[0])).upper()
+        elif operation == protocol.operation("literal-true"):
+            result = True
+        elif operation == protocol.operation("nothing"):
+            # A port that carries no value in this branch. Distinct from
+            # the empty value: a wire carrying "" is carrying something.
+            result = _MISSING
+        elif operation == protocol.operation("coalesce"):
+            result = _MISSING
+            for candidate in arguments:
+                held_candidate = evaluate(candidate)
+                if held_candidate is not _MISSING and held_candidate is not None:
+                    result = held_candidate
+                    break
         elif operation == protocol.operation("list-of"):
             # A list nobody filled is the empty LIST; emptiness has a type.
             held_list = evaluate(arguments[0]) if arguments else _MISSING
@@ -1310,6 +1329,7 @@ __all__ = [
     "is_view_template",
     "open_view_template_protocol",
     "evaluate_view_expression",
+    "NO_VALUE",
     "render_view_template",
     "view_template_projection_scope",
     "with_view_template_projection_scope",

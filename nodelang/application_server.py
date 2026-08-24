@@ -872,6 +872,13 @@ class _CleanAuthorityHttpServer:
             # would refuse controls for everything added since. Serving the
             # derivation is serving the graph.
             installed = None
+        # WHICH set is being served decides which digest a rebase must
+        # compare against: the installed table's digest describes the whole
+        # scope tree, the derivation's describes the scopes actually
+        # expanded. Comparing one against the other refused every rebase
+        # ("projection_lease_expired" on a click after any unrelated
+        # commit), because the two can never be equal.
+        self._interactions_are_installed = installed is not None
         self.clean_scope_interactions = installed or derived
         self._derived_interaction_cells = (
             () if installed is not None else derived_cells
@@ -2322,6 +2329,7 @@ class _CleanAuthorityHttpServer:
         except InvalidCell:
             return
         self._derived_scope_roots = roots
+        self._interactions_are_installed = False
         self.clean_scope_interactions = derived
         self._derived_interaction_cells = derived_cells
         self._interaction_snapshot_cache = None
@@ -2430,6 +2438,7 @@ class _CleanAuthorityHttpServer:
         held = self.clean_scope_interactions
         if held is not None and held.source_digest == derived.source_digest:
             return
+        self._interactions_are_installed = False
         self.clean_scope_interactions = derived
         self._derived_interaction_cells = derived_cells
         self._interaction_snapshot_cache = None
@@ -2515,6 +2524,12 @@ class _CleanAuthorityHttpServer:
             cache = getattr(self, "_read_set_digest_cache", None)
             if cache is not None and cache[0] is snapshot.cells:
                 fresh_digest = cache[1]
+            elif getattr(self, "_interactions_are_installed", False):
+                fresh_digest = clean_scope_source_digest(
+                    self.clean_authority,
+                    self.clean_scope_root,
+                    caller=self.clean_caller,
+                )
             else:
                 fresh, _cells = derive_clean_scope_interactions(
                     self.clean_authority,

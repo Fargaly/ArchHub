@@ -325,6 +325,8 @@ def _reconcile_status_parameter(
 # something this table may assume.
 GRAPH_EXPRESSIONS = {
     "shape.count": ("length", "items", "count"),
+    "shape.unique": ("unique", "items", "items_out"),
+    "shape.flatten": ("flatten", "items", "items_out"),
 }
 
 

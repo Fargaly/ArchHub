@@ -75,6 +75,14 @@ OPERATION_NAMES = (
     "slice",
     "add",
     "json",
+    # Generic list operations, so a node that sorts or de-duplicates can
+    # SAY so in the graph instead of being answered by a Python branch on
+    # its name (SPEC 4.1).
+    "unique",
+    "flatten",
+    "reverse",
+    "first",
+    "last",
 )
 
 _MISSING = object()
@@ -748,6 +756,39 @@ def render_view_template(
             if len(arguments) != 1:
                 raise InvalidCell("upper expression needs one argument")
             result = str(evaluate(arguments[0])).upper()
+        elif operation == protocol.operation("unique"):
+            values = evaluate(arguments[0]) if arguments else ()
+            seen = []
+            for value in (values if isinstance(values, (list, tuple)) else ()):
+                if value not in seen:
+                    seen.append(value)
+            result = seen
+        elif operation == protocol.operation("flatten"):
+            values = evaluate(arguments[0]) if arguments else ()
+            flat = []
+            for value in (values if isinstance(values, (list, tuple)) else ()):
+                if isinstance(value, (list, tuple)):
+                    flat.extend(value)
+                else:
+                    flat.append(value)
+            result = flat
+        elif operation == protocol.operation("reverse"):
+            values = evaluate(arguments[0]) if arguments else ()
+            result = list(reversed(list(values))) if isinstance(
+                values, (list, tuple)
+            ) else []
+        elif operation == protocol.operation("first"):
+            values = evaluate(arguments[0]) if arguments else ()
+            result = (
+                values[0] if isinstance(values, (list, tuple)) and values
+                else _MISSING
+            )
+        elif operation == protocol.operation("last"):
+            values = evaluate(arguments[0]) if arguments else ()
+            result = (
+                values[-1] if isinstance(values, (list, tuple)) and values
+                else _MISSING
+            )
         elif operation == protocol.operation("length"):
             if len(arguments) != 1:
                 raise InvalidCell("length expression needs one argument")

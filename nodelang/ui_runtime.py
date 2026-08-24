@@ -2381,6 +2381,17 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       });
     }
     if (composer) composer.hidden=false;
+    // The composer is client-made chrome and the toolbar is graph-held, so
+    // nothing in the stylesheet knows they share the bottom of the canvas.
+    // With twenty-six cards the toolbar grew under the composer and every
+    // group/ungroup click landed in the text box instead of the button:
+    // elementFromPoint on "Compose selected nodes" answered composer-input.
+    // Measured, not guessed, so a toolbar that wraps still stays clear.
+    if (composer && toolbar) {
+      const lift=Math.ceil(toolbar.getBoundingClientRect().height)+22;
+      const wanted=lift+'px';
+      if (composer.style.bottom !== wanted) composer.style.bottom=wanted;
+    }
   }
   function projectedNodeWidth(projection) {
     const value=projection.configuration?.design_system?.components
@@ -4863,12 +4874,17 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         error.message || 'The composition scope could not be opened.');
     }
   });
+  // The viewport the founder is LOOKING at, which is not the one the graph
+  // has accepted yet: a commit is debounced, so five quick notches all
+  // computed from the same committed zoom and overwrote each other. Zoom
+  // compounds from what is on screen and settles into the graph once.
+  let liveViewport=null;
   document.addEventListener('wheel', event => {
     const canvas=event.target.closest('.canvas[data-universal="true"]');
     if (!canvas || !lastProjection || event.target.closest('.canvas-toolbar')) return;
     event.preventDefault();
     const rect=canvas.getBoundingClientRect();
-    const old=lastProjection.viewport;
+    const old=liveViewport || lastProjection.viewport;
     const raw=event.deltaY*(event.deltaMode === 1 ? 16
       : event.deltaMode === 2 ? rect.height : 1);
     const policy=interactionPolicy();
@@ -4884,10 +4900,14 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       pan_y:cursorY-worldY*zoom,
       zoom,
     };
+    liveViewport=viewport;
     applyViewport(canvas,viewport);
     clearTimeout(viewportCommitTimer);
-    viewportCommitTimer=setTimeout(() => commit({viewport}),
-      policy.viewport_commit_debounce_ms);
+    viewportCommitTimer=setTimeout(() => {
+      const settled=liveViewport;
+      liveViewport=null;
+      if (settled) commit({viewport:settled});
+    },policy.viewport_commit_debounce_ms);
   },{passive:false});
   document.addEventListener('keydown', async event => {
     const editing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');

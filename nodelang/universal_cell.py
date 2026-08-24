@@ -145,6 +145,13 @@ class CellJournal(Protocol):
     local_path: str | None
     exclusive_owner: bool
     shared_writers: bool
+    # Capabilities are DECLARED, not probed. Asking an object whether it
+    # answers to a name is choosing behaviour from a string, which the
+    # execution floor may not do (SPEC 4.1) -- so what a journal can do is
+    # part of the contract every journal answers, and a journal that
+    # cannot say is a journal the store will not guess about.
+    supports_lazy_history: bool
+    append_only_fence_present: bool
 
     def load(
         self,
@@ -911,8 +918,7 @@ class _SqliteJournal:
                     "SELECT name FROM sqlite_master WHERE type = 'trigger'"
                 )
             }
-            self.append_only_fence_present = True
-            self._fence_was_present = {
+            self.append_only_fence_present = {
                 "cell_versions_append_only_update",
                 "cell_versions_append_only_delete",
                 "revisions_append_only_update",

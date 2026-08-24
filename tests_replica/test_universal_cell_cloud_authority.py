@@ -46,6 +46,12 @@ class _SharedJournalState:
 
 
 class _SharedJournal:
+
+    # A journal declares what it can do; the store never probes for a
+    # name (SPEC 4.1). This double keeps its whole history in memory, so
+    # there is nothing to read lazily and no append-only fence to trust.
+    supports_lazy_history = False
+    append_only_fence_present = False
     backend = "court-shared"
     local_path = None
     exclusive_owner = False

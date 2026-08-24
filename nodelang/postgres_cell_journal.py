@@ -126,6 +126,9 @@ class PostgresCellJournal:
     exclusive_owner = False
     shared_writers = True
     supports_lazy_history = True
+    # No append-only trigger fence exists on this backend, so the
+    # accelerator caches that the fence gates are never trusted here.
+    append_only_fence_present = False
 
     def __init__(
         self,

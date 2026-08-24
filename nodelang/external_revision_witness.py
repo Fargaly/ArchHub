@@ -580,6 +580,11 @@ class WitnessedCellJournal:
         return self._journal.shared_writers
 
     @property
+    def append_only_fence_present(self) -> bool:
+        """Whatever the journal underneath can prove, this one repeats."""
+        return bool(self._journal.append_only_fence_present)
+
+    @property
     def supports_lazy_history(self) -> bool:
         return callable(getattr(self._journal, "load_head", None))
 

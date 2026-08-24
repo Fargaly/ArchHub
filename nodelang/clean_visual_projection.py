@@ -978,15 +978,19 @@ def _project_clean_visual_canvas_unscoped(
     # Every declared input socket in the scope is a drop target for every
     # declared output socket: the client lights them and the direct
     # connect route makes the relation.
+    # EVERY socket on this canvas can be wired, not only the ones a stem
+    # definition declared: eleven of three hundred and forty-four ports
+    # could start a wire, so every domain and requirement card was
+    # unwireable and the canvas looked broken to anyone holding a mouse.
     input_targets = [
         {"id": node["id"], "interface": port["name"]}
         for node in nodes
         for port in node["ports"]
-        if port.get("mode") == "declared" and port["side"] == "target"
+        if port["side"] == "target" and port.get("name")
     ]
     for node in nodes:
         for port in node["ports"]:
-            if port.get("mode") == "declared" and port["side"] == "source":
+            if port["side"] == "source" and port.get("name"):
                 port["connect_control"] = "direct:connect"
                 port["connect_choices"] = [
                     {"id": target["id"], "interface": target["interface"]}

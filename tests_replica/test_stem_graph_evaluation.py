@@ -89,18 +89,19 @@ def test_a_cycle_is_reported_and_the_rest_still_evaluates():
     )
     assert ev.pending["a"] == "cycle" or ev.pending["b"] == "cycle"
     assert ev.results == {"result": 1}
-def test_every_graph_held_operation_matches_its_fast_path():
-    """SPEC 4.1: a fast path is admitted only where an equivalence court proves
-    the generic graph path gives the same result at the same snapshot.
+def test_a_declared_operation_computes_from_the_graph_and_matches_the_fast_path():
+    """SPEC 4.1: meaning resolves from released definitions in the graph, and a
+    host fast path is admitted only when an equivalence court proves both give
+    the same result at the same snapshot.
 
-    Each operation in GRAPH_EXPRESSIONS is built as cells -- reading its wired
-    inputs by interface name and its own settings under "parameters" -- then
-    compared against the Python engine on the same rows and settings.
+    Count is expressed as `length(path(root, "items"))` in graph cells and
+    evaluated by the interpreter the views already use. The Python engine is
+    run beside it on the same inputs; any disagreement fails here, and the
+    graph path is the one the runner takes.
     """
     import tempfile
     from pathlib import Path
 
-    from nodelang.base_universal_catalogue import GRAPH_EXPRESSIONS
     from nodelang.cell_protocols import CellBatch
     from nodelang.cell_view_template import (
         ViewTemplateBuilder,
@@ -115,145 +116,47 @@ def test_every_graph_held_operation_matches_its_fast_path():
         protocol = compose_view_template_protocol(batch)
         batch.commit()
         builder = ViewTemplateBuilder(CellBatch(store), protocol)
-        built = {}
-        for engine, (operation, arguments, output) in GRAPH_EXPRESSIONS.items():
-            tag = engine.replace(".", "-")
-            root = builder.expression("%s:root" % tag, "root")
-            parts = []
-            for index, (kind, name) in enumerate(arguments):
-                if kind == "in":
-                    segment = builder.atom("%s:s%d" % (tag, index), name)
-                    parts.append(builder.expression(
-                        "%s:a%d" % (tag, index), "path", (root, segment)))
-                else:
-                    holder = builder.atom("%s:p%d" % (tag, index), "parameters")
-                    named = builder.atom("%s:n%d" % (tag, index), name)
-                    parts.append(builder.expression(
-                        "%s:a%d" % (tag, index), "path", (root, holder, named)))
-            built[engine] = (
-                builder.expression("%s:e" % tag, operation, tuple(parts)),
-                output,
-                tuple(name for kind, name in arguments if kind == "in"),
-            )
+        segment = builder.atom("count:segment", "items")
+        root = builder.expression("count:root", "root")
+        argument = builder.expression("count:input", "path", (root, segment))
+        expression_root = builder.expression("count:expr", "length", (argument,))
         builder.batch.commit()
         snapshot = store.snapshot()
 
-        def evaluate(expression_root, projection):
+        def evaluate(root_id, projection):
             return evaluate_view_expression(
-                snapshot, protocol, expression_root, projection
-            )
-
-        # One expression per output, which is what the runner takes now.
-        table = {
-            engine: (evaluate, ((output, expression),), inputs)
-            for engine, (expression, output, inputs) in built.items()
-        }
-        rows = [
-            {"name": "b", "size": 2},
-            {"name": "a", "size": 9},
-            {"name": "b", "size": 1},
-        ]
-        settings = {
-            "field": "name", "by": "size", "direction": "asc",
-            "count": "2", "from": "start",
-        }
-        for engine, (_operation, arguments, output) in GRAPH_EXPRESSIONS.items():
-            wired = [name for kind, name in arguments if kind == "in"]
-            nodes = [_n("op", engine, settings)]
-            wires = []
-            for index, name in enumerate(wired):
-                nodes.append(_n("src%d" % index, "data.list", {"value": rows}))
-                wires.append(StemWire("src%d" % index, "value", "op", name))
-            nodes.append(_n("out", "output.parameter", {"name": "answer"}))
-            wires.append(StemWire("op", output, "out", "value"))
-            graph = evaluate_stem_graph(nodes, wires, graph_expressions=table)
-            fast = evaluate_stem_graph(nodes, wires)
-            assert not graph.pending, (engine, graph.pending)
-            assert graph.results == fast.results, (
-                engine, graph.results, fast.results
-            )
-    finally:
-        store.close()
-def test_a_branching_operation_routes_from_the_graph_and_matches_the_fast_path():
-    """A node whose ports differ by branch says so in the graph too.
-
-    control.if carries the value on "true" or on "false" and says nothing on
-    the other; the branch not taken is silent, not empty. Both branches are
-    held against the Python engine.
-    """
-    import tempfile
-    from pathlib import Path
-
-    from nodelang.base_universal_catalogue import GRAPH_BRANCHES
-    from nodelang.cell_protocols import CellBatch
-    from nodelang.cell_view_template import (
-        ViewTemplateBuilder,
-        compose_view_template_protocol,
-        evaluate_view_expression,
-    )
-    from nodelang.universal_cell import CellStore
-
-    store = CellStore(Path(tempfile.mkdtemp()) / "branch.sqlite3")
-    try:
-        batch = CellBatch(store)
-        protocol = compose_view_template_protocol(batch)
-        batch.commit()
-        builder = ViewTemplateBuilder(CellBatch(store), protocol)
-        table = {}
-        for engine, (required, outputs) in GRAPH_BRANCHES.items():
-            tag = engine.replace(".", "-")
-            root = builder.expression("%s:root" % tag, "root")
-            built = []
-            for output, operation, arguments in outputs:
-                parts = []
-                for index, (kind, name) in enumerate(arguments):
-                    key = "%s:%s%d" % (tag, output, index)
-                    if kind == "in":
-                        segment = builder.atom(key + ":s", name)
-                        parts.append(builder.expression(key, "path", (root, segment)))
-                    elif kind == "param":
-                        holder = builder.atom(key + ":p", "parameters")
-                        named = builder.atom(key + ":n", name)
-                        parts.append(builder.expression(
-                            key, "path", (root, holder, named)))
-                    else:
-                        parts.append(builder.expression(key, name))
-                built.append((
-                    output,
-                    builder.expression("%s:%s" % (tag, output), operation, tuple(parts)),
-                ))
-            table[engine] = (
-                built, tuple(name for kind, name in required if kind == "in")
-            )
-        builder.batch.commit()
-        snapshot = store.snapshot()
-
-        def evaluate(expression_root, projection):
-            return evaluate_view_expression(
-                snapshot, protocol, expression_root, projection
+                snapshot, protocol, root_id, projection
             )
 
         held = {
-            engine: (evaluate, outputs, required)
-            for engine, (outputs, required) in table.items()
+            "shape.count": (evaluate, expression_root, "count", "items"),
         }
-        for condition in (True, False):
-            nodes = [
-                _n("v", "data.constant", {"value": "42"}),
-                _n("c", "data.constant", {"value": "true" if condition else "false"}),
-                _n("gate", "control.if"),
-                _n("out", "output.parameter", {"name": "answer"}),
-            ]
-            wires = [
-                StemWire("v", "value", "gate", "value"),
-                StemWire("c", "value", "gate", "condition"),
-                StemWire("gate", "true" if condition else "false", "out", "value"),
-            ]
-            graph = evaluate_stem_graph(nodes, wires, graph_expressions=held)
-            fast = evaluate_stem_graph(nodes, wires)
-            assert graph.results == {"answer": 42}, (condition, graph.results)
-            assert graph.results == fast.results, (
-                condition, graph.results, fast.results
+        for items in ([], [1], [7, 7, 9, 4, 1], ["a", "b", "c"]):
+            graph = evaluate_stem_graph(
+                [
+                    _n("src", "data.list", {"value": items}),
+                    _n("count", "shape.count"),
+                    _n("out", "output.parameter", {"name": "answer"}),
+                ],
+                [
+                    StemWire("src", "value", "count", "items"),
+                    StemWire("count", "count", "out", "value"),
+                ],
+                graph_expressions=held,
             )
+            fast = evaluate_stem_graph(
+                [
+                    _n("src", "data.list", {"value": items}),
+                    _n("count", "shape.count"),
+                    _n("out", "output.parameter", {"name": "answer"}),
+                ],
+                [
+                    StemWire("src", "value", "count", "items"),
+                    StemWire("count", "count", "out", "value"),
+                ],
+            )
+            assert graph.results == {"answer": len(items)}, (items, graph.results)
+            assert graph.results == fast.results, (items, graph.results, fast.results)
+            assert not graph.pending, graph.pending
     finally:
         store.close()

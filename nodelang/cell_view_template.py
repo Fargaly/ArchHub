@@ -75,41 +75,9 @@ OPERATION_NAMES = (
     "slice",
     "add",
     "json",
-    # Generic list operations, so a node that sorts or de-duplicates can
-    # SAY so in the graph instead of being answered by a Python branch on
-    # its name (SPEC 4.1).
-    "unique",
-    "flatten",
-    "reverse",
-    "first",
-    "last",
-    # A node that sorts, groups, filters or plucks names the FIELD and
-    # the direction it works by; without these the graph cannot say what
-    # such a node means and a Python branch answers for it (SPEC 4.1).
-    "pluck",
-    "sort-by",
-    "group-by",
-    "keep-where",
-    "slice",
-    "append",
-    "value-of",
-    "list-of",
-    "nothing",
-    "coalesce",
-    "literal-true",
 )
 
 _MISSING = object()
-# What an expression denotes when it denotes no value at all. Public so a
-# reader can tell "no value" from the empty value without sniffing reprs.
-NO_VALUE = _MISSING
-
-
-def _as_text(value: object) -> str:
-    """What a parameter says, as text, with absence reading as empty."""
-    if value is _MISSING or value is None:
-        return ""
-    return str(value)
 
 
 def _truthy(value: object) -> bool:
@@ -780,129 +748,6 @@ def render_view_template(
             if len(arguments) != 1:
                 raise InvalidCell("upper expression needs one argument")
             result = str(evaluate(arguments[0])).upper()
-        elif operation == protocol.operation("literal-true"):
-            result = True
-        elif operation == protocol.operation("nothing"):
-            # A port that carries no value in this branch. Distinct from
-            # the empty value: a wire carrying "" is carrying something.
-            result = _MISSING
-        elif operation == protocol.operation("coalesce"):
-            result = _MISSING
-            for candidate in arguments:
-                held_candidate = evaluate(candidate)
-                if held_candidate is not _MISSING and held_candidate is not None:
-                    result = held_candidate
-                    break
-        elif operation == protocol.operation("list-of"):
-            # A list nobody filled is the empty LIST; emptiness has a type.
-            held_list = evaluate(arguments[0]) if arguments else _MISSING
-            result = (
-                list(held_list) if isinstance(held_list, (list, tuple)) else []
-            )
-        elif operation == protocol.operation("value-of"):
-            # A setting nobody set reads as empty, not as absence: a constant
-            # with no value is the empty value, which is what every reader of
-            # it already assumes.
-            held_value = evaluate(arguments[0]) if arguments else _MISSING
-            result = "" if held_value is _MISSING else held_value
-        elif operation == protocol.operation("pluck"):
-            values = evaluate(arguments[0]) if arguments else ()
-            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
-            result = [
-                item.get(field) if isinstance(item, Mapping) else _MISSING
-                for item in (values if isinstance(values, (list, tuple)) else ())
-            ]
-        elif operation == protocol.operation("sort-by"):
-            values = list(evaluate(arguments[0]) or ()) if arguments else []
-            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
-            descending = (
-                _as_text(evaluate(arguments[2])).strip().lower() == "desc"
-                if len(arguments) > 2 else False
-            )
-
-            def _key(item):
-                held = (
-                    item.get(field) if isinstance(item, Mapping) and field
-                    else item
-                )
-                return (held is None, str(held))
-
-            result = sorted(values, key=_key, reverse=descending)
-        elif operation == protocol.operation("group-by"):
-            values = evaluate(arguments[0]) if arguments else ()
-            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
-            groups: dict[str, list] = {}
-            for item in (values if isinstance(values, (list, tuple)) else ()):
-                held = (
-                    item.get(field) if isinstance(item, Mapping) and field
-                    else item
-                )
-                groups.setdefault(str(held), []).append(item)
-            result = [
-                {"key": key, "items": items}
-                for key, items in sorted(groups.items())
-            ]
-        elif operation == protocol.operation("keep-where"):
-            values = evaluate(arguments[0]) if arguments else ()
-            field = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else ""
-            wanted = _as_text(evaluate(arguments[2])) if len(arguments) > 2 else ""
-            result = [
-                item for item in (
-                    values if isinstance(values, (list, tuple)) else ()
-                )
-                if str(
-                    item.get(field) if isinstance(item, Mapping) and field
-                    else item
-                ) == wanted
-            ]
-        elif operation == protocol.operation("slice"):
-            values = list(evaluate(arguments[0]) or ()) if arguments else []
-            count = _as_text(evaluate(arguments[1])) if len(arguments) > 1 else "10"
-            take = int(count) if count.strip().lstrip("-").isdigit() else 10
-            from_end = (
-                _as_text(evaluate(arguments[2])).strip().lower() == "end"
-                if len(arguments) > 2 else False
-            )
-            result = values[-take:] if from_end else values[:take]
-        elif operation == protocol.operation("append"):
-            left = list(evaluate(arguments[0]) or ()) if arguments else []
-            right = (
-                list(evaluate(arguments[1]) or ()) if len(arguments) > 1 else []
-            )
-            result = left + right
-        elif operation == protocol.operation("unique"):
-            values = evaluate(arguments[0]) if arguments else ()
-            seen = []
-            for value in (values if isinstance(values, (list, tuple)) else ()):
-                if value not in seen:
-                    seen.append(value)
-            result = seen
-        elif operation == protocol.operation("flatten"):
-            values = evaluate(arguments[0]) if arguments else ()
-            flat = []
-            for value in (values if isinstance(values, (list, tuple)) else ()):
-                if isinstance(value, (list, tuple)):
-                    flat.extend(value)
-                else:
-                    flat.append(value)
-            result = flat
-        elif operation == protocol.operation("reverse"):
-            values = evaluate(arguments[0]) if arguments else ()
-            result = list(reversed(list(values))) if isinstance(
-                values, (list, tuple)
-            ) else []
-        elif operation == protocol.operation("first"):
-            values = evaluate(arguments[0]) if arguments else ()
-            result = (
-                values[0] if isinstance(values, (list, tuple)) and values
-                else _MISSING
-            )
-        elif operation == protocol.operation("last"):
-            values = evaluate(arguments[0]) if arguments else ()
-            result = (
-                values[-1] if isinstance(values, (list, tuple)) and values
-                else _MISSING
-            )
         elif operation == protocol.operation("length"):
             if len(arguments) != 1:
                 raise InvalidCell("length expression needs one argument")
@@ -1329,7 +1174,6 @@ __all__ = [
     "is_view_template",
     "open_view_template_protocol",
     "evaluate_view_expression",
-    "NO_VALUE",
     "render_view_template",
     "view_template_projection_scope",
     "with_view_template_projection_scope",

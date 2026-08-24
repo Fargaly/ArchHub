@@ -1003,6 +1003,62 @@ class _CleanAuthorityHttpServer:
         return payload
 
 
+    def _graph_held_operations(self):
+        """The operations whose meaning the graph itself carries.
+
+        An operation with a released expression is computed from that
+        expression (SPEC 4.1); the Python engines answer only for the ones
+        the vocabulary still cannot say. A graph that holds no expressions
+        yet simply gets the engines, so this never refuses a Run.
+        """
+        from .base_universal_catalogue import GRAPH_BRANCHES, GRAPH_EXPRESSIONS
+        from .cell_view_template import evaluate_view_expression
+        from .clean_visual_authority import open_clean_visual_system
+
+        snapshot = self.authority.store.snapshot()
+        held = getattr(self, "_stem_expression_cache", None)
+        if held is not None and held[0] == snapshot.revision:
+            return held[1]
+        try:
+            visual = open_clean_visual_system(
+                self.clean_authority, caller=self.clean_caller
+            )
+        except InvalidCell:
+            return {}
+        protocol = visual.protocol
+
+        def evaluate(expression_root, projection):
+            return evaluate_view_expression(
+                snapshot, protocol, expression_root, projection
+            )
+
+        table = {}
+        for engine, (_operation, arguments, output) in GRAPH_EXPRESSIONS.items():
+            root = "app:stem-expression:%s:expression" % engine
+            if root not in snapshot.cells:
+                continue
+            table[engine] = (
+                evaluate,
+                ((output, root),),
+                tuple(name for kind, name in arguments if kind == "in"),
+            )
+        for engine, (required, outputs) in GRAPH_BRANCHES.items():
+            built = []
+            for output, _operation, _arguments in outputs:
+                root = "app:stem-branch:%s:%s" % (engine, output)
+                if root not in snapshot.cells:
+                    built = []
+                    break
+                built.append((output, root))
+            if built:
+                table[engine] = (
+                    evaluate,
+                    tuple(built),
+                    tuple(name for kind, name in required if kind == "in"),
+                )
+        self._stem_expression_cache = (snapshot.revision, table)
+        return table
+
     def _clean_run_stem_graph(self, binding, payload):
         """Evaluate the scope's stem graph and land what it produced.
 
@@ -1056,7 +1112,9 @@ class _CleanAuthorityHttpServer:
                     wire["source"], source_interface,
                     wire["target"], target_interface,
                 ))
-        evaluation = evaluate_stem_graph(stem_nodes, stem_wires)
+        evaluation = evaluate_stem_graph(
+            stem_nodes, stem_wires, self._graph_held_operations()
+        )
         written = 0
         stale = {}
         for item in payload["nodes"]:

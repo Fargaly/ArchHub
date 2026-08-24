@@ -322,6 +322,10 @@ class CleanCoordinationHost:
         self._base_catalogue = install_base_universal_catalogue(
             authority, caller=self._founder,
         )
+        # An owner does not write to the founder's graph at boot. The
+        # expression cells and any visual-system upgrade are migrations
+        # someone runs deliberately: a boot that rewrites 24 templates
+        # because a vocabulary grew added 136,178 cells in 120 restarts.
         _boot_note("base universal catalogue %.1fs (%d definitions)" % (
             time.monotonic() - _t, len(self._base_catalogue),
         ))

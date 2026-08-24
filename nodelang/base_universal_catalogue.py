@@ -324,54 +324,7 @@ def _reconcile_status_parameter(
 # operation to that vocabulary is a protocol change with its own court, not
 # something this table may assume.
 GRAPH_EXPRESSIONS = {
-    # engine: (operation, arguments, output interface)
-    # An argument is ("in", interface) for a wired input, or ("param", name)
-    # for the node's own parameter -- a node that sorts BY something says
-    # which, in the graph.
-    "shape.count": ("length", (("in", "items"),), "count"),
-    "shape.unique": ("unique", (("in", "items"),), "items_out"),
-    "shape.flatten": ("flatten", (("in", "items"),), "items_out"),
-    "shape.pluck": ("pluck", (("in", "items"), ("param", "field")), "values"),
-    "shape.sort": (
-        "sort-by",
-        (("in", "items"), ("param", "by"), ("param", "direction")),
-        "items_out",
-    ),
-    "shape.group": ("group-by", (("in", "items"), ("param", "by")), "groups"),
-    "shape.slice": (
-        "slice",
-        (("in", "items"), ("param", "count"), ("param", "from")),
-        "items_out",
-    ),
-    "shape.concat": ("append", (("in", "a"), ("in", "b")), "items_out"),
-    # A constant IS its setting; a watcher and a reroute ARE what reaches
-    # them. Saying so in the graph costs one expression each and removes
-    # four more Python branches.
-    "data.constant": ("value-of", (("param", "value"),), "value"),
-    "input.parameter": ("value-of", (("param", "value"),), "value"),
-    "data.list": ("list-of", (("param", "value"),), "value"),
-    "watch.preview": ("value-of", (("in", "in"),), "out"),
-    "reroute": ("value-of", (("in", "in"),), "out"),
-    "trigger.emit": ("literal-true", (), "out"),
-}
-
-# Operations whose ports differ by branch: one expression per output, and
-# an output whose expression says nothing carries nothing. A branch not
-# taken is silent, which is what "the false port" means.
-GRAPH_BRANCHES = {
-    "control.if": (
-        (("in", "value"),),
-        (
-            ("true", "choose", (("in", "condition"), ("in", "value"),
-                                ("op", "nothing"))),
-            ("false", "choose", (("in", "condition"), ("op", "nothing"),
-                                 ("in", "value"))),
-        ),
-    ),
-    "control.merge": (
-        (),
-        ((("value"), "coalesce", (("in", "a"), ("in", "b"))),),
-    ),
+    "shape.count": ("length", "items", "count"),
 }
 
 
@@ -396,29 +349,16 @@ def install_stem_expressions(
         held = GRAPH_EXPRESSIONS.get(entry["engine"])
         if held is None:
             continue
-        operation, arguments, _output = held
+        operation, source, output = held
         prefix = "app:stem-expression:%s" % entry["engine"]
         if ("%s:expression" % prefix) in snapshot.cells:
             built[entry["engine"]] = "%s:expression" % prefix
             continue
+        segment = builder.atom("%s:segment" % prefix, source)
         root = builder.expression("%s:root" % prefix, "root")
-        parts = []
-        for index, (kind, name) in enumerate(arguments):
-            if kind == "in":
-                segment = builder.atom("%s:seg%d" % (prefix, index), name)
-                parts.append(builder.expression(
-                    "%s:arg%d" % (prefix, index), "path", (root, segment)
-                ))
-            else:
-                holder = builder.atom(
-                    "%s:param%d" % (prefix, index), "parameters"
-                )
-                named = builder.atom("%s:name%d" % (prefix, index), name)
-                parts.append(builder.expression(
-                    "%s:arg%d" % (prefix, index), "path", (root, holder, named)
-                ))
+        argument = builder.expression("%s:input" % prefix, "path", (root, segment))
         built[entry["engine"]] = builder.expression(
-            "%s:expression" % prefix, operation, tuple(parts)
+            "%s:expression" % prefix, operation, (argument,)
         )
         pending.append(entry["engine"])
     if pending:

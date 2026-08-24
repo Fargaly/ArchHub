@@ -2800,6 +2800,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const card=renderDescriptor(item.card_descriptor[0]);
     card.dataset.graphNode=item.id;
     card.dataset.universalRoot=item.id;
+    card.style.zIndex='1';
     card.dataset.universalComposition=item.composition ? 'True' : 'False';
     card.dataset.draggable='true';
     card.dataset.universalOpenable=item.openable ? 'True' : 'False';
@@ -3139,6 +3140,11 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       class:'wire-layer', viewBox:`0 0 ${stageWidth} ${stageHeight}`,
       width:stageWidth,height:stageHeight,'aria-hidden':'true'
     }),'canvas:wires');
+    // Wires run BEHIND the cards. They were painted over them, which was
+    // wrong to look at and worse to use the moment the lines started
+    // taking the pointer: a click meant for a card landed on whatever
+    // wire happened to cross it.
+    layer.style.zIndex='0';
     const defs=keyed(svgElement('defs'),'canvas:wire-definitions');
     const marker=keyed(svgElement('marker',{
       id:'archhub-wire-arrow',viewBox:'0 0 8 8',refX:7,refY:4,

@@ -101,12 +101,26 @@ def test_a_node_touching_the_edge_counts_as_shown():
 
 
 def test_every_opening_of_the_surface_asks_for_a_viewport_over_the_work():
-    """A render site left on the raw held viewport reopens the defect."""
+    """A render site left on the raw held viewport reopens the defect.
+
+    What is held here is that every render site ASKS for a viewport over
+    the work -- not how the surface travels to it. Naming the applier made
+    this court refuse a change to the travel: the four sites now glide
+    rather than jump, and glide ends at the same applier, so the raw held
+    viewport still cannot reach the canvas.
+    """
     assert "applyViewport(canvas,projection.viewport)" not in (
         UNIVERSAL_CANVAS_SCRIPT
     )
+    assert "glideViewport(canvas,projection.viewport)" not in (
+        UNIVERSAL_CANVAS_SCRIPT
+    )
     assert UNIVERSAL_CANVAS_SCRIPT.count(
-        "applyViewport(canvas,viewportOverWork(projection,canvas))") == 4
+        "viewportOverWork(projection,canvas))") == 4
+    glide = _lifted("glideViewport")
+    assert "applyViewport(canvas," in glide, (
+        "the travel must end at the one applier"
+    )
 
 
 def test_the_correction_is_offered_once_and_never_commits():

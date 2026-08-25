@@ -5225,27 +5225,6 @@ class ApplicationServer:
                                         source_revision_root=body.get('revision'),
                                         authentication_context=binding.context)
                                 touched = owner.universal_store.revision
-                            elif self.path == '/api/universal/theme-assign':
-                                touched = assign_released_universal_theme(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    body['subject'],
-                                    body['revision'],
-                                    authentication_context=binding.context)
-                            elif self.path == '/api/universal/theme-audience':
-                                created_root, touched = \
-                                    assign_released_universal_theme_to_audience(
-                                        owner.universal_store,
-                                        owner.universal_registry,
-                                        body['audience'],
-                                        body['revision'],
-                                        reason=str(body.get('reason', '')).strip(),
-                                        authentication_context=binding.context)
-                            elif self.path == '/api/universal/theme-follow-audience':
-                                touched = follow_universal_theme_audience(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    authentication_context=binding.context)
                             elif self.path == '/api/universal/authority-issue':
                                 expires_at = body.get('expires_at')
                                 created_root, touched = \

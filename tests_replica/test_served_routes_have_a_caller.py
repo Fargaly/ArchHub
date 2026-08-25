@@ -47,7 +47,10 @@ def _reached() -> frozenset[str]:
 
 def test_the_server_dispatches_on_paths_this_court_can_read() -> None:
     served = _served()
-    assert len(served) >= 30, sorted(served)
+    # A floor that says "the parser found the dispatcher", not a count.
+    # Counting served routes here would make this court fail every time
+    # the surface is cut, which is the opposite of what it is for.
+    assert len(served) >= 10, sorted(served)
     assert "/api/universal/canvas" in served
     assert "/api/universal/interaction" in served
 

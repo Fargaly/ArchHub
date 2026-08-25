@@ -3366,9 +3366,6 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/resource-promote", "promote"),
     ("POST", "/api/universal/theme-share", "share"),
     ("POST", "/api/universal/theme-publish", "publish"),
-    ("POST", "/api/universal/theme-assign", "share"),
-    ("POST", "/api/universal/theme-audience", "share"),
-    ("POST", "/api/universal/theme-follow-audience", "inspect"),
     ("POST", "/api/universal/authority-issue", "manage-policy"),
     ("POST", "/api/universal/authority-revoke", "manage-policy"),
 )

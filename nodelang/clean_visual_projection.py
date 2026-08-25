@@ -832,6 +832,9 @@ def _project_clean_visual_canvas_unscoped(
         }
         for entry in lens["catalogue"]
     }
+    # (card, relation, end) -> the socket on that card. Filled while the
+    # cards are built, read when the wires are.
+    socket_of_wire_end: dict[tuple[str, str, str], str] = {}
     for item in lens["nodes"]:
         rows_by_label = {
             str(row.get("name")): row.get("value")
@@ -949,6 +952,17 @@ def _project_clean_visual_canvas_unscoped(
                 caller=caller,
             )
             node["ports"].append(port_projection)
+            # Which socket on this card belongs to which wire END. The
+            # canvas draws a wire to the socket its endpoint names, and
+            # nothing named one: every one of 344 endpoints pointed at an
+            # interface no card rendered, so every line was drawn to a
+            # card EDGE instead. The card, the wire and the socket looked
+            # unrelated because, in the projection, they were.
+            socket_of_wire_end[(
+                item["root_id"],
+                port["relation_root"],
+                _port_side(port["participant_role"]),
+            )] = port_projection["id"]
         declared = declared_by_definition.get(
             item.get("definition_root") or "", None
         )
@@ -1088,6 +1102,14 @@ def _project_clean_visual_canvas_unscoped(
             "participants": participants,
             "source": source,
             "target": target,
+            # The exact socket each end belongs to, when this scope draws
+            # the card that carries it.
+            "source_interface": socket_of_wire_end.get(
+                (source, relation["root_id"], "source")
+            ),
+            "target_interface": socket_of_wire_end.get(
+                (target, relation["root_id"], "target")
+            ),
             "selected": relation["root_id"] in selected_roots,
             # The stylesheet hides a wire that is not in context, so a
             # projector that called every wire out-of-context drew a

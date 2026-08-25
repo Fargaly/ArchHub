@@ -2419,6 +2419,28 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   //
   // A card under the founder's own pointer is exempt: a drag must track
   // the hand exactly, and easing there reads as lag.
+  // The scope the canvas last DREW. render() sets lastProjection before
+  // the canvas renders, so the canvas cannot ask what it drew before --
+  // it has to remember for itself.
+  let drawnScope=null;
+  function enterScopeMotion(stage) {
+    // Short, and only on the way IN: the founder asked for the new level,
+    // so the wait belongs to the graph, not to an animation. Reduced
+    // motion is honoured by doing nothing at all.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+      return;
+    }
+    stage.style.transition='none';
+    stage.style.opacity='0.15';
+    requestAnimationFrame(() => {
+      stage.style.transition='opacity 180ms ease-out';
+      stage.style.opacity='1';
+      setTimeout(() => {
+        stage.style.transition='';
+        stage.style.opacity='';
+      }, 220);
+    });
+  }
   function ensureCanvasMotion() {
     if (document.getElementById('archhub-canvas-motion')) return;
     const sheet=document.createElement('style');
@@ -3267,6 +3289,17 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     return scoped;
   }
   function renderCanvas(projection,redrawSegments=null) {
+    const enteringScope=(
+      drawnScope !== null && drawnScope !== projection.scope.current
+    );
+    drawnScope=projection.scope.current;
+    if (enteringScope) {
+      requestAnimationFrame(() => {
+        const stage=document.querySelector(
+          '.canvas[data-universal="true"] .canvas-stage');
+        if (stage) enterScopeMotion(stage);
+      });
+    }
     const canvas=document.querySelector('.canvas');
     const stage=canvas?.querySelector('.canvas-stage');
     if (!canvas || !stage) return;
@@ -3312,6 +3345,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       desiredStage.append(canvasNodeElement(item,projection));
     });
     reconcileKeyedChildren(stage,desiredStage);
+    // Entering a scope replaced every card between one frame and the
+    // next: one set of nodes vanished and another appeared in the same
+    // instant, with nothing to say that the founder had gone anywhere.
+    // The new level arrives.
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
     glideViewport(canvas,viewportOverWork(projection,canvas));

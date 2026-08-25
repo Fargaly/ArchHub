@@ -11507,11 +11507,31 @@ class ApplicationServer:
                     for member in visibility_members
                     if member.role_id == interface_role
                 )
-                if tuple(
+                projected_roots = tuple(
                     node["id"] for node in projection["nodes"]
-                ) != visible_roots:
+                )
+                if projected_roots != visible_roots:
+                    # "differs" alone cannot be acted on. What differs is
+                    # either membership or order, and the two mean
+                    # different things: a missing root is a real drift, a
+                    # reordering is presentation. The refusal says which.
+                    missing = [
+                        root for root in visible_roots
+                        if root not in projected_roots
+                    ]
+                    extra = [
+                        root for root in projected_roots
+                        if root not in visible_roots
+                    ]
                     raise InvalidCell(
-                        "retained scope identity differs from its projection"
+                        "retained scope identity differs from its "
+                        "projection: %d projected, %d visible, "
+                        "%d missing %s, %d unexpected %s, order_only=%s" % (
+                            len(projected_roots), len(visible_roots),
+                            len(missing), [root[:12] for root in missing[:4]],
+                            len(extra), [root[:12] for root in extra[:4]],
+                            not missing and not extra,
+                        )
                     )
                 scope_identity = (
                     visible_roots,

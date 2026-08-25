@@ -2647,13 +2647,23 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     );
   }
   function projectedNodeHeight(node,projection=lastProjection) {
-    const inputs=node.ports.filter(
-      port => port.side === 'target' &&
-        expandedCanvasPort(port,projection)).length;
-    const outputs=node.ports.filter(
-      port => port.side === 'source' &&
-        expandedCanvasPort(port,projection)).length;
-    return Math.max(112,82+Math.max(inputs,outputs)*24);
+    // A card is as tall as what it carries. This counted only the ports
+    // the BUILD lens expands, so an ordinary card stayed 112px however
+    // many sockets it had -- a domain with twenty-six connections stacked
+    // all of them into the same 112 pixels, which is why the edge read as
+    // a smear and every wire seemed to leave from one place.
+    const onSide=side => node.ports.filter(port => port.side === side);
+    const expandedRows=Math.max(
+      onSide('target').filter(port =>
+        expandedCanvasPort(port,projection)).length,
+      onSide('source').filter(port =>
+        expandedCanvasPort(port,projection)).length,
+    );
+    const socketRows=Math.max(
+      onSide('target').length, onSide('source').length);
+    // An expanded port carries a name and a value, so it needs a full
+    // row; a socket needs only enough not to touch its neighbour.
+    return Math.max(112,82+Math.max(expandedRows*24,socketRows*16));
   }
   function positionCanvasPort(
     port,button,ports,cardHeight,projection=lastProjection
@@ -2972,14 +2982,13 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     card.style.left=item.x+'px';
     card.style.top=item.y+'px';
     card.style.setProperty('--node-color',item.color);
-    const inputCount=item.ports.filter(
-      port => port.side === 'target'
-        && expandedCanvasPort(port,projection)).length;
-    const outputCount=item.ports.filter(
-      port => port.side === 'source'
-        && expandedCanvasPort(port,projection)).length;
-    const cardHeight=Math.max(
-      112,82+Math.max(inputCount,outputCount)*24);
+    // The same rule the layout and the wires use, in one place.
+    const cardHeight=projectedNodeHeight(item,projection);
+    // HEIGHT, not min-height: the graph-held stylesheet gives every card
+    // a fixed height, and a minimum cannot argue with that -- which is
+    // why a card with thirty-three sockets stayed the same size as one
+    // with two.
+    card.style.height=cardHeight+'px';
     card.style.minHeight=cardHeight+'px';
     const ports=card.querySelector(
       ':scope > [data-ui-key="canvas:node:'+item.id+':ports"]');
@@ -3177,7 +3186,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       const prior=previousNodes.get(node.id);
       const cardHeight=projectedNodeHeight(node,projection);
       const priorHeight=projectedNodeHeight(prior,previous);
-      if (priorHeight !== cardHeight) card.style.minHeight=cardHeight+'px';
+      if (priorHeight !== cardHeight) {
+        card.style.height=cardHeight+'px';
+        card.style.minHeight=cardHeight+'px';
+      }
       for (const port of node.ports) {
         const button=index.sockets.get(port.id);
         if (!button) return false;

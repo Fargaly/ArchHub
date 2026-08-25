@@ -4534,9 +4534,14 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       candidateIndexes:new Map(choices.map((choice,index) => [choice.id,index])),
       preview,output,canvas,pointerId:event.pointerId
     };
-    markWireTargets(direct
-      ? new Set(choices.map(choice => 'decl:'+choice.id+':'+choice.interface))
-      : new Set(pendingWire.candidateIndexes.keys()));
+    // Light the sockets a wire may land on, by the identity the sockets
+    // actually carry. This built keys of the form decl:<node>:<port name>
+    // and looked them up among sockets keyed by their own id, so nothing
+    // ever matched: dragging a wire told the founder nothing about where
+    // it could go.
+    markWireTargets(new Set(choices
+      .map(choice => choice.socket)
+      .filter(socket => typeof socket === 'string' && socket)));
     output.setPointerCapture?.(event.pointerId);
   });
   document.addEventListener('pointermove', event => {

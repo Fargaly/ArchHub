@@ -1037,8 +1037,14 @@ def _project_clean_visual_canvas_unscoped(
     # definition declared: eleven of three hundred and forty-four ports
     # could start a wire, so every domain and requirement card was
     # unwireable and the canvas looked broken to anyone holding a mouse.
+    # A choice says where a wire MAY land, and the canvas lights that
+    # socket up while the founder drags. It named the node and the port's
+    # NAME; sockets are keyed by their own identity, so nothing ever
+    # matched and no target ever lit -- dragging a wire showed the
+    # founder nothing about where it could go. The socket says which
+    # socket it is.
     input_targets = [
-        {"id": node["id"], "interface": port["name"]}
+        {"id": node["id"], "interface": port["name"], "socket": port["id"]}
         for node in nodes
         for port in node["ports"]
         if port["side"] == "target" and port.get("name")
@@ -1048,7 +1054,11 @@ def _project_clean_visual_canvas_unscoped(
             if port["side"] == "source" and port.get("name"):
                 port["connect_control"] = "direct:connect"
                 port["connect_choices"] = [
-                    {"id": target["id"], "interface": target["interface"]}
+                    {
+                        "id": target["id"],
+                        "interface": target["interface"],
+                        "socket": target["socket"],
+                    }
                     for target in input_targets
                     if target["id"] != node["id"]
                 ]

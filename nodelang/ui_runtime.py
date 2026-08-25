@@ -1648,7 +1648,41 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       window.__archhubPointerOwner=null;
     }
   }
-  async function performUniversalFetch(path,payload={}) {
+  // A browser session lasts an hour. When it lapsed, every request after
+  // it answered 403 "browser session expired or not yet valid" and the
+  // canvas simply stopped working -- the founder's window sat there with
+  // the message in the corner until it was closed and opened again.
+  // Sign-in already exists; it just only ever ran once, at page load.
+  let signingIn=null;
+  async function renewBrowserSession() {
+    if (signingIn) return signingIn;
+    signingIn=(async () => {
+      const minted=await fetch('/api/universal/session',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-ArchHub-Sign-In':'1'},
+        body:'{}',
+      });
+      if (!minted.ok) throw new Error('sign-in refused');
+      const session=await minted.json();
+      window.__archhubSession=session;
+      try {
+        sessionStorage.setItem('archhub.session',JSON.stringify(session));
+      } catch (error) { /* storage is optional; the session is in memory */ }
+      const meta=document.querySelector('meta[name="archhub-csrf"]');
+      if (meta) meta.content=session.csrf;
+      return session;
+    })();
+    try { return await signingIn; } finally { signingIn=null; }
+  }
+  function sessionHasLapsed(response,result) {
+    // "expired or not yet valid", "authenticated browser session
+    // required", "browser session is unknown" -- a refusal about the
+    // SESSION is a refusal signing in again answers. Anything else is a
+    // real refusal and stays one, and the retry happens at most once.
+    return response.status === 403 && typeof result?.error === 'string'
+      && /session/i.test(result.error);
+  }
+  async function performUniversalFetch(path,payload={},renewed=false) {
     const csrfToken=document.querySelector('meta[name="archhub-csrf"]')?.content;
     const requestHeaders={'Content-Type':'application/json'};
     if (csrfToken) requestHeaders['X-ArchHub-CSRF']=csrfToken;
@@ -1665,6 +1699,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {
+      if (!renewed && sessionHasLapsed(response,result)) {
+        await renewBrowserSession();
+        return performUniversalFetch(path,payload,true);
+      }
       const error=new Error(result.error || 'Universal graph request failed');
       error.code=typeof result.code === 'string' ? result.code : '';
       error.status=response.status;
@@ -1949,6 +1987,50 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       topologyDeltaMode,
       candidateIndex == null ? {} : {topologyCandidateIndex:candidateIndex},
     );
+  }
+  // Everything the canvas did to the view happened between one frame and
+  // the next: zoom jumped, fit jumped, entering a scope jumped. Nothing
+  // moved, so nothing could be followed by eye.
+  //
+  // A gesture in progress is NOT animated -- a drag or a wheel must track
+  // the hand exactly, and easing under a live pointer feels like lag. It
+  // is the jumps the founder did not make with their own hand that get
+  // motion: fit, arrange, a scope change, a viewport restored on load.
+  let viewportGlide=null;
+  function stopViewportGlide() {
+    if (!viewportGlide) return;
+    cancelAnimationFrame(viewportGlide.frame);
+    viewportGlide=null;
+  }
+  function glideViewport(canvas, target, duration=220) {
+    const from={
+      pan_x:parseFloat(canvas.dataset.panX)||0,
+      pan_y:parseFloat(canvas.dataset.panY)||0,
+      zoom:parseFloat(canvas.dataset.zoom)||1,
+    };
+    const far=Math.abs(from.pan_x-target.pan_x) > 2
+      || Math.abs(from.pan_y-target.pan_y) > 2
+      || Math.abs(from.zoom-target.zoom) > 0.005;
+    stopViewportGlide();
+    if (!far) { applyViewport(canvas,target); return; }
+    const started=performance.now();
+    // Zoom is multiplicative, so it is interpolated in log space: a step
+    // from 25% to 100% then reads as even motion rather than a lurch.
+    const fromLog=Math.log(Math.max(0.01,from.zoom));
+    const toLog=Math.log(Math.max(0.01,target.zoom));
+    const step=now => {
+      const t=Math.min(1,(now-started)/duration);
+      // ease-out cubic: quick to leave, gentle to arrive
+      const eased=1-Math.pow(1-t,3);
+      applyViewport(canvas,{
+        pan_x:from.pan_x+(target.pan_x-from.pan_x)*eased,
+        pan_y:from.pan_y+(target.pan_y-from.pan_y)*eased,
+        zoom:Math.exp(fromLog+(toLog-fromLog)*eased),
+      });
+      if (t < 1) { viewportGlide={frame:requestAnimationFrame(step)}; }
+      else { viewportGlide=null; applyViewport(canvas,target); }
+    };
+    viewportGlide={frame:requestAnimationFrame(step)};
   }
   function applyViewport(canvas, viewport) {
     const stage=canvas.querySelector('.canvas-stage');
@@ -2328,6 +2410,32 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   // here rather than inside renderToolbar, because that renderer may
   // create nothing: every button in the toolbar comes from the graph's
   // own descriptor, and a court holds it to that.
+  // Cards teleported: Arrange moved twenty-six of them between one frame
+  // and the next, and a selection changed with no sign that anything had.
+  // They travel and light up over a sixth of a second -- long enough to
+  // follow, short enough not to wait for. As a RULE rather than an inline
+  // style, because the reconciler rebuilds card elements and an inline
+  // transition does not survive that.
+  //
+  // A card under the founder's own pointer is exempt: a drag must track
+  // the hand exactly, and easing there reads as lag.
+  function ensureCanvasMotion() {
+    if (document.getElementById('archhub-canvas-motion')) return;
+    const sheet=document.createElement('style');
+    sheet.id='archhub-canvas-motion';
+    sheet.textContent=
+      '.canvas[data-universal="true"] [data-universal-root]{'
+      +'transition:left 160ms cubic-bezier(.2,.7,.3,1),'
+      +'top 160ms cubic-bezier(.2,.7,.3,1),'
+      +'border-color 120ms ease-out,box-shadow 120ms ease-out;}'
+      +'.canvas[data-universal="true"] [data-universal-root].is-moving{'
+      +'transition:none;}'
+      +'@media (prefers-reduced-motion: reduce){'
+      +'.canvas[data-universal="true"] [data-universal-root]{'
+      +'transition:none;}}';
+    document.head.append(sheet);
+  }
+
   function ensureComposer() {
     const canvasSurface=document.querySelector('.canvas');
     if (!canvasSurface) return null;
@@ -2484,6 +2592,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       button => button.dataset.universalControl === focusedControl
     ) || toolbarButtons[0];
     toolbarButtons.forEach(button => { button.tabIndex=button === focusTarget ? 0 : -1; });
+    ensureCanvasMotion();
     const composer=ensureComposer();
     if (composer) composer.hidden=false;
     // The composer is client-made chrome and the toolbar is graph-held, so
@@ -2927,7 +3036,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     layer.setAttribute('height',String(stageHeight));
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
-    applyViewport(canvas,viewportOverWork(projection,canvas));
+    glideViewport(canvas,viewportOverWork(projection,canvas));
     requestAnimationFrame(() => redraw(redrawSegments));
     return true;
   }
@@ -3011,7 +3120,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     layer.setAttribute('height',String(stageHeight));
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
-    applyViewport(canvas,viewportOverWork(projection,canvas));
+    glideViewport(canvas,viewportOverWork(projection,canvas));
     requestAnimationFrame(() => redraw(redrawSegments));
     return true;
   }
@@ -3205,7 +3314,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     reconcileKeyedChildren(stage,desiredStage);
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
-    applyViewport(canvas,viewportOverWork(projection,canvas));
+    glideViewport(canvas,viewportOverWork(projection,canvas));
     invalidateCanvasElementIndex();
     canvasElementIndexFor(canvas);
     requestAnimationFrame(() => redraw(redrawSegments));
@@ -3373,7 +3482,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       || previous.viewport.pan_y !== projection.viewport.pan_y
       || previous.viewport.zoom !== projection.viewport.zoom
     );
-    if (viewportChanged) applyViewport(canvas,viewportOverWork(projection,canvas));
+    if (viewportChanged) glideViewport(canvas,viewportOverWork(projection,canvas));
 
     const reconcileRelations=() => {
       if (lastProjection !== projection) return;
@@ -4952,6 +5061,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
           pan_y:gesture.viewport.pan_y+clientY-gesture.startY,
           zoom:gesture.viewport.zoom,
         };
+        stopViewportGlide();
         applyViewport(gesture.canvas,gesture.nextViewport);
         return;
       }
@@ -4991,6 +5101,9 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
           payload.positions={};
           gesture.origins.forEach(origin => {
             origin.card.classList.remove('is-moving');
+            // The hand let go; the card is a card again, and moves like
+            // one from here on.
+            origin.card.style.transition='';
             payload.positions[origin.root]={
               x:parseFloat(origin.card.style.left),
               y:parseFloat(origin.card.style.top),
@@ -5072,6 +5185,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       zoom,
     };
     liveViewport=viewport;
+    stopViewportGlide();
     applyViewport(canvas,viewport);
     clearTimeout(viewportCommitTimer);
     viewportCommitTimer=setTimeout(() => {

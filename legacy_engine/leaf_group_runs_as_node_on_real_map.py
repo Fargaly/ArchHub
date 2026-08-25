@@ -15,7 +15,7 @@ Run it:  PYTHONIOENCODING=utf-8 python leaf_group_runs_as_node_on_real_map.py
 import json
 import os
 
-from node_lang import Graph  # the real engine — reused, not rebuilt
+from .node_lang import Graph  # the real engine — reused, not rebuilt
 
 DATA = os.environ.get("ARCHHUB_GRAND_MAP_PATH")
 

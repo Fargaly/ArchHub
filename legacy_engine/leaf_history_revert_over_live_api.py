@@ -22,7 +22,7 @@ import json, os, subprocess, sys, time, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from node_lang import Graph, History
+from .node_lang import Graph, History
 
 
 # ---------- tiny HTTP client against the running server.py ----------

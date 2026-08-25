@@ -31,7 +31,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from node_lang import Graph  # the REAL engine — reused, not rebuilt
+from .node_lang import Graph  # the REAL engine — reused, not rebuilt
 
 GM = os.environ.get("ARCHHUB_GRAND_MAP_PATH")
 if not GM:

@@ -21,7 +21,7 @@ Run it:  PYTHONIOENCODING=utf-8 python leaf_secret_ref.py
 import json
 import os
 
-from node_lang import Graph, History  # the real engine — reused, not rebuilt
+from .node_lang import Graph, History  # the real engine — reused, not rebuilt
 
 REF = "op://vault/stripe/key"          # the reference that IS allowed to be stored
 SECRET = "sk_live_REAL"                # the resolved secret — must NEVER be persisted

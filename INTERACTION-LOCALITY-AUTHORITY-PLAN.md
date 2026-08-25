@@ -2591,7 +2591,7 @@ Evidence after the bounded repair:
 - all nine unchanged generated-runtime UI performance budgets pass.
 
 This remains source and isolated-store evidence. The real-browser editor court
-is still held by the explicit BBC4 machine-priority reservation and remains a
+is still held by the explicit client-work machine-priority reservation and remains a
 release requirement.
 
 ## 44. Real-browser visual acceptance strengthening

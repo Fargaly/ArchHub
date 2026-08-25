@@ -21,7 +21,7 @@ What is asserted:
 
 Run it:  PYTHONIOENCODING=utf-8 python leaf_floor_aggregate.py
 """
-from node_lang import Graph  # the real engine — reused, not rebuilt
+from .node_lang import Graph  # the real engine — reused, not rebuilt
 
 
 def main():

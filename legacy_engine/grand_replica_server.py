@@ -14,7 +14,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-from grand_replica import build_replica
+from .grand_replica import build_replica
 
 
 HOST = "127.0.0.1"

@@ -17,7 +17,7 @@ living node program on the node_lang engine.
 """
 import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from node_lang import Graph
+from .node_lang import Graph
 
 REVIT_PORTS = [48885, 48884, 48886]   # live revit-mcp brokers
 

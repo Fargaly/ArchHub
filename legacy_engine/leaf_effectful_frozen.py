@@ -20,7 +20,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from node_lang import Graph, History
+from .node_lang import Graph, History
 
 
 def _file_state(path):

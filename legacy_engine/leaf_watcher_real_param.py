@@ -42,7 +42,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from node_lang import Graph, History   # REUSE the real engine, do not rebuild
+from .node_lang import Graph, History   # REUSE the real engine, do not rebuild
 
 # the REAL persisted app parameter file (the app would read this at startup)
 CONFIG_PATH = os.path.join(HERE, "app_theme.config.json")

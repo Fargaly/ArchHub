@@ -4,7 +4,7 @@ The AI (me) reads/writes the SAME graph over HTTP. Both drive one graph — it r
 import json, os, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from node_lang import Graph
+from .node_lang import Graph
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 G = Graph()

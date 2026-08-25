@@ -46,7 +46,7 @@ sys.path.insert(0, str(HERE))
 # import the REAL brain court (the jury that gates every ROMA leaf)
 sys.path.insert(0, str(BRAIN_SRC))
 
-import node_lang  # the existing engine — class Graph, kinds incl. "group"
+from . import node_lang  # the existing engine — class Graph, kinds incl. "group"
 from personal_brain.court_harness import convene_court  # the existing jury
 
 

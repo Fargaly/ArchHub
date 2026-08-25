@@ -20,7 +20,7 @@ Run it:  PYTHONIOENCODING=utf-8 python leaf_floor_iterate.py
 """
 import json
 
-from node_lang import Graph  # the real engine — reused, not rebuilt
+from .node_lang import Graph  # the real engine — reused, not rebuilt
 
 
 def main():

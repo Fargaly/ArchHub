@@ -40,7 +40,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import node_lang  # the REAL engine — class Graph, kind "ui_render" computes the HTML
+from . import node_lang  # the REAL engine — class Graph, kind "ui_render" computes the HTML
 
 CACHE = HERE / "_derived_toolbar.cache.html"   # the DERIVED artifact (disposable)
 RENDER_NODE = "toolbar"                          # the ui_render node id

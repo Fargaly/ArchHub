@@ -41,7 +41,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from node_lang import Graph   # REUSE the real engine, do not rebuild
+from .node_lang import Graph   # REUSE the real engine, do not rebuild
 
 
 def classify(score):

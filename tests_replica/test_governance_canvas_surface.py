@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from nodelang import validate_store  # noqa: E402
 from nodelang.graph_api import level_view  # noqa: E402
 
-import serve_governance  # noqa: E402
+from tools import serve_governance  # noqa: E402
 
 
 def test_governance_surface_builds_a_live_node_language_session():

@@ -747,7 +747,7 @@
    "id": "L84",
    "name": "Domain Adapter Boundary",
    "proof_target": "Domain-neutral envelope, exact action, version, sandbox, no-workflow-in-adapter, real-host artifact, and revocation courts. [I02] [E20] [E38]",
-   "failure": "`if project == BBC4` selects hidden behavior in the adapter."
+   "failure": "`if project == "<a client>"` selects hidden behavior in the adapter."
   },
   {
    "source": "100 layers",

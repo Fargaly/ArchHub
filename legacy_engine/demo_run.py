@@ -3,7 +3,7 @@ Proves: nodes-built-from-nodes, grouping-runs-as-node, the whole map as ONE sess
 incremental recompute on edit, and the history tree (revert)."""
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from node_lang import Graph, History
+from .node_lang import Graph, History
 
 GM = os.environ.get("ARCHHUB_GRAND_MAP_PATH")
 if not GM:

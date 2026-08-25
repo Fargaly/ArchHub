@@ -1283,7 +1283,7 @@ flowchart TD
   release, and deletion.
 - **WHERE:** Classification and allowed custody are graph facts; inaccessible
   storage/key boundaries provide physical isolation.
-- **EXAMPLE:** BBC4 T2 content never enters the T0 product tree, public model
+- **EXAMPLE:** client T2 content never enters the T0 product tree, public model
   context, or public release artifact.
 - **FAILURE:** A sanitized summary retains a client identifier in hidden
   metadata.
@@ -1883,7 +1883,7 @@ flowchart TD
   adapter-local.
 - **EXAMPLE:** Revit adapter receives `set parameter on element identity under
   document revision`, while approval workflow remains graph-held.
-- **FAILURE:** `if project == BBC4` selects hidden behavior in the adapter.
+- **FAILURE:** `if project == "<a client>"` selects hidden behavior in the adapter.
 - **PROOF TARGET:** Domain-neutral envelope, exact action, version, sandbox,
   no-workflow-in-adapter, real-host artifact, and revocation courts. [I02] [E20] [E38]
 
@@ -2247,7 +2247,7 @@ The following sequence shows how the layers compose rather than operate as one
 hundred independent services:
 
 ```text
-Founder edits a BBC4 issue property in the local ArchHub application.
+Founder edits a client issue property in the local ArchHub application.
 
 1.  The same project root is visible through an authorised lens.
 2.  Pointer interaction previews locally in the correct coordinate space.
@@ -2268,7 +2268,7 @@ Founder edits a BBC4 issue property in the local ArchHub application.
 17. Other devices receive authorised bounded deltas.
 18. WIP/Shared/Published remain independent immutable views.
 19. Courts bind evidence to exact source, graph, and artifact revisions.
-20. No Brain database, BBC4 domain store, dashboard JSON, or peer bus owns a
+20. No Brain database, client domain store, dashboard JSON, or peer bus owns a
     copied version of the issue.
 ```
 

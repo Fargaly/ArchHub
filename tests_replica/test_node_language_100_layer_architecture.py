@@ -214,7 +214,7 @@ def test_cross_layer_example_preserves_one_graph_and_external_uncertainty() -> N
         "Serializable commit either accepts all or publishes nothing.",
         "Attempt, host outcome, and reconciliation remain distinct.",
         "WIP/Shared/Published remain independent immutable views.",
-        "No Brain database, BBC4 domain store, dashboard JSON, or peer bus owns a",
+        "No Brain database, client domain store, dashboard JSON, or peer bus owns a",
         "copied version of the issue.",
     )
     for statement in required:

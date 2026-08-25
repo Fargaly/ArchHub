@@ -570,7 +570,7 @@ def test_compound_contract_data_is_openable_graph_structure_not_json_blobs():
         "Project",
         {
             "identity": {
-                "code": "BBC4",
+                "code": "Harbour",
                 "tags": ["architecture", "delivery"],
             },
             "enabled": True,
@@ -588,7 +588,7 @@ def test_compound_contract_data_is_openable_graph_structure_not_json_blobs():
     assert definition.contracts["defaults"] == {
         "enabled": True,
         "identity": {
-            "code": "BBC4",
+            "code": "Harbour",
             "tags": ["architecture", "delivery"],
         },
     }
@@ -683,9 +683,9 @@ def test_instances_share_exact_definition_revision_and_store_only_overrides():
     result = instantiate_definition(
         authority,
         definition.root_id,
-        {"title": "BBC4"},
+        {"title": "Harbour"},
         scope_root=composition_root(authority, "Projects"),
-        **_command(authority, "create-project-bbc4"),
+        **_command(authority, "create-project-Harbour"),
     )
     projection = read_instance(authority, result.root_id)
     current = read_definition(authority, definition.root_id)
@@ -695,7 +695,7 @@ def test_instances_share_exact_definition_revision_and_store_only_overrides():
     assert dict(projection["values"]) == {
         "color": "#444444",
         "status": "WIP",
-        "title": "BBC4",
+        "title": "Harbour",
     }
     instance_members = relation_members(authority.store.snapshot(), result.root_id)
     override_count = sum(
@@ -710,7 +710,7 @@ def test_instance_cannot_override_an_undeclared_mutable_region():
     definition = declare_definition(
         authority,
         "Project",
-        {"title": "Untitled", "protected_code": "BBC4"},
+        {"title": "Untitled", "protected_code": "Harbour"},
         parameters={"title": {"editor": "text"}},
         **_command(authority, "declare-protected-project"),
     )
@@ -843,7 +843,7 @@ def test_definition_requires_evidenced_wip_shared_published_promotion():
         instantiate_definition(
             authority,
             draft.root_id,
-            {"title": "BBC4"},
+            {"title": "Harbour"},
             scope_root=composition_root(authority, "Projects"),
             **_command(authority, "instantiate-draft-project"),
         )
@@ -892,7 +892,7 @@ def test_definition_requires_evidenced_wip_shared_published_promotion():
     instance = instantiate_definition(
         authority,
         draft.root_id,
-        {"title": "BBC4"},
+        {"title": "Harbour"},
         scope_root=composition_root(authority, "Projects"),
         **_command(authority, "instantiate-published-project"),
     )
@@ -1146,9 +1146,9 @@ def test_repeating_one_command_after_restart_creates_zero_cells(tmp_path):
     definition = _publish(authority, definition, "project-restart")
     request = {
         "definition_root": definition.root_id,
-        "overrides": {"title": "BBC4"},
+        "overrides": {"title": "Harbour"},
         "scope_root": composition_root(authority, "Projects"),
-        **_command(authority, "create-project-bbc4"),
+        **_command(authority, "create-project-Harbour"),
     }
     first = instantiate_definition(authority, **request)
     revision = store.revision
@@ -1249,9 +1249,9 @@ def test_same_idempotency_key_cannot_change_meaning():
     common = {
         "definition_root": definition.root_id,
         "scope_root": composition_root(authority, "Projects"),
-        **_command(authority, "create-project-bbc4"),
+        **_command(authority, "create-project-Harbour"),
     }
-    instantiate_definition(authority, overrides={"title": "BBC4"}, **common)
+    instantiate_definition(authority, overrides={"title": "Harbour"}, **common)
 
     with pytest.raises(InvalidCell, match="idempotency key"):
         instantiate_definition(

@@ -4,7 +4,7 @@ the UI is RE-RUN from the nodes — recolor, rename, delete, add — and propaga
 Real, executed. The UI is produced BY the node graph, not hand-drawn."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from node_lang import Graph, History
+from .node_lang import Graph, History
 
 g = Graph()
 # A session whose parameters describe a tiny UI (the map's own toolbar), AS NODES:

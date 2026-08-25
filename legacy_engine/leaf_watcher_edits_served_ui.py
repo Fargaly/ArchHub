@@ -17,7 +17,7 @@ import os, sys, json
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from node_lang import Graph, History   # REUSE the real engine, do not rebuild
+from .node_lang import Graph, History   # REUSE the real engine, do not rebuild
 
 OUT = os.path.join(HERE, "watcher_ui.html")
 PAGE = ('<!doctype html><body style="background:#0e0e11;padding:24px">'

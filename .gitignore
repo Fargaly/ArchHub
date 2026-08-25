@@ -18,4 +18,3 @@ grand_sweep_ledger.json
 grandmap.session.json
 self-hosting-map.html
 tests_replica/test_authority_coherence.py
-.probes/

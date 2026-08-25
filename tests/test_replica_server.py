@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import grand_replica_server
+from legacy_engine import grand_replica_server
 
 
 def get_json(url):

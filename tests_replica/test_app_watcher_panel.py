@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import app_from_grandmap as app
+from tools import app_from_grandmap as app
 from nodelang.core import validate_store
 
 

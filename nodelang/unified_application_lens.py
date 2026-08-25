@@ -256,6 +256,9 @@ def _catalogue(
 # revision cell for a definition names the definition root, and that is
 # how two earlier id-only enumerations missed a change).
 LAST_LENS_PHASES: dict = {}
+# What the relations phase spent, told apart: reading each relation's own
+# members, versus resolving the interface each end binds to.
+LENS_RELATION_DETAIL: dict = {}
 
 _DEFINITION_MEMOS: "WeakKeyDictionary" = WeakKeyDictionary()
 
@@ -447,12 +450,20 @@ def project_unified_scope(
     ports: dict[str, list[LensPort]] = {
         root: [] for root in level.composition_roots
     }
+    # A quarter of a minute of the founder's first paint was spent in this
+    # loop and the phase total could not say which half of it. The two
+    # costs are counted apart, so the number a fix is judged by is
+    # measured rather than attributed.
+    _relation_read = 0.0
+    _interface_cost = 0.0
     for relation in relations:
         connection = relation.properties.get("connection")
         if connection is not None and type(connection) is not str:
             raise InvalidCell("relation connection presentation is invalid")
         participant_roots = tuple(root for _, root in relation.participants)
+        _m0 = _lens_time.perf_counter()
         members = read_relation(snapshot, relation.root_id, budget=1024)
+        _relation_read += _lens_time.perf_counter() - _m0
         incidence_by_role: dict[str, str] = {}
         for member in members:
             role_name = role_names.get(member.role_id)
@@ -470,10 +481,12 @@ def project_unified_scope(
         for role, root in relation.participants:
             if root not in ports:
                 continue
+            _i0 = _lens_time.perf_counter()
             interface = _interface_binding(
                 authority, snapshot, level, root, connection, caller,
                 relation.root_id, role,
             )
+            _interface_cost += _lens_time.perf_counter() - _i0
             ports[root].append(LensPort(
                 relation.root_id,
                 role,
@@ -489,6 +502,12 @@ def project_unified_scope(
                 interface.get("authority_roots", ()),
             ))
 
+    LENS_RELATION_DETAIL.clear()
+    LENS_RELATION_DETAIL.update({
+        "relations-read": _relation_read,
+        "relations-interface": _interface_cost,
+        "relations-count": float(len(relations)),
+    })
     _p2 = _lens_time.perf_counter()
     nodes: list[LensNode] = []
     # Where a composition sits is a graph fact the scope holds, not a

@@ -2263,13 +2263,24 @@ class _CleanAuthorityHttpServer:
             door_label=self._door_label(snapshot),
         )
         _t3 = _time.perf_counter()
-        from .unified_application_lens import LAST_LENS_PHASES
+        from .unified_application_lens import (
+            LAST_LENS_PHASES, LENS_RELATION_DETAIL,
+        )
         self._record_gesture_timing(
             "lens phases " + " ".join(
                 "%s=%.3fs" % (name, cost)
                 for name, cost in sorted(LAST_LENS_PHASES.items())
             )
         )
+        if LENS_RELATION_DETAIL:
+            self._record_gesture_timing(
+                "lens relations read=%.3fs interface=%.3fs over %d relations"
+                % (
+                    LENS_RELATION_DETAIL.get("relations-read", 0.0),
+                    LENS_RELATION_DETAIL.get("relations-interface", 0.0),
+                    int(LENS_RELATION_DETAIL.get("relations-count", 0.0)),
+                )
+            )
         self._record_gesture_timing(
             "projection rev=%s scope=%s lens=%.3fs visual-open=%.3fs "
             "canvas=%.3fs nodes=%s"

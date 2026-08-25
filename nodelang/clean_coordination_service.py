@@ -522,8 +522,16 @@ def main() -> int:
             return False
 
     coordination_url = "http://%s:%d/health" % (args.host, args.port)
+    # The canvas endpoint needs an authenticated browser session, which a
+    # watchdog has no business holding: every probe was refused and logged
+    # as an error, so the owner wrote 94,919 "authenticated browser session
+    # required" lines into its own gesture log between 2026-08-19 and
+    # 2026-08-25 -- eleven megabytes that buried every real error under a
+    # failure that was the surface working. The stylesheet is served from
+    # the graph without a session, so a 200 there proves the same thing the
+    # probe was actually asking: this surface is up and reading the graph.
     canvas_url = None if canvas is None else (
-        canvas.url + "/api/universal/canvas"
+        canvas.url + "/api/universal/stylesheet"
     )
     failed_probes = 0
     exit_code = 0

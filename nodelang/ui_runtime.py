@@ -1343,7 +1343,17 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   function cablePath(source, target) {
     const a=socketPoint(source,'source'),b=socketPoint(target,'target');
     const x1=a.x,y1=a.y,x2=b.x,y2=b.y;
-    return `M ${x1} ${y1} C ${x1+80} ${y1}, ${x2-80} ${y2}, ${x2} ${y2}`;
+    // A fixed 80px control point drew the same S whatever the wire had to
+    // cross: short wires bulged, and a wire running back to a card on its
+    // left cut straight through everything between them. The curve leaves
+    // the socket sideways by as much as the gap it has to cross, and a
+    // wire that runs backwards leaves wide enough to go around the cards
+    // rather than over them.
+    const gap=x2-x1;
+    const reach=gap > 60
+      ? Math.max(40,Math.min(180,gap*0.5))
+      : Math.max(90,Math.min(280,Math.abs(gap)*0.8+90));
+    return `M ${x1} ${y1} C ${x1+reach} ${y1}, ${x2-reach} ${y2}, ${x2} ${y2}`;
   }
   function invalidateCanvasElementIndex() {
     canvasElementIndex=null;
@@ -2498,17 +2508,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         const columns=Math.max(1,Math.floor(usable/columnStep));
         const rowStep=Math.max(...lastProjection.nodes.map(
           node => projectedNodeHeight(node,lastProjection)))+56;
-        // Keep the founder's arrangement as far as it goes: cards are
-        // laid out in the order they already read on screen.
         const ordered=[...lastProjection.nodes].sort((a,b) =>
           (Number(a.y)-Number(b.y)) || (Number(a.x)-Number(b.x)));
-        const positions={};
-        ordered.forEach((node,index) => {
-          positions[node.id]={
-            x:60+(index % columns)*columnStep,
-            y:60+Math.floor(index/columns)*rowStep,
-          };
-        });
+        const positions=arrangedByFlow(
+          ordered,lastProjection,columnStep,rowStep,columns);
         composerHint('arranging ' + ordered.length + ' cards…');
         try {
           const answer=await commit({positions});
@@ -2665,6 +2668,84 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // row; a socket needs only enough not to touch its neighbour.
     return Math.max(112,82+Math.max(expandedRows*24,socketRows*16));
   }
+  // A grid laid out in reading order is why the wires looked unrelated to
+  // the cards: two cards that feed each other could sit at opposite ends
+  // of the canvas, so every wire crossed everything. Cards are placed by
+  // what runs through them -- a card sits one column right of the last
+  // card that feeds it -- and inside a column each card sits beside the
+  // cards it is wired to. Cards nothing wires to are parked after the
+  // program rather than padding its first column.
+  function arrangedByFlow(ordered,projection,columnStep,rowStep,columns) {
+    const known=new Set(ordered.map(node => node.id));
+    const edges=(projection.wires || []).filter(wire =>
+      known.has(wire.source) && known.has(wire.target)
+      && wire.source !== wire.target,
+    ).map(wire => ({from:wire.source,to:wire.target}));
+    const wired=new Set();
+    edges.forEach(edge => { wired.add(edge.from); wired.add(edge.to); });
+    const rank=new Map(ordered.map(node => [node.id,0]));
+    // Longest path forward. A cycle stops growing instead of looping,
+    // because a pass that moves nothing ends the walk.
+    for (let pass=0; pass<ordered.length; pass++) {
+      let moved=false;
+      for (const edge of edges) {
+        const want=rank.get(edge.from)+1;
+        if (want > rank.get(edge.to)) { rank.set(edge.to,want); moved=true; }
+      }
+      if (!moved) break;
+    }
+    const flowing=ordered.filter(node => wired.has(node.id));
+    const parked=ordered.filter(node => !wired.has(node.id));
+    const layers=[];
+    flowing.forEach(node => {
+      const column=rank.get(node.id);
+      (layers[column] ||= []).push(node);
+    });
+    const neighbours=new Map(ordered.map(node => [node.id,[]]));
+    edges.forEach(edge => {
+      neighbours.get(edge.to).push(edge.from);
+      neighbours.get(edge.from).push(edge.to);
+    });
+    // Then settle the order inside each column against the columns beside
+    // it, so a wire runs to the card across from it rather than diagonally
+    // over the whole canvas.
+    const slot=new Map();
+    layers.forEach(layer => layer?.forEach(
+      (node,index) => slot.set(node.id,index)));
+    for (let sweep=0; sweep<4; sweep++) {
+      layers.forEach(layer => {
+        if (!layer) return;
+        const pull=new Map(layer.map(node => {
+          const seen=neighbours.get(node.id).filter(id => slot.has(id));
+          if (!seen.length) return [node.id,slot.get(node.id)];
+          return [node.id,seen.reduce(
+            (total,id) => total+slot.get(id),0)/seen.length];
+        }));
+        layer.sort((a,b) => (pull.get(a.id)-pull.get(b.id))
+          || (slot.get(a.id)-slot.get(b.id)));
+        layer.forEach((node,index) => slot.set(node.id,index));
+      });
+    }
+    const positions={};
+    let column=0;
+    layers.forEach(layer => {
+      if (!layer) return;
+      let y=60;
+      layer.forEach(node => {
+        positions[node.id]={x:60+column*columnStep,y};
+        y+=projectedNodeHeight(node,projection)+56;
+      });
+      column+=1;
+    });
+    const parkedColumn=column+(column ? 1 : 0);
+    parked.forEach((node,index) => {
+      positions[node.id]={
+        x:60+(parkedColumn+(index % Math.max(1,columns)))*columnStep,
+        y:60+Math.floor(index/Math.max(1,columns))*rowStep,
+      };
+    });
+    return positions;
+  }
   function positionCanvasPort(
     port,button,ports,cardHeight,projection=lastProjection
   ) {
@@ -2680,6 +2761,21 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const usable=Math.max(24,cardHeight-48);
     const center=34+(compact.indexOf(port)+1)*usable/(compact.length+1);
     button.style.top=(center-12)+'px';
+    // A socket is 25px tall in the graph's stylesheet and its neighbour
+    // sits 16px below it, so 295 of 355 sockets overlapped the one above
+    // -- the edge of a busy card read as one smear and no single socket
+    // could be aimed at. Each takes the room it is actually given, and
+    // never less than a pointer can hit.
+    const pitch=usable/(compact.length+1);
+    const height=Math.max(10,Math.min(25,Math.floor(pitch)-2));
+    // min-height, not height alone: the graph-held stylesheet floors every
+    // socket at --component-socket-target-size (24px), and a height cannot
+    // argue with a minimum -- the sockets stayed 24px tall and kept
+    // overlapping while their inline height read 14px.
+    button.style.height=height+'px';
+    button.style.minHeight=height+'px';
+    button.style.lineHeight=height+'px';
+    button.style.top=(center-height/2)+'px';
   }
   function projectedBounds(projection) {
     if (!projection.nodes.length) {

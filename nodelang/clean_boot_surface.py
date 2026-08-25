@@ -91,13 +91,13 @@ async function tick(){
     if(!answer.ok){throw new Error('boot surface has handed over');}
     const state=await answer.json();
     missed=0;
-    if(state.done){location.reload();return;}
+    if(state.done){setTimeout(()=>location.reload(),250);return;}
     const live=state.phases.filter(p=>p.seconds===null).at(-1);
     document.getElementById('phase').textContent=live?live.label:'opening the graph';
     document.getElementById('elapsed').textContent=state.elapsed+'s';
   }catch(error){
     missed+=1;
-    if(missed>=3){location.reload();return;}
+    if(missed>=3){setTimeout(()=>location.reload(),250);return;}
   }
   setTimeout(tick,500);
 }
@@ -107,6 +107,13 @@ tick();
 
 
 class _BootHandler(BaseHTTPRequestHandler):
+    # HTTP/1.1 so a browser gets a Content-Length and does not wait, but
+    # never a kept-alive connection. Handing the port over closes the
+    # LISTENING socket; a connection already open outlives it, and the
+    # boot page went on being answered by a server that no longer owned
+    # the port -- measured at 9,711 polls over 302 seconds, reloading
+    # itself every twelve milliseconds and never once reaching the canvas.
+    # A connection that ends with its answer cannot outlive the handover.
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *_args) -> None:
@@ -128,8 +135,10 @@ class _BootHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
+        self.close_connection = True
 
     def do_POST(self) -> None:  # noqa: N802
         self.do_GET()

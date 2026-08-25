@@ -39683,9 +39683,39 @@ def _set_universal_scope_execution(
         if previous is not None and previous != cell:
             raise InvalidCell("scope transition patches conflict")
         replacements[cell.id] = cell
+    # Entering a level changes which properties are active, and the
+    # Properties lens was written once when the view session was
+    # provisioned. Every scope entry therefore left the lens describing the
+    # level the operator came FROM, and the next projection refused with
+    # "active canvas properties leave the Properties lens". The lens is
+    # extended here, in the same commit as the transition, because this is
+    # the write that changes what is active -- a projection that repaired
+    # it would be a read with a side effect.
+    lens_scopes = {
+        member.participant_id
+        for member in read_relation(
+            snapshot, view_session.properties_lens_root, budget=100_000
+        )
+        if member.role_id == registry.roles["scope"]
+    }
+    lens_patch = prepare_append_relation_members(
+        snapshot,
+        view_session.properties_lens_root,
+        tuple(
+            (registry.roles["scope"], root)
+            for root in property_roots
+            if root not in lens_scopes
+        ),
+        budget=100_000,
+    )
+    for cell in lens_patch.replace:
+        previous = replacements.get(cell.id)
+        if previous is not None and previous != cell:
+            raise InvalidCell("scope transition patches conflict")
+        replacements[cell.id] = cell
     revision = store.commit(
         snapshot.revision,
-        create=selection_transition.create,
+        create=(*selection_transition.create, *lens_patch.create),
         replace=tuple(replacements.values()),
     )
     return UniversalScopeExecution(

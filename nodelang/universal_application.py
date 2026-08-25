@@ -18354,6 +18354,37 @@ def _ensure_view_visibility_scope_projection(
     if markers:
         if indexed_relations != canonical_relations:
             raise InvalidCell("persisted visibility relation projection drifted")
+        # A property the scope has gained is not drift. Before the marker
+        # exists this function APPENDS canonical members; after it exists
+        # it only verified, so the index could never absorb a property the
+        # scope legitimately acquired -- restoring a runner adds one, and
+        # the refusal was permanent from that moment. Growth is indexed;
+        # what the index holds and the scope no longer has is still drift,
+        # and the subset check below still says so.
+        unindexed = tuple(
+            root for root in canonical_properties
+            if root not in set(indexed_properties)
+        )
+        if unindexed:
+            growth = prepare_append_relation_members(
+                snapshot,
+                view_session.visibility_root,
+                ((registry.roles["property"], root) for root in unindexed),
+                budget=100_000,
+            )
+            store.commit(
+                snapshot.revision,
+                create=growth.create,
+                replace=growth.replace,
+            )
+            snapshot = store.snapshot()
+            members = read_relation(
+                snapshot, view_session.visibility_root, budget=100_000
+            )
+            indexed_properties = tuple(
+                member.participant_id for member in members
+                if member.role_id == registry.roles["property"]
+            )
         if not set(canonical_properties).issubset(indexed_properties):
             raise InvalidCell("persisted visibility property projection drifted")
         if set(indexed_interfaces) != set(canonical_interfaces):

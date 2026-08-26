@@ -4980,6 +4980,18 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     }
     selectedWire=wire.dataset.universalRelation || null;
     paintSelectedWire();
+    // And tell the GRAPH which wire is held. The projection attaches a
+    // wire's disconnect_control only to the wire it marks selected, and
+    // this pick lived in the page alone -- so no wire was ever selected
+    // in the graph, no wire ever carried a disconnect control, and Delete
+    // on a wire could not act. A relation is a member of the scope like a
+    // card is, and the same commit carries it.
+    if (selectedWire) {
+      commit({roots:[selectedWire],focus:selectedWire}).catch(error => {
+        showInteractionStatus(
+          error.message || 'The wire could not be selected.');
+      });
+    }
   },true);
   document.addEventListener('mouseover', event => {
     const card=closestElement(event.target,'[data-universal-root]');

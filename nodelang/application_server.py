@@ -5797,7 +5797,29 @@ class ApplicationServer:
             csrf_token,
             interaction_projection_handle,
         )
+        # A binding whose graph session is no longer active is dead weight
+        # that never leaves: entries were added here and at recovery, and
+        # removed only at shutdown, so every expired sign-in pinned its
+        # whole held projection for the life of the process. Minting is
+        # when the dict grows, so minting is when the dead are buried.
+        protocol = self.universal_registry.browser_session_protocol
         with self._browser_session_lock:
+            held = dict(self._browser_sessions)
+        stale = []
+        snapshot = self.universal_store.snapshot()
+        for digest, candidate in held.items():
+            try:
+                session = read_browser_session(
+                    snapshot, protocol, candidate.session_root
+                )
+            except Exception:
+                stale.append(digest)
+                continue
+            if session.state_root != protocol.states["active"]:
+                stale.append(digest)
+        with self._browser_session_lock:
+            for digest in stale:
+                self._browser_sessions.pop(digest, None)
             self._browser_sessions[self._browser_token_digest(token)] = binding
         return binding
 

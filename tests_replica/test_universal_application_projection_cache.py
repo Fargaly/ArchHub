@@ -118,7 +118,13 @@ def test_visible_scope_cache_is_revision_exact_and_request_local(monkeypatch):
     view_session = registry.view_sessions[
         registry.authorization.subject_root
     ]
-    original = application_module._canvas_scope_for_assigned
+    # The court holds that the scope derivation runs once per request
+    # scope, and its counter must sit on the derivation this path actually
+    # performs. _session_canvas_roots reads the graph-held visibility
+    # projection; counting _canvas_scope_for_assigned -- which only the
+    # provisioning and verification paths call -- measured a function this
+    # path never enters, so the count was zero however the cache behaved.
+    original = application_module._visibility_scope_projection
     calls = 0
 
     def counted(*args, **kwargs):
@@ -127,7 +133,7 @@ def test_visible_scope_cache_is_revision_exact_and_request_local(monkeypatch):
         return original(*args, **kwargs)
 
     monkeypatch.setattr(
-        application_module, "_canvas_scope_for_assigned", counted
+        application_module, "_visibility_scope_projection", counted
     )
 
     @application_module.with_session_canvas_roots_scope

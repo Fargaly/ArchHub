@@ -20743,11 +20743,25 @@ def _project_universal_canvas_interpreter(
         # Reconciliation is repair, not refusal. A tampered index must be
         # refused by the validator that names the violated law -- "signed
         # projection grants" -- so a reconcile that cannot proceed steps
-        # aside and lets the projection's own checks answer.
-        try:
-            _ensure_visibility_scope_projections(store, registry)
-        except InvalidCell:
-            pass
+        # aside and lets the projection's own checks answer. And repair
+        # runs when the canvas's registered surface actually MOVED, not on
+        # every read: unconditional, it re-projected every retired exact
+        # interface per projection, which the active-inspector court
+        # counts and refuses. The trigger is the application relation's
+        # membership -- the thing growth changes -- read, never projected.
+        surface = tuple(
+            (member.role_id, member.participant_id)
+            for member in read_relation(
+                store.snapshot(), registry.application_root, budget=100_000
+            )
+        )
+        if getattr(store, "_visibility_reconcile_surface", None) != surface:
+            try:
+                _ensure_visibility_scope_projections(store, registry)
+            except InvalidCell:
+                pass
+            else:
+                store._visibility_reconcile_surface = surface
     snapshot = (
         store.dense_snapshot()
         if scope_materialization is None

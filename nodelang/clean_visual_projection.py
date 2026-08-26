@@ -1075,7 +1075,15 @@ def _project_clean_visual_canvas_unscoped(
         authority,
         caller,
         {
-            "scope-parent-present": bool(lens.get("scope_parent_root")),
+            # The lens carries no scope_parent_root and never has, so
+            # this fact was False in every scope and the graph's own Up
+            # control could not appear anywhere -- entering a domain left
+            # only the breadcrumb as a way back, and SPEC 7.8 forbids a
+            # control that cannot apply. The parent is the door this
+            # scope was entered through, which is what Up returns to.
+            "scope-parent-present": bool(
+                door_root and door_root != lens["scope_root"]
+            ),
             "selection-count": len(lens.get("selected_roots") or ()),
             "focus-is-composition": _focus_is_composition(lens),
             # Whether the focused node declares a host operation, read from

@@ -1806,8 +1806,22 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     if (!Array.isArray(bindings)) return null;
     return bindings.find(binding => binding.control === controlRoot) || null;
   }
+  // The way back, as the graph declares it. Opening the scope above is
+  // an interaction the graph derives for the door -- which is what the
+  // breadcrumb presses -- and the toolbar's Up button carries its own
+  // control root, for which no interaction exists. The button therefore
+  // rendered disabled in every scope and the crumb was the only exit.
+  // Up is the same act on the same declared interaction, not a second one.
+  function scopeUpInteraction(projection=lastProjection) {
+    const trail=projection?.scope?.trail;
+    if (!Array.isArray(trail) || trail.length < 2) return null;
+    const above=[...trail].reverse().find(entry => !entry.current);
+    return above ? projectedInteraction(above.root,projection) : null;
+  }
   function bindProjectedInteraction(control,controlRoot) {
-    const binding=projectedInteraction(controlRoot);
+    const binding=projectedInteraction(controlRoot)
+      || (controlRoot === 'app:control:canvas:scope-up'
+        ? scopeUpInteraction() : null);
     if (!binding) {
       // A control the graph declared no interaction for cannot act -- with
       // one honest exception: a control whose capability is served by this

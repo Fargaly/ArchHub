@@ -1029,6 +1029,22 @@ class _CleanAuthorityHttpServer:
             caller=self.clean_caller,
             command_id=str(_uuid.uuid4()),
         )
+        # What you just placed is what you are holding. The focus was left
+        # on whatever had been selected before, so the very next Delete
+        # removed THAT -- two cards, in the founder's own graph, while the
+        # node just placed stayed. Group already moves the focus to what it
+        # produced; placing does the same.
+        from .clean_browser_authority import revise_clean_browser_focus
+        revise_clean_browser_focus(
+            self.clean_authority,
+            self.clean_browser_authority,
+            binding.session_root,
+            scope_root=self.clean_scope_root,
+            selected_roots=[created.root_id],
+            primary_root=created.root_id,
+            caller=self.clean_caller,
+            command_id=str(_uuid.uuid4()),
+        )
         self._refresh_scope_interactions()
         payload = self._canvas(binding)
         payload.update({

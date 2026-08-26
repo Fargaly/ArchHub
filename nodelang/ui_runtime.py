@@ -4813,6 +4813,41 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
   });
   document.addEventListener('change', async event => {
     if (projectionReconciliationDepth > 0) return;
+    const contractRole=closestElement(event.target,'[data-universal-contract-role]');
+    if (contractRole && lastProjection) {
+      if (!contractRole.dataset.universalInteraction) {
+        throw new Error('Relation participant Interaction is missing');
+      }
+      await executeProjectedInteraction(
+        contractRole,interactionDeltaMode,{
+          participantIndex:contractRole.selectedIndex,
+        });
+      return;
+    }
+    // An interaction the GRAPH declares on this input is the way the
+    // graph says this property is edited, and it goes first. The rail
+    // shortcut below signs the same revision by a route the client
+    // invented, and it was reached first -- so wherever the graph
+    // declared an interaction, the client's own path pre-empted it and
+    // the declared control never ran.
+    const property=closestElement(event.target,
+      '[data-universal-event-fact-input][data-universal-control]');
+    if (property) {
+      await executeProjectedInteraction(property); return;
+    }
+    // An edited property whose input does not itself carry the control
+    // still belongs to an interaction scope, and that scope names it --
+    // which is how the Enter key already finds it. Requiring the control
+    // on the input meant such a property could be typed into and changed
+    // and nothing was ever sent: the edit was silently dropped.
+    const scoped=closestElement(event.target,
+      '[data-universal-event-fact-input]');
+    const scopedControl=scoped?.closest(
+      '[data-universal-interaction-scope]')?.querySelector(
+        'button[data-universal-control]');
+    if (scoped && scopedControl) {
+      await executeProjectedInteraction(scopedControl); return;
+    }
     // A rail field edit: the input's ui-key names the property row,
     // the row names its owner and label, and the gesture path signs
     // the same revise-instance the stem runner lands answers with.
@@ -4830,22 +4865,6 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         if (answer) render(answer);
         return;
       }
-    }
-    const contractRole=closestElement(event.target,'[data-universal-contract-role]');
-    if (contractRole && lastProjection) {
-      if (!contractRole.dataset.universalInteraction) {
-        throw new Error('Relation participant Interaction is missing');
-      }
-      await executeProjectedInteraction(
-        contractRole,interactionDeltaMode,{
-          participantIndex:contractRole.selectedIndex,
-        });
-      return;
-    }
-    const property=closestElement(event.target,
-      '[data-universal-event-fact-input][data-universal-control]');
-    if (property) {
-      await executeProjectedInteraction(property); return;
     }
     const incidence=closestElement(event.target,'[data-universal-incidence]');
     if (incidence) {

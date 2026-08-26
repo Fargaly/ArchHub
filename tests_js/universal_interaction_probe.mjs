@@ -1748,7 +1748,15 @@ async function waitUntil(predicate, timeoutMs = 3000) {
   const started = performance.now();
   while (!predicate()) {
     if (performance.now() - started > timeoutMs) {
-      throw new Error('rendered-DOM condition timed out');
+      // Which condition timed out, and what the client actually asked for
+      // while it did not come true. "rendered-DOM condition timed out"
+      // alone names neither, and every court that fails this way then
+      // costs a bisect to say what a line of output could have.
+      const asked = requests.map(item => item.route.split('/').pop());
+      throw new Error(
+        'rendered-DOM condition timed out: ' + String(predicate)
+        + ' | requests: ' + (asked.join(',') || 'none')
+      );
     }
     await new Promise(resolve => window.setTimeout(resolve, 1));
   }

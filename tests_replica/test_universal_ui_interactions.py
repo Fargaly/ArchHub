@@ -993,11 +993,17 @@ def test_rejected_wire_is_explained_in_the_visible_status(rendered_application):
 
 
 def test_delete_detaches_the_selected_binary_wire_and_reconciles_topology(
-    rendered_application,
+    rendered_connection_application,
 ):
-    _page, projection = rendered_application
+    # The court is about the SELECTED wire, and the projection only gives a
+    # wire its disconnect control while it is selected. rendered_application
+    # selects nothing -- its selected_relation is None and every
+    # disconnect_control is absent -- so the Delete it pressed could never
+    # produce the request this court waits for.
+    _page, projection = rendered_connection_application
     selected_wire = next(wire for wire in projection["wires"] if not wire["nary"])
-    result = _probe(rendered_application, "wire_delete")
+    assert selected_wire["selected"] is True
+    result = _probe(rendered_connection_application, "wire_delete")
     request = result["disconnectRequest"]
     assert request["route"] == "/api/universal/interaction"
     assert request["payload"] == {

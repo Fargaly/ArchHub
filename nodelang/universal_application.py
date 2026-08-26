@@ -20740,7 +20740,14 @@ def _project_universal_canvas_interpreter(
     # reads each view's index and commits nothing unless the graph has
     # already moved underneath it.
     if scope_materialization is None:
-        _ensure_visibility_scope_projections(store, registry)
+        # Reconciliation is repair, not refusal. A tampered index must be
+        # refused by the validator that names the violated law -- "signed
+        # projection grants" -- so a reconcile that cannot proceed steps
+        # aside and lets the projection's own checks answer.
+        try:
+            _ensure_visibility_scope_projections(store, registry)
+        except InvalidCell:
+            pass
     snapshot = (
         store.dense_snapshot()
         if scope_materialization is None

@@ -15,17 +15,41 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .cell_adapters import bootstrap_adapter_protocol
-from .cell_connector_execution import (
-    bootstrap_baboom_connector_execution_protocol,
+# Which applications ArchHub reaches and which documents it reads is a
+# product boundary, not legacy behavior -- so the fact lives here, in the
+# module whose whole job is publishing it, and the legacy bridge imports
+# it from here. It sat inside cell_legacy_core_nodes, which made this
+# module the one normal-runtime importer of a legacy interpreter and kept
+# the floor court red.
+HOST_FAMILIES = (
+    "revit",
+    "autocad",
+    "blender",
+    "rhino",
+    "max",
+    "speckle",
+    "outlook",
 )
-from .cell_legacy_core_nodes import (
-    DOC_FAMILIES,
-    HOST_FAMILIES,
-    build_legacy_core_node_authority,
+DOC_FAMILIES = (
+    "revit",
+    "dwg",
+    "ifc",
+    "blender",
+    "3dm",
+    "max",
+    "csv",
+    "pdf",
 )
-from .cell_model_execution import bootstrap_baboom_model_execution_protocol
-from .universal_cell import CellStore
+
+
+def host_operation(family: str) -> str:
+    """The single name a host family's dispatch is registered under."""
+    return "host.%s.dispatch" % family
+
+
+def document_operation(family: str) -> str:
+    """The single name a document family's read is registered under."""
+    return "document.%s.read" % family
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,21 +60,18 @@ class CleanHostBoundaries:
 
 
 def compose_host_boundaries() -> CleanHostBoundaries:
-    """Read every boundary without writing to any real graph."""
-    scratch = CellStore()
-    adapters = bootstrap_adapter_protocol(scratch)
-    connectors = bootstrap_baboom_connector_execution_protocol(scratch)
-    models = bootstrap_baboom_model_execution_protocol(scratch)
-    authority = build_legacy_core_node_authority(
-        scratch, adapters, connectors, models
-    )
+    """The boundary catalogue, from the declared fact.
+
+    This used to bootstrap three protocols into a scratch store and build
+    the whole legacy provider authority just to read back names declared
+    right here. The bridge court holds that the providers the legacy
+    build registers match these families and these operation names, so
+    building them again proved nothing the court does not already.
+    """
     return CleanHostBoundaries(
-        tuple(sorted(authority.host_providers)),
-        tuple(sorted(authority.document_providers)),
-        {
-            family: provider.operation
-            for family, provider in sorted(authority.host_providers.items())
-        },
+        tuple(sorted(HOST_FAMILIES)),
+        tuple(sorted(DOC_FAMILIES)),
+        {family: host_operation(family) for family in sorted(HOST_FAMILIES)},
     )
 
 

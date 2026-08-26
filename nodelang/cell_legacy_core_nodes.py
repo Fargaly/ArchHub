@@ -33,24 +33,14 @@ from .cell_protocols import read_relation
 from .universal_cell import CellStore, InvalidCell
 
 
-HOST_FAMILIES = (
-    "revit",
-    "autocad",
-    "blender",
-    "rhino",
-    "max",
-    "speckle",
-    "outlook",
-)
-DOC_FAMILIES = (
-    "revit",
-    "dwg",
-    "ifc",
-    "blender",
-    "3dm",
-    "max",
-    "csv",
-    "pdf",
+# The boundary fact is product state and lives with the module that
+# publishes it; this bridge re-exports it so its own courts and callers
+# keep their names.
+from .clean_host_boundaries import (  # noqa: E402
+    DOC_FAMILIES,
+    HOST_FAMILIES,
+    document_operation,
+    host_operation,
 )
 _CONNECTOR_CATALOG_ROOT = "legacy-core-node:adapter-catalog:connector:v1"
 _MODEL_CATALOG_ROOT = "legacy-core-node:adapter-catalog:model:v1"
@@ -162,7 +152,7 @@ def build_legacy_core_node_authority(
             action_root=action,
             location_root=location,
             datatype_roots=datatypes,
-            operation="host.%s.dispatch" % family,
+            operation=host_operation(family),
         )
         connector_adapter_roots.append(adapter.root_id)
     for family in DOC_FAMILIES:
@@ -192,7 +182,7 @@ def build_legacy_core_node_authority(
             action_root=action,
             location_root=location,
             datatype_roots=datatypes,
-            operation="document.%s.read" % family,
+            operation=document_operation(family),
         )
         connector_adapter_roots.append(adapter.root_id)
     if _CONNECTOR_CATALOG_ROOT not in store.snapshot().cells:

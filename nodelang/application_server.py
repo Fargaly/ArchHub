@@ -1413,6 +1413,11 @@ class _CleanAuthorityHttpServer:
             "viewport",
             "roots",
             "focus",
+            # Taking back the last act. It carries no facts of its own --
+            # what to reverse is what this owner recorded when it signed
+            # the act -- so it needs no control and no declared
+            # interaction, which is what kept Undo off this canvas.
+            "undo",
             "projection",
             "projection_mode",
             "projection_revision",
@@ -1427,6 +1432,8 @@ class _CleanAuthorityHttpServer:
         positions = body.get("positions")
         viewport = body.get("viewport")
         roots = body.get("roots")
+        if body.get("undo"):
+            return self._clean_undo(binding)
         removing = body.get("delete")
         if isinstance(removing, list) and removing:
             import uuid as _uuid
@@ -1465,6 +1472,7 @@ class _CleanAuthorityHttpServer:
                 }
                 if participants & leaving:
                     leaving.add(relation.root_id)
+            released = []
             for root in sorted(leaving):
                 if root not in members:
                     continue
@@ -1475,6 +1483,15 @@ class _CleanAuthorityHttpServer:
                     caller=self.clean_caller,
                     command_id=str(_uuid.uuid4()),
                 )
+                released.append(root)
+            # Taking a card off the canvas is the act most needed back.
+            # Its inverse is the command that put it there.
+            self._undo_entry = {
+                "kind": "restore-members",
+                "scope": self.clean_scope_root,
+                "roots": tuple(released),
+                "selection": tuple(visible_selection),
+            } if released else None
             # A selection is a claim about what this scope shows, and the
             # projection refuses one that names a root the scope no longer
             # holds -- rightly. Deleting the selected card therefore took
@@ -1779,6 +1796,49 @@ class _CleanAuthorityHttpServer:
         # What this view now holds is the full projection just built.
         self._remember_view_projection(binding, projection)
         return delta
+
+    def _clean_undo(self, binding):
+        """Take back the last canvas act, as its inverse.
+
+        The journal is append-only: nothing is rewound. What the scope
+        released is added back by add_composition_member -- the exact
+        signed inverse of the remove that released it -- and the selection
+        held at the time returns with it.
+        """
+        import uuid as _uuid
+
+        from .unified_authority import add_composition_member
+
+        entry = getattr(self, "_undo_entry", None)
+        if entry is None:
+            raise InvalidCell("there is nothing on this canvas to undo")
+        if entry["kind"] != "restore-members":
+            raise InvalidCell("this act cannot be taken back yet")
+        for root in entry["roots"]:
+            add_composition_member(
+                self.clean_authority,
+                entry["scope"],
+                root,
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+        held = [root for root in entry["selection"] if root]
+        if held:
+            from .clean_browser_authority import revise_clean_browser_focus
+            revise_clean_browser_focus(
+                self.clean_authority,
+                self.clean_browser_authority,
+                binding.session_root,
+                scope_root=entry["scope"],
+                selected_roots=held,
+                primary_root=held[-1],
+                caller=self.clean_caller,
+                command_id=str(_uuid.uuid4()),
+            )
+        # One step deep: what was just put back is not itself undoable.
+        self._undo_entry = None
+        self._refresh_scope_interactions()
+        return self._canvas(binding)
 
     def _clean_group_or_ungroup(self, binding, body, control_root):
         """Group the current selection, or dissolve the focused group.
@@ -2276,6 +2336,10 @@ class _CleanAuthorityHttpServer:
             subject_root=binding.subject_root,
             interactions=self.clean_scope_interactions,
             door_root=self.clean_scope_root,
+            # getattr, not attribute access: this projection is built on
+            # more than one owner shape, and an AttributeError here is
+            # swallowed by the reuse path's except and retried forever.
+            can_undo=getattr(self, "_undo_entry", None) is not None,
             door_label=self._door_label(snapshot),
         )
         _t3 = _time.perf_counter()
@@ -2983,6 +3047,10 @@ class _CleanAuthorityHttpServer:
                                 )
                                 self._json(200, {"ok": True, **payload})
                                 return
+                            if capability == CAPABILITY_HISTORY:
+                                payload = owner._clean_undo(probe)
+                                self._json(200, {"ok": True, **payload})
+                                return
                             binding = owner._resolve_binding(
                                 self._token(),
                                 csrf_token=csrf_token,
@@ -3500,6 +3568,10 @@ class ApplicationServer:
         )
         self.browser_bootstrap_token = secrets.token_urlsafe(32)
         self._browser_sessions = {}
+        # What the last canvas gesture would take to reverse. The journal is
+        # append-only by design, so undo is never a rollback: it is the
+        # inverse gesture through the same signed commands.
+        self._undo_entry = None
         self._browser_session_lock = threading.RLock()
         self._browser_canvas_projections: dict[
             str, _BrowserCanvasProjectionBinding

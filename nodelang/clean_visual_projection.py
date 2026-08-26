@@ -795,6 +795,7 @@ def _project_clean_visual_canvas_unscoped(
     subject_root: str,
     interactions: CleanScopeInteractions | None = None,
     door_root: str | None = None,
+    can_undo: bool = False,
     door_label: str | None = None,
 ) -> dict[str, object]:
     selected_root = lens.get("selected_root")
@@ -1092,7 +1093,10 @@ def _project_clean_visual_canvas_unscoped(
             "focus-is-operation": _focus_declares_operation(
                 lens, declared_by_definition
             ),
-            "can-undo": False,
+            # Whether the last canvas act can be taken back. This was
+            # hardcoded False, so the graph's Undo control could never
+            # become applicable and nothing on this canvas was reversible.
+            "can-undo": bool(can_undo),
             "can-redo": False,
         },
     )
@@ -1506,6 +1510,7 @@ def project_clean_visual_canvas(
     subject_root: str,
     interactions: CleanScopeInteractions | None = None,
     door_root: str | None = None,
+    can_undo: bool = False,
     door_label: str | None = None,
 ) -> dict[str, object]:
     """One projection request shares one template-plan cache.
@@ -1529,5 +1534,6 @@ def project_clean_visual_canvas(
             subject_root=subject_root,
             interactions=interactions,
             door_root=door_root,
+            can_undo=can_undo,
             door_label=door_label,
         )

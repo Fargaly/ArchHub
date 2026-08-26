@@ -4920,6 +4920,21 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         .catch(error => showInteractionStatus(String(error.message || error)));
       return;
     }
+    // Take back the last act. The toolbar's Undo carries a control the
+    // graph declares no interaction for, so the key press asks for the
+    // act itself rather than pressing a button that cannot act.
+    if (
+      (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z'
+      && !event.shiftKey
+      && !closestElement(event.target,'input,textarea,select') && lastProjection
+    ) {
+      event.preventDefault();
+      universalMutation('/api/universal/gesture',() => ({undo:true}))
+        .then(answer => { if (answer) render(answer); })
+        .catch(error => showInteractionStatus(
+          error.message || 'There is nothing to take back.'));
+      return;
+    }
     if (
       (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g'
       && !closestElement(event.target,'input,textarea,select') && lastProjection

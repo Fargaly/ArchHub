@@ -17314,8 +17314,19 @@ def _ensure_canvas_domain_public_interfaces(
             public_root = _domain_canvas_public_interface_root(
                 owner_root, side
             )
+            # The governed-work scope interface is a standing released
+            # interface, not a per-relation socket: its cable folds into
+            # the public boundary like any other, but the interface
+            # itself is never a migration source -- retiring it from the
+            # application registry left it indexed in every view's
+            # visibility with no registered owner.
+            standing = endpoint.participant_id == (
+                _governed_work_scope_interface_root(owner_root)
+            )
             previous = tuple(str(root) for root in (
-                interface["previous_roots"]
+                ()
+                if standing
+                else interface["previous_roots"]
                 if endpoint.participant_id == public_root
                 else (endpoint.participant_id,)
             ))
@@ -18387,6 +18398,34 @@ def _ensure_view_visibility_scope_projection(
             )
         if not set(canonical_properties).issubset(indexed_properties):
             raise InvalidCell("persisted visibility property projection drifted")
+        # Interfaces the scope gained are indexed the same way the
+        # properties above are: growth is what a growing canvas does.
+        # What the index holds and the canon no longer has is still
+        # drift, and still refuses below.
+        gained = tuple(
+            root for root in canonical_interfaces
+            if root not in set(indexed_interfaces)
+        )
+        if gained:
+            interface_growth = prepare_append_relation_members(
+                snapshot,
+                view_session.visibility_root,
+                ((interface_role, root) for root in gained),
+                budget=100_000,
+            )
+            store.commit(
+                snapshot.revision,
+                create=interface_growth.create,
+                replace=interface_growth.replace,
+            )
+            snapshot = store.snapshot()
+            members = read_relation(
+                snapshot, view_session.visibility_root, budget=100_000
+            )
+            indexed_interfaces = tuple(
+                member.participant_id for member in members
+                if member.role_id == interface_role
+            )
         if set(indexed_interfaces) != set(canonical_interfaces):
             raise InvalidCell("persisted visibility interface projection drifted")
         _visibility_scope_projection(snapshot, registry, view_session)
@@ -20694,6 +20733,14 @@ def _project_universal_canvas_interpreter(
     reusable_scope_projection: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Interpret the graph-defined canvas and Properties lens for the browser."""
+    # A live canvas grows -- governed work arrives, interfaces migrate --
+    # and the view visibility indexes were reconciled only at build time,
+    # so the first projection after any growth refused with "visibility
+    # interface projection is incomplete". Reconciling is idempotent: it
+    # reads each view's index and commits nothing unless the graph has
+    # already moved underneath it.
+    if scope_materialization is None:
+        _ensure_visibility_scope_projections(store, registry)
     snapshot = (
         store.dense_snapshot()
         if scope_materialization is None
@@ -39513,17 +39560,40 @@ def _set_universal_scope_execution(
         relation_reuse_fingerprint = relation_projection_fingerprint(
             relation_projections
         )
+        # Descending is the other write that changes which properties are
+        # active, and it returned before the ascend path's lens growth --
+        # so entering a composition still left the Properties lens
+        # describing the level above it. Same duty, same commit.
+        descend_lens_scopes = {
+            member.participant_id
+            for member in read_relation(
+                snapshot, view_session.properties_lens_root, budget=100_000
+            )
+            if member.role_id == registry.roles["scope"]
+        }
+        descend_lens_patch = prepare_append_relation_members(
+            snapshot,
+            view_session.properties_lens_root,
+            tuple(
+                (registry.roles["scope"], root)
+                for root in next_properties
+                if root not in descend_lens_scopes
+            ),
+            budget=100_000,
+        )
         revision = store.commit(
             snapshot.revision,
             create=(
                 *selection_transition.create,
                 *trail_patch.create,
                 *selection_patch.create,
+                *descend_lens_patch.create,
             ),
             replace=(
                 *trail_patch.replace,
                 *selection_patch.replace,
                 *selection_transition.replace,
+                *descend_lens_patch.replace,
             ),
         )
         return UniversalScopeExecution(

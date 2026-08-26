@@ -4635,8 +4635,13 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // and looked them up among sockets keyed by their own id, so nothing
     // ever matched: dragging a wire told the founder nothing about where
     // it could go.
+    // A choice names the socket it may land on either as its own id --
+    // the interface root, which is what a socket is keyed by -- or, where
+    // one interface is drawn as several sockets, as an explicit socket.
+    // Reading only the explicit one lit nothing at all wherever the
+    // projection did not draw that distinction.
     markWireTargets(new Set(choices
-      .map(choice => choice.socket)
+      .map(choice => choice.socket || choice.id)
       .filter(socket => typeof socket === 'string' && socket)));
     output.setPointerCapture?.(event.pointerId);
   });

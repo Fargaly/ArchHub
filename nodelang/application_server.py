@@ -1484,8 +1484,12 @@ class _CleanAuthorityHttpServer:
                     command_id=str(_uuid.uuid4()),
                 )
                 released.append(root)
-            # Taking a card off the canvas is the act most needed back.
-            # Its inverse is the command that put it there.
+            # What would reverse this. It is recorded even though the
+            # graph will not yet permit the reversal: policy proves an act
+            # only on a root REACHABLE within the claimed scope, and a
+            # released root belongs nowhere. Folding the roots into one
+            # holder first was tried -- the holder is released too, so it
+            # is unreachable by exactly the same rule.
             self._undo_entry = {
                 "kind": "restore-members",
                 "scope": self.clean_scope_root,
@@ -1812,16 +1816,52 @@ class _CleanAuthorityHttpServer:
         entry = getattr(self, "_undo_entry", None)
         if entry is None:
             raise InvalidCell("there is nothing on this canvas to undo")
-        if entry["kind"] != "restore-members":
+        if entry["kind"] not in ("restore-members", "restore-group"):
             raise InvalidCell("this act cannot be taken back yet")
-        for root in entry["roots"]:
-            add_composition_member(
-                self.clean_authority,
-                entry["scope"],
-                root,
-                caller=self.clean_caller,
-                command_id=str(_uuid.uuid4()),
-            )
+        # Policy proves an act on a root REACHABLE within the claimed
+        # scope, and a released root belongs nowhere -- which is why
+        # ungroup adopts before it releases. Undo cannot reorder history,
+        # so it re-adopts in passes: whatever the scope will take makes
+        # the next one reachable, and the loop ends when a pass adds
+        # nothing. What no pass can reach is reported, not swallowed.
+        pending = list(entry["roots"])
+        denied = None
+        while pending:
+            progressed = []
+            for root in list(pending):
+                try:
+                    add_composition_member(
+                        self.clean_authority,
+                        entry["scope"],
+                        root,
+                        caller=self.clean_caller,
+                        command_id=str(_uuid.uuid4()),
+                    )
+                except InvalidCell as error:
+                    if "already a member" in str(error):
+                        progressed.append(root)
+                        continue
+                    denied = error
+                    continue
+                progressed.append(root)
+            if not progressed:
+                raise denied if denied is not None else InvalidCell(
+                    "the scope will not take these roots back"
+                )
+            pending = [root for root in pending if root not in progressed]
+            denied = None
+        if entry["kind"] == "restore-group":
+            # The holder is back in the scope; dissolving it returns every
+            # card it was carrying, by the same command Ungroup uses.
+            from .unified_authority import ungroup_composition
+            for root in entry["roots"]:
+                ungroup_composition(
+                    self.clean_authority,
+                    entry["scope"],
+                    root,
+                    caller=self.clean_caller,
+                    command_id=str(_uuid.uuid4()),
+                )
         held = [root for root in entry["selection"] if root]
         if held:
             from .clean_browser_authority import revise_clean_browser_focus

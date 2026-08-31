@@ -142,7 +142,11 @@ def compose_canvas_card_template(
             "value-without-status",
             "choose",
             openable,
-            literal("open-hint", "Double-click to open"),
+            # An openable card states WHAT it holds, like every other card;
+            # "Double-click to open" was an instruction manual printed on
+            # the product. The affordance lives in the cursor and the
+            # double-click itself.
+            cell_value,
             expression(
                 "value-structural", "choose",
                 assembly_present, assembly_value, cell_value,

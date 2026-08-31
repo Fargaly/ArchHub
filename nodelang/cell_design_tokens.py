@@ -17,6 +17,22 @@ from .cell_protocols import compose_relation_cells, read_relation
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
 
+from .cell_accessibility import (
+    DEFAULT_OVERLAY as DEFAULT_OVERLAY_NAME,
+    OVERLAYS as _OVERLAYS,
+    ensure_active_overlay,
+    project_accessibility_modifier,
+)
+from .cell_theme_sets import (
+    DEFAULT_THEME as DEFAULT_THEME_NAME,
+    THEMES as _THEMES,
+    ensure_active_theme,
+    project_theme_modifier,
+)
+
+THEME_CONTEXT_NAMES = tuple(_THEMES)
+OVERLAY_CONTEXT_NAMES = tuple(_OVERLAYS)
+
 DTCG_VERSION = "2025.10"
 PROTOCOL_PREFIX = "app:design-token-protocol"
 SYSTEM_ROOT = "app:design-token-system"
@@ -69,21 +85,36 @@ SEMANTIC_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType({
         "canvas": "color.bg_canvas",
         "panel": "color.bg_panel",
         "deep": "color.bg_deep",
-        "raised": "color.bg_soft",
+        # The design system holds bg_soft and bg_raised as two different
+        # surfaces; this aliased both to bg_soft, so a raised surface and a
+        # soft one were the same colour and the elevation never read.
+        "raised": "color.bg_raised",
+        "soft": "color.bg_soft",
         "hover": "color.bg_hover",
+        "base": "color.bg",
+        "ink": "color.bg_ink",
     }),
     "text": MappingProxyType({
         "primary": "color.ink",
         "secondary": "color.ink_soft",
         "muted": "color.ink_muted",
+        "dim": "color.ink_dim",
+        # Text sitting ON a filled swatch needs dark ink: white on the accent
+        # measures 3.12:1. The design system names this role; the app had no
+        # token for it, so every filled control guessed.
+        "on-fill": "color.on_fill",
     }),
     "border": MappingProxyType({
         "default": "color.line",
         "subtle": "color.line_soft",
+        "hair": "color.line_hair",
     }),
     "action": MappingProxyType({
         "primary": "color.accent",
         "primary-container": "color.accent_soft",
+        "primary-dim": "color.accent_dim",
+        "primary-hover": "color.accent_hi",
+        "primary-press": "color.accent_press",
     }),
     "state": MappingProxyType({
         "success": "color.ok",
@@ -104,6 +135,22 @@ SEMANTIC_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType({
         "space-1": "size.space-1",
         "space-2": "size.space-2",
         "space-3": "size.space-3",
+        "space-4": "size.space-4",
+        "space-5": "size.space-5",
+        "space-6": "size.space-6",
+        "space-7": "size.space-7",
+        "space-8": "size.space-8",
+        "space-9": "size.space-9",
+        "space-10": "size.space-10",
+        "space-11": "size.space-11",
+        "radius-xs": "size.radius-xs",
+        "radius-sm": "size.radius-sm",
+        "radius-lg": "size.radius-lg",
+        "radius-xl": "size.radius-xl",
+        "radius-pill": "size.radius-pill",
+        "row-comfortable": "size.row-comfortable",
+        "row-compact": "size.row-compact",
+        "row-cozy": "size.row-cozy",
     }),
     "typography": MappingProxyType({
         "ui-family": "font.ui-family",
@@ -114,10 +161,25 @@ SEMANTIC_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType({
         "body-size": "font.body-size",
         "label-size": "font.label-size",
         "line-height": "font.line-height",
+        "display-family": "font.display-family",
+        "hand-family": "font.hand-family",
+        "display-0": "font.display-0",
+        "display-1": "font.display-1",
+        "display-2": "font.display-2",
+        "heading-1": "font.heading-1",
+        "heading-2": "font.heading-2",
+        "heading-3": "font.heading-3",
+        "body-large": "font.body-large",
+        "body-small": "font.body-small",
+        "mono-size": "font.mono-size",
+        "mono-small": "font.mono-small",
+        "caption-size": "font.caption-size",
     }),
     "motion": MappingProxyType({
+        "instant": "time.instant",
         "fast": "time.fast",
         "settle": "time.settle",
+        "slow": "time.slow",
     }),
 })
 
@@ -128,9 +190,27 @@ STATIC_TOKENS: Mapping[str, Mapping[str, tuple[str, str]]] = MappingProxyType({
         "card-radius": ("dimension", "6px"),
         "control-radius": ("dimension", "4px"),
         "target-min": ("dimension", "24px"),
+        # The design system's spacing scale, all eleven steps. Three steps
+        # meant every gap past 12px was an arbitrary literal.
         "space-1": ("dimension", "4px"),
         "space-2": ("dimension", "8px"),
         "space-3": ("dimension", "12px"),
+        "space-4": ("dimension", "16px"),
+        "space-5": ("dimension", "24px"),
+        "space-6": ("dimension", "32px"),
+        "space-7": ("dimension", "40px"),
+        "space-8": ("dimension", "48px"),
+        "space-9": ("dimension", "56px"),
+        "space-10": ("dimension", "72px"),
+        "space-11": ("dimension", "96px"),
+        "radius-xs": ("dimension", "3px"),
+        "radius-sm": ("dimension", "5px"),
+        "radius-lg": ("dimension", "8px"),
+        "radius-xl": ("dimension", "10px"),
+        "radius-pill": ("dimension", "999px"),
+        "row-comfortable": ("dimension", "32px"),
+        "row-compact": ("dimension", "26px"),
+        "row-cozy": ("dimension", "22px"),
     }),
     "font": MappingProxyType({
         "ui-family": ("fontFamily", "Inter, system-ui, sans-serif"),
@@ -141,10 +221,31 @@ STATIC_TOKENS: Mapping[str, Mapping[str, tuple[str, str]]] = MappingProxyType({
         "body-size": ("dimension", "13px"),
         "label-size": ("dimension", "10px"),
         "line-height": ("number", "1.35"),
+        # The brand's voice is the serif and the hand. The app carried neither
+        # as a token while its own stylesheet hardcoded both by name.
+        "display-family": (
+            "fontFamily", "'Instrument Serif', Georgia, serif",
+        ),
+        "hand-family": (
+            "fontFamily", "'Architects Daughter', 'Comic Sans MS', cursive",
+        ),
+        "display-0": ("dimension", "104px"),
+        "display-1": ("dimension", "88px"),
+        "display-2": ("dimension", "56px"),
+        "heading-1": ("dimension", "40px"),
+        "heading-2": ("dimension", "24px"),
+        "heading-3": ("dimension", "21px"),
+        "body-large": ("dimension", "16px"),
+        "body-small": ("dimension", "13px"),
+        "mono-size": ("dimension", "12px"),
+        "mono-small": ("dimension", "11px"),
+        "caption-size": ("dimension", "9px"),
     }),
     "time": MappingProxyType({
+        "instant": ("duration", "60ms"),
         "fast": ("duration", "80ms"),
         "settle": ("duration", "180ms"),
+        "slow": ("duration", "240ms"),
     }),
 })
 
@@ -458,13 +559,37 @@ def _build_expected(
 
     mode_root = RESOLVER_ROOT + ":modifier:theme"
     mode_name = mode_root + ":name"
-    context_root = mode_root + ":context:dark"
     _add_text(expected, mode_name, "theme")
-    _add_text(expected, context_root, "dark")
+    # Which themes exist is authority, so the contexts are part of the
+    # deterministic set. WHICH ONE IS ACTIVE is state and lives in its own
+    # relation (`cell_theme_sets.ACTIVE_THEME_ROOT`) so switching it does not
+    # make the design system read as drifted.
+    context_members = []
+    for theme_name in THEME_CONTEXT_NAMES:
+        context_root = "%s:context:%s" % (mode_root, theme_name)
+        _add_text(expected, context_root, theme_name)
+        context_members.append((roles["context"], context_root))
+    default_context_root = "%s:context:%s" % (mode_root, DEFAULT_THEME_NAME)
     _add_relation(expected, mode_root, (
         (roles["name"], mode_name),
-        (roles["context"], context_root),
-        (roles["default-context"], context_root),
+        *context_members,
+        (roles["default-context"], default_context_root),
+    ))
+    a11y_root = RESOLVER_ROOT + ":modifier:a11y"
+    a11y_name = a11y_root + ":name"
+    _add_text(expected, a11y_name, "a11y")
+    # The overlay composes ONTO the theme, so it is a second modifier and it
+    # resolves after the theme -- never instead of it.
+    a11y_members = []
+    for overlay_name in OVERLAY_CONTEXT_NAMES:
+        overlay_root = "%s:context:%s" % (a11y_root, overlay_name)
+        _add_text(expected, overlay_root, overlay_name)
+        a11y_members.append((roles["context"], overlay_root))
+    _add_relation(expected, a11y_root, (
+        (roles["name"], a11y_name),
+        *a11y_members,
+        (roles["default-context"],
+         "%s:context:%s" % (a11y_root, DEFAULT_OVERLAY_NAME)),
     ))
     resolver_name = RESOLVER_ROOT + ":name"
     resolver_version = RESOLVER_ROOT + ":version"
@@ -475,8 +600,10 @@ def _build_expected(
         (roles["description"], resolver_version),
         (roles["set"], TOKEN_SET_ROOT),
         (roles["modifier"], mode_root),
+        (roles["modifier"], a11y_root),
         (roles["resolution-item"], TOKEN_SET_ROOT),
         (roles["resolution-item"], mode_root),
+        (roles["resolution-item"], a11y_root),
         (roles["provenance"], PROVENANCE_ROOT),
         (roles["lifecycle"], PUBLISHED_ROOT),
     ))
@@ -553,6 +680,8 @@ def ensure_archhub_design_token_system(
     if missing:
         store.commit(snapshot.revision, create=tuple(missing))
     verify_design_token_system(store.snapshot(), build)
+    ensure_active_theme(store, build.resolver_root + ":modifier:theme")
+    ensure_active_overlay(store, build.resolver_root + ":modifier:a11y")
     return build
 
 
@@ -896,15 +1025,25 @@ def project_dtcg_resolver(
                 ]
             }
         },
+        # Read the themes and the active one out of the graph. This printed
+        # `{"dark": []}` as a literal, so the founder's three themes could
+        # never appear however the graph was wired.
         "modifiers": {
-            "theme": {
-                "contexts": {"dark": []},
-                "default": "dark",
-            }
+            "theme": project_theme_modifier(
+                snapshot,
+                build.resolver_root + ":modifier:theme",
+                build.protocol.roles["context"],
+            ),
+            "a11y": project_accessibility_modifier(
+                snapshot,
+                build.resolver_root + ":modifier:a11y",
+                build.protocol.roles["context"],
+            ),
         },
         "resolutionOrder": [
             {"$ref": "#/sets/foundation"},
             {"$ref": "#/modifiers/theme"},
+            {"$ref": "#/modifiers/a11y"},
         ],
     }
 

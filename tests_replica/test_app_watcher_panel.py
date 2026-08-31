@@ -24,7 +24,27 @@ def test_watcher_opens_a_real_map_node_and_its_param_nodes():
 
     assert snap["map_id"] == "ui_design_tokens"
     assert snap["value_node"]["kind"] == "value"
-    assert snap["value_node"]["value"] == "partial"
+    # The status comes from the grand-map SOURCE, not a hand-pinned copy:
+    # the pinned "partial" went stale the day the map promoted the node to
+    # "live" and the court then failed the truth instead of the drift.
+    import json
+    from nodelang.map_import import resolve_map_path
+    source = json.load(open(resolve_map_path(), encoding="utf-8"))
+    def find(obj):
+        if isinstance(obj, dict):
+            if obj.get("id") == "ui_design_tokens":
+                return obj
+            for value in obj.values():
+                found = find(value)
+                if found is not None:
+                    return found
+        elif isinstance(obj, list):
+            for value in obj:
+                found = find(value)
+                if found is not None:
+                    return found
+        return None
+    assert snap["value_node"]["value"] == find(source)["status"]
     assert "accent" in snap["params"]
     assert snap["params"]["accent"]["kind"] == "param"
     assert snap["params"]["accent"]["value"].startswith("#d97757")

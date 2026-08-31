@@ -262,6 +262,7 @@ from .cell_identity import (
     verify_authority_relationship,
     verify_relationship_authority_snapshot,
 )
+from .cell_capabilities import install_capabilities
 from .cell_secret_keys import SigningKeyProvider
 from .cell_signing_authority import (
     SigningAuthorityProtocol,
@@ -3300,6 +3301,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/select", "inspect"),
     ("POST", "/api/universal/move", "edit"),
     ("POST", "/api/universal/gesture", "edit"),
+    ("POST", "/api/universal/agent", "edit"),
     ("POST", "/api/universal/interaction", "edit"),
     ("POST", "/api/universal/instantiate", "create"),
     ("POST", "/api/universal/agent-session-challenge", "inspect"),
@@ -12666,10 +12668,20 @@ def build_universal_application(
         visible_roots=visible_roots,
         container_roots=container_roots,
         relation_roots=tuple(relation_roots),
-        root_properties=MappingProxyType({
-            root_id: tuple(relation_ids)
-            for root_id, relation_ids in root_properties.items()
-        }),
+        root_properties=(
+            # Both ensures run BEFORE this mapping freezes -- a property
+            # relation added after the freeze is invisible to every scope
+            # (the walk's owner-indexed fallback reads exactly this map).
+            # Design Tokens node: its colour values ARE the persisted theme
+            # cells. Subsystem nodes: the brain/users/models machinery each
+            # joins its domain as an ordinary titled node.
+            _ensure_theme_control_properties(
+                store, roles, root_properties
+            ) or MappingProxyType({
+                root_id: tuple(relation_ids)
+                for root_id, relation_ids in root_properties.items()
+            })
+        ),
         position_properties=MappingProxyType(position_properties),
         viewport_properties=viewport_properties,
         theme_binding_modes=MappingProxyType(theme_binding_modes),
@@ -12691,6 +12703,25 @@ def build_universal_application(
         view_sessions={authorization.subject_root: founder_view},
     )
     _ensure_visibility_scope_projections(store, registry)
+    # Every capability built for this application is installed into the SAME
+    # graph the application serves. A capability the running app cannot reach
+    # is a library sitting next to a product, not part of it.
+    install_capabilities(store, assembly_protocol=assembly_protocol)
+    # Every installed kernel subsystem becomes a node in its domain -- the
+    # founder's law is that everything is a node. Runs at the tail because
+    # the subsystem roots themselves are installed just above.
+    _ensure_subsystem_domain_nodes(store, roles, root_properties)
+    # Runs LAST because it walks levels the map import creates above; at the
+    # earlier top-level call the imported domains do not exist yet and the
+    # walk would find nothing (which is exactly what happened).
+    _ensure_nested_scope_canvas_interfaces(
+        store,
+        registry.assembly_protocol,
+        registry.roles,
+        registry.application_root,
+        tuple(map_registry.domains.values()),
+        registry.root_properties,
+    )
     return store, registry
 
 
@@ -15310,6 +15341,22 @@ def restore_universal_application(
         tuple(top_level_roots),
         existing_relation_roots,
     )
+    # The design's core rule: a wire ends ON a socket -- one knob map is the
+    # single authority for the sockets drawn and the wire endpoints. The
+    # migration above covered the TOP level only, so every entered scope drew
+    # its wires with no sockets to land on and nothing inside a domain could
+    # ever be re-wired. Walk each drawable level once and give its relations
+    # the same exact interfaces. Idempotent: the per-level guard reads the
+    # snapshot and skips levels whose interfaces already exist, so a warm
+    # boot pays one membership scan per level and writes nothing.
+    _ensure_nested_scope_canvas_interfaces(
+        store,
+        assembly,
+        roles,
+        application_root,
+        tuple(top_level_roots),
+        root_properties,
+    )
     _ensure_governed_work_scope_interfaces(
         store,
         assembly,
@@ -16901,6 +16948,241 @@ def _append_migrated_visibility_interfaces(
         )
 
 
+_SUBSYSTEM_DOMAIN_NODES = (
+    # (root cell, domain key, title) -- the kernel subsystem IS the node.
+    ("app:brain:skill-library", "brain", "Skill Library"),
+    ("app:brain:federation", "brain", "Brain Federation"),
+    ("app:brain:community", "brain", "Community Brains"),
+    ("app:brain:groups", "brain", "Brain Groups"),
+    ("app:brain:ownership", "brain", "Brain Ownership"),
+    ("app:brain:recall-index", "brain", "Recall Index"),
+    ("app:brain:reflexion-ledger", "brain", "Reflexion Ledger"),
+    ("app:brain:secret-vault", "brain", "Secret Vault"),
+    ("app:brain:memory-shelf", "brain", "Memory Shelf"),
+    ("app:users:firms", "users", "Firms & Seats"),
+    ("app:models:providers", "models", "Model Providers"),
+    ("app:website:meta", "website", "Website Meta"),
+    ("app:selfext:intents", "selfext", "Self-Extension Intents"),
+    ("app:sessions", "sessions", "Live Sessions"),
+)
+
+
+def _ensure_subsystem_domain_nodes(
+    store: CellStore,
+    roles: Mapping[str, str],
+    root_properties: dict,
+) -> None:
+    """Every installed kernel subsystem appears as a node in its domain.
+
+    The founder's law: everything is a node. The brain, the seats, the
+    model providers were REAL in the kernel and invisible on the canvas,
+    so the product looked like a fraction of what the graph held. Each
+    subsystem root joins its domain relation as an ordinary member with
+    title and position properties -- the same shape the map importer
+    gives its own nodes. Idempotent: an existing membership writes nothing.
+    """
+    snapshot = store.snapshot()
+    by_domain: dict[str, list[tuple[str, str]]] = {}
+    for root, domain_key, title in _SUBSYSTEM_DOMAIN_NODES:
+        if root in snapshot.cells:
+            by_domain.setdefault(domain_key, []).append((root, title))
+    for domain_key, entries in sorted(by_domain.items()):
+        domain_root = "gm:domain:%s" % domain_key
+        if domain_root not in snapshot.cells:
+            continue
+        members = read_relation(snapshot, domain_root, budget=_SCOPE_MEMBER_LIMIT)
+        held = {member.participant_id for member in members}
+        additions = []
+        create: list[Cell] = []
+        column = 0
+        for root, title in entries:
+            if root in held:
+                continue
+            for name, value in (
+                ("title", title),
+                ("position_x", 60.0 + (column % 5) * 244.0),
+                ("position_y", 640.0 + (column // 5) * 174.0),
+            ):
+                reference, cells = _compose_property(
+                    _PropertyRegistryStub(roles), root, name, value
+                )
+                create.extend(cells)
+                additions.append((roles["scope"], reference.relation_root))
+                root_properties.setdefault(root, []).append(
+                    reference.relation_root
+                )
+            additions.append((roles["member"], root))
+            column += 1
+        if not additions:
+            continue
+        patch = prepare_append_relation_members(
+            snapshot, domain_root, additions, budget=100_000,
+        )
+        store.commit(
+            snapshot.revision,
+            create=(*create, *patch.create),
+            replace=patch.replace,
+        )
+        snapshot = store.snapshot()
+
+
+class _PropertyRegistryStub:
+    """_compose_property reads only registry.roles."""
+
+    __slots__ = ("roles",)
+
+    def __init__(self, roles: Mapping[str, str]):
+        self.roles = roles
+
+
+_THEME_CONTROL_NODE = "gm:node:ui_design_tokens"
+_THEME_CONTROL_FIELDS = (
+    ("accent", "accent"),
+    ("canvas", "bg_canvas"),
+    ("panel", "bg_panel"),
+    ("ink", "ink"),
+    ("success", "ok"),
+    ("warning", "warn"),
+    ("danger", "err"),
+)
+
+
+def _ensure_theme_control_properties(
+    store: CellStore,
+    roles: Mapping[str, str],
+    root_properties: dict,
+) -> None:
+    """Wire the Design Tokens node's colours to the REAL theme cells.
+
+    A property relation here uses the persisted theme value cell itself as
+    its value participant. The ordinary property-edit gesture then writes
+    the theme cell, and every surface that reads the theme -- the token
+    graph, the stylesheet variables, the cards -- follows, because there is
+    exactly one cell. This is the first node that operates the application
+    rather than describing it.
+    """
+    snapshot = store.snapshot()
+    if _THEME_CONTROL_NODE not in snapshot.cells:
+        return
+    existing_labels = set()
+    for relation_root in root_properties.get(_THEME_CONTROL_NODE, ()):
+        try:
+            members = read_relation(snapshot, relation_root, budget=8)
+        except InvalidCell:
+            continue
+        label_root = _one_for_role(members, roles["label"])
+        if label_root is not None:
+            existing_labels.add(_text(snapshot, label_root))
+    create: list[Cell] = []
+    added: list[str] = []
+    for label, theme_name in _THEME_CONTROL_FIELDS:
+        if label in existing_labels:
+            continue
+        theme_root = "app:presentation:theme:%s" % theme_name
+        if theme_root not in snapshot.cells:
+            continue
+        relation_root = "app:theme-control:%s" % theme_name
+        if relation_root in snapshot.cells:
+            continue
+        label_root = relation_root + ":label"
+        create.append(Cell(
+            label_root, NULL_CELL_ID, NULL_CELL_ID, label.encode("utf-8")
+        ))
+        create.extend(compose_relation_cells(
+            (
+                (roles["owner"], _THEME_CONTROL_NODE),
+                (roles["label"], label_root),
+                (roles["value"], theme_root),
+            ),
+            relation_id=relation_root,
+        ).cells)
+        added.append(relation_root)
+    if not create:
+        return
+    store.commit(snapshot.revision, create=tuple(create))
+    for relation_root in added:
+        root_properties.setdefault(
+            _THEME_CONTROL_NODE, []
+        ).append(relation_root)
+
+
+def _ensure_nested_scope_canvas_interfaces(
+    store: CellStore,
+    protocol: AssemblyProtocol,
+    roles: Mapping[str, str],
+    application_root: str,
+    top_level_roots: tuple[str, ...],
+    root_properties: Mapping[str, list] | None = None,
+    *,
+    budget: int = 512,
+) -> None:
+    """Give every drawable nested level exact relation interfaces.
+
+    Breadth-first over openable compositions, exactly the levels the scope
+    gesture can enter. Each level is planned from the same authority the
+    canvas draws it from (`_nested_canvas_scope`), and skipped outright when
+    its first relation already holds its exact interface -- so this is one
+    cheap membership scan per level on a warm boot.
+    """
+    registry_stub = _NestedScopeRegistryStub(
+        protocol, roles, root_properties=root_properties
+    )
+    # ONLY the seeds themselves: the walk migrates exactly the levels it is
+    # handed and never follows members. A breadth-first version of this
+    # treated every relation it could read as a canvas level and rewired the
+    # settings binding's incidences -- interfaces are for drawable scopes,
+    # and which roots those are is the CALLER's knowledge, not something to
+    # rediscover by probing.
+    seen: set[str] = set()
+    for scope_root in top_level_roots[:budget]:
+        if scope_root in seen:
+            continue
+        seen.add(scope_root)
+        snapshot = store.snapshot()
+        if _relation_members_or_none(snapshot, scope_root) is None:
+            continue
+        try:
+            next_roots, next_relations, _next_properties = (
+                _nested_canvas_scope(snapshot, registry_stub, scope_root)
+            )
+        except InvalidCell:
+            continue
+        if not next_relations:
+            continue
+        if all(
+            _relation_canvas_interface_root(relation_root, "source")
+            in snapshot.cells
+            for relation_root in next_relations
+        ):
+            continue
+        _ensure_canvas_domain_interfaces(
+            store,
+            protocol,
+            roles,
+            application_root,
+            next_roots,
+            next_relations,
+        )
+
+
+class _NestedScopeRegistryStub:
+    """The registry members the nested scope walk actually reads."""
+
+    __slots__ = ("assembly_protocol", "roles", "root_properties", "canvas_root")
+
+    def __init__(
+        self,
+        protocol: AssemblyProtocol,
+        roles: Mapping[str, str],
+        root_properties: Mapping[str, list] | None = None,
+        canvas_root: str = "app:canvas",
+    ):
+        self.assembly_protocol = protocol
+        self.roles = roles
+        self.root_properties = root_properties or {}
+        self.canvas_root = canvas_root
+
+
 def _ensure_canvas_domain_interfaces(
     store: CellStore,
     protocol: AssemblyProtocol,
@@ -18305,8 +18587,20 @@ def _visibility_scope_projection(
                 or not _is_universal_composition(snapshot, registry, owner)
             )
         ) or value is None or label is None:
-            raise InvalidCell("visibility projection property leaves its scope")
+            # Name the property and the owner it answers to. "leaves its
+            # scope" alone cannot be acted on.
+            raise InvalidCell(
+                "visibility projection property leaves its scope: "
+                "property %s owner %s value=%s label=%s" % (
+                    property_root, owner, value is not None, label is not None,
+                )
+            )
     return visible, relations, properties, indexed_interfaces
+
+
+_VISIBILITY_VERIFY_MEMO: "WeakKeyDictionary[CellStore, dict]" = (
+    WeakKeyDictionary()
+)
 
 
 def _ensure_view_visibility_scope_projection(
@@ -18314,7 +18608,46 @@ def _ensure_view_visibility_scope_projection(
     registry: UniversalApplicationRegistry,
     view_session: ApplicationViewSession,
 ) -> None:
-    """Provision or verify one canonical graph-held visibility projection."""
+    """Provision or verify one canonical graph-held visibility projection.
+
+    The verification is a full re-derivation of the canonical scope --
+    ~200ms -- and it ran on EVERY gesture, which is most of why a click
+    felt slow. The verdict is memoised per store: it stands until a commit
+    touches a cell inside the closure the last verification read, checked
+    against the exact per-revision change lists the store already keeps.
+    A commit outside the closure cannot change what this function would
+    conclude, so skipping it repeats the same verdict, not a guess.
+    """
+    memo = _VISIBILITY_VERIFY_MEMO.setdefault(store, {})
+    held = memo.get(view_session.root_id)
+    if held is not None:
+        held_revision, closure = held
+        if store.revision == held_revision:
+            return
+        if store.revision > held_revision:
+            unchanged = True
+            for revision in range(held_revision + 1, store.revision + 1):
+                try:
+                    changed = store.revision_changes(revision)
+                except InvalidCell:
+                    unchanged = False
+                    break
+                probe = store.snapshot()
+                for cell_id in changed:
+                    cell = probe.cells.get(cell_id)
+                    if (
+                        cell_id in closure
+                        or cell is None
+                        or cell.link0 in closure
+                        or cell.link1 in closure
+                    ):
+                        unchanged = False
+                        break
+                if not unchanged:
+                    break
+            if unchanged:
+                memo[view_session.root_id] = (store.revision, closure)
+                return
     snapshot = store.snapshot()
     members = read_relation(
         snapshot, view_session.visibility_root, budget=100_000
@@ -18429,6 +18762,12 @@ def _ensure_view_visibility_scope_projection(
         if set(indexed_interfaces) != set(canonical_interfaces):
             raise InvalidCell("persisted visibility interface projection drifted")
         _visibility_scope_projection(snapshot, registry, view_session)
+        _VISIBILITY_VERIFY_MEMO.setdefault(store, {})[
+            view_session.root_id
+        ] = (store.revision, _visibility_closure(
+            view_session, assigned, canonical_relations,
+            canonical_properties, canonical_interfaces, members,
+        ))
         return
     if indexed_relations and indexed_relations != canonical_relations:
         raise InvalidCell("persisted visibility relation projection drifted")
@@ -18478,6 +18817,31 @@ def _ensure_view_visibility_scope_projection(
         replace=patch.replace,
     )
     _visibility_scope_projection(store.snapshot(), registry, view_session)
+    _VISIBILITY_VERIFY_MEMO.setdefault(store, {})[
+        view_session.root_id
+    ] = (store.revision, _visibility_closure(
+        view_session, assigned, canonical_relations,
+        canonical_properties, canonical_interfaces, members,
+    ))
+
+
+def _visibility_closure(
+    view_session: ApplicationViewSession,
+    assigned: tuple[str, ...],
+    relations: tuple[str, ...],
+    properties: tuple[str, ...],
+    interfaces: tuple[str, ...],
+    members,
+) -> frozenset[str]:
+    """The roots whose change would change the visibility verdict."""
+    return frozenset((
+        view_session.visibility_root,
+        *assigned,
+        *relations,
+        *properties,
+        *interfaces,
+        *(member.incidence_id for member in members),
+    ))
 
 
 def _ensure_visibility_scope_projections(
@@ -18553,7 +18917,15 @@ def _session_canvas_roots(
                 raise InvalidCell("view has duplicate active projection grants")
             target_index[relationship.scope_root] = relationship.root_id
     if set(assigned) != set(signed_targets):
-        raise InvalidCell("view visibility differs from signed projection grants")
+        ungranted = sorted(set(assigned) - set(signed_targets))
+        unassigned = sorted(set(signed_targets) - set(assigned))
+        raise InvalidCell(
+            "view visibility differs from signed projection grants: "
+            "%d visible without a grant %s, %d granted but not visible %s" % (
+                len(ungranted), [root[:34] for root in ungranted[:3]],
+                len(unassigned), [root[:34] for root in unassigned[:3]],
+            )
+        )
     exposure_compositions = _active_exposure_composition_roots(
         snapshot, registry, view_session
     )
@@ -19050,6 +19422,18 @@ def _nested_canvas_scope(
         relation_members = _relation_members_or_none(snapshot, relation_root)
         if relation_members is None:
             continue
+        # A PROPERTY relation (owner/value/label) carries no wire
+        # endpoints; the endpoint requirement below used to drop it here,
+        # which silently hid every property wired to a member after the
+        # map import -- the node then rendered with no title at all.
+        owner = _one_for_role(relation_members, registry.roles["owner"])
+        value = _one_for_role(relation_members, registry.roles["value"])
+        label = _one_for_role(relation_members, registry.roles["label"])
+        if owner in root_set and value is not None and label is not None:
+            if relation_root not in seen_properties:
+                property_roots.append(relation_root)
+                seen_properties.add(relation_root)
+            continue
         source_member = next((
             member for member in relation_members
             if member.role_id == registry.roles["source"]
@@ -19080,12 +19464,6 @@ def _nested_canvas_scope(
         )
         if source in root_set and target in root_set:
             relation_roots.append(relation_root)
-        owner = _one_for_role(relation_members, registry.roles["owner"])
-        value = _one_for_role(relation_members, registry.roles["value"])
-        label = _one_for_role(relation_members, registry.roles["label"])
-        if owner in root_set and value is not None and label is not None:
-            property_roots.append(relation_root)
-            seen_properties.add(relation_root)
     for root_id in roots:
         for property_root in registry.root_properties.get(root_id, ()):
             if property_root not in seen_properties:
@@ -21917,6 +22295,17 @@ def _project_universal_canvas_interpreter(
                 ),
             })
 
+    # Placement coordinates are the drag gesture's own record and the key is
+    # provenance -- plumbing, not product. They stay graph facts (the move
+    # gesture reads the relations directly, never this list); they just do
+    # not render as editable rows in the Properties panel any more.
+    properties = [
+        row for row in properties
+        if str(row.get("label", "")) not in {
+            "position_x", "position_y", "key",
+        }
+    ]
+
     selected_identity = registry.authorization.broker.resolve(context)
     authority_focus_roots = _inspectable_authority_relationship_roots(
         snapshot,
@@ -23215,12 +23604,13 @@ def _project_universal_canvas_interpreter(
             can_add_property=can_add_property,
             can_add_interface=can_add_property,
             selected_settings=selected_root == view_session.settings_root,
-            has_history=bool(
-                selected_root == view_session.settings_root
-                or action_history_projection["transactions"]
-                or selected_assembly_projection
-                and selected_assembly_projection.get("lifecycle")
-            ),
+            # History is a standing fact of an append-only graph, not a
+            # reward for having acted: every selected root was created by
+            # some revision, and an empty timeline is itself an honest
+            # answer. Gating the tab on non-empty transactions made the
+            # fourth tab appear only after the first action -- a tab that
+            # comes and goes is worse than one that says "nothing yet".
+            has_history=bool(selected_root),
             has_access=is_founder,
             has_evidence=bool(
                 is_founder and (
@@ -38900,6 +39290,61 @@ def _composition_boundary_cells(
     return tuple(internal), tuple(boundaries), tuple(cells)
 
 
+def _relationship_is_active(
+    snapshot: Snapshot,
+    authority: ApplicationAuthorization,
+    relationship_root: str,
+) -> bool:
+    """True when a signed relationship still stands at this revision."""
+    try:
+        relationship = verify_authority_relationship(
+            snapshot,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            relationship_root,
+        )
+    # A REVOKED grant answers this question with "no", not with a crash:
+    # the verifier raises RelationshipAuthorityDenied for a revoked or
+    # expired relationship, and letting that escape meant grouping the same
+    # nodes a second time -- after an ungroup revoked the first grants --
+    # blew up instead of issuing fresh grants.
+    except (InvalidCell, RelationshipAuthorityDenied):
+        return False
+    return (
+        relationship.state_root
+        == authority.identity_protocol.states["active"]
+    )
+
+
+def _property_owner_in(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    property_root: str,
+    owners: frozenset[str] | set[str],
+) -> bool:
+    """True when a projected property answers to one of `owners`."""
+    members = _relation_members_or_none(snapshot, property_root)
+    if not members:
+        return False
+    return _one_for_role(members, registry.roles["owner"]) in owners
+
+
+def _canvas_interface_owner_in(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    interface_root: str,
+    owners: frozenset[str] | set[str],
+) -> bool:
+    """True when a projected canvas interface belongs to one of `owners`."""
+    interface = _project_canvas_interface(
+        snapshot, registry.assembly_protocol, interface_root
+    )
+    return bool(interface) and interface.get("owner") in owners
+
+
+@_with_canvas_interface_projection_scope
+@with_relation_projection_scope
+@with_catalog_verification_scope
 def group_universal_selection(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -39052,15 +39497,88 @@ def group_universal_selection(
          for ref in property_refs),
         budget=100_000,
     )
+    scope_relation_root = (
+        view_session.visibility_root
+        if parent_root == registry.canvas_root
+        else parent_root
+    )
+    # Folding the selection into a composition changes WHAT IS VISIBLE, not
+    # only what is projected: the members leave the canvas and the
+    # composition takes their place. The visibility relation has to say so,
+    # or the retained-scope guard reads the projection as drift and refuses
+    # the whole interaction.
+    staged = snapshot
+    visibility_removal_replace: tuple[Cell, ...] = ()
+    visible_additions: tuple[tuple[str, str], ...] = ()
+    if parent_root == registry.canvas_root:
+        composition_interface_role = registry.assembly_protocol.role(
+            "interface"
+        )
+        internal_relation_set = frozenset(internal_relations)
+        departing_roots = selected_set | internal_relation_set
+        scope_members = read_relation(
+            snapshot, scope_relation_root, budget=100_000
+        )
+        retired_visible = tuple(
+            member.incidence_id
+            for member in scope_members
+            if (
+                member.role_id == registry.roles["visible"]
+                and member.participant_id in selected_set
+            ) or (
+                # An interface owned by a root that just moved inside the
+                # composition is no longer at this scope either. Leaving it
+                # indexed makes the visibility index name an owner nobody
+                # can see.
+                member.role_id == composition_interface_role
+                and _canvas_interface_owner_in(
+                    snapshot,
+                    registry,
+                    member.participant_id,
+                    selected_set,
+                )
+            ) or (
+                # A wire with both ends inside the selection now lives in
+                # the composition. At this scope it has no endpoints left.
+                member.role_id == registry.roles["relation"]
+                and member.participant_id in internal_relation_set
+            ) or (
+                # A property of a root -- or of a wire -- that moved inside
+                # the composition answers to an owner this scope can no
+                # longer see. Retiring the wire without its presentation
+                # leaves the property pointing at nothing.
+                member.role_id == registry.roles["property"]
+                and _property_owner_in(
+                    snapshot,
+                    registry,
+                    member.participant_id,
+                    departing_roots,
+                )
+            )
+        )
+        visible_additions = (
+            (registry.roles["visible"], composition_root),
+            *((composition_interface_role, root) for root in boundary_roots),
+        )
+        if retired_visible:
+            visibility_removal = prepare_remove_relation_members(
+                snapshot,
+                scope_relation_root,
+                retired_visible,
+                budget=100_000,
+            )
+            visibility_removal_replace = visibility_removal.replace
+            staged = overlay_read_snapshot(
+                snapshot, replace=visibility_removal_replace
+            )
     property_scope_patch = prepare_append_relation_members(
-        snapshot,
+        staged,
+        scope_relation_root,
         (
-            view_session.visibility_root
-            if parent_root == registry.canvas_root
-            else parent_root
+            *visible_additions,
+            *((registry.roles["property"], ref.relation_root)
+              for ref in property_refs),
         ),
-        ((registry.roles["property"], ref.relation_root)
-         for ref in property_refs),
         budget=100_000,
     )
     selection_patch = prepare_append_relation_members(
@@ -39140,6 +39658,47 @@ def group_universal_selection(
         ),
         pending_roots=base_ids,
     )
+    # A root that leaves this view stops being granted to it, and the
+    # composition that replaced it starts being granted. The visible set and
+    # the signed grants are one fact; moving one without the other is the
+    # drift the grant court refuses.
+    visibility_revocations = []
+    canvas_projection_grant = None
+    if parent_root == registry.canvas_root:
+        departing_grant_roots = [
+            _projection_grant_root(view_session.subject_root, departing_root)
+            for departing_root in sorted(selected_set)
+        ] + [
+            _projection_grant_root(
+                view_session.subject_root,
+                departing_root,
+                view_session.visibility_root,
+            )
+            for departing_root in sorted(selected_set)
+        ]
+        for grant_root in departing_grant_roots:
+            if grant_root not in snapshot.cells:
+                continue
+            if not _relationship_is_active(
+                snapshot, authority, grant_root
+            ):
+                continue
+            visibility_revocations.append(
+                prepare_authority_relationship_revocation(
+                    snapshot,
+                    identity,
+                    relationship_broker,
+                    relationship_broker.mint_from_trusted_administrator(
+                        actor_root
+                    ),
+                    grant_root,
+                    administrator_root=actor_root,
+                    reason=(
+                        "root is folded into a composition and no longer "
+                        "projects at this view"
+                    ),
+                )
+            )
     projection_grant = prepare_authority_relationship_grant(
         snapshot,
         identity,
@@ -39161,12 +39720,50 @@ def group_universal_selection(
         evidence_roots=(entry_root,),
         pending_roots=base_ids,
     )
+    if parent_root == registry.canvas_root:
+        # Both earlier grants register themselves in the identity protocol's
+        # own relation. Preparing a third over the same snapshot would write
+        # the same chain cell twice and silently unregister one of them, so
+        # this one is prepared over what the other two already staged.
+        authority_staged = overlay_read_snapshot(
+            snapshot,
+            create=(
+                *base_create,
+                *audience_grant.cells,
+                *projection_grant.cells,
+            ),
+        )
+        canvas_projection_grant = prepare_authority_relationship_grant(
+            authority_staged,
+            identity,
+            relationship_broker,
+            relationship_broker.mint_from_trusted_administrator(actor_root),
+            relationship_id=_projection_grant_root(
+                view_session.subject_root, composition_root
+            ),
+            source_root=authority.resource_reader_principal_root,
+            target_root=view_session.subject_root,
+            kind="delegation",
+            tenant_root=authority.tenant_root,
+            administrator_root=actor_root,
+            scope_root=composition_root,
+            action_roots=(read_root,),
+            reason=(
+                "subject receives this resource through the authorized view"
+            ),
+            evidence_roots=(view_session.visibility_root,),
+            pending_roots=base_ids,
+        )
     identity_patch = prepare_append_relation_members(
         snapshot,
         identity.root_id,
         (
             (identity.role("relationship-member"), audience_grant.root_id),
             (identity.role("relationship-member"), projection_grant.root_id),
+            *((
+                (identity.role("relationship-member"),
+                 canvas_projection_grant.root_id),
+            ) if canvas_projection_grant is not None else ()),
         ),
         budget=100_000,
     )
@@ -39194,6 +39791,12 @@ def group_universal_selection(
         scope_root=parent_root,
     )
     replacements = {}
+    # The retirement and the append touch the same visibility chain on
+    # purpose: the append was computed over the retirement, so its cell is
+    # the later truth, not a conflicting one.
+    superseded = {cell.id for cell in visibility_removal_replace}
+    for cell in visibility_removal_replace:
+        replacements[cell.id] = cell
     for cell in (
         *canvas_patch.replace,
         *lens_patch.replace,
@@ -39204,9 +39807,15 @@ def group_universal_selection(
         *identity_patch.replace,
         *session_patch.replace,
         *selection_transition.replace,
+        *(cell for patch in visibility_revocations for cell in patch.replace),
     ):
-        if cell.id in replacements and replacements[cell.id] != cell:
+        if (
+            cell.id in replacements
+            and replacements[cell.id] != cell
+            and cell.id not in superseded
+        ):
             raise InvalidCell("atomic composition has conflicting patches")
+        superseded.discard(cell.id)
         replacements[cell.id] = cell
     revision = _commit_universal_user_change(
         store,
@@ -39221,6 +39830,9 @@ def group_universal_selection(
             *base_create,
             *audience_grant.cells,
             *projection_grant.cells,
+            *(canvas_projection_grant.cells if canvas_projection_grant else ()),
+            *(cell for patch in visibility_revocations
+              for cell in patch.create),
             *identity_patch.create,
             *session_patch.create,
             *selection_transition.create,
@@ -39229,9 +39841,20 @@ def group_universal_selection(
     )
     for grant in (audience_grant, projection_grant):
         relationship_broker.record_generation(grant.root_id, grant.generation)
+    if canvas_projection_grant is not None:
+        relationship_broker.record_generation(
+            canvas_projection_grant.root_id, canvas_projection_grant.generation
+        )
+    for patch in visibility_revocations:
+        record_authority_relationship_revocation(
+            relationship_broker, patch, revision
+        )
     return composition_root, revision
 
 
+@_with_canvas_interface_projection_scope
+@with_relation_projection_scope
+@with_catalog_verification_scope
 def ungroup_universal_composition(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -39292,6 +39915,93 @@ def ungroup_universal_composition(
             after_roots.append(root_id)
     if len(after_roots) != len(set(after_roots)):
         raise InvalidCell("ungroup would duplicate a visible root")
+    # Ungroup is group run backwards: everything that followed the members
+    # inside has to come back out with them, or the view records a
+    # composition that is gone and members it cannot see.
+    scope_relation_root = (
+        view_session.visibility_root
+        if parent_root == registry.canvas_root
+        else parent_root
+    )
+    staged = snapshot
+    visibility_removal_replace: tuple[Cell, ...] = ()
+    visibility_additions: tuple[tuple[str, str], ...] = ()
+    internal_relations = tuple(
+        member.participant_id for member in composition_members
+        if member.role_id == registry.roles["relation"]
+    )
+    if parent_root == registry.canvas_root:
+        interface_role = registry.assembly_protocol.role("interface")
+        composition_set = frozenset((composition_root,))
+        child_set = frozenset(children)
+        returning = child_set | frozenset(internal_relations)
+        retired = tuple(
+            member.incidence_id
+            for member in read_relation(
+                snapshot, scope_relation_root, budget=100_000
+            )
+            if (
+                member.role_id == registry.roles["visible"]
+                and member.participant_id == composition_root
+            ) or (
+                member.role_id == interface_role
+                and _canvas_interface_owner_in(
+                    snapshot, registry, member.participant_id, composition_set
+                )
+            ) or (
+                member.role_id == registry.roles["property"]
+                and _property_owner_in(
+                    snapshot, registry, member.participant_id, composition_set
+                )
+            )
+        )
+        if retired:
+            removal = prepare_remove_relation_members(
+                snapshot, scope_relation_root, retired, budget=100_000
+            )
+            visibility_removal_replace = removal.replace
+            staged = overlay_read_snapshot(
+                snapshot, replace=visibility_removal_replace
+            )
+        returning_interfaces = tuple(
+            member.participant_id
+            for member in read_relation(
+                snapshot, registry.application_root, budget=100_000
+            )
+            if member.role_id == interface_role
+            and _canvas_interface_owner_in(
+                snapshot, registry, member.participant_id, child_set
+            )
+        )
+        returning_properties = tuple(
+            member.participant_id
+            for member in read_relation(
+                snapshot, registry.canvas_root, budget=100_000
+            )
+            if member.role_id == registry.roles["property"]
+            and _property_owner_in(
+                snapshot, registry, member.participant_id, returning
+            )
+        )
+        held = {
+            (member.role_id, member.participant_id)
+            for member in read_relation(
+                staged, scope_relation_root, budget=100_000
+            )
+        }
+        visibility_additions = tuple(
+            pair for pair in (
+                *((registry.roles["visible"], child) for child in children),
+                *((interface_role, root) for root in returning_interfaces),
+                *((registry.roles["relation"], root)
+                  for root in internal_relations),
+                *((registry.roles["property"], root)
+                  for root in returning_properties),
+            ) if pair not in held
+        )
+    visibility_patch = prepare_append_relation_members(
+        staged, scope_relation_root, visibility_additions, budget=100_000
+    )
     exposure = _composition_exposure_cells(
         registry, parent_root, tuple(after_roots), entry_root=entry_root
     )
@@ -39350,6 +40060,7 @@ def ungroup_universal_composition(
         *exposure_create,
         *history_cells,
         *history_patch.create,
+        *visibility_patch.create,
     )
     base_ids = tuple(cell.id for cell in base_create)
     if (
@@ -39386,19 +40097,96 @@ def ungroup_universal_composition(
         )
         for target_root in nested_compositions
     )
+    # The composition stops being granted to this view and the members it
+    # held start being granted again. Visible and granted are one fact.
+    canvas_grant_revocations = []
+    canvas_grants: tuple[object, ...] = ()
+    if parent_root == registry.canvas_root:
+        for grant_root in (
+            _projection_grant_root(view_session.subject_root, composition_root),
+            _projection_grant_root(
+                view_session.subject_root,
+                composition_root,
+                view_session.visibility_root,
+            ),
+        ):
+            if grant_root not in snapshot.cells:
+                continue
+            if not _relationship_is_active(snapshot, authority, grant_root):
+                continue
+            canvas_grant_revocations.append(
+                prepare_authority_relationship_revocation(
+                    snapshot,
+                    identity,
+                    relationship_broker,
+                    relationship_broker.mint_from_trusted_administrator(
+                        actor_root
+                    ),
+                    grant_root,
+                    administrator_root=actor_root,
+                    reason=(
+                        "composition is dissolved and no longer projects at "
+                        "this view"
+                    ),
+                )
+            )
+        authority_staged = overlay_read_snapshot(
+            snapshot,
+            create=(
+                *base_create,
+                *(cell for grant in projection_grants for cell in grant.cells),
+            ),
+        )
+        prepared = []
+        for child_root in children:
+            grant_root = _projection_grant_root(
+                view_session.subject_root,
+                child_root,
+                view_session.visibility_root,
+            )
+            if _relationship_is_active(snapshot, authority, grant_root):
+                continue
+            grant = prepare_authority_relationship_grant(
+                authority_staged,
+                identity,
+                relationship_broker,
+                relationship_broker.mint_from_trusted_administrator(
+                    actor_root
+                ),
+                relationship_id=grant_root,
+                source_root=authority.resource_reader_principal_root,
+                target_root=view_session.subject_root,
+                kind="delegation",
+                tenant_root=authority.tenant_root,
+                administrator_root=actor_root,
+                scope_root=child_root,
+                action_roots=(read_root,),
+                reason=(
+                    "subject receives this resource through the authorized "
+                    "view"
+                ),
+                evidence_roots=(view_session.visibility_root,),
+                pending_roots=base_ids,
+            )
+            prepared.append(grant)
+            authority_staged = overlay_read_snapshot(
+                authority_staged, create=grant.cells
+            )
+        canvas_grants = tuple(prepared)
     identity_patch = prepare_append_relation_members(
         snapshot,
         identity.root_id,
         (
             (identity.role("relationship-member"), grant.root_id)
-            for grant in projection_grants
+            for grant in (*projection_grants, *canvas_grants)
         ),
         budget=100_000,
     )
     session_patch = prepare_append_relation_members(
         snapshot,
         view_session.root_id,
-        ((registry.roles["relation"], grant.root_id) for grant in projection_grants),
+        ((registry.roles["relation"], grant.root_id)
+         for grant in (*projection_grants, *canvas_grants)),
         budget=100_000,
     )
     # The old grant is bound to the old exposure evidence and becomes dormant.
@@ -39420,7 +40208,14 @@ def ungroup_universal_composition(
         scope_root=parent_root,
     )
     replacements = {}
+    # The retirement and the append touch the same visibility chain on
+    # purpose: the append was computed over the retirement.
+    superseded = {cell.id for cell in visibility_removal_replace}
+    for cell in visibility_removal_replace:
+        replacements[cell.id] = cell
     for cell in (
+        *visibility_patch.replace,
+        *(cell for patch in canvas_grant_revocations for cell in patch.replace),
         *selection_patch.replace,
         *exposure_replace,
         *history_patch.replace,
@@ -39428,8 +40223,13 @@ def ungroup_universal_composition(
         *session_patch.replace,
         *selection_transition.replace,
     ):
-        if cell.id in replacements and replacements[cell.id] != cell:
+        if (
+            cell.id in replacements
+            and replacements[cell.id] != cell
+            and cell.id not in superseded
+        ):
             raise InvalidCell("atomic ungroup has conflicting patches")
+        superseded.discard(cell.id)
         replacements[cell.id] = cell
     revision = _commit_universal_user_change(
         store,
@@ -39443,14 +40243,21 @@ def ungroup_universal_composition(
         create=(
             *base_create,
             *(cell for grant in projection_grants for cell in grant.cells),
+            *(cell for grant in canvas_grants for cell in grant.cells),
+            *(cell for patch in canvas_grant_revocations
+              for cell in patch.create),
             *identity_patch.create,
             *session_patch.create,
             *selection_transition.create,
         ),
         replace=tuple(replacements.values()),
     )
-    for grant in projection_grants:
+    for grant in (*projection_grants, *canvas_grants):
         relationship_broker.record_generation(grant.root_id, grant.generation)
+    for patch in canvas_grant_revocations:
+        record_authority_relationship_revocation(
+            relationship_broker, patch, revision
+        )
     return revision
 
 
@@ -46200,9 +47007,18 @@ def apply_universal_canvas_gesture(
                 raise InvalidCell(
                     "canvas gesture projection has invalid visible roots"
                 )
-        visible = set(visible_roots)
+        # A wire is part of the active lens too. Both branches above compute
+        # the relations this view holds and then only the nodes were checked,
+        # so clicking a wire to select it answered 400 and the canvas simply
+        # never selected one.
+        visible = set(visible_roots) | set(relation_roots)
         if any(root_id not in visible for root_id in ordered):
-            raise InvalidCell("canvas gesture selects a root outside the active lens")
+            outside = [root for root in ordered if root not in visible]
+            raise InvalidCell(
+                "canvas gesture selects a root outside the active lens: %s" % (
+                    [root[:40] for root in outside[:3]],
+                )
+            )
         if focus_root is None:
             if ordered:
                 focus_root = ordered[-1]
@@ -46304,6 +47120,7 @@ def apply_universal_canvas_gesture(
             authority_snapshot=authority_snapshot,
         )
         property_index = _property_index(snapshot, registry, property_roots)
+        created_position_cells: list[Cell] = []
         for root_id, point in positions.items():
             position_rows = _rows_by_label(
                 snapshot, property_index.get(root_id, ())
@@ -46312,9 +47129,22 @@ def apply_universal_canvas_gesture(
                 "position_x" not in position_rows
                 or "position_y" not in position_rows
             ):
-                raise InvalidCell(
-                    "canvas gesture moves a root without position wires"
-                )
+                # A card the founder can see and grab MUST be movable. A
+                # root can be visible here while its position properties
+                # belong to another level's index (an instance placed in one
+                # scope, dragged in another) -- refusing then froze the card
+                # in place with a message blaming the founder. The first
+                # move at this level IS the position fact: state it the way
+                # placement does, as ordinary property relations.
+                for name, key in (("position_x", "x"), ("position_y", "y")):
+                    value = float(point[key])
+                    if not math.isfinite(value):
+                        raise InvalidCell("canvas position must be finite")
+                    _reference, cells = _compose_property(
+                        registry, root_id, name, value
+                    )
+                    created_position_cells.extend(cells)
+                continue
             for name, key in (("position_x", "x"), ("position_y", "y")):
                 value = float(point[key])
                 if not math.isfinite(value):
@@ -46354,7 +47184,10 @@ def apply_universal_canvas_gesture(
             route="/api/universal/gesture",
             command_name="canvas.arrange",
             authorization_scope_root=registry.canvas_root,
-            create=selection_transition.create,
+            create=(
+                *selection_transition.create,
+                *created_position_cells,
+            ),
             replace=replacements.values(),
         )
     return store.commit(

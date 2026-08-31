@@ -10,6 +10,12 @@ from __future__ import annotations
 import html
 
 
+# The palette is transcribed from the design system's single source of truth
+# (70.HANDOFFS/archhub-design/archhub/project/tokens.jsx). Two things that file
+# fixes and this one had not: ink_muted was #5e574f, which that source measures
+# at 2.56:1 on our dark surfaces -- failing WCAG AA at every size it is used --
+# and on_fill exists because #fff on accent #d97757 measures 3.12:1. Do not
+# hand-edit a colour here; change tokens.jsx and re-transcribe.
 THEME = {
     "bg": "#0e0e11",
     "bg_panel": "#15151a",
@@ -17,16 +23,35 @@ THEME = {
     "bg_hover": "#22222a",
     "bg_deep": "#0a0a0d",
     "bg_canvas": "#101015",
+    "bg_raised": "#1d1d22",
+    "bg_ink": "#18181e",
     "ink": "#ece8e0",
     "ink_soft": "#9b938a",
-    "ink_muted": "#5e574f",
+    "ink_muted": "#8b837a",
+    "ink_dim": "#8a837c",
+    "on_fill": "#180f08",
     "line": "#26262e",
     "line_soft": "#1e1e24",
+    "line_hair": "#1a1a20",
     "accent": "#d97757",
     "accent_soft": "#3a2018",
+    "accent_dim": "#2a1812",
+    "accent_hi": "#e8896a",
+    "accent_press": "#a04832",
     "ok": "#7ec18e",
+    "warn": "#e5b25a",
     "err": "#e6705f",
     "cyan": "#5fb3b3",
+    "purple": "#a98cd6",
+    "blue": "#7898d6",
+    "l_bg": "#f7f4ee",
+    "l_bg_panel": "#fbf9f4",
+    "l_bg_soft": "#efeae0",
+    "l_ink": "#1a1612",
+    "l_ink_soft": "#6b6256",
+    "l_ink_muted": "#9a9183",
+    "l_line": "#e3ddd0",
+    "l_accent": "#c96442",
 }
 
 

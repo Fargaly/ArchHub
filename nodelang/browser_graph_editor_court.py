@@ -150,7 +150,10 @@ class BrowserGraphEditorCourt:
             node,
             self.script_path,
             env=env,
-            timeout=150,
+            # The cap stays 150s: a court that needs longer is reporting a
+            # slow product, not a slow court. It is readable only so a
+            # diagnostic run can see past a timeout to the checks behind it.
+            timeout=int(os.environ.get("ARCHHUB_EDITOR_COURT_TIMEOUT", "150")),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if returncode != 0:

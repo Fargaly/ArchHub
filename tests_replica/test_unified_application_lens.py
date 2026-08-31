@@ -24,6 +24,7 @@ from nodelang.unified_authority import (
     composition_root,
     create_unified_authority,
     open_unified_authority,
+    read_relation,
     read_scope_level,
 )
 from nodelang.universal_cell import CellStore, InvalidCell
@@ -145,7 +146,21 @@ def test_generic_scope_lens_projects_application_compositions_without_dispatch()
         "Protocol", "Policy", "Catalogue", "Constitution", "History",
     })
     assert all(node.structural_role == "composition" for node in lens.nodes)
-    assert all(node.openable for node in lens.nodes)
+    # Openable is DERIVED, not asserted: a card offers to open only when it
+    # holds something the level below would draw. Asserting every node is
+    # openable encoded the old bug -- every card offered to expand and every
+    # expansion landed on an empty canvas. These bootstrap compositions are
+    # created empty, so none of them opens onto anything, and a composition
+    # that does hold a member must.
+    snapshot = authority.store.snapshot()
+    composition_role = authority.role("composition")
+    for node in lens.nodes:
+        holds = any(
+            member.role_id == composition_role
+            for member in read_relation(snapshot, node.root_id, budget=4096)
+        )
+        assert node.openable is holds, (node.label, node.openable, holds)
+    assert any(not node.openable for node in lens.nodes)
     assert lens.relations == ()
     authority.store.close()
 

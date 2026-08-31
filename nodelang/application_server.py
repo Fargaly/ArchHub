@@ -33,6 +33,7 @@ from .application_machine_transport import (
     validate_baboom_native_frame_payload,
 )
 from .model_execution_broker import ModelExecutionBroker
+from .cell_capabilities import CAPABILITIES, missing_capabilities
 from .cell_agent_body import read_agent_session
 from .cell_baboom_model_execution import read_model_delegation
 from .cell_deliberation import (
@@ -486,6 +487,64 @@ _CONFIGURATION_DELTA_FIELDS = (
 )
 
 
+_CHOICE_FIELDS = frozenset({
+    "connect_choices",
+    "rewire_choices",
+    "source_rewire_choices",
+    "target_rewire_choices",
+})
+
+
+def _structural_value(value, *, parent_field=None):
+    """Strip the volatile attributes so structure compares as structure."""
+    if isinstance(value, dict):
+        return {
+            key: _structural_value(item, parent_field=key)
+            for key, item in value.items()
+            if key != "data-context"
+            and not (parent_field in _CHOICE_FIELDS and key == "label")
+        }
+    if isinstance(value, list):
+        return [
+            _structural_value(item, parent_field=parent_field)
+            for item in value
+        ]
+    return value
+
+
+def _node_structure(node):
+    return {
+        key: _structural_value(value, parent_field=key)
+        for key, value in node.items()
+        if key not in {"selected", "x", "y"}
+    }
+
+
+def _wire_structure(wire):
+    return {
+        key: _structural_value(value, parent_field=key)
+        for key, value in wire.items()
+        if key not in {"selected", "context"}
+    }
+
+
+def _node_port_context(node):
+    """Which ports are in context, in port order.
+
+    A port's context is one boolean that lives inside a ten-kilobyte
+    descriptor. Treating it as structure meant one flipped boolean re-shipped
+    every node on the canvas -- 158KB to say "in context: false". It travels
+    as state now, next to selected/x/y, where it belongs.
+    """
+    contexts = []
+    for port in (node.get("ports") or ()):
+        descriptor = port.get("descriptor") or ()
+        first = descriptor[0] if descriptor else {}
+        attributes = (first or {}).get("attributes") or {}
+        contexts.append(bool(attributes.get("data-context")))
+    return contexts
+
+
 def _interaction_canvas_delta(
     projection: dict[str, object],
     *,
@@ -503,43 +562,8 @@ def _interaction_canvas_delta(
         for wire in (previous_projection or {}).get("wires", ())
     }
 
-    choice_fields = {
-        "connect_choices",
-        "rewire_choices",
-        "source_rewire_choices",
-        "target_rewire_choices",
-    }
-
-    def structural_value(
-        value: object, *, parent_field: str | None = None
-    ) -> object:
-        if isinstance(value, dict):
-            return {
-                key: structural_value(item, parent_field=key)
-                for key, item in value.items()
-                if key != "data-context"
-                and not (parent_field in choice_fields and key == "label")
-            }
-        if isinstance(value, list):
-            return [
-                structural_value(item, parent_field=parent_field)
-                for item in value
-            ]
-        return value
-
-    def node_structure(node: dict[str, object]) -> dict[str, object]:
-        return {
-            key: structural_value(value, parent_field=key)
-            for key, value in node.items()
-            if key not in {"selected", "x", "y"}
-        }
-
-    def wire_structure(wire: dict[str, object]) -> dict[str, object]:
-        return {
-            key: structural_value(value, parent_field=key)
-            for key, value in wire.items()
-            if key not in {"selected", "context"}
-        }
+    node_structure = _node_structure
+    wire_structure = _wire_structure
 
     delta = {
         "projection_mode": _INTERACTION_DELTA_MODE,
@@ -553,6 +577,7 @@ def _interaction_canvas_delta(
                 "selected": node["selected"],
                 "x": node["x"],
                 "y": node["y"],
+                "port_context": _node_port_context(node),
             }
             for node in projection["nodes"]
             if (
@@ -562,6 +587,8 @@ def _interaction_canvas_delta(
                     != node.get(field)
                     for field in ("selected", "x", "y")
                 )
+                or _node_port_context(previous_nodes[str(node["id"])])
+                != _node_port_context(node)
             )
         ],
         "wire_states": [
@@ -635,12 +662,32 @@ def _topology_canvas_delta(
     for field in _TOPOLOGY_DELTA_FIELDS:
         if field not in projection:
             continue
-        if (
+        if not (
             previous_projection is None
             or previous_projection.get("revision") != base_revision
             or previous_projection.get(field) != projection.get(field)
         ):
-            delta[field] = projection[field]
+            continue
+        # Placing one node adds it to every definition's connect choices, so
+        # four of fourteen catalogue entries change -- and re-shipping the
+        # whole catalogue spent 176KB announcing it. Ship the entries that
+        # actually changed, positioned, and let the client splice.
+        held = (previous_projection or {}).get(field)
+        current = projection[field]
+        if (
+            field == "catalog"
+            and isinstance(held, list)
+            and isinstance(current, list)
+            and len(held) == len(current)
+        ):
+            delta["catalog_items"] = [
+                {"index": index, "item": item}
+                for index, item in enumerate(current)
+                if held[index] != item
+            ]
+            delta["catalog_count"] = len(current)
+            continue
+        delta[field] = projection[field]
     if (
         previous_projection is None
         or previous_projection.get("revision") != base_revision
@@ -668,18 +715,71 @@ def _topology_canvas_delta(
         next_wires = {
             wire_key(wire): wire for wire in projection["wires"]
         }
+        # A node whose only difference is selected / x / y / port context is
+        # not a structural change, and shipping the whole node to say so cost
+        # 158KB to move one boolean. Structure travels as a full node; state
+        # travels as state.
+        def node_changed_structurally(node):
+            held = previous_nodes.get(str(node["id"]))
+            return held is None or _node_structure(held) != _node_structure(node)
+
+        def wire_changed_structurally(wire):
+            held = previous_wires.get(wire_key(wire))
+            return held is None or _wire_structure(held) != _wire_structure(wire)
+
+        upsert_nodes = [
+            node for node in projection["nodes"]
+            if node_changed_structurally(node)
+        ]
+        upsert_wires = [
+            wire for wire in projection["wires"]
+            if wire_changed_structurally(wire)
+        ]
+        structural_node_ids = {str(node["id"]) for node in upsert_nodes}
+        structural_wire_keys = {wire_key(wire) for wire in upsert_wires}
         delta["topology_patch"] = {
             "node_order": [str(node["id"]) for node in projection["nodes"]],
             "wire_order": [wire_key(wire) for wire in projection["wires"]],
             "remove_nodes": sorted(set(previous_nodes) - set(next_nodes)),
             "remove_wires": sorted(set(previous_wires) - set(next_wires)),
-            "upsert_nodes": [
-                node for node in projection["nodes"]
-                if previous_nodes.get(str(node["id"])) != node
+            "upsert_nodes": upsert_nodes,
+            "upsert_wires": upsert_wires,
+            "state_nodes": [
+                {
+                    "id": node["id"],
+                    "selected": node["selected"],
+                    "x": node["x"],
+                    "y": node["y"],
+                    "port_context": _node_port_context(node),
+                }
+                for node in projection["nodes"]
+                if str(node["id"]) not in structural_node_ids
+                and str(node["id"]) in previous_nodes
+                and (
+                    any(
+                        previous_nodes[str(node["id"])].get(field)
+                        != node.get(field)
+                        for field in ("selected", "x", "y")
+                    )
+                    or _node_port_context(previous_nodes[str(node["id"])])
+                    != _node_port_context(node)
+                )
             ],
-            "upsert_wires": [
-                wire for wire in projection["wires"]
-                if previous_wires.get(wire_key(wire)) != wire
+            "state_wires": [
+                {
+                    "id": wire["id"],
+                    "segment": wire["segment"],
+                    "selected": wire["selected"],
+                    "context": wire["context"],
+                }
+                for wire in projection["wires"]
+                if wire_key(wire) not in structural_wire_keys
+                and wire_key(wire) in previous_wires
+                and any(
+                    previous_wires[wire_key(wire)].get(field)
+                    != wire.get(field)
+                    for field in ("selected", "context")
+                )
             ],
         }
     delta.pop("node_states", None)
@@ -4206,6 +4306,32 @@ class ApplicationServer:
                                      + str(exc),
                         })
                         return
+                if parsed.path == '/api/universal/capabilities':
+                    # What this running application can actually reach. A
+                    # capability installed in the graph but unreachable from
+                    # here is still not part of the product, so the canvas
+                    # asks the server rather than trusting a build-time list.
+                    try:
+                        self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    try:
+                        snapshot = owner.universal_store.snapshot()
+                        missing = missing_capabilities(snapshot)
+                        self._json(200, {
+                            'ok': not missing,
+                            'revision': snapshot.revision,
+                            'capabilities': [
+                                {'name': name, 'root': root,
+                                 'present': root in snapshot.cells}
+                                for name, root, _key in CAPABILITIES
+                            ],
+                            'missing': list(missing),
+                        })
+                    except Exception as exc:  # noqa: BLE001
+                        self._json(500, {'ok': False, 'error': str(exc)})
+                    return
                 if parsed.path == '/':
                     try:
                         binding, session_token = \
@@ -5232,6 +5358,21 @@ class ApplicationServer:
                                     focus_root=body.get('focus'),
                                     consent_evidence_root=binding.session_root,
                                     authentication_context=binding.context)
+                            elif self.path == '/api/universal/agent':
+                                # The agentic composer: intent in, the same
+                                # signed gestures out. The model can do
+                                # nothing a founder's own click could not.
+                                from .agent_composer import (
+                                    run_agent_composer,
+                                )
+                                agent_result = run_agent_composer(
+                                    owner.universal_store,
+                                    owner.universal_registry,
+                                    str(body.get('prompt', '')),
+                                    authentication_context=binding.context,
+                                )
+                                self._json(200, agent_result)
+                                return
                             elif self.path == '/api/universal/move':
                                 touched = move_universal_root(
                                     owner.universal_store,
@@ -11643,7 +11784,11 @@ class ApplicationServer:
                     # "differs" alone cannot be acted on. What differs is
                     # either membership or order, and the two mean
                     # different things: a missing root is a real drift, a
-                    # reordering is presentation. The refusal says which.
+                    # reordering is presentation. The refusal says which --
+                    # and it only refuses drift. Order is what the canvas
+                    # shows, so a pure permutation is answered by taking
+                    # the projected order as the retained one, not by
+                    # refusing a mutation that kept every identity.
                     missing = [
                         root for root in visible_roots
                         if root not in projected_roots
@@ -11652,16 +11797,20 @@ class ApplicationServer:
                         root for root in projected_roots
                         if root not in visible_roots
                     ]
-                    raise InvalidCell(
-                        "retained scope identity differs from its "
-                        "projection: %d projected, %d visible, "
-                        "%d missing %s, %d unexpected %s, order_only=%s" % (
-                            len(projected_roots), len(visible_roots),
-                            len(missing), [root[:12] for root in missing[:4]],
-                            len(extra), [root[:12] for root in extra[:4]],
-                            not missing and not extra,
+                    if not missing and not extra:
+                        visible_roots = projected_roots
+                    else:
+                        raise InvalidCell(
+                            "retained scope identity differs from its "
+                            "projection: %d projected, %d visible, "
+                            "%d missing %s, %d unexpected %s" % (
+                                len(projected_roots), len(visible_roots),
+                                len(missing),
+                                [root[:12] for root in missing[:4]],
+                                len(extra),
+                                [root[:12] for root in extra[:4]],
+                            )
                         )
-                    )
                 scope_identity = (
                     visible_roots,
                     relation_roots,

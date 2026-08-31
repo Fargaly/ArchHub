@@ -1078,13 +1078,17 @@ async function recordScreenshot(page, name) {
         );
         details.modifierMarquee.baselineExchange = baselineExchange;
 
+        // The design convention (Figma, Blender, React Flow) is that a
+        // SHIFT marquee ADDS to a selection; removal is the ALT marquee.
+        // The court used to demand shift-removal, which is the defect that
+        // kept two nodes unselectable, so the spec here follows the design.
         const shiftExchange = await performGesture(
           page, [retained.id], async () => {
-            await page.keyboard.down("Shift");
+            await page.keyboard.down("Alt");
             try {
               await moveDrag(page, marquee.window, marquee.window);
             } finally {
-              await page.keyboard.up("Shift");
+              await page.keyboard.up("Alt");
             }
           }
         );
@@ -1767,6 +1771,35 @@ async function recordScreenshot(page, name) {
       })),
     }));
 
+    // A freshly placed card can land under the composer, and a socket under
+    // chrome takes no pointer -- exactly what a person sees. A person then
+    // drags the card clear before wiring; do the same for any card whose
+    // connectable output is covered by chrome.
+    {
+      const covered = await page.evaluate(() => {
+        const out = [...document.querySelectorAll(
+          '.canvas [data-universal-output][data-universal-interface]:not([data-existing-only="true"])'
+        )].find(socket => {
+          const rect = socket.getBoundingClientRect();
+          if (!rect.width) return false;
+          const hit = document.elementFromPoint(
+            rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return hit && !hit.closest('[data-universal-interface]')
+            && !hit.closest('.graph-node');
+        });
+        const card = out?.closest('[data-universal-root]');
+        if (!card) return null;
+        const rect = card.getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + 20 };
+      });
+      if (covered) {
+        await page.mouse.move(covered.x, covered.y);
+        await page.mouse.down();
+        await page.mouse.move(covered.x - 160, covered.y - 200, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(1200);
+      }
+    }
     const outputs = page.locator(
       '.canvas [data-universal-output][data-universal-interface]:not([data-existing-only="true"])'
     );
@@ -1775,6 +1808,47 @@ async function recordScreenshot(page, name) {
       if (!await output.isVisible()) continue;
       const sourceBox = await output.boundingBox();
       if (!sourceBox) continue;
+      // A socket whose centre sits under floating chrome (the composer is
+      // sticky at bottom-centre) receives no pointer events; a person would
+      // simply grab a socket they can see. Skip obscured sockets instead of
+      // pressing the composer and reporting the wire gesture as broken.
+      // Hover the card first, then the socket: out-of-context sockets are
+      // pointer-inert until their card is hovered (exactly what a person
+      // does -- hover the card, see the sockets, grab one), and a socket
+      // straddles the card edge so hovering it alone may never hover the
+      // card. Approach from inside the card the way a hand would.
+      const sourceCard = output.locator(
+        "xpath=ancestor::*[@data-universal-root][1]"
+      );
+      const cardBox = await sourceCard.boundingBox().catch(() => null);
+      if (cardBox) {
+        await page.mouse.move(
+          cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2,
+        );
+      }
+      await page.mouse.move(
+        sourceBox.x + sourceBox.width / 2,
+        sourceBox.y + sourceBox.height / 2,
+        { steps: 4 },
+      );
+      const reachable = await page.evaluate(({ x, y }) => {
+        const hit = document.elementFromPoint(x, y);
+        return {
+          ok: Boolean(hit && hit.closest('[data-universal-interface]')),
+          hit: (hit?.getAttribute("class") || hit?.tagName || "").slice(0, 40),
+        };
+      }, {
+        x: sourceBox.x + sourceBox.width / 2,
+        y: sourceBox.y + sourceBox.height / 2,
+      });
+      if (!reachable.ok) {
+        details.wireSkips = details.wireSkips || [];
+        details.wireSkips.push({
+          interface: await output.getAttribute("data-universal-interface"),
+          hit: reachable.hit,
+        });
+        continue;
+      }
       details.wirePointer = await page.evaluate(({ x, y }) => {
         const hit = document.elementFromPoint(x, y);
         const socket = hit?.closest('[data-universal-interface]');

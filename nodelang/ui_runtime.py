@@ -486,6 +486,7 @@ CLIENT_SCRIPT = """
     ).forEach(surface => {
       const zoom=parseFloat(surface.dataset.zoom)||1;
       surface.style.setProperty('--grid-size',(20*zoom)+'px');
+      surface.style.setProperty('--inv-zoom',String(1.02/zoom));
       surface.style.setProperty('--grid-x',(parseFloat(surface.dataset.panX)||0)+'px');
       surface.style.setProperty('--grid-y',(parseFloat(surface.dataset.panY)||0)+'px');
       const cards = new Map(Array.from(
@@ -550,12 +551,12 @@ CLIENT_SCRIPT = """
   }
   function mergeSelection(base, hits, event) {
     const result = new Set(base);
-    if (event.shiftKey) {
-      hits.forEach(id => result.delete(id));
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      hits.forEach(id => result.add(id));
       return result;
     }
-    if (event.ctrlKey || event.metaKey) {
-      hits.forEach(id => result.add(id));
+    if (event.altKey) {
+      hits.forEach(id => result.delete(id));
       return result;
     }
     return new Set(hits);
@@ -596,6 +597,7 @@ CLIENT_SCRIPT = """
     surface.dataset.zoom = String(zoom);
     stage.style.transform = 'translate('+x+'px,'+y+'px) scale('+zoom+')';
     surface.style.setProperty('--grid-size', (20*zoom)+'px');
+    surface.style.setProperty('--inv-zoom',String(1.02/zoom));
     surface.style.setProperty('--grid-x', x+'px');
     surface.style.setProperty('--grid-y', y+'px');
   }
@@ -757,12 +759,14 @@ CLIENT_SCRIPT = """
       const previousFocus=canvas.querySelector(
         '.graph-node[data-focused="True"]')?.dataset.graphNode;
       let next;
-      if (event.shiftKey) {
+      // Shift+click ADDS to a selection everywhere a node editor exists --
+      // Figma, Blender, React Flow, Photoshop. It removed here, so a founder
+      // shift-clicking a second node deselected the first, never reached two
+      // selected, and Group could never become applicable.
+      if (event.shiftKey || event.ctrlKey || event.metaKey) {
         next = new Set(base);
-        next.delete(nodeId);
-      } else if (event.ctrlKey || event.metaKey) {
-        next = new Set(base);
-        next.add(nodeId);
+        if (next.has(nodeId)) next.delete(nodeId);
+        else next.add(nodeId);
       } else {
         next = base.has(nodeId) ? new Set(base) : new Set([nodeId]);
       }
@@ -795,7 +799,8 @@ CLIENT_SCRIPT = """
                 previousFocus:surface.querySelector(
                   '.graph-node[data-focused="True"]')?.dataset.graphNode,
                 event:{shiftKey:event.shiftKey, ctrlKey:event.ctrlKey,
-                       metaKey:event.metaKey}, pointerId:event.pointerId};
+                       metaKey:event.metaKey, altKey:event.altKey},
+                pointerId:event.pointerId};
     surface.classList.add('is-selecting');
     surface.setPointerCapture?.(event.pointerId);
   });
@@ -1471,6 +1476,25 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         control_catalog:result.control_state,
       },
     };
+    // A positioned splice of the entries that changed, instead of the whole
+    // 176KB catalogue, for the same reason the node patch stopped shipping
+    // whole nodes: a change is not a reason to resend everything.
+    if (Array.isArray(result.catalog_items)) {
+      const held=baseProjection.catalog;
+      if (!Array.isArray(held)
+          || held.length !== Number(result.catalog_count)) {
+        throw new Error('Catalogue patch does not cover the held catalogue');
+      }
+      const next=[...held];
+      result.catalog_items.forEach(entry => {
+        const index=Number(entry.index);
+        if (!Number.isInteger(index) || index < 0 || index >= next.length) {
+          throw new Error('Catalogue patch names an absent entry');
+        }
+        next[index]=entry.item;
+      });
+      merged.catalog=next;
+    }
     merged.connection_count=Number(result.connection_count || 0);
     merged.connections=[];
     if (mode === topologyDeltaMode) {
@@ -1483,6 +1507,11 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         if (fields.some(field => !Array.isArray(patch[field]))) {
           throw new Error('Topology patch shape is invalid');
         }
+        const stateNodes=patch.state_nodes || [];
+        const stateWires=patch.state_wires || [];
+        if (!Array.isArray(stateNodes) || !Array.isArray(stateWires)) {
+          throw new Error('Topology patch state channel is invalid');
+        }
         const nodes=new Map(baseProjection.nodes.map(node => [node.id,node]));
         const wires=new Map(baseProjection.wires.map(wire => [
           `${wire.id}:${wire.segment}`,wire,
@@ -1492,6 +1521,38 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         patch.upsert_nodes.forEach(node => nodes.set(node.id,node));
         patch.upsert_wires.forEach(wire => wires.set(
           `${wire.id}:${wire.segment}`,wire));
+        // A port's context is one boolean buried in a ten-kilobyte
+        // descriptor. The server sends it as state; rebuild the descriptor
+        // around it rather than making the server re-ship the node.
+        stateNodes.forEach(state => {
+          const held=nodes.get(state.id);
+          if (!held) throw new Error('Topology state names an absent node');
+          const next={...held,selected:state.selected,x:state.x,y:state.y};
+          if (Array.isArray(state.port_context) && Array.isArray(held.ports)) {
+            if (state.port_context.length !== held.ports.length) {
+              throw new Error('Topology port context does not cover the ports');
+            }
+            next.ports=held.ports.map((port,index) => {
+              const context=state.port_context[index];
+              const descriptor=port.descriptor;
+              if (!Array.isArray(descriptor) || !descriptor.length) return port;
+              const head=descriptor[0];
+              const attributes={...(head.attributes||{}),
+                'data-context':context};
+              return {...port,descriptor:[
+                {...head,attributes},...descriptor.slice(1),
+              ]};
+            });
+          }
+          nodes.set(state.id,next);
+        });
+        stateWires.forEach(state => {
+          const key=`${state.id}:${state.segment}`;
+          const held=wires.get(key);
+          if (!held) throw new Error('Topology state names an absent wire');
+          wires.set(key,{...held,
+            selected:state.selected,context:state.context});
+        });
         if (
           new Set(patch.node_order).size !== patch.node_order.length
           || new Set(patch.wire_order).size !== patch.wire_order.length
@@ -1558,10 +1619,34 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     ) {
       throw new Error('Interaction delta changed the projected topology');
     }
+    // The state channel carries port context as a boolean per port; folding
+    // it in as a bare field would leave a `port_context` key on the node and
+    // the descriptor still stale. Rebuild the descriptor from it instead.
+    const applyNodeState=(node,state) => {
+      if (!state) return node;
+      const {port_context:context,...plain}=state;
+      const next={...node,...plain};
+      if (Array.isArray(context) && Array.isArray(node.ports)
+          && context.length === node.ports.length) {
+        next.ports=node.ports.map((port,index) => {
+          const descriptor=port.descriptor;
+          if (!Array.isArray(descriptor) || !descriptor.length) return port;
+          const head=descriptor[0];
+          const attributes={...(head.attributes||{}),
+            'data-context':context[index]};
+          return {...port,descriptor:[
+            {...head,attributes},...descriptor.slice(1),
+          ]};
+        });
+      }
+      return next;
+    };
     merged.nodes=nodeStates.size || nodePatches.size
       ? baseProjection.nodes.map(node => (
           nodeStates.has(node.id) || nodePatches.has(node.id)
-            ? {...node,...nodePatches.get(node.id),...nodeStates.get(node.id)}
+            ? applyNodeState(
+                {...node,...nodePatches.get(node.id)},
+                nodeStates.get(node.id))
             : node
         ))
       : baseProjection.nodes;
@@ -1585,13 +1670,28 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
     return merged;
   }
+  function scheduleRedraw(segments=null) {
+    // rAF for smoothness when frames flow, a timeout so a hidden or
+    // throttled tab still draws -- the same race the toolbar chrome and
+    // the scope entry needed. One name so nobody reaches for a bare rAF.
+    let done=false;
+    const run=() => { if (done) return; done=true; redraw(segments); };
+    requestAnimationFrame(run);
+    setTimeout(run,32);
+  }
   function redraw(segments=null) {
     const canvas=document.querySelector('.canvas');
     const index=canvasElementIndexFor(canvas);
     if (!index) return;
     const sockets=index.sockets;
     const cards=index.nodes;
-    const wireMembers=segments
+    // A caller that hands over something that is not iterable used to throw
+    // here, and the throw aborted the whole render -- which is why selecting
+    // two nodes left the toolbar frozen and the Group button never appeared.
+    // Redrawing everything is the safe answer; refusing to draw is not.
+    const scoped=segments
+      && typeof segments[Symbol.iterator] === 'function';
+    const wireMembers=scoped
       ? [...segments].flatMap(segment => index.wires.get(segment) || [])
       : [...index.layer.children];
     wireMembers.forEach(element => {
@@ -2066,6 +2166,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const grid=parseFloat(getComputedStyle(document.documentElement)
       .getPropertyValue('--component-canvas-grid-size')) || 20;
     canvas.style.setProperty('--grid-size',(grid*viewport.zoom)+'px');
+    canvas.style.setProperty('--inv-zoom',String(1.02/(viewport.zoom||1)));
     canvas.style.setProperty('--grid-x',viewport.pan_x+'px');
     canvas.style.setProperty('--grid-y',viewport.pan_y+'px');
   }
@@ -2482,6 +2583,48 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     document.head.append(sheet);
   }
 
+  function ensureAgentBar() {
+    const canvasSurface=document.querySelector('.canvas');
+    if (!canvasSurface) return null;
+    let bar=canvasSurface.querySelector(':scope > .composer');
+    if (bar?.dataset.agent === 'true') return bar;
+    bar?.remove();
+    bar=element('div','composer');
+    bar.dataset.agent='true';
+    const box=element('input','composer-input');
+    box.type='text';
+    box.placeholder='Tell the agent what to do on this canvas…';
+    box.setAttribute('aria-label','Agent composer');
+    box.autocomplete='off';
+    box.spellcheck=false;
+    const status=element('span','composer-agent-status');
+    status.hidden=true;
+    box.addEventListener('keydown',async event => {
+      if (event.key !== 'Enter') return;
+      const prompt=box.value.trim();
+      if (!prompt) return;
+      event.preventDefault();
+      box.disabled=true;
+      status.hidden=false;
+      status.textContent='…';
+      try {
+        const result=await performUniversalFetch(
+          '/api/universal/agent',{prompt});
+        status.textContent=result.answer || 'Done';
+        box.value='';
+        await window.__archhubUniversalRefresh?.();
+      } catch (error) {
+        status.textContent=error?.message || 'The agent request failed';
+      } finally {
+        box.disabled=false;
+        box.focus();
+        setTimeout(() => { status.hidden=true; },8000);
+      }
+    });
+    bar.append(box,status);
+    canvasSurface.append(bar);
+    return bar;
+  }
   function ensureComposer() {
     const canvasSurface=document.querySelector('.canvas');
     if (!canvasSurface) return null;
@@ -2632,8 +2775,11 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     ) || toolbarButtons[0];
     toolbarButtons.forEach(button => { button.tabIndex=button === focusTarget ? 0 : -1; });
     ensureCanvasMotion();
-    const composer=ensureComposer();
-    if (composer) composer.hidden=false;
+    // The composer is AGENTIC now -- the design's whole point. What you
+    // type goes to the model with the live canvas as context, and what
+    // comes back is applied through the same signed gestures a click
+    // uses. The old bar that just placed a node by name is gone.
+    const composer=ensureAgentBar();
     // The composer is client-made chrome and the toolbar is graph-held, so
     // nothing in the stylesheet knows they share the bottom of the canvas.
     // With twenty-six cards the toolbar grew under the composer and every
@@ -2679,8 +2825,13 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const socketRows=Math.max(
       onSide('target').length, onSide('source').length);
     // An expanded port carries a name and a value, so it needs a full
-    // row; a socket needs only enough not to touch its neighbour.
-    return Math.max(112,82+Math.max(expandedRows*24,socketRows*16));
+    // row; a socket needs a row a pointer can actually hit. 16px per
+    // socket was enough not to touch its neighbour and not enough to aim
+    // at: the placement below divides this room among the sockets, and at
+    // 16px a row it handed each one 14px and the court measured every
+    // socket under the 24px target. A card carrying many sockets grows
+    // instead -- the sockets stay hittable and stop fighting the floor.
+    return Math.max(112,82+Math.max(expandedRows*24,socketRows*26));
   }
   // A grid laid out in reading order is why the wires looked unrelated to
   // the cards: two cards that feed each other could sit at opposite ends
@@ -2781,7 +2932,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     // could be aimed at. Each takes the room it is actually given, and
     // never less than a pointer can hit.
     const pitch=usable/(compact.length+1);
-    const height=Math.max(10,Math.min(25,Math.floor(pitch)-2));
+    // Never below the pointer target: the card was grown to make the room,
+    // so a socket that still came out under 24px would mean the growth did
+    // not happen, and shrinking is not the answer to that.
+    const height=Math.max(24,Math.min(25,Math.floor(pitch)-2));
     // min-height, not height alone: the graph-held stylesheet floors every
     // socket at --component-socket-target-size (24px), and a height cannot
     // argue with a minimum -- the sockets stayed 24px tall and kept
@@ -3178,7 +3332,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
     glideViewport(canvas,viewportOverWork(projection,canvas));
-    requestAnimationFrame(() => redraw(redrawSegments));
+    scheduleRedraw(redrawSegments);
     return true;
   }
   function reconcileStableCanvasProjection(previous,projection) {
@@ -3262,7 +3416,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     stage.style.width=stageWidth+'px';
     stage.style.height=stageHeight+'px';
     glideViewport(canvas,viewportOverWork(projection,canvas));
-    requestAnimationFrame(() => redraw(redrawSegments));
+    scheduleRedraw(redrawSegments);
     return true;
   }
   function reconcileCanvasLensPresentation(previous,projection) {
@@ -3332,7 +3486,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       || movedInterfaces.has(wire.target_interface)
     )).map(wire => wire.id+':'+wire.segment));
     if (redrawSegments.size) {
-      requestAnimationFrame(() => redraw(redrawSegments));
+      scheduleRedraw(redrawSegments);
     }
     return true;
   }
@@ -3369,8 +3523,16 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         || JSON.stringify(previousComposer) !== JSON.stringify(nextComposer)
       ) renderLibrary(projection);
       if (!propertyPatched) renderInspector(projection);
+      // A selection leaves the canvas signature untouched, so this is the
+      // branch every click lands in. Gating the toolbar on the descriptor
+      // alone meant selecting two nodes made Group applicable server-side
+      // and the button never appeared -- the graph said you could group and
+      // there was nothing to press. Applicability lives in the control
+      // catalogue, so compare that too.
       if (!sameProjectedRegion(
-        previous.toolbar_descriptor,projection.toolbar_descriptor)) {
+        previous.toolbar_descriptor,projection.toolbar_descriptor)
+        || JSON.stringify(zoneControls('canvas-toolbar',previous))
+          !== JSON.stringify(zoneControls('canvas-toolbar',projection))) {
         renderToolbar(projection);
       }
       clearInteractionStatus();
@@ -3476,7 +3638,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     glideViewport(canvas,viewportOverWork(projection,canvas));
     invalidateCanvasElementIndex();
     canvasElementIndexFor(canvas);
-    requestAnimationFrame(() => redraw(redrawSegments));
+    // Never a bare requestAnimationFrame for a correctness-bearing draw: a
+    // hidden or throttled tab gets no frame, and every wire in the entered
+    // scope then sits with an empty path forever. Race a timeout.
+    scheduleRedraw(redrawSegments);
   }
   function requireUniqueProjectionIdentities(projection) {
     const requireUnique=(values,label) => {
@@ -3513,6 +3678,19 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     Object.entries(projection.configuration?.theme || {}).forEach(
       ([name,value]) => document.documentElement.style.setProperty(
         `--${name.replaceAll('_','-')}`,value));
+    // The design tokens and component bindings used to be written only by a
+    // full render, so every delta path repainted the canvas with the tokens
+    // the page loaded with. Revising a token then showed nothing until
+    // something forced a whole re-render.
+    Object.entries(
+      projection.configuration?.design_system?.tokens || {}
+    ).forEach(([name,token]) => document.documentElement.style.setProperty(
+      `--token-${name.replaceAll('.','-')}`,token.value));
+    Object.entries(
+      projection.configuration?.design_system?.components || {}
+    ).forEach(([component,bindings]) => Object.entries(bindings).forEach(
+      ([property,binding]) => document.documentElement.style.setProperty(
+        `--component-${component}-${property}`,binding.value)));
   }
   function render(projection) {
     requireUniqueProjectionIdentities(projection);
@@ -3523,13 +3701,6 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     ) acceptedProjection=projection;
     window.__archhubInteractionPolicy=projection?.interaction_policy || null;
     applyThemeProjection(projection);
-    Object.entries(projection.configuration.design_system?.tokens || {}).forEach(
-      ([name,token]) => document.documentElement.style.setProperty(
-        `--token-${name.replaceAll('.','-')}`,token.value));
-    Object.entries(projection.configuration.design_system?.components || {}).forEach(
-      ([component,bindings]) => Object.entries(bindings).forEach(
-        ([property,binding]) => document.documentElement.style.setProperty(
-          `--component-${component}-${property}`,binding.value)));
     renderStaticControls(projection);
     renderLibrary(projection);
     renderCanvas(projection);
@@ -3723,24 +3894,58 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     });
     const inspectorChanged=!sameProjectedRegion(
       previous?.inspector,projection.inspector);
+    // The toolbar draws only the controls that are APPLICABLE right now, and
+    // applicability lives in the control catalogue -- not in the descriptor.
+    // Gating the re-render on the descriptor alone meant selecting two nodes
+    // made Group applicable and the button never appeared: the graph said you
+    // could group and there was nothing to press.
     const toolbarChanged=!sameProjectedRegion(
-      previous?.toolbar_descriptor,projection.toolbar_descriptor);
+      previous?.toolbar_descriptor,projection.toolbar_descriptor)
+      || JSON.stringify(zoneControls('canvas-toolbar',previous).map(
+           control => control.owner))
+        !== JSON.stringify(zoneControls('canvas-toolbar',projection).map(
+           control => control.owner));
     const renderChrome=() => {
-      if (lastProjection !== projection) return;
-      if (inspectorChanged) renderInspector(projection);
+      // Two pointer paths commit the same click, so by the time this frame
+      // runs the projection it was scheduled for is often already
+      // superseded. Bailing then left the chrome frozen on the FIRST
+      // selection -- the toolbar kept reading "1 selected" while the graph
+      // held two and Group was applicable. Draw the projection the client
+      // actually holds now, and re-decide against it.
+      const current=lastProjection || projection;
+      const superseded=current !== projection;
+      const inspectorNow=superseded
+        ? !sameProjectedRegion(previous?.inspector,current.inspector)
+        : inspectorChanged;
+      const toolbarNow=superseded
+        ? (!sameProjectedRegion(
+             previous?.toolbar_descriptor,current.toolbar_descriptor)
+           || JSON.stringify(zoneControls('canvas-toolbar',previous).map(
+                control => control.owner))
+             !== JSON.stringify(zoneControls('canvas-toolbar',current).map(
+                control => control.owner)))
+        : toolbarChanged;
+      if (inspectorNow) renderInspector(current);
       else {
         const inspector=document.querySelector('.inspector');
-        if (inspector) inspector.dataset.inspectedNode=projection.selected || '';
+        if (inspector) inspector.dataset.inspectedNode=current.selected || '';
       }
-      if (toolbarChanged) renderToolbar(projection);
+      if (toolbarNow) renderToolbar(current);
       clearInteractionStatus();
     };
     if (!reconciled) {
       render(projection);
       return;
     }
-    if (sameSelection(previous,projection)) renderChrome();
-    else requestAnimationFrame(renderChrome);
+    if (sameSelection(previous,projection)) { renderChrome(); return; }
+    // A changed selection deferred the chrome to the next animation frame,
+    // and a frame never comes while the tab is hidden or throttled -- the
+    // toolbar then sits frozen on the previous selection forever, which is
+    // exactly how Group stayed missing. Take whichever tick arrives first.
+    let drawn=false;
+    const once=() => { if (drawn) return; drawn=true; renderChrome(); };
+    requestAnimationFrame(once);
+    setTimeout(once,32);
   }
   function topologyRedrawSegments(previous,projection) {
     if (!previous) return null;
@@ -3789,8 +3994,17 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     const previous=lastProjection;
     const inspectorChanged=!sameProjectedRegion(
       previous?.inspector,projection.inspector);
+    // The toolbar draws only the controls that are APPLICABLE right now, and
+    // applicability lives in the control catalogue -- not in the descriptor.
+    // Gating the re-render on the descriptor alone meant selecting two nodes
+    // made Group applicable and the button never appeared: the graph said you
+    // could group and there was nothing to press.
     const toolbarChanged=!sameProjectedRegion(
-      previous?.toolbar_descriptor,projection.toolbar_descriptor);
+      previous?.toolbar_descriptor,projection.toolbar_descriptor)
+      || JSON.stringify(zoneControls('canvas-toolbar',previous).map(
+           control => control.owner))
+        !== JSON.stringify(zoneControls('canvas-toolbar',projection).map(
+           control => control.owner));
     const redrawSegments=projection.__topologyPatch
       ? topologyPatchRedrawSegments(previous,projection.__topologyPatch)
       : topologyRedrawSegments(previous,projection);
@@ -4454,8 +4668,10 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       return;
     }
     const roots=new Set(lastProjection.selection);
-    if (event.shiftKey) roots.delete(root);
-    else if (event.ctrlKey || event.metaKey) roots.add(root);
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      if (roots.has(root)) roots.delete(root);
+      else roots.add(root);
+    }
     else { roots.clear(); roots.add(root); }
     const chosen=Array.from(roots);
     const focus=roots.has(root) ? root : chosen.at(-1);
@@ -4944,10 +5160,24 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       const control=zoneControls('canvas-toolbar').find(candidate =>
         candidate.activation.capability === controlCapabilities.composition
         && candidate.activation.arguments?.operation === operation);
-      const action=control ? [...document.querySelectorAll(
-        '.canvas-toolbar [data-control-binding]')].find(button =>
-          button.dataset.controlBinding === control.activation.binding) : null;
-      action?.click();
+      // A shortcut must not depend on chrome. This looked up the toolbar
+      // BUTTON and clicked it, so whenever the button was not drawn the
+      // shortcut did nothing at all and said nothing either.
+      if (!control) {
+        showInteractionStatus(
+          operation === 'group'
+            ? 'Select two or more nodes to group them.'
+            : 'Select a group to ungroup it.', 'info');
+        return;
+      }
+      // activateProjectedControl reads the control off a button element, so
+      // give it a detached one carrying the same graph identity. The command
+      // still comes from the projection; only the chrome is gone.
+      const carrier=element('button');
+      carrier.dataset.universalControl=control.owner;
+      carrier.dataset.controlBinding=control.activation.binding;
+      activateProjectedControl(carrier).catch(error => showInteractionStatus(
+        error.message || 'That did not work.'));
       return;
     }
     const scopedInput=event.target.closest?.(
@@ -5056,10 +5286,19 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         root => allowed.has(root)));
     }
   }
-  function selectionWithModifiers(base,roots,event) {
+  function selectionWithModifiers(base,roots,event,{toggle=false}={}) {
+    // Marquee sweeps ADD on shift (sweeping over an already-selected node
+    // must not deselect it); a modifier CLICK toggles the one node under
+    // the pointer -- the Figma/Blender/React Flow convention. Alt removes
+    // in both shapes.
     const result=new Set(base);
-    if (event.shiftKey) roots.forEach(root => result.delete(root));
-    else if (event.ctrlKey || event.metaKey) roots.forEach(root => result.add(root));
+    if (event.altKey) roots.forEach(root => result.delete(root));
+    else if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      roots.forEach(root => {
+        if (toggle && result.has(root)) result.delete(root);
+        else result.add(root);
+      });
+    }
     else return new Set(roots);
     return result;
   }
@@ -5138,7 +5377,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       });
       const segments=wireSegmentsForNodes(
         gesture.canvas,gesture.origins.map(origin => origin.root));
-      if (segments.size) requestAnimationFrame(() => redraw(segments));
+      if (segments.size) scheduleRedraw(segments);
     }
     if (gesture.kind === 'pan' && restore) {
       applyViewport(gesture.canvas,gesture.viewport);
@@ -5169,10 +5408,19 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
     pending.timer=setTimeout(async () => {
       if (pendingCanvasSelectionCommit !== pending) return;
       pendingCanvasSelectionCommit=null;
-      if (
-        lastProjection?.revision !== revision
-        || lastProjection?.scope?.current !== scope
-      ) return;
+      // A selection is a VIEW fact: which roots the founder is holding. It
+      // does not go stale because the graph advanced a revision -- and the
+      // revision always advances, because the click before it committed.
+      // Guarding on the revision meant the second click in a row was
+      // silently dropped, so a two-node selection never reached the server
+      // and Group could never become applicable. Scope still guards it, and
+      // the roots must still be on the canvas.
+      if (lastProjection?.scope?.current !== scope) return;
+      const nodes=lastProjection?.nodes;
+      if (Array.isArray(nodes) && nodes.length) {
+        const visible=new Set(nodes.map(node => node.id));
+        if ((payload?.roots || []).some(root => !visible.has(root))) return;
+      }
       await commit(payload);
     },delay);
     pendingCanvasSelectionCommit=pending;
@@ -5214,7 +5462,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       const base=visibleCanvasSelection(canvas);
       let roots;
       if (event.shiftKey || event.ctrlKey || event.metaKey) {
-        roots=selectionWithModifiers(base,[root],event);
+        roots=selectionWithModifiers(base,[root],event,{toggle:true});
       } else {
         roots=base.has(root) ? base : new Set([root]);
       }
@@ -5261,7 +5509,7 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       canvas,capture:canvas,box,startX:event.clientX,startY:event.clientY,
       base,roots:new Set(base),
       focus:lastProjection.selected,moved:false,
-      event:{shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey},
+      event:{shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey,altKey:event.altKey},
     });
   });
   document.addEventListener('pointermove', event => {

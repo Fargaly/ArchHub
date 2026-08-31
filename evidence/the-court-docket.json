@@ -1,4 +1,10 @@
 {
+ "generated_from": {
+  "SPEC 11": "SPEC.md section 11 (parsed)",
+  "Core Values": "carried from previous docket - no parser yet",
+  "100 layers": "carried from previous docket - no parser yet",
+  "Grand Map": "carried from previous docket - no parser yet"
+ },
  "sources": {
   "SPEC 11": 17,
   "Core Values": 10,
@@ -9,87 +15,152 @@
   {
    "source": "SPEC 11",
    "id": "SPEC-11.1",
-   "text": "Uniform Cell: no second persisted semantic shape or side authority."
+   "text": "Uniform Cell: no second persisted semantic shape or side authority.",
+   "measured_by": [
+    "tests_replica/test_forcing_one_table.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.2",
-   "text": "Authority coherence: no active contradiction; mutable facts are generated."
+   "text": "Authority coherence: no active contradiction; mutable facts are generated.",
+   "measured_by": [
+    "tests_replica/test_authority_coherence.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.3",
-   "text": "No hidden interpreter: graph path and any fast path are equivalent; deleting the fast path does not alter meaning."
+   "text": "No hidden interpreter: graph path and any fast path are equivalent; deleting the fast path does not alter meaning.",
+   "measured_by": [
+    "tests_replica/test_chain_checkpoint_equivalence.py",
+    "tests_replica/test_derived_interactions_equivalence.py",
+    "tests_replica/test_cell_revision_checkpoint.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.4",
-   "text": "One identity: every lens resolves the same roots and facts."
+   "text": "One identity: every lens resolves the same roots and facts.",
+   "measured_by": [
+    "tests_replica/test_cell_identity.py",
+    "tests_replica/test_cell_federated_identity.py",
+    "tests_replica/test_unified_application_lens.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.5",
-   "text": "Explicit causality: rewiring authority changes behavior; deleting projection does not."
+   "text": "Explicit causality: rewiring authority changes behavior; deleting projection does not.",
+   "measured_by": [
+    "tests_replica/test_projection_delta.py",
+    "tests_replica/test_clean_server_visual_projection.py",
+    "tests_replica/test_universal_application_projection_cache.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.6",
-   "text": "Persistent attention: signals, reasons, focus, obligations, and cursors recover after restart."
+   "text": "Persistent attention: signals, reasons, focus, obligations, and cursors recover after restart.",
+   "measured_by": [
+    "tests_replica/test_cell_attention.py",
+    "tests_replica/test_cell_attention_reactions.py",
+    "tests_replica/test_cell_focus_view.py",
+    "tests_replica/test_universal_focus_integration.py",
+    "tests_replica/test_application_persistence.py",
+    "tests_replica/test_universal_cell_persistent_map.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.7",
-   "text": "Replay: graph state reconstructs deterministically and effects do not repeat."
+   "text": "Replay: graph state reconstructs deterministically and effects do not repeat.",
+   "measured_by": [
+    "tests_replica/test_cell_revision_checkpoint.py",
+    "tests_replica/test_postgres_cell_journal.py",
+    "tests_replica/test_application_machine_transport.py::test_machine_transport_executes_only_one_idempotent_founder_baboom_task"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.8",
-   "text": "Attention security: hidden roots cannot influence visible output or context."
+   "text": "Attention security: hidden roots cannot influence visible output or context.",
+   "measured_by": [
+    "tests_replica/test_relation_security.py",
+    "tests_replica/test_cell_view_template_security.py",
+    "tests_replica/test_application_agent_body_security.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.9",
-   "text": "User control: a nontechnical user can understand cause, edit permitted state, undo, and recover without Floor knowledge."
+   "text": "User control: a nontechnical user can understand cause, edit permitted state, undo, and recover without Floor knowledge.",
+   "measured_by_note": "decided by the live browser gesture court (the_court.cjs), not by pytest"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.10",
-   "text": "Real interfaces: sockets, cables, relations, incidences, and n-ary cases are exact."
+   "text": "Real interfaces: sockets, cables, relations, incidences, and n-ary cases are exact.",
+   "measured_by": [
+    "tests_replica/test_cell_relation_contract.py",
+    "tests_replica/test_cell_relation_forms.py",
+    "tests_replica/test_cell_relations_view.py",
+    "tests_replica/test_cell_interface_view.py",
+    "tests_replica/test_universal_cell_relations.py",
+    "tests_replica/test_relation_topology_editor.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.11",
-   "text": "Properties: panels/editors are graph-projected and no tab is dead."
+   "text": "Properties: panels/editors are graph-projected and no tab is dead.",
+   "measured_by": [
+    "tests_replica/test_cell_properties_view.py",
+    "tests_replica/test_universal_properties_presentation.py",
+    "tests_replica/test_app_watcher_panel.py",
+    "tests_replica/test_browser_graph_editor_court.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.12",
-   "text": "Composition: group, enter, breadcrumb, ungroup, and undo preserve identity and connectivity."
+   "text": "Composition: group, enter, breadcrumb, ungroup, and undo preserve identity and connectivity.",
+   "measured_by_note": "decided by the live browser gesture court"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.13",
-   "text": "Interaction: selection, zoom, pan, drag, wire, keyboard, focus, and pointer capture pass in a real browser."
+   "text": "Interaction: selection, zoom, pan, drag, wire, keyboard, focus, and pointer capture pass in a real browser.",
+   "measured_by_note": "decided by the live browser gesture court"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.14",
-   "text": "Performance: pointer frame p95 <= 16.7 ms, same-frame selection feedback, local mutation acknowledgement <= 100 ms, bounded scope entry <= 150 ms, and no steady-state long task over 50 ms on the reference machine."
+   "text": "Performance: pointer frame p95 <= 16.7 ms, same-frame selection feedback, local mutation acknowledgement <= 100 ms, bounded scope entry <= 150 ms, and no steady-state long task over 50 ms on the reference machine.",
+   "measured_by_note": "decided by the live browser gesture court"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.15",
-   "text": "Lifecycle/effect: independent states, receipts, reconciliation, conflicts, recovery, and compensation are proven."
+   "text": "Lifecycle/effect: independent states, receipts, reconciliation, conflicts, recovery, and compensation are proven.",
+   "measured_by": [
+    "tests_replica/test_cell_lifecycle.py",
+    "tests_replica/test_clean_owner_recovery.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.16",
-   "text": "Core Values: each value maps to a passing control or visible gap; no partial row is green."
+   "text": "Core Values: each value maps to a passing control or visible gap; no partial row is green.",
+   "measured_by": [
+    "tests_replica/test_cell_core_values.py"
+   ]
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.17",
-   "text": "No false done: report exact revision, environment, evidence, open requirement, residual risk, and untested boundary. Security, privacy, data-loss, authority-coherence, and one-identity failures are release blockers. A lo"
+   "text": "No false done: report exact revision, environment, evidence, open requirement, residual risk, and untested boundary. Security, privacy, data-loss, authority-coherence, and one-identity failures are release blockers. A local visual demo, test count, or completion percentage cannot override a red court.",
+   "measured_by_note": "decided by this judgement naming every NOT JUDGED item"
   },
   {
    "source": "Core Values",
@@ -747,7 +818,7 @@
    "id": "L84",
    "name": "Domain Adapter Boundary",
    "proof_target": "Domain-neutral envelope, exact action, version, sandbox, no-workflow-in-adapter, real-host artifact, and revocation courts. [I02] [E20] [E38]",
-   "failure": "`if project == "<a client>"` selects hidden behavior in the adapter."
+   "failure": "`if project == \"<a client>\"` selects hidden behavior in the adapter."
   },
   {
    "source": "100 layers",

@@ -513,12 +513,20 @@ def project_unified_scope(
     # Where a composition sits is a graph fact the scope holds, not a
     # number a projector picks. A composition that has never been placed
     # reads as unplaced, so the canvas can say so rather than scatter it.
+    # An application that holds no Interface composition has placed nothing,
+    # which is exactly what "never been placed" means. Demanding the
+    # composition here turned a legitimately unplaced scope into a refusal
+    # and took every generic lens down with it.
+    try:
+        interface_root = composition_root(authority, "Interface", caller=caller)
+    except InvalidCell:
+        interface_root = None
     placements = read_composition_placements(
         authority,
         authority.store.snapshot(),
-        composition_root(authority, "Interface", caller=caller),
+        interface_root,
         wanted=level.composition_roots,
-    )
+    ) if interface_root is not None else {}
     for root in level.composition_roots:
         instance = level.instances.get(root)
         if instance is None:

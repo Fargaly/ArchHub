@@ -1,0 +1,109 @@
+{
+  "schema": "archhub-court-bindings-v1",
+  "what_this_is": "Which measurement decides which court. Declared as data so the docket carries it and the judge holds no per-court branches. A court with no binding stays NOT JUDGED - that is the honest default, not an edge case.",
+  "rules": {
+    "PASS": "every bound test ran and passed, and at least one matched",
+    "FAIL": "any bound test failed or errored",
+    "NOT JUDGED": "no binding declared, or no bound test matched the report"
+  },
+  "junit_report": "evidence/junit-tests_replica.xml",
+  "bindings": {
+    "SPEC-11.1": {
+      "why": "Uniform Cell: no second persisted semantic shape or side authority.",
+      "tests": ["tests_replica/test_forcing_one_table.py"]
+    },
+    "SPEC-11.2": {
+      "why": "Authority coherence: no active contradiction; mutable facts are generated.",
+      "tests": ["tests_replica/test_authority_coherence.py"]
+    },
+    "SPEC-11.3": {
+      "why": "No hidden interpreter: graph path and any fast path are equivalent.",
+      "tests": [
+        "tests_replica/test_chain_checkpoint_equivalence.py",
+        "tests_replica/test_derived_interactions_equivalence.py",
+        "tests_replica/test_cell_revision_checkpoint.py"
+      ]
+    },
+    "SPEC-11.4": {
+      "why": "One identity: every lens resolves the same roots and facts.",
+      "tests": [
+        "tests_replica/test_cell_identity.py",
+        "tests_replica/test_cell_federated_identity.py",
+        "tests_replica/test_unified_application_lens.py"
+      ]
+    },
+    "SPEC-11.5": {
+      "why": "Explicit causality: rewiring authority changes behavior; deleting projection does not.",
+      "tests": [
+        "tests_replica/test_projection_delta.py",
+        "tests_replica/test_clean_server_visual_projection.py",
+        "tests_replica/test_universal_application_projection_cache.py"
+      ]
+    },
+    "SPEC-11.6": {
+      "why": "Persistent attention: signals, reasons, focus, obligations and cursors recover after restart.",
+      "tests": [
+        "tests_replica/test_cell_attention.py",
+        "tests_replica/test_cell_attention_reactions.py",
+        "tests_replica/test_cell_focus_view.py",
+        "tests_replica/test_universal_focus_integration.py",
+        "tests_replica/test_application_persistence.py",
+        "tests_replica/test_universal_cell_persistent_map.py"
+      ]
+    },
+    "SPEC-11.7": {
+      "why": "Replay: graph state reconstructs deterministically and effects do not repeat.",
+      "tests": [
+        "tests_replica/test_cell_revision_checkpoint.py",
+        "tests_replica/test_postgres_cell_journal.py",
+        "tests_replica/test_application_machine_transport.py::test_machine_transport_executes_only_one_idempotent_founder_baboom_task"
+      ]
+    },
+    "SPEC-11.8": {
+      "why": "Attention security: hidden roots cannot influence visible output or context.",
+      "tests": [
+        "tests_replica/test_relation_security.py",
+        "tests_replica/test_cell_view_template_security.py",
+        "tests_replica/test_application_agent_body_security.py"
+      ]
+    },
+    "SPEC-11.10": {
+      "why": "Real interfaces: sockets, cables, relations, incidences and n-ary cases are exact.",
+      "tests": [
+        "tests_replica/test_cell_relation_contract.py",
+        "tests_replica/test_cell_relation_forms.py",
+        "tests_replica/test_cell_relations_view.py",
+        "tests_replica/test_cell_interface_view.py",
+        "tests_replica/test_universal_cell_relations.py",
+        "tests_replica/test_relation_topology_editor.py"
+      ]
+    },
+    "SPEC-11.11": {
+      "why": "Properties: panels/editors are graph-projected and no tab is dead.",
+      "tests": [
+        "tests_replica/test_cell_properties_view.py",
+        "tests_replica/test_universal_properties_presentation.py",
+        "tests_replica/test_app_watcher_panel.py",
+        "tests_replica/test_browser_graph_editor_court.py"
+      ]
+    },
+    "SPEC-11.15": {
+      "why": "Lifecycle/effect: independent states, receipts, reconciliation, conflicts, recovery and compensation are proven.",
+      "tests": [
+        "tests_replica/test_cell_lifecycle.py",
+        "tests_replica/test_clean_owner_recovery.py"
+      ]
+    },
+    "SPEC-11.16": {
+      "why": "Core Values: each value maps to a passing control or visible gap.",
+      "tests": ["tests_replica/test_cell_core_values.py"]
+    }
+  },
+  "deliberately_unbound": {
+    "SPEC-11.9": "decided by the live browser gesture court (the_court.cjs), not by pytest",
+    "SPEC-11.12": "decided by the live browser gesture court",
+    "SPEC-11.13": "decided by the live browser gesture court",
+    "SPEC-11.14": "decided by the live browser gesture court",
+    "SPEC-11.17": "decided by this judgement naming every NOT JUDGED item"
+  }
+}

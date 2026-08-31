@@ -856,10 +856,15 @@ def prepare_authority_relationship_grant(
     ), relation_id=relationship_id)
     cells = (*terminal_cells, *relation.cells)
     cell_ids = tuple(cell.id for cell in cells)
+    # `set(...).intersection(mapping)` walks the WHOLE graph: the snapshot is
+    # a Mapping, not a set, so the intersection iterates every cell in it
+    # through __iter__/__getitem__. Signing one relationship cost 186 ms of
+    # nothing but that walk. The question is only "does any prepared id
+    # already exist", so ask the graph about the handful of ids instead.
     if (
         len(cell_ids) != len(set(cell_ids))
-        or set(cell_ids).intersection(snapshot.cells)
-        or set(cell_ids).intersection(pending)
+        or any(cell_id in snapshot.cells for cell_id in cell_ids)
+        or any(cell_id in pending for cell_id in cell_ids)
     ):
         raise InvalidCell("authority relationship prepared cells collide")
     return AuthorityRelationshipGrant(relationship_id, generation, tuple(cells))

@@ -151,7 +151,14 @@ def test_topology_delta_adds_graph_roots_without_duplicate_application_truth():
         patch = delta["topology_patch"]
         assert patch["remove_nodes"] == []
         assert patch["upsert_nodes"]
-        assert patch["upsert_wires"]
+        # Placing a node changes which ports are IN CONTEXT on its
+        # neighbours, not the wiring itself. Context travels as state now
+        # (state_nodes/state_wires), so structural upsert_wires is rightly
+        # empty; the wire_order still names every wire the canvas holds.
+        assert patch["wire_order"]
+        assert patch["state_nodes"] or patch["upsert_wires"] or (
+            patch["state_wires"]
+        )
         assert delta["created_root"] in {
             node["id"] for node in patch["upsert_nodes"]
         }

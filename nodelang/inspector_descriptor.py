@@ -126,6 +126,12 @@ def _properties(projection: Mapping[str, Any]) -> list[dict[str, object]]:
     rows = []
     for item in projection.get("properties", ()):
         relation = str(item["relation"])
+        # Placement coordinates are the drag gesture's own record, and the
+        # internal key is provenance -- plumbing, not product. Showing them
+        # as editable text rows made the inspector read like a debug view.
+        # The canvas IS the editor for position; the key stays in Build.
+        if str(item.get("label", "")) in {"position_x", "position_y", "key"}:
+            continue
         if item.get("editable"):
             label = str(item.get("label", ""))
             numeric = label in {"position_x", "position_y", "width"}
@@ -1267,7 +1273,26 @@ def _timeline(projection: Mapping[str, Any]) -> list[dict[str, object]]:
         ))
     if not lifecycle:
         if not children:
-            return []
+            # The History tab now stands for every selected root, so an
+            # empty timeline must SAY it is empty rather than render a
+            # blank panel -- a tab that opens onto nothing is a dead tab.
+            children.append(descriptor(
+                "session-actions-empty",
+                tag="section",
+                class_name="inspector-section",
+                children=(
+                    descriptor(
+                        "session-actions-empty:heading",
+                        class_name="inspector-heading",
+                        text="SESSION ACTIONS / 0",
+                    ),
+                    _box(
+                        "session-actions-empty:%s" % root,
+                        "No actions this session yet. Every change made "
+                        "on this canvas will appear here, newest first.",
+                    ),
+                ),
+            ))
         return [descriptor(
             "presenter:timeline:%s" % root,
             tag="section",

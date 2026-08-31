@@ -7,123 +7,125 @@
   "100 layers": 100,
   "Grand Map": 291
  },
+ "junit_report": "evidence/junit-tests_replica.xml",
+ "junit_cases_read": 957,
  "tally": {
-  "PASS": 8,
-  "FAIL": 7,
-  "NOT JUDGED": 403
+  "PASS": 126,
+  "FAIL": 11,
+  "NOT JUDGED": 281
  },
  "rows": [
   {
    "source": "SPEC 11",
    "id": "SPEC-11.1",
    "name": "Uniform Cell: no second persisted semantic shape or side authority.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.1 yet"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.2",
    "name": "Authority coherence: no active contradiction; mutable facts are generated.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.2 yet"
+   "outcome": "PASS",
+   "why": "8 bound tests passed across 1 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.3",
    "name": "No hidden interpreter: graph path and any fast path are equivalent; deleting the fast path",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.3 yet"
+   "outcome": "PASS",
+   "why": "20 bound tests passed across 3 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.4",
    "name": "One identity: every lens resolves the same roots and facts.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.4 yet"
+   "outcome": "FAIL",
+   "why": "3 of 85 bound tests failed: test_unified_application_lens.py::test_workshop_lens_projects_real_nodes_ports_relations_and_properties; test_unified_application_lens.py::test_generic_scope_lens_projects_"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.5",
    "name": "Explicit causality: rewiring authority changes behavior; deleting projection does not.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.5 yet"
+   "outcome": "FAIL",
+   "why": "1 of 11 bound tests failed: test_projection_delta.py::test_topology_delta_adds_graph_roots_without_duplicate_application_truth"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.6",
    "name": "Persistent attention: signals, reasons, focus, obligations, and cursors recover after rest",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.6 yet"
+   "outcome": "PASS",
+   "why": "33 bound tests passed across 6 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.7",
    "name": "Replay: graph state reconstructs deterministically and effects do not repeat.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.7 yet"
+   "outcome": "PASS",
+   "why": "27 bound tests passed across 3 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.8",
    "name": "Attention security: hidden roots cannot influence visible output or context.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.8 yet"
+   "outcome": "PASS",
+   "why": "29 bound tests passed across 3 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.9",
    "name": "User control: a nontechnical user can understand cause, edit permitted state, undo, and re",
    "outcome": "PASS",
-   "why": "22 visible of 22 cards, 330 wires"
+   "why": "13 visible of 15 cards, 330 wires"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.10",
    "name": "Real interfaces: sockets, cables, relations, incidences, and n-ary cases are exact.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.10 yet"
+   "outcome": "PASS",
+   "why": "64 bound tests passed across 6 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.11",
    "name": "Properties: panels/editors are graph-projected and no tab is dead.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.11 yet"
+   "outcome": "FAIL",
+   "why": "1 of 13 bound tests failed: test_browser_graph_editor_court.py::test_real_browser_graph_editor_direct_manipulation"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.12",
    "name": "Composition: group, enter, breadcrumb, ungroup, and undo preserve identity and connectivit",
    "outcome": "PASS",
-   "why": "'Accepted requirement source 46' -> 'UI & Design System' via ASSEMBLY  /  vUI & Design System2 cells ; 1 crumb(s); 'Accepted requirement source 46' after 2724 ms"
+   "why": "'Accepted requirement source 46' -> 'UI & Design System' via Domain compositionUI & Design SystemDoub; 1 crumb(s); 'Accepted requirement source 46' after 2046 ms"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.13",
    "name": "Interaction: selection, zoom, pan, drag, wire, keyboard, focus, and pointer capture pass i",
    "outcome": "PASS",
-   "why": "wheel=0.661 -> 0.569; fit=22/22; pointer=17.1 ms"
+   "why": "wheel=1.030 -> 0.887; fit=15/15; pointer=16.9 ms"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.14",
    "name": "Performance: pointer frame p95 <= 16.7 ms, same-frame selection feedback, local mutation a",
    "outcome": "PASS",
-   "why": "17.1 ms"
+   "why": "16.9 ms"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.15",
    "name": "Lifecycle/effect: independent states, receipts, reconciliation, conflicts, recovery, and c",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.15 yet"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 2 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.16",
    "name": "Core Values: each value maps to a passing control or visible gap; no partial row is green.",
-   "outcome": "NOT JUDGED",
-   "why": "no automatic measurement bound to SPEC 11.16 yet"
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
   },
   {
    "source": "SPEC 11",
@@ -263,7 +265,7 @@
    "id": "L9",
    "name": "UI And Lawful Lenses",
    "outcome": "PASS",
-   "why": "22 visible of 22 cards, 330 wires; 9ad3897c-42c8-4da9-9c90-6cc44ba8b851: cards 22 -> 23"
+   "why": "13 visible of 15 cards, 330 wires"
   },
   {
    "source": "100 layers",
@@ -906,92 +908,92 @@
    "source": "Grand Map",
    "id": "ui_design_tokens",
    "name": "Design Tokens",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "4 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_engine",
    "name": "Theme Engine",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_forge",
    "name": "Theme: Forge",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_blueprint",
    "name": "Theme: Blueprint",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_vellum",
    "name": "Theme: Vellum",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "ui_a11y_overlay",
    "name": "A11y Token Overlay",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "ui_sidebar_rail",
    "name": "Sidebar Rail",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - the shell rail is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "ui_composer_bar",
    "name": "Composer Bar",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - asking in plain language is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "ui_account_chip",
    "name": "Account Chip",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - account surface is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "ui_node_card",
    "name": "Node Card Component",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "drawn by the browser editor court, which is currently red"
   },
   {
    "source": "Grand Map",
    "id": "ui_modal_system",
    "name": "Modal / Panel System",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "ui_voice_lint",
    "name": "Voice / Microcopy Lint",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "ui_command_palette",
    "name": "Command Palette",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - palette is not migrated"
   },
   {
    "source": "Grand Map",
@@ -1012,7 +1014,7 @@
    "id": "nl_ui_app_is_graph",
    "name": "App UI Is The Graph",
    "outcome": "NOT JUDGED",
-   "why": "claimed vision; nothing to measure yet"
+   "why": "vision - nothing to measure yet"
   },
   {
    "source": "Grand Map",
@@ -1046,29 +1048,29 @@
    "source": "Grand Map",
    "id": "canvas_lm_graph_state",
    "name": "LM_GRAPH State Store",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "canvas_node_view",
    "name": "NodeView Renderer",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "drawn by the browser editor court, which is currently red"
   },
   {
    "source": "Grand Map",
    "id": "canvas_wire_layer",
    "name": "WireLayer (typed edges)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "canvas_typed_ports",
    "name": "Typed Ports / Sockets",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "25 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1081,92 +1083,92 @@
    "source": "Grand Map",
    "id": "canvas_dirty_cascade",
    "name": "Dirty Cascade",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "canvas_run_node",
    "name": "run_node / Rerun",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - running a single node is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "canvas_inline_param_edit",
    "name": "Inline Param Edit",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "1 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "canvas_drag_rewire",
    "name": "Drag-Rewire + Cycle Guard",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "3 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "canvas_pan_zoom",
    "name": "Pan / Zoom Viewport",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "decided by the live browser gesture court"
   },
   {
    "source": "Grand Map",
    "id": "canvas_multiselect",
    "name": "Multiselect + Marquee",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "decided by the live browser gesture court"
   },
   {
    "source": "Grand Map",
    "id": "canvas_groups",
    "name": "Groups / Collapse",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "24 bound tests passed across 3 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "canvas_resnap_repair",
    "name": "Wire Resnap / Repair",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - wire repair after a port change is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "canvas_bump_graph",
    "name": "bumpGraph Repaint Bus",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "FAIL",
+   "why": "1 of 2 bound tests failed: test_projection_delta.py::test_topology_delta_adds_graph_roots_without_duplicate_application_truth"
   },
   {
    "source": "Grand Map",
    "id": "nl_arch_interpret",
    "name": "Interpret Runtime",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - the interpret runtime is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "nl_arch_group_runs",
    "name": "Group Runs As A Node",
-   "outcome": "NOT JUDGED",
-   "why": "claimed vision; nothing to measure yet"
+   "outcome": "PASS",
+   "why": "23 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nl_arch_incremental",
    "name": "Incremental Recompute",
-   "outcome": "NOT JUDGED",
-   "why": "claimed vision; nothing to measure yet"
+   "outcome": "PASS",
+   "why": "10 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nl_arch_freeze_history",
    "name": "Freeze + History In Engine",
-   "outcome": "NOT JUDGED",
-   "why": "claimed vision; nothing to measure yet"
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1179,50 +1181,50 @@
    "source": "Grand Map",
    "id": "nodes_grammar",
    "name": "Node Grammar",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "16 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_category_taxonomy",
    "name": "Category Taxonomy",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "17 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_typed_ports",
    "name": "Typed Inputs / Outputs",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "25 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_config_schema",
    "name": "Config Schema (Knobs)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "nodes_library_search",
    "name": "Library Search (search-before-create)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_library_create",
    "name": "Library Create + Register",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_validator",
    "name": "Modular-Spec Validator",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
@@ -1236,42 +1238,42 @@
    "id": "nodes_sandbox",
    "name": "Execution Sandbox",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - custom-code sandbox not migrated"
   },
   {
    "source": "Grand Map",
    "id": "nodes_custom_register",
    "name": "Custom Node Registry",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "nodes_skill_node",
    "name": "Skill Node",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "nodes_subgraph",
    "name": "Subgraph (Node-of-Nodes)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "4 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_param_promote",
    "name": "Param to Socket Promote",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "19 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_runner",
    "name": "Graph Runner (cook)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - running the graph is not migrated"
   },
   {
    "source": "Grand Map",
@@ -1361,232 +1363,232 @@
    "source": "Grand Map",
    "id": "models_router",
    "name": "LLM Router",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_registry",
    "name": "Model Registry",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "2 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_claude",
    "name": "Claude (Anthropic)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_openai",
    "name": "OpenAI (GPT)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_gemini",
    "name": "Google (Gemini)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_local",
    "name": "Local Models",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_cli_sub",
    "name": "CLI Subscriptions",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_keys",
    "name": "Provider Keys & Auth",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_blocklist",
    "name": "Failure Classifier & Cooldown",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_tool_engine",
    "name": "Tool Engine",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "models_composer",
    "name": "Composer Agent",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - the composer agent is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "models_mode_gate",
    "name": "Write Approval Gate",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "35 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "models_agent_step",
    "name": "agent_step Primitives",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "models_usage",
    "name": "Usage & Cost Meter",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nl_model_ai_primitives",
    "name": "AI Calls = Effectful Primitives",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "25 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nl_model_build_agent",
    "name": "The Build Agent",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - the build agent is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "brain_daemon",
    "name": "Brain Daemon :8473",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_owner_binding",
    "name": "Owner Binding",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_fact_store",
    "name": "Fact Store (brain.db)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "brain.db is the old store - the graph is the store now, no court asserts the migration"
   },
   {
    "source": "Grand Map",
    "id": "brain_layers",
    "name": "Layered Scopes",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_write",
    "name": "Write / Observe",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_embeddings",
    "name": "Embedding Index",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_context_recall",
    "name": "Context Recall",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_skills",
    "name": "Skill Library",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_reflexion",
    "name": "Reflexion Worker",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_secrets",
    "name": "Secret Vault (op://)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "10 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_personal_cloud_sync",
    "name": "Personal Cloud Sync",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_firm_federation",
    "name": "Firm Federation",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_community",
    "name": "Community Brain",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_court_gate",
    "name": "Verify Gate (ROMA Court)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "4 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "brain_explorer",
    "name": "Brain Explorer / Folders",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "10 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nl_brain_court_engine",
    "name": "Court Tree = Build Engine",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nl_brain_memory_is_nodes",
    "name": "Memory Is Nodes",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1634,8 +1636,8 @@
    "source": "Grand Map",
    "id": "brain_diligence",
    "name": "Diligence Gate (never-reward-short)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1677,21 +1679,21 @@
    "id": "connectors_health_daemon",
    "name": "Health Daemon (5s heartbeat)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "connectors_broker",
    "name": "Loopback Broker (in-process bridge)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "connectors_self_heal",
    "name": "Self-Heal (auto-revive)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
@@ -1705,28 +1707,28 @@
    "id": "connectors_auto_build",
    "name": "Auto-Build Connector (ask → built)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - ask-to-built connector is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "connectors_registry",
    "name": "Connector Registry (the roster)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "connectors_approval_gate",
    "name": "Write Approval Gate",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "35 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "connectors_panel",
    "name": "Connector Panel (the surface)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - the surface is not migrated"
   },
   {
    "source": "Grand Map",
@@ -1739,8 +1741,8 @@
    "source": "Grand Map",
    "id": "nl_conn_effect_primitives",
    "name": "Connectors = Effect Primitives",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "2 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1753,85 +1755,85 @@
    "source": "Grand Map",
    "id": "sessions_session_object",
    "name": "Session Object (.archhub-session.json)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "10 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_param_pool",
    "name": "Parameter Pool",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_chain_state",
    "name": "Chain State Machine",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_autosave",
    "name": "Debounced Autosave",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_save_guard",
    "name": "Save Guard + Round-Trip Verify",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_graph_migrator",
    "name": "Graph ↔ lmGraph Migrator",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "migration helper for the old format - retires with the old app"
   },
   {
    "source": "Grand Map",
    "id": "sessions_threads_rail",
    "name": "Threads Rail",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - shell surface not migrated"
   },
   {
    "source": "Grand Map",
    "id": "sessions_open_session",
    "name": "Open / Resume Session",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "4 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_pin",
    "name": "Pin / Favourite",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_version_history",
    "name": "Version History",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_clear_graph",
    "name": "Clear / Empty Persist",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "1 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_cloud_sync",
    "name": "Cloud Session Sync",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - cloud session sync not migrated"
   },
   {
    "source": "Grand Map",
@@ -1844,8 +1846,8 @@
    "source": "Grand Map",
    "id": "sessions_replay",
    "name": "Repeat / Replay Run",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1886,106 +1888,106 @@
    "source": "Grand Map",
    "id": "selfext_intent_ask",
    "name": "Intent Ask",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_agency_gate",
    "name": "User-Agency Gate",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_atomize",
    "name": "Atomize",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_req_tree",
    "name": "Requirement Tree",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_library_first",
    "name": "Library-First Search",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_composer_build",
    "name": "Composer Build (local)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - building a node from intent is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "selfext_executor",
    "name": "Executor (does work)",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "selfext_lens_artifact",
    "name": "Lens 1 - Artifact",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_lens_diligence",
    "name": "Lens 2 - Diligence",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_lens_independence",
    "name": "Lens 3 - Independence",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "174 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_convene_court",
    "name": "ROMA Court (jury)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_settle",
    "name": "Settle Verdict",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "4 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_learn_fact",
    "name": "Learn Fact",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "selfext_court_signal",
    "name": "court_verdict Signal",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "8 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_promote",
    "name": "Promote Local to Official",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - promoting local to official is not migrated"
   },
   {
    "source": "Grand Map",
@@ -2006,14 +2008,14 @@
    "id": "nl_gate_loop_dry",
    "name": "Gate - Loop Until Dry",
    "outcome": "NOT JUDGED",
-   "why": "claimed vision; nothing to measure yet"
+   "why": "vision - nothing to measure yet"
   },
   {
    "source": "Grand Map",
    "id": "nl_gate_court_refute",
    "name": "Gate - Court Refutes",
    "outcome": "NOT JUDGED",
-   "why": "claimed vision; nothing to measure yet"
+   "why": "vision - nothing to measure yet"
   },
   {
    "source": "Grand Map",
@@ -2075,78 +2077,78 @@
    "source": "Grand Map",
    "id": "website_content_source",
    "name": "Content Source (repo facts)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "website_from_brain",
    "name": "Brain Skill Export",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "website_changelog_parser",
    "name": "Changelog Parser",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "website_build_info",
    "name": "Build-Info Stamper",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "2 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "website_pricing_node",
    "name": "Pricing Tiers",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - pricing is not migrated"
   },
   {
    "source": "Grand Map",
    "id": "website_page_renderer",
    "name": "Astro Page Renderer",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "website_voice_lint",
    "name": "Voice / Microcopy Lint",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "website_seo_meta",
    "name": "SEO + Meta / Schema",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "website_download_cta",
    "name": "Download CTA",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "website_signin_gateway",
    "name": "Sign-in / Signup Gateway",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "website_fly_deploy",
    "name": "Fly Deploy Host",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "deployment is an open release boundary"
   },
   {
    "source": "Grand Map",
@@ -2167,126 +2169,126 @@
    "id": "website_contributors",
    "name": "Contributors / Community Wall",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "users_identity",
    "name": "Identity (who is asking)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "19 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_signup_register",
    "name": "Sign up / register",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "users_magic_link",
    "name": "Magic-link email",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "users_pkce_exchange",
    "name": "PKCE code exchange",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "users_google_oauth",
    "name": "Sign in with Google",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "83 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_idtoken_verify",
    "name": "id_token verify (JWKS RS256)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "60 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_session_token",
    "name": "Session token (bearer)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "23 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_token_guard",
    "name": "Token guard (require_user)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "9 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_logout_revoke",
    "name": "Logout / revoke sessions",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "4 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_brain_provision",
    "name": "Brain provision on first auth",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
    "id": "users_firm",
    "name": "Firm / company",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_roles",
    "name": "Roles & membership gate",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_seats",
    "name": "Seats (à-la-carte)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_invite",
    "name": "Invite teammate",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_invite_accept",
    "name": "Accept invite (email-bound)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "users_account_chip",
    "name": "Account chip",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet - account surface not migrated"
   },
   {
    "source": "Grand Map",
    "id": "users_owner_transfer",
    "name": "Transfer ownership",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
@@ -2419,7 +2421,7 @@
    "id": "cockpit_keyword_router",
    "name": "Offline Keyword Router",
    "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "why": "no kernel court yet"
   },
   {
    "source": "Grand Map",
@@ -2468,7 +2470,7 @@
    "id": "cockpit_withheld",
    "name": "Withheld Actions (founder-hands-only)",
    "outcome": "NOT JUDGED",
-   "why": "claimed LIVE on 2026-07-15; live proof requires its evidence_ref to be a court -> not judged"
+   "why": "no kernel court yet - founder-hands-only actions are not migrated"
   },
   {
    "source": "Grand Map",
@@ -2607,85 +2609,85 @@
    "source": "Grand Map",
    "id": "community_share_card",
    "name": "Share to Community",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_tier_gate",
    "name": "Tier Gate (exclusive vs knowledge)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_redaction_promote",
    "name": "Promote + Redact",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_firm_outbox",
    "name": "Firm Outbox (ActivityPub)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_subscribe",
    "name": "Subscribe to Peer Firm",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_poller",
    "name": "Community Poller",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_incoming_eval",
    "name": "Incoming Pattern Judge",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_quarantine",
    "name": "Quarantine Buffer",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_create_group",
    "name": "Create Community Group",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_join_code",
    "name": "Join-Code Issue + Verify",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "12 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_fanout_export",
    "name": "Fanout Export",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "community_fanout_apply",
    "name": "Fanout Apply (inbound merge)",
-   "outcome": "NOT JUDGED",
-   "why": "claimed partial; no automatic measurement"
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",

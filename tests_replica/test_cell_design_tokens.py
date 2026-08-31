@@ -15,30 +15,14 @@ from nodelang.cell_design_tokens import (
     resolve_design_tokens,
 )
 from nodelang.cell_protocols import read_relation
+from nodelang.cell_theme_sets import DEFAULT_THEME, THEMES
 from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 
 
-THEME = {
-    "bg": "#0e0e11",
-    "bg_panel": "#15151a",
-    "bg_soft": "#1c1c23",
-    "bg_hover": "#22222a",
-    "bg_deep": "#0a0a0d",
-    "bg_canvas": "#101015",
-    "ink": "#ece8e0",
-    "ink_soft": "#9b938a",
-    "ink_muted": "#5e574f",
-    "line": "#26262e",
-    "line_soft": "#1e1e24",
-    "accent": "#d97757",
-    "accent_soft": "#3a2018",
-    "ok": "#7ec18e",
-    "warn": "#e5b25a",
-    "err": "#e6705f",
-    "cyan": "#5fb3b3",
-    "purple": "#a98cd6",
-    "blue": "#7898d6",
-}
+# The application's own palette IS the fixture: a hand-copy here silently
+# drifted from production (it still carried the failing #5e574f ink_muted
+# after the app moved on). The court must judge the palette the app ships.
+from nodelang.universal_presentation_seed import THEME
 
 
 def _system():
@@ -93,14 +77,19 @@ def test_dtcg_projection_round_trips_through_a_new_cell_graph():
     )
 
 
-def test_resolver_projects_the_released_dark_context_and_order():
+def test_resolver_projects_the_released_theme_contexts_and_order():
+    """The resolver used to print one context, `dark`, as a literal. The
+    themes are graph-held now, so it names every installed one and the
+    active one -- see `test_cell_theme_sets` for the switching court."""
     store, built = _system()
     resolver = project_dtcg_resolver(store.snapshot(), built)
     assert resolver["version"] == DTCG_VERSION
-    assert resolver["modifiers"]["theme"]["default"] == "dark"
+    assert set(resolver["modifiers"]["theme"]["contexts"]) == set(THEMES)
+    assert resolver["modifiers"]["theme"]["default"] == DEFAULT_THEME
     assert resolver["resolutionOrder"] == [
         {"$ref": "#/sets/foundation"},
         {"$ref": "#/modifiers/theme"},
+        {"$ref": "#/modifiers/a11y"},
     ]
 
 

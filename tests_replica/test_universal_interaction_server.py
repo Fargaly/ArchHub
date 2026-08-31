@@ -61,6 +61,47 @@ def _merge_projection_delta(previous, result):
             f"{wire['id']}:{wire['segment']}": wire
             for wire in patch["upsert_wires"]
         })
+        # Selection, position and port context ride the light channel, exactly
+        # as the browser client applies them.
+        for state in patch.get("node_context", ()):
+            node = nodes.get(state["id"])
+            if node is None:
+                continue
+            updated = dict(node)
+            updated.update({
+                "selected": state["selected"],
+                "x": state["x"],
+                "y": state["y"],
+            })
+            flags = state.get("ports")
+            if isinstance(flags, list) and isinstance(node.get("ports"), list):
+                ports = []
+                for index, port in enumerate(node["ports"]):
+                    flag = flags[index] if index < len(flags) else None
+                    descriptor = port.get("descriptor") if isinstance(port, dict) else None
+                    if flag is None or not isinstance(descriptor, list):
+                        ports.append(port)
+                        continue
+                    rendered = []
+                    for item in descriptor:
+                        attributes = item.get("attributes") if isinstance(item, dict) else None
+                        if isinstance(attributes, dict) and "data-context" in attributes:
+                            item = dict(item)
+                            item["attributes"] = {**attributes, "data-context": flag}
+                        rendered.append(item)
+                    ports.append({**port, "descriptor": rendered})
+                updated["ports"] = ports
+            nodes[state["id"]] = updated
+        for state in patch.get("wire_context", ()):
+            key = "%s:%s" % (state["id"], state["segment"])
+            wire = wires.get(key)
+            if wire is None:
+                continue
+            wires[key] = {
+                **wire,
+                "selected": state["selected"],
+                "context": state["context"],
+            }
         merged["nodes"] = [nodes[root] for root in patch["node_order"]]
         merged["wires"] = [wires[root] for root in patch["wire_order"]]
     elif result.get("topology_recovery") is not True:

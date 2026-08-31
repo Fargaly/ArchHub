@@ -5135,10 +5135,16 @@ def read_view_session_state(
         snapshot = authority.store.snapshot()
     else:
         snapshot = authority.store.at(at_revision)
-    interface_root = composition_root(authority, "Interface", caller=caller)
+    # The docstring above is the contract: absence is a graph fact. An
+    # application that holds no Interface composition holds no view state
+    # either, so it reads as the defaults instead of refusing.
+    try:
+        interface_root = composition_root(authority, "Interface", caller=caller)
+    except InvalidCell:
+        interface_root = None
     found = _view_session_state(
         authority, snapshot, interface_root, view_root
-    )
+    ) if interface_root is not None else None
     viewport: dict[str, object] = dict(VIEW_DEFAULT_VIEWPORT)
     tokens: dict[str, object] = {}
     if found is not None:

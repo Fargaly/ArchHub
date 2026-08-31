@@ -10,8 +10,8 @@ from .cell_protocols import CellBatch
 from .cell_view_template import ViewTemplateBuilder, ViewTemplateProtocol
 
 
-LEGACY_CANVAS_CARD_PREFIX = "app:canvas-card-template:v1"
-CANVAS_CARD_PREFIX = "app:canvas-card-template:v2"
+LEGACY_CANVAS_CARD_PREFIX = "app:canvas-card-template:v2"
+CANVAS_CARD_PREFIX = "app:canvas-card-template:v3"
 CANVAS_CARD_TEMPLATE_ROOT = CANVAS_CARD_PREFIX + ":card"
 CANVAS_CARD_TEMPLATE_MEMBER_ROOTS = (
     CANVAS_CARD_TEMPLATE_ROOT,
@@ -19,6 +19,8 @@ CANVAS_CARD_TEMPLATE_MEMBER_ROOTS = (
     CANVAS_CARD_PREFIX + ":head",
     CANVAS_CARD_PREFIX + ":title",
     CANVAS_CARD_PREFIX + ":summary",
+    CANVAS_CARD_PREFIX + ":params",
+    CANVAS_CARD_PREFIX + ":param-row",
     CANVAS_CARD_PREFIX + ":value",
     CANVAS_CARD_PREFIX + ":ports",
 )
@@ -200,6 +202,53 @@ def compose_canvas_card_template(
         text=summary,
         condition=summary_present,
     )
+    params = path("params", root, segment("params"))
+    param_item = expression("param-item-context", "item")
+    param_label_segment = builder.atom(
+        "%s:segment:param-label" % prefix, "label"
+    )
+    param_value_segment = builder.atom(
+        "%s:segment:param-value" % prefix, "value"
+    )
+    param_key = expression(
+        "param-key", "path", param_item, param_label_segment
+    )
+    param_value = expression(
+        "param-value", "path", param_item, param_value_segment
+    )
+    builder.template(
+        prefix + ":param-row",
+        tag=literal("param-row-tag", "div"),
+        key=expression(
+            "param-row-key", "concat",
+            literal("param-row-prefix", "param:"), param_key,
+        ),
+        class_name=literal("param-row-class", "node-param"),
+        children=(
+            builder.template(
+                prefix + ":param-k",
+                tag=literal("param-k-tag", "span"),
+                key=literal("param-k-key", "k"),
+                class_name=literal("param-k-class", "node-param-k"),
+                text=param_key,
+            ),
+            builder.template(
+                prefix + ":param-v",
+                tag=literal("param-v-tag", "span"),
+                key=literal("param-v-key", "v"),
+                class_name=literal("param-v-class", "node-param-v"),
+                text=param_value,
+            ),
+        ),
+    )
+    builder.template(
+        prefix + ":params",
+        tag=literal("params-tag", "div"),
+        key=keyed_value("params"),
+        class_name=literal("params-class", "node-params"),
+        repeat=params,
+        children=(prefix + ":param-row",),
+    )
     builder.template(
         prefix + ":value",
         tag=literal("value-tag", "div"),
@@ -246,6 +295,7 @@ def compose_canvas_card_template(
             prefix + ":head",
             prefix + ":title",
             prefix + ":summary",
+            prefix + ":params",
             prefix + ":value",
             prefix + ":ports",
         ),

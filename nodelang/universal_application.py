@@ -21621,6 +21621,23 @@ def _project_universal_canvas_interpreter(
                 "atom_bytes": len(snapshot.cells[root_id].atom),
             },
             "assembly": assembly,
+            # The design draws a node's defining parameters INSIDE the card
+            # (k:v mono rows) -- content-first, like Revit's own parameter
+            # panel. Structural bookkeeping stays out; the first four real
+            # parameters travel with the node.
+            "params": [
+                {
+                    "label": name,
+                    "value": str(effective_property_value(row)),
+                }
+                for name, row in labelled.items()
+                if name not in {
+                    "id", "cat", "key", "title", "sub", "status", "color",
+                    "position_x", "position_y", "definition", "version",
+                    "evidence_ref", "last_verified", "authority_source",
+                    "bim_phase", "standard",
+                }
+            ][:4],
             "ports": [
                 {
                     **interface,

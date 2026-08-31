@@ -40300,6 +40300,12 @@ def _set_universal_scope_execution(
     authentication_context: object | None = None,
 ) -> UniversalScopeExecution:
     """Enter one direct graph level or return to an existing trail ancestor."""
+    # The visibility index may lawfully GROW while this transition is being
+    # prepared (a scope whose canonical properties expanded commits its
+    # growth inside projection). Settle that growth FIRST, so the revision
+    # this transition pins is the one it actually commits against --
+    # otherwise the descend randomly conflicts with its own bookkeeping.
+    _ensure_visibility_scope_projections(store, registry)
     snapshot = store.snapshot()
     verify_released_catalog_stable(
         store,

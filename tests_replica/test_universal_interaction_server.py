@@ -63,7 +63,7 @@ def _merge_projection_delta(previous, result):
         })
         # Selection, position and port context ride the light channel, exactly
         # as the browser client applies them.
-        for state in patch.get("node_context", ()):
+        for state in patch.get("state_nodes", ()):
             node = nodes.get(state["id"])
             if node is None:
                 continue
@@ -92,7 +92,7 @@ def _merge_projection_delta(previous, result):
                     ports.append({**port, "descriptor": rendered})
                 updated["ports"] = ports
             nodes[state["id"]] = updated
-        for state in patch.get("wire_context", ()):
+        for state in patch.get("state_wires", ()):
             key = "%s:%s" % (state["id"], state["segment"])
             wire = wires.get(key)
             if wire is None:
@@ -856,7 +856,12 @@ def test_topology_delta_sends_only_revision_bound_changed_graph_items():
     assert "wires" not in delta
     assert patch["node_order"] == ["node:a", "node:b"]
     assert patch["wire_order"] == ["relation:a:relation:a:0", "relation:b:relation:b:0"]
-    assert [node["id"] for node in patch["upsert_nodes"]] == ["node:a", "node:b"]
+    # node:a changed only in selection STATE; structure ships as an
+    # upsert, state travels in the compact state channel -- the split that
+    # stopped one flipped boolean re-shipping ten kilobytes of ports.
+    assert [node["id"] for node in patch["upsert_nodes"]] == ["node:b"]
+    assert [state["id"] for state in patch["state_nodes"]] == ["node:a"]
+    assert patch["state_nodes"][0]["selected"] is False
     assert [wire["id"] for wire in patch["upsert_wires"]] == ["relation:b"]
     assert patch["remove_nodes"] == []
     assert patch["remove_wires"] == []

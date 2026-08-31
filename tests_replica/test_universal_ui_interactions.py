@@ -642,20 +642,24 @@ def test_fit_measures_the_projected_graph_instead_of_using_a_magic_zoom(
     assert result["canvasScroll"] == {"left": 0, "top": 0}
 
 
-def test_shift_removes_and_ctrl_does_not_remove(rendered_application):
+def test_modifier_click_toggles_membership(rendered_application):
+    # The design convention (Figma, Blender, React Flow): shift/ctrl CLICK
+    # toggles the node under the pointer. Card 0 is selected in [0, 1], so
+    # either modifier click removes exactly it.
     shifted = _probe(rendered_application, "shift_remove")
     assert shifted["gesture"]["payload"]["roots"] == [shifted["nodeIds"][1]]
 
     controlled = _probe(rendered_application, "ctrl_retains")
-    assert controlled["selected"] == [controlled["nodeIds"][0]]
-    assert controlled["gesture"] is None
-    assert controlled["gestureRequests"] == []
+    assert controlled["selected"] == []
+    assert controlled["gesture"]["payload"]["roots"] == []
 
 
-def test_shift_marquee_removes_and_ctrl_marquee_adds(rendered_application):
+def test_shift_marquee_adds_and_alt_marquee_removes(rendered_application):
+    # Sweeping with shift ADDS (a sweep over an already-selected node must
+    # not deselect it); removal is the ALT sweep.
     result = _probe(rendered_application, "modifier_marquee")
-    assert result["modifierMarquee"]["afterShift"] == []
-    assert result["modifierMarquee"]["afterControl"] == [result["nodeIds"][0]]
+    assert result["modifierMarquee"]["afterShift"] == [result["nodeIds"][0]]
+    assert result["modifierMarquee"]["afterControl"] == []
     assert len(result["gestureRequests"]) == 2
 
 

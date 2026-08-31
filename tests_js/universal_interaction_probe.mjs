@@ -543,7 +543,7 @@ function applyFixtureSelection(roots, focus = roots.at(-1) || projection.selecte
 if (input.scenario === 'shift_remove') applyFixtureSelection(nodeIds.slice(0, 2), nodeIds[1]);
 if (input.scenario === 'ctrl_retains') applyFixtureSelection([nodeIds[0]], nodeIds[0]);
 if (input.scenario === 'modifier_marquee') {
-  applyFixtureSelection([nodeIds[0]], nodeIds[0]);
+  applyFixtureSelection([], projection.selected);
 }
 if (['marquee', 'marquee_viewport', 'crossing'].includes(input.scenario)) {
   applyFixtureSelection([], projection.selected);
@@ -2098,13 +2098,13 @@ if (input.scenario === 'duplicate_projection') {
   )].map(card => card.dataset.universalRoot);
 
   pointer(canvas, 'pointerdown', {
-    clientX: start.x, clientY: start.y, ctrlKey: true,
+    clientX: start.x, clientY: start.y, altKey: true,
   });
   pointer(canvas, 'pointermove', {
-    clientX: end.x, clientY: end.y, ctrlKey: true,
+    clientX: end.x, clientY: end.y, altKey: true,
   });
   pointer(canvas, 'pointerup', {
-    clientX: end.x, clientY: end.y, ctrlKey: true,
+    clientX: end.x, clientY: end.y, altKey: true,
   });
   await waitUntil(() => gestureResponseDelivered > 1);
   await settle();

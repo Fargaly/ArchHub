@@ -224,6 +224,7 @@ def compose_canvas_card_template(
             literal("param-row-prefix", "param:"), param_key,
         ),
         class_name=literal("param-row-class", "node-param"),
+        repeat=params,
         children=(
             builder.template(
                 prefix + ":param-k",
@@ -246,7 +247,6 @@ def compose_canvas_card_template(
         tag=literal("params-tag", "div"),
         key=keyed_value("params"),
         class_name=literal("params-class", "node-params"),
-        repeat=params,
         children=(prefix + ":param-row",),
     )
     builder.template(

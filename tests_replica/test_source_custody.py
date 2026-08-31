@@ -32,9 +32,8 @@ def test_private_grand_map_input_is_explicit_and_machine_portable(monkeypatch):
     monkeypatch.delenv("ARCHHUB_GRAND_MAP_PATH", raising=False)
     monkeypatch.delenv("ARCHHUB_WORKSPACE_ROOT", raising=False)
 
-    import grand_replica
-    import reality_grade
-    import serve_grandmap
+    from legacy_engine import grand_replica
+    from tools import reality_grade, serve_grandmap
 
     with pytest.raises(RuntimeError, match="ARCHHUB_GRAND_MAP_PATH"):
         grand_replica._grand_map_path()

@@ -17,10 +17,10 @@ from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 def _store():
     store = CellStore()
     protocol = bootstrap_assembly_protocol(store)
-    work = "work:bbc4-revision-clouds"
-    court = "court:bbc4-revision-clouds:passed"
+    work = "work:harbor-revision-clouds"
+    court = "court:harbor-revision-clouds:passed"
     store.commit(store.revision, create=(
-        Cell(work, NULL_CELL_ID, NULL_CELL_ID, b"BBC4 revision clouds"),
+        Cell(work, NULL_CELL_ID, NULL_CELL_ID, b"Harbor revision clouds"),
         Cell(court, NULL_CELL_ID, NULL_CELL_ID, b"passed"),
     ))
     return store, protocol, work, court

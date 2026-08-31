@@ -24,7 +24,7 @@ def _store():
 
 def _shelved(store):
     shelve_fact(store, fact_root="fact:site", kind="projects", title="Jumeirah villa")
-    shelve_fact(store, fact_root="fact:client", kind="projects", title="BBC4 package")
+    shelve_fact(store, fact_root="fact:client", kind="projects", title="Harbor package")
     shelve_fact(store, fact_root="fact:rate", kind="about you", title="Day rate")
     return store
 
@@ -71,7 +71,7 @@ def test_the_same_fact_cannot_be_shelved_twice():
 def test_opening_a_folder_lists_it_by_title():
     store = _shelved(_store())
     inside = open_folder(store.snapshot(), "projects")
-    assert [item.title for item in inside] == ["BBC4 package", "Jumeirah villa"]
+    assert [item.title for item in inside] == ["Harbor package", "Jumeirah villa"]
 
 
 def test_a_folder_that_holds_nothing_does_not_exist():

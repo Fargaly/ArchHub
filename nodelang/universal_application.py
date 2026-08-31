@@ -12673,7 +12673,7 @@ def build_universal_application(
             # relation added after the freeze is invisible to every scope
             # (the walk's owner-indexed fallback reads exactly this map).
             # Design Tokens node: its colour values ARE the persisted theme
-            # cells. Subsystem nodes: the brain/users/models machinery each
+            # cells. Subsystem nodes: brain, users, and models machinery each
             # joins its domain as an ordinary titled node.
             _ensure_theme_control_properties(
                 store, roles, root_properties

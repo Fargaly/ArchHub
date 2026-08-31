@@ -41,10 +41,14 @@ def _load_openrouter_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if key:
         return key
-    production = Path(os.environ.get(
-        "ARCHHUB_PRODUCTION_ROOT",
-        "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION",
-    ))
+    # No machine-bound literal path: the production sibling is discovered
+    # relative to this repository, overridable by environment.
+    configured = os.environ.get("ARCHHUB_PRODUCTION_ROOT")
+    production = (
+        Path(configured)
+        if configured
+        else Path(__file__).resolve().parents[2] / "12.PRODUCTION"
+    )
     if str(production) not in sys.path:
         sys.path.insert(0, str(production))
     from app import secrets_store  # noqa: PLC0415

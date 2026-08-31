@@ -8,11 +8,11 @@
   "Grand Map": 291
  },
  "junit_report": "evidence/junit-tests_replica.xml",
- "junit_cases_read": 957,
+ "junit_cases_read": 369,
  "tally": {
-  "PASS": 126,
-  "FAIL": 11,
-  "NOT JUDGED": 281
+  "PASS": 38,
+  "FAIL": 8,
+  "NOT JUDGED": 372
  },
  "rows": [
   {
@@ -40,15 +40,15 @@
    "source": "SPEC 11",
    "id": "SPEC-11.4",
    "name": "One identity: every lens resolves the same roots and facts.",
-   "outcome": "FAIL",
-   "why": "3 of 85 bound tests failed: test_unified_application_lens.py::test_workshop_lens_projects_real_nodes_ports_relations_and_properties; test_unified_application_lens.py::test_generic_scope_lens_projects_"
+   "outcome": "PASS",
+   "why": "85 bound tests passed across 3 file(s)"
   },
   {
    "source": "SPEC 11",
    "id": "SPEC-11.5",
    "name": "Explicit causality: rewiring authority changes behavior; deleting projection does not.",
-   "outcome": "FAIL",
-   "why": "1 of 11 bound tests failed: test_projection_delta.py::test_topology_delta_adds_graph_roots_without_duplicate_application_truth"
+   "outcome": "PASS",
+   "why": "51 bound tests passed across 3 file(s)"
   },
   {
    "source": "SPEC 11",
@@ -90,7 +90,7 @@
    "id": "SPEC-11.11",
    "name": "Properties: panels/editors are graph-projected and no tab is dead.",
    "outcome": "FAIL",
-   "why": "1 of 13 bound tests failed: test_browser_graph_editor_court.py::test_real_browser_graph_editor_direct_manipulation"
+   "why": "1 of 36 bound tests failed: test_browser_graph_editor_court.py::test_real_browser_graph_editor_direct_manipulation"
   },
   {
    "source": "SPEC 11",
@@ -908,43 +908,43 @@
    "source": "Grand Map",
    "id": "ui_design_tokens",
    "name": "Design Tokens",
-   "outcome": "PASS",
-   "why": "4 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_engine",
    "name": "Theme Engine",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_forge",
    "name": "Theme: Forge",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_blueprint",
    "name": "Theme: Blueprint",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "ui_theme_vellum",
    "name": "Theme: Vellum",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "ui_a11y_overlay",
    "name": "A11y Token Overlay",
-   "outcome": "PASS",
-   "why": "9 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -985,8 +985,8 @@
    "source": "Grand Map",
    "id": "ui_voice_lint",
    "name": "Voice / Microcopy Lint",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1063,7 +1063,7 @@
    "id": "canvas_wire_layer",
    "name": "WireLayer (typed edges)",
    "outcome": "PASS",
-   "why": "14 bound tests passed across 2 file(s)"
+   "why": "11 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1098,7 +1098,7 @@
    "id": "canvas_inline_param_edit",
    "name": "Inline Param Edit",
    "outcome": "PASS",
-   "why": "1 bound tests passed across 2 file(s)"
+   "why": "24 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1125,8 +1125,8 @@
    "source": "Grand Map",
    "id": "canvas_groups",
    "name": "Groups / Collapse",
-   "outcome": "PASS",
-   "why": "24 bound tests passed across 3 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 3 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1139,8 +1139,8 @@
    "source": "Grand Map",
    "id": "canvas_bump_graph",
    "name": "bumpGraph Repaint Bus",
-   "outcome": "FAIL",
-   "why": "1 of 2 bound tests failed: test_projection_delta.py::test_topology_delta_adds_graph_roots_without_duplicate_application_truth"
+   "outcome": "PASS",
+   "why": "2 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1153,8 +1153,8 @@
    "source": "Grand Map",
    "id": "nl_arch_group_runs",
    "name": "Group Runs As A Node",
-   "outcome": "PASS",
-   "why": "23 bound tests passed across 2 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1167,8 +1167,8 @@
    "source": "Grand Map",
    "id": "nl_arch_freeze_history",
    "name": "Freeze + History In Engine",
-   "outcome": "PASS",
-   "why": "6 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1181,15 +1181,15 @@
    "source": "Grand Map",
    "id": "nodes_grammar",
    "name": "Node Grammar",
-   "outcome": "PASS",
-   "why": "16 bound tests passed across 2 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "nodes_category_taxonomy",
    "name": "Category Taxonomy",
-   "outcome": "PASS",
-   "why": "17 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1202,22 +1202,22 @@
    "source": "Grand Map",
    "id": "nodes_config_schema",
    "name": "Config Schema (Knobs)",
-   "outcome": "NOT JUDGED",
-   "why": "declared 1 test file(s) but the report has none of them"
+   "outcome": "PASS",
+   "why": "23 bound tests passed across 1 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "nodes_library_search",
    "name": "Library Search (search-before-create)",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "nodes_library_create",
    "name": "Library Create + Register",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1258,15 +1258,15 @@
    "source": "Grand Map",
    "id": "nodes_subgraph",
    "name": "Subgraph (Node-of-Nodes)",
-   "outcome": "PASS",
-   "why": "4 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "nodes_param_promote",
    "name": "Param to Socket Promote",
-   "outcome": "PASS",
-   "why": "19 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1363,64 +1363,64 @@
    "source": "Grand Map",
    "id": "models_router",
    "name": "LLM Router",
-   "outcome": "PASS",
-   "why": "6 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_registry",
    "name": "Model Registry",
-   "outcome": "PASS",
-   "why": "2 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_claude",
    "name": "Claude (Anthropic)",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_openai",
    "name": "OpenAI (GPT)",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_gemini",
    "name": "Google (Gemini)",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_local",
    "name": "Local Models",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_cli_sub",
    "name": "CLI Subscriptions",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_keys",
    "name": "Provider Keys & Auth",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "models_blocklist",
    "name": "Failure Classifier & Cooldown",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1440,8 +1440,8 @@
    "source": "Grand Map",
    "id": "models_mode_gate",
    "name": "Write Approval Gate",
-   "outcome": "PASS",
-   "why": "35 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1454,15 +1454,15 @@
    "source": "Grand Map",
    "id": "models_usage",
    "name": "Usage & Cost Meter",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "nl_model_ai_primitives",
    "name": "AI Calls = Effectful Primitives",
-   "outcome": "PASS",
-   "why": "25 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1475,15 +1475,15 @@
    "source": "Grand Map",
    "id": "brain_daemon",
    "name": "Brain Daemon :8473",
-   "outcome": "PASS",
-   "why": "6 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_owner_binding",
    "name": "Owner Binding",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1496,22 +1496,22 @@
    "source": "Grand Map",
    "id": "brain_layers",
    "name": "Layered Scopes",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_write",
    "name": "Write / Observe",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_embeddings",
    "name": "Embedding Index",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1524,71 +1524,71 @@
    "source": "Grand Map",
    "id": "brain_skills",
    "name": "Skill Library",
-   "outcome": "PASS",
-   "why": "9 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_reflexion",
    "name": "Reflexion Worker",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_secrets",
    "name": "Secret Vault (op://)",
-   "outcome": "PASS",
-   "why": "10 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_personal_cloud_sync",
    "name": "Personal Cloud Sync",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_firm_federation",
    "name": "Firm Federation",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_community",
    "name": "Community Brain",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_court_gate",
    "name": "Verify Gate (ROMA Court)",
-   "outcome": "PASS",
-   "why": "4 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "brain_explorer",
    "name": "Brain Explorer / Folders",
-   "outcome": "PASS",
-   "why": "10 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "nl_brain_court_engine",
    "name": "Court Tree = Build Engine",
-   "outcome": "PASS",
-   "why": "9 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "nl_brain_memory_is_nodes",
    "name": "Memory Is Nodes",
    "outcome": "PASS",
-   "why": "14 bound tests passed across 2 file(s)"
+   "why": "7 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1637,7 +1637,7 @@
    "id": "brain_diligence",
    "name": "Diligence Gate (never-reward-short)",
    "outcome": "PASS",
-   "why": "9 bound tests passed across 2 file(s)"
+   "why": "6 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -1685,8 +1685,8 @@
    "source": "Grand Map",
    "id": "connectors_broker",
    "name": "Loopback Broker (in-process bridge)",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 2 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1713,15 +1713,15 @@
    "source": "Grand Map",
    "id": "connectors_registry",
    "name": "Connector Registry (the roster)",
-   "outcome": "PASS",
-   "why": "9 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "connectors_approval_gate",
    "name": "Write Approval Gate",
-   "outcome": "PASS",
-   "why": "35 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1741,8 +1741,8 @@
    "source": "Grand Map",
    "id": "nl_conn_effect_primitives",
    "name": "Connectors = Effect Primitives",
-   "outcome": "PASS",
-   "why": "2 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1756,35 +1756,35 @@
    "id": "sessions_session_object",
    "name": "Session Object (.archhub-session.json)",
    "outcome": "PASS",
-   "why": "10 bound tests passed across 2 file(s)"
+   "why": "6 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "sessions_param_pool",
    "name": "Parameter Pool",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "sessions_chain_state",
    "name": "Chain State Machine",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "sessions_autosave",
    "name": "Debounced Autosave",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "sessions_save_guard",
    "name": "Save Guard + Round-Trip Verify",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1804,29 +1804,29 @@
    "source": "Grand Map",
    "id": "sessions_open_session",
    "name": "Open / Resume Session",
-   "outcome": "PASS",
-   "why": "4 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "sessions_pin",
    "name": "Pin / Favourite",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "sessions_version_history",
    "name": "Version History",
-   "outcome": "PASS",
-   "why": "6 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "sessions_clear_graph",
    "name": "Clear / Empty Persist",
-   "outcome": "PASS",
-   "why": "1 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1846,8 +1846,8 @@
    "source": "Grand Map",
    "id": "sessions_replay",
    "name": "Repeat / Replay Run",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1888,36 +1888,36 @@
    "source": "Grand Map",
    "id": "selfext_intent_ask",
    "name": "Intent Ask",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "selfext_agency_gate",
    "name": "User-Agency Gate",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "selfext_atomize",
    "name": "Atomize",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "selfext_req_tree",
    "name": "Requirement Tree",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "selfext_library_first",
    "name": "Library-First Search",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1937,36 +1937,36 @@
    "source": "Grand Map",
    "id": "selfext_lens_artifact",
    "name": "Lens 1 - Artifact",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "selfext_lens_diligence",
    "name": "Lens 2 - Diligence",
    "outcome": "PASS",
-   "why": "9 bound tests passed across 2 file(s)"
+   "why": "6 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
    "id": "selfext_lens_independence",
    "name": "Lens 3 - Independence",
-   "outcome": "PASS",
-   "why": "174 bound tests passed across 2 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "selfext_convene_court",
    "name": "ROMA Court (jury)",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "selfext_settle",
    "name": "Settle Verdict",
-   "outcome": "PASS",
-   "why": "4 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -1980,7 +1980,7 @@
    "id": "selfext_court_signal",
    "name": "court_verdict Signal",
    "outcome": "PASS",
-   "why": "8 bound tests passed across 2 file(s)"
+   "why": "3 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -2077,8 +2077,8 @@
    "source": "Grand Map",
    "id": "website_content_source",
    "name": "Content Source (repo facts)",
-   "outcome": "PASS",
-   "why": "9 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -2091,15 +2091,15 @@
    "source": "Grand Map",
    "id": "website_changelog_parser",
    "name": "Changelog Parser",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "website_build_info",
    "name": "Build-Info Stamper",
-   "outcome": "PASS",
-   "why": "2 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -2112,29 +2112,29 @@
    "source": "Grand Map",
    "id": "website_page_renderer",
    "name": "Astro Page Renderer",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 2 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "website_voice_lint",
    "name": "Voice / Microcopy Lint",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "website_seo_meta",
    "name": "SEO + Meta / Schema",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "website_download_cta",
    "name": "Download CTA",
-   "outcome": "PASS",
-   "why": "14 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -2204,7 +2204,7 @@
    "id": "users_google_oauth",
    "name": "Sign in with Google",
    "outcome": "PASS",
-   "why": "83 bound tests passed across 2 file(s)"
+   "why": "60 bound tests passed across 2 file(s)"
   },
   {
    "source": "Grand Map",
@@ -2217,22 +2217,22 @@
    "source": "Grand Map",
    "id": "users_session_token",
    "name": "Session token (bearer)",
-   "outcome": "PASS",
-   "why": "23 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "users_token_guard",
    "name": "Token guard (require_user)",
-   "outcome": "PASS",
-   "why": "9 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "users_logout_revoke",
    "name": "Logout / revoke sessions",
-   "outcome": "PASS",
-   "why": "4 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -2245,36 +2245,36 @@
    "source": "Grand Map",
    "id": "users_firm",
    "name": "Firm / company",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "users_roles",
    "name": "Roles & membership gate",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "users_seats",
    "name": "Seats (à-la-carte)",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "users_invite",
    "name": "Invite teammate",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "users_invite_accept",
    "name": "Accept invite (email-bound)",
-   "outcome": "PASS",
-   "why": "13 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -2287,8 +2287,8 @@
    "source": "Grand Map",
    "id": "users_owner_transfer",
    "name": "Transfer ownership",
-   "outcome": "PASS",
-   "why": "11 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
@@ -2609,85 +2609,85 @@
    "source": "Grand Map",
    "id": "community_share_card",
    "name": "Share to Community",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_tier_gate",
    "name": "Tier Gate (exclusive vs knowledge)",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_redaction_promote",
    "name": "Promote + Redact",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_firm_outbox",
    "name": "Firm Outbox (ActivityPub)",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_subscribe",
    "name": "Subscribe to Peer Firm",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_poller",
    "name": "Community Poller",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_incoming_eval",
    "name": "Incoming Pattern Judge",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_quarantine",
    "name": "Quarantine Buffer",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_create_group",
    "name": "Create Community Group",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_join_code",
    "name": "Join-Code Issue + Verify",
-   "outcome": "PASS",
-   "why": "12 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_fanout_export",
    "name": "Fanout Export",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",
    "id": "community_fanout_apply",
    "name": "Fanout Apply (inbound merge)",
-   "outcome": "PASS",
-   "why": "7 bound tests passed across 1 file(s)"
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
   },
   {
    "source": "Grand Map",

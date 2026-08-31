@@ -6399,6 +6399,17 @@ def _ensure_design_system_property_indexes(
                 nested = read_relation(snapshot, root_id, budget=100_000)
             except (InvalidCell, MatchBudgetExceeded):
                 continue
+            # The walk stops at a composition boundary: what lives INSIDE
+            # a composition (brain receipts, grouped members) belongs to
+            # its own scope and reaches a lens only by entering it.
+            # Descending here swept nested receipt titles into every
+            # view's lens -- exactly what nesting them was for.
+            if root_id not in set(assigned) and any(
+                member.role_id == roles["seed"]
+                and member.participant_id == _COMPOSITION_MARKER_ROOT
+                for member in nested
+            ):
+                continue
             for nested_member in nested:
                 if (
                     nested_member.role_id == roles["member"]

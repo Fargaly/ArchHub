@@ -6,7 +6,7 @@ from .cell_view_template import ViewTemplateBuilder, ViewTemplateProtocol
 
 
 VIEW_TEMPLATE_PREFIX = "app:view-template-protocol"
-TIMELINE_PREFIX = "app:properties-template:timeline:v2"
+TIMELINE_PREFIX = "app:properties-template:timeline:v3"
 TIMELINE_TEMPLATE_ROOT = TIMELINE_PREFIX + ":section"
 
 _CONTROL_HEADING_ROOT = TIMELINE_PREFIX + ":control-heading"
@@ -44,6 +44,7 @@ _ACTION_HISTORY_META_ROOT = TIMELINE_PREFIX + ":action-history-meta"
 # one executable relation, preserving nine incidences with eight identities.
 TIMELINE_TEMPLATE_MEMBER_ROOTS = (
     TIMELINE_TEMPLATE_ROOT,
+    TIMELINE_PREFIX + ":empty-notice",
     _CONTROL_HEADING_ROOT,
     _STATE_ROOT,
     _GATE_ROW_ROOT,
@@ -1007,6 +1008,22 @@ def compose_timeline_template(
         literal("root-key-prefix", "presenter:timeline:"),
         selected,
     )
+    no_timeline = expression("no-timeline", "not", (has_timeline,))
+    empty_notice_root = TIMELINE_PREFIX + ":empty-notice"
+    builder.template(
+        empty_notice_root,
+        tag=literal("empty-notice-tag", "div"),
+        key=literal("empty-notice-key", "timeline:empty"),
+        class_name=literal(
+            "empty-notice-class", "connection-box"
+        ),
+        text=literal(
+            "empty-notice-text",
+            "No actions this session yet. Every change made on this "
+            "canvas will appear here, newest first.",
+        ),
+        condition=no_timeline,
+    )
     builder.template(
         TIMELINE_TEMPLATE_ROOT,
         tag=literal("root-tag", "section"),
@@ -1018,8 +1035,8 @@ def compose_timeline_template(
             _STATE_ROOT,
             _GATES_ROOT,
             _HISTORY_ROOT,
+            empty_notice_root,
         ),
-        condition=has_timeline,
     )
     return TIMELINE_TEMPLATE_ROOT
 

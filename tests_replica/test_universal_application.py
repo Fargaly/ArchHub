@@ -1193,6 +1193,14 @@ def test_exact_interface_history_is_projected_only_for_the_active_inspector(
 	exact_roots = frozenset(interface["previous_roots"])
 	assert exact_roots
 
+	# The module store is shared: a previous test may have left an
+	# interface focused, and a focused interface RIGHTLY projects its
+	# exact roots. Park the focus on the domain node so the premise
+	# "nothing exact projects for an inactive inspector" holds.
+	apply_universal_canvas_gesture(
+		store, registry, roots=(ui_root,), focus_root=ui_root
+	)
+
 	projected_exact_roots = []
 	original = universal_application_module._project_canvas_interface_uncached
 
@@ -3034,7 +3042,9 @@ def test_browser_shell_theme_and_stylesheet_are_projected_from_application_cells
 		registry.tenant_authority.published_revision_root,
 		registry.tenant_release_selection.root_id,
 	} == {item["root"] for item in projection["authority_stack"]}
-	assert len(page.encode("utf-8")) < 250_000
+	# Raised once, deliberately: the design-language pass (mono param
+	# rows, tool-tree library, agent bar) costs ~1.4KB of stylesheet.
+	assert len(page.encode("utf-8")) < 260_000
 
 
 def test_theme_edit_is_an_immutable_personal_wip_preview_not_a_broadcast():
@@ -3428,8 +3438,11 @@ def test_selecting_a_card_rewires_the_properties_lens(application):
 	projection = project_universal_canvas(store, registry)
 	assert store.revision == before + 1
 	assert projection["selected"] == target
-	assert {row["label"] for row in projection["properties"]} >= {
-		"key", "title", "position_x", "position_y"
+	# Placement coordinates and the provenance key are plumbing, not
+	# panel content; the drag gesture reads the relations directly.
+	assert {row["label"] for row in projection["properties"]} >= {"title"}
+	assert not {"key", "position_x", "position_y"} & {
+		row["label"] for row in projection["properties"]
 	}
 
 
@@ -3798,8 +3811,10 @@ def test_catalogue_entry_metadata_is_one_inspectable_graph_relation():
 		{node["id"] for node in placed["nodes"]}
 	)
 	assert placed["selected"] == watcher_root
+	# Coordinates are plumbing and no longer panel rows; the definition
+	# and version provenance stay inspectable.
 	assert {row["label"] for row in placed["properties"]} == {
-		"title", "position_x", "position_y", "color", "definition", "version"
+		"title", "color", "definition", "version"
 	}
 	color = next(
 		row for row in placed["properties"] if row["label"] == "color"

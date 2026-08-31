@@ -193,8 +193,10 @@ def test_use_lens_does_not_expose_the_raw_physical_floor():
         if lens["active"]
     ] == ["use"]
     panels = projection["inspector"]["presentation"]["panels"]
+    # History stands for every selected root now: an append-only graph
+    # always has history, and an empty timeline is an honest answer.
     assert {panel["label"] for panel in panels} == {
-        "Properties", "Relations", "Presentation",
+        "Properties", "Relations", "Presentation", "History",
     }
     assert all(
         component["id"] != registry.properties_component_roots["floor"]

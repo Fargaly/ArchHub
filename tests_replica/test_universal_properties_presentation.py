@@ -860,8 +860,10 @@ def test_properties_tabs_are_exact_graph_panels_with_exact_content_sources():
 
     projected = project_universal_canvas(store, registry)
     panels = projected["inspector"]["presentation"]["panels"]
+    # History stands for every selected root: an append-only graph always
+    # has history, and the empty timeline states itself honestly.
     assert [panel["label"] for panel in panels] == [
-        "Properties", "Relations", "Presentation"
+        "Properties", "Relations", "Presentation", "History"
     ]
     active_panels = [panel for panel in panels if panel["active"]]
     assert len(active_panels) == 1

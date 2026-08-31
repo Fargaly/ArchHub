@@ -675,6 +675,23 @@ def _require_transaction_context(
         raise Conflict("change belongs to another actor or view session")
 
 
+def _compensation_tolerates_drift(target_root: str) -> bool:
+    """Structural linkage and signed-authority cells compensate elsewhere.
+
+    A chain cell is pure linkage: replaying its recorded bytes after another
+    lawful append would corrupt the relation, and skipping it keeps the
+    current, longer chain intact. A signed authority relationship can never
+    be compensated by byte replay at all -- the broker's anti-replay
+    generation rightly refuses resurrection -- so undo/redo leave those
+    cells to the grant reconciler, which issues NEW signed generations.
+    """
+    return (
+        target_root.startswith("chain:")
+        or "archhub-projection" in target_root
+        or target_root.startswith("app:authority-relationship:")
+    )
+
+
 def undo_last_change(
     store: CellStore,
     protocol: ChangeHistoryProtocol,
@@ -709,6 +726,8 @@ def undo_last_change(
     for change in original.changes:
         current = snapshot.cells.get(change.target_root)
         if current != change.after:
+            if _compensation_tolerates_drift(change.target_root):
+                continue
             raise Conflict(
                 "Cell changed after the recorded transaction: %s"
                 % change.target_root
@@ -764,6 +783,8 @@ def redo_last_change(
         current = snapshot.cells.get(change.target_root)
         expected = change.before if change.before is not None else change.after
         if current != expected:
+            if _compensation_tolerates_drift(change.target_root):
+                continue
             raise Conflict(
                 "Cell changed after the recorded compensation: %s"
                 % change.target_root

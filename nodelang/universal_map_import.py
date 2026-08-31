@@ -359,6 +359,21 @@ def project_grand_map_cells(
                 }:
                     raise InvalidCell("Grand Map cross relation drifted")
                 cross_relations.append(scope_root)
+            elif scope_root.startswith("app:dynamic:property:"):
+                # A live application may wire its own property relations
+                # into a domain scope (subsystem nodes get title/position
+                # this way). They are application facts, not imported map
+                # facts: validate the property shape, leave the map
+                # registry untouched. The comment on node handling below
+                # already admits application-added MEMBERS for the same
+                # reason.
+                relation = read_relation(snapshot, scope_root, budget=8)
+                if {member.role_id for member in relation} != {
+                    roles["owner"], roles["value"], roles["label"]
+                }:
+                    raise InvalidCell(
+                        "application property in a Grand Map scope drifted"
+                    )
             else:
                 raise InvalidCell("Grand Map domain contains an unknown scope")
 

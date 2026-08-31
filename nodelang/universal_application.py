@@ -15355,7 +15355,10 @@ def restore_universal_application(
         roles,
         application_root,
         tuple(top_level_roots),
-        root_properties,
+        # On the restore path the merged application root_properties is
+        # assembled further down; the imported map's own mapping is the
+        # part the nested walk needs here.
+        map_registry.root_properties,
     )
     _ensure_governed_work_scope_interfaces(
         store,
@@ -46752,6 +46755,212 @@ def _authorize_universal_compensation(
         )
 
 
+def _reconcile_view_projection_grants(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    actor_root: str,
+) -> None:
+    """Re-align signed projection grants with the visible set after undo/redo.
+
+    Undo restores the visibility cells byte-for-byte, but a signed grant
+    cannot be resurrected by restoring old bytes -- the broker's anti-replay
+    generation rightly refuses that as a replay. Compensation for authority
+    is therefore a NEW signed generation, exactly like a git revert is a new
+    commit: whatever is visible gets an active grant, whatever left gets a
+    signed revocation.
+    """
+    authority = registry.authorization
+    read_root = authority.protocol.actions["read"]
+    snapshot = store.snapshot()
+    members = read_relation(
+        snapshot, view_session.visibility_root, budget=100_000
+    )
+    assigned = {
+        member.participant_id for member in members
+        if member.role_id == registry.roles["visible"]
+    }
+    verified = verify_relationship_authority_snapshot(
+        snapshot,
+        authority.identity_protocol,
+        authority.relationship_broker,
+    )
+    exposure_entries = _view_scope_exposures(
+        snapshot, registry, view_session
+    )
+    active_exposure_roots = {
+        entry_root for entry_root, _visible in exposure_entries.values()
+    }
+    exposure_compositions = set(_active_exposure_composition_roots(
+        snapshot, registry, view_session
+    ))
+    composition_entry: dict[str, str] = {}
+    for entry_root, visible in exposure_entries.values():
+        for root_id in visible:
+            if root_id in exposure_compositions:
+                composition_entry[root_id] = entry_root
+    signed_targets: dict[str, str] = {}
+    exposure_targets: dict[str, str] = {}
+    for relationship in verified.active_relationships:
+        if (
+            relationship.source_root
+            == authority.resource_reader_principal_root
+            and relationship.target_root == view_session.subject_root
+            and relationship.kind_root
+            == authority.identity_protocol.kinds["delegation"]
+            and relationship.tenant_root == authority.tenant_root
+            and relationship.scope_root is not None
+            and relationship.action_roots == (read_root,)
+        ):
+            if view_session.visibility_root in relationship.evidence_roots:
+                signed_targets[relationship.scope_root] = relationship.root_id
+            elif active_exposure_roots.intersection(
+                relationship.evidence_roots
+            ):
+                exposure_targets[relationship.scope_root] = (
+                    relationship.root_id
+                )
+            else:
+                # An exposure grant whose entry was undone has no living
+                # evidence: it must fall, or the exposure court refuses
+                # every projection after the undo.
+                revoke_authority_relationship(
+                    store,
+                    authority.identity_protocol,
+                    authority.relationship_broker,
+                    authority.relationship_broker
+                    .mint_from_trusted_administrator(actor_root),
+                    relationship.root_id,
+                    administrator_root=actor_root,
+                    reason="compensation removed this exposure evidence",
+                )
+    for composition_root in sorted(
+        exposure_compositions - set(exposure_targets)
+    ):
+        grant_authority_relationship(
+            store,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            authority.relationship_broker.mint_from_trusted_administrator(
+                actor_root
+            ),
+            # A signed relationship identity is never reused: a reissue
+            # after compensation is a NEW relationship, the way a revert
+            # is a new commit.
+            relationship_id="%s:r%d" % (
+                _projection_grant_root(
+                    view_session.subject_root,
+                    composition_root,
+                    composition_entry[composition_root],
+                ),
+                snapshot.revision,
+            ),
+            source_root=authority.resource_reader_principal_root,
+            target_root=view_session.subject_root,
+            kind="delegation",
+            tenant_root=authority.tenant_root,
+            scope_root=composition_root,
+            action_roots=(read_root,),
+            administrator_root=actor_root,
+            reason="compensation restores this exposure resource",
+            evidence_roots=(composition_entry[composition_root],),
+        )
+    for composition_root in sorted(
+        set(exposure_targets) - exposure_compositions
+    ):
+        revoke_authority_relationship(
+            store,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            authority.relationship_broker.mint_from_trusted_administrator(
+                actor_root
+            ),
+            exposure_targets[composition_root],
+            administrator_root=actor_root,
+            reason="compensation removed this exposure resource",
+        )
+    # Audience bindings ride the same law: a composition visible after a
+    # compensation must carry an ACTIVE, protocol-registered binding, and
+    # the recorded chain bytes cannot be replayed once the registry has
+    # moved on. Reissue a fresh binding where verification fails.
+    wip_root = registry.standard_library.lifecycle_protocol.states["wip"]
+    for resource_root in sorted({
+        root for root in (*assigned, *exposure_compositions)
+        if _is_universal_composition(snapshot, registry, root)
+    }):
+        binding_root = _resource_audience_binding_root(resource_root)
+        try:
+            verify_authority_relationship(
+                snapshot,
+                authority.identity_protocol,
+                authority.relationship_broker,
+                binding_root,
+            )
+            continue
+        except (InvalidCell, RelationshipAuthorityDenied):
+            pass
+        grant_authority_relationship(
+            store,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            authority.relationship_broker.mint_from_trusted_administrator(
+                actor_root
+            ),
+            relationship_id="%s:r%d" % (binding_root, snapshot.revision),
+            source_root=resource_root,
+            target_root=authority.audience_root,
+            kind="audience-binding",
+            tenant_root=authority.tenant_root,
+            scope_root=authority.classification_root,
+            action_roots=(read_root,),
+            administrator_root=actor_root,
+            reason="compensation restores this resource audience",
+            evidence_roots=(
+                wip_root,
+                view_session.subject_root,
+                resource_root,
+            ),
+        )
+    for target_root in sorted(assigned - set(signed_targets)):
+        grant_authority_relationship(
+            store,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            authority.relationship_broker.mint_from_trusted_administrator(
+                actor_root
+            ),
+            relationship_id="%s:r%d" % (
+                _projection_grant_root(
+                    view_session.subject_root,
+                    target_root,
+                    view_session.visibility_root,
+                ),
+                snapshot.revision,
+            ),
+            source_root=authority.resource_reader_principal_root,
+            target_root=view_session.subject_root,
+            kind="delegation",
+            tenant_root=authority.tenant_root,
+            scope_root=target_root,
+            action_roots=(read_root,),
+            administrator_root=actor_root,
+            reason="compensation restores this view resource",
+            evidence_roots=(view_session.visibility_root,),
+        )
+    for target_root in sorted(set(signed_targets) - assigned):
+        revoke_authority_relationship(
+            store,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            authority.relationship_broker.mint_from_trusted_administrator(
+                actor_root
+            ),
+            signed_targets[target_root],
+            administrator_root=actor_root,
+            reason="compensation removed this view resource",
+        )
+
+
 def undo_universal_change(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -46770,7 +46979,7 @@ def undo_universal_change(
     if operation_root not in snapshot.cells:
         raise InvalidCell("undo control binding has no graph authority")
     actor_root = registry.authorization.broker.resolve(context).subject_root
-    return undo_last_change(
+    revision = undo_last_change(
         store,
         registry.change_history_protocol,
         history_root=view_session.action_history_root,
@@ -46778,6 +46987,10 @@ def undo_universal_change(
         session_root=view_session.root_id,
         operation_root=operation_root,
     ).revision
+    _reconcile_view_projection_grants(
+        store, registry, view_session, actor_root
+    )
+    return store.revision
 
 
 def redo_universal_change(
@@ -46798,14 +47011,20 @@ def redo_universal_change(
     if operation_root not in snapshot.cells:
         raise InvalidCell("redo control binding has no graph authority")
     actor_root = registry.authorization.broker.resolve(context).subject_root
-    return redo_last_change(
+    redo_last_change(
         store,
         registry.change_history_protocol,
         history_root=view_session.action_history_root,
         actor_root=actor_root,
         session_root=view_session.root_id,
         operation_root=operation_root,
-    ).revision
+    )
+    # Same law as undo: signed authority is compensated by a NEW signed
+    # generation, never by replaying old bytes.
+    _reconcile_view_projection_grants(
+        store, registry, view_session, actor_root
+    )
+    return store.revision
 
 
 def execute_universal_control(

@@ -4680,6 +4680,18 @@ def _part(value: object) -> str:
     return quote(str(value), safe="")
 
 
+def _fresh_relationship_id(snapshot: Snapshot, base_root: str) -> str:
+    """A signed relationship identity is minted once, never reused.
+
+    A deterministic id that already exists (typically revoked by an earlier
+    cycle of the same gesture) gets a revision-suffixed successor -- the
+    reissue-as-new-commit law that undo/redo compensation follows.
+    """
+    if base_root not in snapshot.cells:
+        return base_root
+    return "%s:r%d" % (base_root, snapshot.revision)
+
+
 def _projection_grant_root(
     subject_root: str,
     target_root: str,
@@ -18574,7 +18586,13 @@ def _visibility_scope_projection(
                 )
             required_interface_roots.append(str(interface["id"]))
     if not set(required_interface_roots).issubset(indexed_interface_set):
-        raise InvalidCell("visibility interface projection is incomplete")
+        missing = sorted(
+            set(required_interface_roots) - indexed_interface_set
+        )
+        raise InvalidCell(
+            "visibility interface projection is incomplete: %d missing %s"
+            % (len(missing), [root[:56] for root in missing[:3]])
+        )
     owners = visible_set | relation_set
     for property_root in properties:
         property_members = _relation_members_or_none(snapshot, property_root)
@@ -18599,6 +18617,68 @@ def _visibility_scope_projection(
                 )
             )
     return visible, relations, properties, indexed_interfaces
+
+
+def _visibility_required_interfaces(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    visible: tuple[str, ...],
+    relations: tuple[str, ...],
+) -> tuple[str, ...]:
+    """The exact interfaces the projection court will demand indexed.
+
+    One derivation shared by the growth path and the court: every wire
+    endpoint of an indexed relation, plus every interface member of a
+    visible composition. Growing from any OTHER derivation re-created
+    the court contradiction this function removes.
+    """
+    interface_cache: dict[str, dict[str, object] | None] = {}
+    owner_interface_index, boundary_index = (
+        _nested_scope_endpoint_indexes(
+            snapshot, registry, visible, interface_cache,
+        )
+    )
+    required: list[str] = []
+    for relation_root in relations:
+        members = _relation_members_or_none(snapshot, relation_root)
+        if members is None:
+            continue
+        source_member = next((
+            member for member in members
+            if member.role_id == registry.roles["source"]
+        ), None)
+        target_member = next((
+            member for member in members
+            if member.role_id == registry.roles["target"]
+        ), None)
+        if source_member is None or target_member is None:
+            continue
+        for endpoint_member in (source_member, target_member):
+            _root, interface = _canvas_endpoint(
+                snapshot,
+                registry,
+                endpoint_member,
+                visible,
+                interface_cache=interface_cache,
+                owner_interface_index=owner_interface_index,
+                boundary_index=boundary_index,
+            )
+            if interface is not None:
+                required.append(str(interface["id"]))
+    interface_role = registry.assembly_protocol.role("interface")
+    for visible_root in visible:
+        visible_members = _relation_members_or_none(snapshot, visible_root)
+        if not visible_members or not any(
+            member.role_id == registry.roles["seed"]
+            and member.participant_id == _COMPOSITION_MARKER_ROOT
+            for member in visible_members
+        ):
+            continue
+        for member in visible_members:
+            if member.role_id != interface_role:
+                continue
+            required.append(member.participant_id)
+    return tuple(dict.fromkeys(required))
 
 
 _VISIBILITY_VERIFY_MEMO: "WeakKeyDictionary[CellStore, dict]" = (
@@ -18738,11 +18818,30 @@ def _ensure_view_visibility_scope_projection(
         # properties above are: growth is what a growing canvas does.
         # What the index holds and the canon no longer has is still
         # drift, and still refuses below.
-        gained = tuple(
-            root for root in canonical_interfaces
-            if root not in set(indexed_interfaces)
+        # ONE law both directions: the endpoint index over the assigned
+        # roots says which non-application interfaces belong. Growth adds
+        # what it derives and the index lacks (an ungrouped member's part
+        # interfaces reappear here); the shed above removed what it no
+        # longer derives.
+        required_interfaces = _visibility_required_interfaces(
+            snapshot,
+            registry,
+            tuple(assigned),
+            tuple(indexed_relations),
         )
+        indexed_now = set(indexed_interfaces)
+        gained = tuple(dict.fromkeys((
+            *(
+                root for root in canonical_interfaces
+                if root not in indexed_now
+            ),
+            *(
+                root for root in required_interfaces
+                if root not in indexed_now
+            ),
+        )))
         if gained:
+            pass
             interface_growth = prepare_append_relation_members(
                 snapshot,
                 view_session.visibility_root,
@@ -18762,8 +18861,73 @@ def _ensure_view_visibility_scope_projection(
                 member.participant_id for member in members
                 if member.role_id == interface_role
             )
-        if set(indexed_interfaces) != set(canonical_interfaces):
-            raise InvalidCell("persisted visibility interface projection drifted")
+        # Judge staleness with the SAME lens the projection guard uses:
+        # an indexed non-application interface must resolve through the
+        # endpoint index built over the assigned roots. Anything the guard
+        # would refuse, the index sheds -- one owner-visibility law, one
+        # derivation, no contradicting courts.
+        application_interfaces = {
+            member.participant_id
+            for member in read_relation(
+                snapshot, registry.application_root, budget=100_000
+            )
+            if member.role_id == interface_role
+        }
+        shed_candidates = (
+            set(indexed_interfaces) - application_interfaces
+        )
+        stale_interfaces: set[str] = set()
+        if shed_candidates:
+            owner_index, _boundary = _nested_scope_endpoint_indexes(
+                snapshot,
+                registry,
+                tuple(assigned),
+                {},
+            )
+            stale_interfaces = {
+                root for root in shed_candidates
+                if root not in owner_index
+            }
+        if stale_interfaces:
+            # The canonical derivation is the ONE authority for what this
+            # index holds. Demanding that every mutation which hides an
+            # owner also remember to shed its interfaces reintroduced the
+            # same bug on every new path; the index sheds what the canon
+            # no longer derives, exactly as it grows what the canon gained.
+            stale_incidences = tuple(
+                member.incidence_id
+                for member in members
+                if member.role_id == interface_role
+                and member.participant_id in stale_interfaces
+            )
+            shed = prepare_remove_relation_members(
+                snapshot,
+                view_session.visibility_root,
+                stale_incidences,
+                budget=100_000,
+            )
+            store.commit(
+                snapshot.revision,
+                replace=shed.replace,
+            )
+            snapshot = store.snapshot()
+            members = read_relation(
+                snapshot, view_session.visibility_root, budget=100_000
+            )
+            indexed_interfaces = tuple(
+                member.participant_id for member in members
+                if member.role_id == interface_role
+            )
+        if set(canonical_interfaces) - set(indexed_interfaces):
+            raise InvalidCell(
+                "persisted visibility interface projection drifted"
+            )
+        # An indexed interface beyond the canonical derivation is tolerated
+        # when its owner is visible or unprojectable right now: the shed
+        # above removes hidden-owner entries, and the completeness court
+        # below independently enforces every REQUIRED endpoint. Demanding
+        # exact equality made two courts contradict each other over the
+        # same wire-endpoint interfaces.
         _visibility_scope_projection(snapshot, registry, view_session)
         _VISIBILITY_VERIFY_MEMO.setdefault(store, {})[
             view_session.root_id
@@ -21130,11 +21294,30 @@ def _project_universal_canvas_interpreter(
         # interface per projection, which the active-inspector court
         # counts and refuses. The trigger is the application relation's
         # membership -- the thing growth changes -- read, never projected.
-        surface = tuple(
-            (member.role_id, member.participant_id)
-            for member in read_relation(
-                store.snapshot(), registry.application_root, budget=100_000
-            )
+        # The trigger watches BOTH surfaces growth answers to: the
+        # application relation's membership AND every view's visibility
+        # relation -- ungroup moves the second without touching the
+        # first, and the old single-surface gate skipped the repair the
+        # projection court then refused.
+        surface_snapshot = store.snapshot()
+        surface = (
+            tuple(
+                (member.role_id, member.participant_id)
+                for member in read_relation(
+                    surface_snapshot,
+                    registry.application_root,
+                    budget=100_000,
+                )
+            ),
+            tuple(
+                (view.root_id, member.role_id, member.participant_id)
+                for view in registry.view_sessions.values()
+                for member in read_relation(
+                    surface_snapshot,
+                    view.visibility_root,
+                    budget=100_000,
+                )
+            ),
         )
         if getattr(store, "_visibility_reconcile_surface", None) != surface:
             try:
@@ -24666,6 +24849,37 @@ def provision_universal_view_session(
         viewport_properties=MappingProxyType(viewport),
     )
     registry.view_sessions[subject_root] = view
+    # The design-system title index covers every view lens; a view born
+    # after that ensure ran would otherwise carry the debt to the next
+    # restore, and the durability court rightly demands a WRITE-FREE
+    # reopen. Pay the debt at birth: reconstruct the title relations from
+    # the canvas index (the graph already holds them) and settle this
+    # view's lens now.
+    index_snapshot = store.snapshot()
+    title_relations: dict[str, str] = {}
+    for member in read_relation(
+        index_snapshot, "app:canvas", budget=100_000
+    ):
+        if member.role_id != registry.roles["property"]:
+            continue
+        relation_members = read_relation(
+            index_snapshot, member.participant_id, budget=8
+        )
+        owner = _one_for_role(relation_members, registry.roles["owner"])
+        label_root = _one_for_role(relation_members, registry.roles["label"])
+        if (
+            owner is not None
+            and label_root is not None
+            and _text(index_snapshot, label_root) == "title"
+        ):
+            title_relations[owner] = member.participant_id
+    if title_relations:
+        _ensure_design_system_property_indexes(
+            store,
+            registry.roles,
+            title_relations,
+            application_root=registry.application_root,
+        )
     return view, revision
 
 
@@ -39662,7 +39876,9 @@ def group_universal_selection(
         identity,
         relationship_broker,
         relationship_broker.mint_from_trusted_administrator(actor_root),
-        relationship_id=_resource_audience_binding_root(composition_root),
+        relationship_id=_fresh_relationship_id(
+            snapshot, _resource_audience_binding_root(composition_root)
+        ),
         source_root=composition_root,
         target_root=authority.audience_root,
         kind="audience-binding",
@@ -39724,10 +39940,13 @@ def group_universal_selection(
         identity,
         relationship_broker,
         relationship_broker.mint_from_trusted_administrator(actor_root),
-        relationship_id=_projection_grant_root(
-            view_session.subject_root,
-            composition_root,
-            entry_root,
+        relationship_id=_fresh_relationship_id(
+            snapshot,
+            _projection_grant_root(
+                view_session.subject_root,
+                composition_root,
+                entry_root,
+            ),
         ),
         source_root=authority.resource_reader_principal_root,
         target_root=view_session.subject_root,
@@ -39758,8 +39977,11 @@ def group_universal_selection(
             identity,
             relationship_broker,
             relationship_broker.mint_from_trusted_administrator(actor_root),
-            relationship_id=_projection_grant_root(
-                view_session.subject_root, composition_root
+            relationship_id=_fresh_relationship_id(
+                snapshot,
+                _projection_grant_root(
+                    view_session.subject_root, composition_root
+                ),
             ),
             source_root=authority.resource_reader_principal_root,
             target_root=view_session.subject_root,
@@ -40099,10 +40321,13 @@ def ungroup_universal_composition(
             identity,
             relationship_broker,
             relationship_broker.mint_from_trusted_administrator(actor_root),
-            relationship_id=_projection_grant_root(
-                view_session.subject_root,
-                target_root,
-                entry_root,
+            relationship_id=_fresh_relationship_id(
+                snapshot,
+                _projection_grant_root(
+                    view_session.subject_root,
+                    target_root,
+                    entry_root,
+                ),
             ),
             source_root=authority.resource_reader_principal_root,
             target_root=view_session.subject_root,
@@ -40166,6 +40391,7 @@ def ungroup_universal_composition(
             )
             if _relationship_is_active(snapshot, authority, grant_root):
                 continue
+            grant_root = _fresh_relationship_id(snapshot, grant_root)
             grant = prepare_authority_relationship_grant(
                 authority_staged,
                 identity,
@@ -40305,7 +40531,13 @@ def _set_universal_scope_execution(
     # growth inside projection). Settle that growth FIRST, so the revision
     # this transition pins is the one it actually commits against --
     # otherwise the descend randomly conflicts with its own bookkeeping.
-    _ensure_visibility_scope_projections(store, registry)
+    # Settling is all this pre-pass owes: a strict-projection refusal here
+    # belongs to the projection that follows, which reports it with its
+    # own context instead of failing the transition early.
+    try:
+        _ensure_visibility_scope_projections(store, registry)
+    except InvalidCell:
+        pass
     snapshot = store.snapshot()
     verify_released_catalog_stable(
         store,

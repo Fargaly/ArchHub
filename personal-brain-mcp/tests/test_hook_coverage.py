@@ -34,6 +34,16 @@ from personal_brain import installer  # noqa: E402
 from personal_brain.storage import BrainStore  # noqa: E402
 
 
+@pytest.fixture(scope="module")
+def cell_runtime():
+    """One real Cell runtime for this module's integration-level courts."""
+    server = ApplicationServer().start()
+    try:
+        yield server
+    finally:
+        server.close()
+
+
 BRAIN_CONTROL_PLANE_MODULES = [
     "active_work.py",
     "client_hook.py",
@@ -246,7 +256,7 @@ def test_audit_persists_installed_hook_coverage_in_brain_meta(fake_home, store):
     assert codex.touchpoints["scope_gate"].state == installer.ENFORCED
     assert codex.touchpoints["workshop_authority"].state == installer.ENFORCED
     assert codex.touchpoints["workshop_authority"].installed is True
-    assert codex.touchpoints["post_tool_write"].state == installer.PER_TURN
+    assert codex.touchpoints["post_tool_write"].state == installer.ENFORCED
 
 
 @pytest.mark.parametrize(
@@ -321,6 +331,19 @@ def test_runtime_compliance_observer_is_read_only_and_covers_exact_court_checks(
     assert observation["issue_count"] == 0
 
 
+def test_runtime_compliance_observer_maps_codex_desktop_to_codex_wiring(
+    fake_home,
+):
+    (fake_home / ".codex").mkdir()
+    installer.install_all(only=["codex"])
+
+    observation = hc.observe_runtime_compliance("codex-desktop")
+
+    assert observation["client"] == "codex"
+    assert observation["status"] == "green"
+    assert all(observation["checks"].values())
+
+
 def test_runtime_compliance_observer_fails_closed_for_missing_client_wiring(
     fake_home,
 ):
@@ -348,43 +371,40 @@ def test_audit_appends_compliance_history_event(fake_home, store):
 def test_hook_coverage_audit_cell_first_writes_only_the_cell_ledger(
     fake_home,
     store,
+    cell_runtime,
 ):
     (fake_home / ".codex").mkdir()
     installer.install_all(only=["codex"])
-    server = ApplicationServer().start()
-    bridge = _InProcessRuntimeBridge(server)
-    try:
-        result = hc.audit_cell_first(
-            store,
-            only=["codex"],
-            owner_user="founder",
-            cell_bridge=bridge,
-        )
+    bridge = _InProcessRuntimeBridge(cell_runtime)
+    result = hc.audit_cell_first(
+        store,
+        only=["codex"],
+        owner_user="founder",
+        cell_bridge=bridge,
+    )
 
-        assert result["ok"] is True
-        assert result["cell_first"] is True
-        assert result["brain_written"] is False
-        assert result["report"]["status"] == "green"
-        assert result["report"]["cell_record_root"]
-        assert result["cell_record"]["root"] == result["report"][
-            "cell_record_root"
-        ]
-        assert store.get_meta(hc.COVERAGE_META_KEY) is None
-        persisted = hc.get_report_cell_first(
-            store, owner_user="founder", cell_bridge=bridge
-        )
-        assert persisted is not None
-        assert persisted.clients["codex"].status == "green"
-        entries = bridge.deliberation_read(
-            space=hc.CELL_CONTROL_LEDGER_ROOT,
-            limit=10,
-        )
-        event = entries["entries"][-1]
-        assert event["root"] == result["report"]["cell_record_root"]
-        assert event["payload"]["event_type"] == "hook_coverage_audit"
-        assert event["payload"]["clients"]["codex"]["status"] == "green"
-    finally:
-        server.close()
+    assert result["ok"] is True
+    assert result["cell_first"] is True
+    assert result["brain_written"] is False
+    assert result["report"]["status"] == "green"
+    assert result["report"]["cell_record_root"]
+    assert result["cell_record"]["root"] == result["report"][
+        "cell_record_root"
+    ]
+    assert store.get_meta(hc.COVERAGE_META_KEY) is None
+    persisted = hc.get_report_cell_first(
+        store, owner_user="founder", cell_bridge=bridge
+    )
+    assert persisted is not None
+    assert persisted.clients["codex"].status == "green"
+    entries = bridge.deliberation_read(
+        space=hc.CELL_CONTROL_LEDGER_ROOT,
+        limit=10,
+    )
+    event = entries["entries"][-1]
+    assert event["root"] == result["report"]["cell_record_root"]
+    assert event["payload"]["event_type"] == "hook_coverage_audit"
+    assert event["payload"]["clients"]["codex"]["status"] == "green"
 
 
 def test_hook_coverage_audit_cell_first_fails_closed_before_brain_write(store):
@@ -426,32 +446,29 @@ def test_runtime_write_gate_rejects_legacy_only_green_coverage(
 def test_runtime_write_gate_accepts_cell_first_green_coverage(
     fake_home,
     store,
+    cell_runtime,
 ):
     (fake_home / ".codex").mkdir()
     installer.install_all(only=["codex"])
-    server = ApplicationServer().start()
-    bridge = _InProcessRuntimeBridge(server)
-    try:
-        result = hc.audit_cell_first(
-            store,
-            only=["codex"],
-            owner_user="founder",
-            cell_bridge=bridge,
-        )
-        assert result["ok"] is True
+    bridge = _InProcessRuntimeBridge(cell_runtime)
+    result = hc.audit_cell_first(
+        store,
+        only=["codex"],
+        owner_user="founder",
+        cell_bridge=bridge,
+    )
+    assert result["ok"] is True
 
-        gate = hc.runtime_write_gate(
-            store,
-            runtime="codex",
-            owner_user="founder",
-            write=True,
-            cell_bridge=bridge,
-        )
+    gate = hc.runtime_write_gate(
+        store,
+        runtime="codex",
+        owner_user="founder",
+        write=True,
+        cell_bridge=bridge,
+    )
 
-        assert gate["allowed"] is True
-        assert gate["cell_record_root"] == result["report"]["cell_record_root"]
-    finally:
-        server.close()
+    assert gate["allowed"] is True
+    assert gate["cell_record_root"] == result["report"]["cell_record_root"]
 
 
 def test_audit_marks_detected_missing_codex_hooks_red(fake_home, store):
@@ -464,6 +481,51 @@ def test_audit_marks_detected_missing_codex_hooks_red(fake_home, store):
     assert codex.installed is False
     assert codex.status == "red"
     assert any("hooks.json" in issue for issue in codex.issues)
+
+
+@pytest.mark.parametrize(
+    ("client", "event_name", "vendor"),
+    [
+        ("claude-code", "PostToolUse", "claude"),
+        ("codex", "PostToolUse", "codex"),
+        ("gemini-cli", "AfterTool", "gemini"),
+    ],
+)
+def test_audit_requires_signed_post_write_settlement(
+    fake_home,
+    store,
+    client,
+    event_name,
+    vendor,
+):
+    installer.ALL_PLANS[client].config_path.parent.mkdir(parents=True, exist_ok=True)
+    installer.install_all(only=[client])
+    path = (
+        installer._codex_hooks_path()
+        if client == "codex"
+        else installer.ALL_PLANS[client].config_path
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    groups = payload["hooks"][event_name]
+    payload["hooks"][event_name] = [
+        group
+        for group in groups
+        if not any(
+            "agent_scope_gate.py" in str(handler.get("command", ""))
+            and f"--vendor {vendor}" in str(handler.get("command", ""))
+            for handler in group.get("hooks", [])
+            if isinstance(handler, dict)
+        )
+    ]
+    assert len(payload["hooks"][event_name]) < len(groups)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = hc.audit(store, only=[client], owner_user="founder")
+
+    coverage = report.clients[client]
+    assert coverage.status == "red"
+    assert coverage.touchpoints["post_tool_write"].installed is False
+    assert any("post_tool_write" in issue for issue in coverage.issues)
 
 
 def test_audit_accepts_antigravity_named_hooks_and_mcp(fake_home, store):
@@ -612,48 +674,45 @@ def test_repair_appends_compliance_history_event(fake_home, store):
 def test_hook_coverage_repair_cell_first_records_request_and_outcome(
     fake_home,
     store,
+    cell_runtime,
 ):
     (fake_home / ".gemini").mkdir()
-    server = ApplicationServer().start()
-    bridge = _InProcessRuntimeBridge(server)
-    try:
-        result = hc.repair_cell_first(
-            store,
-            only=["gemini-cli"],
-            owner_user="founder",
-            dry_run=False,
-            cell_bridge=bridge,
-        )
+    bridge = _InProcessRuntimeBridge(cell_runtime)
+    result = hc.repair_cell_first(
+        store,
+        only=["gemini-cli"],
+        owner_user="founder",
+        dry_run=False,
+        cell_bridge=bridge,
+    )
 
-        assert result["ok"] is True
-        assert result["cell_first"] is True
-        assert result["brain_written"] is False
-        assert result["side_effect_executed"] is True
-        assert result["before"]["status"] == "red"
-        assert result["after"]["status"] == "green"
-        assert installer._gemini_path().exists()
-        assert result["request_cell_record"]["root"] == result["after"][
-            "repair_request_cell_record_root"
-        ]
-        assert result["outcome_cell_record"]["root"] == result["after"][
-            "repair_outcome_cell_record_root"
-        ]
-        assert store.get_meta(hc.COVERAGE_META_KEY) is None
-        persisted = hc.get_report_cell_first(
-            store, owner_user="founder", cell_bridge=bridge
-        )
-        assert persisted is not None
-        assert persisted.clients["gemini-cli"].status == "green"
-        entries = bridge.deliberation_read(
-            space=hc.CELL_CONTROL_LEDGER_ROOT,
-            limit=10,
-        )
-        event = entries["entries"][-1]
-        assert event["root"] == result["after"]["repair_outcome_cell_record_root"]
-        assert event["payload"]["event_type"] == "hook_coverage_repair_outcome"
-        assert event["payload"]["after"]["clients"]["gemini-cli"]["status"] == "green"
-    finally:
-        server.close()
+    assert result["ok"] is True
+    assert result["cell_first"] is True
+    assert result["brain_written"] is False
+    assert result["side_effect_executed"] is True
+    assert result["before"]["status"] == "red"
+    assert result["after"]["status"] == "green"
+    assert installer._gemini_path().exists()
+    assert result["request_cell_record"]["root"] == result["after"][
+        "repair_request_cell_record_root"
+    ]
+    assert result["outcome_cell_record"]["root"] == result["after"][
+        "repair_outcome_cell_record_root"
+    ]
+    assert store.get_meta(hc.COVERAGE_META_KEY) is None
+    persisted = hc.get_report_cell_first(
+        store, owner_user="founder", cell_bridge=bridge
+    )
+    assert persisted is not None
+    assert persisted.clients["gemini-cli"].status == "green"
+    entries = bridge.deliberation_read(
+        space=hc.CELL_CONTROL_LEDGER_ROOT,
+        limit=10,
+    )
+    event = entries["entries"][-1]
+    assert event["root"] == result["after"]["repair_outcome_cell_record_root"]
+    assert event["payload"]["event_type"] == "hook_coverage_repair_outcome"
+    assert event["payload"]["after"]["clients"]["gemini-cli"]["status"] == "green"
 
 
 def test_hook_coverage_repair_cell_first_request_failure_prevents_file_write(
@@ -760,13 +819,12 @@ def test_legacy_hook_tools_are_retired_without_writes_or_repairs(fake_home, stor
     assert store.get_meta(hc.COVERAGE_META_KEY) is None
 
 
-def test_monitor_start_runs_startup_audit(fake_home, store):
+def test_monitor_start_runs_startup_audit(fake_home, store, cell_runtime):
     (fake_home / ".codex").mkdir()
     installer.install_all(only=["codex"])
     assert store.get_meta(hc.COVERAGE_META_KEY) is None
 
-    server = ApplicationServer().start()
-    bridge = _InProcessRuntimeBridge(server)
+    bridge = _InProcessRuntimeBridge(cell_runtime)
     monitor = None
     try:
         monitor = hc.start_hook_coverage_monitor(
@@ -789,13 +847,11 @@ def test_monitor_start_runs_startup_audit(fake_home, store):
     finally:
         if monitor is not None:
             monitor.stop()
-        server.close()
 
 
-def test_monitor_periodically_refreshes_coverage(fake_home, store):
+def test_monitor_periodically_refreshes_coverage(fake_home, store, cell_runtime):
     (fake_home / ".codex").mkdir()
-    server = ApplicationServer().start()
-    bridge = _InProcessRuntimeBridge(server)
+    bridge = _InProcessRuntimeBridge(cell_runtime)
     monitor = None
     try:
         monitor = hc.start_hook_coverage_monitor(
@@ -830,14 +886,12 @@ def test_monitor_periodically_refreshes_coverage(fake_home, store):
     finally:
         if monitor is not None:
             monitor.stop()
-        server.close()
 
 
-def test_monitor_auto_repairs_detected_red_client(fake_home, store):
+def test_monitor_auto_repairs_detected_red_client(fake_home, store, cell_runtime):
     (fake_home / ".codex").mkdir()
 
-    server = ApplicationServer().start()
-    bridge = _InProcessRuntimeBridge(server)
+    bridge = _InProcessRuntimeBridge(cell_runtime)
     monitor = None
     try:
         monitor = hc.start_hook_coverage_monitor(
@@ -862,7 +916,6 @@ def test_monitor_auto_repairs_detected_red_client(fake_home, store):
     finally:
         if monitor is not None:
             monitor.stop()
-        server.close()
 
 
 def test_monitor_auto_repair_is_opt_in(monkeypatch):

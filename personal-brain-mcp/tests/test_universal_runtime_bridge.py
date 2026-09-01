@@ -210,15 +210,28 @@ def test_brain_bridge_uses_the_signed_runtime_and_same_work_registry(tmp_path):
         claimed = bridge.work_transition(
             root_id=created["created_root"], event="claim"
         )
-        assert claimed["status"]["counts"]["claimed"] == 1
-        assert claimed["status"]["items"][0]["claimant_session"] \
-            == bridge.agent_session_root
+        assert claimed["projection"] == "receipt-v1"
+        assert claimed["work_root"] == created["created_root"]
+        assert claimed["event"] == "claim"
+        claim_status = bridge.work_index()
+        claimed_item = next(
+            item for item in claim_status["items"]
+            if item["root"] == created["created_root"]
+        )
+        assert claimed_item["claimant_session"] == bridge.agent_session_root
         released = bridge.work_transition(
             root_id=created["created_root"], event="release"
         )
-        assert released["status"]["counts"]["open"] == 1 + grand_sync[
-            "created_count"
-        ]
+        assert released["projection"] == "receipt-v1"
+        assert released["work_root"] == created["created_root"]
+        assert released["event"] == "release"
+        release_status = bridge.work_index()
+        released_item = next(
+            item for item in release_status["items"]
+            if item["root"] == created["created_root"]
+        )
+        assert released_item["operational"]["current_state_label"] == "OPEN"
+        assert released_item["claimant_session"] is None
     finally:
         server.close()
 
@@ -314,8 +327,14 @@ def test_brain_bridge_passes_timeout_to_prompt_and_status_projections():
     assert bridge.deliberation_read(
         space="app:brain-control",
         limit=5,
+        category="app:brain-control:run-report",
         response_timeout_seconds=2.5,
     )["entries"] == []
+    assert client.calls[-1][2] == {
+        "space": "app:brain-control",
+        "limit": 5,
+        "category": "app:brain-control:run-report",
+    }
     assert bridge.deliberation_append(
         space="app:brain-control",
         category="app:brain-control:compliance-event",
@@ -376,12 +395,16 @@ def test_brain_bridge_passes_timeout_to_prompt_and_status_projections():
             None,
             {"response_timeout_seconds": 3.0},
         ),
-        (
-            "GET",
-            "/api/universal/deliberation",
-            {"space": "app:brain-control", "limit": 5},
-            {"response_timeout_seconds": 2.5},
-        ),
+            (
+                "GET",
+                "/api/universal/deliberation",
+                {
+                    "space": "app:brain-control",
+                    "limit": 5,
+                    "category": "app:brain-control:run-report",
+                },
+                {"response_timeout_seconds": 2.5},
+            ),
         (
             "POST",
             "/api/universal/deliberation",
@@ -448,5 +471,46 @@ def test_brain_bridge_passes_timeout_to_prompt_and_status_projections():
                 "source": "brain.roma_atomize",
             },
             {"response_timeout_seconds": 0.6},
+        ),
+    ]
+
+
+def test_work_mutations_request_only_authoritative_bounded_projections():
+    class _FakeClient:
+        agent_session_root = "app:agent-session:runtime:test"
+
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, path, body=None, **kwargs):
+            self.calls.append((method, path, body, kwargs))
+            return {"projection": body.get("projection")}
+
+    client = _FakeClient()
+    bridge = UniversalRuntimeBridge.__new__(UniversalRuntimeBridge)
+    bridge._transport_error = RuntimeError
+    bridge._client = client
+
+    assert bridge.work_transition(
+        root_id="work:bounded", event="submit", evidence="proof"
+    )["projection"] == "receipt-v1"
+    assert bridge.work_court("work:bounded")["projection"] == "index"
+    assert client.calls == [
+        (
+            "POST",
+            "/api/universal/work-transition",
+            {
+                "root": "work:bounded",
+                "event": "submit",
+                "evidence": "proof",
+                "projection": "receipt-v1",
+            },
+            {"response_timeout_seconds": None},
+        ),
+        (
+            "POST",
+            "/api/universal/work-court",
+            {"root": "work:bounded", "projection": "index"},
+            {"response_timeout_seconds": None},
         ),
     ]

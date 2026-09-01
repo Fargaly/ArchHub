@@ -28,7 +28,14 @@ import mcp.types as mt
 
 DEFAULT_DAEMON_URL = "http://127.0.0.1:8473/mcp"
 _OFF_VALUES = {"0", "off", "false", "no", "disabled"}
-DEFAULT_HEALTH_TIMEOUT_SEC = 2.0
+# The probe must outlast a BUSY singleton, not just an idle one. Measured
+# 2026-07-27 against the live daemon (pid 106564): transport-level `ping` /
+# `initialize` answer in 2-8ms, but every `tools/call` takes 1.4-3.7s with the
+# daemon burning ~0 CPU (it blocks, it does not compute). The old 2.0s ceiling
+# sat INSIDE that band, so a healthy daemon read as unavailable, the guard
+# exited 2, and stdio clients (Antigravity) reported `calling "initialize": EOF`.
+# Fail-closed is for a daemon that is GONE — never for one that is merely slow.
+DEFAULT_HEALTH_TIMEOUT_SEC = 15.0
 DEFAULT_EOF_DRAIN_SEC = 5.0
 
 

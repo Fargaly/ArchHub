@@ -534,8 +534,11 @@ def announce_session_wiring_cell_first(
     store: BrainStore,
     req: WiringAnnounceRequest,
     owner_user: str,
+    runtime_session_manager: Any,
+    runtime: str,
+    external_session_id: str,
 ) -> dict[str, Any]:
-    """Append one idempotent SessionStart receipt to the graph control ledger."""
+    """Append one SessionStart receipt as the exact enrolled graph session."""
     entry_summaries = [
         {
             "name": entry.name,
@@ -550,8 +553,9 @@ def announce_session_wiring_cell_first(
     recorded_at = datetime.now(timezone.utc).isoformat()
     claims = {
         "operation": "brain.hook_session_start",
-        "owner_user": owner_user,
-        "device_id": req.device_id,
+        "session_fingerprint": hashlib.sha256(
+            external_session_id.encode("utf-8")
+        ).hexdigest(),
         "entry_count": len(req.entries),
         "entries": entry_summaries,
         "secret_ref_count": len(req.secret_refs),
@@ -566,17 +570,16 @@ def announce_session_wiring_cell_first(
             str(req.git_remote or "").encode("utf-8")
         ).hexdigest(),
     }
-    source = "brain-control:session-wiring:v2:%s" % hashlib.sha256(
+    source = "brain-control:session-wiring:v3:%s" % hashlib.sha256(
         json.dumps(claims, sort_keys=True).encode("utf-8")
     ).hexdigest()[:16]
     try:
-        from .universal_runtime import UniversalRuntimeBridge
-
-        runtime = UniversalRuntimeBridge()
-        cell_record = runtime.deliberation_append(
+        cell_record = runtime_session_manager.deliberation_append(
+            runtime=runtime,
+            external_session_id=external_session_id,
             space="app:brain-control-ledger:v1",
             category="app:brain-control-ledger:v1:category:compliance-event",
-            summary="Session wiring: %s" % req.device_id,
+            summary="Runtime Agent Session wiring",
             payload=claims,
             idempotency_key=source,
             created_at=recorded_at,
@@ -605,6 +608,47 @@ def announce_session_wiring_cell_first(
     return out
 
 
+_BRAIN_CONTROL_LEDGER_ROOT = "app:brain-control-ledger:v1"
+_BRAIN_CONTROL_COMPLIANCE_CATEGORY = (
+    "app:brain-control-ledger:v1:category:compliance-event"
+)
+
+
+def _append_brain_control_receipt(
+    runtime: Any,
+    *,
+    operation: str,
+    scope: str,
+    source: str,
+    claims: dict[str, Any],
+    provenance: str,
+) -> dict[str, Any]:
+    """Append one compact graph receipt instead of cloning an assembly."""
+    payload = {
+        **claims,
+        "operation": operation,
+        "scope": scope,
+        "source": source,
+        "provenance": provenance,
+    }
+    receipt = runtime.deliberation_append(
+        space=_BRAIN_CONTROL_LEDGER_ROOT,
+        category=_BRAIN_CONTROL_COMPLIANCE_CATEGORY,
+        summary="Brain control receipt: %s" % operation,
+        payload=payload,
+        idempotency_key=source,
+        created_at=None,
+    )
+    root = receipt.get("root")
+    if not isinstance(root, str) or not root:
+        raise RuntimeError("Brain control ledger receipt has no graph root")
+    return {
+        **receipt,
+        "created_root": root,
+        "record_kind": "brain-control-ledger-entry",
+    }
+
+
 def queue_skill_mint_with_cell_receipt(
     *,
     store: BrainStore,
@@ -618,7 +662,7 @@ def queue_skill_mint_with_cell_receipt(
     redacted_trace = _redact_hook_value(trace)
     trace_json = json.dumps(redacted_trace, sort_keys=True, default=str)
     tool_calls = trace.get("tool_calls", []) or []
-    claims = {
+    identity_claims = {
         "operation": "brain.skill_mint",
         "owner_user": owner_user,
         "contributing_agent": contributing_agent,
@@ -636,25 +680,23 @@ def queue_skill_mint_with_cell_receipt(
                 "utf-8"
             )
         ).hexdigest(),
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
-    basis = json.dumps(claims, sort_keys=True)
+    basis = json.dumps(identity_claims, sort_keys=True)
     source = "brain-control:skill-mint:%s" % (
         hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
     )
+    claims = dict(identity_claims)
     try:
         from .universal_runtime import UniversalRuntimeBridge
 
         runtime = UniversalRuntimeBridge()
-        cell_record = runtime.assembly_create(
-            definition_key="knowledge-branch",
-            fields={
-                "source": source,
-                "scope": "founder/brain-control/skill-mint",
-                "provenance": "personal_brain.server:skill_mint",
-            },
-            structured_fields={"claims": claims},
-            idempotency_field="source",
+        cell_record = _append_brain_control_receipt(
+            runtime,
+            operation="brain.skill_mint",
+            scope="founder/brain-control/skill-mint",
+            source=source,
+            claims=claims,
+            provenance="personal_brain.server:skill_mint",
         )
     except Exception as cell_error:
         return {
@@ -971,26 +1013,17 @@ def build_server(
                 from .universal_runtime import UniversalRuntimeBridge
 
                 runtime = UniversalRuntimeBridge()
-                cell_record = runtime.assembly_create(
-                    definition_key="knowledge-branch",
-                    fields={
-                        "source": cell_record_source,
-                        "scope": "founder/brain-control/write",
-                        "claims": json.dumps(
-                            {
-                                "operation": "brain.write",
-                                "owner_user": owner,
-                                "ops": op_summaries,
-                                "acl_denied_count": len(denied),
-                                "recorded_at": datetime.now(
-                                    timezone.utc
-                                ).isoformat(),
-                            },
-                            sort_keys=True,
-                        ),
-                        "provenance": "personal_brain.server:brain_write",
+                cell_record = _append_brain_control_receipt(
+                    runtime,
+                    operation="brain.write",
+                    scope="founder/brain-control/write",
+                    source=cell_record_source,
+                    claims={
+                        "owner_user": owner,
+                        "ops": op_summaries,
+                        "acl_denied_count": len(denied),
                     },
-                    idempotency_field="source",
+                    provenance="personal_brain.server:brain_write",
                 )
             except Exception as cell_error:
                 result = {
@@ -1608,22 +1641,19 @@ def build_server(
                 "owner_user": owner,
                 "input_summary": input_summary,
                 "result_summary": result_summary,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
             }
             cell_record_source = f"brain-control:observe:{frag_id}"
             try:
                 from .universal_runtime import UniversalRuntimeBridge
 
                 runtime = UniversalRuntimeBridge()
-                cell_record = runtime.assembly_create(
-                    definition_key="knowledge-branch",
-                    fields={
-                        "source": cell_record_source,
-                        "scope": "founder/brain-control/observe",
-                        "claims": json.dumps(cell_payload, sort_keys=True),
-                        "provenance": "personal_brain.server:brain_observe",
-                    },
-                    idempotency_field="source",
+                cell_record = _append_brain_control_receipt(
+                    runtime,
+                    operation="brain.observe",
+                    scope="founder/brain-control/observe",
+                    source=cell_record_source,
+                    claims=cell_payload,
+                    provenance="personal_brain.server:brain_observe",
                 )
             except Exception as cell_error:
                 return {
@@ -1730,9 +1760,9 @@ def build_server(
     @mcp.tool(
         name="brain.hook_session_start",
         description=(
-            "CELL-FIRST Claude Code SessionStart hook target. Records the "
-            "session wiring through the same Cell-first path brain.wiring_announce "
-            "uses, then enrolls the runtime Agent Session when available. "
+            "CELL-FIRST Claude Code SessionStart hook target. Enrolls the "
+            "authenticated runtime Agent Session, records its wiring through "
+            "that exact graph capability, then updates the Brain projection. "
             "Tolerant of unexpected kwargs; never hard-errors."
         ),
     )
@@ -1743,10 +1773,35 @@ def build_server(
         **_ignored: Any,
     ) -> dict[str, Any]:
         try:
+            runtime = (vendor or "unknown").strip() or "unknown"
+            if not session_id:
+                return {
+                    "ok": False,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "universal_runtime_connected": False,
+                    "universal_runtime_error": (
+                        "vendor did not provide a session identity"
+                    ),
+                }
+            try:
+                graph_session = runtime_session_manager.enroll(
+                    runtime=runtime,
+                    external_session_id=session_id,
+                )
+            except Exception as graph_error:
+                return {
+                    "ok": False,
+                    "cell_first": True,
+                    "brain_written": False,
+                    "universal_runtime_connected": False,
+                    "universal_runtime_error": (
+                        f"{type(graph_error).__name__}: {graph_error}"
+                    ),
+                }
             owner = resolve_default_owner()
-            device = (session_id or "").strip() or "claude-code-session"
             req = WiringAnnounceRequest(
-                device_id=device,
+                device_id=session_id,
                 entries=[],
                 secret_refs=[],
                 cwd=cwd,
@@ -1756,33 +1811,13 @@ def build_server(
                 store=store,
                 req=req,
                 owner_user=owner,
+                runtime_session_manager=runtime_session_manager,
+                runtime=runtime,
+                external_session_id=session_id,
             )
-            if not out.get("ok"):
-                return out
-            runtime = (vendor or "unknown").strip() or "unknown"
-            if session_id:
-                try:
-                    graph_session = runtime_session_manager.enroll(
-                        runtime=runtime,
-                        external_session_id=session_id,
-                    )
-                    out["universal_runtime_connected"] = True
-                    out["universal_agent_session"] = graph_session[
-                        "agent_session"
-                    ]
-                    out["universal_agent_session_reused"] = graph_session[
-                        "reused"
-                    ]
-                except Exception as graph_error:
-                    out["universal_runtime_connected"] = False
-                    out["universal_runtime_error"] = (
-                        f"{type(graph_error).__name__}: {graph_error}"
-                    )
-            else:
-                out["universal_runtime_connected"] = False
-                out["universal_runtime_error"] = (
-                    "vendor did not provide a session identity"
-                )
+            out["universal_runtime_connected"] = True
+            out["universal_agent_session"] = graph_session["agent_session"]
+            out["universal_agent_session_reused"] = graph_session["reused"]
             return out
         except Exception as ex:  # a hook must never hard-error
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}

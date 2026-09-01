@@ -83,6 +83,47 @@ class _FailingDeliberationBridge:
         raise RuntimeError("cell ledger refused")
 
 
+class _RecordingDeliberationBridge:
+    def __init__(self):
+        self.reads = []
+
+    def deliberation_read(self, **body):
+        self.reads.append(body)
+        return {"entries": [], "total": 0}
+
+
+def test_cell_first_control_reads_request_only_the_required_category(store):
+    bridge = _RecordingDeliberationBridge()
+
+    compliance = cr.get_compliance_history_cell_first(
+        store,
+        owner_user="founder",
+        limit=7,
+        cell_bridge=bridge,
+    )
+    reports = rr.get_run_reports_cell_first(
+        store,
+        owner_user="founder",
+        limit=3,
+        cell_bridge=bridge,
+    )
+
+    assert compliance["ok"] is True
+    assert reports["ok"] is True
+    assert bridge.reads == [
+        {
+            "space": cr.CELL_CONTROL_LEDGER_ROOT,
+            "category": cr.CELL_COMPLIANCE_CATEGORY_ROOT,
+            "limit": 7,
+        },
+        {
+            "space": rr.CELL_CONTROL_LEDGER_ROOT,
+            "category": rr.CELL_RUN_REPORT_CATEGORY_ROOT,
+            "limit": 3,
+        },
+    ]
+
+
 @pytest.fixture()
 def store():
     s = BrainStore.open(":memory:")

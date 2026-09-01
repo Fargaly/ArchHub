@@ -35,6 +35,12 @@ ENV/
 *~
 .DS_Store
 Thumbs.db
+# Timestamped pre-edit backups written by tooling (e.g.
+# tools/brainwrap.py.<tag>-bak.<YYYYMMDD_HHMMSS>). They are a lane's local
+# rollback point for uncommitted work — keep them on disk, keep them out of the
+# tracked boundary. Untracked they land as `unclassified_noncoordinated` and
+# redden the AgDR-0061 WIP gate (AGENTS.md Hard Rule 3: regenerables are ignored).
+*-bak.[0-9]*
 
 # ==== Secrets ====
 *.env
@@ -150,3 +156,6 @@ _*.png
 founder_msgs.txt
 # zipped exports / bundles — regenerable, never source
 *.zip
+
+# Private peer-bus location pointer (T2 path — never literal in public source)
+.peer_bus_dir

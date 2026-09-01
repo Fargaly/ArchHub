@@ -73,6 +73,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -270,11 +271,11 @@ def _write_active_cde_state(
     container = _cde_container_from_leaf(leaf)
     path = _active_cde_state_path(session_id=session_id, runtime=runtime)
     if not container:
-        _clear_active_cde_state(runtime=runtime, session_id=session_id)
         return
     payload = {
         "schema": "archhub-active-cde/v1",
         "runtime": runtime,
+        "session_id": session_id,
         "leaf_id": leaf.get("leaf_id", "") if isinstance(leaf, dict) else "",
         "title": leaf.get("title", "") if isinstance(leaf, dict) else "",
         "cwd": os.getcwd(),
@@ -299,6 +300,31 @@ def _clear_active_cde_state(*, runtime: str = "", session_id: str = "") -> None:
               file=sys.stderr)
 
 
+def _clear_expired_active_cde_state(
+    *, runtime: str, session_id: str, now: Optional[datetime] = None
+) -> bool:
+    """Delete only an expired or malformed time-bounded state projection."""
+    path = _active_cde_state_path(session_id=session_id, runtime=runtime)
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        container = payload.get("container") if isinstance(payload, dict) else None
+        expiry_text = container.get("expires_at") if isinstance(container, dict) else None
+        if not expiry_text:
+            return False
+        expiry = datetime.fromisoformat(str(expiry_text).replace("Z", "+00:00"))
+        if expiry.tzinfo is None:
+            raise ValueError("CDE expiry must be timezone-aware")
+        observed = now or datetime.now(timezone.utc)
+        if observed.astimezone(timezone.utc) < expiry.astimezone(timezone.utc):
+            return False
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    _clear_active_cde_state(runtime=runtime, session_id=session_id)
+    return True
+
+
 def fetch_drive_block(*, runtime: str, session_id: str = "") -> str:
     """THE DRIVE (pre-prompt). Ask the brain for this runtime's next leaf, CLAIM
     it, and return the ready-to-prepend <assigned_leaf> block.
@@ -314,8 +340,8 @@ def fetch_drive_block(*, runtime: str, session_id: str = "") -> str:
     or a non-Universal response. It never claims from a local Brain database.
     """
     if not session_id.strip():
-        _clear_active_cde_state(runtime=runtime, session_id=session_id)
         return ""
+    _clear_expired_active_cde_state(runtime=runtime, session_id=session_id)
     owner = os.environ.get("BRAIN_OWNER_USER")
     fit = _drive_fit()
     # 1) daemon — the cross-process-safe path.
@@ -340,7 +366,6 @@ def fetch_drive_block(*, runtime: str, session_id: str = "") -> str:
                 res.get("leaf"), runtime=runtime, session_id=session_id
             )
             return block
-    _clear_active_cde_state(runtime=runtime, session_id=session_id)
     return ""
 
 

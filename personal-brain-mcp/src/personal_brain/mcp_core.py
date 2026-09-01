@@ -91,6 +91,12 @@ ERR_INTERNAL = -32603
 # MCP impl-defined range -32000..-32099 (== node_mcp.py:77).
 ERR_TOOL_NOT_FOUND = -32001
 
+# Transport liveness is the supervisor's dependency-free proof that this
+# process can still answer. Sending that proof through a graph-backed observer
+# would make the probe depend on the runtime it is supervising and can deadlock
+# recovery when the observer queue is saturated.
+_OBSERVER_EXCLUDED_TOOLS = frozenset({"brain.liveness"})
+
 
 # ─────────────────────── Errors (== node_mcp.py:95-109) ────────────────────
 class MCPError(Exception):
@@ -612,7 +618,7 @@ class InHouseMCP:
         # so ALL work by ALL agents shows in the workshop even if an agent
         # never speaks. Fail-soft: narration can never break a tool call.
         observer = getattr(self, "_tool_observer", None)
-        if observer is not None:
+        if observer is not None and name not in _OBSERVER_EXCLUDED_TOOLS:
             try:
                 observer(name, arguments, result)
             except Exception:

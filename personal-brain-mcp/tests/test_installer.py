@@ -106,6 +106,61 @@ def test_claude_code_idempotent(fake_home):
     assert len(tools) == 2, f"expected exactly the 2 brain pre-prompt hooks, got {tools}"
 
 
+def test_claude_code_repair_removes_legacy_brainwrap_duplicates(fake_home):
+    path = fake_home / ".claude" / "settings.json"
+    path.parent.mkdir(parents=True)
+    legacy_start = {
+        "hooks": [{
+            "type": "command",
+            "command": 'python "C:/workspace/tools/brainwrap.py" '
+                       "session-start --vendor claude-code",
+        }],
+    }
+    legacy_stop = {
+        "hooks": [{
+            "type": "command",
+            "command": 'python "C:/workspace/tools/brainwrap.py" '
+                       "stop --vendor claude-code",
+        }],
+    }
+    unrelated_stop = {
+        "hooks": [{
+            "type": "command",
+            "command": "python BBC4_PROJECT_CONTROL/AGENT_BUS/bus_stop_hook.py",
+        }],
+    }
+    path.write_text(json.dumps({
+        "hooks": {
+            "SessionStart": [legacy_start, legacy_start],
+            "Stop": [legacy_stop, legacy_stop, unrelated_stop],
+        },
+    }))
+
+    installer.install_all(only=["claude-code"])
+
+    cfg = json.loads(path.read_text())
+    starts = [
+        handler
+        for group in cfg["hooks"]["SessionStart"]
+        for handler in group.get("hooks", [])
+        if "brainwrap.py" in handler.get("command", "")
+    ]
+    stops = [
+        handler
+        for group in cfg["hooks"]["Stop"]
+        for handler in group.get("hooks", [])
+        if "brainwrap.py" in handler.get("command", "")
+    ]
+    all_stop_commands = [
+        handler.get("command", "")
+        for group in cfg["hooks"]["Stop"]
+        for handler in group.get("hooks", [])
+    ]
+    assert len(starts) == 1
+    assert len(stops) == 1
+    assert any("bus_stop_hook.py" in command for command in all_stop_commands)
+
+
 def test_claude_code_preserves_existing_servers(fake_home):
     path = fake_home / ".claude" / "settings.json"
     path.parent.mkdir(parents=True)

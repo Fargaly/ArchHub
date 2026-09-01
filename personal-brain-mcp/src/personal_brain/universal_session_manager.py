@@ -13,10 +13,15 @@ ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
 PROMOTION_ALLOWED = False
 
 import hashlib
+import logging
 import threading
+import time
 from typing import Any, Callable, Mapping
 
 from .universal_runtime import UniversalRuntimeBridge, UniversalRuntimeUnavailable
+
+
+_LOG = logging.getLogger(__name__)
 
 
 def _binding_key(runtime: str, external_session_id: str) -> str:
@@ -39,10 +44,118 @@ class UniversalRuntimeSessionManager:
         bridge_factory: Callable[[], UniversalRuntimeBridge] = (
             UniversalRuntimeBridge
         ),
+        *,
+        renewal_lead_seconds: float = 60.0,
+        renewal_poll_seconds: float = 5.0,
     ) -> None:
+        if (
+            isinstance(renewal_lead_seconds, bool)
+            or not isinstance(renewal_lead_seconds, (int, float))
+            or float(renewal_lead_seconds) <= 0
+        ):
+            raise ValueError("renewal lead must be positive")
+        if (
+            isinstance(renewal_poll_seconds, bool)
+            or not isinstance(renewal_poll_seconds, (int, float))
+            or float(renewal_poll_seconds) <= 0
+        ):
+            raise ValueError("renewal poll interval must be positive")
         self._bridge_factory = bridge_factory
         self._bindings: dict[str, UniversalRuntimeBridge] = {}
+        self._binding_expiries: dict[str, float] = {}
+        self._renewal_failures: dict[str, str] = {}
+        self._renewal_lead_seconds = float(renewal_lead_seconds)
+        self._renewal_poll_seconds = float(renewal_poll_seconds)
+        self._renewal_stop = threading.Event()
+        self._renewal_thread: threading.Thread | None = None
         self._lock = threading.RLock()
+
+    def _record_enrollment_locked(
+        self,
+        key: str,
+        bridge: UniversalRuntimeBridge,
+        enrollment: Mapping[str, object],
+    ) -> None:
+        self._bindings[key] = bridge
+        expires_at = enrollment.get("expires_at")
+        if (
+            not isinstance(expires_at, bool)
+            and isinstance(expires_at, (int, float))
+        ):
+            self._binding_expiries[key] = float(expires_at)
+            self._ensure_renewal_thread_locked()
+        else:
+            self._binding_expiries.pop(key, None)
+        self._renewal_failures.pop(key, None)
+
+    def _ensure_renewal_thread_locked(self) -> None:
+        thread = self._renewal_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._renewal_stop.clear()
+        thread = threading.Thread(
+            target=self._renewal_loop,
+            name="archhub-agent-session-renewal",
+            daemon=True,
+        )
+        self._renewal_thread = thread
+        thread.start()
+
+    def _renewal_loop(self) -> None:
+        """Rotate held capabilities before expiry without recreating Cells."""
+        while not self._renewal_stop.is_set():
+            now = time.time()
+            with self._lock:
+                due = tuple(
+                    (key, self._bindings[key])
+                    for key, expires_at in self._binding_expiries.items()
+                    if (
+                        key in self._bindings
+                        and expires_at - now <= self._renewal_lead_seconds
+                    )
+                )
+            for key, bridge in due:
+                try:
+                    renewed = bridge._client.renew_agent_session()
+                    expires_at = renewed.get("expires_at")
+                    if (
+                        isinstance(expires_at, bool)
+                        or not isinstance(expires_at, (int, float))
+                        or float(expires_at) <= time.time()
+                    ):
+                        raise RuntimeError(
+                            "Agent Session renewal returned an invalid expiry"
+                        )
+                except Exception as exc:
+                    message = "%s: %s" % (type(exc).__name__, exc)
+                    with self._lock:
+                        if self._bindings.get(key) is bridge:
+                            self._renewal_failures[key] = message
+                    _LOG.warning(
+                        "Agent Session capability renewal failed for %s: %s",
+                        key,
+                        message,
+                    )
+                    continue
+                with self._lock:
+                    if self._bindings.get(key) is bridge:
+                        self._binding_expiries[key] = float(expires_at)
+                        self._renewal_failures.pop(key, None)
+            self._renewal_stop.wait(self._renewal_poll_seconds)
+
+    def renewal_failures(self) -> Mapping[str, str]:
+        """Expose bounded process evidence instead of swallowing heartbeat errors."""
+        with self._lock:
+            return dict(self._renewal_failures)
+
+    def close(self) -> None:
+        """Stop the process-local lease keeper without changing graph state."""
+        self._renewal_stop.set()
+        with self._lock:
+            thread = self._renewal_thread
+            self._renewal_thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=max(1.0, self._renewal_poll_seconds * 2.0))
 
     def enroll(
         self, *, runtime: str, external_session_id: str
@@ -68,7 +181,7 @@ class UniversalRuntimeSessionManager:
                         runtime=normalized_runtime,
                         external_session_id=external_session_id,
                     )
-                    self._bindings[key] = replacement
+                    self._record_enrollment_locked(key, replacement, enrolled)
                     return {
                         "agent_session": enrolled["agent_session"],
                         "runtime": enrolled["runtime"],
@@ -88,7 +201,7 @@ class UniversalRuntimeSessionManager:
                 runtime=normalized_runtime,
                 external_session_id=external_session_id,
             )
-            self._bindings[key] = bridge
+            self._record_enrollment_locked(key, bridge, enrolled)
             return {
                 "agent_session": enrolled["agent_session"],
                 "runtime": enrolled["runtime"],
@@ -133,6 +246,29 @@ class UniversalRuntimeSessionManager:
             if isinstance(item, Mapping):
                 projected.append(self._resolve_work_references(bridge, item))
         return {**state, "items": projected, "projection": "index"}
+
+    def deliberation_append(
+        self,
+        *,
+        runtime: str,
+        external_session_id: str,
+        space: str,
+        category: str,
+        summary: str,
+        payload: object,
+        idempotency_key: str,
+        created_at: str | None = None,
+    ) -> dict[str, object]:
+        """Append through the exact enrolled Agent Session capability."""
+        bridge = self._require(runtime, external_session_id)
+        return bridge.deliberation_append(
+            space=space,
+            category=category,
+            summary=summary,
+            payload=payload,
+            idempotency_key=idempotency_key,
+            created_at=created_at,
+        )
 
     def claim_next(
         self, *, runtime: str, external_session_id: str
@@ -284,7 +420,10 @@ class UniversalRuntimeSessionManager:
     def forget(self, *, runtime: str, external_session_id: str) -> bool:
         key = _binding_key(runtime, external_session_id)
         with self._lock:
-            return self._bindings.pop(key, None) is not None
+            removed = self._bindings.pop(key, None) is not None
+            self._binding_expiries.pop(key, None)
+            self._renewal_failures.pop(key, None)
+            return removed
 
     def _require(
         self, runtime: str, external_session_id: str

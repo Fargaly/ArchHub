@@ -1607,11 +1607,11 @@ def _write_active_cde_state(
                     if isinstance(value, dict) and value.get("container_id"):
                         container = value
         if not container:
-            _clear_active_cde_state(runtime=runtime, session_id=session_id)
             return
         payload = {
             "schema": "archhub-active-cde/v1",
             "runtime": runtime,
+            "session_id": session_id,
             "leaf_id": leaf.get("leaf_id", ""),
             "title": leaf.get("title", ""),
             "cwd": os.getcwd(),
@@ -2047,9 +2047,6 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
                 )
                 work = assignment.get("work")
                 if not assignment.get("claimed") or not isinstance(work, dict):
-                    _clear_active_cde_state(
-                        runtime=runtime, session_id=session_identity
-                    )
                     return {
                         "ok": True,
                         "owner_user": owner,
@@ -2087,9 +2084,6 @@ def register_active_work_tools(mcp: "Any", store: "BrainStore") -> "Any":
                     "status": assignment.get("status"),
                 }
             except Exception as ex:
-                _clear_active_cde_state(
-                    runtime=runtime, session_id=session_identity
-                )
                 return {
                     "ok": False,
                     "owner_user": owner,

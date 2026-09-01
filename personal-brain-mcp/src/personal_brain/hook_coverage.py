@@ -600,7 +600,12 @@ def _checks_for(client: str) -> tuple[list[tuple[bool, str]], dict[str, tuple[bo
                 "pre_prompt_inject": _json_event_has(path, "UserPromptSubmit", "brain.hook_context"),
                 "workshop_authority": _json_event_has(path, "UserPromptSubmit", "brain.hook_context"),
                 "drive_inject": _json_event_has(path, "UserPromptSubmit", "brain.work_assigned_block"),
-                "post_tool_write": _json_event_has(path, "PostToolUse", "brain.observe"),
+                "post_tool_write": _json_event_has(
+                    path,
+                    "PostToolUse",
+                    "agent_scope_gate.py",
+                    "--vendor claude",
+                ),
                 "stop_gate": _json_event_has(
                     path, "Stop", "brainwrap", "stop", "claude-code"
                 ),
@@ -632,7 +637,12 @@ def _checks_for(client: str) -> tuple[list[tuple[bool, str]], dict[str, tuple[bo
                 "pre_prompt_inject": _json_event_has(hooks_path, "UserPromptSubmit", "brainwrap", "context"),
                 "workshop_authority": _json_event_has(hooks_path, "UserPromptSubmit", "brainwrap", "context"),
                 "drive_inject": _json_event_has(hooks_path, "UserPromptSubmit", "brainwrap", "context"),
-                "post_tool_write": _json_event_has(hooks_path, "Stop", "brainwrap", "stop"),
+                "post_tool_write": _json_event_has(
+                    hooks_path,
+                    "PostToolUse",
+                    "agent_scope_gate.py",
+                    "--vendor codex",
+                ),
                 "stop_gate": _json_event_has(hooks_path, "Stop", "brainwrap", "stop"),
             },
         )
@@ -645,7 +655,12 @@ def _checks_for(client: str) -> tuple[list[tuple[bool, str]], dict[str, tuple[bo
                 "pre_prompt_inject": _json_event_has(path, "BeforeAgent", "brainwrap", "context"),
                 "workshop_authority": _json_event_has(path, "BeforeAgent", "brainwrap", "context"),
                 "drive_inject": _json_event_has(path, "BeforeAgent", "brainwrap", "context"),
-                "post_tool_write": _json_event_has(path, "AfterAgent", "brainwrap", "stop"),
+                "post_tool_write": _json_event_has(
+                    path,
+                    "AfterTool",
+                    "agent_scope_gate.py",
+                    "--vendor gemini",
+                ),
                 "stop_gate": _json_event_has(path, "AfterAgent", "brainwrap", "stop"),
             },
         )
@@ -1225,6 +1240,7 @@ def runtime_client(runtime: str) -> str:
         "claude-code": "claude-code",
         "cursor": "cursor",
         "codex": "codex",
+        "codex-desktop": "codex",
         "gemini": "gemini-cli",
         "gemini-cli": "gemini-cli",
     }

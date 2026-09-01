@@ -276,7 +276,8 @@ def get_compliance_history_cell_first(
             raise ValueError("Cell runtime bridge is unavailable")
         result = cell_bridge.deliberation_read(
             space=CELL_CONTROL_LEDGER_ROOT,
-            limit=HISTORY_LIMIT,
+            category=CELL_COMPLIANCE_CATEGORY_ROOT,
+            limit=max(1, limit_int),
         )
         entries = result.get("entries") if isinstance(result, dict) else None
         if not isinstance(entries, list):

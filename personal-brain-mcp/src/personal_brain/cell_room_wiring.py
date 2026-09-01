@@ -20,13 +20,23 @@ AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
 ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
 PROMOTION_ALLOWED = False
 
+import atexit
 import os
+import queue
+import threading
+import time
 from typing import Any, Optional
 
 from . import cell_room as CR
 
 # one handle shared by the tool path and the injection path
 _HANDLE: Optional[CR.RoomHandle] = None
+
+# tool-call narration runs on ONE background FIFO worker so a tool call never
+# waits on the Universal runtime's persist (see _narrate for the measurements)
+_NARRATION_QUEUE: "queue.Queue" = queue.Queue(maxsize=1024)
+_NARRATION_LOCK = threading.Lock()
+_NARRATION_THREAD: Optional[threading.Thread] = None
 
 
 def cell_room_enabled() -> bool:
@@ -151,11 +161,68 @@ def cell_room_leaf_gate(leaf_id: str, phase: str) -> dict:
     )
 
 
+def _say_now(kind: str, refs: list, text: str) -> None:
+    try:
+        CR.room_say(_HANDLE, frm="brain", kind=kind, refs=refs, text=text)
+    except Exception:
+        return
+
+
+def _narration_worker() -> None:
+    while True:
+        item = _NARRATION_QUEUE.get()
+        try:
+            if item is None:  # shutdown sentinel
+                return
+            _say_now(*item)
+        finally:
+            _NARRATION_QUEUE.task_done()
+
+
+def _enqueue_narration(kind: str, refs: list, text: str) -> None:
+    """Hand one narration to the worker; fall back to an inline say if the
+    queue is full, so an event is NEVER dropped (founder 2026-07-17:
+    participation is NOT optional)."""
+    global _NARRATION_THREAD
+    with _NARRATION_LOCK:
+        if _NARRATION_THREAD is None or not _NARRATION_THREAD.is_alive():
+            _NARRATION_THREAD = threading.Thread(
+                target=_narration_worker,
+                name="brain-room-narrator",
+                daemon=True,
+            )
+            _NARRATION_THREAD.start()
+            atexit.register(_flush_narrations)
+    try:
+        _NARRATION_QUEUE.put_nowait((kind, refs, text))
+    except queue.Full:
+        _say_now(kind, refs, text)
+
+
+def _flush_narrations(timeout_s: float = 10.0) -> None:
+    """Drain pending narrations at shutdown — bounded, never raises."""
+    deadline = time.monotonic() + timeout_s
+    while not _NARRATION_QUEUE.empty() and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
 def _register_observer(mcp: Any) -> None:
     if _HANDLE is None or not hasattr(mcp, "set_tool_observer"):
         return
 
     def _narrate(name: str, args: Any, result: Any) -> None:
+        # OFF THE CRITICAL PATH (measured 2026-07-27): this narration is one
+        # synchronous AF_PIPE round-trip into the Universal runtime, and the
+        # runtime persists the event into a ~289MB SQLite store. Cost: 3 brain
+        # tool calls = 7.05s wall, of which the authority bridge burned 1.55s
+        # CPU while the Brain daemon burned 0.00s — i.e. EVERY brain tool call
+        # paid a ~2.4s tax waiting on another process. `ping` / `initialize` /
+        # unknown-tool (which skip the observer) answered in 2-13ms. It also
+        # pushed brain.health past the stdio singleton guard's probe deadline,
+        # which is how this surfaced (see stdio_http_proxy.DEFAULT_HEALTH_
+        # TIMEOUT_SEC). Narration is a projection, not authority, so it is now
+        # queued to one FIFO worker: the event still lands, in order, and a
+        # full queue falls back to the old inline say rather than dropping it.
         try:
             refs: list = []
             for obj in (args, result):
@@ -166,8 +233,7 @@ def _register_observer(mcp: Any) -> None:
                 if isinstance(obj, dict) and isinstance(obj.get("leaf"), dict) and obj["leaf"].get("leaf_id"):
                     refs.append(str(obj["leaf"]["leaf_id"]))
             kind = "court" if name == "brain.universal_work_court" else "op"
-            CR.room_say(_HANDLE, frm="brain", kind=kind, refs=sorted(set(refs)),
-                        text=f"{name} executed")
+            _enqueue_narration(kind, sorted(set(refs)), f"{name} executed")
         except Exception:
             return
 

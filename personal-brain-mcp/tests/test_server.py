@@ -192,6 +192,17 @@ class _ObserveCellBridge:
     def __init__(self, fail: bool = False):
         self.fail = fail
         self.created = []
+        self.deliberations = []
+
+    def deliberation_append(self, **kwargs):
+        if self.fail:
+            raise RuntimeError("cell unavailable")
+        record = {
+            "root": f"app:brain-control-ledger:v1:entry:{len(self.deliberations) + 1}",
+            **kwargs,
+        }
+        self.deliberations.append(record)
+        return record
 
     def assembly_create(
         self,
@@ -857,15 +868,21 @@ def test_observe_hook_creates_cell_record_before_brain_fragment(monkeypatch):
         assert result["ok"] is True
         assert result["cell_first"] is True
         assert result["brain_written"] is True
-        assert result["cell_record_root"] == "assembly-instance:observe-1"
-        assert bridge.created[0]["definition_key"] == "knowledge-branch"
-        assert bridge.created[0]["idempotency_field"] == "source"
-        assert bridge.created[0]["fields"]["source"].startswith(
+        assert result["cell_record_root"] \
+            == "app:brain-control-ledger:v1:entry:1"
+        assert bridge.created == []
+        receipt = bridge.deliberations[0]
+        assert receipt["space"] == "app:brain-control-ledger:v1"
+        assert receipt["category"] \
+            == "app:brain-control-ledger:v1:category:compliance-event"
+        assert receipt["payload"]["operation"] == "brain.observe"
+        assert receipt["idempotency_key"].startswith(
             "brain-control:observe:"
         )
         assert store.count_fragments() == 1
         stored = store.search_fragments("Write", k=1)[0]
-        assert stored.extra["cell_record_root"] == "assembly-instance:observe-1"
+        assert stored.extra["cell_record_root"] \
+            == "app:brain-control-ledger:v1:entry:1"
         assert stored.extra["cell_record_source"].startswith(
             "brain-control:observe:"
         )
@@ -900,8 +917,9 @@ def test_observe_hook_cell_failure_prevents_brain_fragment(monkeypatch):
         store.close()
 
 
-def test_brain_write_tool_creates_cell_receipt_before_projection(monkeypatch):
-    import json
+def test_brain_write_tool_creates_compact_cell_receipt_before_projection(
+    monkeypatch,
+):
     from personal_brain import universal_runtime as ur
 
     store = BrainStore.open(":memory:")
@@ -927,12 +945,20 @@ def test_brain_write_tool_creates_cell_receipt_before_projection(monkeypatch):
         assert result["ops_applied"] == 1
         assert result["cell_first"] is True
         assert result["brain_written"] is True
-        assert result["cell_record_root"] == "assembly-instance:observe-1"
-        claims = json.loads(bridge.created[0]["fields"]["claims"])
+        assert result["cell_record_root"] \
+            == "app:brain-control-ledger:v1:entry:1"
+        assert bridge.created == []
+        assert len(bridge.deliberations) == 1
+        receipt = bridge.deliberations[0]
+        assert receipt["space"] == "app:brain-control-ledger:v1"
+        assert receipt["category"] \
+            == "app:brain-control-ledger:v1:category:compliance-event"
+        assert receipt["idempotency_key"].startswith("brain-control:write:")
+        claims = receipt["payload"]
         assert claims["operation"] == "brain.write"
         assert claims["ops"][0]["fragment_id"] == "write-cell-1"
         assert claims["ops"][0]["text_len"] == len("private turn memory")
-        assert "private turn memory" not in bridge.created[0]["fields"]["claims"]
+        assert "private turn memory" not in str(claims)
         assert store.count_fragments() == 1
     finally:
         store.close()
@@ -1494,13 +1520,31 @@ def test_skill_mint_tool_labels_its_cell_record_as_receipt_only(monkeypatch):
         assert "cell_first" not in result
         assert result["brain_written"] is True
         assert result["legacy_projection_written"] is True
-        assert result["cell_record_root"] == "assembly-instance:observe-1"
-        assert "claims" not in bridge.created[0]["fields"]
-        claims = bridge.created[0]["structured_fields"]["claims"]
+        assert result["cell_record_root"] \
+            == "app:brain-control-ledger:v1:entry:1"
+        assert bridge.created == []
+        receipt = bridge.deliberations[0]
+        assert receipt["space"] == "app:brain-control-ledger:v1"
+        assert receipt["category"] \
+            == "app:brain-control-ledger:v1:category:compliance-event"
+        claims = receipt["payload"]
         assert claims["operation"] == "brain.skill_mint"
         assert claims["trace_id"] == "tr-cell-mint"
         assert claims["tool_call_count"] == 2
         assert "sk-test-1234567890abcdef" not in json.dumps(claims)
+        assert receipt["idempotency_key"].startswith(
+            "brain-control:skill-mint:"
+        )
+        repeated = mcp._tools["brain.skill_mint"].handler(
+            trace=trace,
+            outcome="success",
+            contributing_agent="codex",
+            session_id="codex-session-1",
+        )
+        assert repeated["ok"] is True
+        assert bridge.deliberations[1]["idempotency_key"] \
+            == receipt["idempotency_key"]
+        assert bridge.deliberations[1]["payload"] == receipt["payload"]
         assert store.list_fragments(kinds=[FragmentKind.TRACE], limit=20)
     finally:
         store.close()
@@ -1588,9 +1632,10 @@ def test_hook_skill_mint_creates_cell_request_from_transcript(monkeypatch, tmp_p
         assert "cell_first" not in result
         assert result["brain_written"] is True
         assert result["legacy_projection_written"] is True
-        assert result["cell_record_root"] == "assembly-instance:observe-1"
-        assert "claims" not in bridge.created[0]["fields"]
-        claims = bridge.created[0]["structured_fields"]["claims"]
+        assert result["cell_record_root"] \
+            == "app:brain-control-ledger:v1:entry:1"
+        assert bridge.created == []
+        claims = bridge.deliberations[0]["payload"]
         assert claims["operation"] == "brain.skill_mint"
         assert claims["trace_id"] == "claude-session-1"
         assert claims["tool_call_count"] == 2

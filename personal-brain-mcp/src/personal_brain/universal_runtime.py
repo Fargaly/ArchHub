@@ -150,12 +150,16 @@ class UniversalRuntimeBridge:
         *,
         space: str,
         limit: int = 100,
+        category: str | None = None,
         response_timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
+        body: dict[str, Any] = {"space": space, "limit": int(limit)}
+        if category is not None:
+            body["category"] = category
         return self._request(
             "GET",
             "/api/universal/deliberation",
-            {"space": space, "limit": int(limit)},
+            body,
             response_timeout_seconds=response_timeout_seconds,
         )
 
@@ -400,7 +404,12 @@ class UniversalRuntimeBridge:
         return self._request(
             "POST",
             "/api/universal/work-transition",
-            {"root": root_id, "event": event, "evidence": evidence},
+            {
+                "root": root_id,
+                "event": event,
+                "evidence": evidence,
+                "projection": "receipt-v1",
+            },
         )
 
     def work_court(self, root_id: str) -> dict[str, Any]:
@@ -409,7 +418,9 @@ class UniversalRuntimeBridge:
                 "work court requires a bound runtime Agent Session"
             )
         return self._request(
-            "POST", "/api/universal/work-court", {"root": root_id}
+            "POST",
+            "/api/universal/work-court",
+            {"root": root_id, "projection": "index"},
         )
 
 

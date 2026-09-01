@@ -37,6 +37,8 @@ from fastapi import APIRouter, Body, Cookie, Form, Header, HTTPException, Reques
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
+from pathlib import Path
+
 import config
 import db
 
@@ -789,13 +791,45 @@ def api_purge_test_users(
     })
 
 
+_COCKPIT_ASSETS = Path(__file__).resolve().parent / "cockpit_assets"
+
+
+@router.get("/map-assets/{asset:path}")
+def cockpit_asset(asset: str,
+                  _founder: dict = Depends(require_founder)) -> Response:
+    """One cockpit module, behind the founder gate like every other route."""
+    target = (_COCKPIT_ASSETS / asset).resolve()
+    if _COCKPIT_ASSETS not in target.parents or not target.is_file():
+        return Response(status_code=404)
+    kind = (
+        "text/javascript; charset=utf-8"
+        if target.suffix in (".js", ".jsx")
+        else "text/html; charset=utf-8" if target.suffix == ".html"
+        else "application/octet-stream"
+    )
+    return Response(target.read_bytes(), media_type=kind)
+
+
+@router.get("/admin", response_class=HTMLResponse)
+def cockpit_admin(_founder: dict = Depends(require_founder)) -> HTMLResponse:
+    """The users/subscriptions/errors dashboard, one click from the map."""
+    return HTMLResponse(_PAGE_HTML)
+
+
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
     """The single self-contained on-brand HTML dashboard. It hydrates from
     the /founder/api/* endpoints (which share this route's founder gate) and
     auto-refreshes every 30s. All styling is inline so the page has zero
-    external dependencies."""
+    external dependencies.
+
+    The cockpit IS the grand map -- brain, cockpit and graph are one
+    model, so /founder opens the atlas. The admin dashboard remains one
+    click away at /founder/admin."""
+    page = _COCKPIT_ASSETS / "map.html"
+    if page.is_file():
+        return HTMLResponse(page.read_text(encoding="utf-8"))
     return HTMLResponse(_PAGE_HTML)
 
 

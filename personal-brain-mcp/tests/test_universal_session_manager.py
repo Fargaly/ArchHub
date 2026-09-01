@@ -1,7 +1,10 @@
 """Brain retains capabilities; the application graph retains authority."""
 from pathlib import Path
+import hashlib
 import inspect
 import sys
+import threading
+import time
 
 import pytest
 
@@ -13,6 +16,7 @@ if str(NODE_LANGUAGE) not in sys.path:
 
 from nodelang.application_server import ApplicationServer  # noqa: E402
 from nodelang.cell_attestations import CourtResult  # noqa: E402
+from nodelang.cell_deliberation import read_deliberation_entry  # noqa: E402
 from nodelang.cell_secret_keys import MemorySigningKeyProvider  # noqa: E402
 from personal_brain.universal_runtime import UniversalRuntimeBridge  # noqa: E402
 from personal_brain.universal_runtime import UniversalRuntimeUnavailable  # noqa: E402
@@ -99,8 +103,8 @@ def test_manager_reuses_one_graph_session_and_never_owns_a_store(tmp_path):
     assert "sqlite3" not in source
 
 
-def test_unchanged_session_wiring_reuses_one_cell_identity(monkeypatch):
-    class FakeBridge:
+def test_unchanged_session_wiring_reuses_one_cell_identity():
+    class FakeManager:
         def __init__(self):
             self.calls = []
 
@@ -108,10 +112,7 @@ def test_unchanged_session_wiring_reuses_one_cell_identity(monkeypatch):
             self.calls.append(kwargs)
             return {"root": "app:brain-control-ledger:v1:entry:wiring"}
 
-    from personal_brain import universal_runtime as ur
-
-    bridge = FakeBridge()
-    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    manager = FakeManager()
     store = BrainStore.open(":memory:")
     request = WiringAnnounceRequest(
         device_id="codex-session-stable",
@@ -122,27 +123,41 @@ def test_unchanged_session_wiring_reuses_one_cell_identity(monkeypatch):
     )
     try:
         first = announce_session_wiring_cell_first(
-            store=store, req=request, owner_user="founder"
+            store=store,
+            req=request,
+            owner_user="founder",
+            runtime_session_manager=manager,
+            runtime="codex",
+            external_session_id="codex-session-stable",
         )
         second = announce_session_wiring_cell_first(
-            store=store, req=request, owner_user="founder"
+            store=store,
+            req=request,
+            owner_user="founder",
+            runtime_session_manager=manager,
+            runtime="codex",
+            external_session_id="codex-session-stable",
         )
     finally:
         store.close()
 
     assert first["ok"] is True
     assert second["ok"] is True
-    assert len(bridge.calls) == 2
-    assert bridge.calls[0]["space"] == "app:brain-control-ledger:v1"
-    assert bridge.calls[0]["category"] \
+    assert len(manager.calls) == 2
+    assert manager.calls[0]["space"] == "app:brain-control-ledger:v1"
+    assert manager.calls[0]["category"] \
         == "app:brain-control-ledger:v1:category:compliance-event"
-    assert bridge.calls[0]["idempotency_key"] \
-        == bridge.calls[1]["idempotency_key"]
-    assert bridge.calls[0]["idempotency_key"].startswith(
-        "brain-control:session-wiring:v2:"
+    assert manager.calls[0]["idempotency_key"] \
+        == manager.calls[1]["idempotency_key"]
+    assert manager.calls[0]["idempotency_key"].startswith(
+        "brain-control:session-wiring:v3:"
     )
-    assert bridge.calls[0]["payload"] == bridge.calls[1]["payload"]
-    assert "recorded_at" not in bridge.calls[0]["payload"]
+    assert manager.calls[0]["payload"] == manager.calls[1]["payload"]
+    assert manager.calls[0]["payload"]["session_fingerprint"] == hashlib.sha256(
+        b"codex-session-stable"
+    ).hexdigest()
+    assert "device_id" not in manager.calls[0]["payload"]
+    assert "recorded_at" not in manager.calls[0]["payload"]
 
 
 def test_manager_reused_enrollment_uses_compact_work_index():
@@ -186,6 +201,74 @@ def test_manager_reused_enrollment_uses_compact_work_index():
     assert second["reused"] is True
     assert second["revision"] == 2
     assert bridges[0].index_calls == 1
+
+
+def test_manager_renews_held_capability_without_reprovisioning_graph_session():
+    renewed = threading.Event()
+
+    class FakeClient:
+        def __init__(self, root):
+            self.root = root
+            self.calls = 0
+
+        def renew_agent_session(self):
+            self.calls += 1
+            renewed.set()
+            return {
+                "agent_session": self.root,
+                "session_token": "r" * 48,
+                "expires_at": time.time() + 30.0,
+                "revision": 11,
+            }
+
+    class FakeBridge:
+        agent_session_root = "app:agent-session:runtime:renewed"
+
+        def __init__(self):
+            self.bind_calls = 0
+            self._client = FakeClient(self.agent_session_root)
+
+        def bind_agent_session(self, *, runtime, external_session_id):
+            self.bind_calls += 1
+            return {
+                "agent_session": self.agent_session_root,
+                "runtime": runtime,
+                "revision": 11,
+                "expires_at": time.time() + 0.08,
+            }
+
+        def work_index(self):
+            return {"revision": 11, "items": ()}
+
+    bridges = []
+
+    def factory():
+        bridge = FakeBridge()
+        bridges.append(bridge)
+        return bridge
+
+    manager = UniversalRuntimeSessionManager(
+        factory,
+        renewal_lead_seconds=0.06,
+        renewal_poll_seconds=0.005,
+    )
+    try:
+        first = manager.enroll(
+            runtime="codex", external_session_id="vendor-session-renew"
+        )
+        assert renewed.wait(0.5)
+        second = manager.enroll(
+            runtime="codex", external_session_id="vendor-session-renew"
+        )
+    finally:
+        manager.close()
+
+    assert first["agent_session"] == second["agent_session"]
+    assert second["reused"] is True
+    assert len(bridges) == 1
+    assert bridges[0].bind_calls == 1
+    assert bridges[0]._client.calls == 1
+    assert manager.renewal_failures() == {}
 
 
 @pytest.mark.parametrize(
@@ -237,6 +320,150 @@ def test_manager_reenrolls_after_runtime_invalidates_session(failure):
     assert second["reused"] is False
     assert second["reconnected"] is True
     assert len(bridges) == 2
+
+
+def test_manager_reconnects_after_real_expiry_and_writes_as_exact_session(
+    tmp_path,
+):
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"r" * 32
+    )
+    descriptor = tmp_path / "runtime.json"
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor,
+        machine_key_provider=provider,
+        runtime_compliance_runner=_green_runtime_compliance,
+    ).start()
+    manager = UniversalRuntimeSessionManager(
+        lambda: UniversalRuntimeBridge(descriptor, provider)
+    )
+    external_session_id = "court-expired-session-reconnect"
+    try:
+        first = manager.enroll(
+            runtime="codex", external_session_id=external_session_id
+        )
+        with server._machine_agent_session_lock:
+            server._machine_agent_sessions[first["agent_session"]][
+                "expires_at"
+            ] = 0.0
+
+        reconnected = manager.enroll(
+            runtime="codex", external_session_id=external_session_id
+        )
+
+        assert reconnected["reconnected"] is True
+        assert reconnected["agent_session"] == first["agent_session"]
+        fingerprint = hashlib.sha256(
+            external_session_id.encode("utf-8")
+        ).hexdigest()
+        receipt = manager.deliberation_append(
+            runtime="codex",
+            external_session_id=external_session_id,
+            space=server.universal_registry.brain_control_ledger_root,
+            category=server.universal_registry.brain_control_category_roots[
+                "compliance-event"
+            ],
+            summary="Runtime Agent Session wiring",
+            payload={
+                "operation": "brain.hook_session_start",
+                "session_fingerprint": fingerprint,
+                "entry_count": 0,
+                "entries": [],
+                "secret_ref_count": 0,
+                "secret_ref_hashes": [],
+                "cwd_sha256": "a" * 64,
+                "git_remote_sha256": "b" * 64,
+            },
+            idempotency_key="court:expired-session-wiring",
+        )
+        entry = read_deliberation_entry(
+            server.universal_store.snapshot(),
+            server.universal_registry.deliberation_protocol,
+            receipt["root"],
+        )
+        assert entry.actor_root == first["agent_session"]
+        with pytest.raises(
+            UniversalRuntimeUnavailable,
+            match="receipt is not admitted",
+        ):
+            manager.deliberation_append(
+                runtime="codex",
+                external_session_id=external_session_id,
+                space=server.universal_registry.brain_control_ledger_root,
+                category=server.universal_registry.brain_control_category_roots[
+                    "compliance-event"
+                ],
+                summary="Runtime Agent Session wiring",
+                payload={
+                    "operation": "brain.hook_session_start",
+                    "session_fingerprint": "0" * 64,
+                    "entry_count": 0,
+                    "entries": [],
+                    "secret_ref_count": 0,
+                    "secret_ref_hashes": [],
+                    "cwd_sha256": "a" * 64,
+                    "git_remote_sha256": "b" * 64,
+                },
+                idempotency_key="court:forged-session-wiring",
+            )
+    finally:
+        server.close()
+
+
+def test_manager_heartbeat_rotates_real_capability_without_graph_commit(
+    tmp_path,
+):
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"h" * 32
+    )
+    descriptor = tmp_path / "runtime.json"
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor,
+        machine_key_provider=provider,
+        machine_session_lifetime_seconds=5.0,
+        runtime_compliance_runner=_green_runtime_compliance,
+    ).start()
+    manager = UniversalRuntimeSessionManager(
+        lambda: UniversalRuntimeBridge(descriptor, provider),
+        renewal_lead_seconds=4.8,
+        renewal_poll_seconds=0.01,
+    )
+    try:
+        first = manager.enroll(
+            runtime="codex", external_session_id="court-heartbeat-session"
+        )
+        revision_after_enrollment = server.universal_store.revision
+        with server._machine_agent_session_lock:
+            first_token = server._machine_agent_sessions[
+                first["agent_session"]
+            ]["token"]
+
+        deadline = time.monotonic() + 2.0
+        renewed_token = first_token
+        while renewed_token == first_token and time.monotonic() < deadline:
+            time.sleep(0.01)
+            with server._machine_agent_session_lock:
+                renewed_token = server._machine_agent_sessions[
+                    first["agent_session"]
+                ]["token"]
+
+        assert renewed_token != first_token
+        assert server.universal_store.revision == revision_after_enrollment
+        second = manager.enroll(
+            runtime="codex", external_session_id="court-heartbeat-session"
+        )
+        assert second["reused"] is True
+        assert second["agent_session"] == first["agent_session"]
+        assert server.universal_store.revision == revision_after_enrollment
+        with server._machine_agent_session_lock:
+            assert tuple(server._machine_agent_sessions) == (
+                first["agent_session"],
+            )
+    finally:
+        manager.close()
+        server.close()
 
 
 def test_manager_keeps_binding_on_transient_runtime_unavailability():
@@ -471,6 +698,12 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
                 "reused": False,
             }
 
+        def deliberation_append(self, **kwargs):
+            self.calls.append(("deliberation-append", kwargs))
+            return {
+                "root": "app:brain-control-ledger:v1:entry:session-1"
+            }
+
         def work_status(self, **kwargs):
             self.calls.append(("status", kwargs))
             return {"revision": 7, "items": []}
@@ -507,29 +740,7 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
             self.calls.append(("court", kwargs))
             return {"revision": 9, "passed": True, "event": "accept"}
 
-    class FakeCellBridge:
-        def __init__(self):
-            self.created = []
-
-        def deliberation_append(
-            self,
-            **kwargs,
-        ):
-            record = {
-                "root": (
-                    "app:brain-control-ledger:v1:entry:session-%s"
-                    % (len(self.created) + 1)
-                ),
-                **kwargs,
-            }
-            self.created.append(record)
-            return record
-
-    from personal_brain import universal_runtime as ur
-
     manager = FakeManager()
-    cell_bridge = FakeCellBridge()
-    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: cell_bridge)
     store = BrainStore.open(":memory:")
     mcp = build_server(store=store, runtime_session_manager=manager)
     try:
@@ -604,14 +815,28 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
             work_root="work:test",
         )
         assert court["passed"] is True
-        assert manager.calls == [
-            (
-                "enroll",
-                {
-                    "runtime": "claude-code",
-                    "external_session_id": "claude-session-7",
-                },
-            ),
+        assert manager.calls[0] == (
+            "enroll",
+            {
+                "runtime": "claude-code",
+                "external_session_id": "claude-session-7",
+            },
+        )
+        receipt_call = manager.calls[1]
+        assert receipt_call[0] == "deliberation-append"
+        assert receipt_call[1]["runtime"] == "claude-code"
+        assert receipt_call[1]["external_session_id"] == "claude-session-7"
+        assert receipt_call[1]["space"] == "app:brain-control-ledger:v1"
+        assert receipt_call[1]["category"] \
+            == "app:brain-control-ledger:v1:category:compliance-event"
+        assert receipt_call[1]["summary"] == "Runtime Agent Session wiring"
+        assert receipt_call[1]["payload"]["session_fingerprint"] \
+            == hashlib.sha256(b"claude-session-7").hexdigest()
+        assert "device_id" not in receipt_call[1]["payload"]
+        assert receipt_call[1]["idempotency_key"].startswith(
+            "brain-control:session-wiring:v3:"
+        )
+        assert manager.calls[2:] == [
             (
                 "status",
                 {
@@ -694,23 +919,23 @@ def test_brain_session_hook_and_work_tools_delegate_without_copying_state(monkey
         store.close()
 
 
-def test_brain_session_hook_cell_failure_does_not_enroll(monkeypatch):
+def test_brain_session_hook_enrolls_before_receipt_and_keeps_brain_unwritten():
     class FakeManager:
         def __init__(self):
             self.calls = []
 
         def enroll(self, **kwargs):
             self.calls.append(("enroll", kwargs))
-            return {"agent_session": "should-not-exist", "reused": False}
+            return {
+                "agent_session": "app:agent-session:runtime:test",
+                "reused": False,
+            }
 
-    class FailingCellBridge:
-        def deliberation_append(self, **_kwargs):
+        def deliberation_append(self, **kwargs):
+            self.calls.append(("deliberation-append", kwargs))
             raise RuntimeError("cell unavailable")
 
-    from personal_brain import universal_runtime as ur
-
     manager = FakeManager()
-    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: FailingCellBridge())
     store = BrainStore.open(":memory:")
     mcp = build_server(store=store, runtime_session_manager=manager)
     try:
@@ -723,6 +948,13 @@ def test_brain_session_hook_cell_failure_does_not_enroll(monkeypatch):
         assert started["cell_first"] is True
         assert started["brain_written"] is False
         assert "cell unavailable" in started["error"]
-        assert manager.calls == []
+        assert [call[0] for call in manager.calls] == [
+            "enroll", "deliberation-append"
+        ]
+        assert manager.calls[1][1]["payload"]["session_fingerprint"] \
+            == hashlib.sha256(b"claude-session-7").hexdigest()
+        assert started["universal_runtime_connected"] is True
+        assert started["universal_agent_session"] \
+            == "app:agent-session:runtime:test"
     finally:
         store.close()

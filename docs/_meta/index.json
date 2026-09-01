@@ -524,7 +524,7 @@
     "title": "ArchHub Roadmap — single source of truth",
     "path": "docs/ROADMAP.md",
     "word_count": 13908,
-    "mtime": 1782992313,
+    "mtime": 1785267487,
     "deps": [
       "AgDR-0001",
       "AgDR-0002",
@@ -1645,8 +1645,8 @@
     "slug": "agdr/AgDR-0061-public-wip-authority-maintenance",
     "title": "Public WIP Authority Maintenance Strategy",
     "path": "docs/agdr/AgDR-0061-public-wip-authority-maintenance.md",
-    "word_count": 687,
-    "mtime": 1784804988,
+    "word_count": 1204,
+    "mtime": 1784816115,
     "deps": [
       "AgDR-0061"
     ],

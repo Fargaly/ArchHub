@@ -305,7 +305,8 @@ def get_run_reports_cell_first(
             raise ValueError("Cell runtime bridge is unavailable")
         result = cell_bridge.deliberation_read(
             space=CELL_CONTROL_LEDGER_ROOT,
-            limit=RUN_REPORT_LIMIT,
+            category=CELL_RUN_REPORT_CATEGORY_ROOT,
+            limit=(RUN_REPORT_LIMIT if leaf_id else max(1, limit_int)),
         )
         entries = result.get("entries") if isinstance(result, dict) else None
         if not isinstance(entries, list):

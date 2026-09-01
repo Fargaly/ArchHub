@@ -99,6 +99,12 @@ def test_claude_code_gets_real_hooks_for_all_three_touchpoints(fake_home):
         and "stop --vendor claude-code" in str(h.get("command", ""))
         for h in stop
     )
+    claude_gate = next(
+        h for h in pretool
+        if "agent_scope_gate.py" in str(h.get("command", ""))
+        and "--vendor claude" in str(h.get("command", ""))
+    )
+    assert claude_gate["timeout"] == 30
     assert any(
         "agent_scope_gate.py" in str(h.get("command", ""))
         and "--vendor claude" in str(h.get("command", ""))
@@ -259,23 +265,26 @@ def test_codex_writes_real_hooks_json_with_confirmed_schema(fake_home):
     hooks = cfg["hooks"]
     # Confirmed events present.
     assert "UserPromptSubmit" in hooks
+    assert "PostToolUse" in hooks
     assert "Stop" in hooks
     # Confirmed nesting: event → [group] → group["hooks"] → [command hook].
     pre_hook = hooks["UserPromptSubmit"][0]["hooks"][0]
+    post_hook = hooks["PostToolUse"][0]["hooks"][0]
     stop_hook = hooks["Stop"][0]["hooks"][0]
     assert pre_hook["type"] == "command"
     assert "brainwrap" in pre_hook["command"] and "context" in pre_hook["command"]
     assert "--vendor codex" in pre_hook["command"]
+    assert "agent_scope_gate.py" in post_hook["command"]
+    assert "--vendor codex" in post_hook["command"]
     assert "brainwrap" in stop_hook["command"] and "stop" in stop_hook["command"]
     assert "--vendor codex" in stop_hook["command"]
     # Stop carries the 30s (SECONDS) budget like the Claude gate.
     assert stop_hook["timeout"] == 30
-    # matrix: pre-prompt + stop enforced-by-hook; post-tool is now the
-    # per-turn flush the Stop hook performs (NOT docs-only, NOT per-tool).
+    # The native post-tool event settles the exact signed write permit.
     m = installer.coverage_matrix(["codex"])["codex"]
     assert m["pre_prompt_inject"] == installer.ENFORCED
     assert m["stop_gate"] == installer.ENFORCED
-    assert m["post_tool_write"] == installer.PER_TURN
+    assert m["post_tool_write"] == installer.ENFORCED
 
 
 def test_codex_writes_pretooluse_governance_scope_gate(fake_home):
@@ -302,7 +311,7 @@ def test_codex_writes_pretooluse_governance_scope_gate(fake_home):
         if "agent_scope_gate.py" in h.get("command", "")
     )
     assert gate["type"] == "command"
-    assert gate["timeout"] == 15
+    assert gate["timeout"] == 30
     assert "ArchHub" in gate["statusMessage"]
 
     m = installer.coverage_matrix(["codex"])["codex"]
@@ -388,27 +397,31 @@ def test_gemini_writes_real_hooks_with_confirmed_events(fake_home):
     assert "brain" in cfg["mcpServers"]      # mcpServers preserved
     hooks = cfg["hooks"]
     assert "BeforeTool" in hooks             # pre-tool CDE scope gate
+    assert "AfterTool" in hooks              # exact signed receipt settlement
     assert "BeforeAgent" in hooks            # per-turn context inject
     assert "AfterAgent" in hooks             # per-turn stop (final response)
     scope_hook = hooks["BeforeTool"][0]["hooks"][0]
+    post_hook = hooks["AfterTool"][0]["hooks"][0]
     pre_hook = hooks["BeforeAgent"][0]["hooks"][0]
     stop_hook = hooks["AfterAgent"][0]["hooks"][0]
     assert scope_hook["type"] == "command"
     assert "agent_scope_gate.py" in scope_hook["command"]
     assert "--vendor gemini" in scope_hook["command"]
     assert scope_hook["name"] == "archhub-scope-gate"
+    assert scope_hook["timeout"] == 30000
+    assert "agent_scope_gate.py" in post_hook["command"]
+    assert "--vendor gemini" in post_hook["command"]
     assert pre_hook["type"] == "command"
     assert "brainwrap" in pre_hook["command"] and "context" in pre_hook["command"]
     assert "--vendor gemini-cli" in pre_hook["command"]
     assert "brainwrap" in stop_hook["command"] and "stop" in stop_hook["command"]
     assert "--vendor gemini-cli" in stop_hook["command"]
-    # matrix: pre-prompt + stop enforced-by-hook; post-tool is now the per-turn
-    # flush AfterAgent → brainwrap performs (NOT docs-only, NOT per-tool).
+    # The native post-tool event settles the exact signed write permit.
     m = installer.coverage_matrix(["gemini-cli"])["gemini-cli"]
     assert m["scope_gate"] == installer.ENFORCED
     assert m["pre_prompt_inject"] == installer.ENFORCED
     assert m["stop_gate"] == installer.ENFORCED
-    assert m["post_tool_write"] == installer.PER_TURN
+    assert m["post_tool_write"] == installer.ENFORCED
 
 
 def test_gemini_hooks_idempotent(fake_home):
@@ -418,6 +431,7 @@ def test_gemini_hooks_idempotent(fake_home):
     hooks = json.loads(installer._gemini_path().read_text())["hooks"]
     managed = {
         "BeforeTool": "agent_scope_gate.py",
+        "AfterTool": "agent_scope_gate.py",
         "BeforeAgent": "brainwrap",
         "AfterAgent": "brainwrap",
     }
@@ -592,55 +606,43 @@ def test_enforced_cells_have_doc_url():
             assert installer.HOOK_DOC_URLS[vendor].startswith("http")
 
 
-def test_codex_and_gemini_post_tool_is_per_turn_flush_with_urls():
-    """Codex + Gemini keep pre-prompt + stop enforced-by-hook (per-tool), and
-    their post-tool write is now enforced-per-turn-flush — the Stop/AfterAgent
-    hook → brainwrap writes the turn's memory to brain.write ONCE per turn. It
-    is explicitly NOT upgraded to per-tool ENFORCED (that would be false parity
-    with Claude Code, which writes the brain after EVERY tool call)."""
+def test_codex_and_gemini_post_tool_is_native_and_per_tool_with_urls():
+    """Native post-tool events settle each exact signed write on both clients."""
     matrix = installer.coverage_matrix()
     for vendor, url_frag in (("codex", "learn.chatgpt.com/codex/hooks"),
                              ("gemini-cli", "geminicli.com/docs/hooks")):
         cells = matrix[vendor]
         assert cells["pre_prompt_inject"] == installer.ENFORCED
         assert cells["stop_gate"] == installer.ENFORCED
-        assert cells["post_tool_write"] == installer.PER_TURN
-        # the honesty floor: NOT marked per-tool ENFORCED.
-        assert cells["post_tool_write"] != installer.ENFORCED
+        assert cells["post_tool_write"] == installer.ENFORCED
         assert url_frag in installer.HOOK_DOC_URLS[vendor]
 
 
-def test_post_tool_write_only_claude_is_per_tool():
-    """Honesty floor after the per-turn-flush change: ONLY Claude Code's
-    post-tool write is per-tool (ENFORCED). Every foreign vendor's post-tool
-    write is enforced-per-turn-flush — hook-backed but coarser, never claiming
-    Claude's per-tool granularity. This is the cell that keeps the matrix from
-    asserting false parity."""
+def test_post_tool_write_is_per_tool_only_with_a_native_settlement_event():
+    """The matrix follows installed native events, not vendor identity."""
     matrix = installer.coverage_matrix()
     for vendor, cells in matrix.items():
-        if vendor == "claude-code":
+        if vendor in {"claude-code", "codex", "gemini-cli"}:
             assert cells["post_tool_write"] == installer.ENFORCED
         else:
             assert cells["post_tool_write"] == installer.PER_TURN
             assert cells["post_tool_write"] != installer.ENFORCED
 
 
-def test_matrix_never_claims_per_tool_parity_for_foreign_vendors():
-    """Honesty floor (updated for the per-turn flush): every cell may now be
-    hook-backed, so the OLD floor ('at least one non-hook cell') no longer
-    applies. The truthful floor is sharper — no FOREIGN vendor's post-tool
-    write may be the per-tool ENFORCED state. Claude alone owns per-tool
-    brain.write; the rest are honestly the coarser per-turn flush."""
+def test_matrix_never_claims_per_tool_without_a_native_settlement_hook():
+    """Cursor and Antigravity remain coarse until they gain a post-tool hook."""
     matrix = installer.coverage_matrix()
-    foreign_post = [cells["post_tool_write"]
-                    for v, cells in matrix.items() if v != "claude-code"]
-    assert foreign_post, "expected at least one non-Claude vendor"
-    assert all(s == installer.PER_TURN for s in foreign_post), (
-        "foreign vendors' post-tool write must be enforced-per-turn-flush")
-    assert all(s != installer.ENFORCED for s in foreign_post), (
-        "matrix must NOT claim per-tool parity with Claude for any foreign "
-        "vendor — that would be the false-parity lie the 4th state prevents")
-    # And the two enforced states are distinct labels (no silent collapse).
+    native = {"claude-code", "codex", "gemini-cli"}
+    assert all(
+        cells["post_tool_write"] == installer.ENFORCED
+        for vendor, cells in matrix.items()
+        if vendor in native
+    )
+    assert all(
+        cells["post_tool_write"] == installer.PER_TURN
+        for vendor, cells in matrix.items()
+        if vendor not in native
+    )
     assert installer.ENFORCED != installer.PER_TURN
 
 

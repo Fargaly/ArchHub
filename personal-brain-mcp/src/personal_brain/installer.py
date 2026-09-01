@@ -229,6 +229,7 @@ def _is_managed_claude_handler(entry: Any) -> bool:
     command = str(entry.get("command", ""))
     return any(marker in command for marker in (
         "anti_laziness_gate",
+        "brainwrap.py",
         "completion_gate",
         "pretooluse_validate.py",
         "agent_scope_gate.py",
@@ -291,7 +292,7 @@ def _brain_hooks() -> dict[str, Any]:
             "hooks": [{
                 "type": "command",
                 "command": _agent_scope_gate_command("claude"),
-                "timeout": 15,
+                "timeout": 30,
             }],
         }],
         # SessionStart has no MCP client context in Claude Code 2.1.169, so a
@@ -331,6 +332,16 @@ def _brain_hooks() -> dict[str, Any]:
             ],
         }],
         "PostToolUse": [{
+            "matcher": (
+                "Write|Edit|MultiEdit|NotebookEdit|Update|apply_patch|"
+                "write_file|edit_file|replace_file|create_file|notebook_edit"
+            ),
+            "hooks": [{
+                "type": "command",
+                "command": _agent_scope_gate_command("claude"),
+                "timeout": 30,
+            }],
+        }, {
             "hooks": [{
                 "type": "mcp_tool", "server": "brain",
                 "tool": "brain.observe",
@@ -845,8 +856,20 @@ def _codex_hooks_block() -> dict[str, Any]:
             {"hooks": [
                 {"type": "command",
                  "command": _agent_scope_gate_command("codex"),
-                 "timeout": 15,
+                 "timeout": 30,
                  "statusMessage": "ArchHub CDE/placement scope gate"}
+            ]}
+        ],
+        "PostToolUse": [
+            {"matcher": (
+                "apply_patch|Write|Edit|NotebookEdit|write_file|edit_file|"
+                "notebook_edit"
+             ),
+             "hooks": [
+                {"type": "command",
+                 "command": _agent_scope_gate_command("codex"),
+                 "timeout": 30,
+                 "statusMessage": "ArchHub signed CDE receipt"}
             ]}
         ],
         "UserPromptSubmit": [
@@ -1031,6 +1054,15 @@ def _gemini_hooks_block() -> dict[str, Any]:
                  {"type": "command",
                   "command": _agent_scope_gate_command("gemini"),
                   "name": "archhub-scope-gate",
+                  "timeout": 30000}
+             ]}
+        ],
+        "AfterTool": [
+            {"matcher": "write_file|replace|apply_patch|edit_file|notebook_edit",
+             "hooks": [
+                 {"type": "command",
+                  "command": _agent_scope_gate_command("gemini"),
+                  "name": "archhub-signed-cde-receipt",
                   "timeout": 30000}
              ]}
         ],
@@ -1449,7 +1481,7 @@ COVERAGE_MATRIX: dict[str, dict[str, str]] = {
         "pre_prompt_inject": ENFORCED,   # UserPromptSubmit → brain.context
         "workshop_authority": ENFORCED,
         "drive_inject": ENFORCED,        # UserPromptSubmit → brain.work_assigned_block
-        "post_tool_write": ENFORCED,     # PostToolUse → brain.write
+        "post_tool_write": ENFORCED,     # PostToolUse → signed receipt settlement
         "stop_gate": ENFORCED,           # Stop → graph-session brainwrap + skill_mint
     },
     # Cursor: REAL Agent Hooks (https://cursor.com/docs/hooks) auto-fire
@@ -1466,29 +1498,28 @@ COVERAGE_MATRIX: dict[str, dict[str, str]] = {
         "post_tool_write": PER_TURN,     # stop → brainwrap flush (1×/turn)
         "stop_gate": ENFORCED,           # stop → brainwrap (completion gate + diligence)
     },
-    # Codex CLI: REAL hooks.json (Confirmed: developers.openai.com/codex/hooks)
+    # Codex CLI: REAL hooks.json (Confirmed: learn.chatgpt.com/codex/hooks)
     # auto-fires brainwrap on UserPromptSubmit (context + DRIVE) + Stop (gate).
-    # PreToolUse gates writes, but brain.write still is not per-tool: the Stop
-    # hook -> brainwrap flushes the turn's memory ONCE per turn.
+    # PreToolUse obtains one exact signed permit and PostToolUse settles its
+    # observed bytes into one graph receipt.
     "codex": {
         "scope_gate": ENFORCED,
         "pre_prompt_inject": ENFORCED,   # UserPromptSubmit → brainwrap context
         "workshop_authority": ENFORCED,
         "drive_inject": ENFORCED,        # UserPromptSubmit → brainwrap (drive block)
-        "post_tool_write": PER_TURN,     # Stop → brainwrap flush (1×/turn)
+        "post_tool_write": ENFORCED,     # PostToolUse → signed receipt settlement
         "stop_gate": ENFORCED,           # Stop → brainwrap stop (completion gate + diligence)
     },
     # Gemini CLI: REAL settings.json hooks (Confirmed: geminicli.com/docs/
-    # hooks/reference). BeforeTool gates writes; per-turn BeforeAgent injects
-    # context + DRIVE; per-turn AfterAgent fires after the final response.
-    # brain.write still is not per-tool: AfterAgent -> brainwrap flushes the
-    # turn's memory ONCE per turn.
+    # hooks/reference). BeforeTool obtains one exact signed permit; AfterTool
+    # settles its observed bytes. BeforeAgent injects context + DRIVE and
+    # AfterAgent retains the final-response completion gate.
     "gemini-cli": {
         "scope_gate": ENFORCED,
         "pre_prompt_inject": ENFORCED,   # BeforeAgent → brainwrap context
         "workshop_authority": ENFORCED,
         "drive_inject": ENFORCED,        # BeforeAgent → brainwrap (drive block)
-        "post_tool_write": PER_TURN,     # AfterAgent → brainwrap flush (1×/turn)
+        "post_tool_write": ENFORCED,     # AfterTool → signed receipt settlement
         "stop_gate": ENFORCED,           # AfterAgent → brainwrap stop (completion gate + diligence)
     },
     "antigravity": {

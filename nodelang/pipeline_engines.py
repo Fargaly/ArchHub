@@ -165,12 +165,64 @@ def revit_build_walls(params: Mapping[str, object],
         len(built), session.get("document") or session["port"])
 
 
+
+
+def _brain_call(tool: str, arguments: Mapping[str, object]) -> object:
+    """One tools/call against the live brain daemon; SSE frame or JSON."""
+    import urllib.request
+
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": tool, "arguments": dict(arguments)},
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        "http://127.0.0.1:8473/mcp", data=body,
+        headers={"Content-Type": "application/json",
+                 "Accept": "application/json, text/event-stream"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        raw = response.read().decode("utf-8")
+    payload = None
+    for line in raw.splitlines():
+        if line.startswith("data: "):
+            payload = json.loads(line[6:])
+    if payload is None:
+        payload = json.loads(raw)
+    if payload.get("error"):
+        raise ValueError("brain refused: %s" % payload["error"].get("message"))
+    content = (payload.get("result") or {}).get("content") or []
+    texts = [item.get("text", "") for item in content
+             if item.get("type") == "text"]
+    return chr(10).join(texts)
+
+
+def brain_recall(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Ask the live brain for context on a prompt -- the founder's memory."""
+    prompt = str(feeds.get("in") or params.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("set the prompt parameter or wire text in")
+    answer = str(_brain_call("brain.context", {"prompt": prompt}))
+    lines = [line for line in answer.splitlines() if line.strip()]
+    return {"out": answer}, (
+        "%d context line(s) for %r" % (len(lines), prompt[:32])
+    )
+
+
+def brain_facts(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """How many facts the live brain holds right now."""
+    answer = str(_brain_call("brain.list_facts", {}))
+    count = answer.count(chr(10)) + 1 if answer.strip() else 0
+    return {"out": answer}, "%d fact row(s) in the brain" % count
+
+
 PIPELINE_ENGINES = {
     "vision.sketch_lines": sketch_lines,
     "cad.read_lines": cad_lines,
     "lines.watch": watch_lines,
     "revit.sessions": revit_sessions,
     "revit.build_walls": revit_build_walls,
+    "brain.recall": brain_recall,
+    "brain.facts": brain_facts,
 }
 
 __all__ = ["PIPELINE_ENGINES"]

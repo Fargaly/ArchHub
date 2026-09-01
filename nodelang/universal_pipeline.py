@@ -56,6 +56,46 @@ def _owner_properties(snapshot, registry):
     return owned
 
 
+def _graph_engines(store, registry):
+    """Effect engines whose truth IS the graph this server serves."""
+
+    def baboom_status(params, feeds):
+        snapshot = store.snapshot()
+        catalogs = {
+            "model execution": getattr(
+                registry, "baboom_model_execution_adapter_catalog_root", None
+            ),
+            "cognition": getattr(
+                registry, "baboom_cognition_adapter_catalog_root", None
+            ),
+            "connector execution": getattr(
+                registry,
+                "baboom_connector_execution_adapter_catalog_root",
+                None,
+            ),
+        }
+        held = {
+            name: bool(root and root in snapshot.cells)
+            for name, root in catalogs.items()
+        }
+        installed = [name for name, ok in held.items() if ok]
+        missing = [name for name, ok in held.items() if not ok]
+        if not installed:
+            raise ValueError(
+                "no BABOOM adapter catalogue is installed in this graph"
+            )
+        note = "" if not missing else " · missing: %s" % ", ".join(missing)
+        return (
+            {"out": held},
+            "%d/%d adapter catalogues installed (%s)%s · companion runtime "
+            "not attached" % (
+                len(installed), len(held), ", ".join(installed), note
+            ),
+        )
+
+    return {"baboom.status": baboom_status}
+
+
 def run_universal_pipeline(
     store,
     registry,
@@ -89,7 +129,8 @@ def run_universal_pipeline(
         if source in engine_roots and target in engine_roots:
             stem_wires.append(StemWire(source, "out", target, "in"))
     evaluation = evaluate_stem_graph(
-        stem_nodes, stem_wires, None, effect_engines
+        stem_nodes, stem_wires, None,
+        {**_graph_engines(store, registry), **dict(effect_engines)},
     )
     written = 0
     for node in stem_nodes:
@@ -202,6 +243,11 @@ _SEED = (
         "level": "", "height_mm": "3000", "session": "",
     }),
     ("Revit Sessions", 880.0, 470.0, {"engine": "revit.sessions"}),
+    ("Brain Recall", 240.0, 560.0, {
+        "engine": "brain.recall", "prompt": "ArchHub product state",
+    }),
+    ("Brain Facts", 560.0, 560.0, {"engine": "brain.facts"}),
+    ("BABOOM Status", 880.0, 560.0, {"engine": "baboom.status"}),
 )
 
 

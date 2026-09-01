@@ -29,6 +29,16 @@ faulthandler.enable(file=_log)
 state_dir = Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"
 state_dir.mkdir(parents=True, exist_ok=True)
 state_path = state_dir / "archhub-test.universal.sqlite3"
+authority_path = state_dir / "checkpoint-authority.sqlite3"
+
+# ONE app. A second double-click fronts nothing and starts nothing --
+# the socket is the cheapest cross-process mutex Windows respects.
+import socket as _socket
+_instance_lock = _socket.socket()
+try:
+    _instance_lock.bind(("127.0.0.1", 48611))
+except OSError:
+    sys.exit(0)
 
 # listdir membership: Path.exists() returns False on a Windows sharing
 # violation (a dying prior instance still holds the handle), which would
@@ -45,29 +55,25 @@ if first_boot:
             stale.unlink(missing_ok=True)
         except OSError:
             pass
-    identity = hashlib.sha256(
-        str(state_path.resolve()).casefold().encode("utf-8")
-    ).hexdigest()
+    # Fresh means the WHOLE universe: database, its signing authority,
+    # and every signed checkpoint either of them anchored -- a survivor
+    # on any side rightly refuses a newborn on the other.
     archhub_local = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
-    (archhub_local / "checkpoints" / (identity + ".json")).unlink(
-        missing_ok=True
-    )
-    # The universal store's SIGNING AUTHORITY is its own Cell store with
-    # its own checkpoint; a fresh test universe means both are fresh, or
-    # the survivor rightly refuses the newborn.
-    authority = (
-        archhub_local / "authorities"
-        / ("revision-checkpoint-%s.sqlite3" % identity)
-    )
-    authority_identity = hashlib.sha256(
-        str(authority.resolve()).casefold().encode("utf-8")
-    ).hexdigest()
-    (archhub_local / "checkpoints" / (authority_identity + ".json")).unlink(
-        missing_ok=True
-    )
-    for stale in archhub_local.glob(
-        "authorities/revision-checkpoint-%s.sqlite3*" % identity
-    ):
+    for anchored in (state_path, authority_path):
+        identity = hashlib.sha256(
+            str(anchored.resolve()).casefold().encode("utf-8")
+        ).hexdigest()
+        (archhub_local / "checkpoints" / (identity + ".json")).unlink(
+            missing_ok=True
+        )
+        for stale in archhub_local.glob(
+            "authorities/revision-checkpoint-%s.sqlite3*" % identity
+        ):
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError:
+                pass
+    for stale in state_dir.glob(authority_path.name + "*"):
         try:
             stale.unlink(missing_ok=True)
         except OSError:
@@ -98,6 +104,7 @@ descriptor_path = state_dir / "runtime-descriptor.json"
 started = time.perf_counter()
 server = ApplicationServer(
     universal_state_path=state_path,
+    universal_checkpoint_authority_path=authority_path,
     pipeline_effect_engines=PIPELINE_ENGINES,
     enable_machine_transport=True,
     machine_descriptor_path=descriptor_path,

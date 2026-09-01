@@ -31,6 +31,8 @@ Each action is one of:
  {"op":"group"}
  {"op":"ungroup"}
  {"op":"set_property","root":"<node id>","label":"<label>","value":"<text>"}
+ {"op":"wire","source":"<node id>","target":"<node id>"}
+ {"op":"run"}
  {"op":"open","root":"<openable node id>"}
 Only use node ids and definition names that appear in the context. Answer in
 the founder's language. If the request needs no canvas change, return
@@ -113,11 +115,13 @@ def run_agent_composer(
     registry,
     prompt: str,
     *,
+    effect_engines: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
 ) -> dict[str, object]:
     """One agent turn: read the canvas, ask the model, apply its actions."""
     from .universal_application import (  # noqa: PLC0415
         apply_universal_canvas_gesture,
+        connect_universal_roots,
         edit_universal_property,
         group_universal_selection,
         instantiate_universal_definition,
@@ -231,6 +235,49 @@ def run_agent_composer(
             )
             applied.append({"op": op, "ok": True,
                             "label": action.get("label")})
+        elif op == "wire":
+            source = str(action.get("source", ""))
+            target = str(action.get("target", ""))
+            if source not in node_ids or target not in node_ids:
+                applied.append({"op": op, "ok": False,
+                                "why": "unknown endpoint"})
+                continue
+            try:
+                from .universal_pipeline import (
+                    _ensure_pipeline_node_interfaces,
+                )
+                for endpoint in (source, target):
+                    _ensure_pipeline_node_interfaces(
+                        store, registry, endpoint
+                    )
+                connect_universal_roots(
+                    store, registry, source, target,
+                    source_interface=(
+                        "app:pipeline-interface:%s:source"
+                        % source.rsplit(":", 1)[-1]
+                    ),
+                    target_interface=(
+                        "app:pipeline-interface:%s:target"
+                        % target.rsplit(":", 1)[-1]
+                    ),
+                    authentication_context=authentication_context,
+                )
+                applied.append({"op": op, "ok": True})
+            except InvalidCell as refusal:
+                applied.append({"op": op, "ok": False,
+                                "why": str(refusal)[:120]})
+        elif op == "run":
+            from .universal_pipeline import run_universal_pipeline
+            outcome = run_universal_pipeline(
+                store, registry,
+                effect_engines=dict(effect_engines or {}),
+                authentication_context=authentication_context,
+            )
+            applied.append({
+                "op": op, "ok": True,
+                "ran": outcome["ran"],
+                "answers": list(outcome["display"].values())[:6],
+            })
         elif op == "open":
             root = str(action.get("root", ""))
             if root not in node_ids:

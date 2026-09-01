@@ -401,7 +401,7 @@ def project_atlas_map(store, registry, *, authentication_context=None):
         gx = 40 + (index % per_row) * 650
         gy = 40 + (index // per_row) * 560
         domains.append({
-            "key": key, "title": item.get("label") or key,
+            "key": key, "title": str(item.get("label") or key)[:24],
             "x": gx, "y": gy, "w": 560, "h": 480, "col": colour,
         })
         try:

@@ -1146,12 +1146,14 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
 
     {/* connectors */}
     <div style={{ padding:'14px 16px' }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · 3</div>
-      {[['Revit 2025','#5fb3b3','connected'],['Blender 5.1','#d97757','syncing'],['Speckle','#a98cd6','connected']].map(([n,c,s])=>(
-        <div key={n} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
-          <span style={{ width:7, height:7, borderRadius:'50%', background:c, boxShadow:`0 0 0 3px ${c}22`, animation: s==='syncing' ? 'lmPulse 1.2s infinite' : 'none' }}/>
-          <span style={{ flex:1, fontSize:12.5 }}>{n}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9.5, color: s==='connected'?LM.ok:LM.warn, letterSpacing:'0.06em', textTransform:'uppercase' }}>{s}</span>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {(window.ARCHHUB_LIVE?.hosts || []).length}</div>
+      {(window.ARCHHUB_LIVE?.hosts || []).length === 0 ? (
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>no host is listening — open Revit or AutoCAD and reload</div>
+      ) : (window.ARCHHUB_LIVE.hosts).map(h => (
+        <div key={h.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
+          <span style={{ width:7, height:7, borderRadius:'50%', background:LM.ok, boxShadow:`0 0 0 3px ${LM.ok}22` }}/>
+          <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={h.file}>{h.name} · :{h.port}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.ok, letterSpacing:'0.06em', textTransform:'uppercase' }}>{h.state}</span>
         </div>
       ))}
     </div>

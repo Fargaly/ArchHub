@@ -1103,6 +1103,51 @@ const ChatView = ({ session, model, setMode }) => {
 };
 
 // ─── Calm inference inspector (chat mode right rail) ───
+// The parametric chain, LIVE: the actual wired pipeline from the graph,
+// in topological order, each stage's real editable parameters. Nothing
+// here is authored -- an empty canvas shows an empty chain, honestly.
+const LiveChain = () => {
+  const graph = window.ARCHHUB_LIVE?.graph;
+  if (!graph || !graph.nodes.length) return null;
+  const wired = new Set(graph.wires.flatMap(w => [w.from[0], w.to[0]]));
+  const incoming = {};
+  graph.wires.forEach(w => { incoming[w.to[0]] = (incoming[w.to[0]] || 0) + 1; });
+  const stages = [];
+  let frontier = graph.nodes.filter(n => wired.has(n.id) && !incoming[n.id]);
+  const seen = new Set();
+  while (frontier.length && stages.length < 8) {
+    stages.push(frontier);
+    frontier.forEach(n => seen.add(n.id));
+    const next = new Set();
+    graph.wires.forEach(w => {
+      if (seen.has(w.from[0]) && !seen.has(w.to[0])) next.add(w.to[0]);
+    });
+    frontier = graph.nodes.filter(n => next.has(n.id));
+  }
+  if (!stages.length) return null;
+  return (
+    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
+      <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
+        {stages.map((_, i) => (
+          <React.Fragment key={i}>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${LM.accent}`, background:LM.bg, color:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:9, fontWeight:600 }}>{i + 1}</div>
+            {i < stages.length - 1 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
+          </React.Fragment>
+        ))}
+      </div>
+      {stages.map((nodes, i) => nodes.map(n => (
+        <div key={n.id} style={{ marginBottom:8 }}>
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.05em', marginBottom:4 }}>{i + 1} · {n.title}</div>
+          {(n.params || []).filter(p => p.type === 'slider').slice(0, 2).map(p => (
+            <FullParam key={p.k} p={p}/>
+          ))}
+        </div>
+      )))}
+    </div>
+  );
+};
+
 const InferenceInspector = ({ model, setPickerOpen }) => (
   <aside style={{
     gridColumn:'2', gridRow:'2', minHeight:0, overflow:'auto',
@@ -1131,6 +1176,9 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
       <CalmSlider k="top-p" v={0.95} min={0} max={1} step={0.01}/>
       <CalmSlider k="max tokens" v={4096} min={256} max={32000} step={256} int/>
     </div>
+
+    {/* parametric chain -- the LIVE wired pipeline, stage by stage */}
+    <LiveChain/>
 
     {/* connectors */}
     <div style={{ padding:'14px 16px' }}>

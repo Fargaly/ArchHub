@@ -263,20 +263,33 @@ class BaboomNativeCompanionController:
             occupied=self._occupied_rectangles(),
             animation_tick=self._animation_tick,
         )
+        # A companion that recomputes its home every 750ms WANDERS: the
+        # founder's foreground windows change, the placement search
+        # answers differently, and the sprite hops around the desktop.
+        # It lives in ONE place until the screen itself changes.
+        pinned = getattr(self, "_pinned_layout", None)
+        pinned_screen = getattr(self, "_pinned_screen", None)
+        if pinned is not None and pinned_screen == screen:
+            return replace(frame, layout=pinned)
         if frame.layout.collision_state == "clear":
+            self._pinned_layout = frame.layout
+            self._pinned_screen = screen
             return frame
         # A desktop with a maximised window has NO clear ground, and a
         # companion that answers that by vanishing is one nobody ever
         # sees. Every ambient Windows assistant solves this the same way:
         # sit in a screen corner, above the work, without the panel.
         # Presence first, politeness second.
-        return project_baboom_native_visual_frame(
+        settled = project_baboom_native_visual_frame(
             snapshot,
             self._atlas,
             screen=screen,
             occupied=(),
             animation_tick=self._animation_tick,
         )
+        self._pinned_layout = settled.layout
+        self._pinned_screen = screen
+        return settled
 
     def next_sprite_source(self, motion: str) -> Rect:
         """Advance only the released sprite crop; layout stays stable."""

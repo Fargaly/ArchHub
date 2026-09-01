@@ -56,31 +56,24 @@ if first_boot:
         except OSError:
             pass
     # Fresh means the WHOLE universe: database, its signing authority,
-    # and every signed checkpoint either of them anchored -- a survivor
-    # on any side rightly refuses a newborn on the other.
-    archhub_local = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
-    def _identity(path):
-        return hashlib.sha256(
-            str(path.resolve()).casefold().encode("utf-8")
-        ).hexdigest()
-    default_authority = (
-        archhub_local / "authorities"
-        / ("revision-checkpoint-%s.sqlite3" % _identity(state_path))
+    # and every signed checkpoint either of them anchored. Identities come
+    # from the SAME functions the runtime uses -- a hand-rolled hash was a
+    # proxy, and the proxy deleted the wrong anchor for a day.
+    from nodelang.cell_revision_checkpoint import RevisionCheckpointGuard
+    from nodelang.checkpoint_authority_provisioning import (
+        default_checkpoint_authority_path,
     )
-    for anchored in (state_path, authority_path, default_authority):
-        identity = hashlib.sha256(
-            str(anchored.resolve()).casefold().encode("utf-8")
-        ).hexdigest()
-        (archhub_local / "checkpoints" / (identity + ".json")).unlink(
-            missing_ok=True
-        )
-        for stale in archhub_local.glob(
-            "authorities/revision-checkpoint-%s.sqlite3*" % identity
-        ):
-            try:
-                stale.unlink(missing_ok=True)
-            except OSError:
-                pass
+    authority_db = default_checkpoint_authority_path(state_path)
+    for anchor in (
+        RevisionCheckpointGuard.default_path(state_path),
+        RevisionCheckpointGuard.default_path(authority_db),
+    ):
+        anchor.unlink(missing_ok=True)
+    for stale in authority_db.parent.glob(authority_db.name + "*"):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
     for stale in state_dir.glob(authority_path.name + "*"):
         try:
             stale.unlink(missing_ok=True)

@@ -1105,6 +1105,55 @@ const ChatView = ({ session, model, setMode }) => {
 };
 
 // ─── Calm inference inspector (chat mode right rail) ───
+// The parametric chain, LIVE: the wired pipeline from the graph in
+// topological stages, each stage's real editable parameters. Nothing is
+// authored -- an empty canvas shows an empty chain, honestly.
+const LiveChain = () => {
+  const graph = window.ARCHHUB_LIVE?.graph;
+  if (!graph || !graph.nodes.length) return null;
+  const wired = new Set(graph.wires.flatMap(w => [w.from[0], w.to[0]]));
+  const incoming = {};
+  graph.wires.forEach(w => { incoming[w.to[0]] = (incoming[w.to[0]] || 0) + 1; });
+  const stages = [];
+  let frontier = graph.nodes.filter(n => wired.has(n.id) && !incoming[n.id]);
+  const seen = new Set();
+  while (frontier.length && stages.length < 8) {
+    stages.push(frontier);
+    frontier.forEach(n => seen.add(n.id));
+    const next = new Set();
+    graph.wires.forEach(w => {
+      if (seen.has(w.from[0]) && !seen.has(w.to[0])) next.add(w.to[0]);
+    });
+    frontier = graph.nodes.filter(n => next.has(n.id));
+  }
+  if (!stages.length) return null;
+  return (
+    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
+      <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
+        {stages.map((_, i) => (
+          <React.Fragment key={i}>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${LM.accent}`, background:LM.bg, color:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:9, fontWeight:600 }}>{i + 1}</div>
+            {i < stages.length - 1 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
+          </React.Fragment>
+        ))}
+      </div>
+      {stages.map((nodes, i) => nodes.map(n => (
+        <div key={n.id} style={{ marginBottom:8 }}>
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.05em', marginBottom:4 }}>{i + 1} · {n.title}</div>
+          {(n.params || []).slice(0, 2).map(p => (
+            <div key={p.k} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10, padding:'2px 0' }}>
+              <span style={{ color:LM.inkMuted }}>{p.k}</span>
+              <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:3 }}/>
+              <span style={{ color:LM.ink, maxWidth:120, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{String(p.v)}</span>
+            </div>
+          ))}
+        </div>
+      )))}
+    </div>
+  );
+};
+
 const InferenceInspector = ({ model, setPickerOpen }) => (
   <aside style={{
     gridColumn:'2', gridRow:'2', minHeight:0, overflow:'auto',
@@ -1134,32 +1183,23 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
       <CalmSlider k="max tokens" v={4096} min={256} max={32000} step={256} int/>
     </div>
 
-    {/* parametric chain */}
-    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · 2 STAGES</div>
-      <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
-        {[1,2].map(i => (
-          <React.Fragment key={i}>
-            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${i===1?LM.ok:LM.accent}`, background:LM.bg, color:i===1?LM.ok:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:9, fontWeight:600 }}>{i}</div>
-            {i<2 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
-          </React.Fragment>
-        ))}
-      </div>
-      <CalmSlider k="offset_mm" v={240} min={60} max={600} step={10} unit="mm"/>
-      <CalmRow k="scale" v="1:50"/>
-      <CalmRow k="align" v="parallel"/>
-    </div>
+    {/* parametric chain -- the LIVE wired pipeline, stage by stage */}
+    <LiveChain/>
 
-    {/* connectors */}
+    {/* connectors -- exactly what answered a probe, nothing invented */}
     <div style={{ padding:'14px 16px' }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · 3</div>
-      {[['Revit 2025','#5fb3b3','connected'],['Blender 5.1','#d97757','syncing'],['Speckle','#a98cd6','connected']].map(([n,c,s])=>(
-        <div key={n} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
-          <span style={{ width:7, height:7, borderRadius:'50%', background:c, boxShadow:`0 0 0 3px ${c}22`, animation: s==='syncing' ? 'lmPulse 1.2s infinite' : 'none' }}/>
-          <span style={{ flex:1, fontSize:12.5 }}>{n}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9.5, color: s==='connected'?LM.ok:LM.warn, letterSpacing:'0.06em', textTransform:'uppercase' }}>{s}</span>
-        </div>
-      ))}
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {(window.ARCHHUB_LIVE?.connectors || []).length}</div>
+      {(window.ARCHHUB_LIVE?.connectors || []).map(c => {
+        const col = c.state === 'connected' || c.state === 'listening' ? LM.ok
+          : c.state === 'installed' ? LM.warn : LM.inkDim;
+        return (
+          <div key={c.id} title={c.detail} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
+            <span style={{ width:7, height:7, borderRadius:'50%', background:col, boxShadow:`0 0 0 3px ${col}22` }}/>
+            <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
+            <span style={{ fontFamily:LM.mono, fontSize:9.5, color:col, letterSpacing:'0.06em', textTransform:'uppercase' }}>{c.state}</span>
+          </div>
+        );
+      })}
     </div>
   </aside>
 );
@@ -3573,7 +3613,7 @@ POST /v1/brain/promote         → { id, to: "practice" }`}</DCode>
 
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
-  const live = LM_HOSTS.filter(h => h.state !== 'off').length;
+  const live = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.state === 'connected' || c.state === 'listening').length;
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     return (
@@ -3595,7 +3635,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
       padding:'0 10px', display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-        <span style={{ color:LM.ok }}>●</span> server :7300 · {live}/{LM_HOSTS.length} hosts
+        <span style={{ color:LM.ok }}>●</span> server {window.location.host} · {live} host{live === 1 ? '' : 's'} live
       </StripItem>
       {session ? (
         <>
@@ -3603,7 +3643,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
           <StripItem>{session.file}</StripItem>
           <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span> · 4.2k tok · $0.024
+            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span>
           </StripItem>
         </>
       ) : (

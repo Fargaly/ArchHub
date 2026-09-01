@@ -1206,11 +1206,6 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
           fontFamily:LM.sans, fontSize:11.5, fontWeight: mode===k ? 500 : 400,
         }}>{l}</button>
       ))}
-      <button onClick={() => { window.location.href = '/cockpit'; }} title="The Founder Cockpit — the grand map of the live graph" style={{
-        padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:'pointer',
-        background:'transparent', color:LM.accent,
-        fontFamily:LM.sans, fontSize:11.5, fontWeight:500,
-      }}>Cockpit</button>
     </div>
 
     <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
@@ -1475,9 +1470,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (fromIdx < 0 || toIdx < 0) return null;
     const x1 = fromNode.x + fromNode.w, y1 = fromNode.y + socketY(fromIdx);
     const x2 = toNode.x,                y2 = toNode.y + socketY(toIdx);
-    const touches = w.from[0] === focusId || w.to[0] === focusId;
+    const touches = w.from[0] === focusId || w.to[0] === focusId
+      || w.id === focusId;
     return {
       i, x1, y1, x2, y2,
+      id: w.id, fromTitle: fromNode.title, toTitle: toNode.title,
       t: fromNode.outs[fromIdx].t,
       animated: fromNode.state === 'running' || toNode.state === 'running',
       focused: touches,
@@ -1527,6 +1524,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             return (
               <g key={w.i}>
                 <path d={d} stroke={color} strokeWidth={strokeW} fill="none" opacity={op} filter={w.focused ? "url(#lm-wire-glow)" : undefined}/>
+                {w.id ? (
+                  <path d={d} stroke="transparent" strokeWidth={14} fill="none"
+                    style={{ pointerEvents:'stroke', cursor:'pointer' }}
+                    onClick={e => { e.stopPropagation(); setFocusId(w.id); }}/>
+                ) : null}
                 {w.animated && (
                   <path d={d} stroke={color} strokeWidth={strokeW} fill="none" strokeDasharray="6 10" style={{ animation:'lmDash 0.9s linear infinite' }}/>
                 )}
@@ -3687,8 +3689,9 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
-      <a href="/cockpit" style={{ color:LM.accent, textDecoration:'none', fontFamily:LM.mono, fontSize:10, letterSpacing:'0.08em' }}>cockpit</a>
-      <a href="https://archhub-cloud.fly.dev/founder" target="_blank" rel="noreferrer" title="The 24/7 cloud cockpit — founder gate" style={{ color:LM.inkSoft, textDecoration:'none', fontFamily:LM.mono, fontSize:10, letterSpacing:'0.08em' }}>cloud</a>
+      {window.ARCHHUB_ACCOUNT?.founder ? (
+        <a href="https://archhub-cloud.fly.dev/founder" target="_blank" rel="noreferrer" title="Your 24/7 cloud cockpit" style={{ color:LM.accent, textDecoration:'none', fontFamily:LM.mono, fontSize:10, letterSpacing:'0.08em' }}>cockpit</a>
+      ) : null}
       <StripItem>v1.4 prototype</StripItem>
     </div>
   );

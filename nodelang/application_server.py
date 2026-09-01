@@ -4408,6 +4408,9 @@ class ApplicationServer:
                         self._json(500, {'ok': False, 'error': str(exc)})
                     return
                 if parsed.path == '/cockpit':
+                    # The cockpit is the founder's cloud surface; the local
+                    # page remains only as his offline fallback and is not
+                    # linked anywhere in the product.
                     parsed = parsed._replace(path='/studio/cockpit.html')
                 if parsed.path == '/studio' or parsed.path.startswith(
                     '/studio/'

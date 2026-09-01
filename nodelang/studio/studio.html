@@ -150,7 +150,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       if (!idset.has(w.source) || !idset.has(w.target)) continue;
       const s = nodes.find(n => n.id === w.source);
       const t = nodes.find(n => n.id === w.target);
-      wires.push({from:[w.source, s?.outs[0]?.id], to:[w.target, t?.ins[0]?.id], t:'any'});
+      wires.push({id:String(w.id || ''), from:[w.source, s?.outs[0]?.id], to:[w.target, t?.ins[0]?.id], t:(s?.outs[0]?.t) || 'any'});
     }
     window.ARCHHUB_LIVE = {
       sessions: [{

@@ -5517,12 +5517,35 @@ class ApplicationServer:
                                 from .universal_pipeline import (
                                     run_universal_pipeline,
                                 )
+                                def _baboom_presence(_params, _feeds):
+                                    presence = (
+                                        owner
+                                        ._machine_agent_runtime_presence()
+                                    )
+                                    live = bool(
+                                        presence.get("baboom_connected")
+                                    )
+                                    return (
+                                        {"out": presence},
+                                        "companion %s · %d signed runtime "
+                                        "session(s)" % (
+                                            "ATTACHED" if live
+                                            else "not attached",
+                                            presence[
+                                                "active_runtime_sessions"
+                                            ],
+                                        ),
+                                    )
                                 run_result = run_universal_pipeline(
                                     owner.universal_store,
                                     owner.universal_registry,
-                                    effect_engines=(
-                                        owner.pipeline_effect_engines or {}
-                                    ),
+                                    effect_engines={
+                                        **(
+                                            owner.pipeline_effect_engines
+                                            or {}
+                                        ),
+                                        "baboom.presence": _baboom_presence,
+                                    },
                                     authentication_context=binding.context,
                                 )
                                 self._json(200, run_result)

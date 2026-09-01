@@ -87,8 +87,7 @@ def _graph_engines(store, registry):
         note = "" if not missing else " · missing: %s" % ", ".join(missing)
         return (
             {"out": held},
-            "%d/%d adapter catalogues installed (%s)%s · companion runtime "
-            "not attached" % (
+            "%d/%d adapter catalogues installed (%s)%s" % (
                 len(installed), len(held), ", ".join(installed), note
             ),
         )
@@ -248,6 +247,7 @@ _SEED = (
     }),
     ("Brain Facts", 560.0, 560.0, {"engine": "brain.facts"}),
     ("BABOOM Status", 880.0, 560.0, {"engine": "baboom.status"}),
+    ("BABOOM Presence", 1200.0, 560.0, {"engine": "baboom.presence"}),
 )
 
 

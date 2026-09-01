@@ -3303,6 +3303,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/gesture", "edit"),
     ("POST", "/api/universal/agent", "edit"),
     ("POST", "/api/universal/run-graph", "edit"),
+    ("POST", "/api/universal/set-property", "edit"),
     ("GET", "/api/universal/hosts", "read"),
     ("POST", "/api/universal/pipeline-seed", "edit"),
     ("POST", "/api/universal/interaction", "edit"),
@@ -21929,6 +21930,7 @@ def _project_universal_canvas_interpreter(
                 {
                     "label": name,
                     "value": str(effective_property_value(row)),
+                    "relation": row.relation_root,
                 }
                 for name, row in labelled.items()
                 if name not in {

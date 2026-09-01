@@ -1741,6 +1741,10 @@ const Socket = ({ side, i, t, label }) => {
 
 // ─── per-category body content ───
 const NodeBody = ({ n, expanded, onToggleExpand }) => {
+  // A GRAPH-BACKED node draws exactly its real parameters and its last
+  // run answer -- never a category's demo furniture. The per-category
+  // bodies below belong to palette demos only.
+  if (n.live) return <LiveBody n={n}/>;
   switch (n.cat) {
     case 'host':      return <HostBody n={n}/>;
     case 'ai':        return <AIBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>;
@@ -1754,6 +1758,21 @@ const NodeBody = ({ n, expanded, onToggleExpand }) => {
     default:          return null;
   }
 };
+
+const LiveBody = ({ n }) => (
+  <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
+    {(n.params || []).slice(0, 4).map(row => (
+      <div key={row.k} style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
+        <span style={{ color:LM.inkMuted, letterSpacing:'0.04em' }}>{row.k}</span>
+        <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
+        <span style={{ color:LM.ink, maxWidth:110, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{String(row.v)}</span>
+      </div>
+    ))}
+    {n.status ? (
+      <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:9.5, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
+    ) : null}
+  </div>
+);
 
 const HostBody = ({ n }) => (
   <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>
@@ -2337,10 +2356,7 @@ const NodeRail = ({ node }) => {
             b.disabled = false;
             setTimeout(() => { b.textContent = '↻ Rerun this node'; }, 6000);
           }
-        }} style={{ ...railBtn(), background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0 }}>↻ Rerun this node</button>
-        <button style={railBtn()}>Pin to skill</button>
-        <button style={railBtn()}>Branch from here</button>
-        <button style={{ ...railBtn(), color:LM.err, borderColor:LM.lineSoft }}>Delete node</button>
+        }} title="Run the graph and land this node's answer" style={{ ...railBtn(), background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0 }}>↻ Rerun this node</button>
       </div>
     </aside>
   );
@@ -2530,46 +2546,57 @@ const railBtn = () => ({
 });
 
 const FullParam = ({ p }) => {
+  const [v, setV] = React.useState(p.v);
+  const [state, setState] = React.useState('');
+  React.useEffect(() => { setV(p.v); }, [p.rel, p.v]);
+  const commit = async (value) => {
+    if (!p.rel || !window.ARCHHUB_SET_PROP) return;
+    setState('saving');
+    try {
+      await window.ARCHHUB_SET_PROP(p.rel, String(value));
+      setState('saved');
+    } catch (error) {
+      setState('refused: ' + (error?.message || error).slice(0, 40));
+    }
+    setTimeout(() => setState(''), 2500);
+  };
+  const head = (
+    <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+      <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
+      {state ? <span style={{ fontFamily:LM.mono, fontSize:9, color: state === 'saved' ? LM.ok : state === 'saving' ? LM.inkMuted : LM.err }}>{state}</span> : null}
+    </div>
+  );
   if (p.type === 'slider') {
-    const pct = ((p.v - p.min) / (p.max - p.min)) * 100;
+    const min = Number(p.min ?? 0), max = Number(p.max ?? 100), step = Number(p.step ?? 1);
+    const num = Number(v) || min;
     return (
       <div>
-        <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-          <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500 }}>{p.v}</span>
-        </div>
-        <div style={{ height:4, background:LM.bgDeep, borderRadius:2, marginTop:6, position:'relative' }}>
-          <div style={{ width:`${pct}%`, height:'100%', background:LM.accent, borderRadius:2 }}/>
-          <div style={{ position:'absolute', left:`calc(${pct}% - 5px)`, top:-3, width:10, height:10, borderRadius:'50%', background:LM.ink, border:`1.5px solid ${LM.accent}` }}/>
+        {head}
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
+          <input type="range" min={min} max={max} step={step} value={num}
+            onChange={e => setV(e.target.value)}
+            onPointerUp={e => commit(e.target.value)}
+            style={{ flex:1, accentColor:LM.accent, height:4 }}/>
+          <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500, minWidth:40, textAlign:'right' }}>{num}</span>
         </div>
         <div style={{ display:'flex', justifyContent:'space-between', marginTop:3, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>
-          <span>{p.min}</span><span>{p.max}</span>
+          <span>{min}</span><span>{max}</span>
         </div>
       </div>
     );
   }
-  if (p.type === 'text') {
-    return (
-      <div>
-        <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, marginBottom:LM.sp.xs, letterSpacing:'0.04em' }}>{p.k}</div>
-        <div style={{
-          padding:'7px 10px', background:LM.bg, border:`1px solid ${LM.line}`,
-          borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11, color:LM.ink,
-        }}>{p.v}</div>
-      </div>
-    );
-  }
+  const numeric = p.type === 'number';
   return (
     <div>
-      <div style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, marginBottom:LM.sp.xs, letterSpacing:'0.04em' }}>{p.k}</div>
-      <button style={{
-        width:'100%', padding:'6px 10px', background:LM.bg, border:`1px solid ${LM.line}`,
-        borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:11, color:LM.ink, textAlign:'left',
-        display:'flex', alignItems:'center', gap:6, cursor:'pointer',
-      }}>
-        <span style={{ flex:1 }}>{p.v}</span>
-        <span style={{ color:LM.inkMuted }}>▾</span>
-      </button>
+      {head}
+      <input value={v}
+        type={numeric ? 'number' : 'text'}
+        onChange={e => setV(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') commit(e.currentTarget.value); }}
+        onBlur={e => { if (String(e.target.value) !== String(p.v)) commit(e.target.value); }}
+        style={{ width:'100%', marginTop:4, padding:'7px 10px', background:LM.bg,
+          border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+          fontFamily:LM.mono, fontSize:11, color:LM.ink, outline:'none' }}/>
     </div>
   );
 };

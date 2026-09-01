@@ -54,6 +54,21 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_AGENT = async prompt =>
       (await jpost('/api/universal/agent', {prompt})).answer || 'done';
     window.ARCHHUB_RUN = () => jpost('/api/universal/run-graph', {});
+    window.ARCHHUB_SET_PROP = (relation, value) =>
+      jpost('/api/universal/set-property', {relation, value});
+    const PARAM_SPECS = {
+      threshold: {type:'slider', min:10, max:250, step:5},
+      min_length: {type:'slider', min:5, max:200, step:5},
+      max_gap: {type:'slider', min:1, max:40, step:1},
+      mm_per_pixel: {type:'number'},
+      height_mm: {type:'slider', min:2000, max:6000, step:100},
+      image_path: {type:'text'},
+      file_path: {type:'text'},
+      layer: {type:'text'},
+      level: {type:'text'},
+      session: {type:'text'},
+      prompt: {type:'text'},
+    };
     const canvas = await jget('/api/universal/canvas');
     let hosts = [];
     try { hosts = (await jget('/api/universal/hosts')).hosts || []; } catch (e) {}
@@ -61,25 +76,43 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       e.startsWith('vision.') || e.startsWith('cad.') ? 'read'
       : e.startsWith('lines.') ? 'annotate'
       : e.startsWith('revit.') ? 'host'
-      : e.startsWith('ai') ? 'ai' : 'compose';
+      : e.startsWith('brain.') ? 'ai'
+      : e.startsWith('ai') ? 'ai' : 'logic';
+    const PORT_TYPES = {
+      'vision.sketch_lines': {in:'file', out:'lines'},
+      'cad.read_lines': {in:'file', out:'lines'},
+      'lines.watch': {in:'lines', out:'lines'},
+      'revit.build_walls': {in:'lines', out:'walls'},
+      'revit.sessions': {in:'any', out:'rows'},
+      'brain.recall': {in:'text', out:'text'},
+      'brain.facts': {in:'any', out:'rows'},
+      'baboom.status': {in:'any', out:'rows'},
+      'baboom.presence': {in:'any', out:'rows'},
+    };
     const nodes = []; const idset = new Set();
     for (const n of (canvas.nodes || [])) {
       const params = Object.fromEntries((n.params || []).map(r => [r.label, r.value]));
       const engine = String(n.engine || params.engine || '');
       if (!engine) continue;
+      const types = PORT_TYPES[engine] || {in:'any', out:'any'};
       const ins = [], outs = [];
       for (const p of (n.ports || [])) {
-        const entry = {id:p.id, label:p.name || '', t:'any'};
-        if (p.side === 'target') ins.push(entry);
-        else if (p.side === 'source') outs.push(entry);
+        if (p.side === 'target') {
+          ins.push({id:p.id, label:p.name || '', t:types.in});
+        } else if (p.side === 'source') {
+          outs.push({id:p.id, label:p.name || '', t:types.out});
+        }
       }
       nodes.push({
         id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine,
         x:Number(n.x) || 200, y:Number(n.y) || 200, w:210, h:110,
-        ins, outs, messages:[],
+        ins, outs, messages:[], live:true,
         params:(n.params || [])
           .filter(r => r.label !== 'engine' && r.label !== 'status')
-          .map(r => ({k:r.label, v:r.value, type:'select'})),
+          .map(r => ({
+            k:r.label, v:r.value, rel:r.relation,
+            ...(PARAM_SPECS[r.label] || {type:'text'}),
+          })),
         status: n.status || params.status || '',
       });
       idset.add(n.id);

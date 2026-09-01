@@ -5573,6 +5573,28 @@ class ApplicationServer:
                                 )
                                 self._json(200, run_result)
                                 return
+                            elif self.path == '/api/universal/set-property':
+                                from .universal_application import (
+                                    edit_universal_property,
+                                )
+                                value_root = edit_universal_property(
+                                    owner.universal_store,
+                                    owner.universal_registry,
+                                    str(body.get('relation') or ''),
+                                    str(body.get('value', '')),
+                                    mutation_route=(
+                                        '/api/universal/set-property'
+                                    ),
+                                    authentication_context=binding.context,
+                                )
+                                self._json(200, {
+                                    'ok': True,
+                                    'value_root': value_root,
+                                    'revision': (
+                                        owner.universal_store.revision
+                                    ),
+                                })
+                                return
                             elif self.path == '/api/universal/pipeline-seed':
                                 from .universal_pipeline import (
                                     seed_wall_pipeline,

@@ -59,7 +59,15 @@ if first_boot:
     # and every signed checkpoint either of them anchored -- a survivor
     # on any side rightly refuses a newborn on the other.
     archhub_local = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
-    for anchored in (state_path, authority_path):
+    def _identity(path):
+        return hashlib.sha256(
+            str(path.resolve()).casefold().encode("utf-8")
+        ).hexdigest()
+    default_authority = (
+        archhub_local / "authorities"
+        / ("revision-checkpoint-%s.sqlite3" % _identity(state_path))
+    )
+    for anchored in (state_path, authority_path, default_authority):
         identity = hashlib.sha256(
             str(anchored.resolve()).casefold().encode("utf-8")
         ).hexdigest()
@@ -104,7 +112,6 @@ descriptor_path = state_dir / "runtime-descriptor.json"
 started = time.perf_counter()
 server = ApplicationServer(
     universal_state_path=state_path,
-    universal_checkpoint_authority_path=authority_path,
     pipeline_effect_engines=PIPELINE_ENGINES,
     enable_machine_transport=True,
     machine_descriptor_path=descriptor_path,

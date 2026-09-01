@@ -4386,6 +4386,8 @@ class ApplicationServer:
                     except Exception as exc:  # noqa: BLE001
                         self._json(500, {'ok': False, 'error': str(exc)})
                     return
+                if parsed.path == '/cockpit':
+                    parsed = parsed._replace(path='/studio/cockpit.html')
                 if parsed.path == '/studio' or parsed.path.startswith(
                     '/studio/'
                 ):

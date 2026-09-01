@@ -38,7 +38,13 @@ state_path = state_dir / "archhub-test.universal.sqlite3"
 import socket as _socket
 _lock_port = int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))
 _instance_lock = _socket.socket()
-_instance_lock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+# NEVER SO_REUSEADDR here: on Windows it PERMITS binding a port another
+# process already holds, which silently disables the single-instance
+# mutex and lets a second app fight the first for the database.
+if hasattr(_socket, "SO_EXCLUSIVEADDRUSE"):
+    _instance_lock.setsockopt(
+        _socket.SOL_SOCKET, _socket.SO_EXCLUSIVEADDRUSE, 1
+    )
 for _attempt in range(12):
     try:
         _instance_lock.bind(("127.0.0.1", _lock_port))

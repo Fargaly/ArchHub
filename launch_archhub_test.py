@@ -26,7 +26,10 @@ sys.stderr = _log
 print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
 faulthandler.enable(file=_log)
 
-state_dir = Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"
+state_dir = Path(
+    os.environ.get("ARCHHUB_TEST_STATE_DIR")
+    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+)
 state_dir.mkdir(parents=True, exist_ok=True)
 state_path = state_dir / "archhub-test.universal.sqlite3"
 
@@ -112,6 +115,7 @@ def _boot():
         machine_key_provider=machine_key_provider,
     ).start()
 
+refusal = None
 try:
     server = _boot()
 except Exception as refusal:
@@ -119,6 +123,21 @@ except Exception as refusal:
     # it could rebuild is a locked door, not a security posture. The
     # suspect universe is QUARANTINED -- never destroyed -- and a fresh
     # one is born; the refusal is printed, not swallowed.
+    # A lock held by a dying predecessor clears on its own; retrying once
+    # costs a second and saves the founder's whole graph from being set
+    # aside for a transient.
+    import gc
+
+    gc.collect()
+    time.sleep(1.5)
+    try:
+        server = _boot()
+        print("  recovered  : the saved graph opened on a second attempt",
+              flush=True)
+        refusal = None
+    except Exception as second:
+        refusal = second
+if refusal is not None:
     print("  could not open the saved graph: %s"
           % str(refusal).splitlines()[-1][:160])
     set_aside = state_dir / ("set-aside-%s" % time.strftime("%Y%m%d-%H%M%S"))

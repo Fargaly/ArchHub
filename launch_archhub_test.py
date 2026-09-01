@@ -50,6 +50,22 @@ if first_boot:
         except OSError:
             pass
 
+if not first_boot:
+    # Rolling backups, like Revit's: a silent copy at every launch,
+    # newest seven kept. The history lives inside the file; the copies
+    # protect against the disk and the human.
+    import shutil
+    backups = state_dir / "backups"
+    backups.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        shutil.copy2(state_path, backups / ("%s.%s" % (state_path.name, stamp)))
+        aged = sorted(backups.glob(state_path.name + ".*"))
+        for old_copy in aged[:-7]:
+            old_copy.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 print("ArchHub TEST")
 print("  graph store :", state_path)
 print("  first boot  :", first_boot, "(first boot builds the graph, ~1-2 min)")

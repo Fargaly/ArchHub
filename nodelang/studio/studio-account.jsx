@@ -402,6 +402,57 @@ const acMeter = (label, val, max, unit, col) => {
   );
 };
 
+// The three brain-folder controls, each doing the thing it names: open
+// the folder in Explorer, choose where a copy syncs, and hand the
+// founder his own record as a file. Every answer is reported in place.
+function BrainFolderActions() {
+  const [said, setSaid] = React.useState('');
+  const speak = (text) => { setSaid(text); setTimeout(() => setSaid(''), 5000); };
+  const reveal = async () => {
+    try {
+      const answer = await window.ARCHHUB_REVEAL('brain');
+      speak(answer.ok ? 'opened ' + answer.opened : answer.error);
+    } catch (error) { speak('refused: ' + (error?.message || error)); }
+  };
+  const choose = async () => {
+    try {
+      const chosen = await window.ARCHHUB_PICK_FILE(
+        'Choose a folder to sync into (pick any file inside it)', '');
+      if (!chosen) return;
+      const folder = chosen.replace(/[\/][^\/]*$/, '');
+      const held = acLoad();
+      acSave(Object.assign({}, held, { syncFolder: folder }));
+      speak('sync folder: ' + folder);
+    } catch (error) { speak('refused: ' + (error?.message || error)); }
+  };
+  const exportJson = () => {
+    const payload = JSON.stringify({
+      account: acLoad(),
+      graph: window.ARCHHUB_LIVE?.graph
+        ? { nodes: window.ARCHHUB_LIVE.graph.nodes.length,
+            wires: window.ARCHHUB_LIVE.graph.wires.length }
+        : null,
+      connectors: window.ARCHHUB_LIVE?.connectors || [],
+      skills: (window.ARCHHUB_LIVE?.skills || []).map(s => s.name),
+      exported_at: new Date().toISOString(),
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = 'archhub-account.json';
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    speak('exported archhub-account.json');
+  };
+  return (
+    <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button onClick={reveal} style={smallBtn()}>Reveal in explorer</button>
+      <button onClick={choose} style={smallBtn()}>Choose sync folder</button>
+      <button onClick={exportJson} style={smallBtn()}>Export as JSON</button>
+      {said ? <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkSoft }}>{said}</span> : null}
+    </div>
+  );
+}
+
 function SettingsAccount({ account, setAccount, onSignOut }) {
   // Prefer the live record on disk when the passed snapshot predates a sign-up — this panel
   // states someone's plan and spend, so it must not render a stale one.
@@ -492,9 +543,7 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           git remote — sync is a directory you nominate, so the practice controls the copy.
         </div>
         <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
-          <button style={smallBtn()}>Reveal in finder</button>
-          <button style={smallBtn()}>Choose sync folder</button>
-          <button style={smallBtn()}>Export as JSON</button>
+          <BrainFolderActions/>
         </div>
       </div>
 

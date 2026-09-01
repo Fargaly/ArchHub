@@ -5667,6 +5667,33 @@ class ApplicationServer:
                                         'error': str(refusal)[:200],
                                     })
                                 return
+                            elif self.path == '/api/universal/reveal':
+                                # Open a folder the APP owns, never an
+                                # arbitrary path a caller names.
+                                import os as _os
+                                import subprocess as _sub
+                                from pathlib import Path as _P
+                                known = {
+                                    'brain': _P(
+                                        _os.environ.get('APPDATA', '')
+                                    ) / 'ArchHub' / 'brain',
+                                    'graph': _P(
+                                        _os.environ.get('LOCALAPPDATA', '')
+                                    ) / 'ArchHub-Test',
+                                }
+                                target = known.get(str(body.get('what') or ''))
+                                if target is None or not target.exists():
+                                    self._json(200, {
+                                        'ok': False,
+                                        'error': 'that folder does not exist '
+                                                 'on this machine yet',
+                                    })
+                                    return
+                                _sub.Popen(['explorer', str(target)])
+                                self._json(200, {
+                                    'ok': True, 'opened': str(target),
+                                })
+                                return
                             elif self.path == '/api/universal/pick-file':
                                 picker = getattr(
                                     owner, 'native_file_picker', None

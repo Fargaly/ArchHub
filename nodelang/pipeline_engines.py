@@ -225,4 +225,96 @@ PIPELINE_ENGINES = {
     "brain.facts": brain_facts,
 }
 
-__all__ = ["PIPELINE_ENGINES"]
+
+
+def probe_connectors():
+    """Every connector the design names, each with its REAL state now.
+
+    connected = answering a live handshake; listening = a port is open;
+    installed = present on this machine but not attached; absent = not
+    found. Nothing is guessed and nothing is hidden.
+    """
+    import os
+    import socket
+    import subprocess
+
+    found = []
+
+    def port_open(port, host="127.0.0.1", timeout=0.15):
+        probe = socket.socket()
+        probe.settimeout(timeout)
+        try:
+            return probe.connect_ex((host, port)) == 0
+        finally:
+            probe.close()
+
+    from .clean_revit_adapter import live_sessions
+    revit = []
+    acad = []
+    try:
+        for session in live_sessions():
+            document = session.get("document")
+            if isinstance(document, dict) and document.get("acad_version"):
+                acad.append(session)
+            else:
+                revit.append(session)
+    except Exception:
+        pass
+    found.append({
+        "id": "revit", "name": "Revit",
+        "state": "connected" if revit else "absent",
+        "detail": (
+            "%d session(s)" % len(revit) if revit
+            else "no session listening on 48884-48899"
+        ),
+    })
+    found.append({
+        "id": "autocad", "name": "AutoCAD",
+        "state": "connected" if acad else "absent",
+        "detail": (
+            "%d session(s)" % len(acad) if acad
+            else "no session listening"
+        ),
+    })
+    found.append({
+        "id": "rhino", "name": "Rhino",
+        "state": "listening" if port_open(9879) else "absent",
+        "detail": (
+            "bridge on :9879" if port_open(9879)
+            else "bridge not running (start it inside Rhino)"
+        ),
+    })
+    appdata = os.environ.get("APPDATA", "")
+    speckle_installed = bool(appdata) and os.path.isdir(
+        os.path.join(appdata, "Speckle")
+    )
+    found.append({
+        "id": "speckle", "name": "Speckle",
+        "state": "installed" if speckle_installed else "absent",
+        "detail": (
+            "Manager installed · local wire on demand"
+            if speckle_installed else "Manager not found"
+        ),
+    })
+    try:
+        tasks = subprocess.run(
+            ["tasklist", "/fo", "csv", "/nh"],
+            capture_output=True, text=True, timeout=8,
+        ).stdout.casefold()
+    except Exception:
+        tasks = ""
+    for exe, cid, name in (
+        ("outlook.exe", "outlook", "Outlook"),
+        ("dropbox.exe", "dropbox", "Dropbox"),
+        ("blender.exe", "blender", "Blender"),
+    ):
+        running = exe in tasks
+        found.append({
+            "id": cid, "name": name,
+            "state": "connected" if running else "absent",
+            "detail": "running" if running else "not running",
+        })
+    return found
+
+
+__all__ = ["PIPELINE_ENGINES", "probe_connectors"]

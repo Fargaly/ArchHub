@@ -98,8 +98,12 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       prompt: {type:'text', help:'What to recall from the brain'},
     };
     const canvas = await jget('/api/universal/canvas');
-    let hosts = [];
-    try { hosts = (await jget('/api/universal/hosts')).hosts || []; } catch (e) {}
+    let hosts = [], connectors = [];
+    try {
+      const scan = await jget('/api/universal/hosts');
+      hosts = scan.hosts || [];
+      connectors = scan.connectors || [];
+    } catch (e) {}
     const CATS = e =>
       e.startsWith('vision.') || e.startsWith('cad.') ? 'read'
       : e.startsWith('lines.') ? 'annotate'
@@ -160,7 +164,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         last:(canvas.nodes || []).length + ' nodes · '
           + (canvas.wires || []).length + ' wires',
       }],
-      hosts, graph:{nodes, wires}, skills:[],
+      hosts, connectors, graph:{nodes, wires}, skills:[],
     };
     for (const f of ['tokens.jsx','shared-data.jsx','studio-account.jsx','studio-lm.jsx','mount.jsx']) {
       const tag = document.createElement('script');

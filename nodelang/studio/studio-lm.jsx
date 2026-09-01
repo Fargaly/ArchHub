@@ -1182,16 +1182,19 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
 
     {/* connectors */}
     <div style={{ padding:'14px 16px' }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {(window.ARCHHUB_LIVE?.hosts || []).length}</div>
-      {(window.ARCHHUB_LIVE?.hosts || []).length === 0 ? (
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>no host is listening — open Revit or AutoCAD and reload</div>
-      ) : (window.ARCHHUB_LIVE.hosts).map(h => (
-        <div key={h.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
-          <span style={{ width:7, height:7, borderRadius:'50%', background:LM.ok, boxShadow:`0 0 0 3px ${LM.ok}22` }}/>
-          <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={h.file}>{h.name} · :{h.port}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.ok, letterSpacing:'0.06em', textTransform:'uppercase' }}>{h.state}</span>
-        </div>
-      ))}
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {(window.ARCHHUB_LIVE?.connectors || []).length}</div>
+      {(window.ARCHHUB_LIVE?.connectors || []).map(c => {
+        const col = c.state === 'connected' ? LM.ok
+          : c.state === 'listening' ? LM.ok
+          : c.state === 'installed' ? LM.warn : LM.inkDim;
+        return (
+          <div key={c.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }} title={c.detail}>
+            <span style={{ width:7, height:7, borderRadius:'50%', background:col, boxShadow:`0 0 0 3px ${col}22` }}/>
+            <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
+            <span style={{ fontFamily:LM.mono, fontSize:9.5, color:col, letterSpacing:'0.06em', textTransform:'uppercase' }}>{c.state}</span>
+          </div>
+        );
+      })}
     </div>
   </aside>
 );

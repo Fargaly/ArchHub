@@ -4346,38 +4346,26 @@ class ApplicationServer:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
                     try:
-                        from .clean_revit_adapter import live_sessions
-                        found = []
-                        for item in live_sessions():
-                            document = item.get('document')
-                            if isinstance(document, dict):
-                                document = (
-                                    document.get('document_title')
-                                    or document.get('document_name')
-                                    or ''
+                        from .pipeline_engines import probe_connectors
+                        catalogue = probe_connectors()
+                        self._json(200, {
+                            'ok': True,
+                            'connectors': catalogue,
+                            'hosts': [
+                                {
+                                    'id': item['id'], 'name': item['name'],
+                                    'port': '', 'state': item['state'],
+                                    'file': item['detail'],
+                                }
+                                for item in catalogue
+                                if item['state'] in (
+                                    'connected', 'listening',
                                 )
-                            name = (
-                                item.get('revit_version')
-                                or (
-                                    'AutoCAD %s' % item['document'].get(
-                                        'acad_version', ''
-                                    )
-                                    if isinstance(item.get('document'), dict)
-                                    and item['document'].get('acad_version')
-                                    else 'Host'
-                                )
-                            )
-                            found.append({
-                                'id': str(item['port']),
-                                'name': str(name),
-                                'port': str(item['port']),
-                                'state': 'connected',
-                                'file': str(document or 'no document open'),
-                            })
-                        self._json(200, {'ok': True, 'hosts': found})
+                            ],
+                        })
                     except Exception as exc:  # noqa: BLE001
                         self._json(200, {
-                            'ok': True, 'hosts': [],
+                            'ok': True, 'hosts': [], 'connectors': [],
                             'note': str(exc),
                         })
                     return

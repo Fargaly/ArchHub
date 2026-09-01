@@ -53,7 +53,11 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     };
     window.ARCHHUB_AGENT = async prompt =>
       (await jpost('/api/universal/agent', {prompt})).answer || 'done';
-    window.ARCHHUB_RUN = () => jpost('/api/universal/run-graph', {});
+    window.ARCHHUB_RUN = async () => {
+      const result = await jpost('/api/universal/run-graph', {});
+      window.ARCHHUB_LAST_RUN = result;
+      return result;
+    };
     window.ARCHHUB_SET_PROP = (relation, value) =>
       jpost('/api/universal/set-property', {relation, value});
     window.ARCHHUB_PICK_FILE = async (title, filter) =>

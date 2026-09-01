@@ -53,6 +53,7 @@ class StemEvaluation:
     display: Mapping[str, str]
     results: Mapping[str, object]
     pending: Mapping[str, str]
+    node_outputs: Mapping[str, Mapping[str, object]] = None
 
 
 def _coerce(text: object) -> object:
@@ -165,7 +166,7 @@ def evaluate_stem_graph(
     for node in nodes:
         if node.engine:
             resolve(node.root_id)
-    return StemEvaluation(display, results, pending)
+    return StemEvaluation(display, results, pending, dict(outputs))
 
 
 def _run_engine(

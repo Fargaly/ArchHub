@@ -1220,6 +1220,11 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
           fontFamily:LM.sans, fontSize:11.5, fontWeight: mode===k ? 500 : 400,
         }}>{l}</button>
       ))}
+      <button onClick={() => { window.location.href = '/cockpit'; }} title="The Founder Cockpit — the grand map of the live graph" style={{
+        padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:'pointer',
+        background:'transparent', color:LM.accent,
+        fontFamily:LM.sans, fontSize:11.5, fontWeight:500,
+      }}>Cockpit</button>
     </div>
 
     <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
@@ -1834,8 +1839,31 @@ const LiveBody = ({ n }) => (
     {n.status ? (
       <div style={{ marginTop:2, fontFamily:LM.mono, fontSize:9.5, color:LM.accent, letterSpacing:'0.03em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.status}</div>
     ) : null}
+    <LinePreview id={n.id}/>
   </div>
 );
+
+// The watcher's eyes: the ACTUAL line segments the last run produced,
+// drawn to scale inside the card. No run yet = nothing, honestly.
+const LinePreview = ({ id }) => {
+  const lines = window.ARCHHUB_LAST_RUN?.lines?.[id];
+  if (!lines || !lines.length) return null;
+  const xs = lines.flatMap(l => [l[0], l[2]]);
+  const ys = lines.flatMap(l => [l[1], l[3]]);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  const w = Math.max(1, Math.max(...xs) - x0);
+  const h = Math.max(1, Math.max(...ys) - y0);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet"
+      style={{ width:'100%', height:64, marginTop:6, background:LM.bgDeep,
+        border:`1px solid ${LM.lineSoft}`, borderRadius:4 }}>
+      {lines.map((l, i) => (
+        <line key={i} x1={l[0]-x0} y1={l[1]-y0} x2={l[2]-x0} y2={l[3]-y0}
+          stroke={LM.accent} strokeWidth={Math.max(w, h) / 90}/>
+      ))}
+    </svg>
+  );
+};
 
 const HostBody = ({ n }) => (
   <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:LM.sp.xs }}>

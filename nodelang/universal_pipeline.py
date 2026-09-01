@@ -154,12 +154,30 @@ def run_universal_pipeline(
                 authentication_context=authentication_context,
             )
         written += 1
+    def _lines_like(value):
+        return (
+            isinstance(value, list) and value
+            and all(
+                isinstance(row, (list, tuple)) and len(row) >= 4
+                and all(isinstance(v, (int, float)) for v in row[:4])
+                for row in value[:400]
+            )
+        )
+
+    previews = {}
+    for root, outs in (evaluation.node_outputs or {}).items():
+        value = (outs or {}).get("out")
+        if _lines_like(value):
+            previews[root] = [
+                [float(v) for v in row[:4]] for row in value[:400]
+            ]
     return {
         "ran": len(stem_nodes),
         "wires": len(stem_wires),
         "display": dict(evaluation.display),
         "pending": dict(evaluation.pending),
         "results": dict(evaluation.results),
+        "lines": previews,
         "written": written,
         "revision": store.revision,
     }

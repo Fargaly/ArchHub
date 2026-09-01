@@ -133,6 +133,49 @@ except Exception as refusal:
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 print("  URL:", server.bootstrap_url, flush=True)
 
+
+def _publish_map_to_cloud():
+    """Push this graph's projection to the founder's 24/7 cloud cockpit.
+
+    The cockpit is the map and the map is the graph -- so the cloud
+    surface shows what the founder's application actually holds, and
+    keeps showing the last known state when the desktop is closed.
+    """
+    import json
+    import urllib.request
+
+    cloud = (
+        Path(os.environ["APPDATA"]) / "ArchHub" / "brain" / "cloud.json"
+    )
+    if not cloud.is_file():
+        return "no cloud session on this machine"
+    held = json.loads(cloud.read_text(encoding="utf-8"))
+    token = held.get("token")
+    base = held.get("cloud_base_url") or "https://archhub-cloud.fly.dev"
+    if not token:
+        return "cloud session carries no token"
+    from nodelang.universal_pipeline import project_atlas_map
+
+    script = project_atlas_map(
+        server.universal_store, server.universal_registry
+    )
+    body = script.split("window.ATLAS_MAP = ", 1)[1]
+    body = body.rsplit("; window.ATLAS_LIVE", 1)[0].encode("utf-8")
+    request = urllib.request.Request(
+        base.rstrip("/") + "/founder/map-state", data=body,
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + token},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=25) as answer:
+        return json.loads(answer.read().decode("utf-8"))
+
+
+try:
+    print("  cloud map  :", _publish_map_to_cloud(), flush=True)
+except Exception as _refusal:
+    print("  cloud map  : not published (%s)" % str(_refusal)[:90], flush=True)
+
 # Announce THIS runtime as the machine's active universal runtime, so
 # the brain, BABOOM and any governed agent reach the founder's live
 # graph instead of a dead descriptor from a previous life.

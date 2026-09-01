@@ -860,7 +860,12 @@ const kbd = () => ({
 });
 
 // ──────────────────────── HOME ────────────────────────
-const Home = ({ onOpen, model, setPickerOpen }) => (
+const Home = ({ onOpen, model, setPickerOpen }) => {
+  const [filter, onFilter] = React.useState('all');
+  const shown = filter === 'all'
+    ? LM_SESSIONS
+    : LM_SESSIONS.filter(s => (s.state || 'idle') === filter);
+  return (
   <main className="ah-scroll" style={{
     gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
     padding:'30px 44px 36px', display:'flex', flexDirection:'column',
@@ -895,19 +900,22 @@ const Home = ({ onOpen, model, setPickerOpen }) => (
     <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
       <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
       <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
-        {LM_SESSIONS.length} · CLICK TO OPEN
+        {shown.length} · CLICK TO OPEN
       </span>
       <div style={{ flex:1 }}/>
-      <button style={chipBtn(true)}>all</button>
-      <button style={chipBtn()}>mine</button>
-      <button style={chipBtn()}>scheduled</button>
-      <button style={chipBtn()}>workflows</button>
+      {['all', 'running', 'idle'].map(kind => (
+        <button key={kind} onClick={() => onFilter && onFilter(kind)}
+          style={chipBtn(filter === kind)}>{kind}</button>
+      ))}
     </div>
     <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:LM.sp.md }}>
-      {LM_SESSIONS.map(s => <SessionCard key={s.id} s={s} onOpen={() => onOpen(s.id)}/>)}
+      {shown.length === 0 ? (
+        <div style={{ fontFamily:LM.mono, fontSize:11, color:LM.inkMuted }}>no {filter} session on this machine</div>
+      ) : shown.map(s => <SessionCard key={s.id} s={s} onOpen={() => onOpen(s.id)}/>)}
     </div>
   </main>
-);
+  );
+};
 
 const chipBtn = (active) => ({
   padding:'4px 11px', borderRadius:999,
@@ -1750,6 +1758,35 @@ const Socket = ({ side, i, t, label }) => {
 };
 
 // ─── per-category body content ───
+// The inline reply is a real ask: it reaches the same agent the main
+// composer does, and reports its answer where it was typed.
+const InlineAsk = () => {
+  const [text, setText] = React.useState('');
+  const [state, setState] = React.useState('');
+  const ask = async () => {
+    const said = text.trim();
+    if (!said || !window.ARCHHUB_AGENT) return;
+    setState('asking…');
+    try {
+      setState(String(await window.ARCHHUB_AGENT(said)).slice(0, 60));
+      setText('');
+    } catch (error) {
+      setState('refused: ' + (error?.message || error));
+    }
+  };
+  return (
+    <>
+      <input value={text} onChange={e => setText(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') ask(); }}
+        placeholder={state || 'Reply…'}
+        style={{ flex:1, background:'transparent', border:0, outline:0,
+          fontStyle:'italic', fontFamily:LM.serif, fontSize:12,
+          color: state ? LM.accent : LM.ink }}/>
+      <button onClick={ask} style={{ padding:'3px 8px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:4, fontSize:10, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
+    </>
+  );
+};
+
 const NodeBody = ({ n, expanded, onToggleExpand }) => {
   // A GRAPH-BACKED node draws exactly its real parameters, its last run
   // answer, and what actually flowed. Never a category's demo furniture.
@@ -1879,8 +1916,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:LM.rad.sm,
         }}>
           <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>/</span>
-          <span style={{ flex:1, fontStyle:'italic', fontFamily:LM.serif, fontSize:12, color:LM.inkMuted }}>Reply…</span>
-          <button style={{ padding:'3px 8px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:4, fontSize:10, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
+          <InlineAsk/>
         </div>
       </div>
     );

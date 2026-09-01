@@ -246,6 +246,10 @@ def _revive(_status, _code):
 view.page().renderProcessTerminated.connect(_revive)
 view.load(QUrl(server.bootstrap_url))
 window.show()
+# A window that opens BEHIND the founder's other windows reads as "the
+# app didn't open". Every launch lands on top, once.
+window.raise_()
+window.activateWindow()
 
 # BABOOM: the ambient companion, attached through the SAME signed
 # agent-session path any governed agent uses. A failure to attach is

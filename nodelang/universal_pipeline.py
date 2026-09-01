@@ -413,6 +413,31 @@ def project_atlas_map(store, registry, *, authentication_context=None):
                 "x": gx + 40 + (spot % 2) * 260,
                 "y": gy + 60 + (spot // 2) * 120,
             })
+    # The founder's brain facts live INSIDE the Brain & Memory domain --
+    # brain, cockpit, grand map: one model. Daemon down = domain shown
+    # without facts, honestly, never a crash.
+    brain_domain = next(
+        (d for d in domains if "brain" in d["title"].casefold()), None
+    )
+    if brain_domain is not None:
+        try:
+            from .pipeline_engines import _brain_call
+            listing = str(_brain_call("brain.list_facts", {}))
+            facts = [
+                line.strip() for line in listing.splitlines() if line.strip()
+            ][:12]
+            for spot, fact in enumerate(facts):
+                nodes.append({
+                    "id": "brain-fact:%d" % spot,
+                    "dom": brain_domain["key"], "cat": "ai",
+                    "title": fact[:58] or "fact",
+                    "sub": "brain fact · live from :8473",
+                    "status": "live", "params": [],
+                    "x": brain_domain["x"] + 40 + (spot % 2) * 260,
+                    "y": brain_domain["y"] + 60 + (spot // 2) * 90,
+                })
+        except Exception:
+            pass
     return "window.ATLAS_MAP = %s; window.ATLAS_LIVE = true;" % _json.dumps({
         "domains": domains, "nodes": nodes, "wires": [],
     })

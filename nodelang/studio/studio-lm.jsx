@@ -1128,22 +1128,6 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
       <CalmSlider k="max tokens" v={4096} min={256} max={32000} step={256} int/>
     </div>
 
-    {/* parametric chain */}
-    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · 2 STAGES</div>
-      <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
-        {[1,2].map(i => (
-          <React.Fragment key={i}>
-            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${i===1?LM.ok:LM.accent}`, background:LM.bg, color:i===1?LM.ok:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:9, fontWeight:600 }}>{i}</div>
-            {i<2 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
-          </React.Fragment>
-        ))}
-      </div>
-      <CalmSlider k="offset_mm" v={240} min={60} max={600} step={10} unit="mm"/>
-      <CalmRow k="scale" v="1:50"/>
-      <CalmRow k="align" v="parallel"/>
-    </div>
-
     {/* connectors */}
     <div style={{ padding:'14px 16px' }}>
       <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {(window.ARCHHUB_LIVE?.hosts || []).length}</div>
@@ -3659,7 +3643,7 @@ POST /v1/brain/promote         → { id, to: "practice" }`}</DCode>
 
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
-  const live = LM_HOSTS.filter(h => h.state !== 'off').length;
+  const live = (window.ARCHHUB_LIVE?.hosts || []).length;
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     return (
@@ -3681,7 +3665,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
       padding:'0 10px', display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-        <span style={{ color:LM.ok }}>●</span> server :7300 · {live}/{LM_HOSTS.length} hosts
+        <span style={{ color:LM.ok }}>●</span> server {window.location.host} · {live} host{live === 1 ? '' : 's'} live
       </StripItem>
       {session ? (
         <>
@@ -3689,7 +3673,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
           <StripItem>{session.file}</StripItem>
           <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span> · 4.2k tok · $0.024
+            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span>
           </StripItem>
         </>
       ) : (

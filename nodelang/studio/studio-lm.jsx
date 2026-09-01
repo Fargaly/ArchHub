@@ -3674,6 +3674,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <a href="/cockpit" style={{ color:LM.accent, textDecoration:'none', fontFamily:LM.mono, fontSize:10, letterSpacing:'0.08em' }}>cockpit</a>
+      <a href="https://archhub-cloud.fly.dev/founder" target="_blank" rel="noreferrer" title="The 24/7 cloud cockpit — founder gate" style={{ color:LM.inkSoft, textDecoration:'none', fontFamily:LM.mono, fontSize:10, letterSpacing:'0.08em' }}>cloud</a>
       <StripItem>v1.4 prototype</StripItem>
     </div>
   );

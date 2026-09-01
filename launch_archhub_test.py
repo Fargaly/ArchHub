@@ -103,13 +103,49 @@ machine_key_provider = MemorySigningKeyProvider(
 descriptor_path = state_dir / "runtime-descriptor.json"
 
 started = time.perf_counter()
-server = ApplicationServer(
-    universal_state_path=state_path,
-    pipeline_effect_engines=PIPELINE_ENGINES,
-    enable_machine_transport=True,
-    machine_descriptor_path=descriptor_path,
-    machine_key_provider=machine_key_provider,
-).start()
+
+def _boot():
+    return ApplicationServer(
+        universal_state_path=state_path,
+        pipeline_effect_engines=PIPELINE_ENGINES,
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=machine_key_provider,
+    ).start()
+
+try:
+    server = _boot()
+except Exception as refusal:
+    # SELF-HEALING BOOT. A desktop that refuses to open over local state
+    # it could rebuild is a locked door, not a security posture. The
+    # suspect universe is QUARANTINED -- never destroyed -- and a fresh
+    # one is born; the refusal is printed, not swallowed.
+    print("  boot refused: %s" % str(refusal).splitlines()[-1][:160])
+    quarantine = state_dir / ("quarantine-%s" % time.strftime("%Y%m%d-%H%M%S"))
+    quarantine.mkdir(parents=True, exist_ok=True)
+    for stale in state_dir.glob(state_path.name + "*"):
+        try:
+            stale.rename(quarantine / stale.name)
+        except OSError:
+            pass
+    from nodelang.cell_revision_checkpoint import RevisionCheckpointGuard
+    from nodelang.checkpoint_authority_provisioning import (
+        default_checkpoint_authority_path,
+    )
+    authority_db = default_checkpoint_authority_path(state_path)
+    for anchor in (
+        RevisionCheckpointGuard.default_path(state_path),
+        RevisionCheckpointGuard.default_path(authority_db),
+    ):
+        anchor.unlink(missing_ok=True)
+    for stale in authority_db.parent.glob(authority_db.name + "*"):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
+    print("  quarantined old universe -> %s" % quarantine.name)
+    print("  rebuilding fresh (~1-2 min) ...")
+    server = _boot()
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 print("  URL:", server.bootstrap_url, flush=True)
 

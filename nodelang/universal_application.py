@@ -7049,18 +7049,53 @@ def _ensure_application_brain_control_ledger(
         space = read_deliberation_space(
             snapshot, protocol, _BRAIN_CONTROL_LEDGER_ROOT
         )
-        if (
-            space.participant_roots != (authorization.subject_root,)
-            or space.category_roots != tuple(categories.values())
-            or space.policy_root != authorization.policy_root
-            or space.action_root != authorization.protocol.actions["create"]
-            or space.scope_roots != (authorization.scope_root,)
-            or space.lifecycle_root != lifecycle_root
-            or space.purpose_root != authorization.purpose_root
-            or space.classification_root != authorization.classification_root
-            or space.audience_root != authorization.audience_root
-        ):
-            raise InvalidCell("Brain control ledger authority drifted")
+        # Participants grow: every signed agent session that attaches
+        # (BABOOM's body, a mounted agent) joins the ledger through the
+        # governed path. Growth by registered agent sessions is the
+        # product working, not drift -- drift is the founder missing or
+        # a participant the graph never admitted as a session.
+        extra_participants = tuple(
+            root for root in space.participant_roots
+            if root != authorization.subject_root
+        )
+        participants_sound = (
+            authorization.subject_root in space.participant_roots
+            and all(
+                root.startswith("app:agent-session:")
+                and root in snapshot.cells
+                for root in extra_participants
+            )
+        )
+        expected = {
+            "participants": (
+                space.participant_roots,
+                space.participant_roots if participants_sound
+                else (authorization.subject_root,),
+            ),
+            "categories": (space.category_roots, tuple(categories.values())),
+            "policy": (space.policy_root, authorization.policy_root),
+            "action": (space.action_root,
+                       authorization.protocol.actions["create"]),
+            "scopes": (space.scope_roots, (authorization.scope_root,)),
+            "lifecycle": (space.lifecycle_root, lifecycle_root),
+            "purpose": (space.purpose_root, authorization.purpose_root),
+            "classification": (space.classification_root,
+                               authorization.classification_root),
+            "audience": (space.audience_root, authorization.audience_root),
+        }
+        drifted = {
+            name: held_and_wanted
+            for name, held_and_wanted in expected.items()
+            if held_and_wanted[0] != held_and_wanted[1]
+        }
+        if drifted:
+            raise InvalidCell(
+                "Brain control ledger authority drifted: "
+                + "; ".join(
+                    "%s held %r wanted %r" % (name, held, wanted)
+                    for name, (held, wanted) in sorted(drifted.items())
+                )
+            )
 
     snapshot = store.snapshot()
     application_members = {

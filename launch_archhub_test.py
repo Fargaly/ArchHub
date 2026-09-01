@@ -33,10 +33,19 @@ state_path = state_dir / "archhub-test.universal.sqlite3"
 # ONE app. A second double-click fronts nothing and starts nothing --
 # the socket is the cheapest cross-process mutex Windows respects.
 import socket as _socket
+_lock_port = int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))
 _instance_lock = _socket.socket()
-try:
-    _instance_lock.bind(("127.0.0.1", int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))))
-except OSError:
+_instance_lock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+for _attempt in range(12):
+    try:
+        _instance_lock.bind(("127.0.0.1", _lock_port))
+        break
+    except OSError:
+        # A dying previous instance still holds the port for a moment.
+        # Reopening right after closing must WORK, so wait it out rather
+        # than exiting silently and leaving the founder with no window.
+        time.sleep(0.5)
+else:
     sys.exit(0)
 
 # listdir membership: Path.exists() returns False on a Windows sharing
@@ -228,6 +237,26 @@ try:
         key_provider=machine_key_provider,
     )
     baboom_window.show()
+    # show() only makes the widget exist; projection is what makes BABOOM
+    # actually draw itself and follow the graph.
+    baboom_window.start_projection()
+    # Say honestly whether the companion has anything to draw: a host
+    # with no snapshot, or a screen too crowded for a clear placement,
+    # hides itself -- and a silent hide reads as "BABOOM is broken".
+    from PyQt6.QtCore import QTimer as _QTimer
+
+    def _report_companion():
+        snapshot = getattr(baboom_host, "latest_snapshot", None)
+        if snapshot is None:
+            print("  BABOOM     : attached, waiting for its first snapshot",
+                  flush=True)
+            return
+        visible = baboom_window.isVisible()
+        rect = baboom_window.geometry()
+        print("  BABOOM     : drawing=%s at %dx%d+%d+%d" % (
+            visible, rect.width(), rect.height(), rect.x(), rect.y()),
+            flush=True)
+    _QTimer.singleShot(6000, _report_companion)
     print("  BABOOM     : attached (signed agent session)", flush=True)
 except Exception as refusal:
     print("  BABOOM     : not attached -- %s" % refusal, flush=True)

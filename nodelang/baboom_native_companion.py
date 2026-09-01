@@ -263,7 +263,20 @@ class BaboomNativeCompanionController:
             occupied=self._occupied_rectangles(),
             animation_tick=self._animation_tick,
         )
-        return frame if frame.layout.collision_state == "clear" else None
+        if frame.layout.collision_state == "clear":
+            return frame
+        # A desktop with a maximised window has NO clear ground, and a
+        # companion that answers that by vanishing is one nobody ever
+        # sees. Every ambient Windows assistant solves this the same way:
+        # sit in a screen corner, above the work, without the panel.
+        # Presence first, politeness second.
+        return project_baboom_native_visual_frame(
+            snapshot,
+            self._atlas,
+            screen=screen,
+            occupied=(),
+            animation_tick=self._animation_tick,
+        )
 
     def next_sprite_source(self, motion: str) -> Rect:
         """Advance only the released sprite crop; layout stays stable."""
@@ -378,6 +391,7 @@ def create_baboom_native_companion_window(
             self.setWindowFlags(
                 Qt.WindowType.Tool
                 | Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
             )
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             self.setStyleSheet("background:transparent;border:0;")
@@ -402,7 +416,14 @@ def create_baboom_native_companion_window(
             self._animation_timer.stop()
 
         def _screen_rect(self) -> Rect | None:
-            screen = self.screen()
+            # The screen the WINDOW happens to sit on is the wrong
+            # authority at birth: a fresh frameless widget can be assigned
+            # a secondary monitor and place the companion at a negative x,
+            # off every visible desktop. The primary screen is where the
+            # founder is.
+            from PyQt6.QtGui import QGuiApplication
+
+            screen = QGuiApplication.primaryScreen() or self.screen()
             if screen is None:
                 return None
             geometry = screen.availableGeometry()

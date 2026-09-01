@@ -115,10 +115,11 @@ def _boot():
         machine_key_provider=machine_key_provider,
     ).start()
 
-refusal = None
+boot_refusal = None
 try:
     server = _boot()
 except Exception as refusal:
+    boot_refusal = refusal
     # SELF-HEALING BOOT. A desktop that refuses to open over local state
     # it could rebuild is a locked door, not a security posture. The
     # suspect universe is QUARANTINED -- never destroyed -- and a fresh
@@ -129,17 +130,26 @@ except Exception as refusal:
     import gc
 
     gc.collect()
+    # A failed first attempt can leave OUR OWN owner fence behind; the
+    # conflict then names this very process. Releasing our own lock is
+    # honest -- it is nobody else's.
+    if "already owned by this same process" in str(refusal):
+        for stale in state_dir.glob(state_path.name + ".owner.lock"):
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError:
+                pass
     time.sleep(1.5)
     try:
         server = _boot()
         print("  recovered  : the saved graph opened on a second attempt",
               flush=True)
-        refusal = None
+        boot_refusal = None
     except Exception as second:
-        refusal = second
-if refusal is not None:
+        boot_refusal = second
+if boot_refusal is not None:
     print("  could not open the saved graph: %s"
-          % str(refusal).splitlines()[-1][:160])
+          % str(boot_refusal).splitlines()[-1][:160])
     set_aside = state_dir / ("set-aside-%s" % time.strftime("%Y%m%d-%H%M%S"))
     set_aside.mkdir(parents=True, exist_ok=True)
     for stale in state_dir.glob(state_path.name + "*"):

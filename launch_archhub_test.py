@@ -90,9 +90,14 @@ _pipe_secret_path = state_dir / "runtime-pipe.secret"
 if not _pipe_secret_path.is_file():
     import secrets as _secrets
     _pipe_secret_path.write_bytes(_secrets.token_bytes(32))
-machine_key_provider = MemorySigningKeyProvider(
-    "archhub.local.universal-runtime-pipe",
-    _pipe_secret_path.read_bytes(),
+# The brain (and every other governed client) authenticates to the pipe
+# with the machine's DPAPI key at its DEFAULT path. Using a private
+# secret here would make this runtime unreachable to them -- which is
+# exactly why brain writes were failing.
+from nodelang.cell_secret_keys import WindowsDpapiSigningKeyProvider
+
+machine_key_provider = WindowsDpapiSigningKeyProvider(
+    WindowsDpapiSigningKeyProvider.default_path()
 )
 descriptor_path = state_dir / "runtime-descriptor.json"
 
@@ -127,6 +132,24 @@ except Exception as refusal:
     server = _boot()
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 print("  URL:", server.bootstrap_url, flush=True)
+
+# Announce THIS runtime as the machine's active universal runtime, so
+# the brain, BABOOM and any governed agent reach the founder's live
+# graph instead of a dead descriptor from a previous life.
+_active_runtime = (
+    Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "active-universal-runtime.json"
+)
+try:
+    _active_runtime.parent.mkdir(parents=True, exist_ok=True)
+    _previous_active = (
+        _active_runtime.read_bytes() if _active_runtime.is_file() else None
+    )
+    _active_runtime.write_bytes(descriptor_path.read_bytes())
+    print("  runtime    : announced as the machine's active universal runtime",
+          flush=True)
+except OSError as _refusal:
+    _previous_active = None
+    print("  runtime    : could not announce (%s)" % _refusal, flush=True)
 
 # The founder's first canvas: the wall pipeline plus the brain and BABOOM
 # nodes, seeded idempotently and run once so every card opens carrying a
@@ -272,5 +295,14 @@ finally:
             baboom_host.stop()
         except Exception:
             pass
+    # Leaving a descriptor behind that points at a dead pipe is what
+    # made every brain write fail; put back whatever was there before.
+    try:
+        if _previous_active is None:
+            _active_runtime.unlink(missing_ok=True)
+        else:
+            _active_runtime.write_bytes(_previous_active)
+    except OSError:
+        pass
     server.close()
 raise SystemExit(code)

@@ -412,7 +412,7 @@ def create_baboom_native_companion_window(
             self._projection_timer.setInterval(750)
             self._projection_timer.timeout.connect(self.refresh)
             self._animation_timer = QTimer(self)
-            self._animation_timer.setInterval(160)
+            self._animation_timer.setInterval(420)
             self._animation_timer.timeout.connect(self._advance_animation)
             self.response_ready.connect(self._apply_response)
             self.execution_ready.connect(self._apply_execution)
@@ -470,6 +470,11 @@ def create_baboom_native_companion_window(
 
         def _advance_animation(self) -> None:
             if self._frame is None or self._sprite is None or not self.isVisible():
+                return
+            # A companion that flips through poses while it has nothing to
+            # say reads as broken, not alive. It breathes only when there
+            # IS something: a report, or the founder talking to it.
+            if self._frame.report is None and not self._interaction_requested:
                 return
             frame = replace(
                 self._frame,

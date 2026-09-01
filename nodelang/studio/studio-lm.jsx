@@ -963,6 +963,8 @@ const SessionCard = ({ s, onOpen }) => {
 const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, onHome }) => {
   const allNodes = [...LM_GRAPH.nodes, ...(userNodes || [])];
   const focusNode = allNodes.find(n => n.id === focusId);
+  const focusWire = !focusNode
+    ? (LM_GRAPH.wires || []).find(w => w.id === focusId) : null;
   const [mode, setMode] = React.useState('chat');   // chat (calm, default) | canvas (node graph)
   return (
     <main style={{
@@ -975,7 +977,9 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
         session={session} model={model} openTabs={openTabs}
         setOpenId={setOpenId} closeTab={closeTab} mode={mode} setMode={setMode}
         setPickerOpen={setPickerOpen} setSettingsOpen={setSettingsOpen} onHome={onHome}/>
-      {mode === 'chat' ? (
+      {focusWire ? (
+        <RelationRail wire={focusWire} nodes={allNodes}/>
+      ) : mode === 'chat' ? (
         <>
           <ChatView session={session} model={model} setMode={setMode}/>
           <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
@@ -2367,6 +2371,52 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
 );
 
 // ──────────────────────── NODE RAIL ────────────────────────
+const RelationRail = ({ wire, nodes }) => {
+  const source = nodes.find(n => n.id === wire.from[0]);
+  const target = nodes.find(n => n.id === wire.to[0]);
+  return (
+    <aside className="ah-scroll" style={{
+      gridColumn:'2', gridRow:'2', minHeight:0, overflow:'auto',
+      background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
+      padding:'14px 16px 20px', display:'flex', flexDirection:'column',
+      gap:LM.sp.lg,
+    }}>
+      <div>
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em' }}>RELATION NODE</div>
+        <div style={{ fontFamily:LM.serif, fontSize:19, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.2 }}>
+          {(source?.title || wire.from[0])} {'→'} {(target?.title || wire.to[0])}
+        </div>
+        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em', wordBreak:'break-all' }}>{wire.id}</div>
+      </div>
+      <div>
+        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:LM.sp.sm }}>DATA FLOW</div>
+        <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, padding:'10px 12px', display:'flex', flexDirection:'column', gap:8 }}>
+          <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
+            <span style={{ color:LM.inkMuted }}>carries</span>
+            <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
+            <span style={{ color: (window.WIRE || {})[wire.t] || LM.ink }}>{wire.t}</span>
+          </div>
+          <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
+            <span style={{ color:LM.inkMuted }}>from</span>
+            <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
+            <span style={{ color:LM.ink }}>{source?.title || '?'}</span>
+          </div>
+          <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
+            <span style={{ color:LM.inkMuted }}>to</span>
+            <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
+            <span style={{ color:LM.ink }}>{target?.title || '?'}</span>
+          </div>
+        </div>
+      </div>
+      <button onClick={() => navigator.clipboard?.writeText(wire.id)} style={{
+        padding:'8px 12px', background:LM.bgSoft, border:`1px solid ${LM.line}`,
+        borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:10.5, color:LM.ink,
+        cursor:'pointer', textAlign:'left',
+      }}>Copy relation id</button>
+    </aside>
+  );
+};
+
 const NodeRail = ({ node }) => {
   if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
   // AI node gets a dedicated conversation rail — full scrollback + composer

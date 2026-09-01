@@ -4,8 +4,15 @@ Boots the universal cell application on a PERSISTENT store under
 %LOCALAPPDATA%/ArchHub-Test (your live graph is never touched) and opens
 it in its own application window. Close the window to stop ArchHub TEST.
 """
+import faulthandler
 import os, sys, time, traceback
 from pathlib import Path
+
+# This machine's documented QtWebEngine failure: GPU compositing
+# collapses the render process and takes the whole window down with no
+# Python traceback. Software rendering is the fix that held.
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
+os.environ.setdefault("QT_OPENGL", "software")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -17,6 +24,7 @@ _log = open(_log_dir / "launcher.log", "a", encoding="utf-8", buffering=1)
 sys.stdout = _log
 sys.stderr = _log
 print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
+faulthandler.enable(file=_log)
 
 state_dir = Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"
 state_dir.mkdir(parents=True, exist_ok=True)
@@ -40,11 +48,30 @@ if first_boot:
     identity = hashlib.sha256(
         str(state_path.resolve()).casefold().encode("utf-8")
     ).hexdigest()
-    checkpoint = (
-        Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "checkpoints"
-        / (identity + ".json")
+    archhub_local = Path(os.environ["LOCALAPPDATA"]) / "ArchHub"
+    (archhub_local / "checkpoints" / (identity + ".json")).unlink(
+        missing_ok=True
     )
-    checkpoint.unlink(missing_ok=True)
+    # The universal store's SIGNING AUTHORITY is its own Cell store with
+    # its own checkpoint; a fresh test universe means both are fresh, or
+    # the survivor rightly refuses the newborn.
+    authority = (
+        archhub_local / "authorities"
+        / ("revision-checkpoint-%s.sqlite3" % identity)
+    )
+    authority_identity = hashlib.sha256(
+        str(authority.resolve()).casefold().encode("utf-8")
+    ).hexdigest()
+    (archhub_local / "checkpoints" / (authority_identity + ".json")).unlink(
+        missing_ok=True
+    )
+    for stale in archhub_local.glob(
+        "authorities/revision-checkpoint-%s.sqlite3*" % identity
+    ):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 print("ArchHub TEST")
 print("  graph store :", state_path)
@@ -136,6 +163,13 @@ def _to_studio(ok):
         _booted["done"] = True
         view.load(QUrl(server.public_url + "/studio"))
 view.loadFinished.connect(_to_studio)
+# A dead render process reloads instead of leaving a dead window.
+def _revive(_status, _code):
+    print("  render process died -- reloading", flush=True)
+    from PyQt6.QtCore import QTimer
+    QTimer.singleShot(300, lambda: view.load(
+        QUrl(server.public_url + "/studio")))
+view.page().renderProcessTerminated.connect(_revive)
 view.load(QUrl(server.bootstrap_url))
 window.show()
 

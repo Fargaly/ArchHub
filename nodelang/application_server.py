@@ -3852,8 +3852,24 @@ class ApplicationServer:
         guard_bound = False
         signing_authority = None
         owns_signing_authority = False
+        # The rollback anchor exists only where OTHER people's rights
+        # live: a shared fence, the cloud gateway, or a caller that
+        # explicitly provisions checkpoint state. A personal desktop
+        # store never has one -- structurally, not by configuration.
+        universal_checkpoint_guard_enabled = bool(
+            universal_runtime_fence_lease is not None
+            or enable_universal_cloud_gateway
+            or universal_checkpoint_path is not None
+            or universal_checkpoint_authority_path is not None
+            or universal_checkpoint_signing_authority is not None
+            or universal_checkpoint_key_name is not None
+            or universal_checkpoint_provider_id is not None
+        )
         checkpoint_path = None
-        if self.universal_state_path is not None:
+        if (
+            self.universal_state_path is not None
+            and universal_checkpoint_guard_enabled
+        ):
             checkpoint_path = (
                 Path(universal_checkpoint_path).expanduser().resolve()
                 if universal_checkpoint_path is not None
@@ -3909,18 +3925,19 @@ class ApplicationServer:
                 persisted_application = (
                     "app:archhub" in universal_store.snapshot().cells
                 )
-                guard = RevisionCheckpointGuard(
-                    checkpoint_path,
-                    database_identity=str(self.universal_state_path),
-                    key_provider=universal_key_provider,
-                    signing_authority=signing_authority,
-                )
+                if universal_checkpoint_guard_enabled:
+                    guard = RevisionCheckpointGuard(
+                        checkpoint_path,
+                        database_identity=str(self.universal_state_path),
+                        key_provider=universal_key_provider,
+                        signing_authority=signing_authority,
+                    )
                 try:
                     # Existing bytes and the selected external authority are
                     # checked before restore-time migrations are allowed to
                     # publish a successor revision. The checkpoint is not
                     # advanced until the restored graph passes below.
-                    if persisted_application:
+                    if persisted_application and guard is not None:
                         guard.verify_trusted_prefix(universal_store)
                         bind_external_signing_authority(
                             universal_store,
@@ -3983,7 +4000,11 @@ class ApplicationServer:
                 signing_authority.store.close()
             raise ValueError('universal_registry is required with universal_store')
 
-        if self.universal_state_path is not None and guard is None:
+        if (
+            self.universal_state_path is not None
+            and universal_checkpoint_guard_enabled
+            and guard is None
+        ):
             guard = RevisionCheckpointGuard(
                 checkpoint_path,
                 database_identity=str(self.universal_state_path),

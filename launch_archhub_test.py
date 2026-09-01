@@ -29,7 +29,6 @@ faulthandler.enable(file=_log)
 state_dir = Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"
 state_dir.mkdir(parents=True, exist_ok=True)
 state_path = state_dir / "archhub-test.universal.sqlite3"
-authority_path = state_dir / "checkpoint-authority.sqlite3"
 
 # ONE app. A second double-click fronts nothing and starts nothing --
 # the socket is the cheapest cross-process mutex Windows respects.
@@ -42,39 +41,10 @@ except OSError:
 
 # listdir membership: Path.exists() returns False on a Windows sharing
 # violation (a dying prior instance still holds the handle), which would
-# mislabel a warm store as a first boot and wipe its checkpoint.
+# mislabel a warm store as a first boot.
 first_boot = state_path.name not in os.listdir(state_dir)
 if first_boot:
-    # A fresh store with a stale signed checkpoint (it lives under
-    # %LOCALAPPDATA%/ArchHub/checkpoints keyed by the database path)
-    # reads as "rolled back behind its checkpoint" and is rightly
-    # refused. Fresh means fresh: clear the sidecars AND that checkpoint.
-    import hashlib
     for stale in state_dir.glob(state_path.name + "*"):
-        try:
-            stale.unlink(missing_ok=True)
-        except OSError:
-            pass
-    # Fresh means the WHOLE universe: database, its signing authority,
-    # and every signed checkpoint either of them anchored. Identities come
-    # from the SAME functions the runtime uses -- a hand-rolled hash was a
-    # proxy, and the proxy deleted the wrong anchor for a day.
-    from nodelang.cell_revision_checkpoint import RevisionCheckpointGuard
-    from nodelang.checkpoint_authority_provisioning import (
-        default_checkpoint_authority_path,
-    )
-    authority_db = default_checkpoint_authority_path(state_path)
-    for anchor in (
-        RevisionCheckpointGuard.default_path(state_path),
-        RevisionCheckpointGuard.default_path(authority_db),
-    ):
-        anchor.unlink(missing_ok=True)
-    for stale in authority_db.parent.glob(authority_db.name + "*"):
-        try:
-            stale.unlink(missing_ok=True)
-        except OSError:
-            pass
-    for stale in state_dir.glob(authority_path.name + "*"):
         try:
             stale.unlink(missing_ok=True)
         except OSError:
@@ -120,31 +90,16 @@ except Exception as refusal:
     # it could rebuild is a locked door, not a security posture. The
     # suspect universe is QUARANTINED -- never destroyed -- and a fresh
     # one is born; the refusal is printed, not swallowed.
-    print("  boot refused: %s" % str(refusal).splitlines()[-1][:160])
-    quarantine = state_dir / ("quarantine-%s" % time.strftime("%Y%m%d-%H%M%S"))
-    quarantine.mkdir(parents=True, exist_ok=True)
+    print("  could not open the saved graph: %s"
+          % str(refusal).splitlines()[-1][:160])
+    set_aside = state_dir / ("set-aside-%s" % time.strftime("%Y%m%d-%H%M%S"))
+    set_aside.mkdir(parents=True, exist_ok=True)
     for stale in state_dir.glob(state_path.name + "*"):
         try:
-            stale.rename(quarantine / stale.name)
+            stale.rename(set_aside / stale.name)
         except OSError:
             pass
-    from nodelang.cell_revision_checkpoint import RevisionCheckpointGuard
-    from nodelang.checkpoint_authority_provisioning import (
-        default_checkpoint_authority_path,
-    )
-    authority_db = default_checkpoint_authority_path(state_path)
-    for anchor in (
-        RevisionCheckpointGuard.default_path(state_path),
-        RevisionCheckpointGuard.default_path(authority_db),
-    ):
-        anchor.unlink(missing_ok=True)
-    for stale in authority_db.parent.glob(authority_db.name + "*"):
-        try:
-            stale.unlink(missing_ok=True)
-        except OSError:
-            pass
-    print("  quarantined old universe -> %s" % quarantine.name)
-    print("  rebuilding fresh (~1-2 min) ...")
+    print("  old data kept in %s -- starting a fresh graph ..." % set_aside.name)
     server = _boot()
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 print("  URL:", server.bootstrap_url, flush=True)

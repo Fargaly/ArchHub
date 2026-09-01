@@ -4450,7 +4450,26 @@ class ApplicationServer:
                     if not inside or not resolved.is_file():
                         self._json(404, {'ok': False, 'error': 'no such file'})
                         return
-                    raw = resolved.read_bytes()
+                    if resolved.name == 'map-data.js':
+                        # The cockpit map IS the live graph -- brain,
+                        # cockpit, grand map: one model. Falls back to
+                        # the authored file only if projection refuses.
+                        try:
+                            from .universal_pipeline import (
+                                project_atlas_map,
+                            )
+                            raw = project_atlas_map(
+                                owner.universal_store,
+                                owner.universal_registry,
+                                authentication_context=(
+                                    studio_binding.context
+                                    if studio_binding is not None else None
+                                ),
+                            ).encode('utf-8')
+                        except Exception:
+                            raw = resolved.read_bytes()
+                    else:
+                        raw = resolved.read_bytes()
                     if (
                         resolved.suffix == '.html'
                         and studio_binding is not None

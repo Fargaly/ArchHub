@@ -342,4 +342,80 @@ def seed_wall_pipeline(
     return {"placed": placed, "wired": wired, "revision": store.revision}
 
 
-__all__ = ["run_universal_pipeline", "seed_wall_pipeline"]
+
+_ATLAS_COLORS = (
+    "#d97757", "#5fb3b3", "#7898d6", "#a98cd6", "#e8896a", "#5fc4d4",
+    "#7ec18e", "#b89cdb", "#e5b25a", "#6a9bcc", "#8fd0a0", "#e0916a",
+    "#69c0c0", "#d4a94a", "#c98ab8",
+)
+
+
+def project_atlas_map(store, registry, *, authentication_context=None):
+    """The cockpit map IS the live graph: domains and their members.
+
+    One model, three names -- brain, cockpit, grand map. This projects
+    the founder's actual graph into the atlas shape the cockpit renders,
+    so what the cockpit shows is what the application is.
+    """
+    import json as _json
+
+    from .universal_application import _nested_canvas_scope
+
+    snapshot = store.snapshot()
+    projection = project_universal_canvas(
+        store, registry, authentication_context=authentication_context
+    )
+    owned = _owner_properties(snapshot, registry)
+
+    def rows_of(root):
+        return {
+            label: value
+            for label, (_rel, value) in (owned.get(root) or {}).items()
+        }
+
+    domains = []
+    nodes = []
+    top = [n for n in projection.get("nodes", ()) if n.get("openable")]
+    per_row = 4
+    for index, item in enumerate(top):
+        key = str(item["id"])
+        colour = _ATLAS_COLORS[index % len(_ATLAS_COLORS)]
+        gx = 40 + (index % per_row) * 650
+        gy = 40 + (index // per_row) * 560
+        domains.append({
+            "key": key, "title": item.get("label") or key,
+            "x": gx, "y": gy, "w": 560, "h": 480, "col": colour,
+        })
+        try:
+            member_roots, _rels, _props = _nested_canvas_scope(
+                snapshot, registry, key
+            )
+        except Exception:
+            member_roots = ()
+        for spot, member in enumerate(tuple(member_roots)[:24]):
+            data = rows_of(member)
+            title = data.get("title") or data.get("label") or member
+            params = [
+                {"k": label, "v": str(value)[:48]}
+                for label, value in data.items()
+                if label not in {
+                    "title", "label", "status", "position_x", "position_y",
+                    "engine",
+                }
+            ][:4]
+            nodes.append({
+                "id": member, "dom": key,
+                "cat": "logic" if not data.get("engine") else "read",
+                "title": str(title)[:60],
+                "sub": str(data.get("engine") or data.get("status") or "")[:80],
+                "status": "live" if data.get("status") else "partial",
+                "params": params,
+                "x": gx + 40 + (spot % 2) * 260,
+                "y": gy + 60 + (spot // 2) * 120,
+            })
+    return "window.ATLAS_MAP = %s; window.ATLAS_LIVE = true;" % _json.dumps({
+        "domains": domains, "nodes": nodes, "wires": [],
+    })
+
+
+__all__ = ["run_universal_pipeline", "seed_wall_pipeline", "project_atlas_map"]

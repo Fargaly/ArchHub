@@ -3304,6 +3304,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/agent", "edit"),
     ("POST", "/api/universal/run-graph", "edit"),
     ("POST", "/api/universal/set-property", "edit"),
+    ("POST", "/api/universal/pick-file", "inspect"),
     ("GET", "/api/universal/hosts", "read"),
     ("POST", "/api/universal/pipeline-seed", "edit"),
     ("POST", "/api/universal/interaction", "edit"),

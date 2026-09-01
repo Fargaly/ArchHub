@@ -83,11 +83,13 @@ def _ensure_device_custody(server, reference) -> str:
                 "device-proof-key-thumbprint:" + reference.thumbprint
             ).encode("ascii"),
         ),))
-    custody_root, _ = register_device_custody(
-        store,
-        server.universal_registry.device_custody_protocol,
-        reference,
-    )
+    custody_root = "device-custody:sha256:" + reference.thumbprint
+    if custody_root not in store.snapshot().cells:
+        custody_root, _ = register_device_custody(
+            store,
+            server.universal_registry.device_custody_protocol,
+            reference,
+        )
     bind_universal_runtime_agent_body_device_custody(
         store,
         server.universal_registry,

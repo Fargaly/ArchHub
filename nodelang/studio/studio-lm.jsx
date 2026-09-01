@@ -1075,8 +1075,6 @@ const ChatView = ({ session, model, setMode }) => {
                 fontFamily:LM.serif, fontStyle:'italic', fontSize:17, color:LM.ink,
                 padding:'2px 0 8px', letterSpacing:'-0.01em' }}/>
             <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-              <Chip mono>@ skill</Chip>
-              <Chip>＋ sketch</Chip>
               <button onClick={() => setMode('canvas')} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
@@ -2561,9 +2559,12 @@ const FullParam = ({ p }) => {
     setTimeout(() => setState(''), 2500);
   };
   const head = (
-    <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-      <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
-      {state ? <span style={{ fontFamily:LM.mono, fontSize:9, color: state === 'saved' ? LM.ok : state === 'saving' ? LM.inkMuted : LM.err }}>{state}</span> : null}
+    <div>
+      <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+        <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
+        {state ? <span style={{ fontFamily:LM.mono, fontSize:9, color: state === 'saved' ? LM.ok : state === 'saving' ? LM.inkMuted : LM.err }}>{state}</span> : null}
+      </div>
+      {p.help ? <div style={{ fontFamily:LM.sans, fontSize:10.5, color:LM.inkMuted, marginTop:2, lineHeight:1.35 }}>{p.help}</div> : null}
     </div>
   );
   if (p.type === 'slider') {
@@ -2581,6 +2582,30 @@ const FullParam = ({ p }) => {
         </div>
         <div style={{ display:'flex', justifyContent:'space-between', marginTop:3, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>
           <span>{min}</span><span>{max}</span>
+        </div>
+      </div>
+    );
+  }
+  if (p.type === 'path') {
+    return (
+      <div>
+        {head}
+        <div style={{ display:'flex', gap:6, marginTop:4 }}>
+          <input value={v}
+            onChange={e => setV(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') commit(e.currentTarget.value); }}
+            onBlur={e => { if (String(e.target.value) !== String(p.v)) commit(e.target.value); }}
+            placeholder="Choose a file…"
+            style={{ flex:1, padding:'7px 10px', background:LM.bg,
+              border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+              fontFamily:LM.mono, fontSize:11, color:LM.ink, outline:'none' }}/>
+          <button onClick={async () => {
+            const chosen = await window.ARCHHUB_PICK_FILE?.(p.k, p.filter || '');
+            if (chosen) { setV(chosen); commit(chosen); }
+          }} style={{ padding:'7px 12px', background:LM.bgSoft,
+            border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+            fontFamily:LM.mono, fontSize:10.5, color:LM.ink, cursor:'pointer',
+            whiteSpace:'nowrap' }}>Browse…</button>
         </div>
       </div>
     );

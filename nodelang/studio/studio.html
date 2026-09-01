@@ -56,18 +56,27 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_RUN = () => jpost('/api/universal/run-graph', {});
     window.ARCHHUB_SET_PROP = (relation, value) =>
       jpost('/api/universal/set-property', {relation, value});
+    window.ARCHHUB_PICK_FILE = async (title, filter) =>
+      (await jpost('/api/universal/pick-file', {title, filter})).path || '';
     const PARAM_SPECS = {
-      threshold: {type:'slider', min:10, max:250, step:5},
-      min_length: {type:'slider', min:5, max:200, step:5},
-      max_gap: {type:'slider', min:1, max:40, step:1},
-      mm_per_pixel: {type:'number'},
-      height_mm: {type:'slider', min:2000, max:6000, step:100},
-      image_path: {type:'text'},
-      file_path: {type:'text'},
-      layer: {type:'text'},
-      level: {type:'text'},
-      session: {type:'text'},
-      prompt: {type:'text'},
+      threshold: {type:'slider', min:10, max:250, step:5,
+        help:'Edge sensitivity — lower finds more lines'},
+      min_length: {type:'slider', min:5, max:200, step:5,
+        help:'Ignore segments shorter than this (px)'},
+      max_gap: {type:'slider', min:1, max:40, step:1,
+        help:'Bridge breaks up to this many px'},
+      mm_per_pixel: {type:'number',
+        help:'Scale — real millimetres per image pixel'},
+      height_mm: {type:'slider', min:2000, max:6000, step:100,
+        help:'Wall height in millimetres'},
+      image_path: {type:'path', filter:'Images (*.png *.jpg *.jpeg *.bmp)',
+        help:'The sketch image to read'},
+      file_path: {type:'path', filter:'CAD (*.dxf)',
+        help:'The DXF file to read'},
+      layer: {type:'text', help:'Only this layer; empty = all'},
+      level: {type:'text', help:'Revit level name to build on'},
+      session: {type:'text', help:'Revit port to build into (e.g. 48884)'},
+      prompt: {type:'text', help:'What to recall from the brain'},
     };
     const canvas = await jget('/api/universal/canvas');
     let hosts = [];

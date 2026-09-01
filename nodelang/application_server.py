@@ -5573,6 +5573,25 @@ class ApplicationServer:
                                 )
                                 self._json(200, run_result)
                                 return
+                            elif self.path == '/api/universal/pick-file':
+                                picker = getattr(
+                                    owner, 'native_file_picker', None
+                                )
+                                if picker is None:
+                                    self._json(200, {
+                                        'ok': True, 'path': '',
+                                        'note': 'no native picker in this '
+                                                'runtime',
+                                    })
+                                    return
+                                chosen = picker(
+                                    str(body.get('title') or 'Choose a file'),
+                                    str(body.get('filter') or ''),
+                                )
+                                self._json(200, {
+                                    'ok': True, 'path': str(chosen or ''),
+                                })
+                                return
                             elif self.path == '/api/universal/set-property':
                                 from .universal_application import (
                                     edit_universal_property,

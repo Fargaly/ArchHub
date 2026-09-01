@@ -176,6 +176,23 @@ def _to_studio(ok):
         _booted["done"] = True
         view.load(QUrl(server.public_url + "/studio"))
 view.loadFinished.connect(_to_studio)
+# The studio's Browse buttons open THIS window's native file dialog; the
+# chosen path goes back over the same origin. Runs on the Qt thread.
+def _pick_file(title, name_filter):
+    from PyQt6.QtWidgets import QFileDialog
+    result = {}
+    done = threading.Event()
+    def ask():
+        chosen, _ = QFileDialog.getOpenFileName(
+            window, title, "", name_filter or "All files (*.*)")
+        result["path"] = chosen
+        done.set()
+    from PyQt6.QtCore import QTimer
+    QTimer.singleShot(0, ask)
+    done.wait(120)
+    return result.get("path", "")
+import threading
+server.native_file_picker = _pick_file
 # A dead render process reloads instead of leaving a dead window.
 def _revive(_status, _code):
     print("  render process died -- reloading", flush=True)

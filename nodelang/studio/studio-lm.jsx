@@ -14,6 +14,7 @@ const LM = window.AH;  // tokens.jsx — single source of truth
 
 // ─── Categories — each is a node type with color + icon + role ───
 const CAT = {
+  wire:      { col:LM.inkSoft, icon:'⇄', label:'CONNECTION' },
   host:      { col:LM.cyan,    icon:'⌬', label:'HOST',      role:'Connected app' },
   read:      { col:LM.cyan,    icon:'◇', label:'READ',      role:'Pulls data from a host' },
   filter:    { col:LM.inkSoft, icon:'⌗', label:'FILTER',    role:'Filters a stream' },
@@ -962,9 +963,11 @@ const SessionCard = ({ s, onOpen }) => {
 // ──────────────────────── WORKSPACE ────────────────────────
 const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, onHome }) => {
   const allNodes = [...LM_GRAPH.nodes, ...(userNodes || [])];
-  const focusNode = allNodes.find(n => n.id === focusId);
-  const focusWire = !focusNode
-    ? (LM_GRAPH.wires || []).find(w => w.id === focusId) : null;
+  // A wire is a node: focusId may name one, and the SAME rail renders it.
+  const wireIdx = String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1;
+  const focusNode = wireIdx >= 0
+    ? window.wireAsNode(LM_GRAPH.wires[wireIdx], wireIdx, allNodes)
+    : allNodes.find(n => n.id === focusId);
   const [mode, setMode] = React.useState('chat');   // chat (calm, default) | canvas (node graph)
   return (
     <main style={{
@@ -977,9 +980,7 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
         session={session} model={model} openTabs={openTabs}
         setOpenId={setOpenId} closeTab={closeTab} mode={mode} setMode={setMode}
         setPickerOpen={setPickerOpen} setSettingsOpen={setSettingsOpen} onHome={onHome}/>
-      {focusWire ? (
-        <RelationRail wire={focusWire} nodes={allNodes}/>
-      ) : mode === 'chat' ? (
+      {mode === 'chat' ? (
         <>
           <ChatView session={session} model={model} setMode={setMode}/>
           <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
@@ -1002,16 +1003,9 @@ const ChatView = ({ session, model, setMode }) => {
   const [draft, setDraft] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const stamp = () => new Date().toTimeString().slice(0, 5);
-  const tier = window.ARCHHUB_ACCOUNT?.tier || 'founder';
-  const agentOpen = ['pro', 'firm', 'founder'].includes(tier);
   const send = async () => {
     const text = draft.trim();
     if (!text || busy || !window.ARCHHUB_AGENT) return;
-    if (!agentOpen) {
-      setMessages(m => [...m, { me:false, time:stamp(),
-        text:'The agent composer is open on Pro and Firm tiers. The founder can open it for your account from Settings.' }]);
-      return;
-    }
     setMessages(m => [...m, { me:true, time:stamp(), text }]);
     setDraft('');
     setBusy(true);
@@ -1019,10 +1013,8 @@ const ChatView = ({ session, model, setMode }) => {
       const answer = await window.ARCHHUB_AGENT(text);
       setMessages(m => [...m, { me:false, time:stamp(), text:answer }]);
     } catch (error) {
-      setMessages(m => [...m, {
-        me:false, time:stamp(),
-        text:'refused: ' + (error?.message || error),
-      }]);
+      setMessages(m => [...m, { me:false, time:stamp(),
+        text:'refused: ' + (error?.message || error) }]);
     } finally { setBusy(false); }
   };
   return (
@@ -1086,6 +1078,8 @@ const ChatView = ({ session, model, setMode }) => {
                 fontFamily:LM.serif, fontStyle:'italic', fontSize:17, color:LM.ink,
                 padding:'2px 0 8px', letterSpacing:'-0.01em' }}/>
             <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <Chip mono>@ skill</Chip>
+              <Chip>＋ sketch</Chip>
               <button onClick={() => setMode('canvas')} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
@@ -1103,51 +1097,6 @@ const ChatView = ({ session, model, setMode }) => {
 };
 
 // ─── Calm inference inspector (chat mode right rail) ───
-// The parametric chain, LIVE: the actual wired pipeline from the graph,
-// in topological order, each stage's real editable parameters. Nothing
-// here is authored -- an empty canvas shows an empty chain, honestly.
-const LiveChain = () => {
-  const graph = window.ARCHHUB_LIVE?.graph;
-  if (!graph || !graph.nodes.length) return null;
-  const wired = new Set(graph.wires.flatMap(w => [w.from[0], w.to[0]]));
-  const incoming = {};
-  graph.wires.forEach(w => { incoming[w.to[0]] = (incoming[w.to[0]] || 0) + 1; });
-  const stages = [];
-  let frontier = graph.nodes.filter(n => wired.has(n.id) && !incoming[n.id]);
-  const seen = new Set();
-  while (frontier.length && stages.length < 8) {
-    stages.push(frontier);
-    frontier.forEach(n => seen.add(n.id));
-    const next = new Set();
-    graph.wires.forEach(w => {
-      if (seen.has(w.from[0]) && !seen.has(w.to[0])) next.add(w.to[0]);
-    });
-    frontier = graph.nodes.filter(n => next.has(n.id));
-  }
-  if (!stages.length) return null;
-  return (
-    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
-      <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
-        {stages.map((_, i) => (
-          <React.Fragment key={i}>
-            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${LM.accent}`, background:LM.bg, color:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:9, fontWeight:600 }}>{i + 1}</div>
-            {i < stages.length - 1 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
-          </React.Fragment>
-        ))}
-      </div>
-      {stages.map((nodes, i) => nodes.map(n => (
-        <div key={n.id} style={{ marginBottom:8 }}>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.05em', marginBottom:4 }}>{i + 1} · {n.title}</div>
-          {(n.params || []).filter(p => p.type === 'slider').slice(0, 2).map(p => (
-            <FullParam key={p.k} p={p}/>
-          ))}
-        </div>
-      )))}
-    </div>
-  );
-};
-
 const InferenceInspector = ({ model, setPickerOpen }) => (
   <aside style={{
     gridColumn:'2', gridRow:'2', minHeight:0, overflow:'auto',
@@ -1177,24 +1126,32 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
       <CalmSlider k="max tokens" v={4096} min={256} max={32000} step={256} int/>
     </div>
 
-    {/* parametric chain -- the LIVE wired pipeline, stage by stage */}
-    <LiveChain/>
+    {/* parametric chain */}
+    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · 2 STAGES</div>
+      <div style={{ display:'flex', alignItems:'center', gap:0, marginBottom:10 }}>
+        {[1,2].map(i => (
+          <React.Fragment key={i}>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${i===1?LM.ok:LM.accent}`, background:LM.bg, color:i===1?LM.ok:LM.accent, display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:9, fontWeight:600 }}>{i}</div>
+            {i<2 && <div style={{ flex:1, height:2, background:LM.accent }}/>}
+          </React.Fragment>
+        ))}
+      </div>
+      <CalmSlider k="offset_mm" v={240} min={60} max={600} step={10} unit="mm"/>
+      <CalmRow k="scale" v="1:50"/>
+      <CalmRow k="align" v="parallel"/>
+    </div>
 
     {/* connectors */}
     <div style={{ padding:'14px 16px' }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {(window.ARCHHUB_LIVE?.connectors || []).length}</div>
-      {(window.ARCHHUB_LIVE?.connectors || []).map(c => {
-        const col = c.state === 'connected' ? LM.ok
-          : c.state === 'listening' ? LM.ok
-          : c.state === 'installed' ? LM.warn : LM.inkDim;
-        return (
-          <div key={c.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }} title={c.detail}>
-            <span style={{ width:7, height:7, borderRadius:'50%', background:col, boxShadow:`0 0 0 3px ${col}22` }}/>
-            <span style={{ flex:1, fontSize:12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
-            <span style={{ fontFamily:LM.mono, fontSize:9.5, color:col, letterSpacing:'0.06em', textTransform:'uppercase' }}>{c.state}</span>
-          </div>
-        );
-      })}
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · 3</div>
+      {[['Revit 2025','#5fb3b3','connected'],['Blender 5.1','#d97757','syncing'],['Speckle','#a98cd6','connected']].map(([n,c,s])=>(
+        <div key={n} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
+          <span style={{ width:7, height:7, borderRadius:'50%', background:c, boxShadow:`0 0 0 3px ${c}22`, animation: s==='syncing' ? 'lmPulse 1.2s infinite' : 'none' }}/>
+          <span style={{ flex:1, fontSize:12.5 }}>{n}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:9.5, color: s==='connected'?LM.ok:LM.warn, letterSpacing:'0.06em', textTransform:'uppercase' }}>{s}</span>
+        </div>
+      ))}
     </div>
   </aside>
 );
@@ -1415,22 +1372,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   };
 
   const onContextMenu = (e) => {
-    const card = e.target.closest('.lm-node');
-    if (card) {
-      e.preventDefault();
-      const rect = wrapRef.current.getBoundingClientRect();
-      const nid = card.dataset.nodeId;
-      if (nid) {
-        setFocusId(nid);
-        setCtxMenu({
-          x: Math.max(8, Math.min(e.clientX - rect.left, rect.width - 228)),
-          y: Math.max(8, Math.min(e.clientY - rect.top, rect.height - 220)),
-          nodeId: nid,
-        });
-      }
-      return;
-    }
-    if (e.target.closest('[data-no-pan]')) return;
+    if (e.target.closest('.lm-node') || e.target.closest('[data-no-pan]')) return;
     e.preventDefault();
     const rect = wrapRef.current.getBoundingClientRect();
     // Clamp so the menu never spills past the canvas edges (menu ≈ 220×350).
@@ -1510,6 +1452,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     allNodes.map(n => [n.id, { ...n, x: positions[n.id]?.x ?? n.x, y: positions[n.id]?.y ?? n.y }])
   );
 
+  const focusWireIdx = String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1;
   const connectedIds = new Set([focusId]);
   LM_GRAPH.wires.forEach(w => {
     if (w.from[0] === focusId) connectedIds.add(w.to[0]);
@@ -1525,11 +1468,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (fromIdx < 0 || toIdx < 0) return null;
     const x1 = fromNode.x + fromNode.w, y1 = fromNode.y + socketY(fromIdx);
     const x2 = toNode.x,                y2 = toNode.y + socketY(toIdx);
-    const touches = w.from[0] === focusId || w.to[0] === focusId
-      || w.id === focusId;
+    const touches = w.from[0] === focusId || w.to[0] === focusId || i === focusWireIdx;
     return {
-      i, x1, y1, x2, y2,
-      id: w.id, fromTitle: fromNode.title, toTitle: toNode.title,
+      i, x1, y1, x2, y2, selected: i === focusWireIdx,
       t: fromNode.outs[fromIdx].t,
       animated: fromNode.state === 'running' || toNode.state === 'running',
       focused: touches,
@@ -1563,7 +1504,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         position:'absolute', left:pan.x, top:pan.y,
         transform:`scale(${zoom})`, transformOrigin:'0 0',
       }}>
-        <svg width="2400" height="1400" style={{ position:'absolute', left:0, top:0, pointerEvents:'none', overflow:'visible' }}>
+        <svg width="2400" height="1400" style={{ position:'absolute', left:0, top:0, pointerEvents:'none', overflow:'visible' }} className="lm-wires">
           <defs>
             <filter id="lm-wire-glow" x="-20%" y="-20%" width="140%" height="140%">
               <feGaussianBlur stdDeviation="1.5" result="b"/>
@@ -1574,16 +1515,17 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             const dx = Math.max(40, Math.abs(w.x2 - w.x1) * 0.5);
             const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
             const color = WIRE[w.t] || LM.inkSoft;
-            const strokeW = w.focused ? 2.4 : 1.4;
+            const strokeW = w.selected ? 3.2 : w.focused ? 2.4 : 1.4;
             const op = w.focused ? 1 : 0.5;
             return (
               <g key={w.i}>
-                <path d={d} stroke={color} strokeWidth={strokeW} fill="none" opacity={op} filter={w.focused ? "url(#lm-wire-glow)" : undefined}/>
-                {w.id ? (
-                  <path d={d} stroke="transparent" strokeWidth={14} fill="none"
-                    style={{ pointerEvents:'stroke', cursor:'pointer' }}
-                    onClick={e => { e.stopPropagation(); setFocusId(w.id); }}/>
-                ) : null}
+                <path d={d} stroke="transparent" strokeWidth={14} fill="none"
+                  onClick={(e) => { e.stopPropagation(); setFocusId('wire:' + w.i); }}
+                  style={{ pointerEvents: 'stroke', cursor: 'pointer' }}>
+                  <title>Open this connection</title>
+                </path>
+                {w.selected && <path d={d} stroke={LM.accent} strokeWidth={strokeW + 5} fill="none" opacity={0.22} strokeLinecap="round"/>}
+                <path d={d} stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} filter={w.focused ? "url(#lm-wire-glow)" : undefined} style={{ pointerEvents: 'none' }}/>
                 {w.animated && (
                   <path d={d} stroke={color} strokeWidth={strokeW} fill="none" strokeDasharray="6 10" style={{ animation:'lmDash 0.9s linear infinite' }}/>
                 )}
@@ -1628,11 +1570,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       }} onFit={onResetView} setLibraryOpen={setLibraryOpen}/>
       <FloatingComposer setLibraryOpen={setLibraryOpen}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
-      {ctxMenu && (ctxMenu.nodeId
-        ? <NodeMenu x={ctxMenu.x} y={ctxMenu.y}
-            node={allNodes.find(n => n.id === ctxMenu.nodeId)}
-            onClose={() => setCtxMenu(null)}/>
-        : <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }} onFit={onResetView} onClose={() => setCtxMenu(null)}/>)}
+      {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }} onFit={onResetView} onClose={() => setCtxMenu(null)}/>}
       <CanvasHint/>
     </div>
   );
@@ -1654,45 +1592,6 @@ const CanvasHint = () => (
     <span>right-click → menu</span>
   </div>
 );
-
-// Right-click node menu -- every row does something real.
-const NodeMenu = ({ x, y, node, onClose }) => {
-  React.useEffect(() => {
-    const off = () => onClose();
-    document.addEventListener('click', off);
-    return () => document.removeEventListener('click', off);
-  }, []);
-  if (!node) return null;
-  const row = (label, action, tone) => (
-    <button key={label} onClick={async e => {
-      e.stopPropagation();
-      try { await action(); } finally { onClose(); }
-    }} style={{
-      display:'block', width:'100%', textAlign:'left', padding:'7px 12px',
-      background:'transparent', border:0, cursor:'pointer',
-      fontFamily:LM.sans, fontSize:12.5, color: tone || LM.ink,
-    }} onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
-       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-      {label}
-    </button>
-  );
-  return (
-    <div data-no-pan style={{
-      position:'absolute', left:x, top:y, width:220, zIndex:60,
-      background:LM.bgPanel, border:`1px solid ${LM.line}`,
-      borderRadius:LM.rad.md, padding:'6px 0',
-      boxShadow:'0 12px 32px rgba(0,0,0,0.45)',
-    }}>
-      <div style={{ padding:'5px 12px 7px', fontFamily:LM.mono, fontSize:9.5,
-        color:LM.inkMuted, letterSpacing:'0.12em',
-        borderBottom:`1px solid ${LM.lineSoft}` }}>{(node.title || node.id).toUpperCase()}</div>
-      {row('↻ Run graph from here', async () => { await window.ARCHHUB_RUN?.(); window.location.reload(); })}
-      {row('Copy node id', () => navigator.clipboard?.writeText(node.id))}
-      {row('Copy engine', () => navigator.clipboard?.writeText(node.sub || ''))}
-      {node.status ? row('Copy last result', () => navigator.clipboard?.writeText(node.status)) : null}
-    </div>
-  );
-};
 
 // Right-click canvas context menu
 const CanvasMenu = ({ x, y, onAddNode, onFit, onClose }) => {
@@ -1756,7 +1655,7 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
   const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
   return (
-    <div className="lm-node" data-node-id={n.id} onClick={onFocus}
+    <div className="lm-node" onClick={onFocus}
       style={{
         position:'absolute', left:n.x, top:n.y, width:w, minHeight:n.h,
         background:LM.bgPanel,
@@ -1852,9 +1751,8 @@ const Socket = ({ side, i, t, label }) => {
 
 // ─── per-category body content ───
 const NodeBody = ({ n, expanded, onToggleExpand }) => {
-  // A GRAPH-BACKED node draws exactly its real parameters and its last
-  // run answer -- never a category's demo furniture. The per-category
-  // bodies below belong to palette demos only.
+  // A GRAPH-BACKED node draws exactly its real parameters, its last run
+  // answer, and what actually flowed. Never a category's demo furniture.
   if (n.live) return <LiveBody n={n}/>;
   switch (n.cat) {
     case 'host':      return <HostBody n={n}/>;
@@ -1886,8 +1784,7 @@ const LiveBody = ({ n }) => (
   </div>
 );
 
-// The watcher's eyes: the ACTUAL line segments the last run produced,
-// drawn to scale inside the card. No run yet = nothing, honestly.
+// The watcher's eyes: the ACTUAL segments the last run produced.
 const LinePreview = ({ id }) => {
   const lines = window.ARCHHUB_LAST_RUN?.lines?.[id];
   if (!lines || !lines.length) return null;
@@ -2422,52 +2319,6 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
 );
 
 // ──────────────────────── NODE RAIL ────────────────────────
-const RelationRail = ({ wire, nodes }) => {
-  const source = nodes.find(n => n.id === wire.from[0]);
-  const target = nodes.find(n => n.id === wire.to[0]);
-  return (
-    <aside className="ah-scroll" style={{
-      gridColumn:'2', gridRow:'2', minHeight:0, overflow:'auto',
-      background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
-      padding:'14px 16px 20px', display:'flex', flexDirection:'column',
-      gap:LM.sp.lg,
-    }}>
-      <div>
-        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.accent, letterSpacing:'0.18em' }}>RELATION NODE</div>
-        <div style={{ fontFamily:LM.serif, fontSize:19, letterSpacing:'-0.015em', marginTop:5, lineHeight:1.2 }}>
-          {(source?.title || wire.from[0])} {'→'} {(target?.title || wire.to[0])}
-        </div>
-        <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em', wordBreak:'break-all' }}>{wire.id}</div>
-      </div>
-      <div>
-        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:LM.sp.sm }}>DATA FLOW</div>
-        <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, padding:'10px 12px', display:'flex', flexDirection:'column', gap:8 }}>
-          <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
-            <span style={{ color:LM.inkMuted }}>carries</span>
-            <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
-            <span style={{ color: (window.WIRE || {})[wire.t] || LM.ink }}>{wire.t}</span>
-          </div>
-          <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
-            <span style={{ color:LM.inkMuted }}>from</span>
-            <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
-            <span style={{ color:LM.ink }}>{source?.title || '?'}</span>
-          </div>
-          <div style={{ display:'flex', gap:6, fontFamily:LM.mono, fontSize:10 }}>
-            <span style={{ color:LM.inkMuted }}>to</span>
-            <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
-            <span style={{ color:LM.ink }}>{target?.title || '?'}</span>
-          </div>
-        </div>
-      </div>
-      <button onClick={() => navigator.clipboard?.writeText(wire.id)} style={{
-        padding:'8px 12px', background:LM.bgSoft, border:`1px solid ${LM.line}`,
-        borderRadius:LM.rad.sm, fontFamily:LM.mono, fontSize:10.5, color:LM.ink,
-        cursor:'pointer', textAlign:'left',
-      }}>Copy relation id</button>
-    </aside>
-  );
-};
-
 const NodeRail = ({ node }) => {
   if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
   // AI node gets a dedicated conversation rail — full scrollback + composer
@@ -2492,52 +2343,10 @@ const NodeRail = ({ node }) => {
         {node.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:5, letterSpacing:'0.04em' }}>{node.sub}</div>}
       </div>
 
-      {(node.ins || node.outs) && (
-        <div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:LM.sp.sm }}>CONNECTIONS</div>
-          <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, padding:'10px 12px', display:'flex', flexDirection:'column', gap:10 }}>
-            {node.ins?.length > 0 && (
-              <div>
-                <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:LM.sp.xs }}>RECEIVES</div>
-                {node.ins.map(s => <PinRow key={s.id} s={s} side="in"/>)}
-              </div>
-            )}
-            {node.outs?.length > 0 && (
-              <div>
-                <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:LM.sp.xs }}>SENDS</div>
-                {node.outs.map(s => <PinRow key={s.id} s={s} side="out"/>)}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {node.params && (
-        <div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', marginBottom:10 }}>SETTINGS</div>
-          <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
-            {node.params.map(p => <FullParam key={p.k} p={p}/>)}
-          </div>
-        </div>
-      )}
-
-      <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-        <button onClick={async (e) => {
-          const b = e.currentTarget;
-          b.textContent = 'running…'; b.disabled = true;
-          try {
-            const result = await window.ARCHHUB_RUN?.();
-            const answer = result?.display?.[node.id]
-              || result?.pending?.[node.id] || 'ran';
-            b.textContent = String(answer).slice(0, 42);
-          } catch (err) {
-            b.textContent = 'refused: ' + (err?.message || err).slice(0, 32);
-          } finally {
-            b.disabled = false;
-            setTimeout(() => { b.textContent = '↻ Rerun this node'; }, 6000);
-          }
-        }} title="Run the graph and land this node's answer" style={{ ...railBtn(), background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0 }}>↻ Rerun this node</button>
-      </div>
+      {/* Connections, parameters and actions are one instrument — see studio-params.jsx.
+          The old block was dead form widgets: native selects, a bare range input and four
+          equal-weight buttons, none of which could be typed into or reverted. */}
+      <window.NodeInspector key={node.id} node={node}/>
     </aside>
   );
 };
@@ -2706,107 +2515,6 @@ const ChatAction = ({ children }) => (
   }}>{children}</button>
 );
 
-const PinRow = ({ s, side }) => {
-  const col = WIRE[s.t] || LM.inkSoft;
-  return (
-    <div style={{ display:'flex', alignItems:'center', gap:7, padding:'2px 0', fontFamily:LM.mono, fontSize:10.5 }}>
-      <span style={{ width:7, height:7, borderRadius:'50%', background: side==='out' ? col : LM.bgPanel, border:`1.5px solid ${col}`, flexShrink:0 }}/>
-      <span style={{ color:LM.inkMuted, letterSpacing:'0.04em' }}>{s.label || s.id}</span>
-      <div style={{ flex:1, borderBottom:`1px dashed ${LM.lineSoft}`, marginBottom:2 }}/>
-      <span style={{ color:LM.ink }}>{s.val || s.t}</span>
-    </div>
-  );
-};
-
-const railBtn = () => ({
-  display:'flex', alignItems:'center', gap:9, padding:'7px 11px',
-  background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-  color:LM.ink, fontFamily:LM.sans, fontSize:12.5, cursor:'pointer', textAlign:'center',
-  justifyContent:'center', fontWeight:500,
-});
-
-const FullParam = ({ p }) => {
-  const [v, setV] = React.useState(p.v);
-  const [state, setState] = React.useState('');
-  React.useEffect(() => { setV(p.v); }, [p.rel, p.v]);
-  const commit = async (value) => {
-    if (!p.rel || !window.ARCHHUB_SET_PROP) return;
-    setState('saving');
-    try {
-      await window.ARCHHUB_SET_PROP(p.rel, String(value));
-      setState('saved');
-    } catch (error) {
-      setState('refused: ' + (error?.message || error).slice(0, 40));
-    }
-    setTimeout(() => setState(''), 2500);
-  };
-  const head = (
-    <div>
-      <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-        <span style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, flex:1, letterSpacing:'0.04em' }}>{p.k}</span>
-        {state ? <span style={{ fontFamily:LM.mono, fontSize:9, color: state === 'saved' ? LM.ok : state === 'saving' ? LM.inkMuted : LM.err }}>{state}</span> : null}
-      </div>
-      {p.help ? <div style={{ fontFamily:LM.sans, fontSize:10.5, color:LM.inkMuted, marginTop:2, lineHeight:1.35 }}>{p.help}</div> : null}
-    </div>
-  );
-  if (p.type === 'slider') {
-    const min = Number(p.min ?? 0), max = Number(p.max ?? 100), step = Number(p.step ?? 1);
-    const num = Number(v) || min;
-    return (
-      <div>
-        {head}
-        <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
-          <input type="range" min={min} max={max} step={step} value={num}
-            onChange={e => setV(e.target.value)}
-            onPointerUp={e => commit(e.target.value)}
-            style={{ flex:1, accentColor:LM.accent, height:4 }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:11.5, color:LM.ink, fontWeight:500, minWidth:40, textAlign:'right' }}>{num}</span>
-        </div>
-        <div style={{ display:'flex', justifyContent:'space-between', marginTop:3, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.04em' }}>
-          <span>{min}</span><span>{max}</span>
-        </div>
-      </div>
-    );
-  }
-  if (p.type === 'path') {
-    return (
-      <div>
-        {head}
-        <div style={{ display:'flex', gap:6, marginTop:4 }}>
-          <input value={v}
-            onChange={e => setV(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commit(e.currentTarget.value); }}
-            onBlur={e => { if (String(e.target.value) !== String(p.v)) commit(e.target.value); }}
-            placeholder="Choose a file…"
-            style={{ flex:1, padding:'7px 10px', background:LM.bg,
-              border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-              fontFamily:LM.mono, fontSize:11, color:LM.ink, outline:'none' }}/>
-          <button onClick={async () => {
-            const chosen = await window.ARCHHUB_PICK_FILE?.(p.k, p.filter || '');
-            if (chosen) { setV(chosen); commit(chosen); }
-          }} style={{ padding:'7px 12px', background:LM.bgSoft,
-            border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-            fontFamily:LM.mono, fontSize:10.5, color:LM.ink, cursor:'pointer',
-            whiteSpace:'nowrap' }}>Browse…</button>
-        </div>
-      </div>
-    );
-  }
-  const numeric = p.type === 'number';
-  return (
-    <div>
-      {head}
-      <input value={v}
-        type={numeric ? 'number' : 'text'}
-        onChange={e => setV(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') commit(e.currentTarget.value); }}
-        onBlur={e => { if (String(e.target.value) !== String(p.v)) commit(e.target.value); }}
-        style={{ width:'100%', marginTop:4, padding:'7px 10px', background:LM.bg,
-          border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
-          fontFamily:LM.mono, fontSize:11, color:LM.ink, outline:'none' }}/>
-    </div>
-  );
-};
 
 // ──────────────────────── SETTINGS ────────────────────────
 const SET_LS = 'archhub.studio.settings.v1';
@@ -3746,7 +3454,7 @@ POST /v1/brain/promote         → { id, to: "practice" }`}</DCode>
 
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
-  const live = (window.ARCHHUB_LIVE?.hosts || []).length;
+  const live = LM_HOSTS.filter(h => h.state !== 'off').length;
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     return (
@@ -3768,7 +3476,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
       padding:'0 10px', display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-        <span style={{ color:LM.ok }}>●</span> server {window.location.host} · {live} host{live === 1 ? '' : 's'} live
+        <span style={{ color:LM.ok }}>●</span> server :7300 · {live}/{LM_HOSTS.length} hosts
       </StripItem>
       {session ? (
         <>
@@ -3776,7 +3484,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
           <StripItem>{session.file}</StripItem>
           <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span>
+            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span> · 4.2k tok · $0.024
           </StripItem>
         </>
       ) : (
@@ -3790,9 +3498,6 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
-      {window.ARCHHUB_ACCOUNT?.founder ? (
-        <a href="https://archhub-cloud.fly.dev/founder" target="_blank" rel="noreferrer" title="Your 24/7 cloud cockpit" style={{ color:LM.accent, textDecoration:'none', fontFamily:LM.mono, fontSize:10, letterSpacing:'0.08em' }}>cockpit</a>
-      ) : null}
       <StripItem>v1.4 prototype</StripItem>
     </div>
   );

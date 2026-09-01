@@ -68,6 +68,11 @@ const AC_BOOT = [
   { k: 'canvas',  label: 'Canvas',             detail: '11 nodes restored',       ms: 1460 },
 ];
 
+// The boot screen is a HELD MOMENT, not a dashboard. The old one was a full title block —
+// header, five listed rows, a big percentage, a footer — which is a lot of furniture to read
+// in two seconds. Reduced to the three things that belong on a splash: the mark, one light
+// line naming what is happening right now, and a hairline of progress on the bottom edge of
+// the screen. Everything it used to report is still true; it is reported one line at a time.
 function AppBoot({ onDone, account }) {
   const [t, setT] = React.useState(0);
   const [failed, setFailed] = React.useState(false);
@@ -79,84 +84,70 @@ function AppBoot({ onDone, account }) {
   }, []);
   const done = AC_BOOT.filter(b => t >= b.ms).length;
   const pct = Math.min(100, Math.round((t / 1650) * 100));
+  // the line reports the subsystem in flight, or the last one that reported in
+  const cur = AC_BOOT[Math.min(done, AC_BOOT.length - 1)];
+  const settled = done >= AC_BOOT.length;
+  const line = settled
+    ? (account && account.firm ? 'Opening ' + account.firm : 'Opening workspace')
+    : cur.label + ' · ' + (done > 0 && t >= AC_BOOT[done - 1].ms && t - AC_BOOT[done - 1].ms < 180
+        ? AC_BOOT[done - 1].detail : 'connecting…');
+
   return (
     <div style={{
       position: 'absolute', inset: 0, background: AC.bg, color: AC.ink, zIndex: 200,
-      display: 'grid', placeItems: 'center', fontFamily: AC.sans,
+      display: 'grid', placeItems: 'center', fontFamily: AC.sans, overflow: 'hidden',
     }}>
-      {/* faint drafting grid — the same ground the canvas uses, so boot belongs to the app */}
+      {/* the same faint drafting ground the canvas uses, so boot belongs to the app */}
       <div style={{
         position: 'absolute', inset: 0, opacity: 0.35, pointerEvents: 'none',
         backgroundImage: `linear-gradient(${AC.lineHair} 1px, transparent 1px), linear-gradient(90deg, ${AC.lineHair} 1px, transparent 1px)`,
         backgroundSize: '48px 48px',
       }}/>
-      <div style={{ position: 'relative', width: 460, maxWidth: '86vw' }}>
-        {/* title block header */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', paddingBottom: 12, borderBottom: `1px solid ${AC.line}` }}>
-          <div>
-            <div style={{ fontFamily: AC.arch, fontSize: 26, lineHeight: '30px', letterSpacing: '0.01em' }}>ArchHub</div>
-            <div style={{ fontFamily: AC.mono, fontSize: 9.5, color: AC.inkSoft, letterSpacing: '0.22em', marginTop: 2 }}>STUDIO · v1.4</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontFamily: AC.serif, fontSize: 34, lineHeight: 1, color: AC.accent, letterSpacing: '-0.03em' }}>{pct}<span style={{ fontSize: 15 }}>%</span></div>
-            <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.14em', marginTop: 3 }}>
-              {account && account.firm ? account.firm.toUpperCase() : 'OPENING WORKSPACE'}
-            </div>
-          </div>
-        </div>
 
-        {/* subsystem rows — each states what it actually found */}
-        <div style={{ marginTop: 4 }}>
-          {AC_BOOT.map((b, i) => {
-            const on = t >= b.ms, active = !on && i === done;
-            return (
-              <div key={b.k} style={{
-                display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0',
-                borderBottom: `1px solid ${AC.lineHair}`,
-                opacity: on ? 1 : active ? 0.9 : 0.32, transition: 'opacity .3s',
-              }}>
-                <span style={{
-                  width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                  background: on ? AC.ok : active ? AC.accent : AC.lineSoft,
-                  boxShadow: on ? `0 0 0 3px ${AC.ok}1f` : 'none',
-                  animation: active ? 'acPulse 1s infinite' : 'none',
-                }}/>
-                <span style={{ fontSize: 13, flexShrink: 0, minWidth: 104 }}>{b.label}</span>
-                <span style={{ flex: 1, height: 1, background: AC.lineHair }}/>
-                <span style={{ fontFamily: AC.mono, fontSize: 10.5, color: on ? AC.inkSoft : AC.inkMuted, textAlign: 'right' }}>
-                  {on ? b.detail : active ? 'opening…' : 'queued'}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+        <svg width={72} height={72} viewBox="0 0 64 64" fill="none" style={{ display: 'block' }}>
+          <path d="M10 56 V32 a22 22 0 0 1 44 0 V56" stroke={AC.accent} strokeWidth="4.5" strokeLinecap="square"/>
+          <circle cx="32" cy="22" r="5.2" fill={AC.bg} stroke={AC.accent} strokeWidth="2.4"/>
+          <circle cx="32" cy="22" r="1.8" fill={AC.accent} style={{ animation: 'acPulse 1.1s infinite' }}/>
+          <path d="M6 58 H58" stroke={AC.accent} strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
 
-        {/* progress rule + the one honest line about what happens if it stalls */}
-        <div style={{ height: 2, background: AC.lineSoft, marginTop: 16, borderRadius: 2, overflow: 'hidden' }}>
-          <div style={{ width: pct + '%', height: '100%', background: AC.accent, transition: 'width .12s linear' }}/>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 9 }}>
-          <span style={{ fontFamily: AC.mono, fontSize: 9.5, color: AC.inkMuted, letterSpacing: '0.1em' }}>
-            {done}/{AC_BOOT.length} SUBSYSTEMS
-          </span>
-          <button onClick={() => setFailed(true)} style={{
-            background: 'none', border: 0, padding: 0, cursor: 'pointer',
-            fontFamily: AC.mono, fontSize: 9.5, color: AC.inkMuted, letterSpacing: '0.1em',
-            textDecoration: 'underline dotted',
-          }}>TAKING TOO LONG?</button>
-        </div>
-        {failed && (
-          <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: AC.rad.md, border: `1px solid ${AC.warn}`, background: AC.bgPanel }}>
-            <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.warn, letterSpacing: '0.14em' }}>IF A HOST IS SLOW</div>
-            <div style={{ fontSize: 12.5, color: AC.inkSoft, marginTop: 5, lineHeight: 1.5 }}>
-              The canvas opens without it and the connector reconnects in the background — your
-              graph is never blocked on a host. Skip straight in and watch it heal.
-            </div>
-            <button onClick={() => onDone && onDone()} style={{ ...smallBtn(true), marginTop: 9 }}>Open anyway</button>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontFamily: AC.arch, fontSize: 25, lineHeight: 1.15, letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+            Arch<span style={{ color: AC.accent }}>Hub</span>
           </div>
-        )}
+          {/* one light line — what is connecting, right now. Fixed height so it never jumps. */}
+          <div style={{
+            height: 15, marginTop: 9, fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft,
+            letterSpacing: '0.1em', marginRight: '-0.1em', whiteSpace: 'nowrap',
+          }}>{line}</div>
+        </div>
       </div>
-      <style>{'@keyframes acPulse{0%,100%{opacity:1}50%{opacity:.35}}'}</style>
+
+      {failed && (
+        <div style={{ position: 'absolute', bottom: 54, left: '50%', transform: 'translateX(-50%)', width: 380, maxWidth: '86vw', padding: '10px 12px', borderRadius: AC.rad.md, border: `1px solid ${AC.warn}`, background: AC.bgPanel }}>
+          <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.warn, letterSpacing: '0.14em' }}>IF A HOST IS SLOW</div>
+          <div style={{ fontSize: 12.5, color: AC.inkSoft, marginTop: 5, lineHeight: 1.5 }}>
+            The canvas opens without it and the connector reconnects in the background — your
+            graph is never blocked on a host. Skip straight in and watch it heal.
+          </div>
+          <button onClick={() => onDone && onDone()} style={{ ...smallBtn(true), marginTop: 9 }}>Open anyway</button>
+        </div>
+      )}
+
+      {!failed && (
+        <button onClick={() => setFailed(true)} style={{
+          position: 'absolute', bottom: 16, right: 18, background: 'none', border: 0, padding: 0, cursor: 'pointer',
+          fontFamily: AC.mono, fontSize: 9.5, color: AC.inkSoft, letterSpacing: '0.1em', textDecoration: 'underline dotted',
+        }}>TAKING TOO LONG?</button>
+      )}
+
+      {/* progress rides the bottom EDGE — a hairline the eye can ignore until it matters */}
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: AC.lineHair }}>
+        <div style={{ width: pct + '%', height: '100%', background: AC.accent, transition: 'width .12s linear' }}/>
+      </div>
+
+      <style>{'@keyframes acPulse{0%,100%{opacity:1}50%{opacity:.25}}'}</style>
     </div>
   );
 }
@@ -199,13 +190,6 @@ function SignUp({ onDone, onCancel, plan }) {
       usage: Object.assign({}, a.usage, { cap: p.cap, opsCap: p.ops }),
     });
     acSave(rec);
-    // The account is a graph record, not just localStorage: land it and
-    // keep the tier the graph answers with.
-    if (window.ARCHHUB_LOGIN && rec.email) {
-      window.ARCHHUB_LOGIN(rec.email).then(live => {
-        if (live && live.tier) acSave(Object.assign({}, rec, { plan: live.tier, graphTier: live.tier, founder: !!live.founder }));
-      }).catch(() => {});
-    }
     onDone && onDone(rec);
   };
 
@@ -383,47 +367,9 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
   const plan = AC_PLANS.find(p => p.id === a.plan) || AC_PLANS[1];
   const u = a.usage;
   const patchA = (patch) => { const next = Object.assign({}, a, patch); acSave(next); setAccount && setAccount(next); };
-  const [members, setMembers] = React.useState(null);
-  const isFounder = !!(a.founder || a.graphTier === 'founder');
-  React.useEffect(() => {
-    if (isFounder && window.ARCHHUB_ACCOUNTS) {
-      window.ARCHHUB_ACCOUNTS().then(setMembers).catch(() => setMembers([]));
-    }
-  }, [isFounder]);
-  const retier = async (email, tier) => {
-    try {
-      await window.ARCHHUB_SET_TIER(email, tier);
-      setMembers(await window.ARCHHUB_ACCOUNTS());
-    } catch (e) {}
-  };
   return (
     <div>
       <SHead title="Account & usage" sub="What you're on, what you've spent against your own cap, and where your brain lives. The cap is yours to set — we stop, we don't invoice past it."/>
-      {isFounder && (
-        <div style={{ marginBottom: 16, border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, padding: '12px 14px' }}>
-          <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.14em', marginBottom: 8 }}>ACCOUNTS · FOUNDER CONTROL</div>
-          {members === null ? (
-            <div style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkMuted }}>loading…</div>
-          ) : members.length === 0 ? (
-            <div style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkMuted }}>no accounts yet</div>
-          ) : members.map(m => (
-            <div key={m.email} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: `1px solid ${AC.lineSoft || AC.line}` }}>
-              <span style={{ flex: 1, fontFamily: AC.mono, fontSize: 11, color: AC.ink }}>{m.email}</span>
-              {m.tier === 'founder' ? (
-                <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.accent }}>FOUNDER</span>
-              ) : (
-                <select value={m.tier} onChange={e => retier(m.email, e.target.value)} style={{
-                  background: AC.bg, color: AC.ink, border: `1px solid ${AC.line}`,
-                  borderRadius: 4, fontFamily: AC.mono, fontSize: 10, padding: '3px 6px' }}>
-                  <option value="free">free</option>
-                  <option value="pro">pro</option>
-                  <option value="firm">firm</option>
-                </select>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* identity */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>

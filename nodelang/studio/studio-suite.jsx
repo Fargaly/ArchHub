@@ -713,119 +713,8 @@ const colorJson = (line) => {
   });
 };
 
-// ═══════════════════════ 5 · MOBILE COMPANION ═══════════════════════
-const StudioMobile = () => (
-  <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto', padding:'40px 48px' }} className="ah-scroll">
-    <div style={{ marginBottom:28 }}>
-      <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>MOBILE COMPANION · iOS</div>
-      <h1 style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.03em', margin:'8px 0 4px', fontWeight:400 }}>Sketch in pocket. Run on workstation.</h1>
-      <div style={{ fontFamily:ST.serif, fontStyle:'italic', fontSize:16, color:ST.inkSoft }}>Capture → handoff → live params from anywhere.</div>
-    </div>
-
-    <div style={{ display:'flex', gap:ST.sp['2xl'], justifyContent:'center', flexWrap:'wrap' }}>
-      {/* Phone 1 — Capture */}
-      <PhoneShell label="01 · Capture sketch">
-        <div style={{ flex:1, background:`linear-gradient(180deg, ${ST.bgDeep}, ${ST.bg})`, padding:'12px 14px', display:'flex', flexDirection:'column' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, marginBottom:14 }}>
-            <Mark size={22}/><Word size={16}/>
-            <div style={{ flex:1 }}/>
-            <span style={{ fontFamily:ST.mono, fontSize:9, color:ST.ok, letterSpacing:'0.06em' }}>● PAIRED</span>
-          </div>
-          {/* sketch placeholder */}
-          <div style={{ flex:1, background:'#f0e8d8', borderRadius:ST.rad.xl, position:'relative', overflow:'hidden' }}>
-            <svg viewBox="0 0 200 280" style={{ width:'100%', height:'100%' }}>
-              <path d="M30 240 L30 130 L100 70 L170 130 L170 240 Z" fill="none" stroke="#3a2418" strokeWidth="1.5"/>
-              <line x1="30" y1="180" x2="170" y2="180" stroke="#3a2418" strokeWidth="0.8"/>
-              <rect x="60" y="200" width="22" height="40" fill="none" stroke="#3a2418" strokeWidth="0.8"/>
-              <rect x="118" y="200" width="22" height="40" fill="none" stroke="#3a2418" strokeWidth="0.8"/>
-              <text x="100" y="265" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="7" fill="#7a7064">~6m wide · gabled · 2 storey</text>
-            </svg>
-            <span style={{ position:'absolute', top:8, right:8, padding:'2px 6px', background:ST.bg, color:ST.accent, fontFamily:ST.mono, fontSize:8.5, borderRadius:ST.rad.xs, letterSpacing:'0.06em' }}>● 12.4MP</span>
-          </div>
-          <div style={{ display:'flex', gap:6, marginTop:10 }}>
-            <button style={{...btnSecondary(), flex:1, fontSize:11, padding:'7px 10px'}}>📷 Retake</button>
-            <button style={{...btnPrimary(), flex:2, fontSize:11, padding:'7px 10px', justifyContent:'center'}}>Send to workstation →</button>
-          </div>
-        </div>
-      </PhoneShell>
-
-      {/* Phone 2 — Handoff */}
-      <PhoneShell label="02 · Handoff">
-        <div style={{ flex:1, padding:'14px', display:'flex', flexDirection:'column', gap:10 }}>
-          <div>
-            <div style={{ fontFamily:ST.mono, fontSize:9, color:ST.inkMuted, letterSpacing:'0.1em' }}>YOUR DEVICES</div>
-            <div style={{ marginTop:ST.sp.sm, padding:'10px 12px', background:ST.accentSoft, border:`1px solid ${ST.accent}`, borderRadius:7, display:'flex', alignItems:'center', gap:10 }}>
-              <span style={{ width:32, height:32, borderRadius:ST.rad.sm, background:ST.accent, color:((window.AH && window.AH.onFill) || '#180f08'), display:'grid', placeItems:'center' }}>🖥</span>
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:13, fontWeight:500 }}>STUDIO-PC</div>
-                <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkSoft }}>Revit 2025 · awake</div>
-              </div>
-              <span style={{ fontFamily:ST.mono, fontSize:9, color:ST.ok }}>SELECT</span>
-            </div>
-            {[['💻','LAPTOP-M2','Mac · sleeping'],['🏢','OFFICE-WS','offline 2h ago']].map(([g,n,s])=>(
-              <div key={n} style={{ marginTop:6, padding:'8px 12px', background:ST.bgPanel, border:`1px solid ${ST.lineSoft}`, borderRadius:7, display:'flex', alignItems:'center', gap:10 }}>
-                <span style={{ width:28, height:28, borderRadius:ST.rad.sm, background:ST.bg, display:'grid', placeItems:'center', opacity:0.6 }}>{g}</span>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:12, color:ST.inkSoft }}>{n}</div>
-                  <div style={{ fontFamily:ST.mono, fontSize:9, color:ST.inkMuted }}>{s}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div style={{ flex:1 }}/>
-          <div style={{ background:ST.bgPanel, border:`1px solid ${ST.line}`, borderRadius:7, padding:'10px 12px' }}>
-            <div style={{ fontFamily:ST.mono, fontSize:9, color:ST.inkMuted, letterSpacing:'0.1em' }}>QUEUED</div>
-            <div style={{ fontSize:12.5, marginTop:ST.sp.xs }}>Sketch_2026-05-08.png</div>
-            <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.accent, marginTop:2 }}>↻ uploading · 64%</div>
-          </div>
-        </div>
-      </PhoneShell>
-
-      {/* Phone 3 — Live params */}
-      <PhoneShell label="03 · Live params">
-        <div style={{ flex:1, padding:'14px', display:'flex', flexDirection:'column', gap:10 }}>
-          <div>
-            <div style={{ fontFamily:ST.serif, fontSize:18, letterSpacing:'-0.01em' }}>Tower A</div>
-            <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted }}>5 stages · running on STUDIO-PC</div>
-          </div>
-          <div style={{ display:'flex', gap:3 }}>
-            {[1,2,3,4,5].map(i => <span key={i} style={{ flex:1, height:3, borderRadius:2, background:i<=3?ST.ok:i===4?ST.accent:ST.lineSoft }}/>)}
-          </div>
-          <div style={{ background:ST.bgPanel, border:`1px solid ${ST.lineSoft}`, borderRadius:ST.rad.md, padding:10 }}>
-            <ParamDemo k="mass_height" v={32} unit="m"/>
-            <ParamDemo k="wwr" v={0.42} unit="ratio"/>
-            <ParamDemo k="rooms" v={true} kind="toggle"/>
-          </div>
-          <div style={{ flex:1 }}/>
-          <div style={{ padding:10, background:ST.bgDeep, borderRadius:ST.rad.md, fontFamily:ST.mono, fontSize:10, color:ST.inkSoft, lineHeight:1.7 }}>
-            <div style={{ color:ST.accent }}>↻ stages 4-5 re-running</div>
-            <div style={{ color:ST.inkMuted }}>· est. 4.8s</div>
-          </div>
-          <button style={{...btnPrimary(), width:'100%', justifyContent:'center', fontSize:12}}>Open Studio on PC</button>
-        </div>
-      </PhoneShell>
-    </div>
-  </div>
-);
-const PhoneShell = ({ label, children }) => (
-  <div>
-    <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, letterSpacing:'0.14em', marginBottom:ST.sp.md, textAlign:'center' }}>{label}</div>
-    <div style={{ width:280, height:580, borderRadius:42, background:'#000', padding:ST.sp.sm, boxShadow:'0 30px 80px rgba(0,0,0,.5), inset 0 0 0 1.5px #2a2620' }}>
-      <div style={{ width:'100%', height:'100%', borderRadius:34, background:ST.bg, overflow:'hidden', display:'flex', flexDirection:'column', position:'relative' }}>
-        {/* Status bar */}
-        <div style={{ padding:'10px 22px 4px', display:'flex', alignItems:'center', justifyContent:'space-between', fontFamily:ST.sans, fontSize:11, fontWeight:600, color:ST.ink }}>
-          <span>9:41</span>
-          <span style={{ position:'absolute', top:10, left:'50%', transform:'translateX(-50%)', width:80, height:22, background:'#000', borderRadius:14 }}/>
-          <span style={{ display:'flex', gap:5, alignItems:'center', fontSize:10 }}>● ●● ▮</span>
-        </div>
-        {children}
-        <div style={{ height:20, display:'grid', placeItems:'center', paddingBottom:6 }}>
-          <span style={{ width:108, height:4, borderRadius:2, background:ST.inkSoft, opacity:0.5 }}/>
-        </div>
-      </div>
-    </div>
-  </div>
-);
+// 5 · MOBILE COMPANION — moved to studio-mobile.jsx (a device you operate, not three
+// stills). Deleted here rather than left shadowed: it loaded first and lost, silently.
 
 // ═══════════════════════ 6 · PRICING DIALOG ═══════════════════════
 const StudioPricing = () => (
@@ -1017,6 +906,5 @@ window.StudioUIKit = StudioUIKit;
 window.StudioOnboarding = StudioOnboarding;
 window.StudioLanding = StudioLanding;
 window.StudioSkillJson = StudioSkillJson;
-window.StudioMobile = StudioMobile;
 window.StudioPricing = StudioPricing;
 window.StudioSelfHeal = StudioSelfHeal;

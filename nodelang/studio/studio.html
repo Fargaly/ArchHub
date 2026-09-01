@@ -145,6 +145,8 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
             k:r.label, v:r.value, rel:r.relation,
             ...(PARAM_SPECS[r.label] || {type:'text'}),
           })),
+        ports:{ins:ins.map(x => ({id:x.id, t:x.t})),
+               outs:outs.map(x => ({id:x.id, t:x.t}))},
         status: n.status || params.status || '',
       });
       idset.add(n.id);
@@ -166,7 +168,9 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       }],
       hosts, connectors, graph:{nodes, wires}, skills:[],
     };
-    for (const f of ['tokens.jsx','shared-data.jsx','studio-account.jsx','studio-lm.jsx','mount.jsx']) {
+    for (const f of ['tokens.jsx','design-canvas.jsx','shared-data.jsx',
+                     'studio-suite.jsx','param-types.jsx','studio-params.jsx',
+                     'studio-mobile.jsx','studio-account.jsx','studio-lm.jsx','mount.jsx']) {
       const tag = document.createElement('script');
       tag.type = 'text/babel';
       tag.src = '/studio/' + f;

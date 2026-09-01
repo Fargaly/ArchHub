@@ -381,6 +381,18 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
   // (Previously each computed its own top-6 slice, so any peer past the 6th fell back to
   // the box centre and the wire visibly missed the knob.) Every wired peer gets a socket;
   // spacing compresses to fit the box rather than truncating the list.
+  const upp = (() => {
+    const el = svgRef.current;
+    if (el && el.getScreenCTM) { const m = el.getScreenCTM(); if (m && m.a) return 1 / m.a; }
+    // hostW is a change-signal, not a measurement — always measure the element itself.
+    const w = (el && el.getBoundingClientRect().width) || props.hostW || pxW;
+    const src = vbRef.current || vb;
+    return w ? src.w / w : 1;
+  })();
+  const scr = (px, maxWorld) => Math.min(maxWorld == null ? Infinity : maxWorld, px * Math.max(1, upp));
+  const macro = upp > 1.9;   // zoomed out far enough that node-level detail is noise
+  const cardFs = (px) => Math.max(9 * upp, px * Math.max(1, upp * 0.55));
+
   const knobMap = React.useMemo(() => {
     const out = {};
     M.domains.forEach(d => {
@@ -559,7 +571,6 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
   const tallyPitch = (b) => { const avail = b.w - 60; const cols = Math.max(1, Math.floor(avail / 104)); return avail / cols; };
   const tallyFs = (b) => Math.max(9 * upp, Math.min(13, tallyPitch(b) * 0.13));
   const tallyFit = (b) => tallyFs(b) <= tallyPitch(b) * 0.2;              // is a node card wide enough to carry text?
-  const cardFs = (px) => Math.max(9 * upp, px * Math.max(1, upp * 0.55));
   const fitStr = (str, availWorld, fsz) => {
     const t = String(str || '');
     const max = Math.floor(availWorld / Math.max(0.001, fsz * 0.44));
@@ -585,16 +596,6 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
   // screen-size floor below (domain titles rendered at 7px on a narrow map). getScreenCTM().a
   // is the actual world→screen scale the browser is painting with, so it cannot disagree with
   // what the user sees. vbRef (the imperative source of truth) is the fallback, never `vb`.
-  const upp = (() => {
-    const el = svgRef.current;
-    if (el && el.getScreenCTM) { const m = el.getScreenCTM(); if (m && m.a) return 1 / m.a; }
-    // hostW is a change-signal, not a measurement — always measure the element itself.
-    const w = (el && el.getBoundingClientRect().width) || props.hostW || pxW;
-    const src = vbRef.current || vb;
-    return w ? src.w / w : 1;
-  })();
-  const scr = (px, maxWorld) => Math.min(maxWorld == null ? Infinity : maxWorld, px * Math.max(1, upp));
-  const macro = upp > 1.9;   // zoomed out far enough that node-level detail is noise
 
   // ── active run flow: animated pulse along wires currently carrying a run ──
   const flowEls = (activeWires && activeWires.size) ? [...activeWires].map(key => {
@@ -653,7 +654,7 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
               <rect x={bx} y={by} width={bw} height={bh} rx={26 + tier * 6} fill={col + (tier > 1 ? '14' : '0d')} stroke={selF ? col : col + 'b0'} strokeWidth={selF ? 3 : 2} strokeDasharray={tier > 1 ? '22 10' : '14 9'} style={{ pointerEvents: 'none', filter: `drop-shadow(0 0 8px ${col}44)` }}/>
               <g style={{ cursor: 'pointer' }} onClick={e => { e.stopPropagation(); props.onPickField && props.onPickField(f.id, e.shiftKey || e.metaKey); }} onContextMenu={e => { e.preventDefault(); e.stopPropagation(); props.onFieldContext && props.onFieldContext(f.id, e.clientX, e.clientY); }}>
                 <rect x={bx + 20} y={by} width={Math.max(196, label.length * 8.4 + 82)} height={tabH} rx={9} fill={col}/>
-                <text x={bx + 36} y={by + tabH * 0.68} fontSize={cardFs(12.5)} fontFamily={HB.mono} fontWeight="700" letterSpacing="0.14em" fill={(window.AH && window.AH.onFill) || "#180f08"}>⬡ {label}</text>
+                <text x={bx + 36} y={by + tabH * 0.68} fontSize={cardFs(12.5)} fontFamily={HB.mono} fontWeight="700" letterSpacing="0.14em" fill={(window.AH && window.AH.onFill) || "#180f08"} stroke={col} strokeWidth={Math.max(5 * upp, cardFs(12.5) * 0.14)} strokeLinejoin="round" paintOrder="stroke fill">⬡ {label}</text>
                 <text x={bx + Math.max(196, label.length * 8.4 + 82) + 4} y={by + tabH * 0.68} fontSize={cardFs(10)} fontFamily={HB.mono} fill={col}>{members}</text>
               </g>
             </g>
@@ -680,7 +681,8 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
               <rect x={b.x + 10} y={b.y + 10} width={b.w - 20} height={Math.max(34, scr(30, 90))} rx={8} fill="transparent"/>
               {(() => {
                 const fsz = titleSize(d, b);
-                return <text x={b.x + 22} y={b.y + 26 + fsz * 0.78} fontSize={fsz} fontWeight="700" fontFamily={HB.serif} fill={d.col}><title>{d.title}</title>{fitTitle(d, b, fsz)}</text>;
+                return <text x={b.x + 22} y={b.y + 26 + fsz * 0.78} fontSize={fsz} fontWeight="700" fontFamily={HB.serif} fill={d.col}
+                  stroke={HB.paper} strokeWidth={Math.max(7 * upp, fsz * 0.16)} strokeLinejoin="round" paintOrder="stroke fill"><title>{d.title}</title>{fitTitle(d, b, fsz)}</text>;
               })()}
               {(() => {
                 const fsz = Math.max(11 * upp, Math.min(scr(10.5), b.h * 0.062));

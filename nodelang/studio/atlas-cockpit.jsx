@@ -447,6 +447,11 @@ function AtlasCockpit() {
   const duplicateNode = (id) => { const n = M.nodes.find(x => x.id === id); if (!n) return; const nid = 'n_' + Date.now().toString(36); setM(m => ({ ...m, nodes: [...m.nodes, { ...n, id: nid, frozen: false, rt: undefined, x: n.x + 28, y: n.y + 28, title: n.title + ' copy' }] })); setSel({ domain: null, nodes: new Set([nid]) }); flash('Duplicated'); };
   const onNodeContext = (id, x, y) => { if (!sel.nodes.has(id)) setSel({ domain: null, nodes: new Set([id]) }); setCtx({ type: 'node', id, x, y }); };
   const onWireContext = (a, b, x, y, bundle) => setCtx({ type: 'wire', a, b, x, y, bundle });
+  // A wire is a node: its parameters live on the wire records and persist with the model.
+  const patchWire = (members, patch) => setM(m => {
+    const keys = new Set(members.map(x => x.a + '\u0000' + x.b));
+    return { ...m, wires: m.wires.map(x => keys.has(x.a + '\u0000' + x.b) ? { ...x, params: { ...(x.params || {}), ...patch } } : x) };
+  });
   const pickWire = (w) => setSel({ domain: null, domains: new Set(), nodes: new Set(), fields: new Set(), field: null, wire: w });
   // delete every underlying wire in a bundle — the visible line is a roll-up, so removing it
   // must remove what it stands for, not just the one wire that named it
@@ -671,7 +676,7 @@ function AtlasCockpit() {
   let inspectPanel;
   const multiDom = (sel.domains || new Set()).size > 1 || ((sel.domains || new Set()).size >= 1 && sel.nodes.size >= 1);
   const selFieldSet = sel.fields || new Set();
-  if (sel.wire) inspectPanel = <WirePanel M={M} w={sel.wire} onDelete={() => deleteWireBundle(sel.wire)} onGoto={(id) => { const n = M.nodes.find(x => x.id === id); if (n) { focusDomain(n.dom); pickNode(id, false); } }} onClose={clearSel}/>;
+  if (sel.wire) inspectPanel = <WirePanel M={M} w={sel.wire} patchWire={patchWire} onDelete={() => deleteWireBundle(sel.wire)} onGoto={(id) => { const n = M.nodes.find(x => x.id === id); if (n) { focusDomain(n.dom); pickNode(id, false); } }} onClose={clearSel}/>;
   else if (selFieldSet.size > 1) inspectPanel = <MultiFieldPanel M={M} ids={[...selFieldSet]} onGroup={groupIntoField} clearSel={clearSel}/>;
   else if (sel.field) inspectPanel = <FieldPanel M={M} fieldId={sel.field} patchField={patchField} onUngroup={ungroupField} onEnterDomain={(k) => { focusDomain(k); pickDomain(k); }} onClose={clearSel}/>;
   else if (multiDom) inspectPanel = <MultiPanel selDomains={[...(sel.domains || new Set())]} selNodes={sel.nodes} M={M} onGroupField={groupIntoField} clearSel={clearSel}/>;

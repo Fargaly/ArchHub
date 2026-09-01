@@ -243,21 +243,25 @@ function BulkPanel({ sel, selNodes, M, DB, STATUS, bulkStatus, bulkDomain, bulkA
    triggers are added in place. Mirrors stem-sandbox.jsx NodeBody. */
 const ptypeOf = (p) => p.t || ((p.v === true || p.v === false || p.v === 'true' || p.v === 'false') ? 'boolean' : (String(p.v).trim() !== '' && !isNaN(parseFloat(p.v)) && isFinite(+p.v) ? 'number' : (/^#[0-9a-fA-F]{3,8}$/.test(String(p.v)) ? 'color' : 'string')));
 const PARAM_WIRE = { string: 'string', number: 'number', boolean: 'boolean', color: 'string', trigger: 'exec' };
-const ptypeCol = (t) => (window.typeColOf ? window.typeColOf(PARAM_WIRE[t] || 'any') : HB.inkMute);
+// cockpit type name → the shared registry's name (studio-params.jsx PM_TYPES)
+const PARAM_SHARED = { string: 'text', number: 'number', boolean: 'toggle', color: 'colour', trigger: 'any' };
+const ptypeCol = (t) => {
+  const R = window.PM_TYPES;
+  if (R) { const d = R[PARAM_SHARED[t] || t]; if (d) return d.col; }
+  return window.typeColOf ? window.typeColOf(PARAM_WIRE[t] || 'any') : HB.inkMute;
+};
+// same socket the app inspector draws: colour = type, shape = cardinality
+const ptypeSocket = (t, filled, size) => {
+  const c = ptypeCol(t);
+  return <span style={{ width: size || 9, height: size || 9, flexShrink: 0, display: 'inline-block',
+    background: filled ? c : 'transparent', border: `1.5px solid ${c}`, borderRadius: '50%' }}/>;
+};
 
 function StemParams({ node, patchNode }) {
   const params = node.params || [];
   const ports = node.ports || { ins: [], outs: [] };
   const promoted = new Set((ports.ins || []).map(x => x.id));
-  const setParam = (i, patch) => {
-    patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...patch } : p) });
-    // A live-graph parameter commits through the governed write; the
-    // local patch above keeps the panel instant either way.
-    const held = params[i];
-    if (patch.v !== undefined && held && held.rel && window.ARCHHUB_SET_PROP) {
-      window.ARCHHUB_SET_PROP(held.rel, String(patch.v)).catch(() => {});
-    }
-  };
+  const setParam = (i, patch) => patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...patch } : p) });
   const delParam = (i) => { const p = params[i]; patchNode(node.id, { params: params.filter((_, j) => j !== i), ports: { ...ports, ins: (ports.ins || []).filter(x => x.id !== p.k) } }); };
   const addParam = (t) => {
     const n = params.length + 1;
@@ -272,33 +276,28 @@ function StemParams({ node, patchNode }) {
   };
   const promote = (p) => { const has = promoted.has(p.k); const ins = has ? (ports.ins || []).filter(x => x.id !== p.k) : [...(ports.ins || []), { id: p.k, t: PARAM_WIRE[ptypeOf(p)] || 'any' }]; patchNode(node.id, { ports: { ...ports, ins } }); };
 
-  const wrap = { display: 'flex', flexDirection: 'column', gap: 7 };
-  const card = (on) => ({ border: `1px solid ${on ? HB.accent : HB.line}`, borderRadius: 8, padding: '8px 9px', background: on ? HB.accentSoft : HB.paper2, display: 'flex', flexDirection: 'column', gap: 7 });
-  const keyInput = { flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: HB.ink, fontFamily: HB.mono, fontSize: 11.5, outline: 'none', padding: 0 };
-  const fieldStyle = { flex: 1, padding: '5px 8px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 6, color: HB.ink, fontFamily: HB.mono, fontSize: 11.5, outline: 'none' };
+  const wrap = { display: 'flex', flexDirection: 'column', borderTop: `1px solid ${HB.lineSoft}` };
+  // matches studio-params.jsx ParamRow: 34px line, control inline, left edge carries state
+  const card = (on) => ({ display: 'flex', alignItems: 'center', gap: 8, minHeight: 34, paddingLeft: 8,
+    borderLeft: `2px solid ${on ? HB.accent : 'transparent'}`, borderBottom: `1px solid ${HB.lineSoft}` });
+  const keyInput = { flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: HB.ink, fontFamily: HB.sans, fontSize: 12.5, outline: 'none', padding: 0 };
+  const fieldStyle = { width: 104, boxSizing: 'border-box', flexShrink: 0, padding: '4px 7px', background: HB.paper, border: `1px solid ${HB.line}`, borderRadius: 4, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' };
   const tag = (t) => ({ fontFamily: HB.mono, fontSize: 8.5, color: ptypeCol(t), padding: '1px 6px', borderRadius: 999, border: `1px solid ${ptypeCol(t)}`, flexShrink: 0, textTransform: 'lowercase' });
   const promoteBtn = (on) => ({ width: 16, height: 16, flexShrink: 0, borderRadius: on ? 3 : '50%', cursor: 'pointer', background: on ? HB.accent : 'transparent', border: `1.5px solid ${on ? HB.accent : HB.inkMute}`, color: on ? '#fff' : HB.inkMute, fontSize: 9, lineHeight: 1, padding: 0, display: 'grid', placeItems: 'center' });
   const addBtn = { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 9px', borderRadius: 6, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10, border: `1px dashed ${HB.line}`, background: HB.card, color: HB.inkSoft };
 
   const widget = (p, i, t) => {
     if (t === 'boolean') { const on = p.v === true || p.v === 'true'; return (
-      <button onClick={() => setParam(i, { v: !on })} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 0, cursor: 'pointer', padding: 0 }}>
-        <span style={{ width: 30, height: 17, borderRadius: 99, background: on ? HB.accent : HB.line, position: 'relative', flexShrink: 0 }}><span style={{ position: 'absolute', top: 2, left: on ? 15 : 2, width: 13, height: 13, borderRadius: '50%', background: '#fff', transition: 'left .15s' }}/></span>
-        <span style={{ fontFamily: HB.mono, fontSize: 11, color: HB.ink }}>{String(on)}</span>
+      <button onClick={() => setParam(i, { v: !on })} role="switch" aria-checked={on} title={p.k + ' — ' + (on ? 'on' : 'off')} style={{ display: 'flex', alignItems: 'center', background: 'none', border: 0, cursor: 'pointer', padding: 0, flexShrink: 0 }}>
+        <span style={{ width: 30, height: 16, borderRadius: 99, background: on ? HB.accent : HB.lineSoft, position: 'relative', flexShrink: 0, transition: 'background .15s' }}><span style={{ position: 'absolute', top: 1, left: on ? 15 : 1, width: 14, height: 14, borderRadius: '50%', background: HB.ink, transition: 'left .15s' }}/></span>
       </button>
     ); }
     if (t === 'number') return <input type="number" value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle}/>;
     if (t === 'color') return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(String(p.v)) ? p.v : '#d97757'} onChange={e => setParam(i, { v: e.target.value })} style={{ width: 22, height: 22, border: 0, background: 'none', padding: 0, cursor: 'pointer', borderRadius: 5 }}/>
-        <input value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle}/>
-      </div>
+      <input type="color" title={String(p.v)} value={/^#[0-9a-fA-F]{6}$/.test(String(p.v)) ? p.v : '#d97757'} onChange={e => setParam(i, { v: e.target.value })} style={{ width: 104, height: 24, flexShrink: 0, border: `1px solid ${HB.line}`, background: 'none', padding: 0, cursor: 'pointer', borderRadius: 4 }}/>
     );
     if (t === 'trigger') return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-        <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.amber }}>▷ fires</span>
-        <input value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle} placeholder="on save · cron · webhook…"/>
-      </div>
+      <input value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle} title="▷ fires on…" placeholder="on save · cron…"/>
     );
     return <input value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle} placeholder="value…"/>;
   };
@@ -307,18 +306,16 @@ function StemParams({ node, patchNode }) {
     <div style={wrap}>
       {params.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 12.5, color: HB.inkMute }}>No parameters yet — add a field, toggle, or trigger below to grow this node.</div>}
       {params.map((p, i) => { const t = ptypeOf(p); const on = promoted.has(p.k); return (
-        <div key={i} style={card(on)}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <button onClick={() => promote(p)} title={on ? 'demote to dial' : 'promote to wireable input port'} style={promoteBtn(on)}>◇</button>
-            <input value={p.k} onChange={e => setParam(i, { k: e.target.value })} style={keyInput}/>
-            <span style={tag(t)}>{t}</span>
-            <button onClick={() => delParam(i)} style={{ border: 'none', background: 'transparent', color: HB.inkMute, cursor: 'pointer', padding: 0, display: 'grid', placeItems: 'center' }}><CKIcon name="x" size={12}/></button>
-          </div>
+        <div key={i} style={card(on)} title={p.k + ' · ' + t + (on ? ' · exposed as an input port, wireable on the map' : '')}>
+          <button onClick={() => promote(p)} title={on ? 'Demote to a local dial' : 'Expose as a wireable input port'} style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            {ptypeSocket(t, on)}
+          </button>
+          <input value={p.k} onChange={e => setParam(i, { k: e.target.value })} style={keyInput}/>
           {widget(p, i, t)}
-          {on && <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.accent }}>▶ exposed as input port · wireable on the map</div>}
+          <button onClick={() => delParam(i)} title={'Remove ' + p.k} style={{ border: 'none', background: 'transparent', color: HB.inkSoft, cursor: 'pointer', padding: 0, flexShrink: 0, display: 'grid', placeItems: 'center' }}><CKIcon name="x" size={12}/></button>
         </div>
       ); })}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
         {[['field', '＋ Field'], ['number', '＋ Number'], ['boolean', '＋ Toggle'], ['color', '＋ Color'], ['trigger', '＋ Trigger']].map(([t, l]) => <button key={t} onClick={() => addParam(t)} style={addBtn}>{l}</button>)}
       </div>
       {(ports.ins || []).length > 0 && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, paddingTop: 2 }}><b style={{ color: HB.accent }}>{ports.ins.length}</b> port{ports.ins.length > 1 ? 's' : ''} promoted — now wireable knobs on the node</div>}
@@ -577,7 +574,14 @@ function MultiFieldPanel({ M, ids, onGroup, clearSel }) {
   );
 }
 
-function WirePanel({ M, w, onDelete, onGoto, onClose }) {
+// Wire parameters come from param-types.jsx — the SAME definition Studio's inspector uses,
+// so a connection means one thing in both graphs.
+const WIRE_PARAM_DEFS = (window.WIRE_PARAMS || []).map(p => ({
+  k: p.k, v: p.def, t: p.type === 'toggle' ? 'boolean' : p.type === 'number' ? 'number' : 'string',
+  opts: p.opts, help: p.help, label: p.label,
+}));
+
+function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
   const nodeById = {}; M.nodes.forEach(n => nodeById[n.id] = n);
   const domById = {}; M.domains.forEach(d => domById[d.key] = d);
   const domOfN = {}; M.nodes.forEach(n => domOfN[n.id] = n.dom);
@@ -589,6 +593,9 @@ function WirePanel({ M, w, onDelete, onGoto, onClose }) {
       : (x.a === w.a && x.b === w.b) || (x.a === w.b && x.b === w.a);
   });
   const A = domById[w.da], B = domById[w.db];
+  // wire parameters live on the wire records themselves, so they persist with the model
+  const wp = (members[0] && members[0].params) || {};
+  const setWP = (k, v) => patchWire && patchWire(members, { [k]: v });
   const sig = (id) => { const n = nodeById[id]; return n ? (window.sigOf ? window.sigOf(n) : n.cat) : '—'; };
   return (
     <div>
@@ -602,6 +609,50 @@ function WirePanel({ M, w, onDelete, onGoto, onClose }) {
           {w.cross ? ' · rolled up into one line' : ''}
         </div>
       </div>
+      <div style={secStyle}>
+        <div style={{ ...insLabel, display: 'flex', alignItems: 'center', gap: 6 }}>
+          WIRE PARAMETERS
+          <span style={{ fontFamily: HB.mono, fontSize: 8, color: HB.accent, letterSpacing: '0.1em' }}>A WIRE IS A NODE</span>
+        </div>
+        <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkSoft, lineHeight: 1.55, marginBottom: 9 }}>
+          Applies to all {members.length} underlying wire{members.length === 1 ? '' : 's'}.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${HB.lineSoft}` }}>
+          {WIRE_PARAM_DEFS.map(p => {
+            const val = wp[p.k] === undefined ? p.v : wp[p.k];
+            const changed = String(val) !== String(p.v);
+            return (
+              <div key={p.k} title={p.k + (p.help ? ' — ' + p.help : '')}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 34, paddingLeft: 8,
+                  borderLeft: `2px solid ${changed ? HB.accent : 'transparent'}`, borderBottom: `1px solid ${HB.lineSoft}` }}>
+                {ptypeSocket(p.t, false)}
+                <span style={{ flex: 1, minWidth: 0, fontFamily: HB.sans, fontSize: 12.5, color: HB.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {p.label || p.k}
+                </span>
+                {changed && <button onClick={() => setWP(p.k, p.v)} title={'Revert to ' + p.v} style={{ border: 0, background: 'transparent', color: HB.accent, cursor: 'pointer', fontFamily: HB.mono, fontSize: 12, padding: 0 }}>↺</button>}
+                {p.t === 'boolean' ? (
+                  <button onClick={() => setWP(p.k, !val)} role="switch" aria-checked={!!val}
+                    style={{ background: 'transparent', border: 0, padding: 0, cursor: 'pointer', display: 'flex' }}>
+                    <span style={{ width: 30, height: 16, borderRadius: 999, position: 'relative', background: val ? HB.accent : HB.lineSoft, transition: 'background .15s' }}>
+                      <span style={{ position: 'absolute', top: 1, left: val ? 15 : 1, width: 14, height: 14, borderRadius: '50%', background: HB.ink, transition: 'left .15s' }}/>
+                    </span>
+                  </button>
+                ) : p.opts ? (
+                  <select value={val} onChange={e => setWP(p.k, e.target.value)}
+                    style={{ width: 104, padding: '4px 6px', borderRadius: 4, border: `1px solid ${HB.line}`, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' }}>
+                    {p.opts.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input value={val} onChange={e => setWP(p.k, p.t === 'number' ? (+e.target.value || 0) : e.target.value)}
+                    type={p.t === 'number' ? 'number' : 'text'} placeholder={p.k === 'condition' ? 'always' : 'value…'}
+                    style={{ width: 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${HB.line}`, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div style={secStyle}>
         <div style={insLabel}>WHAT IS WIRED TO WHAT</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 8 }}>

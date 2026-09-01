@@ -62,6 +62,15 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       jpost('/api/universal/set-property', {relation, value});
     window.ARCHHUB_PICK_FILE = async (title, filter) =>
       (await jpost('/api/universal/pick-file', {title, filter})).path || '';
+    window.ARCHHUB_CAPABILITIES = async () => {
+      const scan = await jget('/api/universal/capabilities');
+      return {
+        ok: !!scan.ok, revision: scan.revision,
+        present: (scan.capabilities || []).filter(c => c.present).length,
+        total: (scan.capabilities || []).length,
+        missing: scan.missing || [],
+      };
+    };
     window.ARCHHUB_LOGIN = email =>
       jpost('/api/universal/login', {email});
     window.ARCHHUB_ACCOUNTS = async () =>
@@ -166,7 +175,12 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         last:(canvas.nodes || []).length + ' nodes · '
           + (canvas.wires || []).length + ' wires',
       }],
-      hosts, connectors, graph:{nodes, wires}, skills:[],
+      hosts, connectors, graph:{nodes, wires},
+      skills:(await (async () => {
+        try {
+          return (await jpost('/api/universal/skills', {want:'catalogue'})).result || [];
+        } catch (e) { return []; }
+      })()),
     };
     for (const f of ['tokens.jsx','design-canvas.jsx','shared-data.jsx',
                      'studio-suite.jsx','param-types.jsx','studio-params.jsx',

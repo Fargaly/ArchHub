@@ -60,12 +60,38 @@ const AC_PLANS = [
 // BOOT — the loading screen. A title block that fills in, not a spinner: each line is a
 // real subsystem coming up, so the wait tells you what the app is doing and what it found.
 // ─────────────────────────────────────────────────────────────
+// Five real subsystems. Each detail is READ from what actually answered
+// this boot -- never a fixed count, because a splash that recites numbers
+// nobody measured is furniture, not a report.
+const _bootDetail = (key) => {
+  const live = window.ARCHHUB_LIVE || {};
+  if (key === 'tokens') {
+    const T = window.AH || {};
+    return Object.keys(T).length + ' tokens';
+  }
+  if (key === 'brain') {
+    return window.ARCHHUB_BRAIN_FACTS != null
+      ? window.ARCHHUB_BRAIN_FACTS + ' facts' : 'connecting';
+  }
+  if (key === 'hosts') {
+    const live_hosts = (live.connectors || []).filter(
+      c => c.state === 'connected' || c.state === 'listening');
+    return live_hosts.length
+      ? live_hosts.map(c => c.name).join(' · ') : 'none listening';
+  }
+  if (key === 'skills') {
+    return (live.skills || []).length + ' on this machine';
+  }
+  const nodes = (live.graph && live.graph.nodes) || [];
+  return nodes.length + ' nodes restored';
+};
+
 const AC_BOOT = [
-  { k: 'tokens',  label: 'Design tokens',      detail: '34 colours · 12 sizes',   ms: 240 },
-  { k: 'brain',   label: 'Brain',              detail: 'local · 8 facts',         ms: 620 },
-  { k: 'hosts',   label: 'Hosts',              detail: 'Revit · Rhino · Speckle', ms: 900 },
-  { k: 'skills',  label: 'Skills',             detail: '6 saved · 2 shared',      ms: 1180 },
-  { k: 'canvas',  label: 'Canvas',             detail: '11 nodes restored',       ms: 1460 },
+  { k: 'tokens',  label: 'Design tokens', ms: 240,  get detail() { return _bootDetail('tokens'); } },
+  { k: 'brain',   label: 'Brain',         ms: 620,  get detail() { return _bootDetail('brain'); } },
+  { k: 'hosts',   label: 'Hosts',         ms: 900,  get detail() { return _bootDetail('hosts'); } },
+  { k: 'skills',  label: 'Skills',        ms: 1180, get detail() { return _bootDetail('skills'); } },
+  { k: 'canvas',  label: 'Canvas',        ms: 1460, get detail() { return _bootDetail('canvas'); } },
 ];
 
 // The boot screen is a HELD MOMENT, not a dashboard. The old one was a full title block —
@@ -76,9 +102,15 @@ const AC_BOOT = [
 function AppBoot({ onDone, account }) {
   const [t, setT] = React.useState(0);
   const [failed, setFailed] = React.useState(false);
+  const [live, setLive] = React.useState(null);
   React.useEffect(() => {
     const t0 = Date.now();
     const iv = setInterval(() => setT(Date.now() - t0), 60);
+    // What the boot screen names must be what actually answered. The
+    // capability probe is the truth; the timer only paces the reading.
+    if (window.ARCHHUB_CAPABILITIES) {
+      window.ARCHHUB_CAPABILITIES().then(setLive).catch(() => setLive(false));
+    }
     const end = setTimeout(() => { clearInterval(iv); onDone && onDone(); }, 2050);
     return () => { clearInterval(iv); clearTimeout(end); };
   }, []);
@@ -190,6 +222,17 @@ function SignUp({ onDone, onCancel, plan }) {
       usage: Object.assign({}, a.usage, { cap: p.cap, opsCap: p.ops }),
     });
     acSave(rec);
+    // The account is a GRAPH record, not just localStorage: land it and
+    // take the tier the graph answers with.
+    if (window.ARCHHUB_LOGIN && rec.email) {
+      window.ARCHHUB_LOGIN(rec.email).then(live => {
+        if (live && live.tier) {
+          acSave(Object.assign({}, rec, {
+            plan: live.tier, graphTier: live.tier, founder: !!live.founder,
+          }));
+        }
+      }).catch(() => {});
+    }
     onDone && onDone(rec);
   };
 

@@ -13947,6 +13947,13 @@ def _migrate_brain_control_receipts_into_brain_scope(
     receipt_roots = frozenset(receipt_roots)
     if not receipt_roots:
         return 0
+    interface_role = assembly.role("interface")
+    receipt_interfaces = frozenset(
+        item.participant_id
+        for receipt_root in receipt_roots
+        for item in read_relation(snapshot, receipt_root, budget=100_000)
+        if item.role_id == interface_role
+    )
 
     receipt_members = tuple(
         member for member in canvas_members
@@ -14048,7 +14055,10 @@ def _migrate_brain_control_receipts_into_brain_scope(
                     )
                 ) or (
                     item.participant_id in property_roots
-                    and item.role_id == roles["scope"]
+                    and item.role_id in (roles["scope"], roles["property"])
+                ) or (
+                    item.participant_id in receipt_interfaces
+                    and item.role_id == interface_role
                 )
             )
             if removals:
@@ -18825,6 +18835,37 @@ def _ensure_view_visibility_scope_projection(
             )
         if not set(canonical_properties).issubset(indexed_properties):
             raise InvalidCell("persisted visibility property projection drifted")
+        # SHED is growth's mirror, by the same canonical derivation: a
+        # property whose owner left the view (a receipt nested into the
+        # brain composition, a member folded into a group) no longer
+        # belongs to this index. Leaving it made every view projection
+        # carry properties of things the view can no longer see.
+        stale_properties = set(indexed_properties) - set(canonical_properties)
+        if stale_properties:
+            stale_incidences = tuple(
+                member.incidence_id
+                for member in members
+                if member.role_id == registry.roles["property"]
+                and member.participant_id in stale_properties
+            )
+            shed_properties = prepare_remove_relation_members(
+                snapshot,
+                view_session.visibility_root,
+                stale_incidences,
+                budget=100_000,
+            )
+            store.commit(
+                snapshot.revision,
+                replace=shed_properties.replace,
+            )
+            snapshot = store.snapshot()
+            members = read_relation(
+                snapshot, view_session.visibility_root, budget=100_000
+            )
+            indexed_properties = tuple(
+                member.participant_id for member in members
+                if member.role_id == registry.roles["property"]
+            )
         # Interfaces the scope gained are indexed the same way the
         # properties above are: growth is what a growing canvas does.
         # What the index holds and the canon no longer has is still

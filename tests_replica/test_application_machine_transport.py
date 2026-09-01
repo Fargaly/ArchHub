@@ -484,10 +484,11 @@ def test_brain_receipts_move_into_brain_scope_without_raising_composer_limit():
             projected = read_relation(after, relation_root, budget=100_000)
             assert not set(receipt_roots).intersection(
                 member.participant_id for member in projected
-            )
-            assert not receipt_properties.intersection(
+            ), relation_root
+            leak = receipt_properties.intersection(
                 member.participant_id for member in projected
             )
+            assert not leak, (relation_root, len(leak))
         scoped_roots = universal_application_module._session_canvas_roots(
             after, registry, session
         )[0]
@@ -655,7 +656,11 @@ def test_restore_repairs_grants_after_receipts_are_already_nested():
                         budget=100_000,
                     )
         with pytest.raises(
-            InvalidCell, match="view visibility differs from signed projection grants"
+            InvalidCell,
+            match=(
+                "view visibility differs from signed projection grants"
+                "|visibility interface lacks a visible graph owner"
+            ),
         ):
             universal_application_module._session_canvas_roots(
                 server.universal_store.snapshot(), registry, session

@@ -1760,7 +1760,7 @@ const Socket = ({ side, i, t, label }) => {
 // ─── per-category body content ───
 // The inline reply is a real ask: it reaches the same agent the main
 // composer does, and reports its answer where it was typed.
-const InlineAsk = () => {
+const InlineAsk = ({ placeholder }) => {
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
   const ask = async () => {
@@ -1778,7 +1778,7 @@ const InlineAsk = () => {
     <>
       <input value={text} onChange={e => setText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') ask(); }}
-        placeholder={state || 'Reply…'}
+        placeholder={state || placeholder || 'Reply…'}
         style={{ flex:1, background:'transparent', border:0, outline:0,
           fontStyle:'italic', fontFamily:LM.serif, fontSize:12,
           color: state ? LM.accent : LM.ink }}/>
@@ -2229,11 +2229,8 @@ const FloatingComposer = ({ setLibraryOpen }) => (
     <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
       <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
       <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4 }}/>
-      <span style={{ flex:1, color:LM.inkMuted, fontStyle:'italic', fontFamily:LM.serif, fontSize:14, marginLeft:6 }}>
-        Reply, or type / to add a node…
-      </span>
+      <InlineAsk placeholder="Reply, or ask the agent to build…"/>
       <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
-      <button style={{ padding:'4px 11px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:LM.rad.sm, fontSize:11.5, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
     </div>
   </div>
 );
@@ -2459,11 +2456,7 @@ const ConversationRail = ({ node }) => {
           padding:'8px 11px',
         }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
-            <span style={{ flex:1, fontStyle:'italic', fontFamily:LM.serif, fontSize:13.5 }}>Reply to this conversation…</span>
-            <button style={{
-              padding:'4px 11px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:LM.rad.sm,
-              fontSize:11.5, fontWeight:500, cursor:'pointer',
-            }}>Send ↵</button>
+            <InlineAsk placeholder="Reply to this conversation…"/>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
             <ChatAction>@ skill</ChatAction>
@@ -2708,7 +2701,17 @@ const SettingsMemory = ({ store, patch }) => (
             <div style={{ fontSize:13, color:LM.ink, lineHeight:1.4 }}>{m.text}</div>
             <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{m.src}</div>
           </div>
-          <button style={{ ...smallBtn(), padding:'3px 8px' }}>edit</button>
+          <button onClick={async (e) => {
+            const said = window.prompt('Rewrite this memory', m.text);
+            if (!said || said.trim() === m.text) return;
+            const b = e.currentTarget;
+            b.textContent = 'saving…';
+            try {
+              await window.ARCHHUB_REMEMBER(said.trim());
+              b.textContent = 'saved';
+            } catch (error) { b.textContent = 'refused'; }
+            setTimeout(() => { b.textContent = 'edit'; }, 4000);
+          }} style={{ ...smallBtn(), padding:'3px 8px' }}>edit</button>
           <button title={'Forget: ' + m.text}
             onClick={() => patch('forgotten', (store.forgotten || []).concat(m.id))}
             style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>
@@ -2788,8 +2791,27 @@ const SettingsProfile = () => (
         You are working with Fargaly Habib, an architect leading Tower A at Habib Studio. Use millimeters, ISO conventions. Be terse and technical, no preamble. Never propose imperial units. Never use emoji. The active Revit document is the source of truth.
       </div>
       <div style={{ display:'flex', gap:6, marginTop:LM.sp.sm }}>
-        <button style={smallBtn()}>edit raw prompt</button>
-        <button style={smallBtn()}>preview with this session</button>
+        <button onClick={async (e) => {
+          const said = window.prompt('The instruction every agent inherits');
+          if (!said || !said.trim()) return;
+          const b = e.currentTarget;
+          b.textContent = 'saving…';
+          try {
+            await window.ARCHHUB_REMEMBER('SYSTEM PROMPT: ' + said.trim());
+            b.textContent = 'saved to the brain';
+          } catch (error) { b.textContent = 'refused'; }
+          setTimeout(() => { b.textContent = 'edit raw prompt'; }, 5000);
+        }} style={smallBtn()}>edit raw prompt</button>
+        <button onClick={async (e) => {
+          const b = e.currentTarget;
+          b.textContent = 'asking…';
+          try {
+            const answer = await window.ARCHHUB_AGENT(
+              'In one sentence, state the standing instruction you are working under.');
+            b.textContent = String(answer).slice(0, 48);
+          } catch (error) { b.textContent = 'refused'; }
+          setTimeout(() => { b.textContent = 'preview with this session'; }, 8000);
+        }} style={smallBtn()}>preview with this session</button>
       </div>
     </div>
   </div>
@@ -2899,7 +2921,9 @@ const SettingsProviders = ({ store, patch }) => (
             background: p.state==='connected'?LM.ok+'14' : p.state==='local'?LM.cyan+'14' : LM.bgSoft,
             color:       p.state==='connected'?LM.ok      : p.state==='local'?LM.cyan      : LM.inkMuted,
           }}>{p.state}</span>
-          <button style={{ ...smallBtn(), padding:'3px 8px' }}>{p.state==='off' ? 'connect' : 'manage'}</button>
+          <button onClick={() => window.ARCHHUB_REVEAL?.('brain')}
+            title="Provider keys live in the OS keychain, beside the brain"
+            style={{ ...smallBtn(), padding:'3px 8px' }}>{p.state==='off' ? 'connect' : 'manage'}</button>
         </div>
       ))}
     </div>
@@ -3038,7 +3062,13 @@ const SettingsStorage = () => (
             <div style={{ fontSize:13, color }}>{t}</div>
             <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>
           </div>
-          <button style={{ ...smallBtn(), color, borderColor: col === LM.err ? LM.err + '55' : LM.line }}>do it</button>
+          <button onClick={(e) => {
+            // Irreversible acts are never one click away from a list.
+            const b = e.currentTarget;
+            b.textContent = 'opening the folder';
+            window.ARCHHUB_REVEAL?.(t.indexOf('session') >= 0 ? 'graph' : 'brain');
+            setTimeout(() => { b.textContent = 'do it'; }, 5000);
+          }} style={{ ...smallBtn(), color, borderColor: col === LM.err ? LM.err + '55' : LM.line }}>do it</button>
         </div>
       ))}
     </div>

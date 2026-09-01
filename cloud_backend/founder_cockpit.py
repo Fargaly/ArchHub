@@ -794,10 +794,44 @@ def api_purge_test_users(
 _COCKPIT_ASSETS = Path(__file__).resolve().parent / "cockpit_assets"
 
 
+_MAP_STATE = Path(__file__).resolve().parent / "data" / "founder-map.json"
+
+
+@router.post("/map-state")
+async def cockpit_map_state(request: Request,
+                            _founder: dict = Depends(require_founder)):
+    """The founder's desktop publishes its live graph projection here.
+
+    The cockpit is the map and the map is the graph, so the cloud serves
+    what the founder's running application actually holds. When no push
+    has arrived the authored model remains the fallback -- the surface is
+    never blank and never invents state.
+    """
+    payload = await request.body()
+    if len(payload) > 4_000_000:
+        return JSONResponse({"ok": False, "error": "map state too large"},
+                            status_code=413)
+    try:
+        json.loads(payload.decode("utf-8"))
+    except Exception:
+        return JSONResponse({"ok": False, "error": "map state is not JSON"},
+                            status_code=400)
+    _MAP_STATE.parent.mkdir(parents=True, exist_ok=True)
+    _MAP_STATE.write_bytes(payload)
+    return {"ok": True, "bytes": len(payload)}
+
+
 @router.get("/map-assets/{asset:path}")
 def cockpit_asset(asset: str,
                   _founder: dict = Depends(require_founder)) -> Response:
     """One cockpit module, behind the founder gate like every other route."""
+    if asset == "map-data.js" and _MAP_STATE.is_file():
+        # The founder's LIVE graph, as pushed by his running application.
+        return Response(
+            b"window.ATLAS_MAP = " + _MAP_STATE.read_bytes()
+            + b"; window.ATLAS_LIVE = true;",
+            media_type="text/javascript; charset=utf-8",
+        )
     target = (_COCKPIT_ASSETS / asset).resolve()
     if _COCKPIT_ASSETS not in target.parents or not target.is_file():
         return Response(status_code=404)

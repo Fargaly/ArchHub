@@ -2323,7 +2323,21 @@ const NodeRail = ({ node }) => {
       )}
 
       <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-        <button style={{ ...railBtn(), background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0 }}>↻ Rerun this node</button>
+        <button onClick={async (e) => {
+          const b = e.currentTarget;
+          b.textContent = 'running…'; b.disabled = true;
+          try {
+            const result = await window.ARCHHUB_RUN?.();
+            const answer = result?.display?.[node.id]
+              || result?.pending?.[node.id] || 'ran';
+            b.textContent = String(answer).slice(0, 42);
+          } catch (err) {
+            b.textContent = 'refused: ' + (err?.message || err).slice(0, 32);
+          } finally {
+            b.disabled = false;
+            setTimeout(() => { b.textContent = '↻ Rerun this node'; }, 6000);
+          }
+        }} style={{ ...railBtn(), background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0 }}>↻ Rerun this node</button>
         <button style={railBtn()}>Pin to skill</button>
         <button style={railBtn()}>Branch from here</button>
         <button style={{ ...railBtn(), color:LM.err, borderColor:LM.lineSoft }}>Delete node</button>

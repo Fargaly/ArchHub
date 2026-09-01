@@ -17,6 +17,30 @@
 </head>
 <body>
 <div id="root"></div>
+<script>
+window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
+(() => {
+  const session = window.ARCHHUB_BOOT;
+  if (!session) return;
+  window.ARCHHUB_SET_PROP = async (relation, value) => {
+    const response = await fetch('/api/universal/set-property', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ArchHub-Session': session.token,
+        'X-ArchHub-CSRF': session.csrf,
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify({relation, value}),
+    });
+    const answer = await response.json();
+    if (!response.ok || answer.ok === false) {
+      throw new Error(answer.error || 'refused');
+    }
+    return answer;
+  };
+})();
+</script>
 <script src="/studio/vendor/react.js"></script>
 <script src="/studio/vendor/react-dom.js"></script>
 <script src="/studio/vendor/babel.js"></script>

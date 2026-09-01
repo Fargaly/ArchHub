@@ -369,8 +369,8 @@ def project_atlas_map(store, registry, *, authentication_context=None):
 
     def rows_of(root):
         return {
-            label: value
-            for label, (_rel, value) in (owned.get(root) or {}).items()
+            label: (rel, value)
+            for label, (rel, value) in (owned.get(root) or {}).items()
         }
 
     domains = []
@@ -393,11 +393,12 @@ def project_atlas_map(store, registry, *, authentication_context=None):
         except Exception:
             member_roots = ()
         for spot, member in enumerate(tuple(member_roots)[:24]):
-            data = rows_of(member)
+            held = rows_of(member)
+            data = {label: value for label, (_r, value) in held.items()}
             title = data.get("title") or data.get("label") or member
             params = [
-                {"k": label, "v": str(value)[:48]}
-                for label, value in data.items()
+                {"k": label, "v": str(value)[:48], "rel": rel, "t": "string"}
+                for label, (rel, value) in held.items()
                 if label not in {
                     "title", "label", "status", "position_x", "position_y",
                     "engine",

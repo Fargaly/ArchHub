@@ -249,7 +249,15 @@ function StemParams({ node, patchNode }) {
   const params = node.params || [];
   const ports = node.ports || { ins: [], outs: [] };
   const promoted = new Set((ports.ins || []).map(x => x.id));
-  const setParam = (i, patch) => patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...patch } : p) });
+  const setParam = (i, patch) => {
+    patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...patch } : p) });
+    // A live-graph parameter commits through the governed write; the
+    // local patch above keeps the panel instant either way.
+    const held = params[i];
+    if (patch.v !== undefined && held && held.rel && window.ARCHHUB_SET_PROP) {
+      window.ARCHHUB_SET_PROP(held.rel, String(patch.v)).catch(() => {});
+    }
+  };
   const delParam = (i) => { const p = params[i]; patchNode(node.id, { params: params.filter((_, j) => j !== i), ports: { ...ports, ins: (ports.ins || []).filter(x => x.id !== p.k) } }); };
   const addParam = (t) => {
     const n = params.length + 1;

@@ -4315,6 +4315,51 @@ class ApplicationServer:
                                      + str(exc),
                         })
                         return
+                if parsed.path == '/api/universal/hosts':
+                    # The live machine, honestly: which hosts answer right
+                    # now. A port scan of the published broker range, never
+                    # a remembered list.
+                    try:
+                        self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    try:
+                        from .clean_revit_adapter import live_sessions
+                        found = []
+                        for item in live_sessions():
+                            document = item.get('document')
+                            if isinstance(document, dict):
+                                document = (
+                                    document.get('document_title')
+                                    or document.get('document_name')
+                                    or ''
+                                )
+                            name = (
+                                item.get('revit_version')
+                                or (
+                                    'AutoCAD %s' % item['document'].get(
+                                        'acad_version', ''
+                                    )
+                                    if isinstance(item.get('document'), dict)
+                                    and item['document'].get('acad_version')
+                                    else 'Host'
+                                )
+                            )
+                            found.append({
+                                'id': str(item['port']),
+                                'name': str(name),
+                                'port': str(item['port']),
+                                'state': 'connected',
+                                'file': str(document or 'no document open'),
+                            })
+                        self._json(200, {'ok': True, 'hosts': found})
+                    except Exception as exc:  # noqa: BLE001
+                        self._json(200, {
+                            'ok': True, 'hosts': [],
+                            'note': str(exc),
+                        })
+                    return
                 if parsed.path == '/api/universal/capabilities':
                     # What this running application can actually reach. A
                     # capability installed in the graph but unreachable from
@@ -4340,6 +4385,88 @@ class ApplicationServer:
                         })
                     except Exception as exc:  # noqa: BLE001
                         self._json(500, {'ok': False, 'error': str(exc)})
+                    return
+                if parsed.path == '/studio' or parsed.path.startswith(
+                    '/studio/'
+                ):
+                    # The studio face: the design handoff's own surface,
+                    # served same-origin so every fetch is the signed API.
+                    studio_binding = None
+                    studio_session_token = None
+                    try:
+                        studio_binding, studio_session_token = (
+                            self._browser_session_binding()
+                        )
+                    except AuthorizationDenied:
+                        bootstrap = (
+                            parse_qs(parsed.query).get('bootstrap') or ['']
+                        )[0]
+                        if not owner._consume_browser_bootstrap(bootstrap):
+                            self._json(403, {
+                                'ok': False,
+                                'error': 'desktop bootstrap is required',
+                            })
+                            return
+                        studio_session_token = owner.browser_session_token
+                        self._set_browser_cookie(studio_session_token)
+                        studio_binding = owner._resolve_browser_session(
+                            studio_session_token
+                        )
+                    import mimetypes as _mimetypes
+                    from pathlib import Path as _Path
+                    studio_dir = _Path(__file__).resolve().parent / 'studio'
+                    name = parsed.path[len('/studio'):].lstrip('/')
+                    target = (
+                        studio_dir / 'studio.html' if not name
+                        else (studio_dir / name)
+                    )
+                    resolved = target.resolve()
+                    inside = studio_dir == resolved.parent or (
+                        studio_dir in resolved.parents
+                    )
+                    if not inside or not resolved.is_file():
+                        self._json(404, {'ok': False, 'error': 'no such file'})
+                        return
+                    raw = resolved.read_bytes()
+                    if (
+                        resolved.suffix == '.html'
+                        and studio_binding is not None
+                    ):
+                        raw = raw.replace(
+                            b'/*__ARCHHUB_BOOT__*/ null',
+                            json.dumps({
+                                'token': studio_session_token,
+                                'csrf': studio_binding.csrf_token,
+                            }).encode('utf-8'),
+                        )
+                    kind = (
+                        'text/html; charset=utf-8'
+                        if resolved.suffix == '.html'
+                        else 'text/javascript; charset=utf-8'
+                        if resolved.suffix in ('.js', '.jsx')
+                        else _mimetypes.guess_type(str(resolved))[0]
+                        or 'application/octet-stream'
+                    )
+                    self.send_response(200)
+                    self.send_header('Content-Type', kind)
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    if resolved.suffix == '.html':
+                        self.send_header('Referrer-Policy', 'no-referrer')
+                        self.send_header('X-Frame-Options', 'DENY')
+                        self.send_header(
+                            'Content-Security-Policy',
+                            "default-src 'none'; connect-src 'self'; "
+                            "img-src 'self' data:; "
+                            "style-src 'unsafe-inline' "
+                            "https://fonts.googleapis.com; "
+                            "font-src https://fonts.gstatic.com; "
+                            "script-src 'self' 'unsafe-inline' "
+                            "'unsafe-eval'; frame-ancestors 'none'"
+                        )
+                    self.send_header('Content-Length', str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
                     return
                 if parsed.path == '/':
                     try:

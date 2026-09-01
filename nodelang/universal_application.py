@@ -3303,6 +3303,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/gesture", "edit"),
     ("POST", "/api/universal/agent", "edit"),
     ("POST", "/api/universal/run-graph", "edit"),
+    ("GET", "/api/universal/hosts", "read"),
     ("POST", "/api/universal/pipeline-seed", "edit"),
     ("POST", "/api/universal/interaction", "edit"),
     ("POST", "/api/universal/instantiate", "create"),
@@ -21902,6 +21903,17 @@ def _project_universal_canvas_interpreter(
                     "bim_phase", "standard",
                 }
             ][:4],
+            # The run wire reads which effect a node declares; the display
+            # cap above must not hide it, and status carries the last run
+            # answer for surfaces that draw it on the card.
+            "engine": (
+                str(effective_property_value(labelled["engine"]))
+                if "engine" in labelled else ""
+            ),
+            "status": (
+                str(effective_property_value(labelled["status"]))
+                if "status" in labelled else ""
+            ),
             "ports": [
                 {
                     **interface,

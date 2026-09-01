@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Architects+Daughter&display=swap" rel="stylesheet"/>
+<style>
+  html, body { margin:0; padding:0; background:#0a0a0d; font-family:'Inter',system-ui,sans-serif; color:#ece8e0; }
+  *, *::before, *::after { box-sizing: border-box; }
+  #root { width:100vw; height:100vh; }
+  .ah-scroll::-webkit-scrollbar { width:6px; height:6px; }
+  .ah-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.12); border-radius:3px; }
+  .ah-scroll::-webkit-scrollbar-track { background:transparent; }
+  #studio-boot { position:fixed; inset:0; display:grid; place-items:center; font-family:'JetBrains Mono',monospace; font-size:11px; color:#9b938a; letter-spacing:.14em; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="studio-boot">CONNECTING TO THE GRAPH&hellip;</div>
+<script src="/studio/vendor/react.js"></script>
+<script src="/studio/vendor/react-dom.js"></script>
+<script src="/studio/vendor/babel.js"></script>
+<script>
+window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
+(async () => {
+  const boot = document.getElementById('studio-boot');
+  const fail = why => { boot.textContent = 'REFUSED: ' + why; };
+  try {
+    let session = window.ARCHHUB_BOOT;
+    if (!session) {
+      const minted = await fetch('/api/universal/session', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-ArchHub-Sign-In':'1'},
+        body:'{}',
+      });
+      if (!minted.ok) throw new Error('sign-in refused');
+      session = await minted.json();
+    }
+    const H = () => ({
+      'Content-Type':'application/json',
+      'X-ArchHub-CSRF':session.csrf,
+      'X-ArchHub-Session':session.token,
+    });
+    const jget = async p => (await fetch(p, {headers:H()})).json();
+    const jpost = async (p, b) => {
+      const r = await fetch(p, {method:'POST', headers:H(), body:JSON.stringify(b || {})});
+      const d = await r.json();
+      if (!r.ok || d.ok === false) throw new Error(d.error || 'refused');
+      return d;
+    };
+    window.ARCHHUB_AGENT = async prompt =>
+      (await jpost('/api/universal/agent', {prompt})).answer || 'done';
+    window.ARCHHUB_RUN = () => jpost('/api/universal/run-graph', {});
+    const canvas = await jget('/api/universal/canvas');
+    let hosts = [];
+    try { hosts = (await jget('/api/universal/hosts')).hosts || []; } catch (e) {}
+    const CATS = e =>
+      e.startsWith('vision.') || e.startsWith('cad.') ? 'read'
+      : e.startsWith('lines.') ? 'annotate'
+      : e.startsWith('revit.') ? 'host'
+      : e.startsWith('ai') ? 'ai' : 'compose';
+    const nodes = []; const idset = new Set();
+    for (const n of (canvas.nodes || [])) {
+      const params = Object.fromEntries((n.params || []).map(r => [r.label, r.value]));
+      const engine = String(n.engine || params.engine || '');
+      if (!engine) continue;
+      const ins = [], outs = [];
+      for (const p of (n.ports || [])) {
+        const entry = {id:p.id, label:p.name || '', t:'any'};
+        if (p.side === 'target') ins.push(entry);
+        else if (p.side === 'source') outs.push(entry);
+      }
+      nodes.push({
+        id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine,
+        x:Number(n.x) || 200, y:Number(n.y) || 200, w:210, h:110,
+        ins, outs, messages:[],
+        params:(n.params || [])
+          .filter(r => r.label !== 'engine' && r.label !== 'status')
+          .map(r => ({k:r.label, v:r.value, type:'select'})),
+        status: n.status || params.status || '',
+      });
+      idset.add(n.id);
+    }
+    const wires = [];
+    for (const w of (canvas.wires || [])) {
+      if (!idset.has(w.source) || !idset.has(w.target)) continue;
+      const s = nodes.find(n => n.id === w.source);
+      const t = nodes.find(n => n.id === w.target);
+      wires.push({from:[w.source, s?.outs[0]?.id], to:[w.target, t?.ins[0]?.id], t:'any'});
+    }
+    window.ARCHHUB_LIVE = {
+      sessions: [{
+        id:'graph', title:'ArchHub Operating Graph', state:'running',
+        host:'archhub', file:'universal graph · rev ' + (canvas.revision ?? '?'),
+        model:'sonnet 4.5', when:'now',
+        last:(canvas.nodes || []).length + ' nodes · '
+          + (canvas.wires || []).length + ' wires',
+      }],
+      hosts, graph:{nodes, wires}, skills:[],
+    };
+    for (const f of ['tokens.jsx','shared-data.jsx','studio-account.jsx','studio-lm.jsx','mount.jsx']) {
+      const tag = document.createElement('script');
+      tag.type = 'text/babel';
+      tag.src = '/studio/' + f;
+      tag.async = false;
+      document.body.appendChild(tag);
+    }
+    Babel.transformScriptTags();
+    boot.remove();
+  } catch (error) {
+    fail(error?.message || String(error));
+  }
+})();
+</script>
+</body>
+</html>

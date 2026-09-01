@@ -4,10 +4,19 @@ Boots the universal cell application on a PERSISTENT store under
 %LOCALAPPDATA%/ArchHub-Test (your live graph is never touched) and opens
 it in its own application window. Close the window to stop ArchHub TEST.
 """
-import os, sys, time
+import os, sys, time, traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# pythonw has no console: stdout/stderr vanish and a crash is invisible.
+# Everything this launcher says goes to a file the founder can open.
+_log_dir = Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_log = open(_log_dir / "launcher.log", "a", encoding="utf-8", buffering=1)
+sys.stdout = _log
+sys.stderr = _log
+print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
 
 state_dir = Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"
 state_dir.mkdir(parents=True, exist_ok=True)
@@ -84,9 +93,22 @@ window.resize(1480, 920)
 window.setMinimumSize(960, 640)
 view = QWebEngineView(window)
 window.setCentralWidget(view)
+# The bootstrap lands on / to mint the session cookie, then the window
+# lives on the studio face.
+_booted = {"done": False}
+def _to_studio(ok):
+    if ok and not _booted["done"]:
+        _booted["done"] = True
+        view.load(QUrl(server.public_url + "/studio"))
+view.loadFinished.connect(_to_studio)
 view.load(QUrl(server.bootstrap_url))
 window.show()
 
-code = app.exec()
-server.close()
+try:
+    code = app.exec()
+except BaseException:
+    traceback.print_exc()
+    code = 1
+finally:
+    server.close()
 raise SystemExit(code)

@@ -3307,6 +3307,8 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/pick-file", "inspect"),
     ("POST", "/api/universal/reveal", "inspect"),
     ("POST", "/api/universal/retract", "edit"),
+    ("POST", "/api/universal/brain-remember", "edit"),
+    ("POST", "/api/universal/brain-export", "read"),
     ("POST", "/api/universal/skills", "read"),
     ("POST", "/api/universal/login", "edit"),
     ("POST", "/api/universal/accounts", "inspect"),

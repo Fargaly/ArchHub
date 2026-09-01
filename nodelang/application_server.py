@@ -5667,6 +5667,51 @@ class ApplicationServer:
                                         'error': str(refusal)[:200],
                                     })
                                 return
+                            elif self.path == '/api/universal/brain-remember':
+                                import hashlib as _h
+
+                                from .pipeline_engines import _brain_call
+                                said = str(body.get('text') or '').strip()
+                                if not said:
+                                    self._json(200, {
+                                        'ok': False,
+                                        'error': 'nothing to remember',
+                                    })
+                                    return
+                                _brain_call('brain.write', {'ops': [{
+                                    'op': 'add',
+                                    'fragment': {
+                                        'id': _h.sha256(
+                                            said.encode('utf-8')
+                                        ).hexdigest(),
+                                        'kind': 'fact', 'text': said,
+                                        'owner_user': (
+                                            'ahmed.fargaly98@gmail.com'
+                                        ),
+                                        'tags': ['founder'],
+                                        'provenance': {
+                                            'contributing_agent': 'archhub',
+                                            'contributing_user': (
+                                                'ahmed.fargaly98@gmail.com'
+                                            ),
+                                        },
+                                    },
+                                }]})
+                                self._json(200, {'ok': True})
+                                return
+                            elif self.path == '/api/universal/brain-export':
+                                import json as _json
+
+                                from .pipeline_engines import _brain_call
+                                listing = str(_brain_call(
+                                    'brain.list_facts', {}
+                                ))
+                                try:
+                                    held = _json.loads(listing)
+                                except Exception:
+                                    held = {'raw': listing[:200000]}
+                                self._json(200, {'ok': True, 'facts': held})
+                                return
                             elif self.path == '/api/universal/retract':
                                 from .universal_pipeline import (
                                     retract_universal_node,

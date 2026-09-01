@@ -71,6 +71,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         missing: scan.missing || [],
       };
     };
+    window.ARCHHUB_REMEMBER = text =>
+      jpost('/api/universal/brain-remember', {text});
+    window.ARCHHUB_BRAIN_EXPORT = async () =>
+      (await jpost('/api/universal/brain-export', {})).facts || [];
     window.ARCHHUB_RETRACT = root =>
       jpost('/api/universal/retract', {root});
     window.ARCHHUB_REVEAL = what =>

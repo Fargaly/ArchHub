@@ -2683,7 +2683,19 @@ const SettingsMemory = ({ store, patch }) => (
     }}>
       <span style={{ color:LM.accent, fontSize:14 }}>✦</span>
       <span style={{ flex:1, fontSize:12.5 }}>You can also say "<span style={{ color:LM.accent, fontFamily:LM.mono }}>/remember</span> …" inside any chat — I'll save it here.</span>
-      <button style={smallBtn()}>add fact</button>
+      <button onClick={async (e) => {
+        const said = window.prompt('What should the brain remember?');
+        if (!said || !said.trim()) return;
+        const b = e.currentTarget;
+        b.textContent = 'saving…';
+        try {
+          await window.ARCHHUB_REMEMBER(said.trim());
+          b.textContent = 'saved';
+        } catch (error) {
+          b.textContent = 'refused';
+        }
+        setTimeout(() => { b.textContent = 'add fact'; }, 4000);
+      }} style={smallBtn()}>add fact</button>
     </div>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       {LM_MEMORY.filter(m => (store.forgotten || []).indexOf(m.id) < 0).map((m, i) => (
@@ -2720,8 +2732,33 @@ const SettingsMemory = ({ store, patch }) => (
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
         <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>EXPORT</span>
         <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>Take your memory with you — JSON, plaintext, or Markdown.</span>
-        <button style={smallBtn()}>export</button>
-        <button style={{ ...smallBtn(), color:LM.err }}>forget all</button>
+        <button onClick={async (e) => {
+          const b = e.currentTarget;
+          b.textContent = 'reading…';
+          try {
+            const facts = await window.ARCHHUB_BRAIN_EXPORT();
+            const blob = new Blob([JSON.stringify(facts, null, 2)],
+              { type:'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url; link.download = 'archhub-brain.json';
+            document.body.appendChild(link); link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 4000);
+            b.textContent = 'exported';
+          } catch (error) {
+            b.textContent = 'refused';
+          }
+          setTimeout(() => { b.textContent = 'export'; }, 4000);
+        }} style={smallBtn()}>export</button>
+        <button onClick={(e) => {
+          // Forgetting everything is not a button press away. The brain
+          // is the founder's memory; erasing it needs the real path, in
+          // the folder, with his own hands.
+          const b = e.currentTarget;
+          b.textContent = 'open the folder to remove it';
+          window.ARCHHUB_REVEAL?.('brain');
+          setTimeout(() => { b.textContent = 'forget all'; }, 6000);
+        }} style={{ ...smallBtn(), color:LM.err }}>forget all</button>
       </div>
     </div>
   </div>

@@ -998,9 +998,16 @@ const ChatView = ({ session, model, setMode }) => {
   const [draft, setDraft] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const stamp = () => new Date().toTimeString().slice(0, 5);
+  const tier = window.ARCHHUB_ACCOUNT?.tier || 'founder';
+  const agentOpen = ['pro', 'firm', 'founder'].includes(tier);
   const send = async () => {
     const text = draft.trim();
     if (!text || busy || !window.ARCHHUB_AGENT) return;
+    if (!agentOpen) {
+      setMessages(m => [...m, { me:false, time:stamp(),
+        text:'The agent composer is open on Pro and Firm tiers. The founder can open it for your account from Settings.' }]);
+      return;
+    }
     setMessages(m => [...m, { me:true, time:stamp(), text }]);
     setDraft('');
     setBusy(true);

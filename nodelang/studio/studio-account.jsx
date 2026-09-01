@@ -199,6 +199,13 @@ function SignUp({ onDone, onCancel, plan }) {
       usage: Object.assign({}, a.usage, { cap: p.cap, opsCap: p.ops }),
     });
     acSave(rec);
+    // The account is a graph record, not just localStorage: land it and
+    // keep the tier the graph answers with.
+    if (window.ARCHHUB_LOGIN && rec.email) {
+      window.ARCHHUB_LOGIN(rec.email).then(live => {
+        if (live && live.tier) acSave(Object.assign({}, rec, { plan: live.tier, graphTier: live.tier, founder: !!live.founder }));
+      }).catch(() => {});
+    }
     onDone && onDone(rec);
   };
 
@@ -376,9 +383,47 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
   const plan = AC_PLANS.find(p => p.id === a.plan) || AC_PLANS[1];
   const u = a.usage;
   const patchA = (patch) => { const next = Object.assign({}, a, patch); acSave(next); setAccount && setAccount(next); };
+  const [members, setMembers] = React.useState(null);
+  const isFounder = !!(a.founder || a.graphTier === 'founder');
+  React.useEffect(() => {
+    if (isFounder && window.ARCHHUB_ACCOUNTS) {
+      window.ARCHHUB_ACCOUNTS().then(setMembers).catch(() => setMembers([]));
+    }
+  }, [isFounder]);
+  const retier = async (email, tier) => {
+    try {
+      await window.ARCHHUB_SET_TIER(email, tier);
+      setMembers(await window.ARCHHUB_ACCOUNTS());
+    } catch (e) {}
+  };
   return (
     <div>
       <SHead title="Account & usage" sub="What you're on, what you've spent against your own cap, and where your brain lives. The cap is yours to set — we stop, we don't invoice past it."/>
+      {isFounder && (
+        <div style={{ marginBottom: 16, border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, padding: '12px 14px' }}>
+          <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.14em', marginBottom: 8 }}>ACCOUNTS · FOUNDER CONTROL</div>
+          {members === null ? (
+            <div style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkMuted }}>loading…</div>
+          ) : members.length === 0 ? (
+            <div style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkMuted }}>no accounts yet</div>
+          ) : members.map(m => (
+            <div key={m.email} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: `1px solid ${AC.lineSoft || AC.line}` }}>
+              <span style={{ flex: 1, fontFamily: AC.mono, fontSize: 11, color: AC.ink }}>{m.email}</span>
+              {m.tier === 'founder' ? (
+                <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.accent }}>FOUNDER</span>
+              ) : (
+                <select value={m.tier} onChange={e => retier(m.email, e.target.value)} style={{
+                  background: AC.bg, color: AC.ink, border: `1px solid ${AC.line}`,
+                  borderRadius: 4, fontFamily: AC.mono, fontSize: 10, padding: '3px 6px' }}>
+                  <option value="free">free</option>
+                  <option value="pro">pro</option>
+                  <option value="firm">firm</option>
+                </select>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* identity */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>

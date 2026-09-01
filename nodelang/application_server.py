@@ -5573,6 +5573,47 @@ class ApplicationServer:
                                 )
                                 self._json(200, run_result)
                                 return
+                            elif self.path == '/api/universal/login':
+                                from .cell_accounts import (
+                                    ensure_accounts,
+                                    founder_email,
+                                    upsert_account,
+                                )
+                                ensure_accounts(
+                                    owner.universal_store,
+                                    founder_email=(
+                                        'ahmed.fargaly98@gmail.com'
+                                    ),
+                                )
+                                _root, mail, tier = upsert_account(
+                                    owner.universal_store,
+                                    body.get('email'),
+                                )
+                                self._json(200, {
+                                    'ok': True, 'email': mail, 'tier': tier,
+                                    'founder': mail == founder_email(
+                                        owner.universal_store.snapshot()
+                                    ),
+                                })
+                                return
+                            elif self.path == '/api/universal/accounts':
+                                from .cell_accounts import read_accounts
+                                self._json(200, {
+                                    'ok': True,
+                                    'accounts': read_accounts(
+                                        owner.universal_store.snapshot()
+                                    ),
+                                })
+                                return
+                            elif self.path == '/api/universal/account-tier':
+                                from .cell_accounts import set_tier
+                                tier = set_tier(
+                                    owner.universal_store,
+                                    body.get('email'),
+                                    str(body.get('tier') or ''),
+                                )
+                                self._json(200, {'ok': True, 'tier': tier})
+                                return
                             elif self.path == '/api/universal/pick-file':
                                 picker = getattr(
                                     owner, 'native_file_picker', None

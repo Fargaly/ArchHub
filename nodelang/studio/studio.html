@@ -58,6 +58,21 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       jpost('/api/universal/set-property', {relation, value});
     window.ARCHHUB_PICK_FILE = async (title, filter) =>
       (await jpost('/api/universal/pick-file', {title, filter})).path || '';
+    window.ARCHHUB_LOGIN = email =>
+      jpost('/api/universal/login', {email});
+    window.ARCHHUB_ACCOUNTS = async () =>
+      (await jpost('/api/universal/accounts', {})).accounts || [];
+    window.ARCHHUB_SET_TIER = (email, tier) =>
+      jpost('/api/universal/account-tier', {email, tier});
+    try {
+      const held = JSON.parse(localStorage.getItem('archhub.account.v1') || '{}');
+      if (held.email) {
+        const live = await window.ARCHHUB_LOGIN(held.email);
+        window.ARCHHUB_ACCOUNT = live;
+        localStorage.setItem('archhub.account.v1', JSON.stringify(
+          Object.assign(held, {plan: live.tier, graphTier: live.tier, founder: !!live.founder})));
+      }
+    } catch (e) {}
     const PARAM_SPECS = {
       threshold: {type:'slider', min:10, max:250, step:5,
         help:'Edge sensitivity — lower finds more lines'},

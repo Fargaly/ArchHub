@@ -18,7 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # pythonw has no console: stdout/stderr vanish and a crash is invisible.
 # Everything this launcher says goes to a file the founder can open.
-_log_dir = Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test"
+_log_dir = Path(
+    os.environ.get("ARCHHUB_TEST_STATE_DIR")
+    or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+)
 _log_dir.mkdir(parents=True, exist_ok=True)
 _log = open(_log_dir / "launcher.log", "a", encoding="utf-8", buffering=1)
 sys.stdout = _log
@@ -237,7 +240,21 @@ try:
         run_universal_pipeline,
         seed_wall_pipeline,
     )
-    seed_wall_pipeline(server.universal_store, server.universal_registry)
+    # Seeding reads the canvas, then writes to it; a commit landing in
+    # between makes the write's expected revision stale. That is ordinary
+    # optimistic concurrency, and its answer is to re-read and try again
+    # -- the seed is idempotent, so a retry adds nothing twice. Without
+    # this a FRESH INSTALL opened with an empty canvas.
+    for attempt in range(4):
+        try:
+            seed_wall_pipeline(
+                server.universal_store, server.universal_registry
+            )
+            break
+        except Exception as clash:
+            if attempt == 3:
+                raise
+            time.sleep(0.4)
     outcome = run_universal_pipeline(
         server.universal_store,
         server.universal_registry,

@@ -15,7 +15,7 @@ AppId={{8B6A2E31-3F4C-4E77-9C21-ARCHHUB000001}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\ArchHub
+DefaultDirName={localappdata}\ArchHub
 DefaultGroupName=ArchHub
 DisableProgramGroupPage=yes
 OutputDir=..\dist
@@ -23,7 +23,7 @@ OutputBaseFilename=ArchHub-Setup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequiredOverridesAllowed=dialog
+PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
 
@@ -50,19 +50,36 @@ Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}
 Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now"; Flags: postinstall nowait skipifsilent
 
 [Code]
-function InitializeSetup(): Boolean;
+function PythonPresent(): Boolean;
 var
-  ResultCode: Integer;
+  Code: Integer;
 begin
-  { A colleague without Python gets told plainly, not a broken app. }
-  if not Exec('cmd.exe', '/c py -3 --version >nul 2>&1 || python --version >nul 2>&1',
-              '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+  { Two honest attempts, no shell operators: the launcher and the plain
+    interpreter. Either answering 3.11+ is enough. }
+  Result := False;
+  if Exec('py', '-3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
+          '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
+  begin
+    Result := True;
+    exit;
+  end;
+  if Exec('python', '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
+          '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
+    Result := True;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  { A colleague without Python is told plainly, never handed a broken app.
+    A silent install proceeds and the launcher reports it on first run. }
+  Result := True;
+  if PythonPresent() then
+    exit;
+  if not WizardSilent() then
   begin
     MsgBox('ArchHub needs Python 3.11 or newer.' + #13#10 +
            'Install it from python.org (tick "Add python.exe to PATH"), then run this again.',
            mbInformation, MB_OK);
     Result := False;
-    exit;
   end;
-  Result := True;
 end;

@@ -164,6 +164,18 @@ profile.setCachePath(str(profile_root / "cache"))
 
 window = QMainWindow()
 window.setWindowTitle("ArchHub TEST")
+# The brand icon, and a distinct AppUserModelID so the taskbar shows
+# ArchHub rather than grouping under python's default.
+import ctypes
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub.Test")
+from PyQt6.QtGui import QIcon
+_icon_path = (
+    Path(__file__).resolve().parents[1]
+    / "12.PRODUCTION" / "app" / "assets" / "archhub.ico"
+)
+if _icon_path.is_file():
+    app.setWindowIcon(QIcon(str(_icon_path)))
+    window.setWindowIcon(QIcon(str(_icon_path)))
 window.resize(1480, 920)
 window.setMinimumSize(960, 640)
 view = QWebEngineView(window)

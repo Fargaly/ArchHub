@@ -279,6 +279,28 @@ _SEED = (
 )
 
 
+def _persist(write, attempts: int = 5):
+    """Run one governed write, re-reading when its revision went stale.
+
+    Placement and property writes each take a snapshot and commit against
+    it; a commit landing in between (the graph settles its own visibility
+    as it grows) makes that expected revision stale by exactly one. The
+    answer is the same as anywhere else in optimistic concurrency: read
+    again and repeat. Nothing here is idempotent by accident -- each call
+    site below either creates something that does not exist yet or is a
+    no-op when it does.
+    """
+    import time as _time
+
+    for attempt in range(attempts):
+        try:
+            return write()
+        except Exception as clash:
+            if attempt == attempts - 1 or "revision" not in str(clash):
+                raise
+            _time.sleep(0.15)
+
+
 def seed_wall_pipeline(
     store,
     registry,
@@ -316,19 +338,21 @@ def seed_wall_pipeline(
     for title, x, y, properties in _SEED:
         if title in existing:
             continue
-        root, _revision = instantiate_universal_definition(
+        root, _revision = _persist(lambda: instantiate_universal_definition(
             store, registry, definition_root, x=x, y=y,
             title_override=title,
             authentication_context=authentication_context,
-        )
+        ))
         for label, value in properties.items():
-            create_universal_property(
+            _persist(lambda label=label, value=value: create_universal_property(
                 store, registry, root, label, value,
                 authentication_context=authentication_context,
-            )
+            ))
         placed[title] = root
     for root in placed.values():
-        _ensure_pipeline_node_interfaces(store, registry, root)
+        _persist(lambda root=root: _ensure_pipeline_node_interfaces(
+            store, registry, root
+        ))
     fresh = project_universal_canvas(
         store, registry, authentication_context=authentication_context
     )
@@ -347,14 +371,14 @@ def seed_wall_pipeline(
             continue
         if (source_root, target_root) in wire_pairs:
             continue
-        connect_universal_roots(
-            store, registry, source_root, target_root,
+        _persist(lambda s=source_root, t=target_root: connect_universal_roots(
+            store, registry, s, t,
             source_interface="app:pipeline-interface:%s:source"
-            % source_root.rsplit(":", 1)[-1],
+            % s.rsplit(":", 1)[-1],
             target_interface="app:pipeline-interface:%s:target"
-            % target_root.rsplit(":", 1)[-1],
+            % t.rsplit(":", 1)[-1],
             authentication_context=authentication_context,
-        )
+        ))
         wired.append((source, target))
     if image_path and "Sketch Lines" in placed:
         snapshot = store.snapshot()

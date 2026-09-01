@@ -6,7 +6,7 @@
 ; share, where Windows attaches no mark-of-the-web and raises no warning.
 
 #define AppName "ArchHub"
-#define AppVersion "1.5.0"
+#define AppVersion "1.5.1"
 #define AppPublisher "Fargaly"
 #define AppExe "ArchHub.bat"
 

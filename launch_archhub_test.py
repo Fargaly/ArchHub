@@ -262,7 +262,12 @@ try:
     )
     print("  pipeline   : %d node(s) ran" % outcome["ran"], flush=True)
 except Exception as refusal:
-    print("  pipeline   : not seeded -- %s" % refusal, flush=True)
+    # A refusal nobody can locate is a refusal nobody can fix: name the
+    # exact call that raised, not only its message.
+    where = traceback.format_exc().strip().splitlines()
+    spot = [line.strip() for line in where if "line " in line][-1:] or [""]
+    print("  pipeline   : not seeded -- %s (%s)" % (refusal, spot[0]),
+          flush=True)
 
 if os.environ.get("ARCHHUB_TEST_NO_OPEN"):
     try:

@@ -52,8 +52,7 @@ if first_boot:
 
 if not first_boot:
     # Rolling backups, like Revit's: a silent copy at every launch,
-    # newest seven kept. The history lives inside the file; the copies
-    # protect against the disk and the human.
+    # last TWO kept -- insurance, not a museum.
     import shutil
     backups = state_dir / "backups"
     backups.mkdir(exist_ok=True)
@@ -61,7 +60,7 @@ if not first_boot:
     try:
         shutil.copy2(state_path, backups / ("%s.%s" % (state_path.name, stamp)))
         aged = sorted(backups.glob(state_path.name + ".*"))
-        for old_copy in aged[:-7]:
+        for old_copy in aged[:-2]:
             old_copy.unlink(missing_ok=True)
     except OSError:
         pass

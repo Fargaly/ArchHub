@@ -98,6 +98,10 @@ def _session_for(instance: object, sessions: list[dict]) -> dict:
     answered by a different model: a read that quietly changes which
     building it describes is worse than a read that fails.
     """
+    # The AutoCAD broker lives in the same port range and also reports a
+    # document; a Revit read sent there dies in its compiler. Only a
+    # session that names its Revit version is a Revit session.
+    sessions = [s for s in sessions if s.get("revit_version")]
     if not sessions:
         raise RevitUnreachable(
             "no Revit session is listening on ports %d-%d"

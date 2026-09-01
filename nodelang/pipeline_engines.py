@@ -215,14 +215,100 @@ def brain_facts(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": answer}, "%d fact row(s) in the brain" % count
 
 
+
+
+def revit_read(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Run one declared Revit read against a chosen session."""
+    from .clean_revit_adapter import invoke, live_sessions
+
+    op = str(params.get("operation") or "revit.list_walls").strip()
+    sessions = [s for s in live_sessions() if s.get("revit_version")]
+    if not sessions:
+        raise ValueError("no Revit session is listening")
+    answer = invoke(op, {"instance": str(params.get("session") or "").strip()})
+    rows = answer.get("result") or []
+    return {"out": rows}, "%d row(s) from %s" % (len(rows), op)
+
+
+def cad_lines_from_host(params: Mapping[str, object],
+                        feeds: Mapping[str, object]):
+    """Read line work from the LIVE AutoCAD session, not a file."""
+    from .clean_revit_adapter import _call, live_sessions
+
+    acad = [
+        s for s in live_sessions()
+        if isinstance(s.get("document"), dict)
+        and s["document"].get("acad_version")
+    ]
+    if not acad:
+        raise ValueError("no AutoCAD session is listening")
+    layer = str(params.get("layer") or "").strip()
+    script = """
+var rows = new List<Dictionary<string,object>>();
+var db = Doc.Database;
+using (var tr = db.TransactionManager.StartTransaction()) {
+    var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+    foreach (ObjectId id in ms) {
+        var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+        if (ent == null) continue;
+        var ln = ent as Line;
+        if (ln == null) continue;
+        rows.Add(new Dictionary<string,object>{
+            {"x1", ln.StartPoint.X}, {"y1", ln.StartPoint.Y},
+            {"x2", ln.EndPoint.X}, {"y2", ln.EndPoint.Y},
+            {"layer", ent.Layer}
+        });
+    }
+    tr.Commit();
+}
+result = rows;
+"""
+    answer = _call(acad[-1]["port"], "/exec", {
+        "code": script, "transaction_name": "ArchHub read lines"})
+    if answer.get("status") != "ok":
+        raise ValueError("AutoCAD refused: %s" % answer.get("error"))
+    lines = []
+    for row in (answer.get("result") or []):
+        if layer and str(row.get("layer") or "") != layer:
+            continue
+        lines.append([
+            float(row["x1"]), float(row["y1"]),
+            float(row["x2"]), float(row["y2"]),
+        ])
+    return {"out": lines}, "%d lines from the live drawing" % len(lines)
+
+
+def connector_status(params: Mapping[str, object],
+                     feeds: Mapping[str, object]):
+    """One connector's real state, as a node on the canvas."""
+    wanted = str(params.get("connector") or "").strip().casefold()
+    catalogue = probe_connectors()
+    if wanted:
+        catalogue = [c for c in catalogue if c["id"] == wanted]
+        if not catalogue:
+            raise ValueError("no connector named %r" % wanted)
+    live = [c for c in catalogue if c["state"] in ("connected", "listening")]
+    return (
+        {"out": catalogue},
+        "%d/%d live · %s" % (
+            len(live), len(catalogue),
+            ", ".join("%s %s" % (c["name"], c["state"]) for c in catalogue[:4]),
+        ),
+    )
+
+
 PIPELINE_ENGINES = {
     "vision.sketch_lines": sketch_lines,
     "cad.read_lines": cad_lines,
+    "cad.host_lines": cad_lines_from_host,
     "lines.watch": watch_lines,
     "revit.sessions": revit_sessions,
+    "revit.read": revit_read,
     "revit.build_walls": revit_build_walls,
     "brain.recall": brain_recall,
     "brain.facts": brain_facts,
+    "connector.status": connector_status,
 }
 
 

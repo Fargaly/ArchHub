@@ -35,7 +35,7 @@ state_path = state_dir / "archhub-test.universal.sqlite3"
 import socket as _socket
 _instance_lock = _socket.socket()
 try:
-    _instance_lock.bind(("127.0.0.1", 48611))
+    _instance_lock.bind(("127.0.0.1", int(os.environ.get("ARCHHUB_TEST_LOCK_PORT", "48611"))))
 except OSError:
     sys.exit(0)
 

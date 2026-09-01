@@ -5803,6 +5803,33 @@ class ApplicationServer:
                                     ),
                                 })
                                 return
+                            elif self.path == '/api/universal/wire-property':
+                                # A wire is a node: it owns its governed
+                                # parameters. The first edit of one the
+                                # connection has never held declares it;
+                                # later edits go through set-property on
+                                # the relation the projection hands back.
+                                from .universal_application import (
+                                    create_universal_property,
+                                )
+                                value_root, wire_revision = (
+                                    create_universal_property(
+                                        owner.universal_store,
+                                        owner.universal_registry,
+                                        str(body.get('wire') or ''),
+                                        str(body.get('label') or ''),
+                                        str(body.get('value', '')),
+                                        authentication_context=(
+                                            binding.context
+                                        ),
+                                    )
+                                )
+                                self._json(200, {
+                                    'ok': True,
+                                    'value_root': value_root,
+                                    'revision': wire_revision,
+                                })
+                                return
                             elif self.path == '/api/universal/pipeline-seed':
                                 from .universal_pipeline import (
                                     seed_wall_pipeline,

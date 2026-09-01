@@ -3304,6 +3304,10 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/agent", "edit"),
     ("POST", "/api/universal/run-graph", "edit"),
     ("POST", "/api/universal/set-property", "edit"),
+    # Editing a connection's parameter, including the first edit that has
+    # to declare the row: the same capability the inspector already holds
+    # for a node's parameter, because a wire is a node.
+    ("POST", "/api/universal/wire-property", "edit"),
     ("POST", "/api/universal/pick-file", "inspect"),
     ("POST", "/api/universal/reveal", "inspect"),
     ("POST", "/api/universal/retract", "edit"),
@@ -22154,6 +22158,24 @@ def _project_universal_canvas_interpreter(
             "nary": False,
             "segment": root_id,
             "role": None,
+            # A wire is a node, so a connection carries its own governed
+            # parameters -- lacing, data tree, condition, on_fail,
+            # throttle, enabled -- and they travel exactly as a node's
+            # do: label, value, and the relation to write back through.
+            # Presentation rows stay out: they say how the wire is
+            # drawn, not what it does.
+            "params": [
+                {
+                    "label": name,
+                    "value": str(effective_property_value(row)),
+                    "relation": row.relation_root,
+                }
+                for name, row in labelled.items()
+                if name not in {
+                    "color", "width", "dash", "title", "status",
+                    "relation_count",
+                }
+            ],
         })
 
     for relation_root, exposed in relation_backed_interfaces.items():
@@ -44708,7 +44730,23 @@ def create_universal_property(
             snapshot, registry, view_session
         )
         if owner_root not in visible_roots:
-            raise InvalidCell("property owner is outside the active canvas")
+            # A wire is a node, so a connection on the active canvas owns
+            # properties the same way its endpoints do. The rule being
+            # enforced is "on this canvas", and a drawn wire is: it is
+            # admitted through the same projection that drew it, never as
+            # a bare identity a caller supplies.
+            drawn_wire = any(
+                wire.get("id") == owner_root
+                for wire in project_universal_canvas(
+                    store,
+                    registry,
+                    authentication_context=authentication_context,
+                ).get("wires", ())
+            )
+            if not drawn_wire:
+                raise InvalidCell(
+                    "property owner is outside the active canvas"
+                )
     else:
         authoring = leased_projection.get("authoring")
         if (

@@ -220,17 +220,26 @@ except Exception as _refusal:
 _active_runtime = (
     Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "active-universal-runtime.json"
 )
-try:
-    _active_runtime.parent.mkdir(parents=True, exist_ok=True)
-    _previous_active = (
-        _active_runtime.read_bytes() if _active_runtime.is_file() else None
-    )
-    _active_runtime.write_bytes(descriptor_path.read_bytes())
-    print("  runtime    : announced as the machine's active universal runtime",
-          flush=True)
-except OSError as _refusal:
-    _previous_active = None
-    print("  runtime    : could not announce (%s)" % _refusal, flush=True)
+_previous_active = None
+if os.environ.get("ARCHHUB_TEST_STATE_DIR"):
+    # A verification run opens its OWN graph in its own state directory.
+    # Announcing it would point the brain, BABOOM and every governed
+    # agent on this machine at a throwaway database -- checking the
+    # application must never move the founder's wiring onto it.
+    print("  runtime    : not announced (verification run keeps the "
+          "machine binding)", flush=True)
+else:
+    try:
+        _active_runtime.parent.mkdir(parents=True, exist_ok=True)
+        _previous_active = (
+            _active_runtime.read_bytes() if _active_runtime.is_file() else None
+        )
+        _active_runtime.write_bytes(descriptor_path.read_bytes())
+        print("  runtime    : announced as the machine's active universal "
+              "runtime", flush=True)
+    except OSError as _refusal:
+        _previous_active = None
+        print("  runtime    : could not announce (%s)" % _refusal, flush=True)
 
 # The founder's first canvas: the wall pipeline plus the brain and BABOOM
 # nodes, seeded idempotently and run once so every card opens carrying a

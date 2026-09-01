@@ -60,6 +60,11 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     };
     window.ARCHHUB_SET_PROP = (relation, value) =>
       jpost('/api/universal/set-property', {relation, value});
+    // The first edit of a connection parameter the wire has never held
+    // declares it on the wire's own root; after that it is an ordinary
+    // property and set-property carries it.
+    window.ARCHHUB_SET_WIRE_PROP = (wire, label, value) =>
+      jpost('/api/universal/wire-property', {wire, label, value});
     window.ARCHHUB_PICK_FILE = async (title, filter) =>
       (await jpost('/api/universal/pick-file', {title, filter})).path || '';
     window.ARCHHUB_CAPABILITIES = async () => {
@@ -173,7 +178,12 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       if (!idset.has(w.source) || !idset.has(w.target)) continue;
       const s = nodes.find(n => n.id === w.source);
       const t = nodes.find(n => n.id === w.target);
-      wires.push({id:String(w.id || ''), from:[w.source, s?.outs[0]?.id], to:[w.target, t?.ins[0]?.id], t:(s?.outs[0]?.t) || 'any'});
+      // A wire is a node: it brings its own governed parameters across,
+      // in the same {k, v, rel} shape a node's carry, so the inspector
+      // writes a connection's condition back to the graph exactly as it
+      // writes a node's.
+      wires.push({id:String(w.id || ''), from:[w.source, s?.outs[0]?.id], to:[w.target, t?.ins[0]?.id], t:(s?.outs[0]?.t) || 'any',
+        params:(w.params || []).map(r => ({k:r.label, v:r.value, rel:r.relation}))});
     }
     window.ARCHHUB_LIVE = {
       sessions: [{

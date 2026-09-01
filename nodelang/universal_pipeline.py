@@ -246,6 +246,50 @@ def _ensure_pipeline_node_interfaces(store, registry, owner_root: str):
     return created
 
 
+# The parameters a real graph engine gives a connection, with the same
+# defaults the inspector draws. They are ordinary graph rows on the wire's
+# own root, so editing one is the ordinary property write every node
+# parameter already uses -- no second mechanism for "a wire".
+_WIRE_PARAMETERS = (
+    ("enabled", "true"),
+    ("lacing", "shortest"),
+    ("tree", "none"),
+    ("condition", ""),
+    ("on_fail", "block"),
+    ("throttle_ms", "0"),
+)
+
+
+def _ensure_wire_parameters(store, registry, wire_root: str):
+    """Give one connection the parameter rows it is drawn with.
+
+    A graph whose wire roots carry no audience binding yet refuses to let
+    a connection own a property. That is a missing install, not a broken
+    pipeline: the founder's nodes must still seed and run, and the
+    inspector still draws the connection with its defaults. So this is
+    best-effort by construction -- it adds rows where the graph admits
+    them, and stays silent where it does not.
+    """
+    try:
+        held = (
+            _owner_properties(store.snapshot(), registry).get(wire_root) or {}
+        )
+    except Exception:
+        return
+    for label, value in _WIRE_PARAMETERS:
+        if label in held:
+            continue
+        try:
+            _persist(
+                lambda label=label, value=value: create_universal_property(
+                    store, registry, wire_root, label, value,
+                ),
+                store=store,
+            )
+        except Exception:
+            return
+
+
 _SEED = (
     ("Sketch Lines", 240.0, 200.0, {
         "engine": "vision.sketch_lines",
@@ -279,7 +323,7 @@ _SEED = (
 )
 
 
-def _persist(write, attempts: int = 5):
+def _persist(write, attempts: int = 5, store=None):
     """Run one governed write, re-reading when its revision went stale.
 
     Placement and property writes each take a snapshot and commit against
@@ -298,6 +342,16 @@ def _persist(write, attempts: int = 5):
         except Exception as clash:
             if attempt == attempts - 1 or "revision" not in str(clash):
                 raise
+            # Sleeping alone re-runs the write against the SAME in-memory
+            # revision, so a store whose journal moved underneath it fails
+            # every attempt with one identical off-by-one. Re-adopt the
+            # accepted revision first: that is what "read again" means
+            # when the journal, not this process, is the authority.
+            if store is not None:
+                try:
+                    store.refresh()
+                except Exception:
+                    pass
             _time.sleep(0.15)
 
 
@@ -342,17 +396,17 @@ def seed_wall_pipeline(
             store, registry, definition_root, x=x, y=y,
             title_override=title,
             authentication_context=authentication_context,
-        ))
+        ), store=store)
         for label, value in properties.items():
             _persist(lambda label=label, value=value: create_universal_property(
                 store, registry, root, label, value,
                 authentication_context=authentication_context,
-            ))
+            ), store=store)
         placed[title] = root
     for root in placed.values():
         _persist(lambda root=root: _ensure_pipeline_node_interfaces(
             store, registry, root
-        ))
+        ), store=store)
     fresh = project_universal_canvas(
         store, registry, authentication_context=authentication_context
     )
@@ -378,8 +432,20 @@ def seed_wall_pipeline(
             target_interface="app:pipeline-interface:%s:target"
             % t.rsplit(":", 1)[-1],
             authentication_context=authentication_context,
-        ))
+        ), store=store)
         wired.append((source, target))
+    # Every connection between seeded nodes carries the six parameters,
+    # whether this run drew it or an earlier one did: a wire the founder
+    # can select must have something to hold.
+    seeded_roots = set(placed.values())
+    for wire in project_universal_canvas(
+        store, registry, authentication_context=authentication_context
+    ).get("wires", ()):
+        if (
+            str(wire.get("source") or "") in seeded_roots
+            and str(wire.get("target") or "") in seeded_roots
+        ):
+            _ensure_wire_parameters(store, registry, str(wire["id"]))
     if image_path and "Sketch Lines" in placed:
         snapshot = store.snapshot()
         rows = _owner_properties(snapshot, registry).get(

@@ -88,9 +88,28 @@ Object.assign(PM_META, {
   throttle_ms: { label: 'Throttle', unit: 'ms', hard: [0, 10000], help: 'Minimum gap between deliveries — for a wire fed by a live host.' },
 });
 
+// The six connection parameters are graph rows, not panel state: held[k] is the wire's own
+// property and its relation, so a value the founder types survives the reload that proves it
+// was written. A wire with no rows yet reads as its defaults and writes the first one.
+const WIRE_DEFAULTS = {
+  enabled: true, lacing: 'shortest', tree: 'none',
+  condition: '', on_fail: 'block', throttle_ms: 0,
+};
+const wireHeld = (w) => Object.fromEntries(
+  (w.params || []).map(p => [p.k, p])
+);
+
 function wireAsNode(w, i, nodes) {
   const from = nodes.find(x => x.id === w.from[0]), to = nodes.find(x => x.id === w.to[0]);
   if (!from || !to) return null;
+  const held = wireHeld(w);
+  const heldValue = (k) => {
+    const row = held[k];
+    if (!row) return WIRE_DEFAULTS[k];
+    if (k === 'enabled') return String(row.v) !== 'false';
+    if (k === 'throttle_ms') return Number(row.v) || 0;
+    return row.v;
+  };
   const src = (from.outs || []).find(o => o.id === w.from[1]) || (from.outs || [])[0] || { label: 'out', t: 'any' };
   const dst = (to.ins || []).find(o => o.id === w.to[1]) || (to.ins || [])[0] || { label: 'in', t: 'any' };
   const ok = src.t === dst.t || dst.t === 'any' || src.t === 'any';
@@ -101,13 +120,17 @@ function wireAsNode(w, i, nodes) {
     ins:  [{ id: 'src', label: from.title, t: src.t, val: src.label }],
     outs: [{ id: 'dst', label: to.title,   t: dst.t, val: dst.label }],
     params: [
-      { k: 'enabled', v: true, type: 'toggle' },
-      { k: 'lacing', v: 'shortest', type: 'select' },
-      { k: 'tree', v: 'none', type: 'select' },
-      { k: 'condition', v: '', type: 'text', page: 'Rules' },
-      { k: 'on_fail', v: 'block', type: 'select', page: 'Rules' },
-      { k: 'throttle_ms', v: 0, min: 0, max: 2000, step: 50, type: 'slider', page: 'Rules' },
+      { k: 'enabled', v: heldValue('enabled'), type: 'toggle' },
+      { k: 'lacing', v: heldValue('lacing'), type: 'select' },
+      { k: 'tree', v: heldValue('tree'), type: 'select' },
+      { k: 'condition', v: heldValue('condition'), type: 'text', page: 'Rules' },
+      { k: 'on_fail', v: heldValue('on_fail'), type: 'select', page: 'Rules' },
+      { k: 'throttle_ms', v: heldValue('throttle_ms'), min: 0, max: 2000, step: 50, type: 'slider', page: 'Rules' },
     ],
+    // The wire is as live as any node: its rows carry the relations the
+    // inspector writes through, and its own root owns rows it has not
+    // grown yet.
+    live: true, wireRoot: w.id, held,
     typeOk: ok, srcType: src.t, dstType: dst.t,
   };
 }
@@ -442,6 +465,19 @@ function NodeInspector({ node }) {
     const held = (node.params || []).find(x => x.k === k);
     if (node.live && held && held.rel && window.ARCHHUB_SET_PROP) {
       window.ARCHHUB_SET_PROP(held.rel, String(v)).catch(() => {});
+      return;
+    }
+    // A wire is a node, so its parameters are graph rows too. The row a
+    // connection already holds is edited through its relation; the first
+    // edit of one it has never held declares it on the wire's own root.
+    if (node.isWire && node.wireRoot) {
+      const row = (node.held || {})[k];
+      if (row && row.rel && window.ARCHHUB_SET_PROP) {
+        window.ARCHHUB_SET_PROP(row.rel, String(v)).catch(() => {});
+      } else if (window.ARCHHUB_SET_WIRE_PROP) {
+        window.ARCHHUB_SET_WIRE_PROP(node.wireRoot, k, String(v))
+          .catch(() => {});
+      }
     }
   };
 

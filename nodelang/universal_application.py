@@ -22904,7 +22904,13 @@ def _project_universal_canvas_interpreter(
                 "participant": member.participant_id,
                 "participant_label": (
                     participant_label
-                    or _humanize_root_id(member.participant_id)
+                    or (
+                        _scope_label(
+                            snapshot, registry, member.participant_id
+                        )
+                        if member.participant_id in snapshot.cells
+                        else _humanize_root_id(member.participant_id)
+                    )
                 ),
                 "participant_owner": participant_owner,
                 "participant_interface": participant_interface,

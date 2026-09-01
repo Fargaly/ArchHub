@@ -1367,7 +1367,22 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   };
 
   const onContextMenu = (e) => {
-    if (e.target.closest('.lm-node') || e.target.closest('[data-no-pan]')) return;
+    const card = e.target.closest('.lm-node');
+    if (card) {
+      e.preventDefault();
+      const rect = wrapRef.current.getBoundingClientRect();
+      const nid = card.dataset.nodeId;
+      if (nid) {
+        setFocusId(nid);
+        setCtxMenu({
+          x: Math.max(8, Math.min(e.clientX - rect.left, rect.width - 228)),
+          y: Math.max(8, Math.min(e.clientY - rect.top, rect.height - 220)),
+          nodeId: nid,
+        });
+      }
+      return;
+    }
+    if (e.target.closest('[data-no-pan]')) return;
     e.preventDefault();
     const rect = wrapRef.current.getBoundingClientRect();
     // Clamp so the menu never spills past the canvas edges (menu ≈ 220×350).
@@ -1558,7 +1573,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       }} onFit={onResetView} setLibraryOpen={setLibraryOpen}/>
       <FloatingComposer setLibraryOpen={setLibraryOpen}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
-      {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }} onFit={onResetView} onClose={() => setCtxMenu(null)}/>}
+      {ctxMenu && (ctxMenu.nodeId
+        ? <NodeMenu x={ctxMenu.x} y={ctxMenu.y}
+            node={allNodes.find(n => n.id === ctxMenu.nodeId)}
+            onClose={() => setCtxMenu(null)}/>
+        : <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }} onFit={onResetView} onClose={() => setCtxMenu(null)}/>)}
       <CanvasHint/>
     </div>
   );
@@ -1580,6 +1599,45 @@ const CanvasHint = () => (
     <span>right-click → menu</span>
   </div>
 );
+
+// Right-click node menu -- every row does something real.
+const NodeMenu = ({ x, y, node, onClose }) => {
+  React.useEffect(() => {
+    const off = () => onClose();
+    document.addEventListener('click', off);
+    return () => document.removeEventListener('click', off);
+  }, []);
+  if (!node) return null;
+  const row = (label, action, tone) => (
+    <button key={label} onClick={async e => {
+      e.stopPropagation();
+      try { await action(); } finally { onClose(); }
+    }} style={{
+      display:'block', width:'100%', textAlign:'left', padding:'7px 12px',
+      background:'transparent', border:0, cursor:'pointer',
+      fontFamily:LM.sans, fontSize:12.5, color: tone || LM.ink,
+    }} onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
+       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+      {label}
+    </button>
+  );
+  return (
+    <div data-no-pan style={{
+      position:'absolute', left:x, top:y, width:220, zIndex:60,
+      background:LM.bgPanel, border:`1px solid ${LM.line}`,
+      borderRadius:LM.rad.md, padding:'6px 0',
+      boxShadow:'0 12px 32px rgba(0,0,0,0.45)',
+    }}>
+      <div style={{ padding:'5px 12px 7px', fontFamily:LM.mono, fontSize:9.5,
+        color:LM.inkMuted, letterSpacing:'0.12em',
+        borderBottom:`1px solid ${LM.lineSoft}` }}>{(node.title || node.id).toUpperCase()}</div>
+      {row('↻ Run graph from here', async () => { await window.ARCHHUB_RUN?.(); window.location.reload(); })}
+      {row('Copy node id', () => navigator.clipboard?.writeText(node.id))}
+      {row('Copy engine', () => navigator.clipboard?.writeText(node.sub || ''))}
+      {node.status ? row('Copy last result', () => navigator.clipboard?.writeText(node.status)) : null}
+    </div>
+  );
+};
 
 // Right-click canvas context menu
 const CanvasMenu = ({ x, y, onAddNode, onFit, onClose }) => {
@@ -1643,7 +1701,7 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
   const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
   return (
-    <div className="lm-node" onClick={onFocus}
+    <div className="lm-node" data-node-id={n.id} onClick={onFocus}
       style={{
         position:'absolute', left:n.x, top:n.y, width:w, minHeight:n.h,
         background:LM.bgPanel,

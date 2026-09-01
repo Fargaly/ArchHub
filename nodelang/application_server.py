@@ -2232,6 +2232,11 @@ class _CleanAuthorityHttpServer:
             "content=\"width=device-width,initial-scale=1\">"
             "<meta name=\"archhub-csrf\" content=\"\">"
             "<title>ArchHub</title>"
+            "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">"
+            "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>"
+            "<link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700"
+            "&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1"
+            "&family=Architects+Daughter&display=swap\" rel=\"stylesheet\">"
             # The skeleton is not a design. It is exactly the structure the
             # graph-held stylesheet declares -- .archhub-app's two columns,
             # the sidebar's rail and library, the workspace's header, canvas

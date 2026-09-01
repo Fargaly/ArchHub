@@ -266,6 +266,15 @@ _SEED = (
     ("Brain Facts", 560.0, 560.0, {"engine": "brain.facts"}),
     ("BABOOM Status", 880.0, 560.0, {"engine": "baboom.status"}),
     ("BABOOM Presence", 1200.0, 560.0, {"engine": "baboom.presence"}),
+    ("Skills Library", 240.0, 740.0, {
+        "engine": "skills.catalogue", "match": "",
+    }),
+    ("Thinking Chain", 560.0, 740.0, {
+        "engine": "skills.thinking_chain", "topic": "",
+    }),
+    ("Connectors", 880.0, 740.0, {
+        "engine": "connector.status", "connector": "",
+    }),
 )
 
 

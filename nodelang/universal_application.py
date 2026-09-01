@@ -3305,6 +3305,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/run-graph", "edit"),
     ("POST", "/api/universal/set-property", "edit"),
     ("POST", "/api/universal/pick-file", "inspect"),
+    ("POST", "/api/universal/skills", "read"),
     ("POST", "/api/universal/login", "edit"),
     ("POST", "/api/universal/accounts", "inspect"),
     ("POST", "/api/universal/account-tier", "edit"),

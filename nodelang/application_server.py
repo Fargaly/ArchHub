@@ -5627,6 +5627,45 @@ class ApplicationServer:
                                 )
                                 self._json(200, {'ok': True, 'tier': tier})
                                 return
+                            elif self.path == '/api/universal/skills':
+                                # The shared library any mounted agent
+                                # reads: catalogue, one skill's full text,
+                                # or the composed thinking chain.
+                                from .pipeline_engines import (
+                                    skill_read,
+                                    skills_catalogue,
+                                    thinking_chain,
+                                )
+                                want = str(body.get('want') or 'catalogue')
+                                params = {
+                                    'match': str(body.get('match') or ''),
+                                    'skill': str(body.get('skill') or ''),
+                                    'topic': str(body.get('topic') or ''),
+                                }
+                                engine = {
+                                    'catalogue': skills_catalogue,
+                                    'read': skill_read,
+                                    'chain': thinking_chain,
+                                }.get(want)
+                                if engine is None:
+                                    self._json(400, {
+                                        'ok': False,
+                                        'error': 'want must be catalogue, '
+                                                 'read, or chain',
+                                    })
+                                    return
+                                try:
+                                    produced, answer = engine(params, {})
+                                    self._json(200, {
+                                        'ok': True, 'answer': answer,
+                                        'result': produced.get('out'),
+                                    })
+                                except Exception as refusal:  # noqa: BLE001
+                                    self._json(200, {
+                                        'ok': False,
+                                        'error': str(refusal)[:200],
+                                    })
+                                return
                             elif self.path == '/api/universal/pick-file':
                                 picker = getattr(
                                     owner, 'native_file_picker', None

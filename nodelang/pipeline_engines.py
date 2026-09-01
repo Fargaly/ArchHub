@@ -298,6 +298,131 @@ def connector_status(params: Mapping[str, object],
     )
 
 
+
+
+def skills_catalogue(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Every skill this machine holds, as one list any agent can read.
+
+    The shared library: Claude's skills, Codex's skills, and anything the
+    brain has minted -- one answer, one shape, so an agent mounting
+    ArchHub on ANY machine asks one node instead of hunting folders.
+    """
+    import os
+    from pathlib import Path
+
+    wanted = str(params.get("match") or "").strip().casefold()
+    home = Path(os.path.expanduser("~"))
+    found = []
+    for root, source in (
+        (home / ".claude" / "skills", "claude"),
+        (home / ".codex" / "skills", "codex"),
+    ):
+        if not root.is_dir():
+            continue
+        for entry in sorted(root.iterdir()):
+            manifest = entry / "SKILL.md"
+            if not manifest.is_file():
+                continue
+            text = manifest.read_text(encoding="utf-8", errors="replace")
+            description = ""
+            for line in text.splitlines():
+                if line.startswith("description:"):
+                    description = line.split(":", 1)[1].strip()[:240]
+                    break
+            record = {
+                "name": entry.name, "source": source,
+                "description": description,
+                "path": str(manifest),
+            }
+            if wanted and wanted not in (
+                entry.name + " " + description
+            ).casefold():
+                continue
+            found.append(record)
+    return (
+        {"out": found},
+        "%d skill(s)%s" % (
+            len(found), " matching %r" % wanted if wanted else "",
+        ),
+    )
+
+
+def skill_read(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """One skill's full instructions, ready to hand to any agent."""
+    name = str(params.get("skill") or "").strip()
+    if not name:
+        raise ValueError("set the skill parameter to a skill name")
+    catalogue, _ = skills_catalogue({"match": name}, {})
+    entries = catalogue["out"]
+    if not entries:
+        raise ValueError("no skill named %r on this machine" % name)
+    exact = [e for e in entries if e["name"].casefold() == name.casefold()]
+    chosen = (exact or entries)[0]
+    from pathlib import Path
+
+    body = Path(chosen["path"]).read_text(encoding="utf-8", errors="replace")
+    return (
+        {"out": body},
+        "%s/%s · %d chars" % (chosen["source"], chosen["name"], len(body)),
+    )
+
+
+def thinking_chain(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """The founder's skills, composed into ONE ordered thinking algorithm.
+
+    Not a pile of separate documents: the binding laws first, then the
+    method skills in the order they must be obeyed, then the domain
+    skills that apply to the work at hand. This is the single text an
+    agent mounts to inherit how the founder works.
+    """
+    catalogue, _ = skills_catalogue({}, {})
+    entries = {e["name"]: e for e in catalogue["out"]}
+    topic = str(params.get("topic") or "").strip().casefold()
+    # The spine: laws that bind EVERY agent, in the order they apply.
+    spine = [
+        "ship-discipline", "solution-only", "ponytail",
+        "agent-failure-rca", "graphify",
+    ]
+    stages = []
+    for name in spine:
+        entry = entries.get(name)
+        if entry is None:
+            continue
+        stages.append({
+            "stage": "law", "name": name,
+            "description": entry["description"],
+        })
+    for name, entry in sorted(entries.items()):
+        if name in spine:
+            continue
+        haystack = (name + " " + entry["description"]).casefold()
+        if topic and topic not in haystack:
+            continue
+        stages.append({
+            "stage": "domain", "name": name,
+            "description": entry["description"],
+        })
+    laws = [s for s in stages if s["stage"] == "law"]
+    lines = ["THINKING CHAIN%s" % (" for %r" % topic if topic else "")]
+    lines.append("")
+    lines.append("BINDING LAWS (in order, every agent, every task):")
+    for index, item in enumerate(laws, 1):
+        lines.append("  %d. %s -- %s" % (index, item["name"],
+                                         item["description"][:150]))
+    lines.append("")
+    lines.append("APPLICABLE SKILLS:")
+    for item in stages:
+        if item["stage"] == "law":
+            continue
+        lines.append("  - %s: %s" % (item["name"], item["description"][:120]))
+    return (
+        {"out": chr(10).join(lines)},
+        "%d law(s) + %d skill(s) composed" % (
+            len(laws), len(stages) - len(laws),
+        ),
+    )
+
+
 PIPELINE_ENGINES = {
     "vision.sketch_lines": sketch_lines,
     "cad.read_lines": cad_lines,
@@ -309,6 +434,9 @@ PIPELINE_ENGINES = {
     "brain.recall": brain_recall,
     "brain.facts": brain_facts,
     "connector.status": connector_status,
+    "skills.catalogue": skills_catalogue,
+    "skills.read": skill_read,
+    "skills.thinking_chain": thinking_chain,
 }
 
 

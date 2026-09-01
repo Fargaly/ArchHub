@@ -585,7 +585,17 @@ function NodeInspector({ node }) {
               Delete {node.isWire ? 'this connection' : 'node and its ' + (node.outs || []).length + ' outgoing wire' + ((node.outs || []).length === 1 ? '' : 's')}?
             </span>
             <button onClick={() => setConfirmDel(false)} style={pmBtn()}>Cancel</button>
-            <button style={Object.assign({}, pmBtn(), { color: PM.err, borderColor: PM.err })}>Delete</button>
+            <button onClick={async (e) => {
+              const b = e.currentTarget;
+              b.textContent = 'removing…';
+              try {
+                await window.ARCHHUB_RETRACT(node.id);
+                window.location.reload();
+              } catch (error) {
+                b.textContent = 'refused';
+                setTimeout(() => { b.textContent = 'Delete'; }, 4000);
+              }
+            }} style={Object.assign({}, pmBtn(), { color: PM.err, borderColor: PM.err })}>Delete</button>
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 5 }}>

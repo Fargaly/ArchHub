@@ -71,6 +71,8 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         missing: scan.missing || [],
       };
     };
+    window.ARCHHUB_RETRACT = root =>
+      jpost('/api/universal/retract', {root});
     window.ARCHHUB_REVEAL = what =>
       jpost('/api/universal/reveal', {what});
     window.ARCHHUB_LOGIN = email =>

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
+from .universal_cell import InvalidCell
 from .stem_graph_evaluation import (
     StemNode,
     StemWire,
@@ -471,4 +472,52 @@ def project_atlas_map(store, registry, *, authentication_context=None):
     })
 
 
-__all__ = ["run_universal_pipeline", "seed_wall_pipeline", "project_atlas_map"]
+
+
+def retract_universal_node(
+    store,
+    registry,
+    root: str,
+    *,
+    authentication_context=None,
+):
+    """Take one node off the canvas without erasing what it was.
+
+    The graph is append-only: a node is never destroyed, it stops being
+    VISIBLE. Its cells, its history and its receipts remain readable --
+    which is what makes an undo possible and an audit honest -- while the
+    canvas and every projection stop carrying it.
+    """
+    from .cell_protocols import prepare_remove_relation_members
+    from .universal_application import (
+        _session_canvas_roots,
+        _view_session_for_context,
+        read_relation,
+    )
+
+    snapshot = store.snapshot()
+    view_session, _context = _view_session_for_context(
+        registry, authentication_context
+    )
+    visible_roots, _relations, _properties = _session_canvas_roots(
+        snapshot, registry, view_session
+    )
+    if root not in visible_roots:
+        raise InvalidCell("that node is not on this canvas")
+    members = read_relation(
+        snapshot, view_session.visibility_root, budget=100_000
+    )
+    doomed = tuple(
+        member.incidence_id for member in members
+        if member.participant_id == root
+    )
+    if not doomed:
+        raise InvalidCell("that node has no visibility to retract")
+    patch = prepare_remove_relation_members(
+        snapshot, view_session.visibility_root, doomed, budget=100_000
+    )
+    store.commit(snapshot.revision, replace=patch.replace)
+    return {"retracted": root, "revision": store.revision}
+
+
+__all__ = ["run_universal_pipeline", "seed_wall_pipeline", "project_atlas_map", "retract_universal_node"]

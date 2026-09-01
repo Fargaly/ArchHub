@@ -5667,6 +5667,20 @@ class ApplicationServer:
                                         'error': str(refusal)[:200],
                                     })
                                 return
+                            elif self.path == '/api/universal/retract':
+                                from .universal_pipeline import (
+                                    retract_universal_node,
+                                )
+                                self._json(200, {
+                                    'ok': True,
+                                    **retract_universal_node(
+                                        owner.universal_store,
+                                        owner.universal_registry,
+                                        str(body.get('root') or ''),
+                                        authentication_context=binding.context,
+                                    ),
+                                })
+                                return
                             elif self.path == '/api/universal/reveal':
                                 # Open a folder the APP owns, never an
                                 # arbitrary path a caller names.

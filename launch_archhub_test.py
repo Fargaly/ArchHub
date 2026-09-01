@@ -43,9 +43,13 @@ print("  first boot  :", first_boot, "(first boot builds the graph, ~1-2 min)")
 print("  booting ...", flush=True)
 
 from nodelang.application_server import ApplicationServer
+from nodelang.pipeline_engines import PIPELINE_ENGINES
 
 started = time.perf_counter()
-server = ApplicationServer(universal_state_path=state_path).start()
+server = ApplicationServer(
+    universal_state_path=state_path,
+    pipeline_effect_engines=PIPELINE_ENGINES,
+).start()
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 print("  URL:", server.bootstrap_url, flush=True)
 

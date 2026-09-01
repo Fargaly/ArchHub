@@ -92,6 +92,7 @@ def evaluate_stem_graph(
     nodes: Sequence[StemNode],
     wires: Sequence[StemWire],
     graph_expressions: "Mapping[str, object] | None" = None,
+    effect_engines: "Mapping[str, object] | None" = None,
 ) -> StemEvaluation:
     """Every declared output's value, walked from constants to results."""
     by_root = {node.root_id: node for node in nodes}
@@ -134,6 +135,19 @@ def evaluate_stem_graph(
             # that expression: the graph says what the node means (SPEC 4.1).
             # The Python engines below remain only where no released
             # expression exists yet, and only as an unproven fast path.
+            effect = (effect_engines or {}).get(node.engine)
+            if effect is not None:
+                # An injected effect engine is the entry point's declared
+                # bridge to a host or a file -- the evaluator stays pure by
+                # default, and an effect that fails answers per node.
+                try:
+                    produced, shown = effect(dict(node.parameters), feeds)
+                except Exception as refusal:
+                    pending[root] = str(refusal)
+                    return None
+                display[root] = shown
+                outputs[root] = dict(produced)
+                return outputs[root]
             held = (graph_expressions or {}).get(node.engine)
             if held is not None:
                 produced = _run_graph_expression(

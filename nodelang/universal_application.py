@@ -3302,6 +3302,8 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/move", "edit"),
     ("POST", "/api/universal/gesture", "edit"),
     ("POST", "/api/universal/agent", "edit"),
+    ("POST", "/api/universal/run-graph", "edit"),
+    ("POST", "/api/universal/pipeline-seed", "edit"),
     ("POST", "/api/universal/interaction", "edit"),
     ("POST", "/api/universal/instantiate", "create"),
     ("POST", "/api/universal/agent-session-challenge", "inspect"),
@@ -12734,6 +12736,7 @@ def build_universal_application(
     # founder's law is that everything is a node. Runs at the tail because
     # the subsystem roots themselves are installed just above.
     _ensure_subsystem_domain_nodes(store, roles, root_properties)
+    _reconcile_presentation_stylesheet(store)
     # Runs LAST because it walks levels the map import creates above; at the
     # earlier top-level call the imported domains do not exist yet and the
     # walk would find nothing (which is exactly what happened).
@@ -17001,6 +17004,29 @@ _SUBSYSTEM_DOMAIN_NODES = (
     ("app:selfext:intents", "selfext", "Self-Extension Intents"),
     ("app:sessions", "sessions", "Live Sessions"),
 )
+
+
+def _reconcile_presentation_stylesheet(store: CellStore) -> None:
+    """Bring the graph-held stylesheet to what the source now declares.
+
+    The stylesheet is seeded at first build and never touched again, so a
+    store built last week renders last week's design forever -- a design
+    fix that only fresh installs can see is not shipped. Same law as the
+    catalogue reconcile: the source is the authority, the graph is brought
+    to it, and an unchanged sheet costs one comparison.
+    """
+    from .universal_presentation_seed import STYLESHEET
+
+    root = "app:presentation:stylesheet"
+    snapshot = store.snapshot()
+    held = snapshot.cells.get(root)
+    declared = STYLESHEET.encode("utf-8")
+    if held is None or held.atom == declared:
+        return
+    store.commit(
+        snapshot.revision,
+        replace=(Cell(held.id, held.link0, held.link1, declared),),
+    )
 
 
 def _ensure_subsystem_domain_nodes(

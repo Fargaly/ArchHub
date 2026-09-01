@@ -3631,6 +3631,7 @@ class ApplicationServer:
                  universal_key_provider: SigningKeyProvider | None = None,
                  device_key_factory=None,
                  allow_legacy_mutations=False,
+                 pipeline_effect_engines=None,
                  enable_machine_transport=False,
                  enable_universal_cloud_gateway=False,
                  cloud_resource_origin=None,
@@ -3650,6 +3651,9 @@ class ApplicationServer:
                  runtime_compliance_runner=None,
                  model_execution_broker=None):
         self.allow_legacy_mutations = bool(allow_legacy_mutations)
+        # Which effects this runtime may run is named by whoever stands it
+        # up -- the same law as the clean host invoker. No default engines.
+        self.pipeline_effect_engines = dict(pipeline_effect_engines or {})
         self._public_server_url = self._validate_public_server_url(
             public_server_url
         )
@@ -5377,6 +5381,39 @@ class ApplicationServer:
                                     authentication_context=binding.context,
                                 )
                                 self._json(200, agent_result)
+                                return
+                            elif self.path == '/api/universal/run-graph':
+                                # The run wire: nodes whose graph-held
+                                # engine property names an effect evaluate
+                                # along their wires; answers land as each
+                                # node's status through the governed write.
+                                from .universal_pipeline import (
+                                    run_universal_pipeline,
+                                )
+                                run_result = run_universal_pipeline(
+                                    owner.universal_store,
+                                    owner.universal_registry,
+                                    effect_engines=(
+                                        owner.pipeline_effect_engines or {}
+                                    ),
+                                    authentication_context=binding.context,
+                                )
+                                self._json(200, run_result)
+                                return
+                            elif self.path == '/api/universal/pipeline-seed':
+                                from .universal_pipeline import (
+                                    seed_wall_pipeline,
+                                )
+                                seed_result = seed_wall_pipeline(
+                                    owner.universal_store,
+                                    owner.universal_registry,
+                                    image_path=(
+                                        str(body.get('image_path') or '')
+                                        or None
+                                    ),
+                                    authentication_context=binding.context,
+                                )
+                                self._json(200, seed_result)
                                 return
                             elif self.path == '/api/universal/move':
                                 touched = move_universal_root(

@@ -2621,7 +2621,31 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
         setTimeout(() => { status.hidden=true; },8000);
       }
     });
-    bar.append(box,status);
+    const run=element('button','composer-run');
+    run.type='button';
+    run.textContent='Run ▸';
+    run.title='Run the wired pipeline: every node with an engine evaluates along its wires';
+    run.addEventListener('click',async () => {
+      run.disabled=true;
+      status.hidden=false;
+      status.textContent='running…';
+      try {
+        const result=await performUniversalFetch(
+          '/api/universal/run-graph',{});
+        const pendingCount=Object.keys(result.pending||{}).length;
+        status.textContent=result.ran
+          ? ('ran '+result.ran+' node(s)'
+             +(pendingCount ? ' · '+pendingCount+' waiting' : ''))
+          : 'no engine nodes on this canvas';
+        await window.__archhubUniversalRefresh?.();
+      } catch (error) {
+        status.textContent=error?.message || 'The run failed';
+      } finally {
+        run.disabled=false;
+        setTimeout(() => { status.hidden=true; },8000);
+      }
+    });
+    bar.append(box,run,status);
     canvasSurface.append(bar);
     return bar;
   }

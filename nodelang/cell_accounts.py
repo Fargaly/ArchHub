@@ -91,6 +91,10 @@ def upsert_account(store, email):
 
 
 def read_accounts(snapshot):
+    # A registry nobody has opened yet holds nobody, which is an ANSWER,
+    # not a failure. Reading before the first sign-in must not refuse.
+    if ACCOUNTS_ROOT not in snapshot.cells:
+        return []
     out = []
     for member in read_relation(snapshot, ACCOUNTS_ROOT, budget=100_000):
         if member.role_id != ACCOUNT_ROLE:

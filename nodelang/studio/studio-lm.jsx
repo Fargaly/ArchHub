@@ -2132,8 +2132,26 @@ const OutputBody = ({ n }) => (
       </div>
     ))}
     <div style={{ display:'flex', gap:6, marginTop:LM.sp.xs }}>
-      <button style={smallBtn()}>preview</button>
-      <button style={smallBtn(true)}>save</button>
+      <button onClick={async (e) => {
+        const b = e.currentTarget;
+        b.textContent = 'running…';
+        try {
+          const result = await window.ARCHHUB_RUN();
+          b.textContent = String(
+            result?.display?.[n.id] || result?.pending?.[n.id] || 'ran'
+          ).slice(0, 30);
+        } catch (error) { b.textContent = 'refused'; }
+        setTimeout(() => { b.textContent = 'preview'; }, 6000);
+      }} style={smallBtn()}>preview</button>
+      <button onClick={async (e) => {
+        const b = e.currentTarget;
+        b.textContent = 'saving…';
+        try {
+          await window.ARCHHUB_RUN();
+          b.textContent = 'saved to the graph';
+        } catch (error) { b.textContent = 'refused'; }
+        setTimeout(() => { b.textContent = 'save'; }, 5000);
+      }} style={smallBtn(true)}>save</button>
     </div>
   </div>
 );

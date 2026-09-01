@@ -5611,7 +5611,16 @@ class ApplicationServer:
                                 })
                                 return
                             elif self.path == '/api/universal/accounts':
-                                from .cell_accounts import read_accounts
+                                from .cell_accounts import (
+                                    ensure_accounts,
+                                    read_accounts,
+                                )
+                                ensure_accounts(
+                                    owner.universal_store,
+                                    founder_email=(
+                                        'ahmed.fargaly98@gmail.com'
+                                    ),
+                                )
                                 self._json(200, {
                                     'ok': True,
                                     'accounts': read_accounts(

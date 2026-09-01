@@ -5538,6 +5538,7 @@ class ApplicationServer:
                                     owner.universal_store,
                                     owner.universal_registry,
                                     str(body.get('prompt', '')),
+                                    model=str(body.get('model') or ''),
                                     effect_engines=(
                                         owner.pipeline_effect_engines
                                     ),

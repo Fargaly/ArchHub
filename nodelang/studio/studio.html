@@ -51,8 +51,8 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       if (!r.ok || d.ok === false) throw new Error(d.error || 'refused');
       return d;
     };
-    window.ARCHHUB_AGENT = async prompt =>
-      (await jpost('/api/universal/agent', {prompt})).answer || 'done';
+    window.ARCHHUB_AGENT = async (prompt, model) =>
+      (await jpost('/api/universal/agent', {prompt, model})).answer || 'done';
     window.ARCHHUB_RUN = async () => {
       const result = await jpost('/api/universal/run-graph', {});
       window.ARCHHUB_LAST_RUN = result;

@@ -327,7 +327,7 @@ const LM_LIBRARY = [
 const StudioLM = () => {
   const [openId, setOpenId] = React.useState(LM_SESSIONS[0]?.id || null);
   const [openTabs, setOpenTabs] = React.useState(LM_SESSIONS.slice(0, 3).map(s => s.id));
-  const [model, setModel] = React.useState({ name:'Claude Sonnet 4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', latency:412 });
+  const [model, setModel] = React.useState({ name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', latency:412 });
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [account, setAccount] = React.useState(() => acLoad());
@@ -1010,7 +1010,7 @@ const ChatView = ({ session, model, setMode }) => {
     setDraft('');
     setBusy(true);
     try {
-      const answer = await window.ARCHHUB_AGENT(text);
+      const answer = await window.ARCHHUB_AGENT(text, model?.route);
       setMessages(m => [...m, { me:false, time:stamp(), text:answer }]);
     } catch (error) {
       setMessages(m => [...m, { me:false, time:stamp(),
@@ -3046,15 +3046,13 @@ const SettingsHosts = ({ store, patch }) => (
 const ModelPicker = ({ setModel, onClose, model }) => {
   const groups = [
     { name:'CLOUD · subscription', items:[
-      { name:'Claude Sonnet 4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$3 / $15 per M', latency:412 },
-      { name:'Claude Opus 4',     vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$15 / $75 per M', latency:820 },
-      { name:'GPT-5',             vendor:'OpenAI',    tag:'CLOUD', ctx:'400k', col:'#10a37f', cost:'$5 / $20 per M', latency:530 },
+      { name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$3 / $15 per M', latency:412 },
+      { name:'Claude Opus 4.1',   route:'anthropic/claude-opus-4.1',   vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$15 / $75 per M', latency:820 },
+      { name:'GPT-4o',            route:'openai/gpt-4o',               vendor:'OpenAI',    tag:'CLOUD', ctx:'128k', col:'#10a37f', cost:'$5 / $20 per M', latency:530 },
     ]},
     { name:'BYO · OpenRouter', items:[
-      { name:'DeepSeek R1',  vendor:'OpenRouter', tag:'BYO',  ctx:'128k', col:'#3a6acc', cost:'$0.55 / $2.20',  latency:1450 },
-    ]},
-    { name:'LOCAL · Ollama', items:[
-      { name:'qwen2.5-coder:32b', vendor:'Ollama', tag:'LOCAL', ctx:'32k',  col:'#1a8a4a', cost:'free · 0.9 GB/s', latency:240 },
+      { name:'DeepSeek R1', route:'deepseek/deepseek-r1', vendor:'OpenRouter', tag:'BYO', ctx:'128k', col:'#3a6acc', cost:'$0.55 / $2.20', latency:1450 },
+      { name:'Llama 3.3 70B', route:'meta-llama/llama-3.3-70b-instruct', vendor:'OpenRouter', tag:'BYO', ctx:'128k', col:'#3a6acc', cost:'$0.12 / $0.30', latency:900 },
     ]},
   ];
   return (

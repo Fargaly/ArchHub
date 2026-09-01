@@ -115,6 +115,7 @@ def run_agent_composer(
     registry,
     prompt: str,
     *,
+    model: str | None = None,
     effect_engines: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
 ) -> dict[str, object]:
@@ -136,7 +137,10 @@ def run_agent_composer(
     )
     context_block = _canvas_context(projection)
     try:
-        raw = _chat(prompt.strip(), context_block, _DEFAULT_MODEL)
+        # The picker is a ROUTER: the model the founder chose is the model
+        # that answers. Only its absence falls back to the default.
+        chosen = (model or "").strip() or _DEFAULT_MODEL
+        raw = _chat(prompt.strip(), context_block, chosen)
     except urllib.error.HTTPError:
         raw = _chat(prompt.strip(), context_block, _FALLBACK_MODEL)
     text = raw.strip()

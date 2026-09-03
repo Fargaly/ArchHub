@@ -5030,6 +5030,57 @@ class ApplicationServer:
                                     authentication_context=binding.context,
                                 ),
                             }
+                        if payload.get('command', {}).get('intent') == (
+                            'open-question'
+                        ):
+                            # Not one of the catalogue commands: the founder
+                            # is simply talking to BABOOM. That reaches the
+                            # same brain-first agent the studio composer
+                            # uses -- his own memory recalled first, then
+                            # the model -- outside the mutation lock, since
+                            # a model turn takes seconds and the lock is
+                            # what the whole application writes through.
+                            from .agent_composer import run_agent_composer
+                            from .pipeline_engines import brain_recall
+                            utterance = str(body['utterance'])
+                            try:
+                                recalled = brain_recall(
+                                    {'prompt': utterance}, {}
+                                )[0]['out']
+                                context = str(recalled)
+                            except Exception:
+                                # The brain daemon being down must never
+                                # cost the founder his answer.
+                                context = ''
+                            prompt = utterance if not context.strip() else (
+                                'Founder memory (recalled from his brain):'
+                                + chr(10) + context[:4000] + chr(10) + chr(10)
+                                + 'Founder says: ' + utterance
+                            )
+                            agent_result = run_agent_composer(
+                                owner.universal_store,
+                                owner.universal_registry,
+                                prompt,
+                                model='',
+                                effect_engines=owner.pipeline_effect_engines,
+                                authentication_context=binding.context,
+                            )
+                            payload['command'] = {
+                                **payload['command'], 'intent': 'ask',
+                            }
+                            payload['response'] = {
+                                'kind': 'answer',
+                                'summary': str(
+                                    agent_result.get('answer') or ''
+                                ),
+                                'data': {
+                                    'brain_context_lines': len([
+                                        line
+                                        for line in context.splitlines()
+                                        if line.strip()
+                                    ]),
+                                },
+                            }
                         self._json(200, payload)
                         return
                     if self.path == '/api/universal/baboom-command-execute':

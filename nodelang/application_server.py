@@ -915,6 +915,10 @@ class _CleanAuthorityHttpServer:
         self.authority_key_provider = authority_key_provider
         self.clean_caller = scope_caller
         self.clean_scope_root = scope_root
+        # The canvas page proves itself with this, not with a header any
+        # local program can type. Minted per boot, embedded in the page
+        # this desktop renders, and required to sign in.
+        self.clean_canvas_key = secrets.token_urlsafe(32)
         # The interaction set is derived from the scope tree and the
         # published catalogue -- the same facts the persisted table merely
         # repeats (equivalence court: test_derived_interactions_equivalence).
@@ -2152,6 +2156,17 @@ class _CleanAuthorityHttpServer:
         )
         return ":root{%s}" % declared + catalogue.get("stylesheet", "")
 
+    def _clean_canvas_key_matches(self, presented: object) -> bool:
+        """Is this the canvas page this desktop rendered?
+
+        Timing-safe, and false for an empty key: a caller that presents
+        nothing must never match a server that has nothing.
+        """
+        expected = getattr(self, "clean_canvas_key", "")
+        if type(presented) is not str or not presented or not expected:
+            return False
+        return secrets.compare_digest(presented, expected)
+
     def _clean_page(self):
         """Serve the page. Pure: no graph write, no session, no cookie.
 
@@ -2191,6 +2206,7 @@ class _CleanAuthorityHttpServer:
       headers: {
         'Content-Type': 'application/json',
         'X-ArchHub-Sign-In': '1',
+        'X-ArchHub-Canvas-Key': window.__archhubCanvasKey || '',
       },
       body: '{}',
     });
@@ -2270,14 +2286,33 @@ class _CleanAuthorityHttpServer:
             "</div>"
             "<script type=\"text/plain\" id=\"archhub-canvas-source\">"
             "%s</script>"
+            # The key travels only inside the page this desktop renders,
+            # so signing in requires having been handed this page.
+            "<script>window.__archhubCanvasKey=%s;</script>"
             "<script>%s</script></body></html>"
-        ) % (UNIVERSAL_CANVAS_SCRIPT, bootstrap)
+        ) % (
+            UNIVERSAL_CANVAS_SCRIPT,
+            json.dumps(getattr(self, "clean_canvas_key", "")),
+            bootstrap,
+        )
         return page
 
     @property
     def url(self) -> str:
         host, port = self.httpd.server_address[:2]
         return "http://%s:%d" % (host, port)
+
+    @property
+    def page_url(self) -> str:
+        """The URL that actually opens the canvas.
+
+        `url` stays the bare origin because callers append API paths to it;
+        this is the one a person opens, and it carries the key that proves
+        the page came from this desktop.
+        """
+        return "%s/?key=%s" % (
+            self.url, getattr(self, "clean_canvas_key", "")
+        )
 
     def start(self):
         if self.thread is None:
@@ -2996,7 +3031,42 @@ class _CleanAuthorityHttpServer:
                     raise InvalidCell("request body must be an object")
                 return body
 
+            def _admit_local_request(self) -> bool:
+                """Refuse a request that only LOOKS local to the browser.
+
+                Every same-origin proof this server relies on is a header
+                the browser fills in, and DNS rebinding makes an attacker's
+                page genuinely same-origin: it re-resolves its own hostname
+                to 127.0.0.1, so `Sec-Fetch-Site` says same-origin, no
+                preflight is sent, and script may read the reply. The one
+                header that still tells the truth is Host -- it carries the
+                name the CLIENT dialled, and a rebound page dialled the
+                attacker's domain, not loopback. This is the same admission
+                clean_coordination_service and clean_application_server
+                already apply; it was simply never applied here.
+                """
+                origin = self.headers.get("Origin")
+                expected_port = self.server.server_address[1]
+                if origin not in {
+                    None,
+                    "http://127.0.0.1:%s" % expected_port,
+                    "http://localhost:%s" % expected_port,
+                    "http://127.0.0.1",
+                    "http://localhost",
+                }:
+                    self._json(403, {"ok": False, "error": "origin denied"})
+                    return False
+                if self.headers.get("Host", "") not in {
+                    "127.0.0.1:%s" % expected_port,
+                    "localhost:%s" % expected_port,
+                }:
+                    self._json(403, {"ok": False, "error": "host denied"})
+                    return False
+                return True
+
             def do_GET(self):
+                if not self._admit_local_request():
+                    return
                 if self.path == "/api/universal/browser-handoff":
                     self._json(403, {
                         "ok": False,
@@ -3020,12 +3090,29 @@ class _CleanAuthorityHttpServer:
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                if self.path in ("/", "/index.html"):
+                if self.path.split("?", 1)[0] in ("/", "/index.html"):
                     # Pure. A safe method must not write: any local page
                     # could force a signed graph command with an <img> tag,
                     # and every reload would mint another session in an
                     # append-only graph. The page carries the bootstrap
                     # script; signing in is an explicit POST.
+                    #
+                    # Handing the page out freely would hand out the canvas
+                    # key printed inside it, and with it the founder's
+                    # session -- so the page is served only to whoever was
+                    # given the URL this desktop printed.
+                    from urllib.parse import parse_qs as _parse_qs
+                    from urllib.parse import urlparse as _urlparse
+                    presented = (_parse_qs(
+                        _urlparse(self.path).query
+                    ).get("key") or [""])[0]
+                    if not owner._clean_canvas_key_matches(presented):
+                        self._json(403, {
+                            "ok": False,
+                            "error": "the canvas page requires the key this "
+                                     "desktop printed with its URL",
+                        })
+                        return
                     body = owner._clean_page().encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type",
@@ -3074,6 +3161,8 @@ class _CleanAuthorityHttpServer:
                 self._json(200, {"ok": True, **payload})
 
             def do_POST(self):
+                if not self._admit_local_request():
+                    return
                 try:
                     body = self._body()
                     csrf_token = self._csrf()
@@ -3303,15 +3392,32 @@ class _CleanAuthorityHttpServer:
                         })
                         return
                     if self.path == "/api/universal/session":
-                        # The custom header is the same-origin proof: a
-                        # cross-origin page cannot send it without a
-                        # preflight this server never answers, so no other
-                        # site can make the founder's browser sign in.
+                        # The custom header proves the caller is not a
+                        # cross-ORIGIN page. It proves nothing about which
+                        # PROCESS is calling: any program on this host can
+                        # set a header, and this reply hands back a session
+                        # bound to the founder that unlocks /execute-adapter
+                        # -- the founder's open Revit models and Office
+                        # documents. On a shared or RDP machine that is
+                        # another signed-in person, not a hypothetical.
+                        #
+                        # So the caller must also prove it is the page this
+                        # desktop itself rendered, by returning the key that
+                        # only that page was given.
                         if not self.headers.get("X-ArchHub-Sign-In"):
                             self._json(403, {
                                 "ok": False,
                                 "error": "sign-in requires a same-origin "
                                          "request",
+                            })
+                            return
+                        if not owner._clean_canvas_key_matches(
+                            self.headers.get("X-ArchHub-Canvas-Key", "")
+                        ):
+                            self._json(403, {
+                                "ok": False,
+                                "error": "sign-in requires the desktop's "
+                                         "own canvas page",
                             })
                             return
                         self._json(200, owner._clean_sign_in())

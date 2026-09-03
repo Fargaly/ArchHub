@@ -478,9 +478,28 @@ def main() -> int:
             "%s %.1fs" % (label, seconds) for label, seconds in phases
         )
         print(
-            "canvas serving on %s after %.1fs (%s)" % (canvas.url, total, report),
+            "canvas serving on %s after %.1fs (%s)" % (
+                canvas.page_url, total, report
+            ),
             file=sys.stderr,
         )
+        # Under pythonw there is no console, so a URL printed to stderr is
+        # a URL nobody can open. The canvas now needs its key, so write the
+        # exact address next to the service's own boot log -- inside the
+        # user's profile, which is where the key belongs and where no other
+        # user's browser can reach it.
+        try:
+            from pathlib import Path as _Path
+            note = (
+                _Path(os.environ.get("LOCALAPPDATA", ""))
+                / "ArchHub" / "unified-authority"
+            )
+            if note.is_dir():
+                (note / "canvas-url.txt").write_text(
+                    canvas.page_url + chr(10), encoding="utf-8"
+                )
+        except OSError:
+            pass
         try:
             log = Path(
                 args.root

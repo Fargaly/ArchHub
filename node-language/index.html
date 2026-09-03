@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>node language — one graph</title>
+<style>
+:root{--bg:#0e0e11;--line:#26262e;--ink:#ece8e0;--soft:#9b938a;--acc:#d97757;--ok:#7bbf6a;}
+*{box-sizing:border-box}body{margin:0;height:100vh;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;overflow:hidden}
+#bar{position:fixed;top:0;left:0;right:0;min-height:46px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 12px;background:#0e0e11ee;border-bottom:1px solid var(--line);z-index:5}
+.btn{background:#1c1c23;border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:inherit}
+.btn:hover{border-color:var(--acc)}.btn.on{background:var(--acc);color:#1a0e08;font-weight:700;border-color:var(--acc)}
+.sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+#info{margin-left:auto;font-size:11px;color:var(--soft)}
+svg{position:fixed;top:52px;left:0;right:0;bottom:0;width:100%;height:calc(100% - 52px);cursor:default}
+.node{cursor:pointer}.node rect{fill:#15151a;stroke:#26262e;stroke-width:1.4}.node:hover rect{stroke:var(--acc)}.node.sel rect{stroke:var(--acc);stroke-width:2.2}
+.node.grp rect{stroke:#6b6be0;stroke-dasharray:4 3}
+.kind{fill:var(--soft);font-size:8px;letter-spacing:.7px}.sub{fill:#8a827a;font-size:8.5px}.val{fill:var(--acc);font-size:15px;font-weight:700}.nid{fill:#5e574f;font-size:8px}
+.knob{fill:#1c1c23;stroke:var(--acc);stroke-width:1.3}
+.wire{stroke:var(--acc);stroke-opacity:.55;fill:none;stroke-width:1.7}
+.hint{position:fixed;left:12px;bottom:10px;color:#5e574f;font-size:11px;max-width:70%}
+</style></head><body>
+<div id="bar">
+<button class="btn" onclick="addNode('const')">+ const</button>
+<button class="btn" onclick="addNode('list')">+ list</button>
+<span class="sep"></span>
+<button class="btn" onclick="addNode('sum')">+ sum</button>
+<button class="btn" onclick="addNode('avg')">+ avg</button>
+<button class="btn" onclick="addNode('mul')">+ mul</button>
+<span class="sep"></span>
+<button class="btn" onclick="addNode('iterate')">+ iterate</button>
+<button class="btn" onclick="addNode('aggregate')">+ aggregate</button>
+<button class="btn" onclick="addNode('ref')">+ ref</button>
+<span class="sep"></span>
+<button class="btn" id="wbtn" onclick="toggleWire()">wire</button>
+<button class="btn" onclick="groupSel()">group selected</button>
+<button class="btn" onclick="delSel()">delete</button>
+<span id="info">one graph · the engine runs it · you AND the AI both drive it (polls live)</span>
+</div>
+<svg id="svg"></svg>
+<div class="hint"><b>click</b> = select · <b>double-click</b> = edit (const value / list items / iterate+aggregate op / mul factor) · <b>wire</b> then click two nodes = connect (into iterate/aggregate = its list, into ref = its target, else = an input) · <b>group</b> selected = one node that RUNS its insides · values computed live by the engine</div>
+<script>
+const NS='http://www.w3.org/2000/svg',HJ={'Content-Type':'application/json'};
+let M={nodes:[]},sel=new Set(),wire=false,wsrc=null;
+const svg=document.getElementById('svg');
+const ITER=k=>k==='iterate'||k==='map', AGG=k=>k==='aggregate'||k==='reduce';
+function E(t,a){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;}
+function byId(id){return M.nodes.find(x=>x.id===id);}
+function P(id){const n=byId(id);return n?[(n.params._x||100),(n.params._y||100)]:[0,0];}
+function fmt(v){return v==null?'—':(typeof v==='object'?JSON.stringify(v):String(v));}
+async function post(path,body){return fetch(path,{method:'POST',headers:HJ,body:JSON.stringify(body)});}
+async function set(id,key,val){await post('/set',{id,key,val});}
+async function load(){try{const r=await fetch('/graph');M=await r.json();render();}catch(e){}}
+const W=158,H=72;
+// every incoming edge a node has — real inputs PLUS param-wires (over / ref) so the engine's
+// param-based reads show as visible wires too.
+function incoming(n){let s=[...(n.inputs||[])];const o=n.params&&n.params.over,r=n.params&&n.params.ref;
+  if(typeof o==='string'&&byId(o))s.push(o); if(typeof r==='string'&&byId(r))s.push(r); return s;}
+function subtitle(n){const p=n.params||{};
+  if(ITER(n.kind))return 'op: '+(p.op||'id')+(typeof p.over==='string'?'  ◂ '+p.over:'');
+  if(AGG(n.kind))return 'op: '+(p.op||'sum')+(typeof p.over==='string'?'  ◂ '+p.over:'');
+  if(n.kind==='mul')return '× '+(p.factor==null?1:p.factor);
+  if(n.kind==='ref')return typeof p.ref==='string'?'◂ '+p.ref:'(unwired)';
+  if(n.kind==='group')return 'runs insides';
+  return '';}
+function render(){
+  while(svg.firstChild)svg.removeChild(svg.firstChild);
+  M.nodes.forEach(n=>{incoming(n).forEach(src=>{const a=P(src),b=[n.params._x||100,n.params._y||100];
+    const x1=a[0]+W,y1=a[1]+H/2,x2=b[0],y2=b[1]+H/2,mx=(x1+x2)/2;
+    svg.appendChild(E('path',{class:'wire',d:'M'+x1+','+y1+' C'+mx+','+y1+' '+mx+','+y2+' '+x2+','+y2}));});});
+  M.nodes.forEach(n=>{const x=n.params._x||100,y=n.params._y||100;
+    const g=E('g',{class:'node'+(sel.has(n.id)?' sel':'')+(n.kind==='group'?' grp':''),transform:'translate('+x+','+y+')','data-node-id':n.id});
+    g.appendChild(E('rect',{width:W,height:H,rx:9}));
+    let t=E('text',{x:13,y:17,class:'kind'});t.textContent=n.kind.toUpperCase();g.appendChild(t);
+    const sb=subtitle(n); if(sb){t=E('text',{x:13,y:29,class:'sub'});t.textContent=sb;g.appendChild(t);}
+    t=E('text',{x:13,y:52,class:'val'});t.textContent=fmt(n.value);g.appendChild(t);
+    t=E('text',{x:13,y:64,class:'nid'});t.textContent=n.id;g.appendChild(t);
+    g.appendChild(E('circle',{cx:0,cy:H/2,r:5,class:'knob'}));
+    g.appendChild(E('circle',{cx:W,cy:H/2,r:5,class:'knob'}));
+    g.onclick=function(ev){ev.stopPropagation();clickNode(n);};
+    g.ondblclick=function(ev){ev.stopPropagation();editNode(n);};
+    svg.appendChild(g);});
+}
+async function clickNode(n){
+  if(wire){ if(!wsrc){wsrc=n.id;sel=new Set([n.id]);render();return;}
+    if(wsrc!==n.id)await connect(wsrc,n.id);
+    wsrc=null;sel.clear();await load();return; }
+  if(sel.has(n.id))sel.delete(n.id);else sel.add(n.id);render();
+}
+// wiring MEANS something per kind: into iterate/aggregate sets its list source; into ref sets its
+// target; otherwise it's a plain input. Keeps the engine pure — the canvas knows what a wire means.
+async function connect(srcId,dstId){const d=byId(dstId);
+  if(d.kind==='ref')await set(dstId,'ref',srcId);
+  else if(ITER(d.kind)||AGG(d.kind))await set(dstId,'over',srcId);
+  else await post('/wire',{dst:dstId,src:srcId});
+}
+async function editNode(n){const p=n.params||{};
+  if(n.kind==='const'){const v=prompt('value for '+n.id,p.value);if(v!==null){await set(n.id,'value',isNaN(Number(v))?v:Number(v));await load();}return;}
+  if(n.kind==='list'||Array.isArray(p.value)){const cur=Array.isArray(p.value)?p.value.join(','):'';
+    const v=prompt('list items (comma-separated) for '+n.id,cur);
+    if(v!==null){const arr=v.split(',').map(s=>s.trim()).filter(s=>s!=='').map(s=>isNaN(Number(s))?s:Number(s));await set(n.id,'value',arr);await load();}return;}
+  if(ITER(n.kind)){const v=prompt('op for '+n.id+'  (id / inc / double / neg)',p.op||'double');if(v!==null){await set(n.id,'op',v.trim());await load();}return;}
+  if(AGG(n.kind)){const v=prompt('op for '+n.id+'  (sum / count / max / min / avg / collect)',p.op||'sum');if(v!==null){await set(n.id,'op',v.trim());await load();}return;}
+  if(n.kind==='mul'){const v=prompt('factor for '+n.id,p.factor==null?2:p.factor);if(v!==null){await set(n.id,'factor',Number(v));await load();}return;}
+}
+async function addNode(kind){
+  const x=140+(M.nodes.length%5)*46,y=120+(M.nodes.length%6)*34;
+  let real=kind,params={};
+  if(kind==='const')params={value:1};
+  else if(kind==='list'){real='const';params={value:[1,2,3]};}
+  else if(kind==='iterate')params={op:'double'};
+  else if(kind==='aggregate')params={op:'sum'};
+  else if(kind==='mul')params={factor:2};
+  await post('/add',{kind:real,x,y,params});
+  await load();
+}
+function toggleWire(){wire=!wire;wsrc=null;sel.clear();document.getElementById('wbtn').classList.toggle('on',wire);render();}
+async function groupSel(){if(!sel.size)return;await post('/group',{ids:[...sel]});sel.clear();await load();}
+async function delSel(){for(const id of sel)await post('/del',{id});sel.clear();await load();}
+load();setInterval(load,1500);
+</script></body></html>

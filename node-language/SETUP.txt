@@ -1,0 +1,11 @@
+ArchHub — install on your machine
+=================================
+
+1. Copy this whole folder to your computer (Desktop is fine).
+2. Double-click  SETUP.bat
+3. When it finishes, double-click  ArchHub  on your Desktop.
+
+That is all. If anything refuses, send Ahmed the text in the window --
+it says exactly what stopped, and nothing pretends to have worked.
+
+Needs Python 3.11 or newer (python.org, tick "Add to PATH").

@@ -539,3 +539,27 @@ def test_native_companion_report_box_fits_the_whole_briefing(tmp_path):
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_native_companion_disappears_past_its_lease_rather_than_lie(tmp_path):
+    """An expired frame is not painted. The founder read live-looking counts
+    off a panel whose server had been gone for an hour; past the lease the
+    companion hides instead."""
+    import time as _time
+    from dataclasses import replace as _replace
+
+    atlas_path = tmp_path / "lease.png"
+    image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QColor(0, 0, 0, 0))
+    assert image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(path=atlas_path, width=1536, height=2288, columns=8, rows=11, cell_width=192, cell_height=208)
+    host = BaboomNativeHost(_Transport(), external_session_id="companion-lease-court",
+                            device_credential_provider=lambda challenge: {"proof": "approved"})
+    host.connect()
+    controller = BaboomNativeCompanionController(host, atlas, occupied_provider=lambda: ())
+    screen = Rect(0, 0, 1920, 1080)
+    assert controller.next_frame(screen) is not None, "a live lease must draw"
+    stale = _replace(host.latest_snapshot, frame_expires_at=_time.time() - 3600.0)
+    with host._lock:
+        host._latest = stale
+    assert controller.next_frame(screen) is None, "an expired lease must not be painted"

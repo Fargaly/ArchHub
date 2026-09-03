@@ -1190,8 +1190,11 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
     <div style={{ padding:'14px 16px' }}>
       <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>CONNECTORS · {(window.ARCHHUB_LIVE?.connectors || []).length}</div>
       {(window.ARCHHUB_LIVE?.connectors || []).map(c => {
-        const col = c.state === 'connected' || c.state === 'listening' ? LM.ok
-          : c.state === 'installed' ? LM.warn : LM.inkDim;
+        // Green only for a host the product can DRIVE; seeing a process or a
+        // port is not a connection, and the founder's rule is that nothing
+        // shows green that is not wired.
+        const col = c.drive && (c.state === 'connected' || c.state === 'listening') ? LM.ok
+          : c.state === 'installed' || c.state === 'reachable' ? LM.warn : LM.inkDim;
         return (
           <div key={c.id} title={c.detail} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px dashed ${LM.lineSoft}` }}>
             <span style={{ width:7, height:7, borderRadius:'50%', background:col, boxShadow:`0 0 0 3px ${col}22` }}/>
@@ -3613,7 +3616,7 @@ POST /v1/brain/promote         → { id, to: "practice" }`}</DCode>
 
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
-  const live = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.state === 'connected' || c.state === 'listening').length;
+  const live = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.drive && (c.state === 'connected' || c.state === 'listening')).length;
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
     return (

@@ -3666,6 +3666,51 @@ def _ensure_cde_write_signing_authority(
     return descriptor_root
 
 
+
+def answer_open_question(owner, utterance, context, payload):
+    """Brain first, then the model, for free text that is not a catalogue command.
+
+    Both entry points -- the browser HTTP handler and the machine dispatcher
+    the shipped BABOOM companion and the cloud gateway actually use -- call
+    this. Before it was shared, the brain-first answer existed only on the
+    HTTP path and the desktop companion still handed the founder a canned
+    menu. Runs OUTSIDE the mutation lock: a model turn takes seconds and the
+    lock is what the whole application writes through. The brain daemon
+    being down costs the recall, never the answer.
+    """
+    from .agent_composer import run_agent_composer
+    from .pipeline_engines import brain_recall
+    utterance = str(utterance)
+    try:
+        context_text = str(brain_recall({"prompt": utterance}, {})[0]["out"])
+    except Exception:
+        context_text = ""
+    prompt = utterance if not context_text.strip() else (
+        "Founder memory (recalled from his brain):" + chr(10)
+        + context_text[:4000] + chr(10) + chr(10) + "Founder says: " + utterance
+    )
+    agent_result = run_agent_composer(
+        owner.universal_store,
+        owner.universal_registry,
+        prompt,
+        model="",
+        effect_engines=owner.pipeline_effect_engines,
+        authentication_context=context,
+    )
+    answered = dict(payload)
+    answered["command"] = {**dict(payload.get("command") or {}), "intent": "ask"}
+    answered["response"] = {
+        "kind": "answer",
+        "summary": str(agent_result.get("answer") or ""),
+        "data": {
+            "brain_context_lines": len([
+                line for line in context_text.splitlines() if line.strip()
+            ]),
+        },
+    }
+    return answered
+
+
 class ApplicationServer:
     @classmethod
     def from_unified_authority(
@@ -4473,7 +4518,7 @@ class ApplicationServer:
                                     'file': item['detail'],
                                 }
                                 for item in catalogue
-                                if item['state'] in (
+                                if item.get('drive') and item['state'] in (
                                     'connected', 'listening',
                                 )
                             ],
@@ -5033,54 +5078,9 @@ class ApplicationServer:
                         if payload.get('command', {}).get('intent') == (
                             'open-question'
                         ):
-                            # Not one of the catalogue commands: the founder
-                            # is simply talking to BABOOM. That reaches the
-                            # same brain-first agent the studio composer
-                            # uses -- his own memory recalled first, then
-                            # the model -- outside the mutation lock, since
-                            # a model turn takes seconds and the lock is
-                            # what the whole application writes through.
-                            from .agent_composer import run_agent_composer
-                            from .pipeline_engines import brain_recall
-                            utterance = str(body['utterance'])
-                            try:
-                                recalled = brain_recall(
-                                    {'prompt': utterance}, {}
-                                )[0]['out']
-                                context = str(recalled)
-                            except Exception:
-                                # The brain daemon being down must never
-                                # cost the founder his answer.
-                                context = ''
-                            prompt = utterance if not context.strip() else (
-                                'Founder memory (recalled from his brain):'
-                                + chr(10) + context[:4000] + chr(10) + chr(10)
-                                + 'Founder says: ' + utterance
+                            payload = answer_open_question(
+                                owner, body['utterance'], binding.context, payload,
                             )
-                            agent_result = run_agent_composer(
-                                owner.universal_store,
-                                owner.universal_registry,
-                                prompt,
-                                model='',
-                                effect_engines=owner.pipeline_effect_engines,
-                                authentication_context=binding.context,
-                            )
-                            payload['command'] = {
-                                **payload['command'], 'intent': 'ask',
-                            }
-                            payload['response'] = {
-                                'kind': 'answer',
-                                'summary': str(
-                                    agent_result.get('answer') or ''
-                                ),
-                                'data': {
-                                    'brain_context_lines': len([
-                                        line
-                                        for line in context.splitlines()
-                                        if line.strip()
-                                    ]),
-                                },
-                            }
                         self._json(200, payload)
                         return
                     if self.path == '/api/universal/baboom-command-execute':
@@ -8907,12 +8907,18 @@ class ApplicationServer:
                 method, path, authentication_context=context
             )
             with self.mutation_lock:
-                return respond_universal_baboom_utterance(
+                result = respond_universal_baboom_utterance(
                     self.universal_store,
                     self.universal_registry,
                     utterance=body["utterance"],
                     authentication_context=context,
                 )
+            if (result.get("command") or {}).get("intent") == "open-question":
+                # The shipped companion enters here, not through HTTP.
+                result = answer_open_question(
+                    self, body["utterance"], context, result
+                )
+            return result
         if method == "POST" and path == "/api/universal/baboom-command-execute":
             if set(body) != {"utterance"}:
                 raise InvalidCell(

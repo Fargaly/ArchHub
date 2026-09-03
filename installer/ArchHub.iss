@@ -51,6 +51,12 @@ Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion
 ; left in place: it still hosts the brain MCP server on :8473.
 Source: "ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\12.PRODUCTION\app\assets\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
+; The skill library travels with the application: a colleague machine has
+; no ~/.claude or ~/.codex, and a catalogue that only scanned those reported
+; 0 skills everywhere but the founder desk. Snapshotted at build time from
+; the machine that builds the installer.
+Source: "{%USERPROFILE}\.claude\skills\*"; DestDir: "{app}\skills\claude"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
+Source: "{%USERPROFILE}\.codex\skills\*"; DestDir: "{app}\skills\codex"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"

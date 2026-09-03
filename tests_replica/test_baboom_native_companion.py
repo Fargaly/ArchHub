@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QColor, QImage, QPainter
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtTest import QTest
 
 from nodelang.baboom_companion_placement import BaboomCompanionLayout, Rect
@@ -289,7 +289,7 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
         app.processEvents()
         assert window.geometry() == first_geometry
         assert window._projection_timer.interval() >= 500
-        assert window._animation_timer.interval() == 420
+        assert window._animation_timer.interval() == 900
         # An ambient companion that sits behind the founder's work is one he
         # never sees. It stays on top, frameless and click-through outside
         # its own sprite, which is how every desktop companion behaves.
@@ -470,6 +470,71 @@ def test_native_companion_click_opens_and_closes_the_ask_box(tmp_path):
         QTest.keyClick(window._input, Qt.Key.Key_Escape)
         app.processEvents()
         assert not window._input.isVisible(), "Escape must close the ask box"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_native_companion_report_box_fits_the_whole_briefing(tmp_path):
+    """Every line of what BABOOM says must fit inside its box.
+
+    His words: "the text of what it says is very long" -- and then, exactly:
+    "I do not mean shorten the message, I mean I cannot see all of it." The
+    box was sized from an assumed characters-per-line, the real font wrapped
+    one line further, and the last line fell outside the box.
+    """
+    app = QApplication.instance() or QApplication([])
+    atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    atlas_image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(atlas_image)
+    painter.fillRect(240, 50, 96, 120, QColor(28, 187, 171, 255))
+    painter.end()
+    atlas_path = tmp_path / "fit.png"
+    assert atlas_image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(
+        path=atlas_path,
+        width=1536,
+        height=2288,
+        columns=8,
+        rows=11,
+        cell_width=192,
+        cell_height=208,
+    )
+    host = BaboomNativeHost(
+        _Transport(),
+        external_session_id="companion-fit-court",
+        device_credential_provider=lambda challenge: {"proof": "approved"},
+    )
+    host.connect()
+    controller = BaboomNativeCompanionController(
+        host, atlas, occupied_provider=lambda: ()
+    )
+    window = create_baboom_native_companion_window(controller)
+    try:
+        window.refresh()
+        app.processEvents()
+        # The briefing his machine actually showed, whose last line was cut.
+        briefing = (
+            "Work: 2 active. Workshop: 563 entries. Attention: 0 blocked. "
+            "Next open: A wire can own its parameters"
+        )
+        width, height = window._report_size(briefing)
+        needed = window._report.fontMetrics().boundingRect(
+            QRect(0, 0, width - 12, 1 << 16),
+            int(Qt.TextFlag.TextWordWrap),
+            briefing,
+        )
+        assert height >= needed.height(), "the briefing does not fit its box"
+
+        # And the box the layout actually hands the label is that size.
+        window._transient_report = briefing
+        window._transient_revision = None
+        window.refresh()
+        app.processEvents()
+        assert window._message_rect is not None
+        assert window._message_rect.height() >= needed.height()
+        assert window._report.text() == briefing
     finally:
         window.close()
         window.deleteLater()

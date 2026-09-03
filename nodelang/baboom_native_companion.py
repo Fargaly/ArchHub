@@ -512,7 +512,9 @@ def create_baboom_native_companion_window(
             self._projection_timer.setInterval(750)
             self._projection_timer.timeout.connect(self.refresh)
             self._animation_timer = QTimer(self)
-            self._animation_timer.setInterval(420)
+            # A companion that changes pose three times a second reads as
+            # restless. It breathes, it does not fidget.
+            self._animation_timer.setInterval(900)
             self._animation_timer.timeout.connect(self._advance_animation)
             self.response_ready.connect(self._apply_response)
             self.execution_ready.connect(self._apply_execution)
@@ -542,6 +544,25 @@ def create_baboom_native_companion_window(
             geometry = screen.availableGeometry()
             return Rect(geometry.x(), geometry.y(), geometry.width(), geometry.height())
 
+        def _report_size(self, text: str) -> tuple[int, int]:
+            """Size the report box from the REAL font, so nothing is clipped.
+
+            The pure geometry assumes a fixed characters-per-line. That is
+            close but not exact for the installed UI font, and the founder's
+            own briefing wrapped one line further than the estimate: its last
+            line fell outside the box, so he could not read the end of what
+            BABOOM was telling him. Qt knows the true wrap, so it decides the
+            height here. The estimate stays the floor.
+            """
+            width, minimum = baboom_compact_message_size(text)
+            padding_x, padding_y = 12, 8
+            wrapped = self._report.fontMetrics().boundingRect(
+                QRect(0, 0, width - padding_x, 1 << 16),
+                int(Qt.TextFlag.TextWordWrap),
+                text,
+            )
+            return (width, max(minimum, wrapped.height() + padding_y))
+
         def _layout_for_report(
             self,
             frame: BaboomNativeVisualFrame,
@@ -552,7 +573,7 @@ def create_baboom_native_companion_window(
             layout = frame.layout
             if not report:
                 return layout
-            message_size = baboom_compact_message_size(report)
+            message_size = self._report_size(report)
             if (
                 layout.message is not None
                 and

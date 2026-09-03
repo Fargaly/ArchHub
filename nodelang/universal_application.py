@@ -36405,7 +36405,13 @@ def project_universal_baboom_companion_directive(
         "motion": motion,
         "message": message,
         "context": "ArchHub | Live activity",
-        "compact_message": "" if key == "steady-observation" else message,
+        # The visual layer refuses a directive that carries a panel with no
+        # action -- "quiet must not project" -- so the compact message
+        # travels only with an actionable directive. Informational
+        # states still show through the sprite's motion (review,
+        # desk-scan, idle); the full message stays in "message" for
+        # surfaces that render text without a panel.
+        "compact_message": message if action else "",
         "ttl_seconds": 12.0,
         "action": action,
         "action_label": action_label,

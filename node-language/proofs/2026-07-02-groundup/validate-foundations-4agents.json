@@ -1,0 +1,301 @@
+{
+  "summary": "Validate research doc citations, SPEC claims, grand-map integrity before building on them",
+  "agentCount": 4,
+  "logs": [],
+  "result": {
+    "results": [
+      {
+        "target": "C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-research-frontiers.md — load-bearing math citations grounding SPEC §19",
+        "checks": [
+          {
+            "claim": "arXiv 1305.0297 = Spivak, operad of wiring diagrams; 'grouping = operadic composition, self-similar nesting' is a fair reading",
+            "status": "VERIFIED",
+            "evidence": "Fetched arxiv.org/abs/1305.0297: 'The operad of wiring diagrams...' by David I. Spivak; abstract states wiring diagrams 'can be nested hierarchically and thus have an aspect of self-similarity' and form the morphisms of an operad. Nuance: this operad is the relational/undirected variant; directed dataflow is covered by co-cited 1408.1598, so the composite citation at doc line 13 holds.",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "arXiv 1502.00872 = Fong, decorated cospans; 'gates on wires compose lawfully'",
+            "status": "VERIFIED",
+            "evidence": "Fetched arxiv.org/abs/1502.00872: 'Decorated Cospans' by Brendan Fong; morphisms = cospan X->N<-Y plus decoration 1->FN, constructed precisely so decorated open systems compose in a symmetric monoidal category. 'Gate = decoration' is a modeling choice, not in the paper, but a legitimate instantiation. Adversarial probe of arXiv 2101.09363 (Baez-Courser-Vasilakopoulou) shows later work GENERALIZES Fong (pseudofunctor variant) rather than refutes; implementers should use the corrected variant but the claim stands.",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "arXiv 1609.05382 / 1806.08304 = hypergraph categories / Frobenius; 'fan-out needs spider structure'",
+            "status": "VERIFIED",
+            "evidence": "Fetched both. 1609.05382 (Fong thesis, 'The Algebra of Open and Interconnected Systems') introduces hypergraph categories for multi-terminal interconnection. 1806.08304 ('Hypergraph Categories', Fong AND Spivak — doc credits Fong alone, trivial slip) defines them as symmetric monoidal categories where every object carries a special commutative Frobenius monoid; that Frobenius/spider structure is exactly what plain monoidal theory lacks for copy/merge of wires. Standard, fair reading.",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "arXiv 2106.04703 = Patterson/Lynch/Fairbanks ACSets; 'one schema, homoiconic store'",
+            "status": "VERIFIED",
+            "evidence": "Fetched arxiv.org/abs/2106.04703: 'Categorical Data Structures for Technical Computing'; introduces attributed C-sets (functors from a finitely-presented schema category to Set), 'a joint generalization of graphs and data frames', explicitly encompassing wiring diagrams — supports 'one schema stores nodes/ports/wires uniformly'. CORRECTION: the paper never says 'homoiconic', and doc line 67's flat 'grouping = schema morphism' is an ArchHub extrapolation (data migration exists but that identification is unproven gloss); the doc's 'Adopt in spirit' hedge partially covers it, but the gloss needs its own proof before it can bear architectural weight.",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "Kahn 1974 KPN; 'graph = least fixed point of continuous stream functions; deterministic, schedule-independent'",
+            "status": "VERIFIED",
+            "evidence": "Extracted full text of the actual 1974 IFIP paper (perso.ensta.fr copy). Confirmed verbatim: processes = continuous functions on stream histories over CPOs (Sec 2.2.4-2.2.5); network histories = 'unique minimal solution' of the fixpoint system, computed by Kleene iteration (Property 1); determinacy explicit ('it can produce only determinate programs') and schedule-independence via Property 2: unfair scheduling 'may produce less output... But what is produced is correct.' LOAD-BEARING CAVEAT for the invariants build: the theorem is conditional — blocking single-line waits (no test-for-emptiness), single writer per channel, every node a continuous function of input histories. ArchHub's effectful nodes (Revit calls, AI, wall-clock/random) violate continuity, so recook-determinism metamorphic checks inherit the guarantee ONLY on the pure functional core; effectful nodes must be excluded or handled via their own idempotence discipline. Citation honest; preconditions must be ENFORCED, not assumed.",
+            "impact_on_build": "blocks-current-build"
+          },
+          {
+            "claim": "arXiv 1408.1598 = Vagner/Spivak/Lerman; 'algebra over operad => group value is composite (a theorem)'",
+            "status": "VERIFIED",
+            "evidence": "Fetched arxiv.org/abs/1408.1598: 'Algebras of Open Dynamical Systems on the Operad of Wiring Diagrams' by Vagner, Spivak, Lerman; proves open dynamical systems form algebras over the directed wiring-diagram operad, so composite dynamics is determined by components + wiring. Minor overstatement in doc line 65: the property is a theorem once the evaluator is PROVEN an algebra (substitution-compatibility axioms), not merely 'declared' one — a real proof obligation on the engine, not free.",
+            "impact_on_build": "blocks-future-arch"
+          }
+        ],
+        "overall": "SOUND-WITH-CORRECTIONS"
+      },
+      {
+        "target": "Citations behind the three builds-in-flight + court stack in C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-research-frontiers.md and journalclub-cross-field-synthesis.md",
+        "overall": "SOUND-WITH-CORRECTIONS",
+        "checks": [
+          {
+            "claim": "Metamorphic testing as oracle-free verification: Chen et al.; arXiv 2310.07414 (MarMot); arXiv 2406.05397 (MR generation SoTA)",
+            "status": "VERIFIED",
+            "evidence": "2310.07414 = 'MarMot: Metamorphic Runtime Monitoring of Autonomous Driving Systems' (Ayerdi, Iriarte, Valle, Roman, Illarramendi, Arrieta), accepted ACM TOSEM — exactly metamorphic runtime monitoring using metamorphic relations to estimate confidence at runtime. 2406.05397 = 'Metamorphic Relation Generation: State of the Art and Visions for Future Research' — co-authored by Tsong Yueh Chen, the originator of metamorphic testing, so 'Chen et al.' attribution is correct. Both real; readings fair. The 'recook-determinism = bit-identical' and 'recompute-from-scratch == incremental' MRs are legitimate applications of this literature to a dataflow graph.",
+            "impact_on_build": "blocks-current-build"
+          },
+          {
+            "claim": "Conformal Risk Control (2107.07511), Learn-Then-Test (2110.01052), selective prediction (1705.08500); 'bound false-green rate <= alpha with ABSTAIN=REJECT' is a fair transplant",
+            "status": "VERIFIED",
+            "evidence": "CITATION MISLABEL (minor): 2107.07511 is actually 'A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification' (Angelopoulos & Bates) — the tutorial, NOT the standalone 'Conformal Risk Control' paper (that is arXiv 2208.02814, same authors + Fisch/Lei/Schuster/Jordan). The doc pinned the method name to the wrong arXiv ID. BUT the transplant is independently sound: 2110.01052 = 'Learn then Test: Calibrating Predictive Algorithms to Achieve Risk Control' (Angelopoulos/Bates/Candes/Jordan/Lei) gives finite-sample risk control bounding a chosen risk <= alpha; 1705.08500 = 'Selective Classification for Deep Neural Networks' (Geifman & El-Yaniv) sets a risk level and rejects/abstains to hold it. So 'bound false-green <= alpha' + 'ABSTAIN as third verdict' is faithfully supported. Fix the citation ID, keep the build.",
+            "impact_on_build": "blocks-current-build"
+          },
+          {
+            "claim": "LLM-as-judge contraindicated as verifier of record — 'Rating Roulette', arXiv 2510.27106",
+            "status": "VERIFIED",
+            "evidence": "2510.27106 = 'Rating Roulette: Self-Inconsistency in LLM-As-A-Judge Frameworks' (Haldar & Hockenmaier, EMNLP 2025) — real, exact title match. Finding: LLM judges have low intra-rater reliability across runs, so 'flips verdict run-to-run' is accurate. Two nuances the doc over-hardens: (1) 'manufactures false-green' is an extrapolation — the paper measures inconsistency/reliability, not false-positive rate specifically; (2) the paper is more nuanced than 'contraindicated', explicitly exploring whether LLMs can still be useful evaluators WITH guidelines. Directionally fair for the 'not the verifier of record' claim; wording slightly stronger than the source.",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "BM25/hybrid 'Query-Adaptive Hybrid Search' — per-query alpha blending of BM25 + dense exists as described (Tier-1 BRAIN build)",
+            "status": "VERIFIED",
+            "evidence": "MECHANISM IS REAL AND BUILDABLE: per-query dynamic alpha blending of BM25 + dense is active, published work — e.g. arXiv 2503.23013 'DAT: Dynamic Alpha Tuning for Hybrid Retrieval in RAG' (per-query alpha calibration, beats fixed-weight hybrids); the general dense-sparse hybrid + per-query weighting pattern is well established. HOWEVER: there is NO paper titled 'Query-Adaptive Hybrid Search' — the doc dressed a generic descriptor as a named source paper (unlike every other citation, which carries a resolvable arXiv ID). The build is safe; the citation is a phantom title. Replace with DAT (2503.23013) or a real hybrid-retrieval cite before treating this as sourced.",
+            "impact_on_build": "blocks-current-build"
+          },
+          {
+            "claim": "TOPSIS + fuzzy-TOPSIS as standard MCDM: normalize -> weight -> ideal -> closeness",
+            "status": "VERIFIED",
+            "evidence": "Canonical TOPSIS (Hwang & Yoon 1981) steps confirmed across multiple sources: build decision matrix; vector-normalize (r_ij = x_ij / sqrt(sum x_ij^2)); apply criterion weights; determine positive/negative ideal solutions; compute Euclidean separation measures; compute relative closeness coefficient; rank by closeness. The doc's 'normalize->weight->ideal->closeness' description is accurate and textbook. Fuzzy-TOPSIS (linguistic/triangular-fuzzy inputs) is a standard, widely published extension — the 'words/criteria in -> live re-cookable score out' framing for a decision.topsis node is a fair reading.",
+            "impact_on_build": "blocks-current-build"
+          },
+          {
+            "claim": "Self-extension loop cites exist + fair: Darwin-Godel Machine 2505.22954, ADAS 2408.08435, Voyager 2305.16291, MAP-Elites 1504.04909, KAN 2404.19756",
+            "status": "VERIFIED",
+            "evidence": "All five resolve exactly. 2505.22954 = 'Darwin Godel Machine: Open-Ended Evolution of Self-Improving Agents' (Zhang/Hu/Lu/Lange/Clune) — archive-of-agents + empirical validation gate, matches doc's 'keep an archive, empirical validation is the only gate'. 2408.08435 = 'Automated Design of Agentic Systems' (Hu/Lu/Clune) — Meta Agent Search, matches 'point self-improvement at the builder itself'. 2305.16291 = 'Voyager: An Open-Ended Embodied Agent with LLMs' — skill library + self-verification, matches. 1504.04909 = 'Illuminating search spaces by mapping elites' (Mouret & Clune) — MAP-Elites/QD, matches. 2404.19756 = 'KAN: Kolmogorov-Arnold Networks' — learnable spline activations on edges, matches 'edge-as-learnable-1D-function'. All fair readings.",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "Suspicious-dated IDs verify as real papers: 2602.20214, 2605.16041, 2506.01662",
+            "status": "VERIFIED",
+            "evidence": "None are fabricated; all exist (and the 2026 dates are legitimate given current date July 2026). 2602.20214 = 'Right to History: A Sovereignty Kernel for Verifiable AI Agent Execution' (Jing Zhang, Feb 2026) — Merkle-tree tamper-evident audit logs for agent actions, matches doc's 'tamper-evident audit trails for AI agents'. 2605.16041 = 'Explainable AI Isn't Enough! Rethinking Algorithmic Contestability' (Freiesleben/Meding/Konig, May 2026) — explicitly distinguishes contestability (presumes decision may be wrong) from recourse (presumes valid), exactly matching the doc. 2506.01662 = 'Explainable AI Systems Must Be Contestable: Here's How to Make It Happen' (Moreira et al., Jun 2025) — composite metric on 20+ criteria; doc's name 'Contestability Assessment Scale' is a paraphrase not the verbatim title, but the concept (rubric scoring how contestable a system is) matches.",
+            "impact_on_build": "blocks-future-arch"
+          }
+        ]
+      },
+      {
+        "target": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/13.NODE-LANGUAGE/SPEC.md cross-examined against origin/main (38c4c24) of C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION + live run of the 13.NODE-LANGUAGE prototype",
+        "checks": [
+          {
+            "claim": "§6: runtime registry = ~19 connectors exposing ~150 ops across ~19 host ids",
+            "status": "VERIFIED",
+            "evidence": "git ls-tree origin/main app/connectors/ | grep _connector.py | wc -l => 19. load_all_connectors() explicit module list in app/connectors/base.py = 19 modules (word..dashscope). Per-file grep -c 'ConnectorOp(' summed = 155 (revit 19, autocad/blender/max 10 each, ...). Each connector registers under exactly one canonical host id (base.py register() keyed on connector.host) => 19 host ids. ~19/~150/~19 is accurate.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "§6 status line: 'iterate/aggregate/reference + typed-values = vision' (i.e. not built)",
+            "status": "REFUTED",
+            "evidence": "origin/main app/workflows/nodes/ registers control.foreach (control.py), data.reduce + data.group_by + data.accumulate + data.sort + data.dedupe (aggregate.py), data.join (relate.py). Ran on clean origin/main worktree: python -m pytest tests/test_foreach_map.py tests/test_aggregate_primitives.py -q => '22 passed in 0.35s'. Typed values: PortType in app/workflows/graph.py already defines NUMBER, STRING, LIST, GEOMETRY, IMAGE (plus HOST/DOCUMENT/ELEMENT/EXEC families) — mesh and ui-element are the only listed types missing. Only 'reference' (a node reading another node by id) has no registered node type (grep for ref/read_node/by_id in app/workflows/nodes/ = zero hits). SPEC calls 2 of its 3 'gaps' vision when they are shipped and test-green — understates reality; matches memory note 'node language already in prod'. Building iterate/aggregate again per this SPEC = duplicate engine.",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "§17/§3: 'Production app: groups are pre-flattened before the executor, so a group does not yet run as a node in the shipped app' (billed as THE core refactor)",
+            "status": "REFUTED",
+            "evidence": "app/workflows/subgraph.py on origin/main defines _subgraph_executor (line 511) which 'Instantiates a nested WorkflowRunner over config.inner_graph' and register_subgraph_executor() (line 710) registering node type subgraph.user; the module self-registers on import from app/workflows/__init__.py ('from . import subgraph'). Executed on clean origin/main worktree: pytest tests/test_subgraph.py -k 'executor or cooks' => '1 passed' (test_subgraph_user_executor_cooks_inner_graph: outer WorkflowRunner yields 3+4=7 through the composite). bridge.py:6341 exposes compose_subgraph to the canvas. So a group DOES run as a node in the shipped engine. The claim is only true for the OTHER grouping mechanism — visual LM_GRAPH.groups collapse, which node_grammar.expand_collapsed_groups explicitly flattens ('The runner sees a FLAT graph'). SPEC conflates the two; the 'core refactor' is partially built since PR#90 (2026-06-09).",
+            "impact_on_build": "blocks-future-arch"
+          },
+          {
+            "claim": "§19: 'This is what brain.tree_court + brain.enforce_diligence already implement'",
+            "status": "VERIFIED",
+            "evidence": "Both tools exist on origin/main: @mcp.tool(name=\"brain.tree_court\") at personal-brain-mcp/src/personal_brain/requirement_tree.py:784 (convenes court_harness.convene_court with ARTIFACT/DILIGENCE/INDEPENDENCE lenses, py_compile/pytest/file_exists/cdp probes, fail-closed needs_root for manual leaves); @mcp.tool(name=\"brain.enforce_diligence\") at personal-brain-mcp/src/personal_brain/server.py:2182 backed by diligence.py. CORRECTION on scope: they implement the layered fail-closed COURT PRINCIPLE, not the full §19 stack — no conformal risk control, no calibrated-confidence/mixture-density gate, no RFC-6962 Merkle transparency log anywhere in personal-brain-mcp. Read 'already implement this' as 'implement the fail-closed-court skeleton' or it oversells.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "§17: prototype engine node_lang.py+server.py 'built, runs' — grouping-runs-as-node, incremental recompute, sessions, history/revert, one-graph-two-drivers",
+            "status": "VERIFIED",
+            "evidence": "Executed, not read: python demo_run.py completed in seconds — 15 domain groups each computed as live avg of inner nodes (e.g. Connectors=69% from 16 inner), 'full run computed 325 nodes total', session saved+reloaded+re-ran (69% round-trips), history commit v0, single-node edit recomputed ONLY 4 of 325 nodes (incremental) 69%->72%, revert restored 69%. python leaf_both_drive_one_graph_over_http.py => 'BOTH_DRIVE_OK n_sum 8 -> 102 ai_node True group True' (one graph, UI view + AI driver over HTTP). leaf_history_append_only.py and leaf_history_revert_over_live_api.py also PASS.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "§17: prototype is 'court-proven' (its court leaves pass on the real artifact today)",
+            "status": "REFUTED",
+            "evidence": "Ran all 16 leaf_*.py. With PYTHONIOENCODING=utf-8: 15/16 PASS, but leaf_group_runs_as_node_on_real_map.py — the flagship leaf for the defining claim — FAILS: 'AssertionError: 280' at line 72 'assert total_nodes == 261' (hardcoded node count rotted as the grand map grew 261->280). Additionally, under default Windows cp1252 console 2 more leaves (leaf_fake_live_detect, leaf_court_gate_refutes_on_real_artifact) false-FAIL on UnicodeEncodeError printing '→' — the court suite is not reproducibly green as-is. 'Court-proven' was true at commit time, is stale at re-run time; the mechanism itself still demonstrably works (demo computes groups on the grown 280-node map fine).",
+            "impact_on_build": "blocks-current-build"
+          },
+          {
+            "claim": "Stale-number sweep: '142 tests green' style claims; §10 '17k-line JSX' vs §19 '21k-line JSX'",
+            "status": "REFUTED",
+            "evidence": "grep '142|tests green' SPEC.md => no hits (that number lives only in memory notes, not the SPEC — nothing to verify there). But the SPEC contradicts itself on the JSX size: §10 says 'hand-written 17k-line JSX', §19 says 'the 21k-line JSX'. Ground truth: git show origin/main:app/web_ui/studio-lm.jsx | wc -l => 21857. §10's 17k figure is stale (~5k lines out of date); §19 is correct.",
+            "impact_on_build": "cosmetic"
+          }
+        ],
+        "overall": "SOUND-WITH-CORRECTIONS"
+      },
+      {
+        "target": "30.KNOWLEDGE/grand-map/data/grand_domains.json (+ .bak-2026-07-01_journalclub) vs journalclub-grandmap-integration-plan.md §2 and origin/main of 10.PRODUCT/12.PRODUCTION",
+        "checks": [
+          {
+            "claim": "Node count went 261 -> 280 (+19) with per-domain deltas selfext +6, nodes +3, brain +4, community +4, orchestration +2",
+            "status": "VERIFIED",
+            "evidence": "Both files parse; backup totals 261, current 280. Per-domain: selfext 20->26, nodes 23->26, brain 19->23, community 15->19, orchestration 18->20; other 10 domains unchanged.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "The 19 added node ids, titles, and domain placement match plan §2 exactly",
+            "status": "VERIFIED",
+            "evidence": "Set-diff current-minus-backup per domain equals plan lists exactly; all 19 titles match plan verbatim (e.g. 'Impossible-State Gate', 'Verdict → Graph Writeback', 'Hybrid Recall (BM25 + dense)'); all cat=logic; sampled params keys match plan.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "Status distribution is honest: only vision count changed",
+            "status": "VERIFIED",
+            "evidence": "Current 280: partial 154 / vision 114 / live 12. Backup 261: partial 154 / vision 95 / live 12. Delta exactly +19 vision; nothing promoted to live/partial by this edit.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "'live' nodes correspond to real code on origin/main (false-green hunt)",
+            "status": "VERIFIED",
+            "evidence": "Only 12 live nodes exist (full set inspected). Spot-checked 3 vs origin/main 38c4c24 in 10.PRODUCT/12.PRODUCTION: (1) connectors_contract -> app/connectors/base.py:376 def load_all_connectors() with exactly 19 explicit connector modules (op count ~155 static vs claimed 153, consistent); (2) connectors_probe -> base.py:159/179 honest 4-state live|loaded_dead|missing|unauthorized enforced; (3) nodes_smith -> app/agents/node_smith.py exists and matches the node's description. No live node points at nonexistent code.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "All 12 live labels carry evidence (status honesty of pre-existing nodes)",
+            "status": "REFUTED",
+            "evidence": "orch_live (orchestration) has status 'live' with EMPTY evidence_ref and null last_verified; orch_claude/orch_agent_build/orch_agent_court cite a past ephemeral Claude Code session ('a live Claude Code chat is driving this map') as evidence — session over, label frozen. Pre-existing (identical in backup), NOT introduced by the journalclub edit, but it is a live-with-no-evidence label in the vision artifact.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "All 19 new nodes have status=vision and evidence_ref -> synthesis doc, and the doc exists",
+            "status": "VERIFIED",
+            "evidence": "All 19: status 'vision', evidence_ref 'file:30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md', authority_source 'reference:journalclub', last_verified '2026-07-01'. File exists at C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md (20,597 bytes). Minor nit: 'standard' field is em-dash on new nodes (prov_ledger could carry 'W3C PROV').",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "No existing node lost or modified vs backup (append-only rule)",
+            "status": "VERIFIED",
+            "evidence": "Per-domain id set diff: zero lost. Deep-equality diff of all 261 backup nodes vs current: zero modified. Pure append.",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "Regenerated the-grand-map.html contains the 19 new node ids",
+            "status": "VERIFIED",
+            "evidence": "All 19 ids present in C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/grand-map/the-grand-map.html (string search, 19/19).",
+            "impact_on_build": "cosmetic"
+          },
+          {
+            "claim": "the-grand-map.html is current with the builder (build_grand_editor.py)",
+            "status": "REFUTED",
+            "evidence": "mtimes: json 15:07:01, html 15:07:12, builder 15:50:32 (edited 43 min AFTER regen). Rebuilt in scratchpad with current builder: output differs (260,236 vs 260,680 bytes). Shipped html still contains the OLD slice()-based history that the builder's 15:50 fix replaced with the truly append-only history tree ('fixed 2026-07-01 after the independent court flagged the old slice() as a rewrite of the past' + historyAppendOnlyOK invariant). Shipped artifact carries the exact defect the court flagged. Fix: rerun python src/build_grand_editor.py from the grand-map dir.",
+            "impact_on_build": "blocks-current-build"
+          }
+        ],
+        "overall": "SOUND-WITH-CORRECTIONS"
+      }
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Validate"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "validate:citations-core-math",
+      "phaseIndex": 1,
+      "phaseTitle": "Validate",
+      "agentId": "a00325c61f5515c4e",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972495066,
+      "queuedAt": 1782972495055,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclu…",
+      "promptPreview": "Load web tools first: ToolSearch query \"select:WebSearch,WebFetch\". Then validate the LOAD-BEARING math citations in C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-research-frontiers.md (read it first). For each, find the real paper (arXiv page/abstract) and judge: does it actually say what the doc claims?\n- arXiv 1305.0297 = Spivak, operad of wiring diagrams — is \"grouping = operadi…",
+      "lastProgressAt": 1782972716350,
+      "tokens": 99275,
+      "toolCalls": 16,
+      "durationMs": 221284,
+      "resultPreview": "{\"target\":\"C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-research-frontiers.md — load-bearing math citations grounding SPEC §19\",\"checks\":[{\"claim\":\"arXiv 1305.0297 = Spivak, operad of wiring diagrams; 'grouping = operadic composition, self-similar nesting' is a fair reading\",\"status\":\"VERIFIED\",\"evidence\":\"Fetched arxiv.org/abs/1305.0297: 'The operad of wiring diagrams...' by David…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "validate:citations-court-brain",
+      "phaseIndex": 1,
+      "phaseTitle": "Validate",
+      "agentId": "a6e9787a8bbbd1a50",
+      "model": "claude-fable-5",
+      "fallbackModel": "claude-opus-4-8",
+      "state": "done",
+      "startedAt": 1782972495067,
+      "queuedAt": 1782972495055,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Citations behind the three builds-in-flight + court stack i…",
+      "promptPreview": "Load web tools first: ToolSearch query \"select:WebSearch,WebFetch\". Read C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-research-frontiers.md + C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-cross-field-synthesis.md. Validate the citations behind the THREE BUILDS IN FLIGHT + court stack:\n- Metamorphic testing as oracle-free verification (Chen et al.; arXiv 2310.07414 Ma…",
+      "lastProgressAt": 1782972672029,
+      "tokens": 99796,
+      "toolCalls": 20,
+      "durationMs": 176962,
+      "resultPreview": "{\"target\":\"Citations behind the three builds-in-flight + court stack in C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-research-frontiers.md and journalclub-cross-field-synthesis.md\",\"overall\":\"SOUND-WITH-CORRECTIONS\",\"checks\":[{\"claim\":\"Metamorphic testing as oracle-free verification: Chen et al.; arXiv 2310.07414 (MarMot); arXiv 2406.05397 (MR generation SoTA)\",\"status\":\"VERIFIED\",…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "validate:spec-vs-reality",
+      "phaseIndex": 1,
+      "phaseTitle": "Validate",
+      "agentId": "a9c53d9cb5c92d0bb",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972495068,
+      "queuedAt": 1782972495055,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "C:/Users/fargaly/00.ARCHUB/10.PRODUCT/13.NODE-LANGUAGE/SPEC…",
+      "promptPreview": "NO web needed. Cross-examine C:/Users/fargaly/00.ARCHUB/10.PRODUCT/13.NODE-LANGUAGE/SPEC.md against the actual codebase at C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION (working tree is a stale dirty branch — use \"git show origin/main:<path>\" for repo facts). Validate/refute each factual claim SPEC makes about what EXISTS:\n- §6 \"runtime registry: ~19 connectors ~150 ops ~19 host ids\" — count…",
+      "lastProgressAt": 1782972886198,
+      "tokens": 133510,
+      "toolCalls": 50,
+      "durationMs": 391130,
+      "resultPreview": "{\"target\":\"C:/Users/fargaly/00.ARCHUB/10.PRODUCT/13.NODE-LANGUAGE/SPEC.md cross-examined against origin/main (38c4c24) of C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION + live run of the 13.NODE-LANGUAGE prototype\",\"checks\":[{\"claim\":\"§6: runtime registry = ~19 connectors exposing ~150 ops across ~19 host ids\",\"status\":\"VERIFIED\",\"evidence\":\"git ls-tree origin/main app/connectors/ | grep _con…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "validate:grandmap-integrity",
+      "phaseIndex": 1,
+      "phaseTitle": "Validate",
+      "agentId": "a07f0e1771fe20d67",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972495069,
+      "queuedAt": 1782972495055,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "30.KNOWLEDGE/grand-map/data/grand_domains.json (+ .bak-2026…",
+      "promptPreview": "NO web needed. Validate C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/grand-map/data/grand_domains.json (and its backup .bak-2026-07-01_journalclub) with python:\n- Parse both; node counts (claimed 261 -> 280, +19); confirm the 19 added node ids match the plan in C:/Users/fargaly/00.ARCHUB/30.KNOWLEDGE/strategy/journalclub-grandmap-integration-plan.md §2 exactly (names + domains: selfext 6, nodes 3, brai…",
+      "lastProgressAt": 1782972742336,
+      "tokens": 100602,
+      "toolCalls": 21,
+      "durationMs": 247267,
+      "resultPreview": "{\"target\":\"30.KNOWLEDGE/grand-map/data/grand_domains.json (+ .bak-2026-07-01_journalclub) vs journalclub-grandmap-integration-plan.md §2 and origin/main of 10.PRODUCT/12.PRODUCTION\",\"checks\":[{\"claim\":\"Node count went 261 -> 280 (+19) with per-domain deltas selfext +6, nodes +3, brain +4, community +4, orchestration +2\",\"status\":\"VERIFIED\",\"evidence\":\"Both files parse; backup totals 261, current 2…"
+    }
+  ],
+  "totalTokens": 433183,
+  "totalToolCalls": 107
+}

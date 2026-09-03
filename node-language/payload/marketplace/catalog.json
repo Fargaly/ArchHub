@@ -1,0 +1,134 @@
+[
+  {
+    "kind": "skill",
+    "id": "official.dimension_walls",
+    "name": "Dimension walls in active view",
+    "author": "ArchHub",
+    "tags": [
+      "revit",
+      "annotate"
+    ],
+    "hosts": [
+      "Revit"
+    ],
+    "description": "Adds linear dimensions to every wall in the active view. Skips walls already dimensioned.",
+    "runs": 312,
+    "version": "0.1.0",
+    "payload": {
+      "id": "official.dimension_walls",
+      "name": "Dimension walls in active view",
+      "tags": [
+        "revit",
+        "annotate"
+      ],
+      "hosts": [
+        "Revit"
+      ],
+      "type": "skill"
+    }
+  },
+  {
+    "kind": "skill",
+    "id": "official.production_sheets",
+    "name": "Production sheets \u2014 A101/A102/A103",
+    "author": "ArchHub",
+    "tags": [
+      "revit",
+      "production"
+    ],
+    "hosts": [
+      "Revit"
+    ],
+    "description": "Generates floor-plan + section + elevation sheets with a standard Tower-A title block.",
+    "runs": 47,
+    "version": "0.1.0",
+    "payload": {
+      "id": "official.production_sheets",
+      "name": "Production sheets \u2014 A101/A102/A103",
+      "tags": [
+        "revit",
+        "production"
+      ],
+      "hosts": [
+        "Revit"
+      ],
+      "type": "skill"
+    }
+  },
+  {
+    "kind": "skill",
+    "id": "official.sketch_to_mass",
+    "name": "Sketch \u2192 6m gabled mass",
+    "author": "ArchHub",
+    "tags": [
+      "blender",
+      "vision"
+    ],
+    "hosts": [
+      "Blender"
+    ],
+    "description": "Reads a hand-sketched roof outline and produces a 6 m gabled mass in Blender.",
+    "runs": 18,
+    "version": "0.1.0",
+    "payload": {
+      "id": "official.sketch_to_mass",
+      "name": "Sketch \u2192 6m gabled mass",
+      "tags": [
+        "blender",
+        "vision"
+      ],
+      "hosts": [
+        "Blender"
+      ],
+      "type": "skill"
+    }
+  },
+  {
+    "kind": "workflow",
+    "id": "official.sketch_to_production",
+    "name": "Sketch \u2192 Production pipeline",
+    "author": "ArchHub",
+    "tags": [
+      "pipeline",
+      "revit",
+      "blender",
+      "speckle"
+    ],
+    "hosts": [
+      "Blender",
+      "Revit",
+      "Speckle"
+    ],
+    "description": "End-to-end: sketch in \u2192 mass extracted \u2192 Speckle stream \u2192 Revit walls \u2192 production sheets.",
+    "runs": 47,
+    "version": "0.1.0",
+    "payload": {
+      "id": "official.sketch_to_production",
+      "name": "Sketch \u2192 Production pipeline",
+      "nodes": [],
+      "edges": []
+    }
+  },
+  {
+    "kind": "workflow",
+    "id": "official.constructions_doc_sprint",
+    "name": "Construction Doc Sprint",
+    "author": "ArchHub",
+    "tags": [
+      "pipeline",
+      "revit"
+    ],
+    "hosts": [
+      "Revit"
+    ],
+    "description": "Eight-step construction document set generation with self-checking dimension audits.",
+    "runs": 18,
+    "version": "0.1.0",
+    "payload": {
+      "id": "official.constructions_doc_sprint",
+      "name": "Construction Doc Sprint",
+      "nodes": [],
+      "edges": []
+    }
+  }
+]

@@ -1,0 +1,145 @@
+{
+  "id": "corpus-text-and-compare",
+  "name": "Text concat and compare",
+  "description": "Exercises the STRING-family stems (text.op concat + length, data.template substitution) alongside a math.op comparison, all flowing through ANY ports so string and number values interop without type_mismatch. Sinks: greeting = 'Hello ArchHub!'; name_long_enough = true (len('ArchHub')=7 >= 6).",
+  "schema_version": "1.0",
+  "nodes": [
+    {
+      "id": "brand",
+      "type": "data.constant",
+      "label": "Brand",
+      "config": {"value": "Arch"},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 80, "y": 80}
+    },
+    {
+      "id": "suffix",
+      "type": "data.constant",
+      "label": "Suffix",
+      "config": {"value": "Hub"},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 80, "y": 220}
+    },
+    {
+      "id": "concat",
+      "type": "text.op",
+      "label": "Concat",
+      "config": {"op": "concat"},
+      "inputs": [
+        {"name": "a", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false},
+        {"name": "b", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 340, "y": 150}
+    },
+    {
+      "id": "greet",
+      "type": "data.template",
+      "label": "Greeting template",
+      "config": {"template": "Hello {var1}!"},
+      "inputs": [
+        {"name": "var1", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "var2", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "var3", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "text", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 600, "y": 80}
+    },
+    {
+      "id": "name_len",
+      "type": "text.op",
+      "label": "Length",
+      "config": {"op": "length"},
+      "inputs": [
+        {"name": "a", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false},
+        {"name": "b", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 600, "y": 260}
+    },
+    {
+      "id": "floor",
+      "type": "data.constant",
+      "label": "Min length",
+      "config": {"value": 6},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "number", "speckle_type": "Objects.Primitive.Number", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 600, "y": 400}
+    },
+    {
+      "id": "long_enough",
+      "type": "math.op",
+      "label": "len >= min",
+      "config": {"op": "gte"},
+      "inputs": [
+        {"name": "a", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false},
+        {"name": "b", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 860, "y": 330}
+    },
+    {
+      "id": "greeting",
+      "type": "output.parameter",
+      "label": "Greeting",
+      "config": {"name": "greeting"},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 900, "y": 80}
+    },
+    {
+      "id": "ok",
+      "type": "output.parameter",
+      "label": "Name long enough",
+      "config": {"name": "name_long_enough"},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 1120, "y": 330}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "src_node": "brand", "src_port": "value", "dst_node": "concat", "dst_port": "a", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Primitive.String"},
+    {"id": "e2", "src_node": "suffix", "src_port": "value", "dst_node": "concat", "dst_port": "b", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Primitive.String"},
+    {"id": "e3", "src_node": "concat", "src_port": "value", "dst_node": "greet", "dst_port": "var1", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "archhub.any"},
+    {"id": "e4", "src_node": "concat", "src_port": "value", "dst_node": "name_len", "dst_port": "a", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "archhub.any"},
+    {"id": "e5", "src_node": "name_len", "src_port": "value", "dst_node": "long_enough", "dst_port": "a", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "archhub.any"},
+    {"id": "e6", "src_node": "floor", "src_port": "value", "dst_node": "long_enough", "dst_port": "b", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Primitive.Number"},
+    {"id": "e7", "src_node": "greet", "src_port": "text", "dst_node": "greeting", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Primitive.String"},
+    {"id": "e8", "src_node": "long_enough", "src_port": "value", "dst_node": "ok", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "archhub.any"}
+  ],
+  "triggers": [
+    {"id": "trig_manual", "type": "manual", "config": {}, "enabled": true}
+  ],
+  "inputs": [],
+  "outputs": [
+    {"name": "greeting", "type": "string", "description": "Composed greeting", "required": false, "default": null},
+    {"name": "name_long_enough", "type": "boolean", "description": "Whether the composed name is at least 6 chars", "required": false, "default": null}
+  ],
+  "metadata": {},
+  "created_at": "2026-06-05T08:00:00+00:00",
+  "updated_at": "2026-06-05T08:00:00+00:00"
+}

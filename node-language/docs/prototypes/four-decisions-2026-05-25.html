@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — 4 decisions blocking next slice · 2026-05-25</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --bg4:#1c1c22; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0; --pink:#e87aa3;
+  --frost:#90c0ff;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:13px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+a{color:var(--accent);text-decoration:none}
+h1{font-size:30px;line-height:1.15;margin-bottom:8px;letter-spacing:-0.02em}
+h2{font-size:22px;margin-bottom:14px;letter-spacing:-0.01em}
+h3{font-size:16px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:11px;color:var(--accent2)}
+pre{font-family:ui-monospace,SF Mono,Consolas,monospace;background:var(--bg3);
+  border:1px solid var(--line);border-radius:8px;padding:14px;font-size:11px;
+  color:var(--ink);overflow:auto;line-height:1.5;margin:8px 0}
+strong{color:var(--ink)}
+small{color:var(--ink3);font-size:11px}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:14px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:15px;margin-right:8px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:5px 10px;border-radius:8px;font-size:11px;
+  border:1px solid transparent}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+nav.top .summary{margin-left:auto;font-size:11px;color:var(--ink2)}
+nav.top .summary span{color:var(--ok);font-weight:600}
+
+header.head{max-width:1240px;margin:0 auto;padding:48px 24px 16px}
+.intent{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin-top:16px}
+.intent .q{font-size:15px;color:var(--ink);font-style:italic;border-left:3px solid var(--accent);padding-left:14px;margin-bottom:14px}
+.intent p{font-size:13px}
+
+section.proto{max-width:1240px;margin:0 auto;padding:40px 24px;border-bottom:1px solid var(--line)}
+.tagline{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;
+  margin-bottom:6px;font-weight:700}
+
+/* — option cards — */
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:18px}
+.opt{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px;
+  display:flex;flex-direction:column;gap:10px;position:relative;transition:border-color .2s}
+.opt.rec{border-color:var(--accent)}
+.opt .label{font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink3)}
+.opt .label.rec-tag{color:var(--accent)}
+.opt h3{font-size:15px}
+.opt .body{font-size:12px;color:var(--ink2);flex:1}
+.opt .meta{font-size:10px;color:var(--ink3);display:flex;gap:10px;flex-wrap:wrap}
+.opt .meta span{background:var(--bg3);padding:2px 6px;border-radius:4px}
+.opt .verdict{display:flex;gap:6px;margin-top:6px}
+.opt .verdict button{flex:1;background:var(--bg3);border:1px solid var(--line);color:var(--ink2);
+  padding:6px 8px;font-size:10px;border-radius:6px;cursor:pointer;font-family:inherit;
+  text-transform:uppercase;letter-spacing:0.06em;font-weight:600;transition:all .15s}
+.opt .verdict button:hover{color:var(--ink);border-color:var(--ink3)}
+.opt .verdict button.yes{}
+.opt .verdict button.yes.on{background:var(--ok);border-color:var(--ok);color:#000}
+.opt .verdict button.refine{}
+.opt .verdict button.refine.on{background:var(--warn);border-color:var(--warn);color:#000}
+.opt .verdict button.no{}
+.opt .verdict button.no.on{background:var(--err);border-color:var(--err);color:#fff}
+
+/* — mock surfaces — */
+.mock{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
+.mock h4{margin-bottom:10px}
+
+.graph{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px;
+  background:var(--bg3);border:1px dashed var(--line);border-radius:8px;
+  background-image:radial-gradient(circle,var(--line) 0.8px,transparent 0.8px);background-size:18px 18px}
+.gnode{background:var(--bg4);border:1px solid var(--line);border-radius:8px;padding:8px 12px;
+  font-size:11px;font-family:ui-monospace,monospace;display:flex;flex-direction:column;gap:2px;min-width:120px}
+.gnode .name{color:var(--ink);font-weight:600}
+.gnode .ports{font-size:10px;color:var(--ink3)}
+.gnode.ok{border-color:var(--ok)}
+.gnode.warn{border-color:var(--warn)}
+.gnode.err{border-color:var(--err)}
+.gnode.frozen{border-color:var(--frost);border-style:dashed}
+.gnode.bypass{border-style:dashed;opacity:0.6}
+.wire{font-family:ui-monospace,monospace;color:var(--ink3);font-size:14px}
+.wire.ok{color:var(--ok)}
+.wire.err{color:var(--err)}
+.wire.warn{color:var(--warn)}
+
+/* — health panel mock — */
+.panel-mock{display:grid;grid-template-columns:1fr 280px;gap:12px}
+.canvas-mock{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:14px;
+  background-image:radial-gradient(circle,var(--line) 0.8px,transparent 0.8px);background-size:18px 18px;min-height:220px}
+.side{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:0;overflow:hidden}
+.side .tabbar{display:flex;border-bottom:1px solid var(--line);background:var(--bg4)}
+.side .tab{padding:8px 12px;font-size:11px;color:var(--ink2);border-right:1px solid var(--line);cursor:pointer}
+.side .tab.active{color:var(--ink);background:var(--bg3);border-bottom:2px solid var(--accent)}
+.side .body{padding:12px}
+.issue{display:flex;gap:8px;padding:7px 8px;border-radius:6px;font-size:11px;
+  background:var(--bg4);margin-bottom:4px;align-items:flex-start;border-left:3px solid var(--line)}
+.issue.err{border-left-color:var(--err)}
+.issue.warn{border-left-color:var(--warn)}
+.issue .badge{font-size:9px;background:var(--bg);padding:1px 5px;border-radius:3px;
+  font-family:ui-monospace,monospace;color:var(--ink2);text-transform:uppercase;
+  flex-shrink:0}
+.issue.err .badge{color:var(--err)}
+.issue.warn .badge{color:var(--warn)}
+.issue .msg{color:var(--ink);font-size:11px;line-height:1.4}
+.summary-row{display:flex;gap:8px;font-size:11px;margin-bottom:10px;
+  padding:8px;background:var(--bg4);border-radius:6px}
+.summary-row span.ok{color:var(--ok)}
+.summary-row span.err{color:var(--err)}
+.summary-row span.warn{color:var(--warn)}
+
+/* — dialog mock — */
+.dialog{background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:18px;
+  max-width:480px;margin:0 auto;box-shadow:0 8px 40px rgba(232,116,58,0.15)}
+.dialog h3{margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.dialog h3::before{content:'⚠';color:var(--warn)}
+.dialog p{font-size:12px;margin-bottom:14px}
+.dialog .actions{display:flex;flex-direction:column;gap:6px}
+.dialog .actions button{background:var(--bg3);border:1px solid var(--line);color:var(--ink);
+  padding:10px 12px;font-size:12px;border-radius:6px;cursor:pointer;text-align:left;
+  font-family:inherit;display:flex;justify-content:space-between;align-items:center}
+.dialog .actions button:hover{border-color:var(--ink3)}
+.dialog .actions button.primary{border-color:var(--accent);color:var(--accent2)}
+.dialog .actions button small{color:var(--ink3);font-size:10px}
+
+/* — context menu mock — */
+.ctxmenu{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:4px;
+  min-width:240px;box-shadow:0 6px 24px rgba(0,0,0,0.4);display:inline-block}
+.ctxmenu .item{padding:7px 10px;font-size:12px;color:var(--ink);cursor:pointer;
+  border-radius:5px;display:flex;justify-content:space-between;align-items:center}
+.ctxmenu .item:hover{background:var(--bg3)}
+.ctxmenu .item.sub{padding-left:24px;color:var(--ink2);font-size:11px}
+.ctxmenu .item .key{font-size:10px;color:var(--ink3);font-family:ui-monospace,monospace}
+.ctxmenu .divider{height:1px;background:var(--line);margin:4px 0}
+.ctxmenu .header{padding:6px 10px;font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.08em}
+
+/* — agdr triage table — */
+.triage{width:100%;border-collapse:collapse;font-size:11px;margin-top:14px}
+.triage th{text-align:left;padding:8px 10px;background:var(--bg3);color:var(--ink2);
+  font-weight:600;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;letter-spacing:0.06em}
+.triage td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink2)}
+.triage td.id{font-family:ui-monospace,monospace;color:var(--ink);font-weight:600;white-space:nowrap}
+.triage td.evid{font-family:ui-monospace,monospace;color:var(--accent2);font-size:10px}
+.triage td.action{white-space:nowrap}
+.tag{display:inline-block;font-size:9px;padding:2px 6px;border-radius:3px;text-transform:uppercase;
+  letter-spacing:0.06em;font-weight:600}
+.tag.shipped{background:rgba(95,200,121,0.15);color:var(--ok)}
+.tag.partial{background:rgba(232,197,74,0.15);color:var(--warn)}
+.tag.obsolete{background:rgba(154,154,163,0.15);color:var(--ink3)}
+.tag.active{background:rgba(232,116,58,0.15);color:var(--accent)}
+
+/* — comparison cols — */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.compare > div{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:16px}
+.compare h4{margin-bottom:8px;color:var(--ink)}
+.compare .before{border-left:3px solid var(--err)}
+.compare .after{border-left:3px solid var(--ok)}
+
+/* — notes box — */
+.note{background:rgba(232,116,58,0.06);border:1px solid rgba(232,116,58,0.2);
+  border-radius:8px;padding:12px 14px;margin-top:14px;font-size:12px;color:var(--ink2)}
+.note strong{color:var(--accent2)}
+
+.notes-input{margin-top:12px}
+.notes-input textarea{width:100%;background:var(--bg3);border:1px solid var(--line);
+  color:var(--ink);padding:10px;border-radius:8px;font-family:inherit;font-size:12px;
+  min-height:60px;resize:vertical}
+.notes-input textarea:focus{outline:none;border-color:var(--accent)}
+.notes-input label{font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink3);margin-bottom:5px;display:block}
+
+footer{max-width:1240px;margin:0 auto;padding:32px 24px;color:var(--ink3);font-size:11px;text-align:center}
+footer button{background:var(--accent);color:#000;border:none;padding:10px 18px;border-radius:8px;
+  font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;margin-top:10px}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <span class="brand">arch<span>hub</span></span>
+  <a class="chip" href="#d1">D1 · Memory</a>
+  <a class="chip" href="#d2">D2 · UI</a>
+  <a class="chip" href="#d3">D3 · Skills</a>
+  <a class="chip" href="#d4">D4 · Triage</a>
+  <span class="summary" id="summary">— picks pending —</span>
+</nav>
+
+<header class="head">
+  <h1>4 decisions blocking the next slice</h1>
+  <p>2026-05-25 · prototype before sign-off</p>
+  <div class="intent">
+    <p class="q">"how am I going to decide while I don't see any prototypes regarding that?"</p>
+    <p>Right. Each decision below shows the options as real visuals — code shape, UI mock,
+    table — with YES/REFINE/NO per option. Picks persist to localStorage so you can refresh,
+    walk away, come back. Default recommendation chip on each section.</p>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- D1 — AgDR-0042 v1.5 shared-memory graph -->
+<section class="proto" id="d1">
+  <div class="tagline">D1 · architecture · AgDR-0042 v1.5</div>
+  <h2>Shared-memory knowledge graph — which slices ship now?</h2>
+  <p>AgDR-0042 proposed 2026-05-24. You signed off the idea
+  (<em>"good for shared memory systems"</em>) but not the six build slices.
+  Pick the cut.</p>
+
+  <div class="mock">
+    <h4>Data model — what every memory node looks like</h4>
+<pre>{
+  "nodes": [
+    {"id": "lib:cap:revit.read_walls", "kind": "capability"},
+    {"id": "lib:skill:hero_render",    "kind": "skill"},
+    {"id": "proj:tower2:wall_134",     "kind": "design"},
+    {"id": "turn:2026-05-25:14:22",    "kind": "turn"},
+    {"id": "agdr:0040",                "kind": "decision"}
+  ],
+  "edges": [
+    {"source":"lib:skill:hero_render", "target":"lib:cap:revit.read_walls",
+     "relation":"contains", "confidence":"EXTRACTED"},
+    {"source":"turn:2026-05-25:14:22", "target":"lib:skill:hero_render",
+     "relation":"used", "confidence":"EXTRACTED"},
+    {"source":"proj:tower2:wall_134",  "target":"lib:skill:hero_render",
+     "relation":"rationale_for", "confidence":"INFERRED"}
+  ]
+}</pre>
+  </div>
+
+  <div class="mock">
+    <h4>memory.query() — Composer asks "find me a Skill for Revit wall takeoff"</h4>
+    <div class="compare">
+      <div class="before">
+        <h4 style="color:var(--err)">TODAY · node_search (Jaccard)</h4>
+<pre>node_search("revit wall takeoff")
+→ [
+  "skill.drone_to_revit_walls"  // matches "wall"
+  "host.read_walls"             // matches "wall"
+]
+// 2 hits. No context on which one
+// the firm actually uses. No prior
+// turns. No cost / time data.</pre>
+      </div>
+      <div class="after">
+        <h4 style="color:var(--ok)">memory.query() — slices 1+2+3</h4>
+<pre>memory.query("revit wall takeoff")
+→ [
+  {skill:"skill.firm.wall_qto_v3",
+   used_in:14 prior turns,
+   avg_cost:"$0.02",
+   community:"wall workflows",
+   rationale_in:"agdr:0017"},
+  {skill:"skill.drone_to_revit_walls",
+   used_in:0 prior turns}
+]</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="opts">
+    <div class="opt rec">
+      <div class="label rec-tag">RECOMMENDED · option A</div>
+      <h3>Ship slices 1+2 now</h3>
+      <div class="body">Core <code>app/memory/graph.py</code> + SQLite store + Library extractor
+      + Composer-turn extractor. Two highest-value entry points. Backwards-compatible
+      shim keeps <code>node_search</code> live.</div>
+      <div class="meta">
+        <span>~2 days</span>
+        <span>~400 LOC</span>
+        <span>no UI work</span>
+      </div>
+      <div class="verdict" data-key="d1.a">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option B</div>
+      <h3>Ship slices 1+2+3</h3>
+      <div class="body">Plus <code>memory.query()</code> BFS search + <code>library_search_v2</code>
+      tool. Composer immediately benefits. Adds query-time ranking layer.</div>
+      <div class="meta">
+        <span>~3 days</span>
+        <span>~600 LOC</span>
+        <span>tool surface change</span>
+      </div>
+      <div class="verdict" data-key="d1.b">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option C</div>
+      <h3>Ship ALL 6 slices</h3>
+      <div class="body">Slices 1–6: core + extractors + query + project/decision +
+      Louvain communities + Speckle firm-sync. Full v1.5 in one shot.</div>
+      <div class="meta">
+        <span>~10 days</span>
+        <span>~1800 LOC</span>
+        <span>Library UI change</span>
+      </div>
+      <div class="verdict" data-key="d1.c">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option D</div>
+      <h3>Defer v1.5 entirely</h3>
+      <div class="body">Stay on <code>node_search</code> Jaccard. Ship something else next
+      (UI work, more skills, polish). Revisit memory after first paying customer.</div>
+      <div class="meta">
+        <span>0 days</span>
+        <span>unblocks other work</span>
+      </div>
+      <div class="verdict" data-key="d1.d">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes-input">
+    <label>D1 notes / revisions</label>
+    <textarea data-key="d1.notes" placeholder="e.g. 'A but drop the Composer-turn extractor', 'C but skip Louvain'"></textarea>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- D2 — AgDR-0041 JSX UI -->
+<section class="proto" id="d2">
+  <div class="tagline">D2 · UI · AgDR-0041</div>
+  <h2>JSX UI for graph robustness — green-light the autonomous edits?</h2>
+  <p>Backend + bridge slots all shipped + CDP-verified. UI surfaces (3 components)
+  explicitly deferred to "next session" in the AgDR doc. JSX file is 3,900 lines;
+  no visual verification path without me driving CDP screenshots.</p>
+
+  <!-- GraphHealthPanel mock -->
+  <div class="mock">
+    <h4>① GraphHealthPanel — right-side tab, debounced on graph edit</h4>
+    <div class="panel-mock">
+      <div class="canvas-mock">
+        <div style="display:flex;gap:14px;align-items:center;justify-content:center;height:100%">
+          <div class="gnode ok"><span class="name">viewport</span><span class="ports">→ image · depth</span></div>
+          <span class="wire ok">━━▶</span>
+          <div class="gnode err"><span class="name">comfy ✗</span><span class="ports">workflow ← image (type mismatch)</span></div>
+          <span class="wire ok">━━▶</span>
+          <div class="gnode warn"><span class="name">poll ⚠</span><span class="ports">task_id (unset)</span></div>
+        </div>
+      </div>
+      <div class="side">
+        <div class="tabbar">
+          <div class="tab">Inspector</div>
+          <div class="tab active">Health</div>
+          <div class="tab">Plans</div>
+        </div>
+        <div class="body">
+          <div class="summary-row">
+            <span class="err">● 1 err</span>
+            <span class="warn">● 1 warn</span>
+            <span class="ok">● 3 ok</span>
+            <span style="margin-left:auto">cook valid+partial ▸</span>
+          </div>
+          <div class="issue err">
+            <span class="badge">err</span>
+            <span class="msg">Edge w1: type 'image' from viewport.image does not match 'workflow' on comfy.workflow</span>
+          </div>
+          <div class="issue warn">
+            <span class="badge">warn</span>
+            <span class="msg">Node 'poll': required input 'task_id' (string) unset</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BrokenWireDialog mock -->
+  <div class="mock">
+    <h4>② BrokenWireDialog — pops when delete would orphan a typed wire</h4>
+    <div class="dialog">
+      <h3>Deleting <code>comfy</code> breaks 1 wire</h3>
+      <p>upstream <code>viewport.image</code> (image) is not compatible with downstream
+      <code>upscale.image_url</code> (string). Pick a recovery:</p>
+      <div class="actions">
+        <button class="primary">
+          <span>Insert adapter <code>render.task_poll</code></span>
+          <small>auto-bridge · types match</small>
+        </button>
+        <button>
+          <span>Swap downstream node</span>
+          <small>show alternatives for upscale</small>
+        </button>
+        <button>
+          <span>Restore <code>comfy</code></span>
+          <small>cancel delete</small>
+        </button>
+        <button>
+          <span>Delete anyway, leave dangling</span>
+          <small>cook will surface upstream_error</small>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Swap-with menu mock -->
+  <div class="mock">
+    <h4>③ Right-click "swap with…" — context menu populated from library_suggest_swaps</h4>
+    <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
+      <div class="gnode" style="border-color:var(--accent)">
+        <span class="name">host.import_mesh</span>
+        <span class="ports">in: mesh · out: value</span>
+      </div>
+      <div class="ctxmenu">
+        <div class="header">node actions</div>
+        <div class="item">Run <span class="key">⏎</span></div>
+        <div class="item">Freeze ❄ <span class="key">F</span></div>
+        <div class="item">Bypass ○ <span class="key">B</span></div>
+        <div class="item">Duplicate <span class="key">⌘D</span></div>
+        <div class="divider"></div>
+        <div class="header">swap with…</div>
+        <div class="item sub">host.import_family <small style="color:var(--ok)">100%</small></div>
+        <div class="item sub">host.import_block <small style="color:var(--ok)">100%</small></div>
+        <div class="item sub">mesh.from_image <small style="color:var(--warn)">75%</small></div>
+        <div class="divider"></div>
+        <div class="item" style="color:var(--err)">Delete <span class="key">⌫</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="opts">
+    <div class="opt rec">
+      <div class="label rec-tag">RECOMMENDED · option A</div>
+      <h3>Green-light autonomous JSX edits</h3>
+      <div class="body">I ship all 3 components in isolated commits.
+      CDP-verify each via <code>Runtime.evaluate</code> on the live app
+      (DOM queries — does the panel exist, does dialog open on simulated delete,
+      etc.). You approve after each commit lands.</div>
+      <div class="meta">
+        <span>~1 day each</span>
+        <span>3 commits</span>
+        <span>CDP-verified live</span>
+      </div>
+      <div class="verdict" data-key="d2.a">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option B</div>
+      <h3>Visual checkpoint per component</h3>
+      <div class="body">I ship 1 component, restart ArchHub, push CDP-rendered
+      screenshot to you. You eyeball it. Approve → next. Reject → iterate.
+      Slower but zero visual drift.</div>
+      <div class="meta">
+        <span>~1 day each</span>
+        <span>3 review cycles</span>
+        <span>screenshots in chat</span>
+      </div>
+      <div class="verdict" data-key="d2.b">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option C</div>
+      <h3>You ship the UI yourself</h3>
+      <div class="body">Bridge surface is fully exposed via QWebChannel.
+      You wire up the JSX with your own visual taste; I help with tricky
+      bits via paste-back code review.</div>
+      <div class="meta">
+        <span>your call</span>
+        <span>tightest UX</span>
+        <span>no autonomous risk</span>
+      </div>
+      <div class="verdict" data-key="d2.c">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes-input">
+    <label>D2 notes / revisions</label>
+    <textarea data-key="d2.notes" placeholder="e.g. 'A but Health panel only', 'B but skip BrokenWireDialog'"></textarea>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- D3 — Skill wire semantics -->
+<section class="proto" id="d3">
+  <div class="tagline">D3 · correctness · revit_to_render</div>
+  <h2>Skill wire semantics — viewport.image → comfy.workflow won't actually cook</h2>
+  <p>Skills shipped + library-registered + palette-visible + spec-valid. BUT the
+  inner wires pump the wrong shape into the wrong port. <code>validate_v2</code>
+  passes (ANY-tolerant) but cook would fail.</p>
+
+  <div class="mock">
+    <h4>Current revit_to_render inner graph</h4>
+    <div class="graph">
+      <div class="gnode warn"><span class="name">viewport</span><span class="ports">→ image (ANY) · depth (ANY)</span></div>
+      <span class="wire warn">━━▶</span>
+      <div class="gnode err"><span class="name">comfy ✗</span><span class="ports">workflow ← image · (OBJECT ≠ ANY-img)</span></div>
+      <span class="wire warn">━━▶</span>
+      <div class="gnode err"><span class="name">upscale ✗</span><span class="ports">image_url ← value · (STRING ≠ OBJECT)</span></div>
+      <span class="wire warn">━━▶</span>
+      <div class="gnode err"><span class="name">poll ✗</span><span class="ports">task_id ← value · (STRING ≠ OBJECT)</span></div>
+      <span class="wire ok">━━▶</span>
+      <div class="gnode ok"><span class="name">out</span><span class="ports">value</span></div>
+    </div>
+    <p style="margin-top:10px"><strong>Why broken:</strong> <code>comfy.workflow</code> expects
+    ComfyUI workflow JSON, not the Revit viewport image. The image should feed a node
+    <em>inside</em> the workflow (e.g. <code>LoadImage.image</code>). No mechanism today
+    to inject inputs into a workflow JSON.</p>
+  </div>
+
+  <div class="opts">
+    <div class="opt">
+      <div class="label">option A</div>
+      <h3>Rewrite inner graph · config-only workflow</h3>
+      <div class="body">Drop the viewport→comfy wire. Workflow JSON loaded from config
+      <code>comfyui_workflow_path</code>. <code>LoadImage</code> inside that JSON hardcodes
+      the viewport export path. Less flexible — workflow author bakes the path.</div>
+      <div class="meta"><span>~1 hour</span><span>no API change</span><span>least flexible</span></div>
+      <pre style="margin-top:6px;font-size:10px">viewport (config: out=./tmp/v.png)
+comfy   (config: workflow_path=./hero.json)
+poll    (config: task_id from comfy)
+out</pre>
+      <div class="verdict" data-key="d3.a">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt rec">
+      <div class="label rec-tag">RECOMMENDED · option B</div>
+      <h3>Add <code>inputs</code> override port to render.comfyui</h3>
+      <div class="body">New port <code>inputs: OBJECT</code> on render.comfyui. Maps
+      <code>{node_id: param_value}</code> into the workflow JSON before queuing. Lets
+      typed upstream nodes feed any workflow parameter dynamically.</div>
+      <div class="meta"><span>~3 hours</span><span>API additive</span><span>cleanest</span></div>
+      <pre style="margin-top:6px;font-size:10px">viewport.image ━━━┐
+                  ▼
+comfy.inputs (override LoadImage.image)
+  workflow (config)
+  ▼
+poll
+out</pre>
+      <div class="verdict" data-key="d3.b">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option C</div>
+      <h3>Leave as-is · fix on first cook attempt</h3>
+      <div class="body">Skills exist for palette demo. Real cook today fails with
+      a clean upstream_error. Wait until first user actually runs a Skill end-to-end,
+      then triage.</div>
+      <div class="meta"><span>0 hours now</span><span>tech debt</span><span>founder-facing risk</span></div>
+      <div class="verdict" data-key="d3.c">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes-input">
+    <label>D3 notes / revisions</label>
+    <textarea data-key="d3.notes" placeholder="e.g. 'B but also fix drone_to_revit_walls wires'"></textarea>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- D4 — Stale AgDR triage -->
+<section class="proto" id="d4">
+  <div class="tagline">D4 · housekeeping · agdr status drift</div>
+  <h2>12 stale proposed AgDRs — bulk-flip or per-AgDR review?</h2>
+  <p>Most code shipped weeks ago but status never flipped. Mandate says only
+  founder flips. Triage table below shows shipped evidence per AgDR.</p>
+
+  <div class="mock">
+    <table class="triage">
+      <thead>
+        <tr><th>ID</th><th>Title</th><th>Code evidence (this loop verified)</th><th>Suggested status</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="id">0005</td><td>group collapse / giant node</td><td class="evid">studio-lm.jsx · expand_collapsed_groups · _ports_for_group</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0006</td><td>group nesting</td><td class="evid">node_grammar.expand_group_members · would_create_cycle (tests pass)</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0013</td><td>multi-llm library-first</td><td class="evid">tool_engine.tool_schemas_for · LIBRARY-FIRST mandate live</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0014</td><td>library design system</td><td class="evid">library.py · library_validator · seed nodes registered</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0015</td><td>visual UI design system</td><td class="evid">studio-lm.jsx LM tokens · color palette · type scale</td><td><span class="tag partial">PARTIAL</span></td><td class="action">review</td></tr>
+        <tr><td class="id">0016</td><td>speckle share / adapter / router / gate</td><td class="evid">workflows/nodes/share.py · adapter.py registered</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0017</td><td>revit speckle ops</td><td class="evid">connectors/revit · speckle ops registered (8 ops)</td><td><span class="tag partial">PARTIAL</span></td><td class="action">review</td></tr>
+        <tr><td class="id">0018</td><td>adapter batch 2</td><td class="evid">adapter.cad_to_revit_wall · to_revit_directshape · max_to_revit_family</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0019</td><td>typed AI nodes</td><td class="evid">ai_chat · ai_complete · ai_classify · ai_tools (test_typed_ai_nodes passes)</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0020</td><td>node to code</td><td class="evid">workflows/nodes/code.py · code.expression · code.python (tests pass)</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0021</td><td>ai.plan canvas node</td><td class="evid">workflows/nodes/ai_plan.py registered · ai.plan cooks · 50-record cap</td><td><span class="tag shipped">SHIPPED</span></td><td class="action">flip → executed</td></tr>
+        <tr><td class="id">0022</td><td>reactflow scaffold migration</td><td class="evid">no ReactFlow imports in studio-lm.jsx · custom canvas still in use</td><td><span class="tag obsolete">SUPERSEDED?</span></td><td class="action">review</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="opts">
+    <div class="opt rec">
+      <div class="label rec-tag">RECOMMENDED · option A</div>
+      <h3>Bulk flip 9 SHIPPED → executed</h3>
+      <div class="body">9 entries marked SHIPPED above. Single commit with each AgDR
+      frontmatter <code>status: proposed → executed</code> + 1-line ship reference.
+      3 entries marked PARTIAL/SUPERSEDED reviewed separately.</div>
+      <div class="meta">
+        <span>~30 min</span>
+        <span>1 commit</span>
+        <span>9 status flips</span>
+      </div>
+      <div class="verdict" data-key="d4.a">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option B</div>
+      <h3>Per-AgDR review</h3>
+      <div class="body">Each of 12 AgDRs reviewed individually. I post evidence,
+      you approve or reject status flip per row.</div>
+      <div class="meta"><span>~2 hours</span><span>12 commits</span><span>thorough</span></div>
+      <div class="verdict" data-key="d4.b">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="label">option C</div>
+      <h3>Leave drift</h3>
+      <div class="body">Status field on old AgDRs not blocking work today. Skip.
+      Comes back to bite when an autonomous loop's "any active AgDR for this
+      design class?" gate scans them.</div>
+      <div class="meta"><span>0 min</span><span>0 commits</span><span>future debt</span></div>
+      <div class="verdict" data-key="d4.c">
+        <button class="yes">YES</button><button class="refine">REFINE</button><button class="no">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes-input">
+    <label>D4 notes / revisions</label>
+    <textarea data-key="d4.notes" placeholder="e.g. 'A but skip 0015 (still want visual review)', 'A but supersede 0022 explicitly'"></textarea>
+  </div>
+</section>
+
+<footer>
+  Picks save to localStorage on click. Recommended defaults: <strong>D1·A</strong> ·
+  <strong>D2·A</strong> · <strong>D3·B</strong> · <strong>D4·A</strong>.<br>
+  <button onclick="exportPicks()">Export picks as JSON</button>
+  <button onclick="clearPicks()" style="background:var(--bg3);color:var(--ink2);margin-left:8px">Reset</button>
+  <div id="export-out" style="margin-top:14px;font-family:ui-monospace,monospace;font-size:11px;color:var(--ink2)"></div>
+</footer>
+
+<script>
+// ── verdict buttons: YES/REFINE/NO + localStorage persistence ─────
+const KEY = 'archhub.four-decisions.2026-05-25';
+const state = JSON.parse(localStorage.getItem(KEY) || '{}');
+
+function save() {
+  localStorage.setItem(KEY, JSON.stringify(state));
+  updateSummary();
+}
+
+function bind() {
+  document.querySelectorAll('.verdict').forEach(v => {
+    const key = v.dataset.key;
+    ['yes','refine','no'].forEach(verdict => {
+      const btn = v.querySelector('.' + verdict);
+      // Restore
+      if (state[key] === verdict) btn.classList.add('on');
+      btn.onclick = () => {
+        // Clear others in this row
+        v.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+        if (state[key] === verdict) {
+          delete state[key];        // toggle off
+        } else {
+          btn.classList.add('on');
+          state[key] = verdict;
+        }
+        save();
+      };
+    });
+  });
+  document.querySelectorAll('textarea[data-key]').forEach(t => {
+    const key = t.dataset.key;
+    if (state[key]) t.value = state[key];
+    t.oninput = () => { state[key] = t.value; save(); };
+  });
+}
+
+function updateSummary() {
+  const picks = ['d1','d2','d3','d4'].map(d => {
+    const yes = Object.entries(state).find(([k,v]) => k.startsWith(d+'.') && v === 'yes');
+    if (yes) return d.toUpperCase() + '·' + yes[0].split('.')[1].toUpperCase();
+    return d.toUpperCase() + '·?';
+  });
+  const done = picks.filter(p => !p.endsWith('·?')).length;
+  document.getElementById('summary').innerHTML =
+    `<span>${done}/4</span> picked · ${picks.join(' · ')}`;
+}
+
+function exportPicks() {
+  document.getElementById('export-out').textContent =
+    JSON.stringify(state, null, 2);
+}
+
+function clearPicks() {
+  if (!confirm('Clear all picks?')) return;
+  Object.keys(state).forEach(k => delete state[k]);
+  localStorage.removeItem(KEY);
+  document.querySelectorAll('.verdict button').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('textarea[data-key]').forEach(t => t.value = '');
+  updateSummary();
+  document.getElementById('export-out').textContent = '';
+}
+
+bind();
+updateSummary();
+</script>
+
+</body>
+</html>

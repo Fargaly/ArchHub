@@ -1,0 +1,10 @@
+#!/bin/sh
+# AppImage entrypoint for ArchHub.
+#
+# appimagetool runs this script when the user double-clicks the
+# .AppImage. PyInstaller's --onedir bundle is staged under usr/bin/ —
+# the ArchHub launcher there must keep its _internal/ sibling, which
+# the AppDir copy preserves. We resolve our own real path first so the
+# AppImage works regardless of the mount point it's extracted to.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "${HERE}/usr/bin/ArchHub" "$@"

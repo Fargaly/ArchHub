@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArchHub — the Collective Mind (one brain · training infrastructure)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0f0f12; --bg-panel:#161618; --bg-soft:#1d1d22; --bg-hover:#23232a; --bg-canvas:#101015; --bg-raised:#1d1d22;
+  --ink:#ece8e0; --ink-soft:#9b938a; --ink-muted:#5e5750; --ink-dim:#3a3530;
+  --line:#26262d; --line-soft:#1d1d23;
+  --terra:#d97757; --accent-soft:#3a201a; --ochre:#d9a445;
+  --cyan:#5fb3b3; --purple:#a98cd6; --blue:#7898d6; --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f;
+  --ink-on-accent:#1a120c;
+  --serif:'Instrument Serif',Georgia,serif; --sans:'Inter','Segoe UI',system-ui,sans-serif; --mono:'JetBrains Mono',Consolas,monospace;
+  --r-md:6px; --r-lg:8px; --r-pill:999px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px;overflow:hidden;}
+.mono{font-family:var(--mono);} .serif{font-family:var(--serif);}
+.src{font-family:var(--mono);font-size:8px;color:var(--ink-dim);letter-spacing:.04em;}
+.top{height:46px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--bg-panel);}
+.brand{font-family:var(--serif);font-size:22px;}.brand b{color:var(--terra);}.brand i{font-style:italic;}
+.title{font-family:var(--serif);font-style:italic;font-size:16px;color:var(--ink-soft);}
+.grow{flex:1;}
+.gstat{font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);} .gstat b{color:var(--terra);}
+.wrap{height:calc(100% - 46px);display:grid;grid-template-columns:234px 244px 1fr;position:relative;}
+.col{padding:13px 14px;overflow:auto;position:relative;}
+.neurons{border-right:1px solid var(--line);background:var(--bg-panel);}
+.dam{background:var(--bg-canvas);border-right:1px solid var(--line);background-image:radial-gradient(circle at 1px 1px,#1a1a20 1px,transparent 0);background-size:16px 16px;}
+.mind{background:var(--bg-panel);display:flex;flex-direction:column;padding-bottom:84px;}
+.lbl{font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.15em;color:var(--ink-muted);}
+.dirs{font-family:var(--mono);font-size:8.5px;color:var(--ink-muted);margin:3px 0 10px;}
+.dirs .up{color:var(--terra);} .dirs .dn{color:var(--cyan);}
+/* neuron cards — each IS one local brain (memory ⊕ skills, one store) */
+.neuron{background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r-lg);padding:9px 11px;margin-bottom:9px;transition:border-color .25s,box-shadow .25s;}
+.neuron.fed{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(95,179,179,.15);}
+.neuron.upgraded{border-color:var(--ochre);box-shadow:0 0 0 2px rgba(217,164,69,.2);}
+.neuron .nh{display:flex;align-items:center;gap:7px;}
+.neuron .nd{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok);}
+.neuron .who{font-size:13px;}
+.neuron .chips{margin-left:auto;display:flex;gap:4px;}
+.neuron .mver{font-family:var(--mono);font-size:8px;color:var(--ochre);border:1px solid rgba(217,164,69,.35);border-radius:var(--r-pill);padding:1px 6px;}
+.neuron .mver.tk{color:var(--purple);border-color:rgba(169,140,214,.35);}
+.mem{display:flex;gap:5px;margin-top:7px;}
+.mem div{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:var(--r-md);padding:4px 5px;text-align:center;}
+.mem .mt{font-family:var(--mono);font-size:7.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.06em;}
+.mem .mv{font-family:var(--mono);font-size:13px;color:var(--ink);}
+.mem .E .mv{color:var(--blue);} .mem .S .mv{color:var(--cyan);} .mem .P .mv{color:var(--terra);}
+.nrow{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;}
+.nrow button{font-family:var(--sans);font-size:10.5px;color:var(--ink-soft);background:var(--bg);border:1px solid var(--line);border-radius:var(--r-pill);padding:4px 9px;cursor:pointer;}
+.nrow button:hover{border-color:var(--terra);color:var(--ink);}
+.nrow button.bad{color:var(--err);border-color:rgba(230,112,95,.4);}
+.recall{font-family:var(--mono);font-size:9px;color:var(--cyan);margin-top:6px;}
+.recall b{color:var(--cyan);}
+.note{font-size:10.5px;color:var(--ink-muted);line-height:1.5;margin-top:8px;}
+.note b{color:var(--cyan);} .note .o{color:var(--ochre);}
+/* dam pipeline */
+.section{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--terra);margin:8px 0 6px;}
+.section.dn{color:var(--cyan);}
+.stage{background:var(--bg-soft);border:1px solid var(--line);border-left:3px solid var(--ink-dim);border-radius:var(--r-md);padding:6px 9px;margin-bottom:7px;transition:border-color .2s,background .2s;}
+.stage.lit{border-left-color:var(--terra);background:var(--accent-soft);}
+.stage .st{font-size:11.5px;color:var(--ink);}
+.stage .sd{font-size:9px;color:var(--ink-muted);margin-top:1px;line-height:1.3;}
+.quar{margin-top:8px;border:1px dashed rgba(230,112,95,.4);border-radius:var(--r-md);padding:6px 9px;background:rgba(230,112,95,.05);}
+.quar .qn{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--err);}
+.qbin{margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;min-height:14px;}
+.qpill{font-family:var(--mono);font-size:8.5px;color:var(--err);border:1px solid rgba(230,112,95,.4);border-radius:var(--r-pill);padding:1px 7px;}
+/* the brain = one entity: KG + lineage + flywheel */
+.mindhead{display:flex;align-items:baseline;gap:10px;}
+.kg{position:relative;flex:0 0 252px;margin-top:8px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--bg-canvas);overflow:hidden;}
+.kg svg{position:absolute;inset:0;width:100%;height:100%;}
+.knode{position:absolute;transform:translate(-50%,-50%);border-radius:var(--r-pill);border:1px solid var(--line);background:var(--bg-soft);padding:5px 10px;font-size:11px;color:var(--ink-soft);white-space:nowrap;transition:opacity 1s linear,transform .3s,border-color .3s,box-shadow .3s;cursor:pointer;z-index:2;}
+.knode.skill{color:var(--terra);border-color:rgba(217,119,87,.4);background:var(--accent-soft);}
+.knode.concept{color:var(--cyan);font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;}
+.knode.hot{box-shadow:0 0 0 3px rgba(217,119,87,.25);transform:translate(-50%,-50%) scale(1.06);}
+.knode .u{font-family:var(--mono);font-size:8px;color:var(--ink-muted);margin-left:4px;}
+.kglegend{font-family:var(--mono);font-size:8.5px;color:var(--ink-muted);margin-top:6px;line-height:1.5;}
+.kglegend b{color:var(--ink-soft);}
+/* TRAINING FLYWHEEL — the infrastructure for AI training + evolving */
+.flywrap{margin-top:10px;border:1px solid rgba(217,164,69,.3);border-radius:var(--r-lg);padding:8px 10px;background:rgba(217,164,69,.04);}
+.flyhead{display:flex;align-items:baseline;gap:8px;}
+.flyhead .fl{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--ochre);}
+.flyhead .fs{font-family:var(--mono);font-size:8px;color:var(--ink-muted);margin-left:auto;}
+.fly{display:flex;align-items:center;gap:4px;margin-top:7px;}
+.fstage{flex:1;background:var(--bg-soft);border:1px solid var(--line);border-bottom:2px solid var(--ink-dim);border-radius:var(--r-md);padding:5px 6px;text-align:center;transition:border-color .2s,background .2s;}
+.fstage.lit{border-bottom-color:var(--ochre);background:rgba(217,164,69,.1);}
+.fstage .ft{font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--ochre);}
+.fstage .fx{font-size:9px;color:var(--ink-muted);margin-top:1px;line-height:1.25;}
+.farrow{color:var(--ink-dim);font-size:11px;flex:0 0 auto;}
+.flynote{font-size:9.5px;color:var(--ink-muted);margin-top:6px;line-height:1.4;}
+.flynote b{color:var(--ochre);}
+/* THINKING SYSTEMS — mandates · patterns · practices, versioned brain content */
+.thinkwrap{margin-top:10px;border:1px solid rgba(169,140,214,.3);border-radius:var(--r-lg);padding:8px 10px;background:rgba(169,140,214,.04);}
+.thinkwrap .fl{color:var(--purple);}
+.tsys{display:flex;align-items:baseline;gap:7px;padding:4px 6px;border-radius:var(--r-md);border-left:2px solid transparent;transition:background .2s,border-left-color .2s;}
+.tsys.lit{background:rgba(169,140,214,.12);border-left-color:var(--purple);}
+.tsys .tn{font-size:11px;color:var(--ink);white-space:nowrap;}
+.tsys .tv{font-family:var(--mono);font-size:8.5px;color:var(--purple);border:1px solid rgba(169,140,214,.35);border-radius:var(--r-pill);padding:0 6px;}
+.tsys .td{font-family:var(--mono);font-size:8px;color:var(--ink-muted);margin-left:auto;text-align:right;}
+.token.think{border-color:var(--purple);color:var(--purple);transition:left .6s ease,top .6s ease,opacity .3s;}
+/* lineage */
+.linpanel{flex:1;margin-top:10px;border-top:1px solid var(--line);padding-top:9px;overflow:auto;min-height:60px;}
+.linhead{font-family:var(--serif);font-style:italic;font-size:15px;color:var(--ink);}
+.ver{position:relative;padding:5px 8px 5px 22px;border-radius:var(--r-md);margin-top:5px;}
+.ver.cur{background:var(--accent-soft);border:1px solid rgba(217,119,87,.3);}
+.ver .vd{position:absolute;left:7px;top:9px;width:7px;height:7px;border-radius:50%;background:var(--ok);}
+.ver .vline{position:absolute;left:10px;top:-5px;height:10px;width:2px;background:var(--line);}
+.ver:first-child .vline{display:none;}
+.ver .vh{display:flex;gap:6px;align-items:center;}
+.ver .vno{font-family:var(--mono);font-size:9.5px;color:var(--terra);font-weight:600;}
+.ver .vby{font-family:var(--mono);font-size:8.5px;color:var(--ink-muted);}
+.ver .vcur{font-family:var(--mono);font-size:7.5px;text-transform:uppercase;background:var(--terra);color:var(--ink-on-accent);border-radius:var(--r-pill);padding:1px 5px;}
+.ver .vdiff{font-size:10.5px;color:var(--ink-soft);margin-top:2px;line-height:1.35;}
+.ver .vdiff .p{color:var(--ok);}
+.empty{font-family:var(--serif);font-style:italic;font-size:14px;color:var(--ink-muted);text-align:center;margin-top:14px;}
+.token{position:absolute;z-index:40;padding:4px 8px;border-radius:var(--r-pill);font-family:var(--mono);font-size:9px;background:var(--bg-raised);border:1px solid var(--terra);color:var(--terra);box-shadow:0 4px 14px rgba(0,0,0,.5);transition:left .5s cubic-bezier(.4,0,.2,1),top .5s cubic-bezier(.4,0,.2,1),opacity .3s;pointer-events:none;white-space:nowrap;}
+.token.bad{border-color:var(--err);color:var(--err);}
+.token.recall{border-color:var(--cyan);color:var(--cyan);transition:left .55s ease,top .55s ease,opacity .3s;}
+.token.model{border-color:var(--ochre);color:var(--ochre);transition:left .6s ease,top .6s ease,opacity .3s;}
+.layers{position:absolute;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);background:var(--bg-panel);}
+.layer{padding:7px 13px;border-right:1px solid var(--line);}
+.layer:last-child{border-right:0;}
+.layer .ln{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--terra);}
+.layer .lx{font-size:10px;color:var(--ink-soft);margin-top:2px;line-height:1.35;}
+.layer .lx b{color:var(--ink);}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand"><b>Arch</b><i>Hub</i></div>
+    <div class="title">the collective mind — an infrastructure for AI training and evolving</div>
+    <div class="grow"></div>
+    <div class="gstat">neurons <b id="gn">3</b> · skills <b id="gs">0</b> · versions <b id="gv">0</b> · thinking <b id="gt" style="color:var(--purple)">v27</b> · model <b id="gm">v1</b> · quarantined <span id="gq" style="color:var(--err)">0</span></div>
+  </div>
+
+  <div class="wrap" id="wrap">
+    <!-- NEURONS -->
+    <div class="col neurons">
+      <div class="lbl">Local neurons — each is one brain</div>
+      <div class="dirs"><span class="up">↑ sync up</span> · <span class="dn">↓ recall down</span> · <span style="color:var(--ochre)">⊙ model deploys</span></div>
+      <div class="neuron" id="u0">
+        <div class="nh"><span class="nd"></span><span class="who">You</span><span class="chips"><span class="mver tk" id="u0t">think v27</span><span class="mver" id="u0m">model v1</span></span></div>
+        <div class="mem"><div class="E"><div class="mt">epis</div><div class="mv" id="u0E">0</div></div><div class="S"><div class="mt">sem</div><div class="mv" id="u0S">0</div></div><div class="P"><div class="mt">proc</div><div class="mv" id="u0P">0</div></div></div>
+        <div class="nrow"><button onclick="run(0,'rfi')">RFI skill</button><button onclick="run(0,'revit')">Revit skill</button></div>
+        <div class="recall" id="u0r">recalled <b>0</b></div>
+      </div>
+      <div class="neuron" id="u1">
+        <div class="nh"><span class="nd"></span><span class="who">Teammate</span><span class="chips"><span class="mver tk" id="u1t">think v27</span><span class="mver" id="u1m">model v1</span></span></div>
+        <div class="mem"><div class="E"><div class="mt">epis</div><div class="mv" id="u1E">0</div></div><div class="S"><div class="mt">sem</div><div class="mv" id="u1S">0</div></div><div class="P"><div class="mt">proc</div><div class="mv" id="u1P">0</div></div></div>
+        <div class="nrow"><button onclick="run(1,'revit')">Revit skill</button><button onclick="run(1,'massing')">Massing skill</button></div>
+        <div class="recall" id="u1r">recalled <b>0</b></div>
+      </div>
+      <div class="neuron" id="u2">
+        <div class="nh"><span class="nd"></span><span class="who">Firm-mate</span><span class="chips"><span class="mver tk" id="u2t">think v27</span><span class="mver" id="u2m">model v1</span></span></div>
+        <div class="mem"><div class="E"><div class="mt">epis</div><div class="mv" id="u2E">0</div></div><div class="S"><div class="mt">sem</div><div class="mv" id="u2S">0</div></div><div class="P"><div class="mt">proc</div><div class="mv" id="u2P">0</div></div></div>
+        <div class="nrow"><button onclick="run(2,'rfi')">RFI skill</button><button class="bad" onclick="run(2,'poison')">poisoned</button></div>
+        <div class="recall" id="u2r">recalled <b>0</b></div>
+      </div>
+      <div class="note">A neuron = <b>any connected agent</b> (composer · Claude Code · Codex · fleet) — one local brain. Hooks document its <b>full sessions + graphs</b> (not just skills): recall before acting, write after, mint on close. Sync keeps mandates + practices current; the flywheel <span class="o">deploys evolved models back</span>.</div>
+    </div>
+
+    <!-- DAM / SYNC MEMBRANE -->
+    <div class="col dam">
+      <div class="lbl">The dam — sync membrane</div>
+      <div class="dirs">gates both directions</div>
+      <div class="section">↑ contribute (out)</div>
+      <div class="stage" id="g0"><div class="st">1 · redact <span class="src">op://</span></div><div class="sd">secrets stripped, bare creds rejected</div></div>
+      <div class="stage" id="g1"><div class="st">2 · verify <span class="src">ROMA · SkillsBench</span></div><div class="sd">run on real artifact — unverified never rises</div></div>
+      <div class="stage" id="g2"><div class="st">3 · canonicalize + diff <span class="src">EDC</span></div><div class="sd">link version to lineage, induce schema, compute Δ</div></div>
+      <div class="stage" id="g3"><div class="st">4 · conflict-resolve <span class="src">KARMA</span></div><div class="sd">neurons disagree → reconcile, not last-writer-wins</div></div>
+      <div class="stage" id="g4"><div class="st">5 · merge <span class="src">CRDT/HLC</span></div><div class="sd">converge into the global brain, idempotent</div></div>
+      <div class="section dn">↓ recall (in)</div>
+      <div class="stage" id="gi0"><div class="st">scope / ACL</div><div class="sd">recall only your scope; private stays private</div></div>
+      <div class="stage" id="gi1"><div class="st">retrieval-isolation <span class="src">AgentPoison</span></div><div class="sd">cap any source's share — no 9%→48% hijack</div></div>
+      <div class="stage" id="gi2"><div class="st">retrieve: raw ⊕ graph, PageRank <span class="src">HippoRAG</span></div><div class="sd">dual (raw+KG, ~35% lives only in raw) + graph-traversal multi-hop</div></div>
+      <div class="stage" id="gi3"><div class="st">rank: recency·importance·relevance·<b style="color:var(--ochre)">trust</b> <span class="src">Gen-Agents</span></div><div class="sd">source reputation weights the result — quarantined source loses trust</div></div>
+      <div class="quar"><div class="qn">quarantine — never trains, never recalls</div><div class="qbin" id="qbin"></div></div>
+    </div>
+
+    <!-- THE BRAIN (one entity) -->
+    <div class="col mind">
+      <div class="mindhead"><span class="lbl">The global brain — one entity: sessions ⊕ graphs ⊕ memory ⊕ skills ⊕ thinking ⊕ training</span><span class="src">Zep/Graphiti</span></div>
+      <div class="dirs"><span class="dn">temporal knowledge graph · grows by use · decays by half-life</span></div>
+      <div class="kg" id="kg"><svg id="kgedges"></svg></div>
+      <div class="kglegend"><b>size</b> = importance · <b>fade</b> = decay (use refreshes) · <span style="color:var(--terra)">orange</span> = versioned skill · <span style="color:var(--cyan)">cyan</span> = concept<br><b style="color:var(--blue)">consolidation</b> (reflection worker): episodic traces → distilled semantic facts → procedural skills — the cheap evolve between training cycles</div>
+
+      <!-- THINKING SYSTEMS -->
+      <div class="thinkwrap">
+        <div class="flyhead"><span class="fl">thinking systems — mandates · patterns · practices, versioned</span><span class="fs" id="thinkstat">current on 3/3 neurons</span></div>
+        <div class="tsys" id="ts0"><span class="tn">Operating mandates</span><span class="tv" id="tv0">v27</span><span class="td">anti-lie · prototype-first · one-system</span></div>
+        <div class="tsys" id="ts1"><span class="tn">ROMA verification</span><span class="tv">v3</span><span class="td">jury · anti-tamper · loop-until-dry</span></div>
+        <div class="tsys" id="ts2"><span class="tn">Design system</span><span class="tv">v5</span><span class="td">terracotta · serif · calm density</span></div>
+        <div class="tsys" id="ts3"><span class="tn">Domain practices</span><span class="tv" id="tv3">v12</span><span class="td">Revit 1-3 floors/exec · CDP-verify</span></div>
+        <div class="flynote">Hooks wire every session to the brain — recall before acting, write after, mint on close. A lesson learned in ONE session updates the system for EVERY neuron. Not just a second brain — <b style="color:var(--purple)">the thinking system itself, unified and current</b>. <b style="color:var(--warn)">Mandate-class is founder-gated</b>: the machine proposes a version, the founder ratifies — knowledge auto-rises, the constitution does not.</div>
+      </div>
+
+      <!-- THE FLYWHEEL -->
+      <div class="flywrap">
+        <div class="flyhead"><span class="fl">training flywheel — how the AI itself evolves</span><span class="fs" id="flystat">3 verified runs → next cycle</span></div>
+        <div class="fly">
+          <div class="fstage" id="f0"><div class="ft">sessions</div><div class="fx">full trajectory + graph</div></div><span class="farrow">→</span>
+          <div class="fstage" id="f1"><div class="ft">dataset</div><div class="fx">curated export</div></div><span class="farrow">→</span>
+          <div class="fstage" id="f2"><div class="ft">train</div><div class="fx">fine-tune / distill</div></div><span class="farrow">→</span>
+          <div class="fstage" id="f3"><div class="ft">eval</div><div class="fx">beat held-out suite? else demote</div></div><span class="farrow">→</span>
+          <div class="fstage" id="f4"><div class="ft">canary→fanout</div><div class="fx">1 neuron → watch → all</div></div>
+        </div>
+        <div class="flynote"><b>Verified-rises applies to models too</b> — ships only if it beats the <b style="color:var(--ochre)">growing AEC eval suite</b> (fed by the river); a regression <b style="color:var(--err)">demotes</b>, not promotes. Rollout is <b>canary → fan-out</b> (no big-bang). Memory is the training set; the brain IS the infrastructure.</div>
+      </div>
+
+      <div class="linpanel" id="linpanel"><div class="empty" id="emptymsg">run skills on the neurons — verified runs feed the knowledge graph AND the flywheel; every 3rd verified run trains + deploys an evolved model</div></div>
+    </div>
+
+    <!-- LAYERS -->
+    <div class="layers">
+      <div class="layer"><div class="ln">one brain</div><div class="lx"><b>sessions ⊕ graphs</b> ⊕ memory ⊕ skills ⊕ thinking ⊕ training = <b>one store</b>. Every session + node-graph from every connected agent is documented; skills/facts are <b>distilled</b> from them.</div></div>
+      <div class="layer"><div class="ln">knowledge mgmt</div><div class="lx"><b>auto-organize</b>: extract → schema → canonicalize → conflict-resolve → cluster. Versioned + diffed.</div></div>
+      <div class="layer"><div class="ln">planning · nodes</div><div class="lx">a plan/skill <b>is a node graph</b>; a version = a diff of that graph.</div></div>
+      <div class="layer"><div class="ln">evolution</div><div class="lx">flywheel: traces → dataset → fine-tune → <b>eval gate</b> → deploy. One neuron's work lifts every neuron.</div></div>
+    </div>
+  </div>
+
+<script>
+const SKILLS={
+ rfi:{label:'RFI sweep', concept:'submittals', x:24, y:30, versions:[
+   {diff:'base — sweep RFIs, draft covers'},{diff:'API-model brain → recall fires live'},{diff:'numeric-tail match for contractor files'}]},
+ revit:{label:'Revit reconcile', concept:'revisions', x:70, y:32, versions:[
+   {diff:'base — reconcile table, 1 txn/sheet'},{diff:'reason-note 85mm + date col left-align'}]},
+ massing:{label:'Massing+render', concept:'geometry', x:48, y:74, versions:[
+   {diff:'base — gabled mass, golden-hour render'}]},
+};
+const CONCEPTS={submittals:{x:16,y:64},revisions:{x:86,y:66},geometry:{x:62,y:92}};
+const REL=[['rfi','submittals'],['revit','revisions'],['massing','geometry'],['rfi','revit']];
+const UNAME=['You','Teammate','Firm-mate'];
+let G={vers:0,q:0,nodes:{},verified:0,model:1,flying:false,think:27};
+// THINKING SYSTEMS — a lesson in one session versions the system for every neuron
+function bumpThinking(sysIdx,label){
+  G.think++;
+  const tv=document.getElementById('tv'+sysIdx); if(tv) tv.textContent='v'+G.think;
+  const row=document.getElementById('ts'+sysIdx); if(row){row.classList.add('lit'); setTimeout(()=>row.classList.remove('lit'),1000);}
+  document.getElementById('gt').textContent='v'+G.think;
+  document.getElementById('thinkstat').textContent=label+' · v'+G.think+' → 3 neurons';
+  const wrap=rect('wrap'); const fr=rect(row?('ts'+sysIdx):'kg');
+  for(let u=0;u<3;u++){
+    const tt=document.createElement('div'); tt.className='token think'; tt.textContent='think v'+G.think; document.body.appendChild(tt);
+    place(tt, fr.left+8-wrap.left, fr.top-wrap.top+46);
+    const ur=rect('u'+u);
+    setTimeout(()=>place(tt, ur.left+ur.width-132-wrap.left, ur.top+8-wrap.top+46), 30+u*90);
+    setTimeout(()=>{ tt.style.opacity='0';
+      const chip=document.getElementById('u'+u+'t'); if(chip) chip.textContent='think v'+G.think;
+      const c=document.getElementById('u'+u); c.classList.add('fed'); setTimeout(()=>c.classList.remove('fed'),650);
+      setTimeout(()=>tt.remove(),300); },700+u*90);
+  }
+}
+// MANDATE-CLASS is founder-gated (court fix): the machine PROPOSES, the founder RATIFIES. No auto-fanout.
+function proposeMandate(label){
+  const row=document.getElementById('ts0'); if(!row) return;
+  G.pendingMandate=(G.pendingMandate||0)+1;
+  const tv=document.getElementById('tv0'); if(tv) tv.innerHTML='v'+G.think+' <span style="color:var(--warn)">· '+G.pendingMandate+' pending ✎ founder-sign</span>';
+  row.classList.add('lit'); setTimeout(()=>row.classList.remove('lit'),1400);
+  document.getElementById('thinkstat').textContent=label;
+}
+function rect(id){return document.getElementById(id).getBoundingClientRect();}
+function place(el,x,y){ el.style.left=x+'px'; el.style.top=y+'px'; }
+function kgxy(px,py){const k=rect('kg');return {x:k.left+ k.width*px/100, y:k.top+ k.height*py/100};}
+function bump(n,kind){ const el=document.getElementById('u'+n+kind); if(el) el.textContent=(+el.textContent+1); }
+function ensureConcept(id){
+  if(G.nodes['c_'+id])return;
+  const c=CONCEPTS[id]; const n=document.createElement('div'); n.className='knode concept'; n.textContent=id;
+  n.style.left=c.x+'%'; n.style.top=c.y+'%'; n.style.opacity='0.85'; document.getElementById('kg').appendChild(n);
+  G.nodes['c_'+id]={el:n,px:c.x,py:c.y};
+}
+function ensureSkill(id){
+  if(G.nodes['s_'+id])return G.nodes['s_'+id];
+  const s=SKILLS[id]; ensureConcept(s.concept);
+  const n=document.createElement('div'); n.className='knode skill'; n.innerHTML=s.label+' <span class="u">×0</span>';
+  n.style.left=s.x+'%'; n.style.top=s.y+'%'; n.onclick=()=>renderLineage(id);
+  document.getElementById('kg').appendChild(n);
+  const node={el:n,px:s.x,py:s.y,uses:0,fresh:1,vers:[]}; G.nodes['s_'+id]=node;
+  drawEdges(); return node;
+}
+function drawEdges(){
+  const svg=document.getElementById('kgedges'); const k=rect('kg'); svg.innerHTML='';
+  REL.forEach(([a,b])=>{
+    const na=G.nodes['s_'+a]||G.nodes['c_'+a]; const nb=G.nodes['s_'+b]||G.nodes['c_'+b];
+    if(!na||!nb)return;
+    const x1=k.width*na.px/100,y1=k.height*na.py/100,x2=k.width*nb.px/100,y2=k.height*nb.py/100;
+    const p=document.createElementNS('http://www.w3.org/2000/svg','line');
+    p.setAttribute('x1',x1);p.setAttribute('y1',y1);p.setAttribute('x2',x2);p.setAttribute('y2',y2);
+    p.setAttribute('stroke','#2a2a33');p.setAttribute('stroke-width','1.5'); svg.appendChild(p);
+  });
+}
+function run(neuron,type){
+  const wrap=rect('wrap'); const poison=(type==='poison');
+  const tok=document.createElement('div'); tok.className='token'+(poison?' bad':''); tok.textContent=poison?'poisoned':SKILLS[type].label;
+  document.body.appendChild(tok);
+  const ur=rect('u'+neuron); place(tok, ur.left+ur.width-26-wrap.left, ur.top+20-wrap.top+46);
+  const out=['g0','g1','g2','g3','g4']; let i=0;
+  const step=()=>{
+    if(i>0)document.getElementById(out[i-1]).classList.remove('lit');
+    if(i<out.length){
+      const r=rect(out[i]); place(tok, r.left+8-wrap.left, r.top+r.height/2-10-wrap.top+46); document.getElementById(out[i]).classList.add('lit');
+      if(i===1 && poison){ setTimeout(()=>{document.getElementById(out[1]).classList.remove('lit');quarantine(tok);},500); i=99; return; }
+      i++; setTimeout(step,480);
+    } else { document.getElementById(out[4]).classList.remove('lit'); toKG(tok,type,neuron); }
+  };
+  setTimeout(step,200);
+  bump(neuron,'E');
+}
+function quarantine(tok){
+  const wrap=rect('wrap'),qb=rect('qbin'); place(tok, qb.left+8-wrap.left, qb.top-wrap.top+46);
+  setTimeout(()=>{ tok.style.opacity='0'; const p=document.createElement('div');p.className='qpill';p.textContent='blocked';document.getElementById('qbin').appendChild(p);
+    G.q++; document.getElementById('gq').textContent=G.q; setTimeout(()=>tok.remove(),300);
+    proposeMandate('dam-hardening proposed — PENDING founder signature (not auto-applied)'); },500);
+}
+function toKG(tok,type,neuron){
+  const wrap=rect('wrap'); const em=document.getElementById('emptymsg'); if(em)em.remove();
+  const node=ensureSkill(type); const def=SKILLS[type];
+  const xy=kgxy(node.px,node.py); place(tok, xy.x-26-wrap.left, xy.y-wrap.top+46);
+  setTimeout(()=>{
+    tok.style.opacity='0';
+    const vi=node.vers.length;
+    if(vi<def.versions.length){ node.vers.push({v:vi+1,by:UNAME[neuron],diff:def.versions[vi].diff}); G.vers++; bump(neuron,'P'); }
+    node.uses++; node.fresh=1; node.el.style.opacity='1';
+    node.el.querySelector('.u').textContent='×'+node.uses;
+    node.el.style.transform='translate(-50%,-50%) scale('+(1+Math.min(0.5,node.uses*0.08))+')';
+    node.el.classList.add('hot'); setTimeout(()=>node.el.classList.remove('hot'),700);
+    bump(neuron,'S');
+    document.getElementById('gs').textContent=Object.keys(G.nodes).filter(k=>k[0]==='s').length;
+    document.getElementById('gv').textContent=G.vers;
+    renderLineage(type); setTimeout(()=>tok.remove(),300);
+    recallBack(node);
+    // feed the flywheel
+    G.verified++;
+    const rem=3-(G.verified%3);
+    document.getElementById('flystat').textContent = (G.verified%3===0) ? 'training…' : rem+' verified run'+(rem>1?'s':'')+' → next cycle';
+    if(G.verified%3===0 && !G.flying) flywheel();
+    if(G.verified%5===0) bumpThinking(3,'practice consolidated from verified runs');
+  },500);
+}
+function renderLineage(type){
+  const node=G.nodes['s_'+type]; if(!node)return; const def=SKILLS[type];
+  const lp=document.getElementById('linpanel');
+  lp.innerHTML='<div class="linhead">'+def.label+' · v'+node.vers.length+' current</div>'
+    +'<div class="src" style="margin:2px 0 6px">importance ×'+node.uses+' · one lineage, '+node.vers.length+' versions linked + diffed</div>'
+    +node.vers.map((vv,ix)=>{const cur=(ix===node.vers.length-1);
+      return '<div class="ver'+(cur?' cur':'')+'"><span class="vline"></span><span class="vd"></span>'
+        +'<div class="vh"><span class="vno">v'+vv.v+'</span><span class="vby">by '+vv.by+'</span>'+(cur?'<span class="vcur">current</span>':'')+'</div>'
+        +'<div class="vdiff">'+(ix===0?'':'<span class="p">Δ</span> ')+vv.diff+'</div></div>';}).join('');
+}
+function recallBack(node){
+  const wrap=rect('wrap'); const xy=kgxy(node.px,node.py);
+  for(let u=0;u<3;u++){
+    const rt=document.createElement('div'); rt.className='token recall'; rt.textContent='recall'; document.body.appendChild(rt);
+    place(rt, xy.x-wrap.left, xy.y-wrap.top+46);
+    const ur=rect('u'+u);
+    setTimeout(()=>place(rt, ur.left+14-wrap.left, ur.top+12-wrap.top+46), 20+u*70);
+    setTimeout(()=>{ rt.style.opacity='0'; const c=document.getElementById('u'+u); c.classList.add('fed'); setTimeout(()=>c.classList.remove('fed'),650);
+      const b=document.querySelector('#u'+u+'r b'); b.textContent=(+b.textContent+1); bump(u,'S'); setTimeout(()=>rt.remove(),300); },620+u*70);
+  }
+}
+// THE FLYWHEEL — every 3 verified runs: dataset → train → eval → deploy model vN+1 to every neuron
+function flywheel(){
+  G.flying=true;
+  const stages=['f0','f1','f2','f3','f4']; let i=0;
+  const step=()=>{
+    if(i>0)document.getElementById(stages[i-1]).classList.remove('lit');
+    if(i<stages.length){ document.getElementById(stages[i]).classList.add('lit'); i++; setTimeout(step,560); }
+    else { deployModel(); }
+  };
+  step();
+}
+function deployModel(){
+  document.getElementById('f4').classList.remove('lit');
+  G.model++; document.getElementById('gm').textContent='v'+G.model;
+  document.getElementById('flystat').textContent='model v'+G.model+' deployed · 3 verified runs → next cycle';
+  const wrap=rect('wrap'); const fw=rect('f4');
+  // CANARY -> FANOUT: neuron 0 first (watch), then the rest (no big-bang)
+  const order=[0,1,2]; const delay=u=> u===0? 0 : 900+ (u-1)*120;
+  document.getElementById('flystat').textContent='model v'+G.model+' · canary on You → watching…';
+  order.forEach(u=>{
+    const mt=document.createElement('div'); mt.className='token model'; mt.textContent=u===0?'canary v'+G.model:'fanout v'+G.model; document.body.appendChild(mt);
+    place(mt, fw.left+8-wrap.left, fw.top-wrap.top+46);
+    const ur=rect('u'+u);
+    setTimeout(()=>place(mt, ur.left+ur.width-70-wrap.left, ur.top+8-wrap.top+46), 30+delay(u));
+    setTimeout(()=>{ mt.style.opacity='0';
+      const c=document.getElementById('u'+u); c.classList.add('upgraded'); setTimeout(()=>c.classList.remove('upgraded'),900);
+      document.getElementById('u'+u+'m').textContent='model v'+G.model;
+      if(u===2) document.getElementById('flystat').textContent='model v'+G.model+' deployed (canary→all) · 3 verified → next cycle';
+      setTimeout(()=>mt.remove(),300);
+    },700+delay(u));
+  });
+  setTimeout(()=>{G.flying=false;},1200);
+}
+// decay: skill nodes fade unless used (recency); using refreshes
+setInterval(()=>{ for(const k in G.nodes){ if(k[0]!=='s')continue; const n=G.nodes[k]; n.fresh=Math.max(0.35,n.fresh-0.06); n.el.style.opacity=n.fresh; } }, 2600);
+window.addEventListener('resize',drawEdges);
+setTimeout(drawEdges,400);
+</script>
+</body>
+</html>

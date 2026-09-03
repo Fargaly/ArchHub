@@ -1,0 +1,115 @@
+{
+  "id": "corpus-pluck-then-join",
+  "name": "Pluck then reconcile",
+  "description": "A two-stage reconcile: transform.apply op=pluck projects the master rows down to {code,status}, then data.join matches the projected master against the submitted codes. Mixes a concrete LIST producer port with ANY transform ports (ANY-floor on the pluck->join edge). Sinks: matched_count = 2 (A-101, A-103 in both); missing = [A-102] (on master, not submitted).",
+  "schema_version": "1.0",
+  "nodes": [
+    {
+      "id": "master",
+      "type": "data.constant",
+      "label": "Master log",
+      "config": {"value": [
+        {"code": "A-101", "status": "APPROVED", "rev": 2},
+        {"code": "A-102", "status": "REVISE", "rev": 0},
+        {"code": "A-103", "status": "APPROVED", "rev": 1}
+      ]},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 80, "y": 80}
+    },
+    {
+      "id": "project",
+      "type": "transform.apply",
+      "label": "Pluck code+status",
+      "config": {"op": "pluck", "field": "", "fields": ["code", "status"], "rename": {}},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 360, "y": 80}
+    },
+    {
+      "id": "submitted",
+      "type": "data.constant",
+      "label": "Submitted codes",
+      "config": {"value": [
+        {"code": "A-101"},
+        {"code": "A-103"},
+        {"code": "A-999"}
+      ]},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 360, "y": 300}
+    },
+    {
+      "id": "reconcile",
+      "type": "data.join",
+      "label": "Match on code",
+      "config": {"key": "code", "how": "inner"},
+      "inputs": [
+        {"name": "left", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": true, "default": null, "exec": false, "multiple": false},
+        {"name": "right", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": true, "default": null, "exec": false, "multiple": false},
+        {"name": "key", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "left_key", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "right_key", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "matched", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "left_only", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "right_only", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "match_count", "type": "number", "speckle_type": "Objects.Primitive.Number", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 660, "y": 180}
+    },
+    {
+      "id": "matched_count",
+      "type": "output.parameter",
+      "label": "Matched count",
+      "config": {"name": "matched_count"},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 960, "y": 80}
+    },
+    {
+      "id": "missing",
+      "type": "output.parameter",
+      "label": "On master, not submitted",
+      "config": {"name": "missing"},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 960, "y": 300}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "src_node": "master", "src_port": "value", "dst_node": "project", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Other.List"},
+    {"id": "e2", "src_node": "project", "src_port": "value", "dst_node": "reconcile", "dst_port": "left", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "archhub.any"},
+    {"id": "e3", "src_node": "submitted", "src_port": "value", "dst_node": "reconcile", "dst_port": "right", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Other.List"},
+    {"id": "e4", "src_node": "reconcile", "src_port": "match_count", "dst_node": "matched_count", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Primitive.Number"},
+    {"id": "e5", "src_node": "reconcile", "src_port": "left_only", "dst_node": "missing", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Other.List"}
+  ],
+  "triggers": [
+    {"id": "trig_manual", "type": "manual", "config": {}, "enabled": true}
+  ],
+  "inputs": [],
+  "outputs": [
+    {"name": "matched_count", "type": "number", "description": "Codes present in both", "required": false, "default": null},
+    {"name": "missing", "type": "list", "description": "Codes on master but not submitted", "required": false, "default": null}
+  ],
+  "metadata": {},
+  "created_at": "2026-06-05T08:00:00+00:00",
+  "updated_at": "2026-06-05T08:00:00+00:00"
+}

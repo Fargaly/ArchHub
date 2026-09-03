@@ -1,0 +1,227 @@
+meta:
+  product: ArchHub
+  scanned: 2026-05-26
+  scanned_against_sha: HEAD as of 2026-05-26
+  sdk:
+    name: posthog
+    language: python
+    package: posthog
+    pinned: false  # not pinned in app/requirements.txt; import-time absent = silent off
+    wrapper: app/telemetry.py
+  destinations:
+    - posthog        # event analytics (opt-in, eu.i.posthog.com)
+    - sentry         # crash + error telemetry (opt-in, shares same consent flag)
+  client_or_server: client-only  # cloud_backend/ has zero tracking calls
+  consent_model: explicit opt-in (telemetry_consent_dialog.py) — null/false by default
+  identity_anchor: distinct_id (UUID4 in secrets_store, install-scoped)
+
+events:
+
+  - name: app_started
+    status: LIVE
+    category: lifecycle  # inferred
+    locations:
+      - file: app/main.py
+        line: 625
+        context: launch path, post-onboarding (telemetry consent already given)
+      - file: app/main.py
+        line: 631
+        context: launch path, silent branch (telemetry consent not yet granted at time of fire; the call is no-op until consent flips)
+    properties:
+      - silent  # boolean: distinguishes the two call sites
+    expected_frequency: low  # once per launch
+    notes: |
+      Both call sites are wrapped in try/except. The "silent=True" call still
+      fires through track_event(), which is itself a no-op when consent_state()
+      is not True — so in practice events from the silent branch never reach
+      PostHog until consent is granted.
+
+  - name: provider_blocked
+    status: LIVE
+    category: error  # inferred
+    locations:
+      - file: app/llm_router.py
+        line: 537
+        context: LLM router cool-off — fires when a provider error puts the provider on the blocklist
+    properties:
+      - provider     # string: anthropic | openai | google | openrouter | lm_studio | …
+      - reason       # string, truncated to 120 chars at the call site
+    expected_frequency: low  # only on real provider failure
+    notes: |
+      `reason[:120]` is truncated at the call site BEFORE the redactor sees it.
+      Source string can contain provider error text (HTTP body fragments etc.);
+      the truncation + redactor pair are the two scrub layers.
+
+  - name: telemetry_opted_in
+    status: LIVE
+    category: lifecycle  # inferred — privacy lifecycle
+    locations:
+      - file: app/telemetry_consent_dialog.py
+        line: 92
+        context: first-run consent dialog Allow button
+    properties:
+      - source       # string, currently hardcoded "first_run_dialog"
+    expected_frequency: low  # at most once per install, by definition
+    notes: |
+      Fires immediately after set_consent(True). The dialog has no symmetric
+      `telemetry_opted_out` event (deny path is silent and final — there is
+      nothing to track because the user has not opted in to telemetry).
+
+  - name: skill_run
+    status: LIVE
+    category: core_value  # inferred — running a saved Skill IS the primary value action
+    locations:
+      - file: app/skills/usage.py
+        line: 77
+        context: record_run() — every Skill execution records local stats and mirrors to telemetry
+    properties:
+      - skill_id     # string: skill slug
+      - success      # boolean
+      - elapsed_ms   # int
+      - is_retry     # boolean: True when the chat layer detected a near-duplicate request within ~60s of a failed run
+      - error_kind   # optional string: error[:40] truncated, or None on success
+    expected_frequency: medium  # one per Skill execution
+    notes: |
+      The local sidecar (skill_usage.json) records full history; the telemetry
+      event is a cloud mirror. `error_kind` is the only field that can carry
+      free-form text — capped at 40 chars at the call site.
+
+  - name: user_feedback
+    status: LIVE
+    category: core_value  # inferred — in-product NPS-shape feedback
+    locations:
+      - file: app/feedback_widget.py
+        line: 172
+        context: thumbs up/down submit on chat reply
+    properties:
+      - direction    # string: "up" | "down"
+      - comment      # string: FREE-FORM USER-TYPED TEXT
+      - message_id   # string: chat message identifier
+      - skill_id     # string: skill slug if the reply ran a Skill
+    expected_frequency: low  # explicit user action
+    notes: |
+      `comment` is free-form text typed by the user. The pii_redactor scrubs
+      paths / API keys / emails / IPs / quoted project names, but does not
+      scrub names, phone numbers, or natural-language personal details.
+      Recorded as an observation, not a recommendation.
+
+identity:
+  identify_calls: []   # PostHog identify() is never called
+  group_calls: []      # PostHog group() is never called
+  page_calls: []       # no page() / screen() (desktop app — pages not applicable)
+  alias_calls: []      # no anonymous→authenticated bridge
+  reset_on_logout: false  # no logout teardown clears distinct_id
+  anchor:
+    method: distinct_id
+    source: uuid.uuid4() at first call, persisted via secrets_store (Windows Credential Manager-backed)
+    scope: install (re-rolls only if %LOCALAPPDATA%/ArchHub is wiped)
+
+patterns:
+  naming_style: snake_case
+  naming_convention: free-form snake_case, no consistent object.action grammar
+  centralized: true
+  wrapper_module: app/telemetry.py
+  wrapper_api: "track_event(name: str, **props: Any) -> None"
+  feature_flags_present: true
+  feature_flag_api: "is_feature_enabled(flag: str, default: bool = False) -> bool"
+  pii_redaction:
+    enabled: true
+    chokepoint: pii_redactor.redact_dict (single point — every props dict goes through it)
+    scrubs: [windows_paths, posix_paths, api_keys, oauth_tokens, sentry_dsn, posthog_key, emails, ipv4, project_folder_names_in_quotes]
+    does_not_scrub: [names, phone_numbers, free_form_natural_language_personal_details]
+  error_handling:
+    wrapper_internal: try/except (failure-silent contract)
+    call_sites: every call site additionally wraps with try/except (defense in depth)
+  shutdown:
+    api: "telemetry.shutdown()"
+    wired: confirm atexit hookup in main.py (separate observation; not verified in this pass)
+  async:
+    model: PostHog SDK background thread (sync_mode=False)
+    blocking: never blocks calling thread
+
+observations:
+
+  - id: O1
+    finding: |
+      The entire React UI (app/web_ui/studio-lm.jsx, ~5,000 lines) emits zero
+      tracking events. Greps for posthog/analytics/track/capture/identify in
+      app/web_ui/ only match inside vendored react-dom + babel bundles.
+      All in-canvas actions (node placement, wiring, run-workflow, composer
+      turns, AI chat, skill save, skill load) are invisible to PostHog.
+
+  - id: O2
+    finding: |
+      The marketing site at landing/index.html and landing/security.html
+      contains no analytics snippet — no PostHog, no Google Analytics, no
+      Plausible, no Fathom. The acquisition funnel has no instrumentation.
+
+  - id: O3
+    finding: |
+      cloud_backend/ has zero tracking calls. Stripe + Polar billing
+      webhooks (cloud_backend/billing.py, cloud_backend/polar.py) and
+      sign-in / token issuance (cloud_backend/auth.py, cloud_backend/db.py)
+      process commercially-relevant lifecycle events without emitting any
+      telemetry.
+
+  - id: O4
+    finding: |
+      identify() is never called. distinct_id is the only identity binding
+      and is install-scoped — anonymous. There is no code path that aliases
+      an install UUID to a cloud user_id at sign-in. Users on multiple
+      devices appear as multiple distinct people in PostHog.
+
+  - id: O5
+    finding: |
+      group() is never called. The cloud backend's company / multi-seat
+      entity model is not represented to PostHog. Account-level segmentation
+      (plan tier, seat count, MRR) is not possible without group calls.
+
+  - id: O6
+    finding: |
+      Event-name grammar varies across the 5 events:
+        - app_started        (subject_verb past)
+        - provider_blocked   (subject_adjective)
+        - telemetry_opted_in (subject_verb_phrase)
+        - skill_run          (noun_noun)
+        - user_feedback      (noun_noun)
+      All snake_case, but no consistent object.action pattern.
+
+  - id: O7
+    finding: |
+      user_feedback.comment is a free-form user-typed string. pii_redactor
+      strips paths/keys/emails/IPs/quoted project IDs but does not strip
+      names, phone numbers, or arbitrary personal text. Recorded as
+      observation.
+
+  - id: O8
+    finding: |
+      The 5 LIVE events are LIVE end-to-end: each call site imports
+      `track_event` and is reachable from production code (verified
+      reading main.py launch path, llm_router cool-off path, consent
+      dialog Allow handler, skills.usage.record_run, feedback widget
+      _dispatch). Zero ORPHANED events detected.
+
+  - id: O9
+    finding: |
+      The telemetry module's design contract (`app/telemetry.py` module
+      docstring, lines 1–22) commits to: off-by-default, cloud-first
+      (eu.i.posthog.com), PII-redacted at source, non-blocking,
+      failure-silent, feature-flag-capable. All five contract clauses
+      are enforced in code.
+
+  - id: O10
+    finding: |
+      Sentry shares the same consent flag (`sentry_init.init()` returns
+      False when `telemetry.consent_state() is not True`). One Settings
+      toggle gates both destinations.
+
+  - id: O11
+    finding: |
+      Sentry before_send drops events when PYTEST_CURRENT_TEST is set
+      (test crashes never reach the production dashboard). The
+      PostHog wrapper has no equivalent — events from running tests
+      that opt in would reach PostHog. Recorded as observation only.
+
+orphan_count:
+  total: 0
+  by_domain: {}

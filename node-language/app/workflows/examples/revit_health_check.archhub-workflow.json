@@ -1,0 +1,72 @@
+{
+  "id": "example-revit-health-check",
+  "name": "Revit health check",
+  "description": "Pings Revit, fetches active document info, asks Claude to summarize anything unusual. Useful as a pre-flight check before a modeling session or as a scheduled morning job.",
+  "schema_version": "1.0",
+  "nodes": [
+    {
+      "id": "input_prompt",
+      "type": "input.parameter",
+      "label": "Prompt",
+      "config": {
+        "name": "prompt",
+        "type": "string",
+        "default": "Run a Revit health check. Report on: active document, units, version, view count, and any obvious issues. Be terse.",
+        "description": "Instruction sent to Claude. Override at run time if you want a different focus."
+      },
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "string", "description": "", "required": false, "default": null}
+      ],
+      "position": {"x": 80, "y": 120}
+    },
+    {
+      "id": "llm_reasoning",
+      "type": "llm.complete_with_tools",
+      "label": "Claude with revit_* tools",
+      "config": {
+        "model": "anthropic:claude-sonnet-4-6",
+        "allowed_tools": ["revit_ping", "revit_info", "revit_execute_csharp"]
+      },
+      "inputs": [
+        {"name": "prompt", "type": "string", "description": "", "required": true, "default": null}
+      ],
+      "outputs": [
+        {"name": "text",             "type": "string",      "description": "", "required": false, "default": null},
+        {"name": "tool_invocations", "type": "list",        "description": "", "required": false, "default": null},
+        {"name": "model",            "type": "string",      "description": "", "required": false, "default": null}
+      ],
+      "position": {"x": 380, "y": 120}
+    },
+    {
+      "id": "output_answer",
+      "type": "output.parameter",
+      "label": "Answer",
+      "config": {"name": "answer"},
+      "inputs": [
+        {"name": "value", "type": "string", "description": "", "required": true, "default": null}
+      ],
+      "outputs": [
+        {"name": "value", "type": "string", "description": "", "required": false, "default": null}
+      ],
+      "position": {"x": 700, "y": 120}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "src_node": "input_prompt", "src_port": "value", "dst_node": "llm_reasoning", "dst_port": "prompt"},
+    {"id": "e2", "src_node": "llm_reasoning", "src_port": "text",  "dst_node": "output_answer", "dst_port": "value"}
+  ],
+  "triggers": [
+    {"id": "trig_manual", "type": "manual", "config": {}, "enabled": true}
+  ],
+  "inputs": [
+    {"name": "prompt", "type": "string",
+     "description": "Instruction for the health check", "required": true,
+     "default": "Run a Revit health check. Report on: active document, units, version, view count, and any obvious issues. Be terse."}
+  ],
+  "outputs": [
+    {"name": "answer", "type": "string", "description": "Health-check summary", "required": false, "default": null}
+  ],
+  "created_at": "2026-05-04T08:00:00",
+  "updated_at": "2026-05-04T08:00:00"
+}

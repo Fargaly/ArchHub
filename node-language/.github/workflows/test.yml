@@ -1,0 +1,279 @@
+name: Tests
+
+# Cross-platform test matrix. Runs the top-level `tests/` suite and the
+# `cloud_backend/tests/` suite on Windows + macOS + Linux for every push
+# to main and every pull request. Python 3.14 to match production.
+#
+# Win32 COM tests (Outlook) are skipped on macOS/Linux via
+# `pytest.mark.skipif(sys.platform != 'win32', ...)` at the test module
+# level — pywin32 is not installed on non-Windows runners.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same PR ref so we don't burn minutes on
+# stale commits. `main` pushes use the SHA so each lands independently.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    # 30 (was 20): the windows runner is ~6x slower than macos/ubuntu on the
+    # fs/subprocess-heavy cloud_backend suite and intermittently grazed the 20m
+    # wall → the job was cancelled mid-run (a false red). macos/ubuntu finish
+    # both suites in ~3m, so the extra margin only ever applies to a slow windows
+    # runner; it never masks a real hang (a genuine deadlock still trips 30m).
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        # 3.13 pinned: PyO3 (pydantic-core's Rust core) caps at 3.13.
+        # Local dev boxes can run 3.14; CI cannot until pydantic-core
+        # ships against PyO3 0.23+. Bump alongside build-macos /
+        # build-linux when that lands.
+        python-version: ['3.13']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # FULL history (not the default shallow fetch-depth:1). The brain
+          # suite's tests/test_backfill_skills.py::test_synth_from_git_helper_
+          # shapes_traces mines REAL conventional commits from `git log` of
+          # this checkout (it asserts >=1 feat/fix/docs/... commit exists). A
+          # depth-1 clone exposes only the PR's synthetic merge commit (subject
+          # "Merge … into …", non-conventional) → the helper returns [] and the
+          # test fails. Fetching full history lets that real test run against
+          # real history exactly as it does locally (no skip, no weakening).
+          # Only THIS matrix job needs it — brain-extras/agents/doc-reconcile
+          # don't run that test.
+          fetch-depth: 0
+
+      # PyQt6 on Linux needs xcb + EGL system libs even for headless
+      # tests — Qt resolves a platform plugin during QApplication init.
+      - name: Install Qt6 runtime libs (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-xkb1 libxkbcommon-x11-0 libegl1 \
+            libfontconfig1 libdbus-1-3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            app/requirements.txt
+            cloud_backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt -r cloud_backend/requirements.txt
+          python -m pip install pytest pytest-asyncio
+
+      # Offscreen platform lets PyQt6 init QApplication without a
+      # display server — required for any test that imports a widget
+      # at module load.
+      #
+      # IGNORE SET — must match the blessed local command in CLAUDE.md
+      # (`pytest tests/ -q --ignore=tests/test_bridge_qt.py
+      # --ignore=tests/test_ui_smoke.py`) AND daily-audit.yml. Previously
+      # this step ran `pytest tests/ -v` with NO --ignore, so the required
+      # gate executed a DIFFERENT set than the blessed dev command +
+      # daily audit (REPO-MAP 2026-05-28 §8: "the required gate and the
+      # blessed dev command test different sets"). The three are now aligned.
+      #   * test_bridge_qt / test_ui_smoke — live Qt/WebEngine harnesses
+      #     that need a real window; skipped headless (kept in the ignore
+      #     set so the contract holds if they're reintroduced).
+      #   * test_ui_cdp_smoke — the canonical CDP proof: it clicks the running
+      #     app over CDP (port 9223). It is now COLLECTED + RUN here (no longer
+      #     --ignore'd) so the proof is a live gate the moment a display is
+      #     present; on a pure-headless runner with no display/GPU it SKIPS
+      #     cleanly (a no-op, not a failure). It can also self-launch the app
+      #     out of process when ARCHHUB_CDP_AUTOLAUNCH=1. CDP works on this
+      #     QtWebEngine build once main.py appends --remote-allow-origins (the
+      #     old "CDP handshake stalls" claim was a misdiagnosis).
+      # The --ignore set is no longer passed here: it lives in the root
+      # pyproject.toml [tool.pytest.ini_options] addopts (TCI-03), so a bare
+      # `pytest tests/` inherits the blessed contract and can't drift from the
+      # local dev command / daily-audit. --strict-markers (also in addopts)
+      # makes a typo'd mark an error, not a silent skip.
+      - name: Run app test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest tests/ -v
+
+      - name: Run cloud backend test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest cloud_backend/tests/ -v
+
+      # ─── personal-brain-mcp suite (TCI-01) ────────────────────────────
+      # The 600+ brain tests (acl-redaction, personal-cloud-sync redaction,
+      # secret-resolver, owner-binding, roma, …) were GREEN locally but ran
+      # in NO CI workflow — a whole production package (the BRAIN-FIRST moat)
+      # shipped ungated. Now part of the required cross-platform matrix.
+      # `.[dev]` pulls pydantic + anyio + mcp (now a declared dep) + pytest
+      # + pytest-asyncio. PYTHONPATH=src maps the `personal_brain` package; the
+      # brain's own pyproject [tool.pytest.ini_options] carries its
+      # --strict-markers contract, so this is a bare `pytest` from the package.
+      # The clip/boto3/fastapi-gated tests SKIP cleanly here (no extras) — the
+      # brain-extras job below installs those so they RUN (TCI-08).
+      - name: Install brain package + dev deps
+        run: python -m pip install -e "personal-brain-mcp/.[dev]"
+      - name: Run personal-brain-mcp test suite
+        working-directory: personal-brain-mcp
+        env:
+          PYTHONPATH: src
+        run: pytest -v
+
+  # ─── Brain optional-dep happy paths (TCI-08) ──────────────────────────────
+  # 10 brain tests were skip-gated on optional deps that NO CI installed:
+  # CLIP (multimodal embedding), boto3 (S3 dataset export), Pillow (pHash
+  # dedupe), FastAPI (federation server). The happy paths therefore NEVER ran
+  # anywhere. This job installs those extras and asserts the gated happy-path
+  # tests RUN (0 skips among them) — so a regression in embed_text /
+  # upload_dataset / phash_image / federation_server fails CI instead of
+  # hiding behind a green "skipped". (The inverse-guard tests, which assert the
+  # graceful no-dep behaviour, are deselected here — they intentionally skip
+  # when the dep IS present — as is the real-subprocess daemon test, whose skip
+  # is a bind flake unrelated to these deps.)
+  brain-extras:
+    name: brain optional-dep happy paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install brain + multimodal/cloud/federation extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "personal-brain-mcp/.[dev,multimodal,cloud,federation]"
+      - name: Pre-flight — the optional deps actually import
+        working-directory: personal-brain-mcp
+        env:
+          PYTHONPATH: src
+        run: |
+          python - <<'PY'
+          import importlib, sys
+          from personal_brain.embedding import is_clip_available
+          ok = is_clip_available()
+          import boto3            # noqa: F401  (S3 export)
+          import fastapi          # noqa: F401  (federation)
+          assert ok, "is_clip_available() is False — sentence-transformers/Pillow not importable"
+          print("extras present: CLIP=%s boto3=ok fastapi=ok" % ok)
+          PY
+      # Run ONLY the dep-gated happy-path tests, with -rs so any skip is
+      # visible, then fail the job if even one of them skipped. With the extras
+      # installed there must be ZERO skips here — that is the TCI-08 gate.
+      - name: Run gated happy paths and assert 0 skips
+        working-directory: personal-brain-mcp
+        env:
+          PYTHONPATH: src
+        run: |
+          set -o pipefail
+          pytest -rs -p no:cacheprovider \
+            tests/test_embedding.py \
+            tests/test_phash.py \
+            tests/test_cloud_archive.py \
+            tests/test_slices_9_through_16.py \
+            -k "not (returns_none_when_clip_missing or handles_pil_missing_gracefully or returns_error_when_boto3_missing or with_real_subprocess_daemon)" \
+            | tee pytest-extras.txt
+          if grep -q "SKIPPED" pytest-extras.txt; then
+            echo "::error::a dep-gated brain happy-path test SKIPPED despite extras being installed — TCI-08 regression"
+            grep "SKIPPED" pytest-extras.txt
+            exit 1
+          fi
+          echo "TCI-08 gate green: all dep-gated happy-path tests ran (0 skips)."
+
+  # ─── agents/ package suite (TCI-02) ───────────────────────────────────────
+  # agents/ is a deployed package (archhub-agents on Fly) but had NO test dir —
+  # scheduler.py / dispatcher.py / ceo_routine.py / queue.py ran in production
+  # with zero coverage. This job runs the new agents/tests/ suite. The package
+  # imports only stdlib + intra-package modules, so no third-party install is
+  # needed to exercise the queue / dispatch / scheduling / CEO-loop logic.
+  agents:
+    name: agents package tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install pytest
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-asyncio
+      - name: Run agents test suite
+        run: pytest agents/tests/ -v
+
+  cdp-smoke:
+    name: CDP smoke (xvfb + software GL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Qt6 runtime + xvfb + Mesa software GL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-xkb1 libxkbcommon-x11-0 libegl1 \
+            libgl1 libglx-mesa0 libgl1-mesa-dri libfontconfig1 libdbus-1-3 \
+            libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libasound2t64 xvfb
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt
+          python -m pip install pytest pytest-asyncio websocket-client
+
+      # Run the canonical CDP proof under a virtual display with software GL.
+      # The gate auto-launches the app (ARCHHUB_CDP_AUTOLAUNCH=1) and clicks it
+      # over CDP. xvfb-run gives it a $DISPLAY; LIBGL_ALWAYS_SOFTWARE +
+      # GALLIUM_DRIVER=llvmpipe make the GPU process come up with no real GPU.
+      - name: Run CDP smoke under xvfb
+        env:
+          ARCHHUB_CDP_AUTOLAUNCH: '1'
+          ARCHHUB_CDP_ALLOW_ANY_ORIGIN: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+          # QtWebEngine's GPU/sandbox is unhappy in CI containers; software
+          # rendering + no-sandbox is the standard headless-display recipe.
+          QTWEBENGINE_CHROMIUM_FLAGS: '--no-sandbox --disable-gpu-sandbox --in-process-gpu --use-gl=swiftshader'
+        run: |
+          xvfb-run -a --server-args="-screen 0 1600x1200x24" \
+            python -m pytest tests/test_ui_cdp_smoke.py -rs -v

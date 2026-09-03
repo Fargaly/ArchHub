@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" font-family="Inter, system-ui, sans-serif">
+  <rect width="1200" height="630" fill="#0e0e11"/>
+  <rect width="1200" height="6" y="624" fill="#d97757"/>
+  <!-- mark -->
+  <g transform="translate(96,96)">
+    <rect width="96" height="96" rx="22" fill="#d97757"/>
+    <g transform="translate(16,16) scale(1.0)" fill="none" stroke="#fff" stroke-width="5.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 50 L32 16 L50 50"/><path d="M14 50 L50 50"/>
+    </g>
+    <g transform="translate(16,16)" fill="#fff">
+      <circle cx="32" cy="16" r="7.5"/><circle cx="14" cy="50" r="7.5"/><circle cx="50" cy="50" r="7.5"/>
+    </g>
+  </g>
+  <text x="216" y="170" fill="#ece8e0" font-size="56" font-weight="600" letter-spacing="-1">ArchHub</text>
+  <text x="96" y="330" fill="#ece8e0" font-size="74" font-weight="700" letter-spacing="-2" style="font-family:'Instrument Serif',Georgia,serif">The graph-first AI workspace</text>
+  <text x="96" y="410" fill="#ece8e0" font-size="74" font-weight="700" letter-spacing="-2" style="font-family:'Instrument Serif',Georgia,serif">for <tspan fill="#e8896a" font-style="italic">architects &amp; AEC teams.</tspan></text>
+  <text x="96" y="500" fill="#9b938a" font-size="32">One canvas · every host you already use · local-first.</text>
+  <text x="96" y="556" fill="#6f675e" font-size="26" style="font-family:'JetBrains Mono',monospace">archhub.io</text>
+</svg>

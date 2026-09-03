@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>RevitMCP</Name>
+    <!-- IMPORTANT: replace the Assembly path after the first build with the
+         absolute path to RevitMCP.dll on your machine, e.g.:
+         C:\Users\<you>\source\AutodeskMCP\RevitMCP\bin\Release\net8.0-windows\RevitMCP.dll -->
+    <Assembly>RevitMCP.dll</Assembly>
+    <FullClassName>RevitMCP.RevitMCPApp</FullClassName>
+    <ClientId>9f5c3b6f-2a1c-4e1f-bd0a-7a31c0e22c1d</ClientId>
+    <VendorId>FRGL</VendorId>
+    <VendorDescription>Fargool / Bayaty — RevitMCP bridge for Claude</VendorDescription>
+  </AddIn>
+</RevitAddIns>

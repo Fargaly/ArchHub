@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub — Node Library Cleanup · 2026-06-20</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
+<style>
+  :root{
+    --bg:#0e0e11; --panel:#15151a; --panel2:#1c1c23; --panel3:#22222b;
+    --line:#2a2a33; --line2:#34343f;
+    --ink:#e9e6df; --dim:#9b978d; --faint:#6a665d;
+    --accent:#d97757;            /* ArchHub terracotta */
+    --accent-soft:rgba(217,119,87,.14);
+    --blue:#6a9bcc; --green:#7e9b66; --violet:#9b87c4; --amber:#caa15a;
+    --rad:11px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif;font-size:14px;line-height:1.5}
+  body{padding:34px 30px 120px;max-width:1320px;margin:0 auto}
+  .serif{font-family:'Instrument Serif',serif;font-style:italic;font-weight:400}
+  .mono{font-family:'JetBrains Mono',monospace}
+  h1{font-family:'Instrument Serif',serif;font-style:italic;font-weight:400;
+    font-size:46px;line-height:1.05;color:#fff;letter-spacing:-.5px}
+  .tag{display:inline-block;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--faint);border:1px solid var(--line);
+    border-radius:20px;padding:4px 12px;margin-bottom:18px}
+  .lead{color:var(--dim);font-size:16px;max-width:760px;margin-top:12px}
+  h2{font-size:12px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;margin:54px 0 4px}
+  .sub{color:var(--dim);max-width:780px;margin-bottom:14px}
+  hr{border:0;border-top:1px solid var(--line);margin:10px 0}
+  b{color:var(--ink);font-weight:600}
+  .mut{color:var(--faint)}
+
+  /* ── App frame ─────────────────────────────────────────────── */
+  .app{display:grid;grid-template-columns:296px 1fr;gap:0;
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    box-shadow:0 24px 60px rgba(0,0,0,.45);background:var(--panel);
+    height:680px}
+
+  /* library rail */
+  .lib{background:var(--panel);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;min-height:0}
+  .lib-head{padding:16px 16px 12px}
+  .lib-title{display:flex;align-items:center;justify-content:space-between}
+  .lib-title .t{font-family:'Instrument Serif',serif;font-style:italic;
+    font-size:22px;color:#fff}
+  .lib-title .ct{font-size:11px;color:var(--faint)}
+  .search{margin-top:12px;position:relative}
+  .search input{width:100%;background:var(--panel2);border:1px solid var(--line2);
+    color:var(--ink);border-radius:9px;padding:9px 11px 9px 32px;font-size:13px;
+    font-family:'Inter',sans-serif;outline:none}
+  .search input::placeholder{color:var(--faint)}
+  .search .mag{position:absolute;left:11px;top:9px;color:var(--faint);font-size:13px}
+  .search input:focus{border-color:var(--accent)}
+  .hint{font-size:11px;color:var(--faint);margin-top:8px;line-height:1.45}
+
+  .lib-body{overflow:auto;padding:6px 10px 18px;flex:1;min-height:0}
+  .lib-body::-webkit-scrollbar{width:8px}
+  .lib-body::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
+
+  /* group (family) */
+  .grp{margin:8px 0 2px}
+  .grp-h{display:flex;align-items:center;gap:9px;padding:8px 8px;
+    border-radius:8px;cursor:pointer;user-select:none}
+  .grp-h:hover{background:var(--panel2)}
+  .gi{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
+    font-size:12px;flex:0 0 auto;color:#15151a;font-weight:700}
+  .grp-h .gt{font-size:13px;font-weight:600;color:var(--ink);flex:1}
+  .grp-h .gn{font-size:11px;color:var(--faint)}
+  .chev{color:var(--faint);font-size:10px;transition:transform .15s;width:12px}
+  .grp.open .chev{transform:rotate(90deg)}
+  .grp-d{font-size:11px;color:var(--faint);padding:0 8px 4px 39px;
+    line-height:1.4;display:none}
+  .grp.open .grp-d{display:block}
+
+  .items{display:none;padding:2px 0 6px}
+  .grp.open .items{display:block}
+  .item{display:flex;align-items:center;gap:10px;padding:7px 8px 7px 12px;
+    margin:1px 6px;border-radius:8px;cursor:grab;border:1px solid transparent}
+  .item:hover{background:var(--panel2);border-color:var(--line2)}
+  .swatch{width:9px;height:9px;border-radius:3px;flex:0 0 auto}
+  .item .nm{font-size:12.5px;color:var(--ink);flex:1}
+  .item .nm small{display:block;font-size:10.5px;color:var(--faint);
+    font-weight:400;margin-top:1px}
+  .badge{font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);border:1px solid var(--line2);border-radius:9px;
+    padding:1px 6px}
+  .badge.fold{color:var(--blue);border-color:rgba(106,155,204,.4)}
+
+  /* nested host op list */
+  .ops{margin:2px 10px 8px 30px;border-left:1px solid var(--line2);
+    padding-left:10px;display:none}
+  .item.open + .ops{display:block}
+  .op{font-size:11.5px;color:var(--dim);padding:4px 6px;border-radius:6px;
+    cursor:grab;display:flex;justify-content:space-between}
+  .op:hover{background:var(--panel2);color:var(--ink)}
+  .op .om{font-size:10px;color:var(--faint)}
+
+  /* ── canvas ────────────────────────────────────────────────── */
+  .canvas{position:relative;overflow:hidden;
+    background:
+      radial-gradient(circle at 1px 1px, #20202a 1px, transparent 0) 0 0/24px 24px,
+      #101015}
+  .topbar{position:absolute;top:0;left:0;right:0;height:44px;z-index:5;
+    display:flex;align-items:center;gap:14px;padding:0 16px;
+    background:linear-gradient(#101015,rgba(16,16,21,.0));
+    border-bottom:1px solid rgba(42,42,51,.6)}
+  .topbar .crumb{font-size:12px;color:var(--dim)}
+  .topbar .crumb b{color:var(--ink)}
+  .topbar .spacer{flex:1}
+  .topbar .btn{font-size:12px;color:var(--dim);border:1px solid var(--line2);
+    border-radius:8px;padding:5px 10px;background:var(--panel)}
+  .topbar .btn.run{color:#15151a;background:var(--accent);border-color:var(--accent);
+    font-weight:600}
+
+  /* node card on canvas */
+  .node{position:absolute;background:var(--panel2);border:1px solid var(--line2);
+    border-radius:10px;min-width:172px;box-shadow:0 10px 26px rgba(0,0,0,.45)}
+  .node .bar{font-size:12.5px;font-weight:600;padding:8px 11px;
+    border-radius:9px 9px 0 0;color:#15151a;display:flex;
+    align-items:center;gap:7px}
+  .node .bar .gl{font-size:12px}
+  .node .body{padding:9px 11px;font-size:11px;color:var(--dim)}
+  .node .body .mono{font-size:10px;color:var(--faint)}
+  .node .body .kv{display:flex;justify-content:space-between;margin:2px 0}
+  .node .body .kv b{color:var(--dim);font-weight:500}
+  .port{width:10px;height:10px;border-radius:50%;border:2px solid #101015;
+    position:absolute;top:32px}
+  .port.in{left:-6px;background:var(--dim)}
+  .port.out{right:-6px;background:var(--accent)}
+  .nd-host .bar{background:var(--blue)}
+  .nd-ai   .bar{background:var(--accent)}
+  .nd-data .bar{background:var(--green)}
+  .nd-flow .bar{background:var(--violet)}
+  .nd-out  .bar{background:var(--amber)}
+  svg.wires{position:absolute;inset:0;pointer-events:none;z-index:1}
+  .wire{stroke:var(--accent);stroke-width:2;fill:none;opacity:.5}
+  .wire.b{stroke:var(--blue)}
+  .wire.g{stroke:var(--green)}
+
+  /* explanatory two-col */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px}
+  .card h3{font-size:13px;color:var(--ink);margin-bottom:4px;font-weight:600}
+  .card .why{font-size:12px;color:var(--faint);margin-bottom:10px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  td,th{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{color:var(--faint);font-weight:600;font-size:11px;letter-spacing:.06em;
+    text-transform:uppercase}
+  td.was{color:var(--faint)}
+  td.now b{color:var(--ink)}
+  .arrow{color:var(--accent);padding:0 6px}
+  .pill{display:inline-block;font-size:10px;border:1px solid var(--line2);
+    border-radius:9px;padding:1px 7px;color:var(--dim);margin:2px 3px 0 0}
+  .pill.keep{color:var(--green);border-color:rgba(126,155,102,.4)}
+  .pill.build{color:var(--accent);border-color:rgba(217,119,87,.4)}
+  .pill.dead{color:var(--faint)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:12px;
+    color:var(--dim)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .ls{width:10px;height:10px;border-radius:3px}
+  .foot{margin-top:60px;color:var(--faint);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+
+<div class="tag">Design reference · prototype · 2026-06-20 · not the roadmap</div>
+<h1 class="serif">A library you can read at a glance</h1>
+<p class="lead">Today the node library is <b>99 flat entries in 15 thin categories</b>, three
+taxonomies that disagree, near-synonyms (number vs constant, match vs regex_match),
+and 155 host ops hidden behind raw text config. This prototype regroups everything into
+<b>8 families</b>, folds the look-alikes into one node with a mode, tucks every host op
+<b>under its host</b>, and puts <b>search first</b>. Nothing is deleted — the dead shells
+become real. Drag from the rail; this is the real dark canvas.</p>
+
+<!-- ════════════════ THE APP ════════════════ -->
+<div class="app">
+
+  <!-- LIBRARY RAIL -->
+  <aside class="lib">
+    <div class="lib-head">
+      <div class="lib-title">
+        <span class="t">Library</span>
+        <span class="ct">8 families · search-first</span>
+      </div>
+      <div class="search">
+        <span class="mag">⌕</span>
+        <input id="q" placeholder="Search nodes &amp; apps — try “list walls”, “sort”, “if”" oninput="filt(this.value)"/>
+      </div>
+      <div class="hint">Type what you want to do. Results rank by intent — you never
+        scroll a wall of verbs. Press <b>⌘K</b> anywhere to open this.</div>
+    </div>
+
+    <div class="lib-body" id="body">
+      <!-- families injected by JS -->
+    </div>
+  </aside>
+
+  <!-- CANVAS -->
+  <section class="canvas">
+    <div class="topbar">
+      <span class="crumb">Skill · <b>Wall audit → Excel</b></span>
+      <span class="spacer"></span>
+      <span class="btn">Plan</span>
+      <span class="btn run">Run ▸</span>
+    </div>
+
+    <svg class="wires" viewBox="0 0 900 620" preserveAspectRatio="none">
+      <path class="wire b" d="M212,138 C300,138 300,150 372,150"/>
+      <path class="wire g" d="M544,162 C620,162 620,300 372,300"/>
+      <path class="wire"   d="M212,300 C300,300 300,312 372,312"/>
+      <path class="wire"   d="M560,324 C660,324 660,470 372,470"/>
+    </svg>
+
+    <!-- App / Host node (the connector, op chosen inline) -->
+    <div class="node nd-host" style="left:40px;top:96px">
+      <div class="bar"><span class="gl">▦</span> Revit
+        <span style="flex:1"></span></div>
+      <div class="body">
+        <div class="kv"><b>op</b><span>list_walls</span></div>
+        <div class="kv mono">connector.run · live</div>
+      </div>
+      <span class="port out"></span>
+    </div>
+
+    <!-- AI node -->
+    <div class="node nd-ai" style="left:392px;top:108px">
+      <div class="bar"><span class="gl">✦</span> AI · Tools</div>
+      <div class="body">
+        <div class="kv"><b>model</b><span>auto</span></div>
+        <div class="kv mono">llm.complete_with_tools</div>
+      </div>
+      <span class="port in"></span><span class="port out"></span>
+    </div>
+
+    <!-- Data node -->
+    <div class="node nd-data" style="left:40px;top:258px">
+      <div class="bar"><span class="gl">◧</span> Reshape · Filter</div>
+      <div class="body">
+        <div class="kv"><b>op</b><span>filter</span></div>
+        <div class="kv mono">transform.apply</div>
+      </div>
+      <span class="port in"></span><span class="port out"></span>
+    </div>
+
+    <!-- Flow node -->
+    <div class="node nd-flow" style="left:392px;top:270px">
+      <div class="bar"><span class="gl">⑂</span> If / Else</div>
+      <div class="body">
+        <div class="kv mono">control.if</div>
+      </div>
+      <span class="port in"></span><span class="port out"></span>
+    </div>
+
+    <!-- Output node -->
+    <div class="node nd-out" style="left:392px;top:432px">
+      <div class="bar"><span class="gl">▤</span> Save · Excel</div>
+      <div class="body">
+        <div class="kv"><b>op</b><span>write_range</span></div>
+        <div class="kv mono">connector.run · Excel</div>
+      </div>
+      <span class="port in"></span>
+    </div>
+  </section>
+</div>
+
+<!-- legend under the app -->
+<div class="legend">
+  <span><i class="ls" style="background:var(--blue)"></i> Apps &amp; Hosts</span>
+  <span><i class="ls" style="background:var(--accent)"></i> AI</span>
+  <span><i class="ls" style="background:var(--green)"></i> Data &amp; Reshape</span>
+  <span><i class="ls" style="background:var(--violet)"></i> Flow &amp; Logic</span>
+  <span><i class="ls" style="background:var(--amber)"></i> Output</span>
+  <span><i class="ls" style="background:#5a5a4a"></i> Build / Code</span>
+  <span class="mut">— 8 families, one swatch each. No more ◆-for-everything.</span>
+</div>
+
+<!-- ════════════════ BEFORE / AFTER ════════════════ -->
+<h2>What changed</h2>
+<p class="sub">15 disagreeing categories &amp; 99 flat cards → <b>8 families</b>. The look-alikes
+collapse into one node with a mode selector. Host ops live under the host. Three taxonomies
+become one.</p>
+
+<table>
+  <thead><tr><th>Today (the mess)</th><th></th><th>This prototype</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="was">6 INPUT cards — <span class="mono">number · text · boolean · file · color · parameter</span> — all the same <span class="mono">data.constant</span></td>
+      <td class="arrow">→</td>
+      <td class="now"><b>1 “Value” node</b> with a type switch (number/text/bool/file/color). <span class="mono">parameter</span> stays separate (it’s a run-time input, different intent).</td>
+    </tr>
+    <tr>
+      <td class="was">16 SHAPE verbs — <span class="mono">filter · sort · group_by · reduce · accumulate · dedupe · unique · count · first · last · flatten · pluck · coalesce · ensure · json_codec · join</span></td>
+      <td class="arrow">→</td>
+      <td class="now"><b>“Reshape” family</b>: one card per real shape (Filter, Sort, Group, Join, Reduce, Pick) — the rest are <i>op</i> presets inside, not separate cards.</td>
+    </tr>
+    <tr>
+      <td class="was">12 MATH cards (add…not_op) + 9 TEXT cards (concat…regex_split)</td>
+      <td class="arrow">→</td>
+      <td class="now"><b>1 “Math” + 1 “Text” node</b>, each with an op selector. <span class="mono">match</span>/<span class="mono">regex_match</span>/<span class="mono">regex_*</span> fold into Text·op=regex.</td>
+    </tr>
+    <tr>
+      <td class="was">4 AI cards + a hidden <span class="mono">ai</span> selector that already unifies them</td>
+      <td class="arrow">→</td>
+      <td class="now"><b>1 “AI” node</b>, mode = Chat / Complete / Classify / Tools / Plan. The selector that already exists becomes the visible one.</td>
+    </tr>
+    <tr>
+      <td class="was">155 host ops reachable only as raw <span class="mono">host+op</span> text on connector.run; 19 hosts flat</td>
+      <td class="arrow">→</td>
+      <td class="now"><b>Apps &amp; Hosts family</b> — expand a host (Revit, Excel…) to see <b>its</b> ops as a searchable sub-list. Pick the op, it fills <span class="mono">connector.run</span>.</td>
+    </tr>
+    <tr>
+      <td class="was">8 dead JSX cats (host/read/filter/transform/annotate/compose/connector_op/custom) + 8 unreachable <span class="mono">doc.*</span> + 9 hidden legacy primitives</td>
+      <td class="arrow">→</td>
+      <td class="now">Dead cats <b>removed from the JSX map</b> (no items, no intent). <span class="mono">doc.*</span> <b>surfaced</b> under each host as “Open document”. Hidden legacy stays hidden (back-compat) — not shown, not deleted.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="cols">
+  <div class="card">
+    <h3>One taxonomy, derived not hand-kept</h3>
+    <div class="why">No more grammar-15 vs JSX-23 vs engine-6 disagreeing.</div>
+    The 8 families are computed from each primitive’s <span class="mono">cat</span> by a
+    single <span class="mono">FAMILY_OF</span> map. The JSX <span class="mono">CAT</span>
+    object is generated from the grammar payload, so it can never grow stale entries again —
+    the “everything renders as NODE” bug class is gone at the root.
+    <div style="margin-top:10px">
+      <span class="pill keep">Apps &amp; Hosts</span>
+      <span class="pill keep">AI</span>
+      <span class="pill keep">Data &amp; Reshape</span>
+      <span class="pill keep">Flow &amp; Logic</span>
+      <span class="pill keep">Output</span>
+      <span class="pill keep">Inputs</span>
+      <span class="pill keep">Build / Code</span>
+      <span class="pill keep">Skills &amp; Notes</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Nothing trimmed — shells become real</h3>
+    <div class="why">MAKE-IT-REAL-NEVER-TRIM: a placeholder is built, not deleted.</div>
+    <span class="pill build">doc.* → “Open document” op</span>
+    <span class="pill build">155 ops → host sub-list</span>
+    <span class="pill build">hidden ai/logic selector → visible mode</span>
+    <span class="pill build">coalesce/ensure → Reshape ops</span>
+    <span class="pill build">watch.* → live Preview node</span>
+    <div style="margin-top:10px;font-size:12px;color:var(--faint)">
+      The only thing actually <i>removed</i> is the 8 empty JSX category
+      definitions — they emit no node, carry no intent, the founder never asked for them,
+      and they cause a render bug. That is the sole default-delete, and it’s justified
+      against all four MAKE-IT-REAL tests.
+    </div>
+  </div>
+</div>
+
+<div class="foot">ArchHub · node library cleanup prototype · drag a node, expand a host, search first.
+  Real tokens: terracotta #d97757 · Instrument Serif · Inter.</div>
+
+<script>
+/* ── The 8 families. Items use REAL grammar kinds / engine types. ── */
+const FAM = [
+  { id:"host", name:"Apps & Hosts", icon:"▦", color:"var(--blue)",
+    desc:"Every connected app. Expand a host to see its ops — pick one, it fills connector.run.",
+    items:[
+      {nm:"Revit", sub:"22 ops · live", host:true, ops:[
+        ["list_walls","connector.run"],["list_sheets","connector.run"],
+        ["set_parameter","connector.run"],["place_tags","connector.run"],
+        ["Open document","doc.revit · built real"]]},
+      {nm:"Excel", sub:"7 ops", host:true, ops:[
+        ["read_range","connector.run"],["write_range","connector.run"],
+        ["export_pdf","connector.run"],["Open document","doc.csv"]]},
+      {nm:"AutoCAD", sub:"10 ops", host:true, ops:[
+        ["list_layers","connector.run"],["run_command","connector.run"],
+        ["Open document","doc.dwg"]]},
+      {nm:"Speckle", sub:"send / receive", host:true, ops:[
+        ["send","connector.run"],["receive","connector.run"]]},
+      {nm:"Blender · Rhino · 3ds Max · Outlook · …", sub:"15 more hosts", host:true, ops:[
+        ["…expand any host for its ops","connector.run"]]},
+    ]},
+  { id:"ai", name:"AI", icon:"✦", color:"var(--accent)",
+    desc:"One AI node. Choose the mode — the rail shows only that mode's settings.",
+    items:[
+      {nm:"AI", sub:"mode: Chat · Complete · Classify · Tools · Plan", fold:true,
+        eng:"conversation.chat / llm.* / ai.plan"},
+    ]},
+  { id:"data", name:"Data & Reshape", icon:"◧", color:"var(--green)",
+    desc:"Shape lists & records. One card per real shape; finer ops live inside as a selector.",
+    items:[
+      {nm:"Filter", sub:"keep the items you want", eng:"filter.apply"},
+      {nm:"Sort", sub:"sort · reverse", eng:"transform.apply op=sort"},
+      {nm:"Group", sub:"partition by key", eng:"data.group_by"},
+      {nm:"Join", sub:"reconcile two lists on a key", eng:"data.join"},
+      {nm:"Reduce", sub:"fold a list to one value", eng:"data.reduce"},
+      {nm:"Pick", sub:"first · last · pluck · count · flatten · unique", fold:true,
+        eng:"transform.apply (op selector)"},
+      {nm:"Math", sub:"add · subtract · compare · and/or — op selector", fold:true,
+        eng:"math.op"},
+      {nm:"Text", sub:"concat · format · split · replace · regex — op selector", fold:true,
+        eng:"text.op"},
+      {nm:"JSON", sub:"parse · stringify", eng:"shape.json_codec"},
+    ]},
+  { id:"flow", name:"Flow & Logic", icon:"⑂", color:"var(--violet)",
+    desc:"Branch, loop, gate. Wire pass/fail into the next step.",
+    items:[
+      {nm:"If / Else", sub:"route by predicate", eng:"control.if"},
+      {nm:"Switch", sub:"multi-way branch", eng:"control.switch"},
+      {nm:"For Each", sub:"iterate a list", eng:"control.foreach"},
+      {nm:"Merge", sub:"combine two branches", eng:"control.merge"},
+      {nm:"Check", sub:"assert + sense — test or read a property, branch on it", fold:true,
+        eng:"verify.assert / sense.extract"},
+    ]},
+  { id:"out", name:"Output", icon:"▤", color:"var(--amber)",
+    desc:"Where results land — a value, a file, the screen, or back into an app.",
+    items:[
+      {nm:"Result", sub:"the graph's result key", eng:"output.parameter"},
+      {nm:"Save to file", sub:"write to disk", eng:"output.file"},
+      {nm:"Display", sub:"show the final value", eng:"output.display"},
+      {nm:"Preview", sub:"image · json · list · table — live peek", fold:true,
+        eng:"watch.* (built real)"},
+      {nm:"Console", sub:"log to trace", eng:"output.console"},
+    ]},
+  { id:"in", name:"Inputs", icon:"◆", color:"var(--dim)",
+    desc:"Values you feed the graph.",
+    items:[
+      {nm:"Value", sub:"number · text · bool · file · color — type switch", fold:true,
+        eng:"data.constant"},
+      {nm:"Parameter", sub:"a run-time-bound input the caller supplies", eng:"input.parameter"},
+    ]},
+  { id:"code", name:"Build & Code", icon:"⌘", color:"#8a8a74",
+    desc:"Drop to code, or call an MCP tool, when no node fits.",
+    items:[
+      {nm:"Code", sub:"a Python expression / snippet", eng:"code.expression"},
+      {nm:"Tool", sub:"call any MCP tool directly", eng:"tool.call"},
+    ]},
+  { id:"skill", name:"Skills & Notes", icon:"✶", color:"var(--blue)",
+    desc:"Reuse a saved skill as one node; annotate the canvas.",
+    items:[
+      {nm:"Skill", sub:"a saved skill graph, reused as one node", eng:"subgraph.user"},
+      {nm:"Note", sub:"a sticky note on the canvas", eng:"ux-only"},
+    ]},
+];
+
+const body = document.getElementById('body');
+
+function render(filter){
+  body.innerHTML='';
+  const f = (filter||'').trim().toLowerCase();
+  FAM.forEach((fam,fi)=>{
+    // match family or any item / op
+    const matchItems = fam.items.filter(it=>{
+      if(!f) return true;
+      const hay = (it.nm+' '+(it.sub||'')+' '+(it.eng||'')+' '+
+        (it.ops?it.ops.map(o=>o[0]+' '+o[1]).join(' '):'')).toLowerCase();
+      return hay.includes(f) || fam.name.toLowerCase().includes(f);
+    });
+    if(f && matchItems.length===0) return;
+
+    const open = f ? true : (fi<3); // first 3 families open by default; all open on search
+    const grp=document.createElement('div');
+    grp.className='grp'+(open?' open':'');
+
+    const gh=document.createElement('div');
+    gh.className='grp-h';
+    gh.innerHTML=
+      `<span class="chev">▶</span>`+
+      `<span class="gi" style="background:${fam.color}">${fam.icon}</span>`+
+      `<span class="gt">${fam.name}</span>`+
+      `<span class="gn">${matchItems.length}</span>`;
+    gh.onclick=()=>grp.classList.toggle('open');
+    grp.appendChild(gh);
+
+    const gd=document.createElement('div');
+    gd.className='grp-d'; gd.textContent=fam.desc;
+    grp.appendChild(gd);
+
+    const items=document.createElement('div');
+    items.className='items';
+    matchItems.forEach(it=>{
+      const el=document.createElement('div');
+      el.className='item';
+      el.innerHTML=
+        `<span class="swatch" style="background:${fam.color}"></span>`+
+        `<span class="nm">${it.nm}<small>${it.sub||it.eng||''}</small></span>`+
+        (it.host?`<span class="badge fold">${(it.ops||[]).length} ops ▸</span>`:
+          it.fold?`<span class="badge fold">modes ▸</span>`:
+          `<span class="badge">node</span>`);
+      items.appendChild(el);
+
+      if(it.host && it.ops){
+        const ops=document.createElement('div'); ops.className='ops';
+        it.ops.forEach(o=>{
+          const od=document.createElement('div'); od.className='op';
+          od.innerHTML=`<span>${o[0]}</span><span class="om mono">${o[1]}</span>`;
+          ops.appendChild(od);
+        });
+        items.appendChild(ops);
+        el.onclick=()=>{ el.classList.toggle('open');
+          ops.style.display = el.classList.contains('open')?'block':'none'; };
+        ops.style.display = f?'block':'none';
+        if(f) el.classList.add('open');
+      }
+    });
+    grp.appendChild(items);
+    body.appendChild(grp);
+  });
+  if(!body.children.length){
+    body.innerHTML='<div class="hint" style="padding:20px 12px">No node matches —'+
+      ' but you can describe it to the Composer and it’ll build one.</div>';
+  }
+}
+function filt(v){ render(v); }
+render('');
+</script>
+</body>
+</html>

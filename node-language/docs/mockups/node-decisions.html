@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>ArchHub — 3 node decisions to make</title>
+<style>
+  :root{
+    --bg:#0e0e11; --panel:#15151a; --soft:#1a1a21; --deep:#101014;
+    --line:#2a2a32; --lineSoft:#202028;
+    --ink:#e6e3dd; --inkSoft:#b8b4ab; --inkMuted:#76736b; --inkDim:#4a4842;
+    --accent:#d97757; --accentDim:#d9775722; --cyan:#6a9bcc; --purple:#9b8bd4;
+    --ok:#788c5d; --warn:#c8a44d;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+    --sans:'Inter',system-ui,sans-serif;
+    --serif:'Instrument Serif',Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);
+       padding:32px 40px 80px;line-height:1.5}
+  h1{font-family:var(--serif);font-size:34px;font-weight:400;color:var(--accent);
+     letter-spacing:-.01em;margin-bottom:6px}
+  .sub{color:var(--inkMuted);font-family:var(--mono);font-size:12px;
+       letter-spacing:.06em;margin-bottom:34px}
+  h2{font-family:var(--serif);font-size:23px;font-weight:400;margin:38px 0 4px;
+     border-top:1px solid var(--line);padding-top:26px}
+  .q{color:var(--inkSoft);font-size:14px;margin-bottom:18px;max-width:780px}
+  .row{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+  .opt{flex:1;min-width:340px;background:var(--panel);
+       border:1px solid var(--line);border-radius:10px;padding:18px 18px 20px}
+  .opt.pick{border-color:var(--accent)}
+  .opthead{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
+  .optname{font-size:15px;font-weight:600}
+  .tag{font-family:var(--mono);font-size:9px;letter-spacing:.1em;
+       padding:2px 7px;border-radius:3px;text-transform:uppercase}
+  .tag.rec{background:var(--accentDim);color:var(--accent)}
+  .tag.alt{background:var(--soft);color:var(--inkMuted)}
+  .optwhy{color:var(--inkMuted);font-size:12px;margin-bottom:14px}
+  .pro{color:var(--ok);font-size:12px;margin:3px 0}
+  .con{color:var(--warn);font-size:12px;margin:3px 0}
+  .stage{background:var(--deep);border:1px solid var(--lineSoft);
+         border-radius:8px;padding:20px;margin:12px 0;
+         min-height:180px;display:flex;gap:18px;flex-wrap:wrap;
+         align-items:flex-start;justify-content:center}
+  /* ---- fake node renders ---- */
+  .node{background:var(--panel);border:1px solid var(--line);
+        border-radius:7px;width:240px;font-family:var(--sans)}
+  .node.host{border-color:#3a4a5a}
+  .node.cell{border-color:var(--line)}
+  .nhead{display:flex;align-items:center;gap:7px;padding:7px 10px;
+         border-bottom:1px solid var(--lineSoft);font-size:11px}
+  .ndot{width:6px;height:6px;border-radius:50%}
+  .ncat{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;
+        text-transform:uppercase;color:var(--inkMuted)}
+  .ntitle{font-family:var(--serif);font-size:15px;padding:6px 10px 2px}
+  .nsub{font-family:var(--mono);font-size:9px;color:var(--inkMuted);
+        padding:0 10px 8px}
+  .prow{display:flex;align-items:center;gap:8px;padding:4px 10px;font-size:11px}
+  .plabel{font-family:var(--mono);font-size:9px;color:var(--inkMuted);
+          letter-spacing:.05em;width:78px;flex-shrink:0}
+  .pctl{flex:1;background:var(--bg);border:1px solid var(--line);
+        border-radius:4px;padding:3px 7px;font-size:10px;color:var(--ink);
+        display:flex;align-items:center;justify-content:space-between}
+  .star{color:var(--accent);font-size:11px;cursor:default}
+  .star.dim{color:var(--inkDim)}
+  .pgroup{font-family:var(--mono);font-size:8px;letter-spacing:.14em;
+          color:var(--inkDim);padding:8px 10px 2px;text-transform:uppercase}
+  .chip{background:#E87D0D22;color:#E87D0D;border-radius:3px;
+        padding:1px 6px;font-size:9px;margin-right:3px}
+  .slider{flex:1;height:4px;background:var(--line);border-radius:2px;
+          position:relative}
+  .slider::after{content:'';position:absolute;left:42%;top:-3px;
+        width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  .foot{border-top:1px solid var(--lineSoft);padding:6px 10px;
+        display:flex;gap:8px;flex-wrap:wrap}
+  .port{font-family:var(--mono);font-size:8.5px;color:var(--inkMuted)}
+  .preview{margin:8px 10px;background:var(--deep);
+           border:1px solid var(--lineSoft);border-radius:4px;
+           padding:8px;font-family:var(--mono);font-size:9px;
+           color:var(--inkSoft);display:flex;gap:8px;align-items:center}
+  .thumb{width:46px;height:30px;background:
+        repeating-linear-gradient(90deg,#E87D0D33 0 5px,transparent 5px 10px);
+        border:1px solid var(--lineSoft);border-radius:3px;flex-shrink:0}
+  .expandbtn{font-family:var(--mono);font-size:9px;color:var(--accent);
+             padding:5px 10px;cursor:default;border-top:1px solid var(--lineSoft)}
+  .aifill{background:var(--accentDim);border:1px solid var(--accent);
+          border-radius:5px;padding:6px 8px;margin:4px 10px;
+          font-size:10px;color:var(--ink)}
+  .aifill .accept{color:var(--ok);font-family:var(--mono);font-size:9px}
+  .aifill .reject{color:var(--warn);font-family:var(--mono);font-size:9px}
+  .ghost{color:var(--accent);font-style:italic}
+  .caption{text-align:center;font-family:var(--mono);font-size:9.5px;
+           color:var(--inkMuted);margin-top:8px;letter-spacing:.04em}
+  .verdict{background:var(--accentDim);border-left:3px solid var(--accent);
+           padding:12px 16px;border-radius:0 6px 6px 0;margin-top:14px;
+           font-size:13px;color:var(--inkSoft)}
+  .verdict b{color:var(--accent)}
+  .decide{font-family:var(--mono);font-size:11px;color:var(--accent);
+          margin-top:10px;letter-spacing:.04em}
+</style>
+</head>
+<body>
+
+<h1>3 decisions — pick what you want</h1>
+<div class="sub">ArchHub node design · 2026-05-15 · these are the questions the R&amp;D agents need you to answer</div>
+
+<!-- ============ DECISION 1 ============ -->
+<h2>Decision 1 — should host nodes look bigger than logic nodes?</h2>
+<div class="q">A host node (Revit, AutoCAD…) needs a lot of controls — dropdowns for views, layers, levels, sliders for limits. A logic/AI node ("filter walls", "ask Claude") needs almost none. So: do we let host nodes be tall and detailed, while small nodes stay compact? Or force everything to look the same at rest?</div>
+
+<div class="row">
+
+  <div class="opt pick">
+    <div class="opthead"><span class="optname">Option A — two sizes</span>
+      <span class="tag rec">recommended</span></div>
+    <div class="optwhy">Host nodes show their full control panel. Logic nodes stay tiny. Honest about what each node is.</div>
+    <div class="stage">
+      <!-- big host node -->
+      <div class="node host">
+        <div class="nhead"><span class="ndot" style="background:#788c5d"></span>
+          <span class="ncat">HOST · live</span>
+          <span style="flex:1"></span><span class="port">↻</span></div>
+        <div class="ntitle">Revit 2025</div>
+        <div class="nsub">Tower-A_central.rvt</div>
+        <div class="pgroup">Document</div>
+        <div class="prow"><span class="plabel">view</span>
+          <span class="pctl">L01-Floor-Plan ▾</span><span class="star">✦</span></div>
+        <div class="prow"><span class="plabel">phase</span>
+          <span class="pctl">New Construction ▾</span><span class="star">✦</span></div>
+        <div class="pgroup">Filter</div>
+        <div class="prow"><span class="plabel">categories</span>
+          <span class="pctl"><span><span class="chip">walls</span><span class="chip">doors</span></span></span><span class="star">✦</span></div>
+        <div class="prow"><span class="plabel">limit</span>
+          <span class="pctl"><span class="slider"></span><span style="margin-left:6px">500</span></span><span class="star">✦</span></div>
+        <div class="preview"><span class="thumb"></span>
+          <span>47 walls · 12 doors<br>cooked 12s ago</span></div>
+        <div class="foot"><span class="port">walls ●</span><span class="port">doors ●</span>
+          <span class="port">rooms ●</span><span class="port">levels ●</span></div>
+      </div>
+      <!-- small cell -->
+      <div class="node cell" style="width:180px">
+        <div class="nhead"><span class="ndot" style="background:#9b8bd4"></span>
+          <span class="ncat">FILTER</span></div>
+        <div class="ntitle" style="font-size:13px">where exterior</div>
+        <div class="preview" style="margin-bottom:8px"><span>31 of 47 walls</span></div>
+        <div class="foot"><span class="port">in ●</span><span class="port">out ●</span></div>
+      </div>
+    </div>
+    <div class="caption">host node = full panel · logic node = compact</div>
+    <div class="pro">✓ Architect sees + controls everything on the host without extra clicks</div>
+    <div class="pro">✓ Canvas stays readable — small nodes don't waste space</div>
+    <div class="con">△ Two visual "shapes" on the canvas — slightly less uniform</div>
+  </div>
+
+  <div class="opt">
+    <div class="opthead"><span class="optname">Option B — everything collapsed</span>
+      <span class="tag alt">alternative</span></div>
+    <div class="optwhy">Every node is the same small size at rest. Host params hide behind an "expand" button.</div>
+    <div class="stage">
+      <div class="node host">
+        <div class="nhead"><span class="ndot" style="background:#788c5d"></span>
+          <span class="ncat">HOST · live</span></div>
+        <div class="ntitle">Revit 2025</div>
+        <div class="nsub">Tower-A_central.rvt</div>
+        <div class="preview" style="margin-bottom:0"><span class="thumb"></span>
+          <span>47 walls · 12 doors</span></div>
+        <div class="expandbtn">▾ expand 9 parameters</div>
+        <div class="foot"><span class="port">walls ●</span><span class="port">doors ●</span></div>
+      </div>
+      <div class="node cell" style="width:180px">
+        <div class="nhead"><span class="ndot" style="background:#9b8bd4"></span>
+          <span class="ncat">FILTER</span></div>
+        <div class="ntitle" style="font-size:13px">where exterior</div>
+        <div class="preview" style="margin-bottom:8px"><span>31 of 47 walls</span></div>
+        <div class="foot"><span class="port">in ●</span><span class="port">out ●</span></div>
+      </div>
+    </div>
+    <div class="caption">all nodes same size · params behind a button</div>
+    <div class="pro">✓ Canvas looks perfectly uniform</div>
+    <div class="con">△ Every host tweak = a click to expand first</div>
+    <div class="con">△ Controls hidden — less "I'm in control" feel</div>
+  </div>
+
+</div>
+<div class="verdict"><b>My take:</b> Option A. You said you want to control everything and see the parameters. Hiding them behind a button fights that. A host node is genuinely a bigger thing than "filter walls" — letting it look bigger is honest, not messy. We keep it tidy with a collapse toggle for when you want it small.</div>
+<div class="decide">DECIDE → "A" (two sizes) or "B" (all collapsed)</div>
+
+<!-- ============ DECISION 2 ============ -->
+<h2>Decision 2 — when AI fills in values, one field at a time or the whole node?</h2>
+<div class="q">The ✦ button = "AI, fill this in for me." Should each parameter have its own ✦ (AI fills just that one field, you keep control of the rest)? Or one ✦ for the whole node (AI fills everything at once)?</div>
+
+<div class="row">
+
+  <div class="opt pick">
+    <div class="opthead"><span class="optname">Option A — ✦ per field</span>
+      <span class="tag rec">recommended</span></div>
+    <div class="optwhy">Each row has its own ✦. AI proposes one value; you Accept or Reject. The rest of the node is untouched.</div>
+    <div class="stage">
+      <div class="node host">
+        <div class="nhead"><span class="ndot" style="background:#788c5d"></span>
+          <span class="ncat">HOST · live</span></div>
+        <div class="ntitle">Revit 2025</div>
+        <div class="prow"><span class="plabel">view</span>
+          <span class="pctl">L01-Floor-Plan ▾</span><span class="star">✦</span></div>
+        <div class="prow"><span class="plabel">categories</span>
+          <span class="pctl"><span class="chip">walls</span></span><span class="star">✦</span></div>
+        <div class="prow"><span class="plabel">limit</span>
+          <span class="pctl"><span class="slider"></span><span style="margin-left:6px">—</span></span>
+          <span class="star">✦</span></div>
+        <div class="aifill">✦ propose <b>250</b> <span class="ghost">— matches your last 3 schedule runs</span><br>
+          <span style="margin-top:4px;display:inline-block">
+          <span class="accept">[Accept ↵]</span>&nbsp;&nbsp;
+          <span class="reject">[Reject Esc]</span></span></div>
+      </div>
+    </div>
+    <div class="caption">AI proposes ONE value · you keep the rest</div>
+    <div class="pro">✓ You stay in control — AI never silently changes 8 things</div>
+    <div class="pro">✓ Every AI suggestion is reviewable + reversible on its own</div>
+    <div class="con">△ Filling a fresh node = several clicks (or "fill all" shortcut)</div>
+  </div>
+
+  <div class="opt">
+    <div class="opthead"><span class="optname">Option B — ✦ whole node</span>
+      <span class="tag alt">alternative</span></div>
+    <div class="optwhy">One ✦ on the node header. AI fills every parameter at once from your intent.</div>
+    <div class="stage">
+      <div class="node host">
+        <div class="nhead"><span class="ndot" style="background:#788c5d"></span>
+          <span class="ncat">HOST · live</span>
+          <span style="flex:1"></span><span class="star">✦ fill all</span></div>
+        <div class="ntitle">Revit 2025</div>
+        <div class="prow"><span class="plabel">view</span>
+          <span class="pctl ghost">L01-Floor-Plan ▾</span></div>
+        <div class="prow"><span class="plabel">categories</span>
+          <span class="pctl"><span class="chip">walls</span><span class="chip">doors</span></span></div>
+        <div class="prow"><span class="plabel">limit</span>
+          <span class="pctl"><span class="slider"></span><span style="margin-left:6px;color:#d97757">250</span></span></div>
+        <div class="preview"><span style="color:#d97757">✦ AI set 3 fields — review before run</span></div>
+      </div>
+    </div>
+    <div class="caption">AI fills the whole node in one shot</div>
+    <div class="pro">✓ Fast — one click sets up the whole node</div>
+    <div class="con">△ AI changed multiple things at once — harder to see what + undo</div>
+    <div class="con">△ Feels like the AI is driving, not you</div>
+  </div>
+
+</div>
+<div class="verdict"><b>My take:</b> Option A — but with a "✦ fill all" shortcut in the header too. So per-field is the default (you stay in control), and "fill all" is there when you want speed. Best of both. You said "AI orchestrates, never the substrate" — per-field ✦ is exactly that.</div>
+<div class="decide">DECIDE → "A" (per field) · "B" (whole node) · or "A + fill-all shortcut"</div>
+
+<!-- ============ DECISION 3 ============ -->
+<h2>Decision 3 — all 18 hosts working: how fast?</h2>
+<div class="q">You said ALL connectors must work. Real talk: 4 hosts have working connectors TODAY. The rest need building. This isn't a look-at-pictures decision — it's a "how do we sequence the work" decision.</div>
+
+<div class="row">
+  <div class="opt" style="flex:1 1 100%">
+    <div class="optname" style="margin-bottom:12px">Honest connector status — right now</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr style="color:#76736b;font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-align:left">
+        <th style="padding:6px 8px">HOST</th><th>STATUS TODAY</th><th>WHAT'S NEEDED</th></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#788c5d">● AutoCAD</td>
+        <td style="color:#788c5d">WORKS — broker live on :48885</td><td style="color:#76736b">add-in built for AutoCAD 2026 · older versions need a build</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#788c5d">● Revit</td>
+        <td style="color:#788c5d">WORKS — add-in for 2020/23/24/25</td><td style="color:#76736b">load the connector inside Revit, then ping</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#788c5d">● Outlook</td>
+        <td style="color:#788c5d">WORKS — via Windows COM</td><td style="color:#76736b">classic Outlook only; "New Outlook" needs Graph API</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#788c5d">● LM Studio · Ollama</td>
+        <td style="color:#788c5d">WORKS — local LLM servers</td><td style="color:#76736b">none — detected + usable now</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#c8a44d">◐ 3ds Max</td>
+        <td style="color:#c8a44d">PARTIAL — broker ready, no add-in</td><td style="color:#76736b">build the Max add-in (.NET / MaxScript)</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#c8a44d">◐ Blender · Rhino · Speckle</td>
+        <td style="color:#c8a44d">PARTIAL — runners exist</td><td style="color:#76736b">finish + harden the runner; wire to canvas</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#c8a44d">◐ Teams · Notion · Dropbox</td>
+        <td style="color:#c8a44d">DETECTED — limited operations</td><td style="color:#76736b">build the action set (read/write) per host</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#76736b">○ Word · Excel · PowerPoint</td>
+        <td style="color:#76736b">DETECTED — COM available, ops thin</td><td style="color:#76736b">build the COM action set</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#76736b">○ Photoshop · Illustrator · InDesign</td>
+        <td style="color:#76736b">DETECTED only</td><td style="color:#76736b">build the COM / UXP action set per app</td></tr>
+      <tr style="border-top:1px solid #202028"><td style="padding:7px 8px;color:#76736b">○ Antigravity</td>
+        <td style="color:#76736b">DETECTED only</td><td style="color:#76736b">define what ArchHub does with it</td></tr>
+    </table>
+    <div class="verdict" style="margin-top:18px"><b>The honest answer:</b> "all 18 hosts working" is real engineering — roughly 5–7 weeks, not one. The framework IS real (brokers, health monitor with auto-repair, the add-in build pipeline). What's missing is the per-host action code. <b>Nothing will be faked.</b> When a host isn't connected, ArchHub now says exactly why ("3ds Max running but add-in not loaded") instead of the AI inventing results.</div>
+    <div class="decide" style="margin-top:14px">DECIDE → "FULL" (5–7 wks, all 18 done properly, one at a time) ·
+      or "CORE-6" (2–3 wks: lock the 6 that work + Max + Excel rock-solid first, rest after)</div>
+  </div>
+</div>
+
+<div style="margin-top:46px;border-top:1px solid #2a2a32;padding-top:20px;
+            font-family:var(--mono);font-size:11px;color:#76736b">
+  Just reply with your 3 picks — e.g. <span style="color:#d97757">"1A · 2A+shortcut · 3 CORE-6"</span> — and I build it.
+</div>
+
+</body>
+</html>

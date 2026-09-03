@@ -1,0 +1,101 @@
+{
+  "id": "corpus-reconcile-join",
+  "name": "Reconcile two lists",
+  "description": "The data.join reconcile core (stem-rebuild Phase-0). Two constant lists are matched on the `id` key; the sink reads match_count. B and C match (2), A is left_only, D is right_only. LIST-typed join ports flowing into an ANY output exercise the ANY-floor on the matched->output edge.",
+  "schema_version": "1.0",
+  "nodes": [
+    {
+      "id": "left_rows",
+      "type": "data.constant",
+      "label": "Master",
+      "config": {"value": [
+        {"id": "A", "v": 1},
+        {"id": "B", "v": 2},
+        {"id": "C", "v": 3}
+      ]},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 80, "y": 80}
+    },
+    {
+      "id": "right_rows",
+      "type": "data.constant",
+      "label": "Submitted",
+      "config": {"value": [
+        {"id": "B", "w": 9},
+        {"id": "C", "w": 8},
+        {"id": "D", "w": 7}
+      ]},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 80, "y": 260}
+    },
+    {
+      "id": "reconcile",
+      "type": "data.join",
+      "label": "Join on id",
+      "config": {"key": "id", "how": "inner"},
+      "inputs": [
+        {"name": "left", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": true, "default": null, "exec": false, "multiple": false},
+        {"name": "right", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": true, "default": null, "exec": false, "multiple": false},
+        {"name": "key", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "left_key", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "right_key", "type": "string", "speckle_type": "Objects.Primitive.String", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "matched", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "left_only", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "right_only", "type": "list", "speckle_type": "Objects.Other.List", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "match_count", "type": "number", "speckle_type": "Objects.Primitive.Number", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 400, "y": 170}
+    },
+    {
+      "id": "n_matched",
+      "type": "output.parameter",
+      "label": "Matched count",
+      "config": {"name": "n_matched"},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 720, "y": 80}
+    },
+    {
+      "id": "strays",
+      "type": "output.parameter",
+      "label": "On master, not submitted",
+      "config": {"name": "strays"},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 720, "y": 260}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "src_node": "left_rows", "src_port": "value", "dst_node": "reconcile", "dst_port": "left", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Other.List"},
+    {"id": "e2", "src_node": "right_rows", "src_port": "value", "dst_node": "reconcile", "dst_port": "right", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Other.List"},
+    {"id": "e3", "src_node": "reconcile", "src_port": "match_count", "dst_node": "n_matched", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Primitive.Number"},
+    {"id": "e4", "src_node": "reconcile", "src_port": "left_only", "dst_node": "strays", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Other.List"}
+  ],
+  "triggers": [
+    {"id": "trig_manual", "type": "manual", "config": {}, "enabled": true}
+  ],
+  "inputs": [],
+  "outputs": [
+    {"name": "n_matched", "type": "number", "description": "Rows present in both lists", "required": false, "default": null},
+    {"name": "strays", "type": "list", "description": "Rows on master but not submitted", "required": false, "default": null}
+  ],
+  "metadata": {},
+  "created_at": "2026-06-05T08:00:00+00:00",
+  "updated_at": "2026-06-05T08:00:00+00:00"
+}

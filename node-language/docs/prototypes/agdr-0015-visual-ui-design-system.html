@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AgDR-0015 — Visual UI Design System</title>
+<style>
+  :root {
+    --bg:#0e0e11; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+    --bgDeep:#0a0a0d;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --inkDim:#3a3530;
+    --line:#26262e; --lineSoft:#1e1e24;
+    --accent:#d97757; --accentSoft:#3a2018; --accentDim:#2a1812;
+    --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f; --cyan:#5fb3b3;
+    --purple:#a98cd6; --blue:#7898d6;
+    --serif:'Instrument Serif', Georgia, serif;
+    --sans:'Inter', system-ui, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:var(--sans); font-size:13px; line-height:1.55;
+         padding:32px 40px; }
+  h1 { font-family:var(--serif); font-size:30px; font-weight:500;
+       letter-spacing:-0.015em; margin:0 0 6px 0; }
+  h2 { font-family:var(--serif); font-size:22px; font-weight:500;
+       letter-spacing:-0.01em; margin:36px 0 8px 0; }
+  h3 { font-family:var(--mono); font-size:11px; font-weight:600;
+       color:var(--inkMuted); letter-spacing:0.18em; margin:18px 0 8px 0;
+       text-transform:uppercase; }
+  p { color:var(--inkSoft); max-width:88ch; }
+  p.sub { color:var(--inkMuted); font-size:12px; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--bgSoft);
+         padding:1px 6px; border-radius:3px; color:var(--ink); }
+
+  .lead { background:var(--bgPanel); border:1px solid var(--line);
+          border-left:3px solid var(--accent); border-radius:8px;
+          padding:16px 20px; margin:18px 0 28px 0; max-width:920px; }
+
+  /* Audit grid */
+  .audit-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px;
+                 margin:14px 0; max-width:940px; }
+  .audit-card { background:var(--bgPanel); border:1px solid var(--line);
+                 border-radius:8px; padding:16px 18px; }
+  .audit-card .row { display:flex; justify-content:space-between;
+                       align-items:baseline; padding:6px 0; }
+  .audit-card .row + .row { border-top:1px dashed var(--lineSoft); }
+  .audit-card .row .label { color:var(--inkSoft); font-size:12.5px; }
+  .audit-card .row .v { font-family:var(--mono); font-size:14px;
+                          color:var(--ink); font-weight:600; }
+  .audit-card .row .v.good { color:var(--ok); }
+  .audit-card .row .v.bad  { color:var(--err); }
+  .audit-card .row .v.warn { color:var(--warn); }
+  .audit-card .head { display:flex; align-items:baseline;
+                        justify-content:space-between; margin-bottom:6px; }
+  .audit-card h4 { font-family:var(--serif); font-weight:500;
+                     font-size:18px; margin:0; color:var(--ink); }
+  .audit-card .score { font-family:var(--mono); font-size:11px;
+                         color:var(--inkMuted); }
+
+  /* Scale visualisation */
+  .scale-row { display:flex; gap:8px; align-items:center; margin:10px 0; }
+  .scale-row .scale-name { width:80px; color:var(--inkMuted);
+                              font-family:var(--mono); font-size:11px;
+                              text-transform:uppercase; letter-spacing:0.1em; }
+  .scale-row .scale-items { display:flex; gap:6px; align-items:center;
+                              flex-wrap:wrap; }
+  .scale-row .scale-items .item { background:var(--bgPanel);
+                                     border:1px solid var(--line);
+                                     border-radius:4px; padding:4px 8px;
+                                     font-family:var(--mono); font-size:11px;
+                                     color:var(--ink); }
+  .scale-row .scale-items .item .v { color:var(--accent); margin-right:6px; }
+
+  .swatch-row { display:flex; gap:10px; margin:8px 0; flex-wrap:wrap; }
+  .swatch { display:flex; align-items:center; gap:8px;
+            background:var(--bgPanel); border:1px solid var(--line);
+            border-radius:5px; padding:6px 10px; }
+  .swatch .col { width:18px; height:18px; border-radius:3px;
+                  border:1px solid rgba(255,255,255,0.05); }
+  .swatch .name { font-family:var(--mono); font-size:10.5px; color:var(--inkSoft); }
+  .swatch .hex { font-family:var(--mono); font-size:10px; color:var(--inkMuted); }
+
+  /* Font scale demo */
+  .font-demo { background:var(--bgPanel); border:1px solid var(--line);
+                border-radius:8px; padding:16px 22px; margin:10px 0;
+                max-width:920px; }
+  .font-demo .row { display:flex; align-items:baseline; padding:6px 0;
+                      border-bottom:1px dashed var(--lineSoft); }
+  .font-demo .row:last-child { border-bottom:none; }
+  .font-demo .row .label { width:90px; font-family:var(--mono); font-size:10px;
+                              color:var(--inkMuted); text-transform:uppercase;
+                              letter-spacing:0.1em; }
+  .font-demo .row .px { width:60px; font-family:var(--mono); font-size:10px;
+                          color:var(--inkSoft); }
+  .font-demo .row .sample { color:var(--ink); }
+
+  /* Numbers */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
+            margin:14px 0 30px 0; max-width:940px; }
+  .stat { background:var(--bgPanel); border:1px solid var(--line);
+           border-radius:6px; padding:14px; }
+  .stat.crit  { border-color:var(--err); }
+  .stat.warn  { border-color:var(--warn); }
+  .stat.good  { border-color:var(--ok); }
+  .stat .label { font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+                  letter-spacing:0.18em; text-transform:uppercase; }
+  .stat .value { font-family:var(--serif); font-size:30px; font-weight:500;
+                  line-height:1.1; margin-top:4px; }
+  .stat.crit .value  { color:var(--err); }
+  .stat.warn .value  { color:var(--warn); }
+  .stat.good .value  { color:var(--ok); }
+  .stat .note { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+                  margin-top:3px; }
+
+  /* Component side-by-side */
+  .before-after { display:grid; grid-template-columns:1fr 1fr; gap:14px;
+                    margin:14px 0; max-width:940px; }
+  .ba-card { background:var(--bgPanel); border:1px solid var(--line);
+              border-radius:8px; padding:14px 16px; }
+  .ba-card.before { border-left:3px solid var(--err); }
+  .ba-card.after  { border-left:3px solid var(--ok); }
+  .ba-card .head { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+                     letter-spacing:0.18em; text-transform:uppercase;
+                     margin-bottom:6px; }
+  .ba-card pre { background:var(--bgDeep); border:1px solid var(--lineSoft);
+                  border-radius:4px; padding:10px 12px; overflow-x:auto;
+                  font-family:var(--mono); font-size:11.5px; color:var(--ink);
+                  margin:0; }
+  .ba-card .badge { display:inline-block; font-family:var(--mono);
+                     font-size:9px; padding:2px 7px; border-radius:3px;
+                     color:var(--err); border:1px solid var(--err);
+                     background:#2a1817; margin:0 4px 0 0; }
+  .ba-card.after .badge { color:var(--ok); border-color:var(--ok);
+                            background:#152419; }
+
+  /* Phases */
+  .phases { display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
+             margin:14px 0; max-width:940px; }
+  .phase { background:var(--bgPanel); border:1px solid var(--line);
+            border-radius:6px; padding:14px; }
+  .phase.done { border-left:3px solid var(--ok); }
+  .phase.queue { border-left:3px solid var(--inkMuted); opacity:0.85; }
+  .phase .head { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+                   letter-spacing:0.18em; text-transform:uppercase;
+                   margin-bottom:4px; }
+  .phase .name { font-family:var(--serif); font-size:17px; color:var(--ink);
+                   margin-bottom:6px; }
+  .phase .desc { font-size:11.5px; color:var(--inkSoft); }
+
+  /* A11y callout */
+  .a11y { background:#2a1817; border:1px solid var(--err); border-radius:8px;
+           padding:18px 22px; margin:14px 0; max-width:940px; }
+  .a11y .head { color:var(--err); font-family:var(--mono); font-size:11px;
+                  letter-spacing:0.16em; text-transform:uppercase;
+                  margin-bottom:8px; }
+  .a11y .v { font-family:var(--serif); font-size:26px; color:var(--ink);
+              margin-bottom:8px; }
+  .a11y p { color:var(--inkSoft); margin:6px 0; max-width:none; }
+
+  /* Forks */
+  .fork { background:var(--bgPanel); border:1px solid var(--line);
+           border-left:3px solid var(--warn); border-radius:8px;
+           padding:14px 18px; margin:8px 0; max-width:920px; }
+  .fork .tag { font-family:var(--mono); font-size:9.5px; color:var(--warn);
+                 margin-right:8px; letter-spacing:0.1em; }
+  .fork .q { color:var(--inkSoft); font-size:13px; }
+
+  .footer { margin-top:48px; padding-top:24px; border-top:1px solid var(--line);
+             color:var(--inkMuted); font-size:11.5px; }
+</style>
+</head>
+<body>
+
+<h1>AgDR-0015 — Visual UI Design System</h1>
+<p class="sub">Status: <strong>proposed</strong> · Phase 1 (token addition) ✓ shipped, Phases 2–4 await sign-off · Complement to AgDR-0014 — that one audited the LIBRARY taxonomy; this one audits the VISUAL UI in <code>app/web_ui/studio-lm.jsx</code> (8 596 lines)</p>
+
+<div class="lead">
+  Visual UI score: <strong>≈ 45/100</strong>. Color + typography-family tokens are
+  REAL and well-used (1 146 <code>LM.*</code> refs). Scale tokens are missing —
+  328 inline <code>fontSize: N</code>, 223 padding/margin, 173 borderRadius, 30
+  boxShadow, 9 transitions — and most critically: <strong>0 aria-* attributes
+  across 8 596 lines</strong>. A11y is a WCAG 2.1 AA procurement blocker.
+</div>
+
+<h2>Audit numbers</h2>
+
+<div class="stats">
+  <div class="stat good">
+    <div class="label">LM token refs</div>
+    <div class="value">1 146</div>
+    <div class="note">color + family tokens well-used</div>
+  </div>
+  <div class="stat warn">
+    <div class="label">Inline fontSize</div>
+    <div class="value">328</div>
+    <div class="note">15+ unique sizes, blurry half-px</div>
+  </div>
+  <div class="stat warn">
+    <div class="label">Inline padding/margin</div>
+    <div class="value">223</div>
+    <div class="note">no scale; arbitrary values</div>
+  </div>
+  <div class="stat warn">
+    <div class="label">Inline borderRadius</div>
+    <div class="value">173</div>
+    <div class="note">10+ unique radii</div>
+  </div>
+  <div class="stat warn">
+    <div class="label">boxShadow strings</div>
+    <div class="value">30</div>
+    <div class="note">no elevation system</div>
+  </div>
+  <div class="stat warn">
+    <div class="label">Transitions</div>
+    <div class="value">9</div>
+    <div class="note">sparse motion vocab</div>
+  </div>
+  <div class="stat warn">
+    <div class="label">Host-brand inline hex</div>
+    <div class="value">~20</div>
+    <div class="note">no LM.brand registry</div>
+  </div>
+  <div class="stat crit">
+    <div class="label">aria-* attributes</div>
+    <div class="value">0</div>
+    <div class="note">across 8 596 lines</div>
+  </div>
+</div>
+
+<h2>What's there today (working)</h2>
+
+<div class="audit-grid">
+  <div class="audit-card">
+    <div class="head"><h4>Color tokens</h4><div class="score">9 / 10</div></div>
+    <p class="sub">23 well-used color tokens, 1 146 refs across the JSX.</p>
+    <div class="swatch-row">
+      <div class="swatch"><div class="col" style="background:#0e0e11"></div><div><div class="name">bg</div><div class="hex">#0e0e11</div></div></div>
+      <div class="swatch"><div class="col" style="background:#15151a"></div><div><div class="name">bgPanel</div><div class="hex">#15151a</div></div></div>
+      <div class="swatch"><div class="col" style="background:#ece8e0"></div><div><div class="name">ink</div><div class="hex">#ece8e0</div></div></div>
+      <div class="swatch"><div class="col" style="background:#d97757"></div><div><div class="name">accent</div><div class="hex">#d97757</div></div></div>
+      <div class="swatch"><div class="col" style="background:#7ec18e"></div><div><div class="name">ok</div><div class="hex">#7ec18e</div></div></div>
+      <div class="swatch"><div class="col" style="background:#e6705f"></div><div><div class="name">err</div><div class="hex">#e6705f</div></div></div>
+    </div>
+    <div class="row"><div class="label">Categories defined</div><div class="v good">23</div></div>
+    <div class="row"><div class="label">Token refs</div><div class="v good">1 146</div></div>
+  </div>
+
+  <div class="audit-card">
+    <div class="head"><h4>Typography families</h4><div class="score">9 / 10</div></div>
+    <p class="sub">3 well-used family tokens (sans / serif / mono). 279 fontFamily inline refs all flow through them.</p>
+    <div class="font-demo" style="border:none; padding:6px 0; background:transparent;">
+      <div class="row"><div class="label">serif</div><div style="font-family:'Instrument Serif',Georgia,serif; font-size:16px;">Instrument Serif fallback Georgia</div></div>
+      <div class="row"><div class="label">sans</div><div style="font-family:'Inter',system-ui,sans-serif; font-size:14px;">Inter fallback system-ui</div></div>
+      <div class="row"><div class="label">mono</div><div style="font-family:'JetBrains Mono',monospace; font-size:13px;">JetBrains Mono fallback ui-mono</div></div>
+    </div>
+  </div>
+</div>
+
+<h2>What's missing (proposed extensions)</h2>
+
+<h3>LM.size — spacing scale (4-px base, 8 steps)</h3>
+<div class="scale-row">
+  <div class="scale-name">size</div>
+  <div class="scale-items">
+    <div class="item"><span class="v">0</span>0px</div>
+    <div class="item"><span class="v">1</span>4px</div>
+    <div class="item"><span class="v">2</span>8px</div>
+    <div class="item"><span class="v">3</span>12px</div>
+    <div class="item"><span class="v">4</span>16px</div>
+    <div class="item"><span class="v">5</span>20px</div>
+    <div class="item"><span class="v">6</span>28px</div>
+    <div class="item"><span class="v">7</span>40px</div>
+  </div>
+</div>
+<p class="sub">Replaces 223 inline padding/margin magic numbers.</p>
+
+<h3>LM.font — type scale (6 steps)</h3>
+<div class="font-demo">
+  <div class="row"><div class="label">xs</div><div class="px">10px</div><div class="sample" style="font-size:10px;">Metadata, footnote, badge text</div></div>
+  <div class="row"><div class="label">sm</div><div class="px">11px</div><div class="sample" style="font-size:11px;">Body small, secondary info</div></div>
+  <div class="row"><div class="label">base</div><div class="px">13px</div><div class="sample" style="font-size:13px;">Body, default reading size</div></div>
+  <div class="row"><div class="label">md</div><div class="px">15px</div><div class="sample" style="font-size:15px;">Emphasis, subheading</div></div>
+  <div class="row"><div class="label">lg</div><div class="px">18px</div><div class="sample" style="font-size:18px;">Section header</div></div>
+  <div class="row"><div class="label">xl</div><div class="px">22px</div><div class="sample" style="font-size:22px;">Page title</div></div>
+</div>
+<p class="sub">15+ unique sizes (incl. blurry half-px 8.5/9.5/10.5/11.5/12.5) → 6 scale steps. 328 fontSize values normalised.</p>
+
+<h3>LM.radius — corner-radius scale (6 steps)</h3>
+<div class="scale-row">
+  <div class="scale-name">radius</div>
+  <div class="scale-items">
+    <div class="item"><span class="v">none</span>0</div>
+    <div class="item"><span class="v">xs</span>3</div>
+    <div class="item"><span class="v">sm</span>5</div>
+    <div class="item"><span class="v">md</span>8</div>
+    <div class="item"><span class="v">lg</span>12</div>
+    <div class="item"><span class="v">pill</span>999</div>
+  </div>
+</div>
+
+<h3>LM.shadow — elevation scale (5 tiers)</h3>
+<div style="display:flex; gap:10px; margin:10px 0; flex-wrap:wrap;">
+  <div style="background:var(--bgPanel); border:1px solid var(--line); padding:14px 16px; font-family:var(--mono); font-size:11px;">none</div>
+  <div style="background:var(--bgPanel); border:1px solid var(--line); padding:14px 16px; font-family:var(--mono); font-size:11px; box-shadow:0 1px 2px rgba(0,0,0,0.3);">s1 hover</div>
+  <div style="background:var(--bgPanel); border:1px solid var(--line); padding:14px 16px; font-family:var(--mono); font-size:11px; box-shadow:0 4px 12px rgba(0,0,0,0.4);">s2 panel</div>
+  <div style="background:var(--bgPanel); border:1px solid var(--line); padding:14px 16px; font-family:var(--mono); font-size:11px; box-shadow:0 8px 24px rgba(0,0,0,0.5);">s3 dialog</div>
+  <div style="background:var(--bgPanel); border:1px solid var(--line); padding:14px 16px; font-family:var(--mono); font-size:11px; box-shadow:0 16px 48px rgba(0,0,0,0.6);">s4 command palette</div>
+</div>
+
+<h3>LM.motion — transition vocab (4 tokens, Material easing)</h3>
+<div class="scale-row">
+  <div class="scale-name">motion</div>
+  <div class="scale-items">
+    <div class="item"><span class="v">fast</span>120ms</div>
+    <div class="item"><span class="v">base</span>200ms</div>
+    <div class="item"><span class="v">slow</span>320ms</div>
+    <div class="item"><span class="v">spring</span>380ms · overshoot</div>
+  </div>
+</div>
+
+<h3>LM.brand — host-third-party identity (17 entries)</h3>
+<div class="swatch-row">
+  <div class="swatch"><div class="col" style="background:#3a6acc"></div><div><div class="name">speckle</div><div class="hex">#3a6acc</div></div></div>
+  <div class="swatch"><div class="col" style="background:#E87D0D"></div><div><div class="name">autocad</div><div class="hex">#E87D0D</div></div></div>
+  <div class="swatch"><div class="col" style="background:#0696D7"></div><div><div class="name">revit</div><div class="hex">#0696D7</div></div></div>
+  <div class="swatch"><div class="col" style="background:#0061ff"></div><div><div class="name">dropbox</div><div class="hex">#0061ff</div></div></div>
+  <div class="swatch"><div class="col" style="background:#107C41"></div><div><div class="name">excel</div><div class="hex">#107C41</div></div></div>
+  <div class="swatch"><div class="col" style="background:#5b5fc7"></div><div><div class="name">teams</div><div class="hex">#5b5fc7</div></div></div>
+  <div class="swatch"><div class="col" style="background:#31A8FF"></div><div><div class="name">photoshop</div><div class="hex">#31A8FF</div></div></div>
+  <div class="swatch"><div class="col" style="background:#cc785c"></div><div><div class="name">anthropic</div><div class="hex">#cc785c</div></div></div>
+</div>
+<p class="sub">~20 inline hex literals scattered across host pickers → one <code>LM.brand.&lt;host&gt;</code> registry. Future light-mode variants drop in cleanly.</p>
+
+<h2>Critical accessibility gap</h2>
+
+<div class="a11y">
+  <div class="head">⚠ CRITICAL — Procurement blocker</div>
+  <div class="v">0 aria-* attributes across 8 596 lines</div>
+  <p>Every interactive button, input, modal, dropdown, node-on-canvas — none has an aria-label. Screen readers can't announce anything. Keyboard navigation has no visible focus ring. Enterprise AEC procurement expects WCAG 2.1 AA.</p>
+  <p>11 occurrences of <code>role</code> / <code>tabIndex</code> / <code>onKeyDown</code> exist (some keyboard work), but no consistent floor across the codebase.</p>
+</div>
+
+<h2>Before / after a typical inline style</h2>
+
+<div class="before-after">
+  <div class="ba-card before">
+    <div class="head">BEFORE — magic numbers</div>
+    <pre>&lt;div style={{
+  padding: 14,
+  fontSize: 9.5,
+  borderRadius: 5,
+  boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+  transition: 'opacity 0.2s ease',
+}}&gt;</pre>
+    <p class="sub" style="margin-top:8px;">
+      <span class="badge">padding:14</span> not in any scale<br>
+      <span class="badge">fontSize:9.5</span> half-pixel, blurry on non-Retina<br>
+      <span class="badge">borderRadius:5</span> not in any scale<br>
+      <span class="badge">boxShadow</span> handwritten, inconsistent with other components<br>
+      <span class="badge">transition</span> unique easing, no shared vocab
+    </p>
+  </div>
+  <div class="ba-card after">
+    <div class="head">AFTER — token-driven</div>
+    <pre>&lt;div style={{
+  padding: LM.size[3],
+  fontSize: LM.font.xs,
+  borderRadius: LM.radius.sm,
+  boxShadow: LM.shadow.s2,
+  transition: `opacity ${LM.motion.base}`,
+}}&gt;</pre>
+    <p class="sub" style="margin-top:8px;">
+      <span class="badge">size[3]</span> = 12px · in scale<br>
+      <span class="badge">font.xs</span> = 10px · in scale, no half-px<br>
+      <span class="badge">radius.sm</span> = 5px · in scale<br>
+      <span class="badge">shadow.s2</span> = panel-elevation tier<br>
+      <span class="badge">motion.base</span> = 200ms cubic-bezier · shared
+    </p>
+  </div>
+</div>
+
+<h2>Migration plan — additive, non-breaking</h2>
+
+<div class="phases">
+  <div class="phase done">
+    <div class="head">Phase 1 ✓ shipped</div>
+    <div class="name">Token addition</div>
+    <div class="desc">Add LM.size / font / radius / shadow / motion / brand to the LM object. Zero JSX behavior change. Tests stay green.</div>
+  </div>
+  <div class="phase queue">
+    <div class="head">Phase 2</div>
+    <div class="name">ReactFlow scaffold</div>
+    <div class="desc">M1.a — every ReactFlow node + edge + handle uses tokens from day 1. Don't migrate twice.</div>
+  </div>
+  <div class="phase queue">
+    <div class="head">Phase 3</div>
+    <div class="name">Inline sweep</div>
+    <div class="desc">1–2 weeks. PR per component (NodeRail, WatchBody, NodeLibrary, …). CDP screenshot diff at 3 viewport sizes.</div>
+  </div>
+  <div class="phase queue">
+    <div class="head">Phase 4</div>
+    <div class="name">A11y sweep</div>
+    <div class="desc">1 week. aria-label everywhere · focus rings · modal focus trap · axe-core via CDP — 0 critical violations.</div>
+  </div>
+</div>
+
+<h2>Open forks for founder</h2>
+
+<div class="fork">
+  <div><span class="tag">F-1</span> <strong>Scale-step base unit.</strong> Token 1 uses a 4-px base. Material uses 4, Apple uses 8. Pick 4 (denser) or 8 (cleaner)?</div>
+</div>
+
+<div class="fork">
+  <div><span class="tag">F-2</span> <strong>Font scale max step.</strong> Today's largest font is 22px; the scale tops at <code>xl: 22</code>. Add <code>xxl: 28</code> / <code>xxxl: 36</code> for Composer's hero state?</div>
+</div>
+
+<div class="fork">
+  <div><span class="tag">F-3</span> <strong><code>LM.brand.notion</code></strong> defaulted to <code>LM.ink</code> (greyscale). OK or specific color?</div>
+</div>
+
+<div class="fork">
+  <div><span class="tag">F-4</span> <strong>Phase 3 migration cadence</strong> — 1–2 weeks of refactor with no new features. Serial (block features) or parallel to M3?</div>
+</div>
+
+<div class="fork">
+  <div><span class="tag">F-5</span> <strong>Accessibility scope</strong> — full WCAG 2.1 AA, or only the AAA-blocker subset (focus rings + aria-labels + keyboard nav)?</div>
+</div>
+
+<div class="footer">
+  See <code>docs/agdr/AgDR-0015-visual-ui-design-system.md</code> for the full text.
+  Phase 1 tokens live in <code>app/web_ui/studio-lm.jsx:13-89</code>.
+</div>
+
+</body>
+</html>

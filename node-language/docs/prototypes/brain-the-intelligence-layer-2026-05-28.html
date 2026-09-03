@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Brain — your intelligence layer</title>
+<style>
+  :root{
+    --dark:#141413; --light:#faf9f5; --mid:#b0aea5; --lgray:#e8e6dc;
+    --orange:#d97757; --blue:#6a9bcc; --green:#788c5d;
+    --shadow:0 1px 3px rgba(20,20,19,.08),0 10px 30px rgba(20,20,19,.07);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--light);color:var(--dark);
+    font-family:"Lora",Georgia,serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  h1,h2,h3,.f{font-family:"Poppins",Arial,sans-serif}
+  header{background:var(--dark);color:var(--light);padding:42px 32px 34px;border-bottom:4px solid var(--orange)}
+  header h1{margin:0 0 8px;font-size:32px;font-weight:600;letter-spacing:-.5px}
+  header p{margin:0;color:var(--mid);font-size:16px;max-width:820px}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 24px 90px}
+  .lead{background:#fff;border:1px solid var(--lgray);border-left:4px solid var(--orange);
+    border-radius:12px;padding:18px 24px;margin:0 0 28px;box-shadow:var(--shadow);font-size:16px}
+  .lead b{color:var(--orange)}
+
+  /* 3-column flow */
+  .flow{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:0;align-items:stretch;margin:8px 0 36px}
+  .col{padding:0 6px}
+  .colhead{font-family:"Poppins",Arial;font-size:12px;font-weight:600;letter-spacing:1.5px;
+    text-transform:uppercase;color:var(--mid);text-align:center;margin-bottom:12px}
+  .panel{background:#fff;border:1px solid var(--lgray);border-radius:14px;padding:18px;box-shadow:var(--shadow);height:100%}
+  .panel.you{border-top:4px solid var(--blue)}
+  .panel.ai{border-top:4px solid var(--green)}
+  .panel.brain{border:2px solid var(--orange);box-shadow:0 0 0 6px rgba(217,119,87,.08),var(--shadow);position:relative}
+  .bubble{background:var(--lgray);border-radius:12px 12px 12px 3px;padding:10px 13px;font-size:14px;margin-bottom:10px}
+  .bubble.user{background:rgba(106,155,204,.14)}
+  .you small,.ai small{font-family:"Poppins",Arial;font-size:11px;color:var(--mid);display:block;margin-top:8px}
+  .ai .step{font-size:13px;padding:6px 0 6px 18px;position:relative;border-bottom:1px dashed var(--lgray)}
+  .ai .step:last-child{border-bottom:0}
+  .ai .step:before{content:"›";position:absolute;left:2px;color:var(--green);font-weight:700}
+  .ai .step .t{font-family:"Poppins",Arial;font-size:10px;color:var(--mid);float:right}
+
+  /* brain layers */
+  .brain h3{margin:0 0 4px;font-size:17px;text-align:center}
+  .brain .sub{text-align:center;color:var(--mid);font-size:12px;margin:0 0 14px;font-family:"Poppins",Arial}
+  .layer{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;margin-bottom:7px;
+    font-family:"Poppins",Arial;font-size:13px;border:1px solid var(--lgray);background:#fcfbf7}
+  .layer .ic{width:26px;height:26px;border-radius:7px;flex:none;display:flex;align-items:center;justify-content:center;
+    font-size:14px;color:#fff}
+  .layer .nm{font-weight:600}
+  .layer .ds{color:#777;font-size:11px;display:block;font-weight:400}
+  .l-intent .ic{background:var(--orange)} .l-mem .ic{background:var(--blue)}
+  .l-skill .ic{background:var(--green)} .l-flow .ic{background:#8a6fb0}
+  .l-mand .ic{background:var(--dark)} .l-setup .ic{background:#c2913f} .l-rule .ic{background:#b05a5a}
+
+  .arrow{display:flex;align-items:center;justify-content:center;color:var(--orange);font-size:30px;font-weight:700}
+
+  /* worked example */
+  .ex{background:#fff;border:1px solid var(--lgray);border-radius:16px;padding:0;overflow:hidden;box-shadow:var(--shadow);margin:0 0 32px}
+  .ex .eh{background:var(--dark);color:var(--light);padding:14px 22px;font-family:"Poppins",Arial;font-weight:600;font-size:15px}
+  .ex .eb{padding:22px}
+  .ex .quote{font-size:18px;font-style:italic;color:var(--dark);margin:0 0 16px}
+  .ex .quote b{color:var(--orange);font-style:normal}
+  .trace{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .tcard{border:1px solid var(--lgray);border-radius:11px;padding:13px}
+  .tcard .th{font-family:"Poppins",Arial;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--mid);margin-bottom:8px}
+  .tcard ul{margin:0;padding-left:16px;font-size:13px}
+  .tcard li{margin-bottom:5px}
+  .chip{display:inline-block;font-family:"Poppins",Arial;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;margin:2px 2px 0 0}
+  .chip.t{background:rgba(106,155,204,.15);color:var(--blue)}
+  .chip.c{background:rgba(217,119,87,.15);color:var(--orange)}
+  .chip.s{background:rgba(120,140,93,.15);color:var(--green)}
+
+  /* learn-back loop */
+  .loop{background:linear-gradient(180deg,#fff, #fcfbf7);border:1px dashed var(--orange);border-radius:14px;
+    padding:18px 22px;text-align:center;font-size:15px;margin:0 0 30px}
+  .loop b{color:var(--orange);font-family:"Poppins",Arial}
+
+  /* scope ladder (privacy) */
+  .scopes{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px}
+  .scope{border:1px solid var(--lgray);border-radius:11px;padding:12px;text-align:center;background:#fff}
+  .scope .nm{font-family:"Poppins",Arial;font-weight:600;font-size:13px}
+  .scope .ds{font-size:11px;color:#777;margin-top:4px}
+  .scope.u{border-top:3px solid var(--blue)} .scope.p{border-top:3px solid var(--green)}
+  .scope.f{border-top:3px solid #c2913f} .scope.c{border-top:3px solid var(--orange)}
+  .scope .lk{font-size:10px;font-family:"Poppins",Arial;color:var(--mid);margin-top:6px}
+
+  h2.sec{font-size:20px;margin:36px 0 6px}
+  .secsub{color:var(--mid);font-size:14px;margin:0 0 14px}
+  .build{display:inline-block;font-family:"Poppins",Arial;font-size:10px;font-weight:600;padding:3px 9px;border-radius:20px;
+    background:rgba(120,140,93,.15);color:var(--green);vertical-align:middle;margin-left:8px}
+  .build.proto{background:rgba(217,119,87,.15);color:var(--orange)}
+  footer{max-width:1080px;margin:0 auto;padding:20px 24px;color:var(--mid);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>The Brain — your intelligence layer</h1>
+  <p>Not a chatbox. The brain sits BETWEEN what you say and what the AI does —
+  translating your intent into real work using everything it knows about you,
+  your firm, your projects, and your rules. This is the thing you asked me to
+  visualize.</p>
+</header>
+
+<div class="wrap">
+
+  <div class="lead">
+    <b>The one idea:</b> you speak plainly. The brain turns that into a plan —
+    pulling your memory, your skills, your workflows, your mandates, your setups,
+    your rules — flags the challenges, estimates the time, and only THEN hands a
+    precise job to the AI. Every result flows back in, so it gets smarter each time.
+  </div>
+
+  <!-- 3-COLUMN FLOW -->
+  <div class="flow">
+    <div class="col">
+      <div class="colhead">You</div>
+      <div class="panel you">
+        <div class="bubble user">"Clean up the repo and ship the lag fix."</div>
+        <div class="bubble user">"Make the brain understand my drawings."</div>
+        <small>Plain language. No commands, no syntax, no jargon.</small>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="colhead">The Brain &nbsp;·&nbsp; translates intent → plan</div>
+      <div class="panel brain">
+        <h3>What the brain holds</h3>
+        <div class="sub">7 layers, queried on every message</div>
+
+        <div class="layer l-intent"><span class="ic">◆</span><span><span class="nm">Intent</span><span class="ds">turns your words into a goal + steps</span></span></div>
+        <div class="layer l-mem"><span class="ic">▤</span><span><span class="nm">Memory</span><span class="ds">facts about you · projects · firm · past work</span></span></div>
+        <div class="layer l-skill"><span class="ic">✦</span><span><span class="nm">Skills</span><span class="ds">proven recipes it can replay</span></span></div>
+        <div class="layer l-flow"><span class="ic">⇄</span><span><span class="nm">Workflows</span><span class="ds">multi-step graphs it can run</span></span></div>
+        <div class="layer l-mand"><span class="ic">§</span><span><span class="nm">Mandates</span><span class="ds">your non-negotiable rules (this file)</span></span></div>
+        <div class="layer l-setup"><span class="ic">⚙</span><span><span class="nm">Setups</span><span class="ds">your hosts · connectors · secrets refs</span></span></div>
+        <div class="layer l-rule"><span class="ic">⊘</span><span><span class="nm">Rules</span><span class="ds">guardrails · what it must never do</span></span></div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="colhead">The AI</div>
+      <div class="panel ai">
+        <div class="step">Drain the cleanup queue <span class="t">~20m</span></div>
+        <div class="step">Imperative-drag lag fix <span class="t">~2h</span></div>
+        <div class="step">Wire geometry + image facts <span class="t">done</span></div>
+        <div class="step">Privacy filter before sharing <span class="t">~1d</span></div>
+        <small>Precise, gated, reversible — because the brain briefed it.</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- WORKED EXAMPLE -->
+  <div class="ex">
+    <div class="eh">Worked example — one sentence in, real plan out</div>
+    <div class="eb">
+      <p class="quote">You say: <b>"clean up the repo without breaking anything, commit it all."</b></p>
+      <div class="trace">
+        <div class="tcard">
+          <div class="th">Brain pulls</div>
+          <ul>
+            <li>Memory: "no waits &gt;60s", protected files list</li>
+            <li>Mandate: ANTI-LIE, PROTOTYPE-FIRST</li>
+            <li>Skill: repo-overhaul (4-scout audit)</li>
+            <li>Setup: git hooks, brain daemon</li>
+          </ul>
+        </div>
+        <div class="tcard">
+          <div class="th">Brain flags</div>
+          <ul>
+            <li><span class="chip c">challenge</span> protected .cs files — needs env flag</li>
+            <li><span class="chip c">challenge</span> don't commit secrets</li>
+            <li><span class="chip t">time</span> ~20 min for safe queue</li>
+          </ul>
+        </div>
+        <div class="tcard">
+          <div class="th">AI executes</div>
+          <ul>
+            <li>Audit → commit by track</li>
+            <li>Run tests, verify green</li>
+            <li><span class="chip s">reversible</span> per-track commits</li>
+            <li>Show you the result</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEARN-BACK -->
+  <div class="loop">
+    Every result writes back into <b>Memory</b> + mints new <b>Skills</b> →
+    the brain is sharper on your next sentence. <b>This is the moat.</b>
+  </div>
+
+  <!-- GEOMETRY + PICTURES -->
+  <h2 class="sec">It understands geometry &amp; pictures <span class="build">built</span></h2>
+  <p class="secsub">The brain stores drawings + images as first-class facts — perceptual-hash + CLIP embedding — so "find me something like this" works on shapes and photos, not just text.</p>
+
+  <!-- DATASETS + PRIVACY SCOPES -->
+  <h2 class="sec">It produces training datasets — privately <span class="build">building now</span></h2>
+  <p class="secsub">Your knowledge can train models. But nothing leaves a scope it shouldn't. Four rings, each tighter than the last — the collective only ever sees noise-protected aggregates, never your raw work.</p>
+  <div class="scopes">
+    <div class="scope u"><div class="nm">You</div><div class="ds">your private memory</div><div class="lk">stays on device</div></div>
+    <div class="scope p"><div class="nm">Project</div><div class="ds">shared in one project</div><div class="lk">project members</div></div>
+    <div class="scope f"><div class="nm">Firm</div><div class="ds">your company</div><div class="lk">firm seats only</div></div>
+    <div class="scope c"><div class="nm">Collective</div><div class="ds">all ArchHub users</div><div class="lk">noise-protected only</div></div>
+  </div>
+
+  <!-- NORTH STAR -->
+  <h2 class="sec">North star — our own hosted models <span class="build proto">vision</span></h2>
+  <p class="secsub">Once enough users form a collective memory, those privacy-protected datasets train ArchHub's own AEC models — owned by us, improving for everyone, never exposing any one user's work. The brain is the road to that.</p>
+
+</div>
+
+<footer>
+  Prototype · 2026-05-28 · the brain you asked me to visualize · picture-first, decided-not-asked per PROTOTYPE-FIRST mandate
+</footer>
+</body>
+</html>

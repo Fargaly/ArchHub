@@ -1,0 +1,1050 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArchHub — Host node prototypes (Revit, 13 ops)</title>
+<style>
+  /* LM theme approx */
+  :root {
+    --bg:#15151a; --bgPanel:#1d1d24; --bgSoft:#23232c; --bgHover:#2a2a35;
+    --line:#3a3a47; --lineSoft:#2a2a35;
+    --ink:#e8e6dc; --inkSoft:#a8a5a0; --inkMuted:#6e6b66; --inkDim:#4a4844;
+    --accent:#d97757; --accentDim:#2a1812;
+    --cyan:#5fb3b3; --ok:#7fae65; --warn:#e29bb5; --err:#d96a6a; --blue:#6a9bcc;
+    --purple:#9b59b6; --yellow:#e3b950; --grey:#9b9690;
+    --mono: 'SF Mono','Menlo','Consolas','Roboto Mono',monospace;
+    --serif:'Lora','Georgia',serif;
+    --sans:'Inter','system-ui',sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); font-size:13px; line-height:1.5;
+    padding:24px 32px; min-height:100vh;
+  }
+  h1 { font-family:var(--serif); font-size:26px; font-weight:600;
+       letter-spacing:-0.015em; margin:0 0 6px 0; }
+  h2 { font-family:var(--serif); font-size:20px; font-weight:600;
+       letter-spacing:-0.01em; margin:32px 0 8px 0; }
+  h3 { font-family:var(--mono); font-size:11px; font-weight:600;
+       color:var(--inkMuted); letter-spacing:0.18em;
+       margin:18px 0 8px 0; }
+  p { color:var(--inkSoft); max-width:80ch; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--bgSoft);
+         padding:1px 6px; border-radius:3px; }
+  .brief {
+    background:var(--bgPanel); border:1px solid var(--line);
+    border-left:3px solid var(--accent);
+    border-radius:8px; padding:14px 18px; margin:18px 0;
+    max-width:880px;
+  }
+  .brief strong { color:var(--ink); }
+  .prototypes { display:flex; flex-direction:column; gap:48px; margin-top:24px; }
+  .prototype {
+    background:linear-gradient(180deg, #1a1a22 0%, var(--bg) 100%);
+    border:1px solid var(--line); border-radius:12px;
+    padding:24px 28px; position:relative;
+  }
+  .prototype-header { display:flex; align-items:baseline; gap:12px; margin-bottom:6px; }
+  .prototype-tag {
+    font-family:var(--mono); font-size:10px; color:var(--accent);
+    letter-spacing:0.18em; background:var(--accentDim);
+    padding:3px 8px; border-radius:3px;
+  }
+  .prototype-name { font-family:var(--serif); font-size:22px; font-weight:600;
+                     letter-spacing:-0.015em; color:var(--ink); }
+  .prototype-tagline { color:var(--inkSoft); margin:2px 0 16px 0;
+                        max-width:90ch; font-size:13px; }
+  .stage {
+    background:#0e0e12; border:1px solid var(--lineSoft); border-radius:10px;
+    padding:24px; margin:12px 0;
+    display:grid; grid-template-columns:1fr 380px; gap:24px;
+    min-height:560px;
+  }
+  .canvas-zone {
+    background:
+      radial-gradient(circle at 1px 1px, #20202833 1px, transparent 0) 0 0/16px 16px,
+      #0e0e12;
+    border-radius:7px; padding:24px; position:relative; overflow:hidden;
+    min-height:520px;
+  }
+  .panel-zone {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  .panel-header {
+    padding:10px 14px; border-bottom:1px solid var(--lineSoft);
+    display:flex; align-items:center; gap:8px;
+  }
+  .panel-host-stripe { width:7px; height:7px; border-radius:2px; background:var(--accent); }
+  .panel-host-label { font-family:var(--mono); font-size:9px; color:var(--accent);
+                       letter-spacing:0.16em; }
+  .panel-title { font-family:var(--serif); font-size:18px; padding:10px 14px 4px;
+                   letter-spacing:-0.015em; }
+  .panel-sub { font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+                padding:0 14px 12px; letter-spacing:0.04em; }
+  /* generic node visual */
+  .node {
+    position:absolute; background:var(--bgPanel); border-radius:9px;
+    border-top:2px solid var(--accent); border-left:1px solid var(--line);
+    border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+    color:var(--ink); font-family:var(--sans);
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+  }
+  .node-title {
+    padding:7px 11px; display:flex; align-items:center; gap:8px;
+    border-bottom:1px solid var(--lineSoft); background:var(--bgSoft);
+    border-top-left-radius:7px; border-top-right-radius:7px;
+  }
+  .icon { font-family:var(--mono); color:var(--accent); }
+  .cat-label { font-family:var(--mono); font-size:9px; color:var(--accent);
+                letter-spacing:0.18em; }
+  .flag-bar { display:flex; gap:3px; margin-left:auto; }
+  .flag {
+    width:8px; height:8px; border-radius:50%;
+    border:1.5px solid var(--inkDim); background:transparent;
+  }
+  .flag.on-blue   { background:var(--blue);   border-color:var(--blue);   }
+  .flag.on-red    { background:var(--err);    border-color:var(--err);    }
+  .flag.on-yellow { background:var(--yellow); border-color:var(--yellow); }
+  .flag.on-green  { background:var(--ok);     border-color:var(--ok);     }
+  .flag.on-purple { background:var(--purple); border-color:var(--purple); }
+  .pill-status {
+    display:inline-block; width:6px; height:6px; border-radius:50%;
+    background:var(--inkMuted); margin-right:4px;
+  }
+  .pill-status.idle { background:var(--inkDim); }
+  .pill-status.cfg  { background:var(--blue);   }
+  .pill-status.done { background:var(--ok);     }
+  .pill-status.run  { background:var(--yellow); }
+  .pill-status.err  { background:var(--err);    }
+  /* sockets */
+  .sock {
+    position:absolute; width:11px; height:11px; border-radius:50%;
+    background:var(--bgPanel); border:1.5px solid var(--inkSoft);
+    box-shadow:0 0 0 2px var(--bg);
+  }
+  .sock.out { background:var(--inkSoft); }
+  .sock.t-any { border-color:var(--inkSoft); }
+  .sock.t-element { border-color:var(--purple); }
+  .sock.t-element.out { background:var(--purple); }
+  .sock.t-view { border-color:var(--purple); }
+  .sock.t-view.out { background:var(--purple); }
+  .sock.t-list { border-color:var(--blue); }
+  .sock.t-list.out { background:var(--blue); }
+  .sock.t-number { border-color:var(--yellow); }
+  .sock.t-bool { border-color:var(--ok); }
+  .sock-label { position:absolute; font-family:var(--mono); font-size:8.5px;
+                 color:var(--inkMuted); letter-spacing:0.04em; }
+  /* wires (svg overlay) */
+  .wire-layer { position:absolute; inset:0; pointer-events:none; }
+  /* annotations */
+  .annot {
+    background:var(--bgPanel); border:1px solid var(--line);
+    border-radius:7px; padding:12px 16px; margin-top:14px;
+    font-size:12.5px; color:var(--inkSoft);
+  }
+  .annot strong { color:var(--ink); }
+  .annot ul { margin:6px 0 0 18px; padding:0; }
+  .annot li { margin:2px 0; }
+  .borrowed { color:var(--cyan); font-family:var(--mono); font-size:11px; }
+  .tradeoffs { color:var(--warn); }
+
+  /* DIRECTION A — op grid */
+  .pA-node { left:48px; top:36px; width:340px; }
+  .pA-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;
+              padding:10px; }
+  .pA-tile {
+    background:var(--bgSoft); border:1px solid var(--lineSoft);
+    border-radius:4px; padding:7px 8px;
+    font-family:var(--mono); font-size:9.5px; line-height:1.3;
+    color:var(--inkSoft); cursor:pointer; position:relative;
+    transition:border .15s, background .15s;
+  }
+  .pA-tile.active { background:var(--bgHover); border-color:var(--accent);
+                     color:var(--ink); grid-column:span 4;
+                     padding:9px 10px 11px; }
+  .pA-tile.active .pA-name { font-size:11px; }
+  .pA-tile.cfg::before {
+    content:''; position:absolute; left:0; top:0; bottom:0; width:2px;
+    background:var(--blue); border-radius:2px 0 0 2px;
+  }
+  .pA-tile.locked::after {
+    content:''; position:absolute; right:5px; top:5px; width:5px; height:5px;
+    border-radius:50%; background:var(--err);
+  }
+  .pA-tile.bypassed::after {
+    content:''; position:absolute; right:5px; top:5px; width:5px; height:5px;
+    border-radius:50%; background:var(--yellow);
+  }
+  .pA-name { font-family:var(--mono); font-size:9.5px; color:var(--ink); }
+  .pA-time { font-family:var(--mono); font-size:8px; color:var(--inkMuted); }
+  .pA-params { margin-top:7px; display:flex; flex-direction:column; gap:3px; }
+  .pA-param { display:flex; align-items:center; gap:6px;
+               font-family:var(--mono); font-size:9.5px; }
+  .pA-param .k { color:var(--inkMuted); width:90px; }
+  .pA-param .v {
+    flex:1; background:var(--bg); border:1px solid var(--lineSoft);
+    border-radius:3px; padding:2px 7px; color:var(--ink);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .pA-param.wired .v { border-color:var(--purple); background:#2c1a2e; }
+  .pA-promote {
+    width:10px; height:10px; border-radius:50%; background:transparent;
+    border:1px dashed var(--inkMuted); flex-shrink:0; opacity:0;
+    transition:opacity .15s;
+  }
+  .pA-tile.active .pA-promote { opacity:.7; }
+
+  /* socket rail on node left edge for A */
+  .pA-rail-sock {
+    position:absolute; left:-6px; width:11px; height:11px; border-radius:50%;
+    background:var(--purple); border:1.5px solid var(--purple);
+    box-shadow:0 0 0 2px var(--bg);
+  }
+  .pA-rail-label {
+    position:absolute; left:9px; font-family:var(--mono); font-size:8px;
+    color:var(--purple); letter-spacing:0.02em;
+  }
+  /* right panel for direction A */
+  .pA-panel-tabs {
+    display:flex; gap:1px; padding:6px 10px 0;
+    border-bottom:1px solid var(--lineSoft);
+  }
+  .pA-tab { padding:5px 9px; font-family:var(--mono); font-size:9.5px;
+             letter-spacing:0.06em; color:var(--inkMuted); cursor:pointer;
+             border-radius:3px 3px 0 0;}
+  .pA-tab.active { color:var(--ink); background:var(--bgSoft);
+                    border-bottom:2px solid var(--accent); }
+  .pA-search { margin:10px 14px; padding:6px 9px; background:var(--bg);
+                border:1px solid var(--line); border-radius:5px;
+                color:var(--ink); font-family:var(--mono); font-size:11px; }
+  .pA-row { display:flex; align-items:center; padding:5px 14px;
+             font-family:var(--mono); font-size:10px; gap:8px; }
+  .pA-row .k { color:var(--inkMuted); flex-shrink:0; width:140px; }
+  .pA-row .v { flex:1; background:var(--bgSoft); border-radius:3px;
+                padding:4px 8px; color:var(--ink); border:1px solid var(--lineSoft);}
+  .pA-row .v.slider { background:var(--bgSoft); height:18px; position:relative; }
+  .pA-row .v.slider::after {
+    content:''; position:absolute; left:38%; top:2px; bottom:2px; width:18px;
+    background:var(--accent); border-radius:3px;
+  }
+  .pA-row.wired .v { border-color:var(--purple); background:#2c1a2e; }
+  .pA-section { font-family:var(--mono); font-size:8.5px;
+                 color:var(--inkMuted); letter-spacing:0.18em;
+                 padding:12px 14px 4px; }
+
+  /* DIRECTION B — stacked widgets */
+  .pB-node { left:36px; top:24px; width:300px; }
+  .pB-section { border-bottom:1px solid var(--lineSoft); }
+  .pB-section:last-child { border-bottom:0; }
+  .pB-sec-head {
+    display:flex; align-items:center; gap:6px;
+    padding:6px 10px; cursor:pointer;
+    font-family:var(--mono); font-size:10px;
+  }
+  .pB-sec-head .chev { color:var(--inkMuted); transition:transform .15s; width:10px; }
+  .pB-sec-head .name { color:var(--ink); flex:1; }
+  .pB-sec-head .count { color:var(--inkMuted); font-size:9px; }
+  .pB-sec-head .time { color:var(--inkMuted); font-size:8.5px; }
+  .pB-sec-head .mode-ring {
+    width:8px; height:8px; border-radius:50%; border:1.5px solid var(--blue);
+    background:transparent;
+  }
+  .pB-sec-head .mode-ring.auto { border-color:var(--blue); }
+  .pB-sec-head .mode-ring.pull { border-color:var(--inkMuted); }
+  .pB-sec-head .mode-ring.manual { border-color:var(--yellow); }
+  .pB-section.expanded .pB-sec-body { display:block; }
+  .pB-sec-body { display:none; padding:2px 10px 9px; }
+  .pB-row { display:flex; align-items:center; gap:6px; padding:3px 0;
+             font-family:var(--mono); font-size:9.5px; position:relative; }
+  .pB-dot {
+    position:absolute; left:-14px; width:9px; height:9px; border-radius:50%;
+    background:var(--bgPanel); border:1px solid var(--inkMuted);
+    cursor:pointer;
+  }
+  .pB-dot.promoted { background:var(--purple); border-color:var(--purple); left:-22px; }
+  .pB-dot.promoted::after {
+    content:''; position:absolute; right:-14px; top:3px; width:14px; height:1px;
+    background:var(--purple);
+  }
+  .pB-row .k { color:var(--inkMuted); width:90px; }
+  .pB-row .v {
+    flex:1; background:var(--bg); border:1px solid var(--lineSoft);
+    border-radius:3px; padding:2px 7px; color:var(--ink);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .pB-row.wired .v { border-color:var(--purple); background:#2c1a2e; }
+  .pB-meta-sock {
+    position:absolute; right:-6px; top:50%; transform:translateY(-50%);
+    width:8px; height:8px; border-radius:50%; background:var(--cyan);
+    border:1.5px solid var(--cyan); box-shadow:0 0 0 2px var(--bg);
+  }
+  /* right panel for B (mirror style) */
+  .pB-panel-search { margin:10px 14px; padding:6px 9px;
+                      background:var(--bg); border:1px solid var(--line);
+                      border-radius:5px; font-family:var(--mono); font-size:11px;
+                      color:var(--ink); }
+  .pB-mirror-row {
+    display:flex; align-items:center; padding:5px 14px;
+    font-family:var(--mono); font-size:10px; gap:8px; position:relative;
+  }
+  .pB-mirror-row .pin { color:var(--inkMuted); cursor:pointer; }
+  .pB-mirror-row .pin.on { color:var(--accent); }
+  .pB-mirror-row .k { color:var(--inkMuted); width:130px; flex-shrink:0; }
+  .pB-mirror-row .v { flex:1; background:var(--bgSoft); border-radius:3px;
+                       padding:4px 8px; border:1px solid var(--lineSoft); }
+  .pB-mirror-row.wired .v { border-color:var(--purple); background:#2c1a2e; }
+  .pB-mirror-row.hit .v { box-shadow:0 0 0 1px var(--accent); }
+
+  /* DIRECTION C — Houdini multi-tab */
+  .pC-node { left:60px; top:36px; width:340px; }
+  .pC-tab-strip {
+    display:flex; overflow-x:auto; padding:6px 9px 0;
+    border-bottom:1px solid var(--lineSoft); gap:1px;
+    scrollbar-width:none;
+  }
+  .pC-tab-strip::-webkit-scrollbar { display:none; }
+  .pC-tab {
+    padding:5px 9px; font-family:var(--mono); font-size:9.5px;
+    color:var(--inkMuted); cursor:pointer; white-space:nowrap;
+    border-radius:3px 3px 0 0; border-bottom:2px solid transparent;
+  }
+  .pC-tab.active { color:var(--ink); background:var(--bgPanel);
+                    border-bottom-color:var(--accent); }
+  .pC-tab.cfg { color:var(--inkSoft); }
+  .pC-tab.cfg::before { content:'●'; color:var(--blue); margin-right:3px; }
+  .pC-body { padding:10px 12px 6px; }
+  .pC-row { display:flex; align-items:center; gap:6px; padding:3px 0;
+             font-family:var(--mono); font-size:10px; }
+  .pC-row .k { color:var(--inkMuted); width:90px; }
+  .pC-row .v {
+    flex:1; background:var(--bg); border:1px solid var(--lineSoft);
+    border-radius:3px; padding:2px 7px; color:var(--ink);
+  }
+  .pC-row.static .v { background:var(--bg); }
+  .pC-row.chref .v { background:#1a2233; border-color:var(--blue); color:var(--blue); }
+  .pC-row.wired .v { background:#1c2c1d; border-color:var(--ok); color:var(--ok); }
+  .pC-row.pinned .v { background:#2a1c2e; border-color:var(--purple); }
+  .pC-flag-bar {
+    display:flex; gap:4px; padding:5px 11px;
+    background:var(--bgSoft); border-top:1px solid var(--lineSoft);
+    border-radius:0 0 7px 7px;
+  }
+  .pC-flag {
+    width:8px; height:8px; border-radius:50%; border:1.5px solid var(--inkDim);
+    background:transparent;
+  }
+  .pC-flag.on-blue   { background:var(--blue);   border-color:var(--blue);   }
+  .pC-flag.on-red    { background:var(--err);    border-color:var(--err);    }
+  .pC-flag.on-yellow { background:var(--yellow); border-color:var(--yellow); }
+  .pC-flag.on-purple { background:var(--purple); border-color:var(--purple); }
+  .pC-flag.on-orange { background:var(--accent); border-color:var(--accent); }
+  /* right panel for C */
+  .pC-panel-tabs { display:flex; gap:1px; padding:6px 10px 0;
+                    border-bottom:1px solid var(--lineSoft); }
+  .pC-ptab { padding:4px 8px; font-family:var(--mono); font-size:9px;
+              color:var(--inkMuted); cursor:pointer; }
+  .pC-ptab.active { color:var(--accent); border-bottom:2px solid var(--accent); }
+  .pC-search { margin:10px 14px; padding:6px 9px; background:var(--bg);
+                border:1px solid var(--line); border-radius:5px;
+                font-family:var(--mono); font-size:11px; color:var(--ink); }
+  .pC-group { font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+               letter-spacing:0.14em; padding:10px 14px 4px;
+               background:var(--bgSoft); border-bottom:1px solid var(--lineSoft); }
+  .pC-prow {
+    display:flex; align-items:center; padding:5px 14px;
+    font-family:var(--mono); font-size:10px; gap:8px;
+  }
+  .pC-prow .marker { width:10px; text-align:center; font-size:11px; }
+  .pC-prow .k { color:var(--inkMuted); width:110px; flex-shrink:0; }
+  .pC-prow .v { flex:1; background:var(--bgSoft); border:1px solid var(--lineSoft);
+                 border-radius:3px; padding:4px 8px; }
+  .pC-prow.hit .v { box-shadow:0 0 0 1px var(--accent); color:var(--accent); }
+  .pC-floating {
+    position:absolute; left:50%; top:-32px; transform:translateX(-50%);
+    background:rgba(20,20,28,.95); border:1px solid var(--line);
+    border-radius:6px; padding:4px 8px; display:flex; gap:6px;
+    font-family:var(--mono); font-size:9.5px; color:var(--inkSoft);
+    box-shadow:0 8px 20px rgba(0,0,0,.5);
+  }
+  .pC-floating .mode-btn { padding:2px 6px; border-radius:3px; cursor:pointer; }
+  .pC-floating .mode-btn.active { background:var(--accentDim); color:var(--accent); }
+
+  .legend { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+             margin-top:14px; padding:10px 14px; background:var(--bgSoft);
+             border:1px dashed var(--line); border-radius:5px;
+             display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  .legend .swatch { width:11px; height:11px; border-radius:3px;
+                     display:inline-block; vertical-align:middle;
+                     margin-right:4px; }
+
+  .pick-cta {
+    background:linear-gradient(180deg,#1f1f28 0%, var(--bgPanel) 100%);
+    border:1px solid var(--accent);
+    border-radius:8px; padding:14px 18px; margin-top:32px;
+    max-width:880px;
+  }
+  .pick-cta h2 { margin:0 0 8px 0; }
+  .pick-cta ol { margin:8px 0 0 18px; color:var(--inkSoft); }
+  .pick-cta li { margin:4px 0; }
+</style>
+</head>
+<body>
+
+<h1>Host node — three design directions</h1>
+<p style="margin-top:2px">
+  Concrete prototypes for the Revit host node carrying its 13 operations.
+  Each direction is opinionated — they trade off canvas density vs panel power
+  differently. Built from grounded research into ComfyUI, n8n, Blender Geometry
+  Nodes, Unreal Blueprints, and Houdini.
+</p>
+
+<div class="brief">
+  <strong>What every direction shares.</strong>
+  Every op visible somehow (no hidden dropdown). Every parameter promotable to a
+  socket. Right panel has tabs, search, sliders. Floating settings bar / right-click
+  for run-mode (no buttons cluttering the node body). All three are renders of the
+  same Revit project (<code>live-A203.rvt</code>) at the same moment so the
+  comparison is honest.
+</div>
+
+<div class="legend">
+  <span><span class="swatch" style="background:var(--blue)"></span>auto-cooked</span>
+  <span><span class="swatch" style="background:var(--err)"></span>cached/locked</span>
+  <span><span class="swatch" style="background:var(--yellow)"></span>bypassed</span>
+  <span><span class="swatch" style="background:var(--purple)"></span>wired (socket-promoted)</span>
+  <span><span class="swatch" style="background:#1a2233; border:1px solid var(--blue)"></span>channel-reference (soft wire)</span>
+  <span><span class="swatch" style="background:var(--ok)"></span>configured / done</span>
+</div>
+
+<div class="prototypes">
+
+<!-- ─────────────────────────── DIRECTION A ─────────────────────────── -->
+<div class="prototype">
+  <div class="prototype-header">
+    <span class="prototype-tag">DIRECTION A</span>
+    <span class="prototype-name">Op grid + Houdini flags</span>
+  </div>
+  <p class="prototype-tagline">
+    All 13 ops live as a tile grid on the node face. Active op expands inline.
+    Per-op coloured flags carry run state (no buttons). Right panel = tabs +
+    search across every op. The most assertive answer to "nothing hidden."
+  </p>
+
+  <div class="stage">
+    <div class="canvas-zone">
+      <!-- The Revit host node — direction A -->
+      <div class="node pA-node">
+        <div class="node-title">
+          <span class="icon">◆</span>
+          <span class="cat-label">REVIT · live-A203.rvt</span>
+          <div class="flag-bar">
+            <div class="flag on-blue"  title="Auto-cook"></div>
+            <div class="flag on-red"   title="Locked (cached)"></div>
+            <div class="flag" title="Bypassed"></div>
+          </div>
+        </div>
+        <!-- main in/out -->
+        <div class="sock t-any"     style="left:-6px; top:42px;"></div>
+        <span class="sock-label" style="left:9px; top:39px;">trigger</span>
+        <div class="sock t-list out" style="right:-6px; top:42px;"></div>
+        <span class="sock-label" style="right:9px; top:39px; color:var(--blue)">last_out</span>
+
+        <!-- Op grid -->
+        <div class="pA-grid">
+          <div class="pA-tile cfg">
+            <div><span class="pill-status done"></span><span class="pA-name">list_views</span></div>
+            <div class="pA-time">2m ago</div>
+          </div>
+          <div class="pA-tile cfg active">
+            <div style="display:flex; align-items:center">
+              <span class="pill-status done"></span>
+              <span class="pA-name">list_walls</span>
+              <span style="margin-left:auto; font-size:8px; color:var(--blue)">AUTO · 18s ago · 142 rows</span>
+            </div>
+            <div class="pA-params">
+              <div class="pA-param wired">
+                <span class="k">view</span>
+                <span class="v">Level 1 ↳ wired</span>
+                <span class="pA-promote" style="background:var(--purple);border-color:var(--purple);opacity:1"></span>
+              </div>
+              <div class="pA-param wired">
+                <span class="k">phase</span>
+                <span class="v">New Construction ↳ wired</span>
+                <span class="pA-promote" style="background:var(--purple);border-color:var(--purple);opacity:1"></span>
+              </div>
+              <div class="pA-param">
+                <span class="k">category</span>
+                <span class="v">Walls</span>
+                <span class="pA-promote"></span>
+              </div>
+              <div class="pA-param">
+                <span class="k">include_demolished</span>
+                <span class="v">false</span>
+                <span class="pA-promote"></span>
+              </div>
+            </div>
+          </div>
+          <div class="pA-tile cfg">
+            <div><span class="pill-status done"></span><span class="pA-name">list_doors</span></div>
+            <div class="pA-time">2m ago</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">list_rooms</span></div>
+            <div class="pA-time">never</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">list_levels</span></div>
+            <div class="pA-time">never</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">list_grids</span></div>
+            <div class="pA-time">never</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">list_sheets</span></div>
+            <div class="pA-time">never</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">list_schedules</span></div>
+            <div class="pA-time">never</div>
+          </div>
+          <div class="pA-tile bypassed">
+            <div><span class="pill-status idle"></span><span class="pA-name">place_family</span></div>
+            <div class="pA-time">bypassed</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">update_param</span></div>
+            <div class="pA-time">never</div>
+          </div>
+          <div class="pA-tile locked">
+            <div><span class="pill-status cfg"></span><span class="pA-name">tag_element</span></div>
+            <div class="pA-time">locked · 4h</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">link_dwg</span></div>
+            <div class="pA-time">never</div>
+          </div>
+          <div class="pA-tile">
+            <div><span class="pill-status idle"></span><span class="pA-name">export_view</span></div>
+            <div class="pA-time">never</div>
+          </div>
+        </div>
+
+        <!-- promoted sockets on left rail -->
+        <div class="pA-rail-sock" style="top:155px;background:var(--purple);"></div>
+        <div class="pA-rail-label" style="top:152px;">list_walls.view</div>
+        <div class="pA-rail-sock" style="top:175px;"></div>
+        <div class="pA-rail-label" style="top:172px;">list_walls.phase</div>
+      </div>
+
+      <!-- a Phase Filter upstream node feeding sockets -->
+      <div class="node" style="left:-200px; top:142px; width:170px; opacity:0; pointer-events:none">
+        <!-- offscreen placeholder; we hint the wire below -->
+      </div>
+      <svg class="wire-layer" style="width:100%; height:100%">
+        <defs></defs>
+        <!-- promoted-input wires entering at left rail (drawn from canvas edge) -->
+        <path d="M 0 162 C 30 162, 30 162, 42 162" stroke="#9b59b6" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <path d="M 0 182 C 30 182, 30 182, 42 182" stroke="#9b59b6" stroke-width="2.4" fill="none" opacity="0.85"/>
+      </svg>
+    </div>
+
+    <!-- Right panel for A -->
+    <div class="panel-zone">
+      <div class="panel-header">
+        <div class="panel-host-stripe"></div>
+        <div class="panel-host-label">REVIT · list_walls</div>
+      </div>
+      <div class="panel-title">list_walls</div>
+      <div class="panel-sub">revit.list_walls · 142 rows · 18s ago</div>
+
+      <div class="pA-panel-tabs">
+        <div class="pA-tab active">PARAMETERS</div>
+        <div class="pA-tab">SETTINGS</div>
+        <div class="pA-tab">OUTPUT</div>
+        <div class="pA-tab">DOCS</div>
+      </div>
+
+      <input class="pA-search" placeholder="search across all 13 ops…" value="phase"/>
+
+      <div class="pA-section">PHASE — 4 MATCHING ROWS ACROSS 3 OPS</div>
+      <div class="pA-row wired">
+        <span class="k">list_walls.phase</span>
+        <span class="v">New Construction ↳ from Phase Filter</span>
+      </div>
+      <div class="pA-row">
+        <span class="k">list_doors.phase</span>
+        <span class="v">New Construction</span>
+      </div>
+      <div class="pA-row">
+        <span class="k">tag_element.phase</span>
+        <span class="v">Existing</span>
+      </div>
+      <div class="pA-row">
+        <span class="k">list_rooms.phase</span>
+        <span class="v">(unset)</span>
+      </div>
+
+      <div class="pA-section">LIST_WALLS — ALL PARAMS</div>
+      <div class="pA-row wired">
+        <span class="k">view</span>
+        <span class="v">Level 1 ↳ wired</span>
+      </div>
+      <div class="pA-row">
+        <span class="k">category</span>
+        <span class="v">Walls</span>
+      </div>
+      <div class="pA-row">
+        <span class="k">workset</span>
+        <span class="v slider"></span>
+      </div>
+      <div class="pA-row">
+        <span class="k">include_demolished</span>
+        <span class="v">false</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="annot">
+    <div class="borrowed">Borrows from: ComfyUI Convert Widget to Input · UE Split Struct Pin · Houdini flags · n8n displayOptions + NDV tabs · n8n Pin Data.</div>
+    <strong>What's easier:</strong>
+    <ul>
+      <li>Op discovery is instant — all 13 visible.</li>
+      <li>"Nothing hidden" honoured: every op + its state is on the node face.</li>
+      <li>Flag system scales: a 14th op is one more tile.</li>
+      <li>Promote-to-socket is one click and visible at left rail.</li>
+    </ul>
+    <strong class="tradeoffs">What's harder:</strong>
+    <ul>
+      <li>Node grows tall when an op is expanded — collisions with other nodes if dense graph.</li>
+      <li>Left socket rail can stack heavily if user promotes many params.</li>
+      <li>Tile-expansion animation has to feel deterministic, not jumpy.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─────────────────────────── DIRECTION B ─────────────────────────── -->
+<div class="prototype">
+  <div class="prototype-header">
+    <span class="prototype-tag">DIRECTION B</span>
+    <span class="prototype-name">Stacked widgets + Blender dual surface</span>
+  </div>
+  <p class="prototype-tagline">
+    Single tall node. Every op = a section. Every parameter = a widget row.
+    Each row promotable to a socket via a single drag. The right panel is a
+    1:1 mirror of the node body (Blender Group Input ↔ modifier-panel model).
+    Most ComfyUI-native; cleanest gesture model.
+  </p>
+
+  <div class="stage">
+    <div class="canvas-zone">
+      <div class="node pB-node">
+        <div class="node-title">
+          <span class="icon">◆</span>
+          <span class="cat-label">REVIT · live-A203.rvt</span>
+          <div class="flag-bar">
+            <div class="flag on-blue"></div>
+          </div>
+        </div>
+        <div class="sock t-any" style="left:-6px; top:42px;"></div>
+        <span class="sock-label" style="left:9px; top:39px;">in</span>
+        <div class="sock t-list out" style="right:-6px; top:42px;"></div>
+        <span class="sock-label" style="right:9px; top:39px; color:var(--blue)">out</span>
+
+        <!-- sections -->
+        <div class="pB-section expanded">
+          <div class="pB-sec-head">
+            <span class="chev">▾</span>
+            <span class="name">list_walls</span>
+            <span class="count">(4)</span>
+            <span class="mode-ring auto" title="Auto"></span>
+            <span class="time">18s</span>
+          </div>
+          <div class="pB-sec-body">
+            <div class="pB-row wired"><span class="pB-dot promoted"></span><span class="k">view</span><span class="v">Level 1</span></div>
+            <div class="pB-row wired"><span class="pB-dot promoted"></span><span class="k">phase</span><span class="v">New Construction</span></div>
+            <div class="pB-row"><span class="pB-dot"></span><span class="k">category</span><span class="v">Walls</span></div>
+            <div class="pB-row"><span class="pB-dot"></span><span class="k">include_demolished</span><span class="v">false</span></div>
+          </div>
+        </div>
+        <div class="pB-section expanded">
+          <div class="pB-sec-head">
+            <span class="chev">▾</span>
+            <span class="name">list_doors</span>
+            <span class="count">(4)</span>
+            <span class="mode-ring auto"></span>
+            <span class="time">18s</span>
+          </div>
+          <div class="pB-sec-body">
+            <div class="pB-row"><span class="pB-dot"></span><span class="k">view</span><span class="v">Level 1</span></div>
+            <div class="pB-row"><span class="pB-dot"></span><span class="k">phase</span><span class="v">New Construction</span></div>
+            <div class="pB-row"><span class="pB-dot"></span><span class="k">family_filter</span><span class="v">*</span></div>
+            <div class="pB-row"><span class="pB-dot"></span><span class="k">include_demolished</span><span class="v">false</span></div>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">list_views</span>
+            <span class="count">(3)</span>
+            <span class="mode-ring pull"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">list_rooms</span>
+            <span class="count">(5)</span>
+            <span class="mode-ring pull"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">list_levels</span>
+            <span class="count">(3)</span>
+            <span class="mode-ring pull"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">list_grids</span>
+            <span class="count">(2)</span>
+            <span class="mode-ring pull"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">list_sheets</span>
+            <span class="count">(2)</span>
+            <span class="mode-ring pull"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">tag_element</span>
+            <span class="count">(6)</span>
+            <span class="mode-ring manual"></span>
+            <span class="time">cached</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">update_param</span>
+            <span class="count">(4)</span>
+            <span class="mode-ring manual"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">place_family</span>
+            <span class="count">(7)</span>
+            <span class="mode-ring manual"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">export_view</span>
+            <span class="count">(5)</span>
+            <span class="mode-ring manual"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">link_dwg</span>
+            <span class="count">(3)</span>
+            <span class="mode-ring manual"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+        <div class="pB-section">
+          <div class="pB-sec-head">
+            <span class="chev">▸</span>
+            <span class="name">list_schedules</span>
+            <span class="count">(2)</span>
+            <span class="mode-ring pull"></span>
+            <span class="time">never</span>
+          </div>
+        </div>
+      </div>
+      <svg class="wire-layer" style="width:100%; height:100%">
+        <!-- promoted wires entering from offscreen left -->
+        <path d="M 0 155 C 20 155, 25 155, 32 155" stroke="#9b59b6" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <path d="M 0 175 C 20 175, 25 175, 32 175" stroke="#9b59b6" stroke-width="2.4" fill="none" opacity="0.85"/>
+      </svg>
+    </div>
+
+    <div class="panel-zone">
+      <div class="panel-header">
+        <div class="panel-host-stripe"></div>
+        <div class="panel-host-label">REVIT — MIRROR</div>
+      </div>
+      <div class="panel-title">live-A203.rvt</div>
+      <div class="panel-sub">node-panel mirror · edit either side</div>
+
+      <input class="pB-panel-search" placeholder="search params (matches across all 13 ops)…" value="view"/>
+
+      <div class="pA-section">5 ROWS MATCH</div>
+      <div class="pB-mirror-row wired hit">
+        <span class="pin on">★</span>
+        <span class="k">list_walls.view</span>
+        <span class="v">Level 1 ↳ wired</span>
+      </div>
+      <div class="pB-mirror-row hit">
+        <span class="pin">☆</span>
+        <span class="k">list_doors.view</span>
+        <span class="v">Level 1</span>
+      </div>
+      <div class="pB-mirror-row hit">
+        <span class="pin">☆</span>
+        <span class="k">list_views.view_type</span>
+        <span class="v">Floor Plan</span>
+      </div>
+      <div class="pB-mirror-row hit">
+        <span class="pin">☆</span>
+        <span class="k">export_view.view_id</span>
+        <span class="v">(unset)</span>
+      </div>
+      <div class="pB-mirror-row hit">
+        <span class="pin">☆</span>
+        <span class="k">tag_element.view_filter</span>
+        <span class="v">*</span>
+      </div>
+
+      <div class="pA-section">OUTPUT PREVIEW · list_walls</div>
+      <div style="padding:6px 14px 14px; font-family:var(--mono); font-size:9.5px; color:var(--ink); background:var(--bg); margin:0 14px 14px; border-radius:4px; border:1px solid var(--lineSoft); max-height:120px; overflow:auto">
+[<br>
+&nbsp;&nbsp;{ "id":"345.001", "type":"Generic - 200mm", "height":3.2, "phase":"New" },<br>
+&nbsp;&nbsp;{ "id":"345.002", "type":"Generic - 200mm", "height":3.2, "phase":"New" },<br>
+&nbsp;&nbsp;{ "id":"345.003", "type":"Curtain - Glazed", "height":4.0, "phase":"New" },<br>
+&nbsp;&nbsp;…<br>
+&nbsp;&nbsp;<em style="color:var(--inkMuted)">+139 more rows</em><br>
+]
+      </div>
+    </div>
+  </div>
+
+  <div class="annot">
+    <div class="borrowed">Borrows from: ComfyUI widget stack + Convert Widget to Input · Blender Geometry Nodes Group-Input ↔ modifier-panel dual surface · UE Split Struct Pin (section-as-struct) · n8n Pin Data per op.</div>
+    <strong>What's easier:</strong>
+    <ul>
+      <li>One mental model: the node IS the form, the panel is a magnifier.</li>
+      <li>Promote-to-socket = single drag on the row's left-edge dot.</li>
+      <li>Mirror means you can edit either surface — Blender's GN modifier slider works identically.</li>
+    </ul>
+    <strong class="tradeoffs">What's harder:</strong>
+    <ul>
+      <li>Node is TALL — ~780 px even with most sections collapsed. Canvas scroll friction.</li>
+      <li>Visual hierarchy between section headers and rows must be ruthless or it becomes a wall of text.</li>
+      <li>Mirror sync needs zero-latency feedback both ways.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─────────────────────────── DIRECTION C ─────────────────────────── -->
+<div class="prototype">
+  <div class="prototype-header">
+    <span class="prototype-tag">DIRECTION C</span>
+    <span class="prototype-name">Houdini multi-tab + channel-ref soft wires</span>
+  </div>
+  <p class="prototype-tagline">
+    Compact node face. Tab strip across the header — one tab per op + Common + All.
+    Active tab shows its params inline; right panel is a full Houdini-style param
+    editor (tabs + search + colour-coded states). Channel-reference / soft wires
+    keep the canvas clean even when many values are linked.
+  </p>
+
+  <div class="stage">
+    <div class="canvas-zone">
+      <div class="node pC-node">
+        <!-- floating settings bar above the node (visible when selected) -->
+        <div class="pC-floating">
+          <span style="color:var(--inkMuted)">run mode:</span>
+          <span class="mode-btn active">auto</span>
+          <span class="mode-btn">pull</span>
+          <span class="mode-btn">manual</span>
+          <span style="color:var(--inkDim)">·</span>
+          <span class="mode-btn">pin output</span>
+          <span class="mode-btn">bypass op</span>
+        </div>
+
+        <div class="node-title">
+          <span class="icon">◆</span>
+          <span class="cat-label">REVIT · live-A203.rvt</span>
+          <span style="margin-left:auto; font-family:var(--mono); font-size:9px; color:var(--ok)">● live</span>
+        </div>
+
+        <!-- main sockets -->
+        <div class="sock t-any" style="left:-6px; top:42px;"></div>
+        <span class="sock-label" style="left:9px; top:39px;">in</span>
+        <div class="sock t-list out" style="right:-6px; top:42px;"></div>
+        <span class="sock-label" style="right:9px; top:39px; color:var(--blue)">out</span>
+
+        <!-- tab strip -->
+        <div class="pC-tab-strip">
+          <div class="pC-tab">Common</div>
+          <div class="pC-tab cfg active">list_walls</div>
+          <div class="pC-tab cfg">list_doors</div>
+          <div class="pC-tab">list_views</div>
+          <div class="pC-tab">list_rooms</div>
+          <div class="pC-tab">list_levels</div>
+          <div class="pC-tab">list_grids</div>
+          <div class="pC-tab">list_sheets</div>
+          <div class="pC-tab">list_schedules</div>
+          <div class="pC-tab">export_view</div>
+          <div class="pC-tab">place_family</div>
+          <div class="pC-tab">update_param</div>
+          <div class="pC-tab cfg">tag_element</div>
+          <div class="pC-tab">link_dwg</div>
+          <div class="pC-tab" style="color:var(--accent)">All</div>
+        </div>
+
+        <!-- active tab body -->
+        <div class="pC-body">
+          <div class="pC-row wired">
+            <span class="k">view</span>
+            <span class="v">Level 1 ↳ wired</span>
+          </div>
+          <div class="pC-row chref">
+            <span class="k">phase</span>
+            <span class="v">ch("../Phase/current")</span>
+          </div>
+          <div class="pC-row static">
+            <span class="k">category</span>
+            <span class="v">Walls</span>
+          </div>
+          <div class="pC-row pinned">
+            <span class="k">workset</span>
+            <span class="v">All Worksets ✕ pinned</span>
+          </div>
+          <div class="pC-row static">
+            <span class="k">include_demolished</span>
+            <span class="v">false</span>
+          </div>
+        </div>
+
+        <!-- flag bar at bottom -->
+        <div class="pC-flag-bar">
+          <div class="pC-flag on-blue" title="Auto-cook"></div>
+          <div class="pC-flag on-red" title="Locked / cached"></div>
+          <div class="pC-flag" title="Bypassed"></div>
+          <div class="pC-flag on-purple" title="Pinned"></div>
+          <div class="pC-flag" title="Errored"></div>
+          <span style="margin-left:auto; font-family:var(--mono); font-size:8.5px; color:var(--inkMuted)">flags · right-click for menu</span>
+        </div>
+      </div>
+
+      <!-- channel reference dotted overlay (shown on hover) -->
+      <svg class="wire-layer" style="width:100%; height:100%">
+        <path d="M 0 222 C 30 222, 30 222, 60 222" stroke="#6a9bcc"
+          stroke-width="2" stroke-dasharray="5 4" fill="none" opacity="0.7"/>
+        <text x="6" y="218" fill="#6a9bcc" font-family="monospace" font-size="9">
+          ch(&quot;../Phase/current&quot;)
+        </text>
+      </svg>
+    </div>
+
+    <div class="panel-zone">
+      <div class="panel-header">
+        <div class="panel-host-stripe"></div>
+        <div class="panel-host-label">REVIT · ALL OPS</div>
+      </div>
+      <div class="panel-title">Parameter Editor</div>
+      <div class="panel-sub">Houdini-style · searchable · channel-ref-aware</div>
+
+      <div class="pC-panel-tabs">
+        <div class="pC-ptab">Common</div>
+        <div class="pC-ptab">list_walls</div>
+        <div class="pC-ptab">list_doors</div>
+        <div class="pC-ptab active">All</div>
+        <div class="pC-ptab">Spare</div>
+      </div>
+
+      <input class="pC-search" placeholder="search across all 13 ops…" value="phase"/>
+
+      <div class="pC-group">LIST_WALLS · 1 MATCH</div>
+      <div class="pC-prow hit">
+        <span class="marker" style="color:var(--blue)">🔗</span>
+        <span class="k">phase</span>
+        <span class="v">ch("../Phase/current")</span>
+      </div>
+      <div class="pC-group">LIST_DOORS · 1 MATCH</div>
+      <div class="pC-prow hit">
+        <span class="marker">=</span>
+        <span class="k">phase</span>
+        <span class="v">New Construction</span>
+      </div>
+      <div class="pC-group">TAG_ELEMENT · 1 MATCH</div>
+      <div class="pC-prow hit">
+        <span class="marker">=</span>
+        <span class="k">phase</span>
+        <span class="v">Existing</span>
+      </div>
+      <div class="pC-group">LIST_ROOMS · 1 MATCH</div>
+      <div class="pC-prow hit">
+        <span class="marker" style="color:var(--inkMuted)">·</span>
+        <span class="k">phase</span>
+        <span class="v" style="color:var(--inkMuted)">(unset)</span>
+      </div>
+
+      <div class="pC-group">SPARE PARAMETERS · user-defined</div>
+      <div class="pC-prow">
+        <span class="marker" style="color:var(--purple)">▲</span>
+        <span class="k">active_phase</span>
+        <span class="v" style="background:#2c1a2e; border-color:var(--purple); color:var(--purple)">= ch("../Phase/current")</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="annot">
+    <div class="borrowed">Borrows from: Houdini param editor (tabs, search, colour-coded states, spare parameters) · Houdini flags · Houdini channel references (ch()) · ComfyUI floating selection toolbar · UE Promote to Variable.</div>
+    <strong>What's easier:</strong>
+    <ul>
+      <li>Most compact node face of the three — scales to 30+ ops.</li>
+      <li>Channel references = no noodle spaghetti for shared values; hover-overlay still discoverable.</li>
+      <li>Power-user surface (Spare Parameters, expression toggle) without burdening newcomers.</li>
+      <li>Floating settings bar = no buttons on the node body (founder constraint).</li>
+    </ul>
+    <strong class="tradeoffs">What's harder:</strong>
+    <ul>
+      <li>Strict reading of "nothing hidden" — non-active tabs hide their params. Reframe needed: tabs are not dropdowns.</li>
+      <li>Three promotion gestures (socket / channel-ref / variable) is power but adds learning.</li>
+      <li>Channel-ref discoverability needs hover-overlay polish.</li>
+    </ul>
+  </div>
+</div>
+
+</div>
+
+<div class="pick-cta">
+  <h2>Pick a direction (or steer me)</h2>
+  <p>Once you point at one (or describe a hybrid you want), I write the revised
+  AgDR-0012 against the founder mandate, then start the ReactFlow migration with
+  this host-node design as the first React component on the new foundation.</p>
+  <ol>
+    <li><strong>A — Op grid + Houdini flags</strong> · most assertive answer to "nothing hidden"; newcomer-friendly; node grows when ops expand.</li>
+    <li><strong>B — Stacked widgets + Blender dual surface</strong> · simplest gesture model; tall node; the node IS the form.</li>
+    <li><strong>C — Houdini multi-tab + channel-ref</strong> · most professional; scales furthest; tabs are the "non-dropdown dropdown".</li>
+    <li><strong>Hybrid</strong> — tell me which pieces of each you want fused.</li>
+  </ol>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,78 @@
+{
+  "id": "corpus-speckle-floor-filter",
+  "name": "Speckle type ANY-floor",
+  "description": "Exercises the AgDR-0012 speckle_type back-compat path. The producer port declares an UNKNOWN/legacy speckle_type ('Objects.Legacy.UnknownTag') plus a concrete legacy type 'list' — PortType.from_speckle_type floors the unknown string to ANY, then Port.from_dict respects the legacy 'list'. The consumer port carries the unknown speckle_type with legacy type 'any', so it floors fully to ANY. The resulting LIST->ANY edge must NOT trip type_mismatch (graph.py ANY-floor). A keep flag filters 3 rows to 2.",
+  "schema_version": "1.0",
+  "nodes": [
+    {
+      "id": "tagged",
+      "type": "data.constant",
+      "label": "Tagged rows",
+      "config": {"value": [
+        {"tag": "T1", "keep": true},
+        {"tag": "T2", "keep": false},
+        {"tag": "T3", "keep": true}
+      ]},
+      "inputs": [],
+      "outputs": [
+        {"name": "value", "type": "list", "speckle_type": "Objects.Legacy.UnknownTag", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 80, "y": 120}
+    },
+    {
+      "id": "keep_only",
+      "type": "filter.apply",
+      "label": "Keep flagged",
+      "config": {"field": "keep", "op": "truthy", "match": null},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "Objects.Legacy.UnknownTag", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false},
+        {"name": "count", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 360, "y": 120}
+    },
+    {
+      "id": "tally",
+      "type": "transform.apply",
+      "label": "Count kept",
+      "config": {"op": "count", "field": ""},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 640, "y": 120}
+    },
+    {
+      "id": "kept_count",
+      "type": "output.parameter",
+      "label": "Kept",
+      "config": {"name": "kept_count"},
+      "inputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": true, "default": null, "exec": false, "multiple": false}
+      ],
+      "outputs": [
+        {"name": "value", "type": "any", "speckle_type": "archhub.any", "description": "", "required": false, "default": null, "exec": false, "multiple": false}
+      ],
+      "position": {"x": 920, "y": 120}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "src_node": "tagged", "src_port": "value", "dst_node": "keep_only", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "Objects.Legacy.UnknownTag"},
+    {"id": "e2", "src_node": "keep_only", "src_port": "value", "dst_node": "tally", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "archhub.any"},
+    {"id": "e3", "src_node": "tally", "src_port": "value", "dst_node": "kept_count", "dst_port": "value", "cache_key": "", "state": "idle", "value_preview": "", "src_field": "", "dst_field": "", "speckle_type": "archhub.any"}
+  ],
+  "triggers": [
+    {"id": "trig_manual", "type": "manual", "config": {}, "enabled": true}
+  ],
+  "inputs": [],
+  "outputs": [
+    {"name": "kept_count", "type": "any", "description": "Rows with keep=true", "required": false, "default": null}
+  ],
+  "metadata": {},
+  "created_at": "2026-06-05T08:00:00+00:00",
+  "updated_at": "2026-06-05T08:00:00+00:00"
+}

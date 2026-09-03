@@ -1,0 +1,24 @@
+# voice_lint allowlist — legitimate exceptions to studio-language §11.
+#
+# The voice lint (tools/voice_lint.py) flags pictographic emoji, exclamation
+# points in UI copy, and the §11 banned/hype words (successfully, amazing, oops,
+# seamless, powerful, generate, produce, effortless, revolutionary).
+#
+# Real copy occasionally has a justified exception — a string that must name an
+# external API verb ("generate" in a provider's own UI label), a deliberate "!"
+# inside a quoted shell/regex example, etc. Add it here so the gate stays signal,
+# not noise. KEEP THIS LIST SHORT — every entry is a small hole in the voice.
+#
+# Two grammars (one per line):
+#   1. A VERBATIM copy string  — suppresses ALL findings inside exactly that
+#      string. Paste the trimmed user-facing text. Prefer this: it is narrow.
+#         e.g.   Image generate — DashScope
+#   2. A 'kind:detail' token   — suppresses one detail everywhere. Use sparingly;
+#      it is broad. Kinds: emoji | exclamation | banned-word.
+#         e.g.   banned-word:generate        (allow the word "generate" anywhere)
+#
+# Lines starting with '#' and blank lines are ignored.
+#
+# ── entries ──
+# (none yet — the codebase copy is expected to pass clean. Add justified
+#  exceptions below as they arise, each with a one-line reason.)

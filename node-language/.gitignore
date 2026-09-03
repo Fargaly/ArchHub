@@ -1,23 +1,141 @@
-*.py[cod]
-*.pyc
-.coverage
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-__pycache__/
+# ==== Build artifacts ====
 build/
-coverage/
 dist/
-domain_sessions/
-evidence/build_current_evidence.py
-evidence/current-evidence.json
-evidence/junit-*.xml
-evidence/junit-parts/
-grand_sweep_ledger.json
-grandmap.session.json
-infrastructure/generated/
+dist-staging/
+*.egg-info/
+*.spec
+
+# ==== Node / web tooling ====
 node_modules/
-public_site/.git/
-self-hosting-map.html
-test-results/
-tests_replica/test_authority_coherence.py
+
+# ==== Bundled runtime (downloaded by installer\build.bat) ====
+python/
+
+# ==== Python ====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==== Virtual environments ====
+.venv/
+venv/
+env/
+ENV/
+
+# ==== IDE / Editor ====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ==== Secrets ====
+*.env
+.env.local
+secrets.dat
+settings.json
+state.json
+*.log
+
+# ==== Compiled C# binaries (built per-machine via dev kit) ====
+**/bin/
+**/obj/
+*.dll
+*.pdb
+
+# ==== Inno Setup output ====
+*.iss.bak
+ArchHub-Setup*.exe
+
+# ==== Test / temporary outputs ====
+/tmp/
+*.tmp
+build_output.txt
+diagnose_output.txt
+startup_error.log
+
+# ==== Per-machine build outputs ====
+# Source build folders stay ignored (they're per-machine).
+payload/sources/*/bin/
+payload/sources/*/obj/
+# Built MCP binaries — produced by CI in the cloud (see
+# .github/workflows/release.yml), downloaded into payload/<family>/
+# <year>/ at install/first-run time. Never committed.
+payload/revit/
+payload/autocad/
+payload/max/
+# LLM-generated connector sources (meta_connector cache, content-hashed) —
+# regenerated on demand, never committed.
+payload/_generated/
+
+# ==== Per-user / per-machine app data (lives in %LOCALAPPDATA%) ====
+**/skill_usage.json
+# User-saved skills/sessions are runtime artefacts, not source.
+app/skills/*.archhub-skill.json
+**/*.archhub-session.json
+
+# ==== Claude Code per-machine state ====
+# IDE settings + transcripts written by Claude Code; never commit.
+.claude/
+
+# ==== Autonomous agent runtime artefacts ====
+# Each headless agent writes task YAMLs + reports under agents/tasks/
+# during normal operation. These are per-machine runtime state, not
+# source. Keep agents/ scripts themselves tracked, only ignore the
+# dynamic runtime sub-trees.
+agents/tasks/
+agents/logs/
+agents/dashboard.html
+agents/_smoke/
+# Roadmap-dispatcher per-machine state (completed ids, lock, last
+# tick). Per-machine; never commit.
+agents/state/*
+!agents/state/.gitkeep
+
+# ==== Codex / temporary boot logs ====
+boot.log
+# graphify scratch — generated knowledge-graph artefacts, never source.
+graphify-out/
+
+# ==== personal-brain-mcp daemon runtime artefacts ====
+# Written by the running brain daemon (engine ON). Per-machine runtime
+# state, never source: the rotated log tail + the last sync snapshot.
+personal-brain-mcp/daemon-engine.log.out
+personal-brain-mcp/brain-sync-snapshot.json
+
+# ==== Generated training datasets ====
+# Brain dataset exports (e.g. exports/brain-datasets/<brain>/fragments.jsonl)
+# are produced on demand by the brain_export_dataset bridge slot. Artifact
+# output, never source — never committed.
+exports/
+
+scripts/stripe_login_pty.py
+
+# ==== Debug bridge (app/debug_bridge.py) ====
+# Per-launch random token written to the repo run dir when the in-app debug
+# bridge is enabled (ARCHHUB_DEBUG_BRIDGE=1). A secret — never committed.
+.debug_bridge_token
+
+# ==== Loose scratch / session / capture junk (STR-07) ====
+# This repo root doubles as the founder's source-of-truth working dir — the
+# place every loose artefact lands: agent/session transcripts, ad-hoc
+# screenshots, founder message dumps, zipped exports. None of it is source.
+# Patterns are bare (not just **/-globbed) so a file dropped AT the root is
+# caught too — the original miss that let scratch get tracked. NOTE: git does
+# NOT strip trailing inline comments, so every pattern stays on its own line.
+# session transcripts (also matched by the **/-glob above; bare form catches
+# a transcript written at the repo root)
+*.archhub-session.json
+# ad-hoc screenshots / captures named with a leading underscore
+_*.png
+# founder message scratch dump
+founder_msgs.txt
+# zipped exports / bundles — regenerable, never source
+*.zip

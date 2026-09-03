@@ -1,0 +1,5 @@
+# Every pull request requests a review from the founder. Combined with the
+# automated Claude review (.github/workflows/claude-review.yml), every
+# change is seen — by the bot always, by a human whenever wanted.
+
+* @Fargaly

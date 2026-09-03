@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArchHub — Cross-host paths (CAD → Revit detail lines)</title>
+<style>
+  :root {
+    --bg:#15151a; --bgPanel:#1d1d24; --bgSoft:#23232c; --bgHover:#2a2a35;
+    --line:#3a3a47; --lineSoft:#2a2a35;
+    --ink:#e8e6dc; --inkSoft:#a8a5a0; --inkMuted:#6e6b66; --inkDim:#4a4844;
+    --accent:#d97757; --accentDim:#2a1812;
+    --cyan:#5fb3b3; --ok:#7fae65; --warn:#e29bb5; --err:#d96a6a; --blue:#6a9bcc;
+    --purple:#9b59b6; --yellow:#e3b950; --grey:#9b9690;
+    --mono: 'SF Mono','Menlo','Consolas','Roboto Mono',monospace;
+    --serif:'Lora','Georgia',serif;
+    --sans:'Inter','system-ui',sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+         font-size:13px; line-height:1.55; padding:24px 32px; }
+  h1 { font-family:var(--serif); font-size:26px; font-weight:600;
+       letter-spacing:-0.015em; margin:0 0 6px 0; }
+  h2 { font-family:var(--serif); font-size:20px; font-weight:600;
+       letter-spacing:-0.01em; margin:32px 0 6px 0; }
+  h3 { font-family:var(--mono); font-size:11px; font-weight:600;
+       color:var(--inkMuted); letter-spacing:0.18em; margin:14px 0 6px 0; }
+  p { color:var(--inkSoft); max-width:82ch; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--bgSoft);
+         padding:1px 6px; border-radius:3px; }
+  pre { font-family:var(--mono); font-size:11.5px; background:#0e0e12;
+        border:1px solid var(--lineSoft); border-radius:5px; padding:10px 12px;
+        color:var(--ink); overflow:auto; line-height:1.45; }
+  .brief {
+    background:var(--bgPanel); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:8px;
+    padding:14px 18px; margin:18px 0; max-width:900px;
+  }
+  .brief strong { color:var(--ink); }
+  .scenario {
+    background:#0e0e12; border:1px solid var(--line); border-radius:8px;
+    padding:14px 18px; margin:18px 0; font-family:var(--mono); font-size:12.5px;
+    color:var(--inkSoft); max-width:900px;
+  }
+  .scenario .from { color:var(--purple); }
+  .scenario .to   { color:var(--accent); }
+  .paths { display:flex; flex-direction:column; gap:48px; margin-top:24px; }
+  .path {
+    background:linear-gradient(180deg, #1a1a22 0%, var(--bg) 100%);
+    border:1px solid var(--line); border-radius:12px; padding:22px 24px;
+  }
+  .path-header { display:flex; align-items:baseline; gap:12px; margin-bottom:4px; }
+  .path-tag { font-family:var(--mono); font-size:10px; color:var(--accent);
+              letter-spacing:0.18em; background:var(--accentDim);
+              padding:3px 8px; border-radius:3px; }
+  .path-name { font-family:var(--serif); font-size:22px; font-weight:600;
+                letter-spacing:-0.015em; color:var(--ink); }
+  .path-tagline { color:var(--inkSoft); margin:0 0 14px 0; max-width:90ch; }
+  .stage {
+    background:#0e0e12; border:1px solid var(--lineSoft); border-radius:8px;
+    padding:18px; margin:10px 0;
+    display:grid; grid-template-columns:1fr 340px; gap:20px;
+    min-height:500px;
+  }
+  .canvas-zone {
+    background:
+      radial-gradient(circle at 1px 1px, #20202833 1px, transparent 0) 0 0/16px 16px,
+      #0e0e12;
+    border-radius:7px; padding:24px; position:relative; overflow:hidden;
+    min-height:460px;
+  }
+  .panel-zone {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:7px;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  /* node */
+  .node {
+    position:absolute; background:var(--bgPanel); border-radius:8px;
+    border-top:2px solid var(--accent); border-left:1px solid var(--line);
+    border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+    color:var(--ink); font-family:var(--sans); font-size:11.5px;
+    box-shadow:0 6px 16px rgba(0,0,0,.35); min-width:160px;
+  }
+  .node.host-autocad { border-top-color:#C66C0A; }
+  .node.host-revit   { border-top-color:#E87D0D; }
+  .node.adapter      { border-top-color:var(--cyan); }
+  .node.script       { border-top-color:var(--warn); }
+  .node.ai           { border-top-color:var(--blue); border-bottom:1px solid var(--blue); }
+  .node-title {
+    padding:6px 10px; border-bottom:1px solid var(--lineSoft);
+    display:flex; align-items:center; gap:6px;
+    background:var(--bgSoft); border-top-left-radius:6px; border-top-right-radius:6px;
+    font-family:var(--mono); font-size:8.5px; letter-spacing:0.14em;
+    color:var(--inkSoft);
+  }
+  .host-autocad .node-title { color:#C66C0A; }
+  .host-revit   .node-title { color:#E87D0D; }
+  .adapter      .node-title { color:var(--cyan); }
+  .script       .node-title { color:var(--warn); }
+  .ai           .node-title { color:var(--blue); }
+  .node-body { padding:8px 11px; font-family:var(--mono); font-size:10px; }
+  .node-row { display:flex; align-items:center; gap:6px; margin:2px 0; }
+  .node-row .k { color:var(--inkMuted); flex-shrink:0; min-width:74px; }
+  .node-row .v { background:var(--bg); border:1px solid var(--lineSoft);
+                  border-radius:3px; padding:1px 7px; flex:1;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .node-row .v.wired { border-color:var(--purple); background:#2c1a2e; }
+  .node-row .v.bad { border-color:var(--err); color:var(--err); }
+  .node-row .v.ok { border-color:var(--ok); }
+  .node-name { font-family:var(--mono); font-weight:600; font-size:11px;
+                color:var(--ink); }
+  .sock { position:absolute; width:10px; height:10px; border-radius:50%;
+           background:var(--bgPanel); border:1.5px solid var(--inkSoft);
+           box-shadow:0 0 0 2px var(--bg); }
+  .sock.out { background:var(--inkSoft); }
+  .sock.t-list   { border-color:var(--blue);   }
+  .sock.t-list.out { background:var(--blue);   }
+  .sock.t-curve  { border-color:var(--accent); }
+  .sock.t-curve.out { background:var(--accent); }
+  .sock.t-cad    { border-color:var(--purple); }
+  .sock.t-cad.out { background:var(--purple); }
+  .sock-label { position:absolute; font-family:var(--mono); font-size:8px;
+                 color:var(--inkMuted); letter-spacing:0.02em; }
+  .wires { position:absolute; inset:0; pointer-events:none; }
+
+  /* panel */
+  .panel-header { padding:9px 12px; border-bottom:1px solid var(--lineSoft);
+                   display:flex; gap:6px; align-items:center; }
+  .panel-header .dot { width:7px; height:7px; border-radius:2px;
+                        background:var(--accent); }
+  .panel-header .lbl { font-family:var(--mono); font-size:9px;
+                        color:var(--accent); letter-spacing:0.16em; }
+  .panel-title { font-family:var(--serif); font-size:17px; padding:8px 12px 3px;
+                   letter-spacing:-0.01em; }
+  .panel-sub { font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+                padding:0 12px 10px; letter-spacing:0.04em; }
+  .panel-section { font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+                    letter-spacing:0.18em; padding:10px 12px 4px;
+                    background:var(--bgSoft); border-bottom:1px solid var(--lineSoft); }
+  .panel-row { display:flex; align-items:center; padding:5px 12px;
+                font-family:var(--mono); font-size:9.5px; gap:7px; }
+  .panel-row .k { color:var(--inkMuted); flex-shrink:0; min-width:88px; }
+  .panel-row .v { flex:1; background:var(--bgSoft); border:1px solid var(--lineSoft);
+                   border-radius:3px; padding:3px 7px;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .panel-row .v.wired { border-color:var(--purple); background:#2c1a2e; }
+  .panel-btn { display:inline-block; padding:5px 11px; border-radius:4px;
+                font-family:var(--mono); font-size:10px; letter-spacing:0.06em;
+                cursor:pointer; }
+  .panel-btn.primary { background:var(--accent); color:#fff; font-weight:600; }
+  .panel-btn.ghost { background:transparent; border:1px solid var(--line);
+                      color:var(--inkSoft); }
+  .panel-cta { display:flex; gap:6px; padding:10px 12px;
+                border-top:1px solid var(--lineSoft); margin-top:auto; }
+  .annot { background:var(--bgPanel); border:1px solid var(--line);
+            border-radius:6px; padding:12px 16px; margin-top:14px;
+            font-size:12.5px; color:var(--inkSoft); }
+  .annot strong { color:var(--ink); }
+  .annot ul { margin:5px 0 0 18px; padding:0; }
+  .annot li { margin:2px 0; }
+  .borrowed { color:var(--cyan); font-family:var(--mono); font-size:11px; }
+  .badge { display:inline-block; padding:1px 7px; border-radius:3px;
+            font-family:var(--mono); font-size:9px; letter-spacing:0.06em; }
+  .badge.ok { background:#1a2c1d; color:var(--ok); border:1px solid var(--ok); }
+  .badge.bad { background:#2c1a1a; color:var(--err); border:1px solid var(--err); }
+  .badge.ai  { background:#1a2233; color:var(--blue); border:1px solid var(--blue); }
+
+  /* comparison table */
+  .matrix { width:100%; border-collapse:collapse; margin-top:14px;
+             font-size:12px; }
+  .matrix th, .matrix td { padding:8px 12px; border:1px solid var(--lineSoft);
+                            text-align:left; vertical-align:top; }
+  .matrix th { background:var(--bgSoft); font-family:var(--mono); font-size:10px;
+                color:var(--accent); letter-spacing:0.1em; font-weight:600; }
+  .matrix td.dim { color:var(--inkMuted); }
+  .matrix .col-head { font-family:var(--serif); font-style:italic; color:var(--ink); }
+  .matrix .yes { color:var(--ok); }
+  .matrix .no  { color:var(--err); }
+  .matrix .meh { color:var(--warn); }
+
+  .legend { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+             margin-top:14px; padding:10px 14px; background:var(--bgSoft);
+             border:1px dashed var(--line); border-radius:5px;
+             display:flex; flex-wrap:wrap; gap:14px; }
+  .legend .sw { width:11px; height:11px; border-radius:3px;
+                 display:inline-block; vertical-align:middle; margin-right:4px; }
+
+  .recommend {
+    background:linear-gradient(180deg,#1f1f28 0%, var(--bgPanel) 100%);
+    border:1px solid var(--accent); border-radius:8px;
+    padding:16px 20px; margin-top:32px; max-width:920px;
+  }
+  .recommend h2 { margin:0 0 8px 0; }
+  .recommend ol { margin:8px 0 0 20px; color:var(--inkSoft); }
+  .recommend li { margin:4px 0; }
+</style>
+</head>
+<body>
+
+<h1>Cross-host paths — the CAD → Revit litmus</h1>
+<p style="margin-top:2px">
+  Three architectural paths for the cross-host data-flow problem, all executing
+  the SAME real scenario, side by side. Grounded in n8n AI Agent, LangGraph
+  Plan-and-Execute, Cursor Plan Mode, ComfyUI custom nodes, Houdini CHOPs,
+  Speckle's CAD↔Revit converter, and the Revit API's <code>NewDetailCurve</code>
+  contract.
+</p>
+
+<div class="scenario">
+  <span class="from">A-WALL layer · Drawing.dwg</span>
+  &nbsp;⟶&nbsp;
+  <span class="to">Revit Level 1 · detail lines (m, z=0)</span>
+  <div style="font-family:var(--sans); color:var(--inkMuted); margin-top:6px">
+    ~217 LINE + LWPOLYLINE entities · mm units in source · drop z, project onto Level 1 sketch plane
+  </div>
+</div>
+
+<div class="brief">
+  <strong>The honest gap.</strong> Today's op set has the endpoints
+  (<code>autocad.read_layer_entities</code>, <code>revit.create_detail_lines</code>)
+  but no <em>adapter</em> between them. The schema, units, and basepoint
+  conventions don't match. Three architectural paths solve this gap differently;
+  the table at the bottom maps which glue belongs in which.
+</div>
+
+<div class="legend">
+  <span><span class="sw" style="background:#C66C0A"></span>AutoCAD op</span>
+  <span><span class="sw" style="background:#E87D0D"></span>Revit op</span>
+  <span><span class="sw" style="background:var(--cyan)"></span>adapter op</span>
+  <span><span class="sw" style="background:var(--warn)"></span>glue.script</span>
+  <span><span class="sw" style="background:var(--blue)"></span>ai.plan</span>
+  <span><span class="sw" style="background:var(--purple)"></span>cad-typed wire</span>
+  <span><span class="sw" style="background:var(--accent)"></span>revit-curve wire</span>
+</div>
+
+<div class="paths">
+
+<!-- ──────────────────────────── PATH 1 ──────────────────────────── -->
+<div class="path">
+  <div class="path-header">
+    <span class="path-tag">PATH 1 · AI PLAN</span>
+    <span class="path-name">Goal in → graph out → approve → run</span>
+  </div>
+  <p class="path-tagline">
+    User types the goal in an <code>ai.plan</code> node. LLM (with the live op
+    registry as MCP-shaped tools) emits a graph; the canvas materialises it as
+    real, editable nodes. Nothing runs until the user approves the graph.
+    LangGraph's <code>interrupt()</code> + <code>Command(resume=…)</code>
+    underneath, Cursor's plan-and-build UX on top.
+  </p>
+
+  <div class="stage">
+    <div class="canvas-zone">
+      <!-- ai.plan node -->
+      <div class="node ai" style="left:24px; top:32px; width:200px;">
+        <div class="node-title">
+          <span>◆</span><span>AI · PLAN</span>
+          <span class="badge ai" style="margin-left:auto">plan ready</span>
+        </div>
+        <div class="node-body">
+          <div style="color:var(--ink); margin-bottom:6px; line-height:1.4; font-family:var(--sans); font-size:11.5px">
+            "Stream <em>A-WALL</em> from <em>Drawing.dwg</em> into Revit
+            <em>Level 1</em> as detail lines, mm→m, drop z."
+          </div>
+          <div class="node-row"><span class="k">model</span><span class="v">claude · sonnet</span></div>
+          <div class="node-row"><span class="k">budget</span><span class="v">5 ops · 3 min</span></div>
+          <div class="node-row"><span class="k">approve</span><span class="v ok">▶ run graph</span></div>
+        </div>
+      </div>
+
+      <!-- materialised nodes from the plan -->
+      <div class="node host-autocad" style="left:260px; top:32px; width:188px;">
+        <div class="node-title"><span>◇</span><span>AUTOCAD · LIST_LAYERS</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">doc</span><span class="v">Drawing.dwg</span></div>
+          <div class="node-row"><span class="k">status</span><span class="v ok">15 layers ✓</span></div>
+        </div>
+        <div class="sock t-list out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node" style="left:260px; top:152px; width:188px;">
+        <div class="node-title"><span>◇</span><span>FILTER · BY_NAME</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">name</span><span class="v">"A-WALL"</span></div>
+          <div class="node-row"><span class="k">op</span><span class="v">eq</span></div>
+        </div>
+        <div class="sock t-list" style="left:-5px; top:32px;"></div>
+        <div class="sock t-list out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node host-autocad" style="left:260px; top:272px; width:188px;">
+        <div class="node-title"><span>◇</span><span>AUTOCAD · READ_LAYER_ENTITIES</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">layer</span><span class="v wired">«A-WALL»</span></div>
+          <div class="node-row"><span class="k">status</span><span class="v ok">217 entities ✓</span></div>
+        </div>
+        <div class="sock t-list" style="left:-5px; top:32px;"></div>
+        <div class="sock t-cad out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node adapter" style="left:486px; top:272px; width:200px;">
+        <div class="node-title"><span>⇌</span><span>GEOMETRY · CAD_TO_REVIT</span>
+          <span class="badge ai" style="margin-left:auto">AI-picked</span>
+        </div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">from_units</span><span class="v">mm</span></div>
+          <div class="node-row"><span class="k">to_units</span><span class="v">m</span></div>
+          <div class="node-row"><span class="k">drop_z</span><span class="v">true</span></div>
+          <div class="node-row"><span class="k">target_view</span><span class="v">Level 1</span></div>
+        </div>
+        <div class="sock t-cad" style="left:-5px; top:32px;"></div>
+        <div class="sock t-curve out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node host-revit" style="left:724px; top:272px; width:180px;">
+        <div class="node-title"><span>◆</span><span>REVIT · DETAIL_LINES</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">view</span><span class="v">Level 1</span></div>
+          <div class="node-row"><span class="k">curves</span><span class="v wired">«from upstream»</span></div>
+          <div class="node-row"><span class="k">status</span><span class="v" style="color:var(--yellow)">awaiting approval</span></div>
+        </div>
+        <div class="sock t-curve" style="left:-5px; top:32px;"></div>
+      </div>
+
+      <svg class="wires">
+        <!-- ai.plan → list_layers -->
+        <path d="M 220 70 C 240 70, 240 70, 260 70" stroke="#6a9bcc" stroke-width="2" stroke-dasharray="4 4" fill="none" opacity="0.6"/>
+        <!-- list_layers → filter -->
+        <path d="M 445 70 C 460 70, 240 70, 240 190 C 240 190, 250 190, 260 190" stroke="#6a9bcc" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <!-- filter → read_layer_entities -->
+        <path d="M 445 190 C 460 190, 240 190, 240 310 C 240 310, 250 310, 260 310" stroke="#6a9bcc" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <!-- read_layer_entities → cad_to_revit -->
+        <path d="M 445 310 C 466 310, 466 310, 486 310" stroke="#9b59b6" stroke-width="3" fill="none" opacity="0.9"/>
+        <!-- cad_to_revit → revit -->
+        <path d="M 685 310 C 705 310, 705 310, 724 310" stroke="#d97757" stroke-width="3" fill="none" opacity="0.9"/>
+      </svg>
+    </div>
+
+    <!-- right panel -->
+    <div class="panel-zone">
+      <div class="panel-header"><span class="dot" style="background:var(--blue)"></span><span class="lbl">AI · PLAN</span></div>
+      <div class="panel-title">Plan ready · review</div>
+      <div class="panel-sub">5 nodes · 2 wires across-host · 1 adapter</div>
+
+      <div class="panel-section">PLAN STEPS · CLICK TO HIGHLIGHT NODE</div>
+      <div class="panel-row"><span class="k">1.</span><span class="v">autocad.list_layers(doc=Drawing.dwg)</span></div>
+      <div class="panel-row"><span class="k">2.</span><span class="v">filter.by_name(name="A-WALL")</span></div>
+      <div class="panel-row"><span class="k">3.</span><span class="v">autocad.read_layer_entities(layer=«2»)</span></div>
+      <div class="panel-row"><span class="k">4.</span><span class="v">geometry.cad_to_revit(...)</span></div>
+      <div class="panel-row"><span class="k">5.</span><span class="v">revit.create_detail_lines(view=Level 1)</span></div>
+
+      <div class="panel-section">TOOLS VISIBLE TO LLM · 47</div>
+      <div class="panel-row"><span class="k">revit.*</span><span class="v">13 ops</span></div>
+      <div class="panel-row"><span class="k">autocad.*</span><span class="v">11 ops</span></div>
+      <div class="panel-row"><span class="k">geometry.*</span><span class="v">4 adapters</span></div>
+      <div class="panel-row"><span class="k">data.*</span><span class="v">6 transforms</span></div>
+      <div class="panel-row"><span class="k">glue.script</span><span class="v">always available</span></div>
+
+      <div class="panel-cta">
+        <span class="panel-btn ghost">Edit nodes</span>
+        <span class="panel-btn ghost">Discard</span>
+        <span class="panel-btn primary">Approve & Run ▶</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="annot">
+    <div class="borrowed">Borrows from: LangGraph Plan-and-Execute + interrupt() · Cursor Plan Mode editable plan · n8n $fromAI() filling action-node params · MCP tools/list as the live op-registry surface · ComfyUI typed-wire compile errors.</div>
+    <strong>Wins:</strong>
+    <ul>
+      <li>Goal-driven UX → no rummaging through 116 ops to assemble a pipeline.</li>
+      <li>Plan IS the canvas — no parallel transcript that drifts from what runs.</li>
+      <li>Type-incompatible wires fail at compile, not at Run (typed sockets do this for free).</li>
+      <li>Hybrid agency: approve-before-run by default; <code>auto_run:true</code> per-node enables the n8n free-agent leg for read-only pipelines.</li>
+    </ul>
+    <strong style="color:var(--warn)">Costs:</strong>
+    <ul>
+      <li>The LLM must see EVERY op's <code>config_schema</code> — registry → MCP tools/list pipe must be live, not hand-curated.</li>
+      <li>Picks the wrong adapter ~1 in 5 on first try (mitigated by typed-wire compile errors surfacing red BEFORE Run).</li>
+      <li>Time-to-first-result: 40–90 s. Includes LLM round-trip + user review.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ──────────────────────────── PATH 2 ──────────────────────────── -->
+<div class="path">
+  <div class="path-header">
+    <span class="path-tag">PATH 2 · GLUE.SCRIPT</span>
+    <span class="path-name">User wires it · gap fills with AI-written script</span>
+  </div>
+  <p class="path-tagline">
+    User places the two host nodes manually, hits a type mismatch on the wire,
+    drops in a <code>glue.script</code> node. The panel shows the input + output
+    schemas (sampled from live data). One click on "Ask AI to write this" sends
+    schemas + intent to the LLM; the script body lands sandboxed and validated.
+  </p>
+
+  <div class="stage">
+    <div class="canvas-zone">
+      <div class="node host-autocad" style="left:36px; top:130px; width:200px;">
+        <div class="node-title"><span>◇</span><span>AUTOCAD · READ_LAYER_ENTITIES</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">doc</span><span class="v">Drawing.dwg</span></div>
+          <div class="node-row"><span class="k">layer</span><span class="v">A-WALL</span></div>
+          <div class="node-row"><span class="k">status</span><span class="v ok">217 entities ✓</span></div>
+        </div>
+        <div class="sock t-cad out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node script" style="left:300px; top:130px; width:240px;">
+        <div class="node-title"><span>⚙</span><span>GLUE · SCRIPT</span>
+          <span class="badge ai" style="margin-left:auto">AI-written · 13s ago</span>
+        </div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">in</span><span class="v">list[cad_entity]</span></div>
+          <div class="node-row"><span class="k">out</span><span class="v">list[revit.line2d]</span></div>
+          <div class="node-row"><span class="k">runtime</span><span class="v">python · sandbox</span></div>
+          <div class="node-row"><span class="k">last_run</span><span class="v ok">217 → 217 curves</span></div>
+        </div>
+        <div class="sock t-cad" style="left:-5px; top:32px;"></div>
+        <div class="sock t-curve out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node host-revit" style="left:592px; top:130px; width:188px;">
+        <div class="node-title"><span>◆</span><span>REVIT · DETAIL_LINES</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">view</span><span class="v">Level 1</span></div>
+          <div class="node-row"><span class="k">curves</span><span class="v wired">«from glue»</span></div>
+          <div class="node-row"><span class="k">status</span><span class="v ok">last run · 217 ok</span></div>
+        </div>
+        <div class="sock t-curve" style="left:-5px; top:32px;"></div>
+      </div>
+
+      <svg class="wires">
+        <path d="M 236 168 C 268 168, 268 168, 300 168" stroke="#9b59b6" stroke-width="3" fill="none" opacity="0.9"/>
+        <path d="M 540 168 C 566 168, 566 168, 592 168" stroke="#d97757" stroke-width="3" fill="none" opacity="0.9"/>
+      </svg>
+
+      <!-- inline hint above the glue node -->
+      <div style="position:absolute; left:300px; top:90px; width:240px;
+                   font-family:var(--mono); font-size:9.5px; color:var(--warn);
+                   border:1px dashed var(--warn); border-radius:4px;
+                   padding:5px 8px; background:rgba(226,155,181,0.06);
+                   text-align:center;">
+        AI fills the schema gap · sandbox-validated
+      </div>
+    </div>
+
+    <div class="panel-zone">
+      <div class="panel-header"><span class="dot" style="background:var(--warn)"></span><span class="lbl">GLUE · SCRIPT</span></div>
+      <div class="panel-title">cad → revit-curve adapter</div>
+      <div class="panel-sub">python · sandboxed · 217 → 217 last run</div>
+
+      <div class="panel-section">INPUTS — sampled from upstream</div>
+      <div class="panel-row"><span class="k">[0].type</span><span class="v">LINE</span></div>
+      <div class="panel-row"><span class="k">[0].layer</span><span class="v">A-WALL</span></div>
+      <div class="panel-row"><span class="k">[0].vertices</span><span class="v">[{x:1200,y:850,z:0},{x:2400,y:850,z:0}]</span></div>
+      <div class="panel-row"><span class="k">…</span><span class="v">+216 more</span></div>
+
+      <div class="panel-section">OUTPUT SCHEMA — picked from downstream</div>
+      <div class="panel-row"><span class="k">curves</span><span class="v">list[{kind:'line', p0, p1}]</span></div>
+
+      <div class="panel-section">SCRIPT BODY</div>
+      <pre style="margin:8px 12px; font-size:10.5px;">def execute(config, inputs, ctx):
+    out = []
+    for e in inputs["entities"]:
+        v = e.get("vertices", [])
+        if len(v) &lt; 2:
+            continue
+        # mm → m, drop z
+        p0 = (v[0]["x"]/1000, v[0]["y"]/1000, 0.0)
+        p1 = (v[-1]["x"]/1000, v[-1]["y"]/1000, 0.0)
+        out.append({"kind":"line","p0":p0,"p1":p1})
+    return {"curves": out}</pre>
+
+      <div class="panel-cta">
+        <span class="panel-btn ghost">Ask AI to revise</span>
+        <span class="panel-btn primary">Save as Custom Node ★</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="annot">
+    <div class="borrowed">Borrows from: ComfyUI custom-node INPUT_TYPES/RETURN_TYPES + FUNCTION shape · ArchHub's existing <code>node_smith.py</code> + <code>custom_nodes._build_executor</code> · Zapier Code (Lambda sandbox) for the security model · Make.com IML for the schema-driven adapter idea.</div>
+    <strong>Wins:</strong>
+    <ul>
+      <li>Direct fit for schema coercion + simple unit conversion.</li>
+      <li>"Save as Custom Node ★" promotes a one-off script to a reusable typed op — three-path extensibility realised.</li>
+      <li>Time-to-first-result: 20–35 s with AI write.</li>
+    </ul>
+    <strong style="color:var(--warn)">Costs:</strong>
+    <ul>
+      <li>Script can't introspect Revit project basepoint / view elevation — hard-codes <code>z=0</code> which is wrong if Level 1 ≠ 0 m.</li>
+      <li>Current sandbox (regex-block + empty <code>__builtins__</code>) is enough for AI-written code, NOT for adversarial user-typed code. Ship RestrictedPython before user-typed goes GA.</li>
+      <li>Hides the math from skill consumers — they read "glue.script" and have to open it to see what it does.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ──────────────────────────── PATH 3 ──────────────────────────── -->
+<div class="path">
+  <div class="path-header">
+    <span class="path-tag">PATH 3 · ADAPTER OP</span>
+    <span class="path-name">Explicit cross-host op · ships with the system</span>
+  </div>
+  <p class="path-tagline">
+    A real first-class op (<code>geometry.cad_to_revit</code>) lives in the
+    registry. Users pick it from the add-node search; it auto-fills config
+    from the upstream DWG header (<code>$INSUNITS</code>) + Revit project units;
+    it knows about basepoint conventions (Internal / PBP / Survey); it
+    pre-validates and shows "Will produce ~217 detail lines."
+  </p>
+
+  <div class="stage">
+    <div class="canvas-zone">
+      <div class="node host-autocad" style="left:36px; top:130px; width:200px;">
+        <div class="node-title"><span>◇</span><span>AUTOCAD · READ_LAYER_ENTITIES</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">doc</span><span class="v">Drawing.dwg</span></div>
+          <div class="node-row"><span class="k">layer</span><span class="v">A-WALL</span></div>
+          <div class="node-row"><span class="k">$INSUNITS</span><span class="v ok">4 · mm (auto)</span></div>
+        </div>
+        <div class="sock t-cad out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node adapter" style="left:300px; top:130px; width:240px;">
+        <div class="node-title"><span>⇌</span><span>GEOMETRY · CAD_TO_REVIT</span>
+          <span class="badge ok" style="margin-left:auto">live</span>
+        </div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">from_units</span><span class="v" style="color:var(--cyan)">mm · auto</span></div>
+          <div class="node-row"><span class="k">to_units</span><span class="v">m</span></div>
+          <div class="node-row"><span class="k">drop_z</span><span class="v">true</span></div>
+          <div class="node-row"><span class="k">basepoint</span><span class="v">Internal</span></div>
+          <div class="node-row"><span class="k">target_view</span><span class="v">Level 1</span></div>
+          <div class="node-row"><span class="k">entity_filter</span><span class="v">lines + polylines</span></div>
+          <div class="node-row"><span class="k">dry_run</span><span class="v ok">~217 lines · planar ✓</span></div>
+        </div>
+        <div class="sock t-cad" style="left:-5px; top:32px;"></div>
+        <div class="sock t-curve out" style="right:-5px; top:32px;"></div>
+      </div>
+
+      <div class="node host-revit" style="left:592px; top:130px; width:188px;">
+        <div class="node-title"><span>◆</span><span>REVIT · DETAIL_LINES</span></div>
+        <div class="node-body">
+          <div class="node-row"><span class="k">view</span><span class="v">Level 1</span></div>
+          <div class="node-row"><span class="k">curves</span><span class="v wired">«from adapter»</span></div>
+          <div class="node-row"><span class="k">status</span><span class="v ok">ready to run</span></div>
+        </div>
+        <div class="sock t-curve" style="left:-5px; top:32px;"></div>
+      </div>
+
+      <svg class="wires">
+        <path d="M 236 168 C 268 168, 268 168, 300 168" stroke="#9b59b6" stroke-width="3" fill="none" opacity="0.9"/>
+        <path d="M 540 168 C 566 168, 566 168, 592 168" stroke="#d97757" stroke-width="3" fill="none" opacity="0.9"/>
+      </svg>
+
+      <div style="position:absolute; left:300px; top:96px; width:240px;
+                   font-family:var(--mono); font-size:9.5px; color:var(--cyan);
+                   border:1px dashed var(--cyan); border-radius:4px;
+                   padding:5px 8px; background:rgba(95,179,179,0.06);
+                   text-align:center;">
+        Adapter knows: $INSUNITS · basepoint · planarity
+      </div>
+    </div>
+
+    <div class="panel-zone">
+      <div class="panel-header"><span class="dot" style="background:var(--cyan)"></span><span class="lbl">GEOMETRY · CAD_TO_REVIT</span></div>
+      <div class="panel-title">First-class adapter</div>
+      <div class="panel-sub">tested · versioned · ships with ArchHub</div>
+
+      <div class="panel-section">CONFIG · auto-filled from upstream + target</div>
+      <div class="panel-row"><span class="k">from_units</span><span class="v">mm · from $INSUNITS</span></div>
+      <div class="panel-row"><span class="k">to_units</span><span class="v">m · from Revit project units</span></div>
+      <div class="panel-row"><span class="k">drop_z</span><span class="v">true</span></div>
+      <div class="panel-row"><span class="k">basepoint</span><span class="v">Internal · matches Speckle default</span></div>
+      <div class="panel-row"><span class="k">target_view</span><span class="v">Level 1 · elevation 0.000 m</span></div>
+      <div class="panel-row"><span class="k">entity_filter</span><span class="v">LINE + LWPOLYLINE</span></div>
+
+      <div class="panel-section">DRY-RUN PREVIEW · samples first 10 entities</div>
+      <div class="panel-row"><span class="k">expected</span><span class="v ok">~217 detail lines</span></div>
+      <div class="panel-row"><span class="k">bbox</span><span class="v">(0.0, 0.0) → (42.8, 18.6) m</span></div>
+      <div class="panel-row"><span class="k">planar</span><span class="v ok">all entities Z=0 ✓</span></div>
+      <div class="panel-row"><span class="k">unsupported</span><span class="v">0 splines · 0 arcs over 360°</span></div>
+
+      <div class="panel-section">FALLBACKS</div>
+      <div class="panel-row"><span class="k">non-planar</span><span class="v">→ glue.script (auto-suggested)</span></div>
+      <div class="panel-row"><span class="k">splines</span><span class="v">→ geometry.spline_to_polyline</span></div>
+
+      <div class="panel-cta">
+        <span class="panel-btn primary">▶ Run on Revit</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="annot">
+    <div class="borrowed">Borrows from: Speckle's BaseToHostGeometryObjectConverter + ScalingServiceToSpeckle · Revit API's NewDetailCurve contract · Houdini CHOPs as a named adaptation context · n8n's typed sub-sockets for "this slot accepts an adapter."</div>
+    <strong>Wins:</strong>
+    <ul>
+      <li>Most predictable + testable path. Each (host-A × host-B × entity-kind) is a tested unit.</li>
+      <li>Time-to-first-result: 8–20 s. Pick adapter, defaults pre-fill, click Run.</li>
+      <li>Auto-detects <code>$INSUNITS</code>, resolves Revit basepoint, dry-run preview before commit.</li>
+      <li>Hard typed errors (unsupported entity, non-planar) point to <code>glue.script</code> with the failing entities pre-filtered.</li>
+    </ul>
+    <strong style="color:var(--warn)">Costs:</strong>
+    <ul>
+      <li>Combinatorial explosion: each cross-host pair × entity-kind is engineering work. Speckle has dozens of engineers and still ships DirectShape as the fallback.</li>
+      <li>Long tail (xrefs, blocks, splines with non-rational knots) won't fit; must route to glue.script.</li>
+      <li>The litmus alone is ~3 days of focused work for a polished adapter.</li>
+    </ul>
+  </div>
+</div>
+
+</div>
+
+<!-- ──────────────────────────── MATRIX ──────────────────────────── -->
+<h2>Which path owns which glue?</h2>
+<p>Different cross-host glue has different best-fit. The three paths are not
+   competitors — they're a layered toolkit. This is what the AI Plan node
+   picks from.</p>
+
+<table class="matrix">
+  <thead>
+    <tr>
+      <th>Glue kind</th>
+      <th>Example</th>
+      <th>AI Plan (P1)</th>
+      <th>glue.script (P2)</th>
+      <th>Adapter op (P3)</th>
+      <th>Best fit</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="col-head">Schema coercion</td>
+      <td class="dim">field rename, type cast</td>
+      <td class="meh">weak — LLM hallucinates names</td>
+      <td class="yes">strong — schemas in scope</td>
+      <td class="yes">strong — declarative map</td>
+      <td><strong>P2 / P3</strong></td>
+    </tr>
+    <tr>
+      <td class="col-head">Unit conversion</td>
+      <td class="dim">mm → m, ft → m</td>
+      <td class="meh">forgets edge units</td>
+      <td class="yes">trivial 1-liner</td>
+      <td class="yes">strongest — Speckle proves it: <code>units</code> as Base prop</td>
+      <td><strong>P3</strong> · bake into the engine</td>
+    </tr>
+    <tr>
+      <td class="col-head">Coordinate-frame transform</td>
+      <td class="dim">CAD WCS → Revit PBP</td>
+      <td class="no">LLM doesn't know your basepoint</td>
+      <td class="meh">script if matrix given</td>
+      <td class="yes">strong — adapter knows Revit basepoints</td>
+      <td><strong>P3</strong></td>
+    </tr>
+    <tr>
+      <td class="col-head">Semantic mapping</td>
+      <td class="dim">layer A-WALL → category OST_Walls</td>
+      <td class="yes">LLM good at "this name probably means…"</td>
+      <td class="yes">table</td>
+      <td class="meh">needs built-in mapping per host pair</td>
+      <td><strong>P1 + P3</strong> · LLM proposes, adapter stores</td>
+    </tr>
+    <tr>
+      <td class="col-head">Pagination + chunking</td>
+      <td class="dim">50k entities in 100 batches</td>
+      <td class="meh">under-estimates batch sizes</td>
+      <td class="yes">script</td>
+      <td class="yes">adapter knows host's batch limits</td>
+      <td><strong>P3</strong> · adapter as AI tool</td>
+    </tr>
+    <tr>
+      <td class="col-head">Lossy aggregation</td>
+      <td class="dim">50k curves → 1 polyline</td>
+      <td class="meh">medium</td>
+      <td class="yes">strong</td>
+      <td class="yes">strong</td>
+      <td><strong>P2 / P3</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Plan-and-execute UX across 6 systems</h2>
+<table class="matrix">
+  <thead>
+    <tr><th>System</th><th>Plan shown?</th><th>Plan format</th><th>Editable?</th><th>Approval gate</th><th>Mid-run intervene</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>n8n Tools Agent</td><td class="meh">post-hoc only</td><td>JSON action/obs</td><td class="no">no</td><td class="no">none</td><td class="no">none</td></tr>
+    <tr><td>LangGraph Plan-and-Execute</td><td class="yes">yes — <code>state.plan</code></td><td>list[str]</td><td class="yes">yes via interrupt</td><td class="yes">interrupt_before</td><td class="yes">full</td></tr>
+    <tr><td>Flowise AgentflowV2</td><td class="yes">canvas is plan</td><td>React Flow</td><td class="yes">canvas</td><td>HITL node</td><td class="meh">Loop + HITL buggy (#5233)</td></tr>
+    <tr><td>Cursor Plan Mode</td><td class="yes">yes</td><td>.md checklist</td><td class="yes">edit the .md</td><td class="yes">Build button</td><td class="meh">revert + refine plan</td></tr>
+    <tr><td>Cline</td><td class="yes">inline summary</td><td>text</td><td class="meh">verbal</td><td class="yes">plan→Act switch</td><td class="yes">per-step diff approval</td></tr>
+    <tr><td>ComfyUI</td><td>graph IS the plan</td><td>wired nodes</td><td class="yes">canvas</td><td class="no">none</td><td class="no">none</td></tr>
+  </tbody>
+</table>
+
+<div class="recommend">
+  <h2>Recommendation if you pick "all three"</h2>
+  <p>The paths layer: P3 is the foundation, P1 is the front door, P2 is the
+     escape valve. Order of implementation:</p>
+  <ol>
+    <li><strong>Ship adapter ops first (P3)</strong> — start with
+        <code>geometry.cad_to_revit</code>, <code>geometry.revit_to_cad</code>,
+        <code>data.excel_to_notion</code>. ~1–2 weeks each. They unblock the
+        litmus, they're testable, they give the AI Plan node something
+        canonical to point at.</li>
+    <li><strong>Ship the <code>ai.plan</code> node (P1)</strong> wired to the
+        LIVE op registry as MCP tools/list. Plan output IS the canvas
+        (not a parallel transcript). Approval = the existing Run button.
+        ~2–3 weeks.</li>
+    <li><strong>Wire hybrid agency via <code>auto_run</code></strong> — per-node
+        flag on <code>ai.plan</code>, default false. Engine forces
+        interrupt-before on any writeable op unless <code>auto_run:true</code>
+        AND no writeable ops in the proposed graph. Borrow Cline's YOLO-mode
+        semantics. ~1 week.</li>
+    <li><strong>Ship <code>glue.script</code> (P2) as engine-suggested
+        fallback</strong> — not a primary entry. Engine raises typed
+        "I can't do this; here are the entities I failed on" → one-click
+        insert glue.script with failed entities pre-filtered + schemas
+        pre-loaded. ~1 week.</li>
+    <li><strong>Sandbox hardening</strong> — RestrictedPython for
+        user-typed scripts; AI-written scripts pass the same gate.
+        ~2 weeks.</li>
+    <li><strong>Skill dependency-graph warnings</strong> in the
+        SaveSkillDialog. ~1 week.</li>
+  </ol>
+  <p>Total: ~9–11 weeks of focused work. The first 1–2 weeks (P3 adapters)
+     close the litmus scenario alone — that's the smallest valuable shippable.</p>
+</div>
+
+</body>
+</html>

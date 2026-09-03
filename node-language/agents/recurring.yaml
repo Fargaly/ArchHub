@@ -1,0 +1,46 @@
+{
+  "jobs": [
+    {
+      "id": "ops-daily-standup",
+      "department": "ops",
+      "title": "Daily standup brief — what shipped, what's stuck, what's next",
+      "instructions": "Read the included context (DEVELOPMENT_LOG.md, recent commits via the agent's git access, VERSION). Write a 5-bullet 'today' brief: (1) what shipped in the last 24h with version numbers, (2) what's open/at risk, (3) top user-facing improvement, (4) one thing that needs founder attention, (5) one suggested next move. Different output every day because input changes. No marketing voice. Stay under 250 words.",
+      "interval_minutes": 1440,
+      "priority": 20,
+      "inputs": {
+        "context_files": [
+          "DEVELOPMENT_LOG.md",
+          "VERSION",
+          "agents/outputs/_reports/"
+        ]
+      }
+    },
+    {
+      "id": "telemetry-friction-scan",
+      "department": "telemetry",
+      "title": "Friction report from real skill usage",
+      "instructions": "Read agents/outputs/_index/skills.json. If every skill has runs < 2, output exactly 'no signal yet — user has not run enough skills'. Otherwise build a Markdown brief: top 5 skills by failure_rate × runs, top 5 by retries, 3 imperative bullets for the next sprint. Cite skill_id + numbers; never invent.",
+      "interval_minutes": 360,
+      "priority": 35,
+      "inputs": {
+        "context_files": [
+          "agents/outputs/_index/skills.json",
+          "agents/logs/token_meter.json"
+        ]
+      }
+    },
+    {
+      "id": "watcher-peer-issues",
+      "department": "watcher",
+      "title": "Weekly peer-pain digest",
+      "instructions": "Read STRATEGY.md (sections 'Competitors' and 'Risks') for ArchHub's positioning. Then read any file under agents/outputs/_peer_feed/ if present. Produce: '# Peer pain — week <ISO>'. Three sections only: (1) Top unmet needs (max 5, cite source), (2) What ArchHub already addresses, (3) What ArchHub should consider next (max 3). If _peer_feed empty, say 'no data this week — fetcher pending'.",
+      "interval_minutes": 10080,
+      "priority": 75,
+      "inputs": {
+        "context_files": [
+          "STRATEGY.md"
+        ]
+      }
+    }
+  ]
+}

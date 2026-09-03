@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The ROMA Loop — Encoded into ArchHub</title>
+<style>
+  /* SIGNED palette — no external fonts/CDN; system fallbacks only */
+  :root{
+    --bg:#0a0a0c; --panel:#16161b; --line:#22222a;
+    --ink:#e8e8ea; --muted:#8a8a92;
+    --accent:#e8743a; --blue:#6a9bcc; --ok:#788c5d; --amber:#c79a3e; --err:#d96a6a;
+    --serif:"Instrument Serif",Georgia,"Times New Roman",serif;
+    --sans:"Inter",-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,"SF Mono",Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;padding-bottom:90px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+  code,.mono{font-family:var(--mono);font-size:.875em}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* HEADER */
+  header{border-bottom:1px solid var(--line);padding:60px 0 46px;background:
+    radial-gradient(1100px 320px at 14% -8%, rgba(232,116,58,.10), transparent 60%),
+    radial-gradient(900px 300px at 92% 0%, rgba(106,155,204,.07), transparent 55%)}
+  .kick{font-family:var(--mono);font-size:11px;letter-spacing:.30em;text-transform:uppercase;color:var(--accent);margin-bottom:18px}
+  header h1{font-family:var(--serif);font-weight:400;font-size:54px;line-height:1.02;letter-spacing:-.5px}
+  header h1 em{font-style:italic;color:var(--accent)}
+  .lede{margin-top:20px;max-width:860px;font-size:17.5px;color:#c9c9cf;line-height:1.55}
+  .lede b{color:var(--ink);font-weight:600}
+  .approved{margin-top:24px;display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;color:var(--ok);border:1px solid rgba(120,140,93,.4);background:rgba(120,140,93,.08);border-radius:999px;padding:7px 15px}
+  .approved .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(120,140,93,.18)}
+
+  /* SECTIONS */
+  section{padding:48px 0 4px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);font-weight:600;margin-bottom:10px}
+  h2{font-family:var(--serif);font-weight:400;font-size:34px;letter-spacing:-.3px;line-height:1.1}
+  .sub{color:var(--muted);font-size:15px;margin-top:8px;margin-bottom:24px;max-width:840px}
+  h3{font-family:var(--serif);font-weight:400;font-size:22px;letter-spacing:-.2px}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px}
+  svg{width:100%;height:auto;display:block}
+
+  /* mapping table */
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  th,td{padding:12px 15px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:500;background:#101015}
+  tr:last-child td{border-bottom:0}
+  td b{color:var(--ink)}
+  .method-cell{font-family:var(--serif);font-size:16.5px;color:var(--ink);white-space:nowrap}
+  .arrow{color:var(--accent);font-family:var(--mono)}
+  td code{color:var(--blue);background:rgba(106,155,204,.09);padding:1px 6px;border-radius:5px;white-space:nowrap}
+
+  /* piece cards */
+  .pieces{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-top:6px}
+  @media(max-width:860px){.pieces{grid-template-columns:1fr 1fr}}
+  @media(max-width:520px){.pieces{grid-template-columns:1fr}}
+  .pc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;position:relative;overflow:hidden}
+  .pc::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent)}
+  .pc.brain::before{background:var(--blue)}
+  .pc.court::before{background:var(--ok)}
+  .pc.gate::before{background:var(--amber)}
+  .pc .ico{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+  .pc h4{font-family:var(--serif);font-weight:400;font-size:20px;margin-bottom:7px}
+  .pc p{font-size:13px;color:var(--muted);line-height:1.5}
+  .pc .file{font-family:var(--mono);font-size:11px;color:var(--blue);margin-top:11px;word-break:break-all;display:block}
+
+  /* numbered mechanics */
+  .mech{display:grid;gap:12px;margin-top:6px}
+  .m{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:grid;grid-template-columns:42px 1fr;gap:16px;align-items:start}
+  .m .num{font-family:var(--serif);font-size:30px;color:var(--accent);line-height:1;opacity:.85}
+  .m .num.b{color:var(--blue)} .m .num.g{color:var(--ok)} .m .num.a{color:var(--amber)}
+  .m h4{font-family:var(--sans);font-weight:600;font-size:15px;margin-bottom:5px;color:var(--ink)}
+  .m p{font-size:13.5px;color:var(--muted);line-height:1.55}
+  .m p b{color:var(--ink);font-weight:600}
+  .m code{color:var(--blue);background:rgba(106,155,204,.09);padding:1px 5px;border-radius:5px}
+
+  /* flow callouts */
+  .flowstep{display:grid;grid-template-columns:130px 1fr;gap:18px;padding:16px 0;border-bottom:1px solid var(--line)}
+  .flowstep:last-child{border-bottom:0}
+  .flowstep .stage{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--accent);padding-top:2px}
+  .flowstep .stage.green{color:var(--ok)}
+  .flowstep p{font-size:14px;color:#c9c9cf;line-height:1.55}
+  .flowstep p b{color:var(--ink)}
+  .flowstep code{font-family:var(--mono);font-size:12px;color:var(--blue);background:rgba(106,155,204,.09);padding:1px 6px;border-radius:5px}
+
+  /* state legend chips */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 4px}
+  .chip{font-family:var(--mono);font-size:11px;letter-spacing:.04em;border-radius:999px;padding:5px 12px;border:1px solid var(--line);color:var(--muted)}
+  .chip b{color:var(--ink);font-weight:600}
+  .chip.open{border-color:rgba(138,138,146,.4)}
+  .chip.claimed{border-color:rgba(106,155,204,.45);color:var(--blue)}
+  .chip.green{border-color:rgba(120,140,93,.5);color:var(--ok)}
+  .chip.red{border-color:rgba(217,106,106,.5);color:var(--err)}
+  .chip.root{border-color:rgba(199,154,62,.5);color:var(--amber)}
+
+  /* safety box */
+  .safety{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:0 12px 12px 0;padding:18px 20px;margin-top:6px}
+  .safety ul{list-style:none;display:grid;gap:9px}
+  .safety li{font-size:13.5px;color:#c9c9cf;line-height:1.5;padding-left:22px;position:relative}
+  .safety li::before{content:"✓";position:absolute;left:0;color:var(--ok);font-family:var(--mono);font-weight:700}
+  .safety li b{color:var(--ink)}
+  .safety li code{font-family:var(--mono);font-size:12px;color:var(--blue)}
+
+  /* punch */
+  .punch{background:linear-gradient(150deg,#141318,#100f13);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:16px;padding:32px 36px;margin-top:20px}
+  .punch .big{font-family:var(--serif);font-size:25px;line-height:1.32;color:var(--ink)}
+  .punch .big em{font-style:italic;color:var(--accent)}
+  .punch p{font-size:14.5px;color:var(--muted);margin-top:14px;max-width:860px;line-height:1.6}
+  .punch p b{color:#c9c9cf}
+
+  footer{margin-top:46px;padding-top:22px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.04em}
+  .legend-inline{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px}
+  .legend-inline span{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="kick">Encoded method · ROMA → ArchHub · 2026-06-03</div>
+    <h1>The loop that <em>finishes everything</em>,<br>encoded into the brain</h1>
+    <p class="lede">The founder approved one governing method: take a vision as the <b>root</b> of a requirement tree, <b>split — never simplify</b> — until each leaf is a single machine-checkable predicate, let parallel executors claim leaves where <b>none may certify its own work</b>, and let an <b>external court fail to refute the real artifact</b> before any leaf turns green. Done is not "short." Done is a <b>full green sweep</b>. This document explains how that method is now encoded — additively — across the three pieces we already hold: the tree <b>ledger</b> (brain), the jury / anti-tamper <b>court</b> (harness) on the real-artifact gate, and the never-reward-short pre-green gate.</p>
+    <div class="approved"><span class="dot"></span>This encodes the method the founder approved — verbatim, not a re-interpretation.</div>
+  </div>
+</header>
+
+<!-- THE MAPPING -->
+<section class="wrap">
+  <div class="tag">The mapping</div>
+  <h2>Every clause of the method has a home in code</h2>
+  <p class="sub">ROMA's recursive atomize → execute → verify → re-decompose loop maps one-to-one onto artifacts that ride existing ArchHub infrastructure. The left column is the method as the founder stated it; the right is where it lives.</p>
+  <table>
+    <tr><th>The method (as approved)</th><th></th><th>Where it is encoded</th></tr>
+    <tr>
+      <td class="method-cell">Vision = ROOT of a tree</td>
+      <td class="arrow">→</td>
+      <td><b>The tree ledger</b> — a store-backed requirement tree. <code>create_root()</code> turns the vision into the root node, persisted as one JSON doc under a single <code>brain_meta</code> key.</td>
+    </tr>
+    <tr>
+      <td class="method-cell">Split, never simplify,<br>down to one predicate</td>
+      <td class="arrow">→</td>
+      <td><code>decompose()</code> appends child nodes and links them; a node with children is no longer a leaf. A leaf carries one <code>predicate</code> + a <code>gate_kind</code>. It refuses to decompose a node already green.</td>
+    </tr>
+    <tr>
+      <td class="method-cell">Parallel executors claim leaves,<br>none self-certify</td>
+      <td class="arrow">→</td>
+      <td><code>claim_leaf(agent_id)</code> flips an open leaf to <b>claimed</b> and records who owns it. That <code>agent_id</code> is the anti-self-certify anchor: the verdict is reserved to a different party.</td>
+    </tr>
+    <tr>
+      <td class="method-cell">External COURT must<br>FAIL TO REFUTE the real artifact</td>
+      <td class="arrow">→</td>
+      <td><b>The court harness</b> — a deterministic, anti-tamper jury that runs the <b>real gate</b> (py_compile / pytest / live-DOM CDP). Green is conferred only when the court could not refute the leaf on the actual artifact.</td>
+    </tr>
+    <tr>
+      <td class="method-cell">Never reward "short"<br>(Dr. MAMR)</td>
+      <td class="arrow">→</td>
+      <td>The existing <b>anti-laziness gate</b> runs <b>pre-green</b>: before a leaf is even handed to the court, the Stop-hook refuses a premature "I'm done" and feeds the reason back to keep the agent working.</td>
+    </tr>
+    <tr>
+      <td class="method-cell">Loop-until-dry;<br>done = full green sweep</td>
+      <td class="arrow">→</td>
+      <td>A red leaf re-enters via re-decompose; the undone frontier only shrinks. <code>sweep()</code> reports done only when every leaf is green — a listed requirement can never be silently dropped.</td>
+    </tr>
+    <tr>
+      <td class="method-cell">YOU (founder) = root<br>for taste &amp; ties</td>
+      <td class="arrow">→</td>
+      <td>A <code>needs_root</code> state is the honest escape: decomposition floor hit, or a tie the jury can't rule. The verdict authority for taste calls is reserved to the root — never faked green.</td>
+    </tr>
+  </table>
+  <div class="legend-inline"><span>Naming note:</span> <code>requirement_tree</code> = the ledger · <code>court_harness</code> = the jury · the gate is the pre-green guard. All three are new/additive; none rewrites an existing handler.</div>
+</section>
+
+<!-- THE THREE PIECES -->
+<section class="wrap">
+  <div class="tag">The three pieces we already hold</div>
+  <h2>Orchestrate · hold the tree · gate on the real artifact</h2>
+  <p class="sub">The method names three organs. ArchHub already has all three — the encode wires them together rather than building anything from scratch.</p>
+  <div class="pieces">
+    <div class="pc">
+      <div class="ico">Orchestrate</div>
+      <h4>Workflow</h4>
+      <p>Fans out executors onto open leaves, calls the court, runs the loop-until-green. The same engine that drove this very research.</p>
+    </div>
+    <div class="pc brain">
+      <div class="ico">The ledger</div>
+      <h4>personal-brain</h4>
+      <p>Holds the requirement tree (total-coverage ledger) plus the growing verified-skill library — the compounding loop.</p>
+      <span class="file">server.py · 40 @mcp.tool handlers · build_server · _brain_store</span>
+    </div>
+    <div class="pc court">
+      <div class="ico">Refute the real artifact</div>
+      <h4>ArchHub court</h4>
+      <p>Gates each leaf on the <b>real artifact</b>: runs the test, validates the live DOM. Truth-grounded, not the agent's claim.</p>
+      <span class="file">tools/_verify_live_now.py · _verify_google_cta.py</span>
+    </div>
+    <div class="pc gate">
+      <div class="ico">Never reward short</div>
+      <h4>Anti-laziness gate</h4>
+      <p>Pre-green Stop-hook. Refuses a premature stop and feeds the reason back so the agent keeps going until verified-complete.</p>
+      <span class="file">tools/anti_laziness_gate.py</span>
+    </div>
+  </div>
+</section>
+
+<!-- THE LOOP DIAGRAM -->
+<section class="wrap">
+  <div class="tag">The encoded loop</div>
+  <h2>How a vision flows root → leaves → green sweep</h2>
+  <p class="sub">A single diagram of the encoded ROMA loop. The vision enters at the root; the tree splits down to predicates; executors claim leaves; the pre-green gate guards against a false "done"; the external court must fail to refute the real artifact; red re-decomposes; green flows up; done is the full sweep.</p>
+  <div class="panel">
+    <svg viewBox="0 0 1000 500" role="img" aria-label="The encoded ROMA loop in ArchHub">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#6a9bcc"/></marker>
+        <marker id="arO" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#e8743a"/></marker>
+        <marker id="arG" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#788c5d"/></marker>
+        <style>
+          .box{fill:#16161b;stroke:#22222a;stroke-width:1.5}
+          .root{fill:#16161b;stroke:#c79a3e;stroke-width:2}
+          .tree{fill:#13161b;stroke:#6a9bcc;stroke-width:1.8}
+          .court{fill:#131814;stroke:#788c5d;stroke-width:2}
+          .gate{fill:#181510;stroke:#c79a3e;stroke-width:1.8}
+          .h{font:600 14px 'Inter',system-ui;fill:#e8e8ea}
+          .s{font:11px 'JetBrains Mono',ui-monospace,monospace;fill:#8a8a92}
+          .wire{stroke:#6a9bcc;stroke-width:1.8;fill:none}
+          .wireO{stroke:#e8743a;stroke-width:1.8;fill:none}
+          .loop{stroke:#d96a6a;stroke-width:1.8;fill:none;stroke-dasharray:5 4}
+          .green{stroke:#788c5d;stroke-width:1.8;fill:none}
+          .lbl{font:11px 'JetBrains Mono',monospace}
+        </style>
+      </defs>
+
+      <!-- ROOT: the vision -->
+        <rect x="395" y="18" width="210" height="54" rx="12" class="root"/>
+        <text x="500" y="40" text-anchor="middle" class="h" fill="#c79a3e">YOU — the root node</text>
+        <text x="500" y="58" text-anchor="middle" class="s">vision · taste · ties</text>
+
+        <!-- TREE LEDGER (brain) -->
+        <rect x="350" y="100" width="300" height="58" rx="12" class="tree"/>
+        <text x="500" y="123" text-anchor="middle" class="h">Tree ledger — requirement_tree</text>
+        <text x="500" y="141" text-anchor="middle" class="s">brain_meta[requirement_tree_v1] · total coverage</text>
+
+        <!-- DECOMPOSE -->
+        <rect x="372" y="186" width="256" height="50" rx="11" class="box"/>
+        <text x="500" y="207" text-anchor="middle" class="h">decompose() — split, never simplify</text>
+        <text x="500" y="224" text-anchor="middle" class="s">internal node → tiny verifiable leaves</text>
+
+        <!-- LEAVES row -->
+        <rect x="300" y="262" width="120" height="34" rx="8" class="box"/>
+        <text x="360" y="284" text-anchor="middle" class="s" fill="#e8e8ea">leaf · predicate</text>
+        <rect x="440" y="262" width="120" height="34" rx="8" class="box"/>
+        <text x="500" y="284" text-anchor="middle" class="s" fill="#e8e8ea">leaf · predicate</text>
+        <rect x="580" y="262" width="120" height="34" rx="8" class="box"/>
+        <text x="640" y="284" text-anchor="middle" class="s" fill="#e8e8ea">leaf · predicate</text>
+
+        <!-- EXECUTORS -->
+        <rect x="70" y="330" width="250" height="66" rx="11" class="box"/>
+        <text x="195" y="355" text-anchor="middle" class="h">Executor fleet (parallel)</text>
+        <text x="195" y="373" text-anchor="middle" class="s">claim_leaf(agent_id) · generate→run→fix</text>
+        <text x="195" y="388" text-anchor="middle" class="s" fill="#6a9bcc">never self-certify</text>
+
+        <!-- ANTI-LAZINESS GATE (pre-green) -->
+        <rect x="380" y="330" width="240" height="66" rx="11" class="gate"/>
+        <text x="500" y="353" text-anchor="middle" class="h" fill="#c79a3e">Anti-laziness gate</text>
+        <text x="500" y="371" text-anchor="middle" class="s">pre-green · Stop-hook</text>
+        <text x="500" y="386" text-anchor="middle" class="s">refuse false "done" ↺ keep going</text>
+
+        <!-- COURT -->
+        <rect x="680" y="330" width="250" height="66" rx="11" class="court"/>
+        <text x="805" y="353" text-anchor="middle" class="h" fill="#788c5d">The court — court_harness</text>
+        <text x="805" y="371" text-anchor="middle" class="s">real gate: py_compile / pytest / CDP</text>
+        <text x="805" y="386" text-anchor="middle" class="s">must FAIL TO REFUTE → green</text>
+
+        <!-- GREEN SWEEP -->
+        <rect x="380" y="446" width="240" height="42" rx="11" class="court"/>
+        <text x="500" y="472" text-anchor="middle" class="h" fill="#788c5d">done = full green sweep</text>
+
+        <!-- wires: root -> tree -> decompose -> leaves -->
+        <path class="wire" d="M500,72 L500,100" marker-end="url(#ar)"/>
+        <path class="wire" d="M500,158 L500,186" marker-end="url(#ar)"/>
+        <path class="wire" d="M460,236 L370,262" marker-end="url(#ar)"/>
+        <path class="wire" d="M500,236 L500,262" marker-end="url(#ar)"/>
+        <path class="wire" d="M540,236 L630,262" marker-end="url(#ar)"/>
+
+        <!-- leaf -> executor -->
+        <path class="wireO" d="M300,288 C220,300 200,312 195,330" marker-end="url(#arO)"/>
+        <text x="150" y="318" class="lbl" fill="#e8743a">claim →</text>
+
+        <!-- executor -> gate -> court -->
+        <path class="wire" d="M320,366 L380,366" marker-end="url(#ar)"/>
+        <text x="332" y="356" class="lbl" fill="#8a8a92">submit</text>
+        <path class="wire" d="M620,366 L680,366" marker-end="url(#ar)"/>
+        <text x="630" y="356" class="lbl" fill="#8a8a92">gate-pass</text>
+
+        <!-- court red -> re-decompose (loop) -->
+        <path class="loop" d="M805,330 C805,250 690,212 628,210" marker-end="url(#arO)"/>
+        <text x="700" y="250" class="lbl" fill="#d96a6a">red → re-decompose ↻</text>
+
+        <!-- court green -> sweep -->
+        <path class="green" d="M760,396 C640,430 600,440 600,446" marker-end="url(#arG)"/>
+        <text x="690" y="430" class="lbl" fill="#788c5d">green ↑</text>
+
+        <!-- green -> skill library (compounds) back to tree -->
+        <path class="green" d="M680,360 C560,300 540,200 560,158" marker-end="url(#arG)"/>
+        <text x="430" y="176" class="lbl" fill="#788c5d">green → skill library (compounds)</text>
+
+        <!-- needs_root escape -->
+        <path class="loop" d="M372,360 C260,300 280,120 395,52" marker-end="url(#arO)" opacity="0.55"/>
+        <text x="250" y="200" class="lbl" fill="#c79a3e" transform="rotate(-58 250 200)">needs_root → founder</text>
+      </svg>
+    <div class="chips">
+      <span class="chip open"><b>open</b> — not yet claimed</span>
+      <span class="chip claimed"><b>claimed</b> — an executor owns it</span>
+      <span class="chip green"><b>green</b> — court failed to refute</span>
+      <span class="chip red"><b>red</b> — court refuted → re-decompose</span>
+      <span class="chip root"><b>needs_root</b> — floor / tie → founder</span>
+    </div>
+  </div>
+</section>
+
+<!-- WHY THE GATE SITS WHERE IT DOES -->
+<section class="wrap">
+  <div class="tag">Why this removes every place a false "done" can hide</div>
+  <h2>Five mechanics, in encode order</h2>
+  <div class="mech">
+    <div class="m"><div class="num b">1</div><div><h4>The tree ledger makes coverage total</h4><p>The vision is enumerated as nodes — an internal node's greenness is <b>derived</b> (green only when all children are green), so you cannot mark a parent done while a child is red. The ledger persists in <code>brain_meta</code> under one JSON key, so the frontier survives across sessions. Nothing in the tree is "off the books."</p></div></div>
+    <div class="m"><div class="num">2</div><div><h4>Leaves are too small to fake</h4><p>When the unit of work is a single predicate, "skip it" stops being a cheap continuation. An unmet leaf is a <b>concrete red predicate</b>, not a smaller, plausible version of success. <code>decompose()</code> refuses to split a green node, so re-decomposition only ever happens on real failure — the loop terminates.</p></div></div>
+    <div class="m"><div class="num a">3</div><div><h4>The anti-laziness gate fires pre-green</h4><p>Before a leaf is even handed to the court, the existing Stop-hook reads the trace and, on a premature stop, emits <code>{"decision":"block","reason":...}</code> so the harness refuses to stop and feeds the reason back. This is the Dr. MAMR rule made operational: <b>never reward "short," always reward "verified-complete."</b> The optimizer's incentive to cut corners is intercepted before the court is ever consulted.</p></div></div>
+    <div class="m"><div class="num g">4</div><div><h4>The court must refute on the real artifact — the worker never judges itself</h4><p>The load-bearing rule. The <code>agent_id</code> recorded at <code>claim_leaf</code> is held apart from the verdict authority. The court runs a <b>deterministic, anti-tamper</b> gate against the actual artifact — py_compile, the pytest suite, or a live-DOM CDP check — mirroring the existing reflexion deterministic-validator pattern. "I think I'm done" becomes "the court couldn't break it." Checks live outside the executor's reach, because the tampering is real.</p></div></div>
+    <div class="m"><div class="num g">5</div><div><h4>Loop-until-dry; the founder is the only escape</h4><p>Red leaves re-decompose and re-enter; the undone frontier only shrinks; <code>sweep()</code> reports done only on a full green sweep. The single honest exit is <code>needs_root</code> — decomposition floor hit, or a tie the jury can't rule. The vision, the taste, what "good" feels like stays the founder's call. A garbage requirement would verify perfectly into a garbage product, so the right requirement is never delegated.</p></div></div>
+  </div>
+</section>
+
+<!-- THE FLOW, NARRATED -->
+<section class="wrap">
+  <div class="tag">A vision, end to end</div>
+  <h2>Root → leaves → green sweep, narrated</h2>
+  <p class="sub">Reading the loop as a single trajectory — the path a real vision takes from the founder's head to a verified-complete sweep.</p>
+  <div class="panel">
+    <div class="flowstep"><div class="stage">root</div><p>The founder states a vision. <code>create_root()</code> writes it as the root node (<b>open</b>), persisted in the tree ledger. This is the only point where taste enters — everything below is mechanical.</p></div>
+    <div class="flowstep"><div class="stage">decompose</div><p><code>decompose()</code> splits the root into children, and splits those again — <b>never simplifying</b>, only subdividing — until each leaf is one machine-checkable predicate with a <code>gate_kind</code>. Internal nodes hold no predicate; their greenness is derived from children.</p></div>
+    <div class="flowstep"><div class="stage">claim</div><p>The Workflow fans the executor fleet onto open leaves. Each executor <code>claim_leaf(agent_id)</code> — leaf flips to <b>claimed</b>, owner recorded. Many leaves run in parallel; <b>none may certify its own work.</b></p></div>
+    <div class="flowstep"><div class="stage">pre-green gate</div><p>When an executor signals "done," the anti-laziness gate runs first. A premature stop is <b>blocked</b> with a reason fed back to the agent. Only work that survives the never-reward-short guard is allowed to reach the court.</p></div>
+    <div class="flowstep"><div class="stage">court</div><p>The court harness runs the <b>real gate</b> on the actual artifact — compile it, run the test, drive the live DOM. The leaf turns <b>green</b> only if the court <b>fails to refute</b> it. If it refutes, the leaf goes <b>red</b> and re-decomposes back into the tree.</p></div>
+    <div class="flowstep"><div class="stage green">green sweep</div><p>Green flows upward; a parent greens only when all its children are green; the verified leaf's lesson promotes into the compounding skill library. The vision is <b>done</b> only when a full <code>sweep()</code> shows every leaf green. Anything the jury can't rule, or any floor the tree can't bottom out, surfaces to the founder as <code>needs_root</code> — never a faked green.</p></div>
+  </div>
+</section>
+
+<!-- SAFETY -->
+<section class="wrap">
+  <div class="tag">Safety contract (load-bearing)</div>
+  <h2>Encoded as additive artifacts only</h2>
+  <p class="sub">The encode never mutates what already works. Every claim below is part of the contract the method was approved under.</p>
+  <div class="safety">
+    <ul>
+      <li><b>Additive only.</b> New modules <code>requirement_tree.py</code> and <code>court_harness.py</code>; the <code>server.py</code> change is at most one added line in <code>build_server</code> plus a new import — <b>zero existing handlers touched</b> (all 40 <code>@mcp.tool</code> handlers stay as-is).</li>
+      <li><b>Persistence rides existing storage.</b> The tree lives as one JSON doc under a <b>new</b> <code>brain_meta</code> key via <code>set_meta</code>/<code>get_meta</code> — which already do <code>INSERT … ON CONFLICT(key) DO UPDATE</code>. <b>No new table, no schema migration</b>; never touches <code>fragments</code>/<code>skills</code>/<code>-wal</code>/<code>-shm</code>.</li>
+      <li><b>The live DB is never mutated.</b> The daemon is down; this is code that compiles and imports cleanly — no run against <code>brain.db</code>.</li>
+      <li><b>The court reuses proven patterns.</b> The deterministic-validator shape (reflexion) and the live-DOM CDP gate (<code>_verify_live_now.py</code>) are mirrored, not reinvented; the anti-laziness Stop-hook is <b>wired in</b>, not rewritten.</li>
+      <li><b><code>.githooks</code> is untouched. Secrets stay <code>op://</code> references</b> — never inlined.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- PUNCH -->
+<section class="wrap">
+  <div class="punch">
+    <div class="big">The way to finish a vision is not to shrink it — it is to <em>fracture it into externally-verified atoms</em> and refuse to let any exit on the worker's say-so.</div>
+    <p>This document encodes the method the founder approved: the <b>tree ledger</b> in the brain holds total coverage; the <b>anti-laziness gate</b> fires pre-green so "short" is never rewarded; the <b>external anti-tamper court</b> must fail to refute the real artifact before green; the loop runs until dry; done is a full green sweep. The one thing the loop cannot do is <b>be the founder</b> — choose the vision, judge the taste, rule when the jury ties. Everything else is mechanical, additive, and grounded in code that already exists.</p>
+  </div>
+  <footer>
+    roma-loop-encoded-2026-06-03.html · SIGNED palette · system fonts only · grounded in server.py (40 @mcp.tool · build_server · _brain_store), storage.py (brain_meta · set_meta/get_meta), tools/anti_laziness_gate.py, tools/_verify_live_now.py
+  </footer>
+</section>
+
+</body>
+</html>

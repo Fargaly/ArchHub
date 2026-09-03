@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ArchHub Settings — Brain · 2026-05-25</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --bg4:#1c1c22; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:13px/1.5 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+h1{font-size:24px;letter-spacing:-0.02em;margin-bottom:6px}
+h2{font-size:14px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.08em;margin:24px 0 10px;font-weight:600}
+h3{font-size:13px;color:var(--ink);margin-bottom:4px;font-weight:600}
+p{color:var(--ink2);font-size:12px;line-height:1.55}
+code{font-family:ui-monospace,Consolas,monospace;background:var(--bg3);padding:1px 5px;border-radius:4px;font-size:11px;color:var(--accent2)}
+small{color:var(--ink3);font-size:11px}
+
+/* ── ArchHub Settings shell ── */
+.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.sidebar{background:var(--bg2);border-right:1px solid var(--line);padding:18px 0}
+.sidebar .brand{padding:0 18px 16px;font-weight:700;letter-spacing:-0.02em;font-size:15px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.sidebar .brand span{color:var(--accent)}
+.sidebar .nav{display:flex;flex-direction:column;gap:1px}
+.sidebar .nav a{display:flex;align-items:center;gap:10px;padding:8px 18px;color:var(--ink2);font-size:12.5px;cursor:pointer;border-left:2px solid transparent}
+.sidebar .nav a:hover{background:var(--bg3);color:var(--ink)}
+.sidebar .nav a.active{background:var(--bg3);color:var(--ink);border-left-color:var(--accent)}
+.sidebar .nav a .ico{width:14px;height:14px;border-radius:3px;background:var(--bg4);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px}
+.sidebar .nav a.active .ico{background:var(--accent);color:#000}
+
+.main{padding:32px 36px;max-width:880px}
+.head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
+.head .pulse{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--ink2)}
+.head .pulse .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px rgba(95,200,121,0.6);animation:pulse 1.5s infinite}
+.head .pulse.offline .dot{background:var(--err);animation:none}
+.head .pulse.degraded .dot{background:var(--warn)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+
+/* ── card ── */
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-top:12px}
+.card .row{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:8px 0;border-bottom:1px solid var(--line)}
+.card .row:last-child{border-bottom:none;padding-bottom:0}
+.card .row:first-child{padding-top:0}
+.card .row .label{flex:1;min-width:0}
+.card .row .label .title{color:var(--ink);font-size:13px;font-weight:500;margin-bottom:2px}
+.card .row .label .desc{color:var(--ink3);font-size:11px}
+.card .row .control{flex-shrink:0}
+
+/* ── toggle switch ── */
+.toggle{position:relative;width:36px;height:20px;background:var(--bg4);border:1px solid var(--line);border-radius:10px;cursor:pointer;transition:background 0.2s}
+.toggle .knob{position:absolute;top:1px;left:1px;width:16px;height:16px;background:var(--ink2);border-radius:50%;transition:all 0.2s}
+.toggle.on{background:var(--accent);border-color:var(--accent)}
+.toggle.on .knob{left:17px;background:#000}
+
+/* ── buttons ── */
+.btn{background:var(--bg3);border:1px solid var(--line);color:var(--ink);font-family:inherit;font-size:11.5px;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:500;letter-spacing:0.01em;transition:all 0.15s}
+.btn:hover{background:var(--bg4);border-color:var(--ink3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#000;font-weight:600}
+.btn.primary:hover{background:var(--accent2);border-color:var(--accent2)}
+.btn.danger{color:var(--err);border-color:var(--bg4)}
+.btn.danger:hover{border-color:var(--err);background:rgba(255,94,94,0.06)}
+.btn.ghost{background:transparent;border-color:var(--line);color:var(--ink2)}
+.btn.ghost:hover{color:var(--ink);border-color:var(--ink3)}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ── stat boxes ── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
+.stat{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.stat .n{font-size:24px;font-weight:700;color:var(--ink);letter-spacing:-0.02em}
+.stat .l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px}
+.stat.ok .n{color:var(--ok)}
+.stat.warn .n{color:var(--warn)}
+.stat.err .n{color:var(--err)}
+
+/* ── client list ── */
+.client-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.client-row:last-child{border-bottom:none}
+.client-row .ico{width:28px;height:28px;border-radius:7px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--ink)}
+.client-row .ico.claude{background:linear-gradient(135deg,#d97757,#e8a47c);color:#000}
+.client-row .ico.cursor{background:#000;color:#fff;border:1px solid var(--line)}
+.client-row .ico.gpt{background:#10a37f;color:#fff}
+.client-row .ico.codex{background:#444;color:#fff}
+.client-row .ico.gemini{background:linear-gradient(135deg,#4285f4,#9b72cb);color:#fff}
+.client-row .ico.archhub{background:var(--accent);color:#000}
+.client-row .name{flex:1;min-width:0}
+.client-row .name .a{color:var(--ink);font-size:13px;font-weight:500}
+.client-row .name .b{color:var(--ink3);font-size:11px;font-family:ui-monospace,monospace;margin-top:1px}
+.client-row .status{font-size:11px;padding:3px 8px;border-radius:5px;font-weight:600;letter-spacing:0.02em}
+.client-row .status.wired{background:rgba(95,200,121,0.12);color:var(--ok)}
+.client-row .status.unwired{background:var(--bg3);color:var(--ink3)}
+.client-row .status.partial{background:rgba(232,197,74,0.12);color:var(--warn)}
+.client-row .status.unsupported{background:var(--bg3);color:var(--ink3);opacity:0.6}
+
+/* ── dropdown / select ── */
+.select{background:var(--bg3);border:1px solid var(--line);color:var(--ink);font-size:12px;padding:5px 8px;border-radius:5px;font-family:inherit;cursor:pointer}
+
+/* ── code preview ── */
+.preview{background:var(--bg3);border:1px solid var(--line);border-radius:7px;padding:10px 12px;font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--ink2);overflow-x:auto;line-height:1.5;margin-top:8px;white-space:pre}
+
+/* ── banner / alert ── */
+.banner{background:linear-gradient(90deg,rgba(95,200,121,0.06),transparent);border:1px solid var(--ok);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.banner.warn{background:linear-gradient(90deg,rgba(232,197,74,0.06),transparent);border-color:var(--warn)}
+.banner.err{background:linear-gradient(90deg,rgba(255,94,94,0.06),transparent);border-color:var(--err)}
+.banner .ico{width:20px;height:20px;border-radius:50%;background:var(--ok);color:#000;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.banner.warn .ico{background:var(--warn)}
+.banner.err .ico{background:var(--err)}
+
+/* ── tagline ── */
+.tagline{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;font-weight:700;margin-bottom:4px}
+
+/* ── modal ── */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:none;align-items:center;justify-content:center;z-index:100}
+.scrim.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:24px 26px;width:520px;max-height:80vh;overflow:auto}
+.modal h2{margin-top:0}
+.modal .step{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
+.modal .step .n{width:22px;height:22px;border-radius:50%;background:var(--bg3);color:var(--ink2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0}
+.modal .step.done .n{background:var(--ok);color:#000}
+.modal .step.running .n{background:var(--accent);color:#000}
+.modal .step .text{flex:1;font-size:12px;color:var(--ink);padding-top:1px}
+.modal .step .text small{display:block;color:var(--ink3);font-size:10.5px;margin-top:2px}
+
+/* ── footer ── */
+footer{max-width:880px;margin:30px 36px 60px;color:var(--ink3);font-size:10.5px;line-height:1.6}
+footer a{color:var(--ink2)}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ─── sidebar ─── -->
+  <aside class="sidebar">
+    <div class="brand">Arch<span>Hub</span> · Settings</div>
+    <div class="nav">
+      <a><span class="ico">G</span>General</a>
+      <a><span class="ico">A</span>Account</a>
+      <a><span class="ico">M</span>Models</a>
+      <a><span class="ico">C</span>Connectors</a>
+      <a class="active"><span class="ico">⌬</span>Brain</a>
+      <a><span class="ico">S</span>Skills</a>
+      <a><span class="ico">K</span>Keys &amp; Secrets</a>
+      <a><span class="ico">T</span>Telemetry</a>
+      <a><span class="ico">P</span>Privacy</a>
+    </div>
+  </aside>
+
+  <!-- ─── main panel ─── -->
+  <main class="main">
+
+    <div class="head">
+      <div>
+        <div class="tagline">AgDR-0044 · personal brain MCP</div>
+        <h1>Brain</h1>
+        <p style="max-width:560px">Shared memory, skills and setups across every AI agent you use. Every Claude Code session, Cursor window, ChatGPT chat and ArchHub turn talks to the same brain — so what you teach it in one tool, every other tool remembers.</p>
+      </div>
+      <div class="pulse" id="head-pulse">
+        <div class="dot"></div>
+        <span id="head-text">brain live · 0 skills · 0 facts</span>
+      </div>
+    </div>
+
+    <!-- ─── primary toggle + status ─── -->
+    <div class="card">
+      <div class="row">
+        <div class="label">
+          <div class="title">Enable Brain</div>
+          <div class="desc">Master switch. When off, every loop falls back to no-context (current Composer behaviour). Per-client wiring + daemon survive — just routed past.</div>
+        </div>
+        <div class="control"><div class="toggle on" id="t-enable" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Daemon</div>
+          <div class="desc">Runs locally on <code>http://127.0.0.1:8473/mcp</code>. Persistent SQLite at <code>%APPDATA%\ArchHub\brain\brain.db</code>. Survives ArchHub close.</div>
+        </div>
+        <div class="control btn-row">
+          <button class="btn ghost" onclick="openLog()">View log</button>
+          <button class="btn" onclick="restart()">Restart</button>
+          <button class="btn danger" onclick="stop()">Stop</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Autostart at login</div>
+          <div class="desc">Registers daemon via Startup folder (no admin needed). Brain comes back automatically every reboot.</div>
+        </div>
+        <div class="control"><div class="toggle on" id="t-autostart" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+    </div>
+
+    <!-- ─── live stats ─── -->
+    <div class="stats">
+      <div class="stat ok"><div class="n" id="s-skills">0</div><div class="l">Skills</div></div>
+      <div class="stat ok"><div class="n" id="s-facts">0</div><div class="l">Facts</div></div>
+      <div class="stat"><div class="n" id="s-wirings">9</div><div class="l">MCPs Wired</div></div>
+      <div class="stat ok"><div class="n" id="s-uptime">02:14</div><div class="l">Uptime (h:m)</div></div>
+    </div>
+
+    <!-- ─── connected agents ─── -->
+    <h2>Connected agents</h2>
+    <p style="margin-bottom:12px">Every agent below auto-fires <code>brain.context</code> on prompt submit, <code>brain.write</code> on tool calls, and <code>brain.skill_mint</code> at turn end. Toggle wiring per agent.</p>
+
+    <div class="card">
+      <div class="client-row">
+        <div class="ico claude">C</div>
+        <div class="name"><div class="a">Claude Code</div><div class="b">~/.claude/settings.json · 4 hooks · stdio</div></div>
+        <div class="status wired">wired</div>
+        <div class="toggle on" onclick="tg(this)"><div class="knob"></div></div>
+      </div>
+      <div class="client-row">
+        <div class="ico cursor">▣</div>
+        <div class="name"><div class="a">Cursor</div><div class="b">~/.cursor/mcp.json · rules/brain.mdc · HTTP</div></div>
+        <div class="status partial">partial · no UserPromptSubmit hook</div>
+        <div class="toggle on" onclick="tg(this)"><div class="knob"></div></div>
+      </div>
+      <div class="client-row">
+        <div class="ico codex">cx</div>
+        <div class="name"><div class="a">Codex CLI</div><div class="b">~/.codex/config.toml · stdio + instructions inject</div></div>
+        <div class="status wired">wired</div>
+        <div class="toggle on" onclick="tg(this)"><div class="knob"></div></div>
+      </div>
+      <div class="client-row">
+        <div class="ico gemini">G</div>
+        <div class="name"><div class="a">Gemini CLI</div><div class="b">~/.gemini/settings.json · session-instructions inject</div></div>
+        <div class="status wired">wired</div>
+        <div class="toggle on" onclick="tg(this)"><div class="knob"></div></div>
+      </div>
+      <div class="client-row">
+        <div class="ico gpt">∞</div>
+        <div class="name"><div class="a">ChatGPT desktop</div><div class="b">Requires public HTTPS endpoint · OAuth 2.1 + PKCE</div></div>
+        <div class="status unwired">not wired</div>
+        <button class="btn">Set up…</button>
+      </div>
+      <div class="client-row">
+        <div class="ico archhub">A</div>
+        <div class="name"><div class="a">ArchHub Composer</div><div class="b">app/llm_router.py Layer 5 hooks · in-process</div></div>
+        <div class="status wired">wired</div>
+        <div class="toggle on" onclick="tg(this)"><div class="knob"></div></div>
+      </div>
+      <div class="client-row">
+        <div class="ico" style="background:#0288d1;color:#fff">CL</div>
+        <div class="name"><div class="a">Cline (VS Code)</div><div class="b">No Cline detected on this device</div></div>
+        <div class="status unsupported">not detected</div>
+        <button class="btn ghost" disabled>—</button>
+      </div>
+      <div class="client-row">
+        <div class="ico" style="background:#7c3aed;color:#fff">Co</div>
+        <div class="name"><div class="a">Continue.dev</div><div class="b">No Continue detected on this device</div></div>
+        <div class="status unsupported">not detected</div>
+        <button class="btn ghost" disabled>—</button>
+      </div>
+    </div>
+
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn primary" onclick="rescan()">Rescan + Auto-Wire</button>
+      <button class="btn ghost" onclick="preview()">Preview config files</button>
+    </div>
+
+    <!-- ─── sync across devices ─── -->
+    <h2>Sync across devices</h2>
+    <p style="margin-bottom:12px">Your brain on every device you own. Pick how to share — local sync folder, mesh tunnel, or federation server.</p>
+
+    <div class="card">
+      <div class="row">
+        <div class="label">
+          <div class="title">Sync mode</div>
+          <div class="desc">Cloud-folder = drop brain.db inside iCloud/Dropbox/OneDrive (Loro CRDT handles concurrent writes). Tailscale = primary device hosts daemon; others connect over WireGuard. Off = device-local only.</div>
+        </div>
+        <div class="control">
+          <select class="select" id="sync-mode" onchange="syncMode(this.value)">
+            <option value="off">Off (device-local)</option>
+            <option value="cloud" selected>Cloud-folder (Loro CRDT)</option>
+            <option value="tailscale">Tailscale mesh</option>
+            <option value="federation">Federation server</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" id="row-cloud">
+        <div class="label">
+          <div class="title">Sync folder</div>
+          <div class="desc">Brain DB + skill markdowns live here. Symlink keeps the canonical path at <code>%APPDATA%\ArchHub\brain\</code> while bytes sync via your cloud client.</div>
+        </div>
+        <div class="control btn-row">
+          <button class="btn">Choose folder…</button>
+          <small style="color:var(--ink3)">iCloud Drive / ArchHub / brain</small>
+        </div>
+      </div>
+      <div class="row" id="row-spatial">
+        <div class="label">
+          <div class="title">Spatial memory via Speckle</div>
+          <div class="desc">Geometric fragments (Revit walls, AutoCAD blocks, Blender meshes) ride Speckle Versions instead of the JSON sync — content-addressed, immutable.</div>
+        </div>
+        <div class="control"><div class="toggle on" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+    </div>
+
+    <!-- ─── tuning ─── -->
+    <h2>Tuning &amp; safety</h2>
+
+    <div class="card">
+      <div class="row">
+        <div class="label">
+          <div class="title">Adaptive skill-mint floor <small>· R1 — calibration.py</small></div>
+          <div class="desc">Beta-Bernoulli LCB + streaming quantile + CUSUM drift detector. Cold-start permissive, tightens as library grows, re-explores on drift.</div>
+        </div>
+        <div class="control"><div class="toggle on" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Echo Trap defense <small>· R2 — exploration.py</small></div>
+          <div class="desc">Diversity floor + variance gate + DPP + library health metrics. Refuses redundant mints; merges near-duplicates.</div>
+        </div>
+        <div class="control"><div class="toggle on" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Resilience wrapper <small>· R3 — liveness.py</small></div>
+          <div class="desc">Circuit breaker + write journal + cached context. Daemon outage = degraded mode, never silent failure.</div>
+        </div>
+        <div class="control"><div class="toggle on" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Bayesian reputation v2 <small>· R4 — reputation.py</small></div>
+          <div class="desc">Empirical-Bayes prior + 180-day decay + vouch/identity/stake side-channels. Replaces the linear scorer.</div>
+        </div>
+        <div class="control"><div class="toggle on" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">LLM critic for skill mints</div>
+          <div class="desc">Production critic uses <code>claude-sonnet-4-6</code> when ANTHROPIC_API_KEY is set. Heuristic fallback runs zero-LLM.</div>
+        </div>
+        <div class="control">
+          <select class="select">
+            <option>Heuristic (zero LLM)</option>
+            <option selected>Anthropic claude-sonnet-4-6</option>
+            <option>OpenAI gpt-5</option>
+            <option>Hybrid (heuristic ratify, LLM refine)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── privacy ─── -->
+    <h2>Privacy &amp; secrets</h2>
+
+    <div class="card">
+      <div class="row">
+        <div class="label">
+          <div class="title">Secret references only</div>
+          <div class="desc">Brain stores <code>op://vault/...</code> references; never values. Resolved JIT via 1Password CLI / Windows Credential Manager / Infisical.</div>
+        </div>
+        <div class="control"><div class="toggle on" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Redaction on promote</div>
+          <div class="desc">When a memory crosses scope (user→firm→community→global), heuristic + LLM redactor strips PII / amounts / secrets / paths first.</div>
+        </div>
+        <div class="control"><div class="toggle on" onclick="tg(this)"><div class="knob"></div></div></div>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Bipartite ACL audit log</div>
+          <div class="desc">Every read of a shared fragment is logged with reader + timestamp + purpose (arXiv 2505.18279). Browseable below.</div>
+        </div>
+        <div class="control btn-row">
+          <button class="btn ghost">Open audit log</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── danger zone ─── -->
+    <h2>Danger zone</h2>
+    <div class="card" style="border-color:var(--err)">
+      <div class="row">
+        <div class="label">
+          <div class="title">Export brain</div>
+          <div class="desc">Download the full SQLite + skill markdowns. Restorable on any device.</div>
+        </div>
+        <button class="btn">Export…</button>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Clear local cache</div>
+          <div class="desc">Wipes the resilient-client journal + cached context. Daemon untouched.</div>
+        </div>
+        <button class="btn danger">Clear cache</button>
+      </div>
+      <div class="row">
+        <div class="label">
+          <div class="title">Reset brain</div>
+          <div class="desc">Wipes everything. Skills, facts, wiring, secrets refs, audit log. Cannot be undone.</div>
+        </div>
+        <button class="btn danger">Reset…</button>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ─── Setup modal (shown when user clicks Set up… for ChatGPT or new device) ─── -->
+<div class="scrim" id="modal-setup">
+  <div class="modal">
+    <h2 style="margin-bottom:6px">Connect this device to the brain</h2>
+    <p style="margin-bottom:18px">5 steps. ArchHub runs them for you. No terminal.</p>
+    <div class="step done"><div class="n">1</div><div class="text">Install Python dependencies<small>fastmcp, loro, specklepy, fastapi, anthropic</small></div></div>
+    <div class="step done"><div class="n">2</div><div class="text">Install personal-brain-mcp package<small>pip install -e personal-brain-mcp</small></div></div>
+    <div class="step done"><div class="n">3</div><div class="text">Wire MCP clients on this device<small>Claude Code, Cursor, Codex, Gemini CLI</small></div></div>
+    <div class="step running"><div class="n">4</div><div class="text">Register daemon autostart<small>Startup-folder VBS shim (no admin)</small></div></div>
+    <div class="step"><div class="n">5</div><div class="text">Probe + start daemon<small>http://127.0.0.1:8473/mcp brain.health</small></div></div>
+    <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" disabled>Running…</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <strong style="color:var(--ink2)">Prototype-is-contract</strong> · this prototype IS the spec per founder mandate 2026-05-25. Once signed off, the shipped Settings → Brain panel mirrors it 1:1.<br><br>
+  Backed by AgDR-0044 (`docs/agdr/AgDR-0044-personal-brain-mcp.md`) and the BRAIN-FIRST MANDATE (`CLAUDE.md` line 182).<br>
+  Each toggle / button maps to a Python slot in `app/bridge.py` (`brain_*`) and a JSX component in `studio-lm.jsx` (`BrainSettings`).
+</footer>
+
+<script>
+function tg(el){
+  el.classList.toggle('on');
+}
+function rescan(){
+  const m = document.getElementById('modal-setup');
+  m.classList.add('open');
+}
+function closeModal(){
+  document.getElementById('modal-setup').classList.remove('open');
+}
+function preview(){
+  alert('Would open a side drawer with the actual settings.json / config.toml / mcp.json contents, syntax-highlighted, scrollable.');
+}
+function restart(){
+  const p = document.getElementById('head-pulse');
+  const t = document.getElementById('head-text');
+  p.className = 'pulse degraded'; t.textContent = 'brain restarting...';
+  setTimeout(()=>{ p.className = 'pulse'; t.textContent = 'brain live · 0 skills · 0 facts'; }, 1500);
+}
+function stop(){
+  const p = document.getElementById('head-pulse');
+  const t = document.getElementById('head-text');
+  p.className = 'pulse offline'; t.textContent = 'brain offline';
+}
+function openLog(){
+  alert('Would tail %LOCALAPPDATA%/ArchHub/logs/brain.log in a side panel.');
+}
+function syncMode(v){
+  const cloud = document.getElementById('row-cloud');
+  cloud.style.display = (v === 'cloud') ? 'flex' : 'none';
+}
+</script>
+</body>
+</html>

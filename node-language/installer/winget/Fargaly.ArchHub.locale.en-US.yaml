@@ -1,0 +1,46 @@
+PackageIdentifier: Fargaly.ArchHub
+PackageVersion: 0.16.0
+PackageLocale: en-US
+Publisher: Fargaly
+PublisherUrl: https://github.com/Fargaly
+PublisherSupportUrl: https://github.com/Fargaly/ArchHub/issues
+PrivacyUrl: https://github.com/Fargaly/ArchHub/blob/main/SECURITY.md
+Author: Ahmed Fargaly
+PackageName: ArchHub
+PackageUrl: https://github.com/Fargaly/ArchHub
+License: MIT
+LicenseUrl: https://github.com/Fargaly/ArchHub/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Ahmed Fargaly
+ShortDescription: AI cockpit for architects — drives Revit, Blender, AutoCAD, 3ds Max and Speckle from one chat.
+Description: |-
+  ArchHub is a free, open-source desktop app that lets architects drive
+  Revit, Blender, AutoCAD, 3ds Max and Speckle from a single chat
+  interface. Useful conversations save as Skills — copy-paste shareable
+  JSON workflow graphs that run again on demand.
+
+  Features:
+  - Chat drives every tool natively (no copying code, no manual exports)
+  - Vision input — paste a sketch, get a 3D mass
+  - Skills you save and share (ComfyUI-style JSON)
+  - Sketch → production pipeline (six chained LLM stages)
+  - Multi-LLM, BYO key (OpenRouter OAuth, Anthropic, OpenAI, Google, local Ollama)
+  - Cloud-synced Skills via your private GitHub
+  - First-run wizard, in-app auto-update, click-only setup
+Moniker: archhub
+Tags:
+  - aec
+  - architecture
+  - bim
+  - revit
+  - blender
+  - autocad
+  - speckle
+  - ai
+  - llm
+  - chat
+  - copilot
+  - parametric
+  - design
+ReleaseNotesUrl: https://github.com/Fargaly/ArchHub/releases/tag/v0.16.0
+ManifestType: defaultLocale
+ManifestVersion: 1.5.0

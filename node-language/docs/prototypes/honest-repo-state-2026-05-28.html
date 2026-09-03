@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Honest State of ArchHub — full repo read</title>
+<style>
+  :root{
+    --dark:#141413; --light:#faf9f5; --mid:#b0aea5; --lgray:#e8e6dc;
+    --orange:#d97757; --blue:#6a9bcc; --green:#788c5d;
+    --red:#b0524a; --amber:#c2913f;
+    --shadow:0 1px 3px rgba(20,20,19,.08),0 10px 30px rgba(20,20,19,.07);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--light);color:var(--dark);
+    font-family:"Lora",Georgia,serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  h1,h2,h3,.f{font-family:"Poppins",Arial,sans-serif}
+  header{background:var(--dark);color:var(--light);padding:40px 32px 30px;border-bottom:4px solid var(--orange)}
+  header h1{margin:0 0 8px;font-size:30px;font-weight:600;letter-spacing:-.5px}
+  header p{margin:0;color:var(--mid);font-size:15px;max-width:880px}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 22px 90px}
+
+  .correction{background:#fff;border:1px solid var(--lgray);border-left:5px solid var(--red);
+    border-radius:12px;padding:16px 22px;margin:0 0 26px;box-shadow:var(--shadow)}
+  .correction .t{font-family:"Poppins",Arial;font-weight:600;color:var(--red);font-size:13px;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px}
+  .correction p{margin:0;font-size:15px}
+  .correction b{color:var(--dark)}
+
+  .legend{display:flex;gap:18px;margin:0 0 24px;flex-wrap:wrap;font-family:"Poppins",Arial;font-size:13px}
+  .legend .it{display:flex;align-items:center;gap:7px}
+  .dot{width:13px;height:13px;border-radius:50%;flex:none}
+  .g{background:var(--green)} .a{background:var(--amber)} .r{background:var(--red)}
+
+  .scale{display:flex;height:30px;border-radius:8px;overflow:hidden;margin:0 0 30px;box-shadow:var(--shadow);font-family:"Poppins",Arial;font-size:11px;font-weight:600}
+  .scale div{display:flex;align-items:center;justify-content:center;color:#fff}
+  .scale .sg{background:var(--green);flex:48} .scale .sa{background:var(--amber);flex:34} .scale .sr{background:var(--red);flex:18}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:#fff;border:1px solid var(--lgray);border-radius:14px;padding:0;overflow:hidden;box-shadow:var(--shadow)}
+  .card .ch{padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--lgray)}
+  .card .ch .nm{font-family:"Poppins",Arial;font-weight:600;font-size:15px;flex:1}
+  .card .ch .rag{font-family:"Poppins",Arial;font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;color:#fff}
+  .card.green .ch{background:rgba(120,140,93,.08)} .card.green .rag{background:var(--green)}
+  .card.amber .ch{background:rgba(194,145,63,.10)} .card.amber .rag{background:var(--amber)}
+  .card .cb{padding:13px 16px;font-size:13.5px}
+  .card .cb .row{display:flex;gap:8px;margin-bottom:7px;align-items:flex-start}
+  .card .cb .row:last-child{margin-bottom:0}
+  .card .cb .ic{flex:none;width:15px;height:15px;border-radius:50%;margin-top:3px}
+  .card .cb .tx b{font-family:"Poppins",Arial;font-weight:600;font-size:12.5px}
+
+  h2.sec{font-family:"Poppins",Arial;font-size:18px;margin:34px 0 4px}
+  .secsub{color:var(--mid);font-size:13.5px;margin:0 0 14px;font-family:"Poppins",Arial}
+
+  .broken{background:#fff;border:1px solid var(--lgray);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);margin-bottom:30px}
+  .broken .bh{background:var(--red);color:#fff;padding:11px 18px;font-family:"Poppins",Arial;font-weight:600;font-size:14px}
+  .broken table{width:100%;border-collapse:collapse;font-size:13px}
+  .broken td{padding:9px 16px;border-bottom:1px solid var(--lgray);vertical-align:top}
+  .broken tr:last-child td{border-bottom:0}
+  .broken td.w{font-family:"Poppins",Arial;font-weight:600;width:230px;color:var(--dark)}
+  .broken td.d{color:#555}
+
+  .fix{background:linear-gradient(180deg,#fff,#fcfbf7);border:1px dashed var(--green);border-radius:14px;padding:18px 22px;margin-bottom:24px}
+  .fix h3{margin:0 0 10px;font-family:"Poppins",Arial;font-size:15px;color:var(--green)}
+  .fix ol{margin:0;padding-left:20px;font-size:14px}
+  .fix li{margin-bottom:6px}
+  .fix li b{font-family:"Poppins",Arial;font-size:13px}
+
+  .verdict{background:var(--dark);color:var(--light);border-radius:14px;padding:20px 24px;font-size:15px;line-height:1.65}
+  .verdict b{color:var(--orange)}
+
+  footer{max-width:1080px;margin:0 auto;padding:18px 22px;color:var(--mid);font-size:12.5px;text-align:center}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Honest State of ArchHub</h1>
+  <p>You asked: did I read the entire repo? I hadn't — so I did. Every subtree,
+  ~2.7M tokens of reading. This is the real picture, including where my last
+  "all shipped, all proven" report was too generous.</p>
+</header>
+
+<div class="wrap">
+
+  <div class="correction">
+    <div class="t">⟲ Correcting my last report</div>
+    <p>The <b>buttons I showed you working ARE real</b> — the drag is smooth, the brain view opens, the dataset
+    button writes a real file, the backup syncs. That part held up. But the deep read found the <b>systems behind
+    the vision are thinner than I implied</b>: the brain's background engine never actually turns on, its memory is
+    seeded with fake data, the collective-models north star is plumbing with no model, the cloud's paid feature is
+    switched off — and the UI still has dead buttons and fake numbers. The honest label for the vision layer is
+    <b>"built, but not running yet,"</b> not "shipped."</p>
+  </div>
+
+  <div class="legend">
+    <div class="it"><span class="dot g"></span> REAL — works, you reach it, it does the thing</div>
+    <div class="it"><span class="dot a"></span> BUILT BUT NOT RUNNING — code exists, no engine drives it / seeded data</div>
+    <div class="it"><span class="dot r"></span> BROKEN · FAKE · DEAD</div>
+  </div>
+
+  <div class="scale">
+    <div class="sg">~ Half the repo: REAL &amp; working</div>
+    <div class="sa">~ A third: built, dormant</div>
+    <div class="sr">~ A sixth: broken/fake</div>
+  </div>
+
+  <h2 class="sec">The 8 subsystems</h2>
+  <div class="secsub">What I found reading every file in each.</div>
+
+  <div class="grid">
+
+    <div class="card green">
+      <div class="ch"><span class="nm">1 · Desktop app shell</span><span class="rag">REAL</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx"><b>109 real buttons-to-backend wires</b> (bridge slots), off-thread so the UI never freezes.</span></div>
+        <div class="row"><span class="ic a"></span><span class="tx">200 KB of old dead shell code still in the tree (never runs).</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">Marketplace trusts a placeholder security key ("replace before launch").</span></div>
+      </div>
+    </div>
+
+    <div class="card amber">
+      <div class="ch"><span class="nm">2 · The canvas UI (the big file)</span><span class="rag">MIXED</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx">Drag lag fixed for real (proven). Canvas, composer, brain view all work.</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx"><b>6 decorative buttons</b> still do nothing · <b>3 fake numbers</b> shown ("4.2k tok · $0.024", a fake schedule, a hardcoded date).</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">~10 menu actions silently do nothing (wrong call style on async slots).</span></div>
+      </div>
+    </div>
+
+    <div class="card amber">
+      <div class="ch"><span class="nm">3 · The Brain</span><span class="rag">BUILT · DORMANT</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx">22 real tools, real privacy/skill/memory algorithms, 366 tests.</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx"><b>The background engine never starts.</b> It learns nothing on its own — no skill is ever auto-made from your work.</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">Its memory is <b>seeded with synthetic data</b>, not earned. The "204 facts" you saw is a different store.</span></div>
+      </div>
+    </div>
+
+    <div class="card amber">
+      <div class="ch"><span class="nm">4 · Connectors &amp; workflows</span><span class="rag">MOSTLY REAL</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx"><b>18 real host connectors</b> (Revit, AutoCAD, Office, Adobe, Speckle, Notion…), 135 operations.</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">Typed host nodes call operations <b>no connector implements</b> → they error when run.</span></div>
+        <div class="row"><span class="ic a"></span><span class="tx">Procore fully built (543 lines) but <b>completely unwired</b> — unreachable.</span></div>
+      </div>
+    </div>
+
+    <div class="card amber">
+      <div class="ch"><span class="nm">5 · Cloud</span><span class="rag">LIVE · DE-CLAWED</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx"><b>Actually deployed</b> (archhub-cloud.fly.dev). Auth, billing, brain-sync, marketplace all real.</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">The <b>paid LLM feature is switched OFF</b> — every paying user would get an error today.</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">Token/cost metering records 0 for most traffic · login tokens never expire.</span></div>
+      </div>
+    </div>
+
+    <div class="card green">
+      <div class="ch"><span class="nm">6 · CAD host bridge (C#)</span><span class="rag">REAL</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx">Hot-reloadable brokers inside Revit/AutoCAD, clean port architecture (48884–99).</span></div>
+        <div class="row"><span class="ic a"></span><span class="tx">A fresh checkout can't run them without a build step (binaries built in CI).</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">Port numbers duplicated in two languages with no shared source — drift broke it once.</span></div>
+      </div>
+    </div>
+
+    <div class="card amber">
+      <div class="ch"><span class="nm">7 · Governance (rules &amp; AgDRs)</span><span class="rag">RULES SOLID · BOOKS DRIFTED</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx">26 mandates, 48 decision records — unusually rigorous.</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">The master rules file still names the <b>old canvas engine</b> you replaced.</span></div>
+        <div class="row"><span class="ic a"></span><span class="tx">6 decisions + the failure log are stale vs what actually shipped.</span></div>
+      </div>
+    </div>
+
+    <div class="card amber">
+      <div class="ch"><span class="nm">8 · Tests &amp; CI</span><span class="rag">BACKEND OK · UI THIN</span></div>
+      <div class="cb">
+        <div class="row"><span class="ic g"></span><span class="tx">Connectors, workflows, memory, cloud all well-tested (2,500+ tests).</span></div>
+        <div class="row"><span class="ic r"></span><span class="tx">The <b>entire visual UI is "tested" by text-searching the file</b> — nothing actually clicks anything.</span></div>
+        <div class="row"><span class="ic a"></span><span class="tx">The protected-file guard is off on any fresh clone (opt-in).</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <h2 class="sec">The "empty shells &amp; fake clicks" — still here</h2>
+  <div class="secsub">Exactly what you've complained about. The deep read found them by name.</div>
+  <div class="broken">
+    <div class="bh">⚠ Decorative / fake / dead — concrete list</div>
+    <table>
+      <tr><td class="w">"Reply…" box in AI nodes</td><td class="d">Looks like a chat input + Send button — has no click handler. Pure decoration.</td></tr>
+      <tr><td class="w">Output node preview/save</td><td class="d">Two buttons, no handlers.</td></tr>
+      <tr><td class="w">Footer "4.2k tok · $0.024 · :7300"</td><td class="d">Hardcoded fake numbers, not your real usage.</td></tr>
+      <tr><td class="w">Conversation "WEDNESDAY · MAY 13"</td><td class="d">Hardcoded date divider regardless of real dates.</td></tr>
+      <tr><td class="w">Schedule table in Compose node</td><td class="d">Fake rows (200 / 6,420 / 12…) regardless of data.</td></tr>
+      <tr><td class="w">Click a health issue → focus node</td><td class="d">Fires an event nothing listens to → nothing happens.</td></tr>
+      <tr><td class="w">~10 right-click menu actions</td><td class="d">Flatten, expand, group, rename, duplicate… silently do nothing (wrong call style).</td></tr>
+      <tr><td class="w">~1,000 lines of orphan panels</td><td class="d">Old Chats/Skills/Search panels — never shown, still compiled every launch.</td></tr>
+    </table>
+  </div>
+
+  <div class="fix">
+    <h3>What I'd fix first — root causes, by impact</h3>
+    <ol>
+      <li><b>Turn the brain's engine on</b> — start the background workers + the learn-from-your-work loop, so the brain actually grows instead of sitting on seeded data. (This is the moat.)</li>
+      <li><b>Strip the fakes</b> — delete the 3 fake-number strings, wire or remove the 6 dead buttons, fix the ~10 silent menu actions. Your exact complaint, closed.</li>
+      <li><b>Fix the typed-node ↔ connector mismatch</b> — typed host nodes call operations that don't exist.</li>
+      <li><b>Reconcile the books</b> — fix the master rules file's stale engine name, flip the 6 stale decisions, sync the failure log.</li>
+      <li><b>Merge the two brains</b> — stop depending on a manual sync script.</li>
+      <li><b>Make the cloud honest</b> — turn the proxy on or label it off; fix metering; expire tokens.</li>
+      <li><b>Real UI tests</b> — actually click the top surfaces in CI, not text-search the file.</li>
+      <li><b>Wire Procore or delete it</b> — 543 lines built, unreachable.</li>
+    </ol>
+  </div>
+
+  <div class="verdict">
+    <b>Bottom line:</b> ArchHub is real — a working graph IDE, 18 real connectors, a live cloud, unusually
+    rigorous governance. It is <b>further along than most "demos."</b> The honest gap is the <b>vision layer</b>:
+    the ambient brain, the collective models, the paid cloud — those are <b>built but not switched on</b>, and the
+    UI still wears a few fakes. None of it is hard to close. But you deserved the real word, and the real word is
+    "built, dormant in places, fake in a few" — not "all shipped." Now you have the map.
+  </div>
+
+</div>
+
+<footer>
+  Full repo read · 2026-05-28 · 8 deep-read passes · detailed record in docs/audits/REPO-MAP-2026-05-28.md · picture-first per PROTOTYPE-FIRST mandate
+</footer>
+</body>
+</html>

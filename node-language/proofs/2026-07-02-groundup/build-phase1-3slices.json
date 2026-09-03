@@ -1,0 +1,218 @@
+{
+  "summary": "Build decision nodes + engine invariants + hybrid recall from research/spec, court-verified",
+  "agentCount": 6,
+  "logs": [],
+  "result": {
+    "results": [
+      {
+        "build": {
+          "slice": "decision/score node family (SPEC §6): decision.topsis (crisp TOPSIS: vector-normalize -> weight -> ideal/anti-ideal -> closeness) + decision.fuzzy (linguistic TFN multi-stakeholder scoring: fuzzy-average fusion -> min-direction inversion -> TFN weighted sum -> centroid defuzzify), registered in the ONE engine registry and dispatched by node.type through WorkflowRunner.",
+          "files": [
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/workflows/nodes/decision.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/workflows/nodes/__init__.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/tests/test_decision_nodes.py"
+          ],
+          "tests_run": "python -m pytest tests/test_decision_nodes.py tests/test_subgraph.py -q (19 passed); wider neighbor sweep: tests/test_decision_nodes.py tests/test_subgraph.py tests/test_aggregate_primitives.py tests/test_workflow_runner.py tests/test_adapter_nodes.py -q (85 passed)",
+          "tests_passed": true,
+          "pytest_tail": "...................                                                      [100%]\n19 passed in 0.41s\n\n(wider sweep)\n........................................................................ [ 84%]\n.............                                                            [100%]\n85 passed in 1.08s",
+          "not_done": "Did NOT run the full 4589-test suite (only the required pair + a 5-file neighbor sweep covering runner/registry/aggregate/adapter/subgraph). Did NOT touch the JSX canvas/UI (no palette entry, no grammar primitive in node_grammar.py / NODE_GRAMMAR.md — decision.* nodes appear via all_specs() only). Did NOT commit or push (worktree left dirty on claude/groundup-build; note git status also shows personal-brain-mcp/* changes that are NOT mine — another agent's, untouched). decision.fuzzy is the simplified fuzzy-TOPSIS (fuzzy weighted sum + centroid), not full intuitionistic-fuzzy TOPSIS with fuzzy ideal-distance separation — mapping tables documented in the module docstring. TOPSIS weights are normalized to sum 1 internally; option-name uniqueness enforced; all error paths return the module's uniform {\"status\":\"error\", ranked:[], best:None, error} shape (tested through the runner, never a raise)."
+        },
+        "court": {
+          "verdict": "GREEN",
+          "fresh_pytest_tail": "$ python -m pytest tests/test_decision_nodes.py tests/test_subgraph.py -q\n...................                                                      [100%]\n19 passed in 0.28s\n\n$ python -m pytest tests/test_decision_nodes.py tests/test_subgraph.py tests/test_aggregate_primitives.py tests/test_workflow_runner.py tests/test_adapter_nodes.py -q\n........................................................................ [ 84%]\n.............                                                            [100%]\n85 passed in 0.74s\n\n(final clean re-run after mutation revert: 19 passed in 0.28s / 85 passed in 0.75s)",
+          "shell_smells": [
+            "NONE blocking. Checked: (1) every test asserts exact hand-calculated values at 1e-6 (e.g. TOPSIS closeness A=0.4032812965776307, fuzzy B=10.625) - I recomputed all of them INDEPENDENTLY in a standalone script (no project imports) and they match to full precision, so not circular; (2) no mocks - all cooks dispatch through real WorkflowRunner.pull()/recook_from() by node.type; (3) ranking/order/best asserted, not just scores; error paths asserted through the runner with exact substrings; (4) default behavior untouched - tracked diff is exactly one import line in app/workflows/nodes/__init__.py, registry-additive only; (5) mutation A (TOPSIS scores[n]=d_plus/denom sign-flip) -> 3 failed; mutation B (fuzzy centroid /2.0 instead of /3.0) -> 2 failed; both reverted, final run green. Minor non-blocking notes: fuzzy option-name-uniqueness check runs AFTER the scoring loop (still returns the uniform error, just wasted work); determinism test compares Python dicts, not serialized bytes ('byte-identical' in docstring is slightly overstated but the assertion is still real)."
+          ],
+          "reason": "Fresh re-runs reproduce the builder's numbers exactly (19 passed pair, 85 passed 5-file sweep). Tests are genuinely falsifiable: two independent deliberate mutations in the two core computations (TOPSIS closeness direction, fuzzy centroid divisor) were each caught by multiple test failures, and both were reverted (git diff shows only the builder's one-line __init__.py change; decision.py/test file untracked as expected). Expected values verified non-circular by independent recomputation outside the project. git status shows only the claimed slice files plus the personal-brain-mcp changes the builder explicitly disclosed as another concurrent agent's work (a third such file appeared DURING verification, confirming concurrency, not contamination). Registration goes through the one registry (register(NodeSpec(...)) pattern, dispatched by node.type), stdlib-only (math), pure/deterministic, uniform error shape. not_done disclosures are accurate."
+        }
+      },
+      {
+        "build": {
+          "files": [
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/workflows/invariants.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/workflows/runner.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/tests/test_engine_invariants.py"
+          ],
+          "not_done": "No commit made (orchestrator owns branch; worktree carries another agent's unrelated in-flight edits I did not touch). Full 4589-test suite not run — ran the commanded trio plus 5 runner-adjacent suites (62 more tests, green). convene not wired to UI/bridge. Frozen-mutation check (c) needs a pre-cook snapshot_frozen; standalone check without one skips that layer by design. metamorphic_full_vs_incremental covers config/param edits only; topology edits raise ValueError fail-closed.",
+          "pytest_tail": "$ python -m pytest tests/test_engine_invariants.py tests/test_subgraph.py tests/test_anti_laziness_gate.py -q\n.................................................                        [100%]\n49 passed in 0.46s\n\n$ python -m pytest tests/test_workflow_runner.py tests/test_aggregate_primitives.py tests/test_foreach_map.py tests/test_recook_param.py tests/test_runner_bypass.py -q\n..............................................................           [100%]\n62 passed in 2.52s",
+          "slice": "Impossible-state + metamorphic engine invariants (SPEC §19 forcings, court layer 0): app/workflows/invariants.py checker library (check_impossible_states with independent reduce recompute + foreach fan-out + frozen snapshot; MR-1 metamorphic full-vs-incremental; KPN determinism_check; operad regroup_invariance via existing compose_subgraph; fail-closed convene), plus opt-in ARCHHUB_COURT_INVARIANTS=1 hook in WorkflowRunner.pull that raises InvariantViolation after each cook; default path untouched.",
+          "tests_passed": true,
+          "tests_run": "python -m pytest tests/test_engine_invariants.py tests/test_subgraph.py tests/test_anti_laziness_gate.py -q (49 passed); python -m pytest tests/test_workflow_runner.py tests/test_aggregate_primitives.py tests/test_foreach_map.py tests/test_recook_param.py tests/test_runner_bypass.py -q (62 passed)"
+        },
+        "court": {
+          "verdict": "GREEN",
+          "fresh_pytest_tail": "$ python -m pytest tests/test_engine_invariants.py tests/test_subgraph.py tests/test_anti_laziness_gate.py -q\n.................................................                        [100%]\n49 passed in 0.49s\n\n$ python -m pytest tests/test_workflow_runner.py tests/test_aggregate_primitives.py tests/test_foreach_map.py tests/test_recook_param.py tests/test_runner_bypass.py -q\n..............................................................           [100%]\n62 passed in 2.09s\n\n(post-mutation-revert combined run, all 8 suites)\n........................................................................ [ 64%]\n.......................................                                  [100%]\n111 passed in 2.45s",
+          "shell_smells": [
+            "None disqualifying. Minor notes: (1) _independent_reduce imports _num coercion from nodes/aggregate (shared scalar coercion, disclosed in-code; fold logic itself uses different primitives - mutation probe confirmed real independence); (2) metamorphic_full_vs_incremental applies edits by writing used.nodes_by_id[nid] directly rather than a public edit API, but then exercises the real recook_from live path; (3) _values_equal float tolerance is tight (rel_tol=1e-9, abs_tol=1e-12) - not a pass-anything tolerance; (4) tests pin hand-calculated constants (17.0, 10, 22.0, expected=10/actual=11) and include monkeypatched lying-executor negative tests that must name the exact node and kind - not circular, not assertion-free; (5) default path verified untouched: flag off means one env read, and test_env_flag_off_default_path_untouched proves an injected lie flows through without raising (sink=18.0)."
+          ],
+          "reason": "Fresh re-runs pass exactly as claimed (49 + 62, and 111 combined post-revert). Mutation probe: off-by-one (+1) in the checker's independent sum fold in app/workflows/invariants.py caused 6 test failures (random-DAG convene-green seeds 2/5/7, lying-reduce expected/actual pin, both env-flag raise tests) - the suite genuinely detects a broken checker; reverted cleanly, all 111 green again. No shell smells: assertions pin hand-calculated values, negative tests inject lies via registry monkeypatch and demand named violations with exact expected/actual, convene is fail-closed with layers-run bookkeeping. git status matches the builder's disclosure: its slice is invariants.py + runner.py hook + tests/test_engine_invariants.py; the other modified/untracked files (app/workflows/nodes/__init__.py, nodes/decision.py, tests/test_decision_nodes.py, personal-brain-mcp/*) are the disclosed unrelated in-flight edits from another agent, untouched by the builder and by me. runner.py diff confirms the default path is byte-equivalent apart from a single os.environ read."
+        }
+      },
+      {
+        "build": {
+          "slice": "brain hybrid recall — BM25 lane beside dense embeddings with per-query alpha (Query-Adaptive Hybrid Search). New stdlib-only module personal_brain/hybrid_recall.py: code-preserving tokenizer (AP_CORNICE/CW22 kept whole, prose lowercased), Okapi BM25 (k1=1.5, b=0.75, Lucene +1 idf), min-max blend(dense, bm25, alpha), predict_alpha heuristic (1.0 pure dense unless query matches [A-Z]{2,}[0-9_]|[A-Z_]{4,}|\\d{2,} -> 0.5), and hybrid_scores convenience with an alpha==1.0 bit-identical passthrough. Wired into the single choke point retrieval.retrieve_facts via new keyword-only param hybrid_alpha (default None -> 1.0 -> the ORIGINAL dense loop verbatim under an if-guard, confirmed by git diff -w showing whitespace-only change to the old block; hybrid lane is opt-in only, satisfying the zero-risk rule).",
+          "files": [
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/src/personal_brain/hybrid_recall.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/src/personal_brain/retrieval.py",
+            "C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/personal-brain-mcp/tests/test_hybrid_recall.py"
+          ],
+          "tests_run": "PYTHONPATH=src python -m pytest tests/test_hybrid_recall.py -q (9 tests: tokenizer keeps CW22/AP_CORNICE whole; BM25 3-doc hand-check with hand-derived literals idf(wall)=ln(1.6)=0.47000363, d1 score 0.64549855, d2 cornice 1.10515972, tol 1e-6; predict_alpha code/prose; 10-doc fixture where stubbed dense scores rank the AP_CORNICE doc 4th and alpha-0.5 hybrid ranks it 1st with hand-computed blend 0.90625; no-code query returns dense list bit-identical; blend edges/mismatch; retrieve_facts wiring: default == hybrid_alpha=1.0 exact id order [fB,fC,fD,fA,fE] via deterministic stub embedder, and hybrid_alpha=0.5 lifts fA to rank 1). Then PYTHONPATH=src python -m pytest tests/test_hybrid_recall.py tests/test_embeddings.py tests/test_embedding.py tests/test_meaning_space_retrieval.py -q (neighboring retrieval/embedding suites). Verified imports resolve to the worktree src, not the installed editable copy.",
+          "tests_passed": true,
+          "pytest_tail": ".........                                                                [100%]\n9 passed in 0.09s\n---\n.................................ss.........                             [100%]\n42 passed, 2 skipped, 1 warning in 38.15s\n(2 skips are pre-existing in test_embedding.py, unrelated to this slice; warning is a transformers/CLIP DeprecationWarning from test_embedding.py)",
+          "not_done": "1) Full personal-brain suite (pytest tests, ~50 files) was launched in background but had NOT completed when this report was forced out — only the new file + the 3 neighboring retrieval/embedding suites are proven green; the full-suite verdict is in C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/tasks/b3l27j101.output (still empty at report time). Re-run before merge. 2) predict_alpha is NOT auto-applied anywhere — retrieve_facts default stays pure dense per the zero-risk rule; no caller (server.py make_context_payload etc.) was changed to opt in, so shipping the behavior requires a follow-up wire like hybrid_alpha=predict_alpha(query) at the call site. 3) retrieve_skills and retrieve_facts_graph were not given a hybrid lane (only the retrieve_facts choke point, per spec 'extend minimally'). 4) Nothing committed — working-tree changes only; worktree also contains an unrelated sibling slice's uncommitted files (app/workflows/nodes/decision.py, app/workflows/nodes/__init__.py, tests/test_decision_nodes.py) which I did not touch."
+        },
+        "court": {
+          "verdict": "GREEN",
+          "fresh_pytest_tail": "$ PYTHONPATH=src python -m pytest tests/test_hybrid_recall.py -q  (from groundup/personal-brain-mcp)\n.........                                                                [100%]\n9 passed in 0.06s\n\n$ PYTHONPATH=src python -m pytest tests/test_hybrid_recall.py tests/test_embeddings.py tests/test_embedding.py tests/test_meaning_space_retrieval.py -q\n42 passed, 2 skipped, 1 warning in 15.36s\n\n[post-mutation-revert re-run] 42 passed, 2 skipped, 1 warning in 15.89s\n\n[mutation run: k1+1.0 -> k1-1.0 in BM25.score]\nE         Obtained: 0.08899477003469551\nE         Expected: 0.4449738501734775 +- 1.0e-06\nFAILED tests/test_hybrid_recall.py::test_bm25_okapi_hand_computed_three_docs\n1 failed, 8 passed in 0.16s",
+          "shell_smells": [
+            "None found in the slice itself: all 9 tests assert hand-derived literal constants at 1e-6/1e-9 tolerance; passthrough test asserts bit-identity (out == _DENSE, exact id order); no mocked core (BM25/blend/tokenize run for real; _StubEmbedder only pins dense-lane inputs, which is the correct seam for testing the blend wire); default behavior unchanged, confirmed by git diff -w showing the original dense loop as whitespace-only re-indent under the alpha==1.0 guard.",
+            "Minor, noted not refuted: `hybrid_alpha == 1.0` float-equality guard is deliberate and documented, but a caller computing alpha arithmetically (e.g. 0.9999999) would silently take the hybrid path.",
+            "Only one of the 9 tests (the BM25 hand-check) caught the k1 sign-flip mutation — the ranking-flip and wiring tests survived it because the flip rescales the BM25 lane without reordering it in those fixtures; acceptable (>=1 failure required) but ranking tests alone would be a weak gate.",
+            "Worktree hygiene: sibling slice footprint is larger than the builder declared — app/workflows/runner.py (modified) and app/workflows/invariants.py (untracked) were not listed in not_done, and tests/test_engine_invariants.py appeared between my two git-status calls (a sibling agent is concurrently writing in this shared worktree). None touch personal-brain-mcp."
+          ],
+          "reason": "Fresh re-run passes (9/9 new + 42 passed 2 skipped across neighbors), with imports verified to resolve to the worktree src (printed __file__ paths), not an installed copy. Builder claims verified against the code: tokenizer preserves AP_CORNICE/CW22, Okapi BM25 k1=1.5 b=0.75 with Lucene +1 idf matches independent hand arithmetic, alpha==1.0 passthrough returns list(dense) verbatim, retrieve_facts default (None->1.0) walks the original dense loop verbatim (git diff -w shows whitespace-only re-indent) and hybrid is opt-in only. Mutation test: sign-flip in BM25 numerator caught immediately with the exact wrong value; revert confirmed clean (git diff --stat shows only builder's 64-line retrieval.py change plus its two new files). Tests are falsifiable — literal hand-computed expectations, no circularity, no mocked core. Caveats (not refuting): full personal-brain suite still unverified per builder's own not_done, and the shared worktree carries an actively-growing sibling slice (runner.py/invariants.py/test_engine_invariants.py) beyond what the builder declared."
+        }
+      }
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Court"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "build:decision-nodes",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "ae1a103be26c905a2",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972404360,
+      "queuedAt": 1782972404349,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "decision/score node family (SPEC §6): decision.topsis (cris…",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — a CLEAN git worktree of ArchHub origin/main on branch claude/groundup-build. Work ONLY here. Do NOT touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION (dirty tree, off limits).\nDISCIPLINE (non-negotiable, from repo CLAUDE.md + SPEC):\n- EXTEND the one eng…",
+      "lastProgressAt": 1782972744998,
+      "tokens": 132768,
+      "toolCalls": 22,
+      "durationMs": 340638,
+      "resultPreview": "{\"slice\":\"decision/score node family (SPEC §6): decision.topsis (crisp TOPSIS: vector-normalize -> weight -> ideal/anti-ideal -> closeness) + decision.fuzzy (linguistic TFN multi-stakeholder scoring: fuzzy-average fusion -> min-direction inversion -> TFN weighted sum -> centroid defuzzify), registered in the ONE engine registry and dispatched by node.type through WorkflowRunner.\",\"files\":[\"C:/User…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "build:engine-invariants",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a0854464e7f917a24",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972404361,
+      "queuedAt": 1782972404349,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "No commit made (orchestrator owns branch; worktree carries …",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — a CLEAN git worktree of ArchHub origin/main on branch claude/groundup-build. Work ONLY here. Do NOT touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION (dirty tree, off limits).\nDISCIPLINE (non-negotiable, from repo CLAUDE.md + SPEC):\n- EXTEND the one eng…",
+      "lastProgressAt": 1782973028323,
+      "tokens": 170231,
+      "toolCalls": 28,
+      "durationMs": 623962,
+      "resultPreview": "{\"files\":[\"C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/workflows/invariants.py\",\"C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup/app/workflows/runner.py\",\"C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "build:hybrid-recall",
+      "phaseIndex": 1,
+      "phaseTitle": "Build",
+      "agentId": "a022185d118e956ec",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972404362,
+      "queuedAt": 1782972404349,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "brain hybrid recall — BM25 lane beside dense embeddings wit…",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — a CLEAN git worktree of ArchHub origin/main on branch claude/groundup-build. Work ONLY here. Do NOT touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION (dirty tree, off limits).\nDISCIPLINE (non-negotiable, from repo CLAUDE.md + SPEC):\n- EXTEND the one eng…",
+      "lastProgressAt": 1782972920320,
+      "tokens": 126352,
+      "toolCalls": 30,
+      "durationMs": 515958,
+      "resultPreview": "{\"slice\":\"brain hybrid recall — BM25 lane beside dense embeddings with per-query alpha (Query-Adaptive Hybrid Search). New stdlib-only module personal_brain/hybrid_recall.py: code-preserving tokenizer (AP_CORNICE/CW22 kept whole, prose lowercased), Okapi BM25 (k1=1.5, b=0.75, Lucene +1 idf), min-max blend(dense, bm25, alpha), predict_alpha heuristic (1.0 pure dense unless query matches [A-Z]{2,}[0…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "court:decision-nodes",
+      "phaseIndex": 2,
+      "phaseTitle": "Court",
+      "agentId": "a46916e99f0ad60c5",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972745009,
+      "queuedAt": 1782972744999,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "GREEN",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — a CLEAN git worktree of ArchHub origin/main on branch claude/groundup-build. Work ONLY here. Do NOT touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION (dirty tree, off limits).\nDISCIPLINE (non-negotiable, from repo CLAUDE.md + SPEC):\n- EXTEND the one eng…",
+      "lastProgressAt": 1782972849457,
+      "tokens": 91999,
+      "toolCalls": 15,
+      "durationMs": 104448,
+      "resultPreview": "{\"verdict\":\"GREEN\",\"fresh_pytest_tail\":\"$ python -m pytest tests/test_decision_nodes.py tests/test_subgraph.py -q\\n...................                                                      [100%]\\n19 passed in 0.28s\\n\\n$ python -m pytest tests/test_decision_nodes.py tests/test_subgraph.py tests/test_aggregate_primitives.py tests/test_workflow_runner.py tests/test_adapter_nodes.py -q\\n..............…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "court:hybrid-recall",
+      "phaseIndex": 2,
+      "phaseTitle": "Court",
+      "agentId": "a78389ef47d94483f",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782972920328,
+      "queuedAt": 1782972920326,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "GREEN",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — a CLEAN git worktree of ArchHub origin/main on branch claude/groundup-build. Work ONLY here. Do NOT touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION (dirty tree, off limits).\nDISCIPLINE (non-negotiable, from repo CLAUDE.md + SPEC):\n- EXTEND the one eng…",
+      "lastProgressAt": 1782973067581,
+      "tokens": 91682,
+      "toolCalls": 11,
+      "durationMs": 147253,
+      "resultPreview": "{\"verdict\":\"GREEN\",\"fresh_pytest_tail\":\"$ PYTHONPATH=src python -m pytest tests/test_hybrid_recall.py -q  (from groundup/personal-brain-mcp)\\n.........                                                                [100%]\\n9 passed in 0.06s\\n\\n$ PYTHONPATH=src python -m pytest tests/test_hybrid_recall.py tests/test_embeddings.py tests/test_embedding.py tests/test_meaning_space_retrieval.py -q\\n42 …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "court:engine-invariants",
+      "phaseIndex": 2,
+      "phaseTitle": "Court",
+      "agentId": "a575ecc5bf872a092",
+      "model": "claude-fable-5",
+      "state": "done",
+      "startedAt": 1782973028325,
+      "queuedAt": 1782973028324,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "GREEN",
+      "promptPreview": "WORKTREE: C:/Users/fargaly/AppData/Local/Temp/claude/C--Users-fargaly-00-ARCHUB/f1edab9a-8b57-4f38-87a4-44d8e177b4d2/scratchpad/groundup — a CLEAN git worktree of ArchHub origin/main on branch claude/groundup-build. Work ONLY here. Do NOT touch C:/Users/fargaly/00.ARCHUB/10.PRODUCT/12.PRODUCTION (dirty tree, off limits).\nDISCIPLINE (non-negotiable, from repo CLAUDE.md + SPEC):\n- EXTEND the one eng…",
+      "lastProgressAt": 1782973128588,
+      "tokens": 94315,
+      "toolCalls": 11,
+      "durationMs": 100263,
+      "resultPreview": "{\"verdict\":\"GREEN\",\"fresh_pytest_tail\":\"$ python -m pytest tests/test_engine_invariants.py tests/test_subgraph.py tests/test_anti_laziness_gate.py -q\\n.................................................                        [100%]\\n49 passed in 0.49s\\n\\n$ python -m pytest tests/test_workflow_runner.py tests/test_aggregate_primitives.py tests/test_foreach_map.py tests/test_recook_param.py tests/tes…"
+    }
+  ],
+  "totalTokens": 707347,
+  "totalToolCalls": 117
+}

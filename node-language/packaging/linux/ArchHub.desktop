@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ArchHub
+GenericName=AEC AI Workspace
+Comment=Graph-first AI workspace for architecture, engineering and construction
+Exec=ArchHub
+Icon=archhub
+Categories=Graphics;Science;Engineering;
+Terminal=false
+StartupNotify=true

@@ -1,0 +1,6 @@
+........................................................................ [ 99%]
+..............................                                           [100%]
+4764 passed, 18 skipped in 1037.53s (0:17:17)
+=== BRAIN ===
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+809 passed, 4 skipped, 7 warnings in 93.48s (0:01:33)

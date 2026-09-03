@@ -1,0 +1,24 @@
+# https://github.com/microsoft/winget-cli/blob/master/doc/ManifestSpecv1.5.0.md
+# Submit by opening a PR to microsoft/winget-pkgs adding this file under
+# manifests/f/Fargaly/ArchHub/<version>/
+PackageIdentifier: Fargaly.ArchHub
+PackageVersion: 0.16.0
+InstallerType: inno
+Scope: user
+InstallModes:
+  - silent
+  - silentWithProgress
+InstallerSwitches:
+  Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+  SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART
+  Custom: /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS
+UpgradeBehavior: install
+ReleaseDate: 2026-05-06
+ReturnResponseUrl: https://github.com/Fargaly/ArchHub/issues
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/Fargaly/ArchHub/releases/download/v0.16.0/ArchHub-Setup-0.16.0.exe
+    # Filled by CI on each release; placeholder for manual local edits.
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+ManifestType: installer
+ManifestVersion: 1.5.0

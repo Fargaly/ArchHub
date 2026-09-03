@@ -1,0 +1,1482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArchHub — Host node v2 · Direction A + ComfyUI + the ecosystem you already built</title>
+<style>
+  :root {
+    --bg:#0e0e12; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+    --bgDeep:#0a0a0d; --bgInk:#181820;
+    --line:#26262e; --lineSoft:#1e1e24; --lineHair:#1a1a20;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --inkDim:#3a3530;
+    --accent:#d97757; --accentSoft:#3a2018; --accentDim:#2a1812; --accentHi:#e8896a;
+    --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f;
+    --cyan:#5fb3b3; --purple:#a98cd6; --blue:#7898d6; --yellow:#e3b950;
+    --green:#788c5d;
+    --mono:'SF Mono','Menlo','Consolas',monospace;
+    --serif:'Instrument Serif','Lora','Georgia',serif;
+    --sans:'Inter','system-ui',sans-serif;
+
+    /* Per-host brand colour. Slice A locked one master per host. */
+    --revit:#d97757; --autocad:#e6705f; --max:#a98cd6; --rhino:#7ec18e;
+    --excel:#5fb3b3; --outlook:#7898d6; --speckle:#e3b950;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); font-size:13px; line-height:1.55;
+    padding:28px 36px; min-height:100vh;
+  }
+  h1 { font-family:var(--serif); font-size:32px; font-weight:600;
+       letter-spacing:-0.02em; margin:0 0 4px 0; }
+  h2 { font-family:var(--serif); font-size:22px; font-weight:600;
+       letter-spacing:-0.01em; margin:36px 0 10px 0; }
+  h3 { font-family:var(--mono); font-size:11px; font-weight:600;
+       color:var(--inkMuted); letter-spacing:0.18em;
+       margin:22px 0 10px 0; text-transform:uppercase; }
+  p { color:var(--inkSoft); max-width:90ch; }
+  code { font-family:var(--mono); font-size:0.92em; background:var(--bgSoft);
+         padding:1px 6px; border-radius:3px; color:var(--ink); }
+  .lede { font-size:14px; max-width:88ch; }
+  .lede em { color:var(--ink); font-style:normal; background:var(--accentDim);
+              padding:1px 5px; border-radius:3px; }
+  .brief {
+    background:var(--bgPanel); border:1px solid var(--line);
+    border-left:3px solid var(--accent);
+    border-radius:8px; padding:14px 18px; margin:18px 0; max-width:1000px;
+  }
+  .brief strong { color:var(--ink); }
+  .why-richer {
+    background:var(--bgPanel); border:1px solid var(--ok);
+    border-left:3px solid var(--ok);
+    border-radius:8px; padding:14px 18px; margin:14px 0; max-width:1000px;
+  }
+  .why-richer strong { color:var(--ok); }
+
+  .stage-wrap { display:flex; flex-direction:column; gap:48px; margin-top:28px; }
+  .stage {
+    background:var(--bgDeep); border:1px solid var(--lineSoft);
+    border-radius:12px; padding:28px 30px 24px; position:relative;
+    display:grid; grid-template-columns:1fr 380px; gap:24px;
+  }
+  .stage.wide { grid-template-columns:1fr; }
+  .stage-tag {
+    position:absolute; top:-12px; left:24px;
+    background:var(--accent); color:#fff;
+    font-family:var(--mono); font-size:10px; font-weight:600;
+    letter-spacing:0.16em; padding:4px 12px; border-radius:4px;
+  }
+  .stage-title { font-family:var(--serif); font-size:22px; margin:0 0 4px 0; }
+  .stage-sub { color:var(--inkSoft); font-size:13px; margin:0 0 16px 0; max-width:78ch; }
+  .canvas-zone {
+    background:
+      radial-gradient(circle at 1px 1px, #20202833 1px, transparent 0) 0 0/16px 16px,
+      #0e0e12;
+    border-radius:8px; padding:24px; position:relative; overflow:hidden;
+    min-height:580px;
+  }
+  .panel-zone {
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+
+  /* ─── HOST NODE — Direction A base (per-host brand stripe) ─── */
+  .host-node {
+    position:absolute; background:var(--bgPanel);
+    border-radius:10px;
+    border-top:3px solid var(--brand, var(--accent));
+    border-left:1px solid var(--line);
+    border-right:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    box-shadow:0 12px 36px rgba(0,0,0,.55);
+    font-family:var(--sans);
+  }
+  .host-node[data-host="revit"]   { --brand:var(--revit); }
+  .host-node[data-host="autocad"] { --brand:var(--autocad); }
+  .host-node[data-host="max"]     { --brand:var(--max); }
+  .host-node[data-host="excel"]   { --brand:var(--excel); }
+
+  .host-title {
+    padding:8px 12px; display:flex; align-items:center; gap:8px;
+    background:var(--bgSoft); border-bottom:1px solid var(--lineSoft);
+    border-top-left-radius:7px; border-top-right-radius:7px;
+  }
+  .host-icon { font-family:var(--mono); font-size:14px; color:var(--brand, var(--accent)); }
+  .host-cat {
+    font-family:var(--mono); font-size:9px; color:var(--brand, var(--accent));
+    letter-spacing:0.18em; font-weight:600;
+  }
+  .host-doc {
+    font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+    letter-spacing:0.04em;
+  }
+
+  /* Disable-verb flags — AgDR-0002 PIN / FREEZE / BYPASS / PREVIEW-OFF */
+  .flag-bar { display:flex; gap:4px; margin-left:auto; }
+  .flag {
+    width:8px; height:8px; border-radius:50%;
+    border:1.5px solid var(--inkDim); background:transparent; cursor:pointer;
+  }
+  .flag.pinned { background:var(--purple); border-color:var(--purple); }
+  .flag.frozen { background:var(--cyan);   border-color:var(--cyan); }
+  .flag.bypass { background:var(--yellow); border-color:var(--yellow); }
+  .flag.preview-off { background:transparent; border-color:var(--inkMuted); }
+  .flag.auto  { background:var(--blue); border-color:var(--blue); }
+  .flag.locked { background:var(--err); border-color:var(--err); }
+
+  /* Main + Advanced sockets — ComfyUI pattern */
+  .main-sock {
+    position:absolute; width:13px; height:13px; border-radius:50%;
+    background:var(--bgPanel); border:2.5px solid var(--inkSoft);
+    box-shadow:0 0 0 2px var(--bg); z-index:5;
+  }
+  .main-sock.in.any  { border-color:var(--inkSoft); }
+  .main-sock.out.list{ background:var(--blue); border-color:var(--blue); }
+  .main-sock-label {
+    position:absolute; font-family:var(--mono); font-size:9px;
+    color:var(--inkMuted); letter-spacing:0.04em;
+  }
+  .main-sock-label.out { color:var(--blue); }
+
+  /* Op grid */
+  .op-grid {
+    display:grid; grid-template-columns:repeat(4, 1fr); gap:5px;
+    padding:9px;
+  }
+  .op-tile {
+    background:var(--bgSoft); border:1px solid var(--lineSoft);
+    border-radius:4px; padding:6px 8px;
+    font-family:var(--mono); font-size:9.5px; line-height:1.3;
+    color:var(--inkSoft); cursor:pointer; position:relative;
+    transition:border .15s, background .15s;
+  }
+  .op-tile.cfg::before {
+    content:''; position:absolute; left:0; top:0; bottom:0; width:2px;
+    background:var(--blue); border-radius:2px 0 0 2px;
+  }
+  .op-tile .pill {
+    display:inline-block; width:6px; height:6px; border-radius:50%;
+    background:var(--inkDim); margin-right:5px; vertical-align:middle;
+  }
+  .op-tile .pill.done { background:var(--ok); }
+  .op-tile .pill.run  { background:var(--yellow); }
+  .op-tile .pill.cfg  { background:var(--blue); }
+  .op-tile .op-name { color:var(--ink); font-size:10px; }
+  .op-tile .op-time { color:var(--inkMuted); font-size:8.5px; margin-top:2px; }
+
+  .op-tile.active {
+    background:var(--bgHover); border-color:var(--brand, var(--accent));
+    color:var(--ink); grid-column:span 4;
+    padding:10px 12px 12px;
+  }
+  .op-tile.active .op-row-meta {
+    display:flex; align-items:center; gap:8px; margin-bottom:6px;
+  }
+  .op-tile.active .op-name { font-size:11.5px; font-weight:500; }
+  .op-tile.active .op-meta-tags {
+    margin-left:auto; font-family:var(--mono); font-size:8.5px;
+    color:var(--blue); letter-spacing:0.04em;
+  }
+
+  /* Param sections — MAIN + ADVANCED inputs + OUTPUTS */
+  .op-section { padding:6px 0 4px; border-top:1px solid var(--lineSoft); }
+  .op-section.first { border-top:0; padding-top:2px; }
+  .op-sec-head {
+    display:flex; align-items:center; gap:8px;
+    font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+    letter-spacing:0.18em; padding:5px 0;
+    cursor:pointer; user-select:none;
+  }
+  .op-sec-head .chev { color:var(--inkMuted); transition:transform .12s; }
+  .op-section.collapsed .op-sec-body { display:none; }
+  .op-section.collapsed .chev { transform:rotate(-90deg); }
+  .op-sec-head .pct { margin-left:auto; color:var(--inkDim); }
+  .op-sec-head.input  { color:var(--purple); }
+  .op-sec-head.output { color:var(--cyan); }
+
+  /* Param row — hover-promote */
+  .params-list { display:flex; flex-direction:column; gap:3px; position:relative; }
+  .param-row {
+    display:grid;
+    grid-template-columns: 22px 120px 1fr 22px;
+    align-items:center; gap:6px;
+    padding:3px 0;
+    font-family:var(--mono); font-size:10px;
+    position:relative;
+  }
+  .row-sock-l, .row-sock-r {
+    width:10px; height:10px; border-radius:50%;
+    border:1.5px dashed var(--inkMuted); background:transparent;
+    cursor:pointer; opacity:0; transition:opacity .12s;
+    box-shadow:0 0 0 2px var(--bg);
+  }
+  .row-sock-l { justify-self:end; }
+  .row-sock-r { justify-self:start; }
+  .param-row.hover .row-sock-l,
+  .param-row.hover .row-sock-r { opacity:0.55; }
+  .param-row.wired-in .row-sock-l  { opacity:1; background:var(--purple); border:1.5px solid var(--purple); }
+  .param-row.wired-out .row-sock-r { opacity:1; background:var(--cyan);   border:1.5px solid var(--cyan); }
+
+  .param-key  { color:var(--inkMuted); }
+  .param-val  {
+    background:var(--bg); border:1px solid var(--lineSoft); border-radius:3px;
+    padding:3px 8px; color:var(--ink);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .param-row.wired-in  .param-val { border-color:var(--purple); background:#2c1a2e; }
+  .param-row.wired-out .param-val { border-color:var(--cyan);   background:#1d2c2c; }
+
+  /* Type hint pill — shown on hover ONLY */
+  .type-hint {
+    position:absolute; left:-48px; top:50%; transform:translateY(-50%);
+    font-family:var(--mono); font-size:8px; padding:1px 5px; border-radius:3px;
+    background:#2a1812; color:var(--accent); letter-spacing:0.04em;
+    opacity:0; transition:opacity .12s; pointer-events:none;
+    border:1px solid var(--accent);
+  }
+  .param-row.hover .type-hint { opacity:0.9; }
+  .type-hint.t-elem  { background:#2a1832; color:var(--purple); border-color:var(--purple); }
+  .type-hint.t-num   { background:#332a18; color:var(--yellow); border-color:var(--yellow); }
+  .type-hint.t-bool  { background:#1d2c2c; color:var(--ok);     border-color:var(--ok); }
+  .type-hint.t-str   { background:#1c2c2c; color:var(--cyan);   border-color:var(--cyan); }
+  .type-hint.t-list  { background:#1c2333; color:var(--blue);   border-color:var(--blue); }
+  .type-hint.t-id    { background:#332218; color:var(--accent); border-color:var(--accent); }
+
+  /* Rail sockets — promoted I/O */
+  .rail-sock {
+    position:absolute; width:13px; height:13px; border-radius:50%;
+    box-shadow:0 0 0 2px var(--bg); z-index:6;
+  }
+  .rail-sock.l { left:-7px; }
+  .rail-sock.r { right:-7px; }
+  .rail-sock.in   { background:var(--purple); border:2.5px solid var(--purple); }
+  .rail-sock.out  { background:var(--cyan);   border:2.5px solid var(--cyan); }
+  .rail-sock.list { background:var(--blue);   border:2.5px solid var(--blue); }
+  .rail-sock.num  { background:var(--yellow); border:2.5px solid var(--yellow); }
+  .rail-label {
+    position:absolute; font-family:var(--mono); font-size:8px;
+    letter-spacing:0.04em; color:var(--inkSoft); white-space:nowrap;
+  }
+  .rail-label.l { left:9px; }
+  .rail-label.r { right:9px; text-align:right; }
+
+  /* Wires */
+  .wire-layer { position:absolute; inset:0; pointer-events:none; z-index:1; }
+  .wire-label {
+    position:absolute; font-family:var(--mono); font-size:8.5px;
+    color:var(--inkMuted); background:var(--bg);
+    padding:1px 5px; border-radius:3px; z-index:2;
+  }
+
+  /* ─── Non-host typed nodes — re-use the shipped grammar ─── */
+  .ghost-node {
+    position:absolute; background:var(--bgPanel);
+    border:1px solid var(--line); border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+    font-family:var(--sans); font-size:11px;
+    padding:0; overflow:hidden;
+  }
+  .ghost-node .gn-head {
+    padding:6px 10px; background:var(--bgSoft);
+    border-bottom:1px solid var(--lineSoft);
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:9.5px;
+  }
+  .ghost-node .gn-tag {
+    font-family:var(--mono); font-size:8px; color:var(--inkMuted);
+    letter-spacing:0.16em;
+  }
+  .ghost-node .gn-name { color:var(--ink); font-weight:500; }
+  .ghost-node .gn-body {
+    padding:6px 10px 8px; color:var(--inkSoft);
+    font-family:var(--mono); font-size:9.5px;
+  }
+  .ghost-node .gn-row {
+    display:flex; gap:6px; padding:2px 0;
+  }
+  .ghost-node .gn-row .k { color:var(--inkMuted); width:65px; }
+  .ghost-node .gn-row .v { color:var(--ink); flex:1; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .ghost-node .gn-sock {
+    position:absolute; width:10px; height:10px; border-radius:50%;
+    box-shadow:0 0 0 2px var(--bg);
+  }
+  .ghost-node .gn-sock.l { left:-6px; }
+  .ghost-node .gn-sock.r { right:-6px; }
+  .ghost-node .gn-sock.purple { background:var(--purple); border:1.5px solid var(--purple); }
+  .ghost-node .gn-sock.cyan   { background:var(--cyan);   border:1.5px solid var(--cyan); }
+  .ghost-node .gn-sock.blue   { background:var(--blue);   border:1.5px solid var(--blue); }
+  .ghost-node .gn-sock.yellow { background:var(--yellow); border:1.5px solid var(--yellow); }
+  .ghost-node .gn-sock.ok     { background:var(--ok);     border:1.5px solid var(--ok); }
+  .ghost-node .gn-sock.accent { background:var(--accent); border:1.5px solid var(--accent); }
+  /* per-kind brand stripes */
+  .ghost-node.adapter   { border-top:2px solid var(--green); }
+  .ghost-node.share     { border-top:2px solid var(--yellow); }
+  .ghost-node.ai_chat   { border-top:2px solid var(--purple); }
+  .ghost-node.ai_plan   { border-top:2px solid var(--accent); }
+  .ghost-node.code_expr { border-top:2px solid var(--cyan); }
+  .ghost-node.skill     { border-top:2px solid var(--ok); }
+  .ghost-node.constant  { border-top:2px solid var(--inkSoft); }
+  .ghost-node.watch     { border-top:2px solid var(--blue); }
+
+  /* Group (Slice C MVP) */
+  .group-rect {
+    position:absolute; pointer-events:none;
+    border:1px dashed var(--green);
+    background:#1e2c1d22; border-radius:8px;
+  }
+  .group-rect.transform { border-color:var(--cyan);  background:#1d2c2c22; }
+  .group-rect.input     { border-color:var(--yellow); background:#332a1822; }
+  .group-rect-head {
+    position:absolute; top:-22px; left:8px;
+    background:var(--bgPanel); border:1px solid var(--lineSoft);
+    border-bottom-color:transparent; border-radius:5px 5px 0 0;
+    padding:3px 10px; font-family:var(--mono); font-size:8.5px;
+    color:var(--green); letter-spacing:0.16em;
+    z-index:3;
+  }
+  .group-rect.transform .group-rect-head { color:var(--cyan); }
+  .group-rect.input     .group-rect-head { color:var(--yellow); }
+
+  /* Collapsed group node — per AgDR-0005 */
+  .collapsed-group {
+    position:absolute; background:var(--bgPanel);
+    border:1.5px solid var(--green); border-radius:9px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);
+    overflow:hidden;
+  }
+  .collapsed-group-head {
+    display:flex; align-items:center; gap:6px;
+    background:#1e2c1d44; border-bottom:1px solid var(--green);
+    padding:6px 10px;
+    font-family:var(--mono); font-size:9px; color:var(--green);
+    letter-spacing:0.16em;
+  }
+  .collapsed-group-body {
+    padding:10px 12px; font-family:var(--mono); font-size:9px;
+    color:var(--inkSoft); position:relative;
+    min-height:80px;
+  }
+  .promoted-port-l, .promoted-port-r {
+    position:absolute; display:flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:8px;
+  }
+  .promoted-port-l { left:8px; }
+  .promoted-port-r { right:8px; }
+
+  /* Floating settings bar — disable verbs */
+  .floating-bar {
+    position:absolute; top:-32px; left:50%; transform:translateX(-50%);
+    background:rgba(20,20,28,.96); border:1px solid var(--line);
+    border-radius:6px; padding:5px 9px; display:flex; gap:9px;
+    font-family:var(--mono); font-size:10px;
+    box-shadow:0 8px 22px rgba(0,0,0,.5); z-index:7;
+  }
+  .floating-bar .mode-btn {
+    padding:2px 8px; border-radius:3px; cursor:pointer; color:var(--inkSoft);
+  }
+  .floating-bar .mode-btn.active { background:var(--accentDim); color:var(--accent); }
+  .floating-bar .sep { color:var(--inkDim); }
+  .floating-bar kbd {
+    font-family:var(--mono); font-size:8px; color:var(--inkMuted);
+    border:1px solid var(--lineSoft); padding:0 4px; border-radius:2px;
+    margin-left:3px;
+  }
+
+  /* Right panel */
+  .panel-header {
+    padding:11px 14px; display:flex; align-items:center; gap:8px;
+    border-bottom:1px solid var(--lineSoft);
+  }
+  .panel-stripe { width:7px; height:7px; border-radius:2px; background:var(--accent); }
+  .panel-host-label {
+    font-family:var(--mono); font-size:9px; color:var(--accent);
+    letter-spacing:0.18em;
+  }
+  .panel-title {
+    font-family:var(--serif); font-size:18px; padding:10px 14px 4px;
+    letter-spacing:-0.015em;
+  }
+  .panel-sub {
+    font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+    padding:0 14px 12px; letter-spacing:0.04em;
+  }
+  .panel-tabs {
+    display:flex; gap:1px; padding:6px 12px 0;
+    border-bottom:1px solid var(--lineSoft);
+  }
+  .panel-tab {
+    padding:5px 9px; font-family:var(--mono); font-size:9.5px;
+    color:var(--inkMuted); cursor:pointer; letter-spacing:0.06em;
+    border-radius:3px 3px 0 0;
+  }
+  .panel-tab.active {
+    color:var(--ink); background:var(--bgSoft);
+    border-bottom:2px solid var(--accent);
+  }
+  .panel-search {
+    margin:10px 14px; padding:6px 9px;
+    background:var(--bg); border:1px solid var(--line); border-radius:5px;
+    font-family:var(--mono); font-size:11px; color:var(--ink);
+  }
+  .panel-group {
+    font-family:var(--mono); font-size:8.5px; color:var(--inkMuted);
+    letter-spacing:0.18em; padding:12px 14px 4px;
+  }
+  .panel-group.in  { color:var(--purple); }
+  .panel-group.out { color:var(--cyan); }
+  .panel-row {
+    display:flex; align-items:center; padding:5px 14px;
+    font-family:var(--mono); font-size:10px; gap:8px; position:relative;
+  }
+  .panel-row .row-sock-mini {
+    width:8px; height:8px; border-radius:50%;
+    border:1.5px dashed var(--inkMuted); cursor:pointer;
+  }
+  .panel-row.wired-in  .row-sock-mini { background:var(--purple); border:1.5px solid var(--purple); }
+  .panel-row.wired-out .row-sock-mini { background:var(--cyan);   border:1.5px solid var(--cyan); }
+  .panel-row .k { color:var(--inkMuted); flex-shrink:0; width:140px; }
+  .panel-row .v {
+    flex:1; background:var(--bgSoft); border-radius:3px;
+    padding:4px 8px; color:var(--ink); border:1px solid var(--lineSoft);
+  }
+  .panel-row.wired-in  .v { border-color:var(--purple); background:#2c1a2e; }
+  .panel-row.wired-out .v { border-color:var(--cyan);   background:#1d2c2c; }
+
+  /* Library + Composer minimal mock */
+  .library-popup {
+    position:absolute; right:-340px; top:24px; width:300px;
+    background:var(--bgPanel); border:1px solid var(--line); border-radius:8px;
+    box-shadow:0 12px 36px rgba(0,0,0,.6); padding:0; z-index:10;
+  }
+  .library-popup .lp-head {
+    padding:8px 12px; border-bottom:1px solid var(--lineSoft);
+    font-family:var(--mono); font-size:9px; color:var(--accent);
+    letter-spacing:0.18em; display:flex; align-items:center; gap:6px;
+  }
+  .library-popup .lp-input {
+    margin:8px 10px; padding:5px 8px;
+    background:var(--bg); border:1px solid var(--line); border-radius:4px;
+    font-family:var(--mono); font-size:10px; color:var(--ink);
+  }
+  .lp-hit {
+    display:flex; align-items:center; gap:6px; padding:4px 12px;
+    font-family:var(--mono); font-size:9.5px; cursor:pointer;
+  }
+  .lp-hit:hover { background:var(--bgHover); }
+  .lp-hit .lp-mark { color:var(--ok); width:10px; text-align:center; }
+  .lp-hit .lp-mark.new { color:var(--accent); }
+  .lp-hit .lp-name { color:var(--ink); }
+  .lp-hit .lp-meta { color:var(--inkMuted); font-size:8.5px; margin-left:auto; }
+
+  /* Annotations */
+  .annot {
+    background:var(--bgPanel); border:1px solid var(--line);
+    border-radius:7px; padding:14px 18px; margin-top:14px;
+    font-size:12.5px; color:var(--inkSoft);
+  }
+  .annot strong { color:var(--ink); }
+  .annot ul { margin:6px 0 0 18px; padding:0; }
+  .annot li { margin:3px 0; }
+  .annot .borrowed { color:var(--cyan); font-family:var(--mono); font-size:11px;
+                      margin-bottom:8px; }
+  .annot .gain { color:var(--ok); }
+  .annot .cost { color:var(--warn); }
+  .annot .reused {
+    color:var(--accent); font-family:var(--mono); font-size:10px;
+    background:var(--accentDim); padding:1px 5px; border-radius:3px;
+    margin-right:5px;
+  }
+
+  /* Decision capture */
+  .decision {
+    background:linear-gradient(180deg, #1f1f28 0%, var(--bgPanel) 100%);
+    border:1px solid var(--accent); border-radius:8px;
+    padding:18px 22px; margin:32px 0; max-width:1000px;
+  }
+  .decision h2 { margin:0 0 10px 0; }
+  .decision ol { margin:8px 0 0 18px; color:var(--inkSoft); }
+  .decision li { margin:6px 0; }
+  .decision .key {
+    font-family:var(--mono); color:var(--accent); font-size:11px;
+    background:var(--accentDim); padding:1px 6px; border-radius:3px;
+  }
+  .decision .new {
+    color:var(--ok); font-family:var(--mono); font-size:10px;
+    background:#1d2c1d; padding:1px 5px; border-radius:3px;
+    border:1px solid var(--ok); margin-left:6px;
+  }
+
+  /* Legend */
+  .legend {
+    font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+    margin:14px 0 0 0; padding:10px 14px;
+    background:var(--bgSoft); border:1px dashed var(--line);
+    border-radius:5px; display:flex; flex-wrap:wrap; gap:18px;
+  }
+  .legend-item { display:inline-flex; align-items:center; gap:6px; }
+  .legend-sw { width:11px; height:11px; border-radius:50%; }
+</style>
+</head>
+<body>
+
+<h1>Host node v2 — Direction A + ComfyUI hover-promote in the ecosystem you already built</h1>
+<p class="lede" style="margin-top:4px">
+  Founder pushback (2026-05-21): <em>"Think further — design can be better.
+  And remember this doesn't wipe out the work already done; make sure it's
+  incorporated."</em> This v2 prototype answers both: the host node is
+  redesigned around four explicit mechanics + shown LIVE inside a graph that
+  re-uses every shipped slice — typed primitives, groups + collapse + nesting,
+  Save-as-Skill, ai.plan, Adapter, Share, Code typed-split, Floating disable
+  verbs, library-first search.
+</p>
+
+<div class="brief">
+  <strong>Four mechanics drive this node.</strong>
+  <ol>
+    <li><strong>Op grid + active tile (Direction A)</strong> — all 13 ops
+      visible; active op expands inline. No dropdowns.</li>
+    <li><strong>MAIN ⇄ ADVANCED I/O</strong> — primary sockets always
+      visible; advanced (everything else) collapsed by default; user
+      hovers + promotes per row.</li>
+    <li><strong>Hover-revealed sockets</strong> on left edge (input
+      promote) AND right edge (output pluck), with typed-pill hint.
+      ComfyUI's Convert-Widget-to-Input gesture in its richest form.</li>
+    <li><strong>Floating settings bar</strong> for run-mode + disable
+      verbs (pin / freeze / bypass / preview-off — AgDR-0002 reuse).</li>
+  </ol>
+</div>
+
+<div class="why-richer">
+  <strong>What this prototype keeps from prior shipped work
+  (no rewrites needed):</strong>
+  <ul>
+    <li><span class="reused">Slice A</span> 16 per-host master nodes — per-host brand stripe (Revit orange · AutoCAD red · 3ds Max purple · Excel cyan).</li>
+    <li><span class="reused">Slice B / AgDR-0002</span> disable verbs (pin / freeze / bypass / preview-off) — shown in the floating bar + flag dots.</li>
+    <li><span class="reused">Slice C / C2 / C3</span> Groups + collapse-to-giant-node + nesting — Stage 4 below shows this host node INSIDE a collapsed group with boundary-promoted sockets per AgDR-0005's algorithm.</li>
+    <li><span class="reused">Slice D / AgDR-0007</span> typed wire colours (purple = element, blue = list, yellow = number, cyan = string, green = bool) — every wire in this prototype follows the palette.</li>
+    <li><span class="reused">Slice G / G2 / AgDR-0010</span> Save-as-Skill preserves promoted sockets — the skill wrapper's I/O equals the host node's rail.</li>
+    <li><span class="reused">Slice H/I/J/K + AgDR-0019/0020</span> typed primitives — code_expr, ai_chat, ai_plan, constants, all coexist in Stage 3's graph.</li>
+    <li><span class="reused">M1.5 SHARE + M2 ADAPTER + AgDR-0016/0017/0018</span> share.publish + adapter.cad_to_revit_wall + revit.send_to_speckle all consume the host node's promoted outputs.</li>
+    <li><span class="reused">M4 / AgDR-0021</span> ai.plan reads the host node's promoted-socket schema as its tool surface.</li>
+    <li><span class="reused">AgDR-0013</span> LIBRARY-FIRST gate — Cmd-K popup shown in Stage 3 surfaces existing matches before suggesting new node creation.</li>
+    <li><span class="reused">AgDR-0015</span> a11y + contrast tokens — every colour referenced here lives in the LM palette + passes the WCAG audit.</li>
+  </ul>
+</div>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-sw" style="background:var(--purple)"></span>wired IN (element / id)</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--cyan)"></span>wired OUT (pluck / string)</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--blue)"></span>list / collection</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--yellow)"></span>number</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--ok)"></span>bool / done</span>
+  <span class="legend-item"><span class="legend-sw" style="border:1.5px dashed var(--inkMuted); background:transparent"></span>hover-promotable</span>
+  <span class="legend-item"><span class="legend-sw" style="background:var(--green)"></span>group / skill stripe</span>
+</div>
+
+<div class="stage-wrap">
+
+<!-- ─────────────────────────── STAGE 1 — REST ─────────────────────────── -->
+<div class="stage">
+  <div class="stage-tag">STAGE 1 · REST</div>
+  <div>
+    <div class="stage-title">Default rest — MAIN sockets only</div>
+    <div class="stage-sub">
+      Newcomer view. Only the two MAIN sockets visible
+      (<code>trigger</code> in / <code>last_out</code> out). 13 ops tile-
+      visible. Active op (list_walls) shows MAIN params only. ADVANCED
+      collapsed. Floating bar hidden until the node is selected.
+    </div>
+    <div class="canvas-zone">
+      <div class="host-node" data-host="revit" style="left:60px; top:38px; width:380px;">
+        <div class="host-title">
+          <span class="host-icon">◆</span>
+          <span class="host-cat">REVIT</span>
+          <span class="host-doc">· live-A203.rvt · 2024</span>
+          <div class="flag-bar">
+            <div class="flag auto"   title="auto-cook (AgDR-0002)"></div>
+            <div class="flag"        title="pin"></div>
+            <div class="flag"        title="freeze"></div>
+            <div class="flag"        title="bypass"></div>
+            <div class="flag"        title="preview-off"></div>
+          </div>
+        </div>
+        <div class="main-sock in any"  style="left:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="left:11px; top:42px;">trigger</span>
+        <div class="main-sock out list" style="right:-7px; top:46px;"></div>
+        <span class="main-sock-label out" style="right:11px; top:42px;">last_out</span>
+
+        <div class="op-grid">
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_views</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile cfg active">
+            <div class="op-row-meta">
+              <span class="pill done"></span>
+              <span class="op-name">list_walls</span>
+              <span class="op-meta-tags">AUTO · 18s · 142 rows</span>
+            </div>
+            <div class="op-section first">
+              <div class="op-sec-head input">
+                <span class="chev">▾</span>
+                <span>MAIN INPUTS</span>
+                <span class="pct">2</span>
+              </div>
+              <div class="op-sec-body">
+                <div class="params-list">
+                  <div class="param-row">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">view</span>
+                    <span class="param-val">Level 1</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">category</span>
+                    <span class="param-val">Walls</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="op-section collapsed">
+              <div class="op-sec-head input">
+                <span class="chev">▾</span>
+                <span>ADVANCED INPUTS</span>
+                <span class="pct">+5</span>
+              </div>
+              <div class="op-sec-body"></div>
+            </div>
+            <div class="op-section collapsed">
+              <div class="op-sec-head output">
+                <span class="chev">▾</span>
+                <span>OUTPUTS</span>
+                <span class="pct">+7</span>
+              </div>
+              <div class="op-sec-body"></div>
+            </div>
+          </div>
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_doors</span><div class="op-time">2m ago</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_rooms</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_levels</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_grids</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_sheets</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_schedules</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">place_family</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">update_param</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">tag_element</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">link_dwg</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">export_view</span><div class="op-time">never</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-zone">
+    <div class="panel-header">
+      <div class="panel-stripe"></div>
+      <div class="panel-host-label">REVIT · list_walls</div>
+    </div>
+    <div class="panel-title">list_walls</div>
+    <div class="panel-sub">revit.list_walls · 142 rows · 18s ago</div>
+    <div class="panel-tabs">
+      <div class="panel-tab active">PARAMS</div>
+      <div class="panel-tab">SETTINGS</div>
+      <div class="panel-tab">OUTPUT</div>
+      <div class="panel-tab">DOCS</div>
+    </div>
+    <input class="panel-search" placeholder="search · 13 ops · 47 params · 91 outputs"/>
+    <div class="panel-group in">MAIN INPUTS · 2</div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">view</span>
+      <span class="v">Level 1</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">category</span>
+      <span class="v">Walls</span>
+    </div>
+    <div class="panel-group in">ADVANCED INPUTS · 5</div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">phase</span>
+      <span class="v">New Construction</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">workset</span>
+      <span class="v">All</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">include_demolished</span>
+      <span class="v">false</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">view_filter_id</span>
+      <span class="v">(unset)</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">design_option</span>
+      <span class="v">(unset)</span>
+    </div>
+    <div class="panel-group out">OUTPUTS · 7 PLUCKABLE</div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">list_walls[*]</span>
+      <span class="v">142 wall records</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">[0].id</span>
+      <span class="v">elem id 345001</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">[*].type</span>
+      <span class="v">string list (12 unique)</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">[*].height</span>
+      <span class="v">number list (range 2.4-4.2m)</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">[*].phase</span>
+      <span class="v">enum list</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">.count</span>
+      <span class="v">142</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">.cooked_at</span>
+      <span class="v">2026-05-21T14:18:00Z</span>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────────── STAGE 2 — HOVER + FLOATING BAR ─────────────────────────── -->
+<div class="stage">
+  <div class="stage-tag">STAGE 2 · HOVER + SETTINGS</div>
+  <div>
+    <div class="stage-title">User selects + hovers — settings bar floats, sockets reveal</div>
+    <div class="stage-sub">
+      Node selected → floating disable-verbs bar appears overhead.
+      ADVANCED expanded. User hovers across the param + output rows →
+      dashed markers reveal in/out. Type-hint pills materialise next to
+      each marker so the user knows the wire colour and compatible
+      upstream / downstream sources before they commit.
+    </div>
+    <div class="canvas-zone">
+      <div class="host-node" data-host="revit" style="left:60px; top:50px; width:380px;">
+        <div class="floating-bar">
+          <span style="color:var(--inkMuted)">RUN MODE:</span>
+          <span class="mode-btn active">auto</span>
+          <span class="mode-btn">pull</span>
+          <span class="mode-btn">manual</span>
+          <span class="sep">·</span>
+          <span class="mode-btn">⌖ pin <kbd>P</kbd></span>
+          <span class="mode-btn">❄ freeze <kbd>^F</kbd></span>
+          <span class="mode-btn">↦ bypass <kbd>^B</kbd></span>
+          <span class="mode-btn">⊘ hide preview <kbd>^⇧P</kbd></span>
+        </div>
+        <div class="host-title">
+          <span class="host-icon">◆</span>
+          <span class="host-cat">REVIT</span>
+          <span class="host-doc">· live-A203.rvt · 2024</span>
+          <div class="flag-bar">
+            <div class="flag auto"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+          </div>
+        </div>
+        <div class="main-sock in any"  style="left:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="left:11px; top:42px;">trigger</span>
+        <div class="main-sock out list" style="right:-7px; top:46px;"></div>
+        <span class="main-sock-label out" style="right:11px; top:42px;">last_out</span>
+
+        <div class="op-grid">
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_views</span><div class="op-time">2m</div></div>
+          <div class="op-tile cfg active">
+            <div class="op-row-meta">
+              <span class="pill done"></span>
+              <span class="op-name">list_walls</span>
+              <span class="op-meta-tags">AUTO · 18s · 142 rows</span>
+            </div>
+            <div class="op-section first">
+              <div class="op-sec-head input">
+                <span class="chev">▾</span><span>MAIN INPUTS</span><span class="pct">2</span>
+              </div>
+              <div class="op-sec-body">
+                <div class="params-list">
+                  <div class="param-row hover">
+                    <span class="type-hint t-elem">element</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">view</span>
+                    <span class="param-val">Level 1</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint t-str">enum</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">category</span>
+                    <span class="param-val">Walls</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="op-section">
+              <div class="op-sec-head input">
+                <span class="chev">▾</span><span>ADVANCED INPUTS</span><span class="pct">5</span>
+              </div>
+              <div class="op-sec-body">
+                <div class="params-list">
+                  <div class="param-row hover">
+                    <span class="type-hint t-str">enum</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">phase</span>
+                    <span class="param-val">New Construction</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint t-num">number</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">workset</span>
+                    <span class="param-val">All</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint t-bool">bool</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">include_demolished</span>
+                    <span class="param-val">false</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint t-id">id</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">view_filter_id</span>
+                    <span class="param-val">(unset)</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <span class="type-hint t-id">id</span>
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">design_option</span>
+                    <span class="param-val">(unset)</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="op-section">
+              <div class="op-sec-head output">
+                <span class="chev">▾</span><span>OUTPUTS — PLUCK</span><span class="pct">7</span>
+              </div>
+              <div class="op-sec-body">
+                <div class="params-list">
+                  <div class="param-row hover">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">[*].id</span>
+                    <span class="param-val">list&lt;id&gt; (142)</span>
+                    <span class="type-hint t-list" style="left:auto;right:-46px;">list&lt;id&gt;</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">[*].type</span>
+                    <span class="param-val">list&lt;string&gt;</span>
+                    <span class="type-hint t-list" style="left:auto;right:-46px;">list&lt;str&gt;</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">[*].height</span>
+                    <span class="param-val">list&lt;number&gt;</span>
+                    <span class="type-hint t-list" style="left:auto;right:-46px;">list&lt;num&gt;</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row hover">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">.count</span>
+                    <span class="param-val">number</span>
+                    <span class="type-hint t-num" style="left:auto;right:-46px;">number</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="op-tile cfg"><span class="pill done"></span><span class="op-name">list_doors</span><div class="op-time">2m</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_rooms</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_levels</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_grids</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_sheets</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_schedules</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">place_family</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">update_param</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">tag_element</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">link_dwg</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">export_view</span><div class="op-time">never</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-zone">
+    <div class="panel-header">
+      <div class="panel-stripe"></div>
+      <div class="panel-host-label">REVIT · list_walls</div>
+    </div>
+    <div class="panel-title">list_walls</div>
+    <div class="panel-sub">hover-promote · 11 dashed markers visible</div>
+    <div class="panel-tabs">
+      <div class="panel-tab active">PARAMS</div>
+      <div class="panel-tab">SETTINGS</div>
+      <div class="panel-tab">OUTPUT</div>
+      <div class="panel-tab">DOCS</div>
+    </div>
+    <input class="panel-search" placeholder="search · 13 ops · 47 params · 91 outputs"/>
+    <div class="panel-group in">SETTINGS</div>
+    <div class="panel-row">
+      <span class="k">run mode</span>
+      <span class="v">auto</span>
+    </div>
+    <div class="panel-row">
+      <span class="k">throttle</span>
+      <span class="v">debounce 200ms</span>
+    </div>
+    <div class="panel-group in">HOVER → PROMOTE INPUTS</div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">view</span>
+      <span class="v">Level 1</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini"></span>
+      <span class="k">phase</span>
+      <span class="v">New Construction</span>
+    </div>
+    <div class="panel-group out">HOVER → PLUCK OUTPUTS</div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">[*].id</span>
+      <span class="v">list&lt;id&gt;</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">[*].height</span>
+      <span class="v">list&lt;number&gt;</span>
+    </div>
+    <div class="panel-row">
+      <span class="row-sock-mini" style="border-style:dashed"></span>
+      <span class="k">.count</span>
+      <span class="v">142</span>
+    </div>
+  </div>
+  <div class="annot" style="grid-column:1 / -1">
+    <div class="borrowed">ComfyUI: hover surfaces "Convert to Input"; Houdini: floating param toolbar; Blender Geometry Nodes: per-row socket dot. Combined here so the user never goes to a menu.</div>
+    <strong class="gain">What this earns:</strong>
+    <ul>
+      <li>Output PLUCK is now first-class — the right-edge dashed marker on output rows reveals a wireable cyan socket, same gesture as the input promote. Downstream consumers (adapter / share / code / ai_plan) wire directly to plucked outputs instead of pulling the whole list and filtering.</li>
+      <li>Type-hint pill carries the type colour so the wire's destination snap-fit is predictable.</li>
+      <li>Disable verbs live in the floating bar (not on the body) — node face stays clean; keyboard shortcuts shown via kbd.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─────────────────────────── STAGE 3 — IN THE ECOSYSTEM ─────────────────────────── -->
+<div class="stage wide">
+  <div class="stage-tag">STAGE 3 · IN THE ECOSYSTEM</div>
+  <div>
+    <div class="stage-title">Live graph — host node wired into the work you already shipped</div>
+    <div class="stage-sub">
+      Real working canvas. The Revit host node sits next to a 3ds Max host
+      (Slice A per-host pattern). Its promoted outputs feed
+      <code>adapter.cad_to_revit_wall</code> + <code>code_expr</code>
+      transforms + <code>share.publish</code> (Speckle wire substrate).
+      <code>ai_plan</code> reads the host node's promoted-socket schema as
+      its tool surface. A Save-as-Skill wrapper preserves the promoted I/O.
+      A Group (Slice C MVP) bundles the whole pipeline. Cmd-K library popup
+      shows LIBRARY-FIRST search.
+    </div>
+    <div class="canvas-zone" style="min-height:680px; padding:38px 24px 24px">
+
+      <!-- GROUP rectangle (Slice C) -->
+      <div class="group-rect transform" style="left:24px; top:20px; width:760px; height:540px;">
+      </div>
+      <div class="group-rect-head" style="left:32px; top:14px">TRANSFORM · WALL EXPORT · Ctrl+G grouped 7 nodes</div>
+
+      <!-- Wires (drawn FIRST so they go behind nodes) -->
+      <svg class="wire-layer" style="width:100%; height:100%">
+        <!-- promoted IN rail wires -->
+        <path d="M 34 280 C 80 280, 100 200, 140 200" stroke="#a98cd6" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <!-- host.[*].id → code_expr.a (yellow list) -->
+        <path d="M 470 184 C 510 184, 540 174, 562 174" stroke="#7898d6" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <!-- host.[*].height → code_expr.b -->
+        <path d="M 470 204 C 510 204, 540 200, 562 200" stroke="#7898d6" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <!-- code_expr.value → adapter.value (purple list) -->
+        <path d="M 660 190 C 690 190, 690 250, 740 250" stroke="#a98cd6" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <!-- adapter.value → share.publish.value -->
+        <path d="M 860 270 C 890 270, 890 320, 920 320" stroke="#a98cd6" stroke-width="2.4" fill="none" opacity="0.85"/>
+        <!-- Max host -> AI Plan reads schema -->
+        <path d="M 470 460 C 530 460, 530 430, 580 430" stroke="#5fb3b3" stroke-width="2.4" fill="none" opacity="0.85"/>
+      </svg>
+
+      <!-- LEFT: upstream constants feeding host node promoted inputs -->
+      <div class="ghost-node constant" style="left:34px; top:170px; width:100px;">
+        <div class="gn-head"><span class="gn-tag">CONST</span></div>
+        <div class="gn-body">
+          <div class="gn-row"><span class="k">value</span><span class="v">Level 1</span></div>
+        </div>
+        <div class="gn-sock r purple" style="top:34px;"></div>
+      </div>
+
+      <!-- The host node (Revit) -->
+      <div class="host-node" data-host="revit" style="left:142px; top:60px; width:330px;">
+        <div class="host-title">
+          <span class="host-icon">◆</span>
+          <span class="host-cat">REVIT</span>
+          <span class="host-doc">· A203.rvt</span>
+          <div class="flag-bar">
+            <div class="flag auto"></div>
+            <div class="flag pinned"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+          </div>
+        </div>
+        <div class="main-sock in any"  style="left:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="left:11px; top:42px;">trigger</span>
+        <div class="main-sock out list" style="right:-7px; top:46px;"></div>
+        <span class="main-sock-label out" style="right:11px; top:42px;">last_out</span>
+
+        <!-- left rail promotes -->
+        <div class="rail-sock l in" style="top:140px;"></div>
+        <span class="rail-label l" style="top:138px;">list_walls.view</span>
+        <!-- right rail promoted outputs (plucks) -->
+        <div class="rail-sock r out list" style="top:180px;"></div>
+        <span class="rail-label r" style="top:178px;">[*].id (list)</span>
+        <div class="rail-sock r out list" style="top:200px;"></div>
+        <span class="rail-label r" style="top:198px;">[*].height (list)</span>
+
+        <div class="op-grid">
+          <div class="op-tile cfg active" style="grid-column: span 4">
+            <div class="op-row-meta">
+              <span class="pill done"></span>
+              <span class="op-name">list_walls</span>
+              <span class="op-meta-tags">142 rows</span>
+            </div>
+            <div class="op-section first">
+              <div class="op-sec-head input"><span class="chev">▾</span><span>MAIN</span><span class="pct">2 · 1 wired</span></div>
+              <div class="op-sec-body">
+                <div class="params-list">
+                  <div class="param-row wired-in">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">view</span>
+                    <span class="param-val">↳ Const</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">category</span>
+                    <span class="param-val">Walls</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="op-section">
+              <div class="op-sec-head output"><span class="chev">▾</span><span>OUTPUT PLUCKS</span><span class="pct">2 active</span></div>
+              <div class="op-sec-body">
+                <div class="params-list">
+                  <div class="param-row wired-out">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">[*].id</span>
+                    <span class="param-val">list&lt;id&gt; → code_expr</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                  <div class="param-row wired-out">
+                    <div class="row-sock-l"></div>
+                    <span class="param-key">[*].height</span>
+                    <span class="param-val">list&lt;num&gt; → code_expr</span>
+                    <div class="row-sock-r"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_doors</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_rooms</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_views</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_levels</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">+9 more</span><div class="op-time"></div></div>
+        </div>
+      </div>
+
+      <!-- code_expr typed node (Slice L / AgDR-0020) -->
+      <div class="ghost-node code_expr" style="left:570px; top:150px; width:90px;">
+        <div class="gn-head"><span class="gn-tag">CODE</span><span class="gn-name">∑ expr</span></div>
+        <div class="gn-body">
+          <div class="gn-row"><span class="k">expr</span><span class="v">a + b·2</span></div>
+        </div>
+        <div class="gn-sock l yellow" style="top:30px;"></div>
+        <div class="gn-sock l yellow" style="top:50px;"></div>
+        <div class="gn-sock r purple" style="top:40px;"></div>
+      </div>
+
+      <!-- adapter (Slice M2 / AgDR-0018) -->
+      <div class="ghost-node adapter" style="left:740px; top:220px; width:122px;">
+        <div class="gn-head"><span class="gn-tag">ADAPTER</span></div>
+        <div class="gn-body">
+          <div class="gn-row"><span class="k">cad → revit</span><span class="v">wall</span></div>
+          <div class="gn-row"><span class="k">level</span><span class="v">Level 1</span></div>
+        </div>
+        <div class="gn-sock l purple" style="top:46px;"></div>
+        <div class="gn-sock r purple" style="top:46px;"></div>
+      </div>
+
+      <!-- share.publish (M1.5 / AgDR-0016) -->
+      <div class="ghost-node share" style="left:910px; top:290px; width:118px;">
+        <div class="gn-head"><span class="gn-tag">SHARE</span><span class="gn-name">↑ publish</span></div>
+        <div class="gn-body">
+          <div class="gn-row"><span class="k">model</span><span class="v">walls.v3</span></div>
+          <div class="gn-row"><span class="k">server</span><span class="v">localhost</span></div>
+        </div>
+        <div class="gn-sock l purple" style="top:30px;"></div>
+        <div class="gn-sock r cyan" style="top:30px;"></div>
+      </div>
+
+      <!-- 3ds Max host (Slice A — per-host master) -->
+      <div class="host-node" data-host="max" style="left:142px; top:380px; width:330px;">
+        <div class="host-title">
+          <span class="host-icon">◆</span>
+          <span class="host-cat" style="color:var(--max)">3DS MAX</span>
+          <span class="host-doc">· scene.max</span>
+          <div class="flag-bar">
+            <div class="flag auto"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+            <div class="flag"></div>
+          </div>
+        </div>
+        <div class="main-sock in any"  style="left:-7px; top:46px;"></div>
+        <span class="main-sock-label" style="left:11px; top:42px;">trigger</span>
+        <div class="main-sock out list" style="right:-7px; top:46px;"></div>
+        <span class="main-sock-label out" style="right:11px; top:42px;">last_out</span>
+        <div class="rail-sock r out" style="top:120px;"></div>
+        <span class="rail-label r" style="top:118px;">list_objects.[*]</span>
+        <div class="op-grid">
+          <div class="op-tile cfg active" style="grid-column: span 4">
+            <div class="op-row-meta">
+              <span class="pill done"></span>
+              <span class="op-name">list_objects</span>
+              <span class="op-meta-tags">36 nodes</span>
+            </div>
+          </div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">scene_info</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_cameras</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_lights</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">list_materials</span><div class="op-time">never</div></div>
+          <div class="op-tile"><span class="pill"></span><span class="op-name">+3 more</span><div class="op-time"></div></div>
+        </div>
+      </div>
+
+      <!-- ai.plan node (M4 / AgDR-0021) — reads schema of host nodes -->
+      <div class="ghost-node ai_plan" style="left:580px; top:410px; width:170px;">
+        <div class="gn-head"><span class="gn-tag">AI</span><span class="gn-name">✶ ai.plan</span></div>
+        <div class="gn-body">
+          <div class="gn-row"><span class="k">prompt</span><span class="v">tag walls by phase</span></div>
+          <div class="gn-row"><span class="k">tools</span><span class="v">14 (host schema)</span></div>
+          <div class="gn-row"><span class="k">replay</span><span class="v">off</span></div>
+        </div>
+        <div class="gn-sock l cyan" style="top:40px;"></div>
+        <div class="gn-sock r purple" style="top:40px;"></div>
+      </div>
+
+      <!-- skill wrapper (AgDR-0010) — packages the chain -->
+      <div class="ghost-node skill" style="left:790px; top:430px; width:140px;">
+        <div class="gn-head"><span class="gn-tag">SKILL</span><span class="gn-name">★ tag_walls</span></div>
+        <div class="gn-body">
+          <div class="gn-row"><span class="k">mode</span><span class="v">shared (S)</span></div>
+          <div class="gn-row"><span class="k">i/o</span><span class="v">2 in · 1 out</span></div>
+        </div>
+        <div class="gn-sock l purple" style="top:30px;"></div>
+        <div class="gn-sock l purple" style="top:50px;"></div>
+        <div class="gn-sock r cyan" style="top:40px;"></div>
+      </div>
+
+      <!-- Library Cmd-K popup (AgDR-0013 library-first) -->
+      <div class="library-popup" style="left:570px; top:24px; width:280px;">
+        <div class="lp-head">⌘ K · LIBRARY-FIRST</div>
+        <input class="lp-input" placeholder="filter walls by height" value="filter walls by height"/>
+        <div class="lp-hit"><span class="lp-mark">●</span><span class="lp-name">code_expr</span><span class="lp-meta">existing · 92%</span></div>
+        <div class="lp-hit"><span class="lp-mark">●</span><span class="lp-name">filter.apply</span><span class="lp-meta">existing · 76%</span></div>
+        <div class="lp-hit"><span class="lp-mark new">+</span><span class="lp-name">create new node…</span><span class="lp-meta">last resort</span></div>
+      </div>
+
+      <!-- Watch sink (Slice E annotation bodies) -->
+      <div class="ghost-node watch" style="left:910px; top:430px; width:118px;">
+        <div class="gn-head"><span class="gn-tag">WATCH</span><span class="gn-name">table</span></div>
+        <div class="gn-body" style="font-size:8px">
+          [{id, type, h},<br>
+          &nbsp;{...×141}]
+        </div>
+        <div class="gn-sock l ok" style="top:30px;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="annot">
+    <div class="borrowed">Borrowed: ComfyUI hover-promote · Blender Group-Input dual surface · Houdini channel-ref + floating toolbar · UE Promote-to-Variable · n8n NDV. Composed inside ArchHub's existing typed-grammar so every ghost node is a primitive you've already shipped.</div>
+    <strong>Each existing slice is visible here:</strong>
+    <ul>
+      <li><span class="reused">Slice A</span> — Revit + 3ds Max host masters, brand-stripe per host.</li>
+      <li><span class="reused">Slice B</span> — pin/freeze/bypass flags + floating bar with shortcuts.</li>
+      <li><span class="reused">Slice C</span> — the dashed transform group wrapping the whole pipeline.</li>
+      <li><span class="reused">Slice D</span> — typed wire colours (purple element · blue list · cyan string).</li>
+      <li><span class="reused">Slice E</span> — Watch node renders a table preview of the cooked rows.</li>
+      <li><span class="reused">Slice G</span> — Skill wrapper bottom-right; its sockets ARE the host node's promoted I/O after Save-as-Skill.</li>
+      <li><span class="reused">Slice L / AgDR-0020</span> — code_expr typed node sits inline.</li>
+      <li><span class="reused">M1.5 / AgDR-0016</span> — share.publish to localhost Speckle.</li>
+      <li><span class="reused">M2 / AgDR-0018</span> — adapter.cad_to_revit_wall.</li>
+      <li><span class="reused">M4 / AgDR-0021</span> — ai.plan reads the host's promoted-socket schema as its tool list; turn persists into .archhub/plans/&lt;id&gt;.json.</li>
+      <li><span class="reused">AgDR-0013</span> — Cmd-K LIBRARY-FIRST popup ranks existing matches before "create new."</li>
+    </ul>
+    <strong class="gain">What this earns:</strong>
+    <ul>
+      <li>Host-node design is not a standalone surface — it IS the entry-point that every other shipped slice composes on top of.</li>
+      <li>OUTPUT pluck eliminates the "list → filter → reduce" boilerplate that plagued the old palette: the wall heights flow directly to <code>code_expr</code>.</li>
+      <li>Save-as-Skill captures the promoted sockets as the skill's I/O — the user re-uses the work without re-wiring.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─────────────────────────── STAGE 4 — INSIDE A COLLAPSED GROUP ─────────────────────────── -->
+<div class="stage">
+  <div class="stage-tag">STAGE 4 · COLLAPSED GROUP (C2)</div>
+  <div>
+    <div class="stage-title">Same pipeline — collapsed to giant-node</div>
+    <div class="stage-sub">
+      User collapses the TRANSFORM group from Stage 3. Per AgDR-0005's
+      boundary-port algorithm, the FIVE boundary sockets auto-promote to
+      the collapsed-group node's edges. Internal wires (host→code_expr,
+      code_expr→adapter, etc.) stay hidden — the engine still cooks them
+      via the wire-rewrite pre-pass. The host node's design choices
+      (rail labels, promoted-I/O naming) keep the boundary semantics
+      clear at the collapsed surface. Tag: this is THE founder's "every
+      group must be re-usable" requirement satisfied without changing
+      the design.
+    </div>
+    <div class="canvas-zone">
+      <svg class="wire-layer" style="width:100%; height:100%">
+        <path d="M 0 260 C 30 260, 30 250, 60 250" stroke="#a98cd6" stroke-width="2.4" fill="none"/>
+        <path d="M 0 280 C 30 280, 30 290, 60 290" stroke="#a98cd6" stroke-width="2.4" fill="none"/>
+        <path d="M 0 230 C 30 230, 30 230, 60 230" stroke="#a98cd6" stroke-width="2.4" fill="none"/>
+        <path d="M 0 200 C 30 200, 30 200, 60 200" stroke="#a98cd6" stroke-width="2.4" fill="none"/>
+        <path d="M 450 240 C 480 240, 480 240, 510 240" stroke="#5fb3b3" stroke-width="2.4" fill="none"/>
+      </svg>
+      <div class="collapsed-group" style="left:60px; top:90px; width:380px; height:280px;">
+        <div class="collapsed-group-head">
+          <span>▾</span>
+          <span style="color:var(--green); font-weight:600">TRANSFORM</span>
+          <span style="color:var(--ink); font-family:var(--serif); font-style:italic; font-size:12px; letter-spacing:0">wall export</span>
+          <div style="margin-left:auto; font-family:var(--mono); font-size:8px; color:var(--inkMuted)">7 nodes · auto</div>
+        </div>
+        <div class="collapsed-group-body">
+          <!-- Promoted in-sockets (left) -->
+          <div class="promoted-port-l" style="top:24px">
+            <div class="rail-sock l in" style="position:relative; left:-12px;"></div>
+            <span style="color:var(--purple)">view (from Const)</span>
+          </div>
+          <div class="promoted-port-l" style="top:48px">
+            <div class="rail-sock l in" style="position:relative; left:-12px;"></div>
+            <span style="color:var(--purple)">list_walls.phase</span>
+          </div>
+          <div class="promoted-port-l" style="top:72px">
+            <div class="rail-sock l in" style="position:relative; left:-12px;"></div>
+            <span style="color:var(--purple)">list_walls.workset</span>
+          </div>
+          <div class="promoted-port-l" style="top:96px">
+            <div class="rail-sock l in" style="position:relative; left:-12px;"></div>
+            <span style="color:var(--purple)">place_family.host_id</span>
+          </div>
+          <!-- Promoted out-sockets (right) -->
+          <div class="promoted-port-r" style="top:60px">
+            <span style="color:var(--cyan)">model_url →</span>
+            <div class="rail-sock r out" style="position:relative; right:-22px;"></div>
+          </div>
+          <!-- Centre text -->
+          <div style="position:absolute; left:50%; top:55%; transform:translate(-50%,-50%);
+                       text-align:center; font-family:var(--serif); font-size:14px;
+                       color:var(--inkSoft); line-height:1.6;">
+            <em style="color:var(--ok)">collapsed</em><br>
+            <span style="font-family:var(--mono); font-size:9.5px; color:var(--inkMuted)">
+              host · code · adapter · share<br>
+              7 nodes hidden · engine still cooks
+            </span>
+          </div>
+        </div>
+      </div>
+      <!-- A downstream Watch node still consumes the model_url -->
+      <div class="ghost-node watch" style="left:510px; top:220px; width:140px;">
+        <div class="gn-head"><span class="gn-tag">WATCH</span><span class="gn-name">image</span></div>
+        <div class="gn-body" style="font-size:8.5px; color:var(--inkMuted)">
+          /streams/walls.v3/<br>
+          objects/abc123
+        </div>
+        <div class="gn-sock l cyan" style="top:30px;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-zone">
+    <div class="panel-header">
+      <div class="panel-stripe" style="background:var(--green)"></div>
+      <div class="panel-host-label" style="color:var(--green)">GROUP · TRANSFORM</div>
+    </div>
+    <div class="panel-title">wall export</div>
+    <div class="panel-sub">collapsed · 7 members hidden · AgDR-0005</div>
+    <div class="panel-tabs">
+      <div class="panel-tab active">BOUNDARY</div>
+      <div class="panel-tab">MEMBERS</div>
+      <div class="panel-tab">RUN LOG</div>
+    </div>
+    <div class="panel-group in">PROMOTED INPUTS · 4</div>
+    <div class="panel-row wired-in">
+      <span class="row-sock-mini"></span>
+      <span class="k">view</span>
+      <span class="v">Level 1</span>
+    </div>
+    <div class="panel-row wired-in">
+      <span class="row-sock-mini"></span>
+      <span class="k">phase</span>
+      <span class="v">↳ Phase Filter</span>
+    </div>
+    <div class="panel-row wired-in">
+      <span class="row-sock-mini"></span>
+      <span class="k">workset</span>
+      <span class="v">↳ Workset Slider</span>
+    </div>
+    <div class="panel-row wired-in">
+      <span class="row-sock-mini"></span>
+      <span class="k">host_id</span>
+      <span class="v">(unset)</span>
+    </div>
+    <div class="panel-group out">PROMOTED OUTPUTS · 1</div>
+    <div class="panel-row wired-out">
+      <span class="row-sock-mini"></span>
+      <span class="k">model_url</span>
+      <span class="v">speckle://...</span>
+    </div>
+    <div class="panel-group">RUN LOG (last 3 ticks)</div>
+    <div class="panel-row" style="font-size:9.5px">
+      <span class="k" style="width:80px">14:18:00</span>
+      <span class="v">142 walls · ok · 312ms</span>
+    </div>
+    <div class="panel-row" style="font-size:9.5px">
+      <span class="k" style="width:80px">14:17:48</span>
+      <span class="v">141 walls · ok · 308ms</span>
+    </div>
+    <div class="panel-row" style="font-size:9.5px">
+      <span class="k" style="width:80px">14:16:35</span>
+      <span class="v">141 walls · ok · 295ms</span>
+    </div>
+  </div>
+  <div class="annot" style="grid-column:1 / -1">
+    <div class="borrowed">Slice C2's collapse algorithm (AgDR-0005) runs on the promoted-socket model of the host node — nothing new in the algorithm; the host's promoted I/O ARE the boundary ports.</div>
+    <strong class="gain">What this proves:</strong>
+    <ul>
+      <li>Host-node-v2 + Slice C2 collapse compose cleanly — promoted sockets are the right boundary unit.</li>
+      <li>A user packs the whole pipeline into one collapsed node + drops it into other graphs by drag.</li>
+      <li>The engine still cooks every member; collapse is a VIEW concern only (AgDR-0005 invariant).</li>
+    </ul>
+  </div>
+</div>
+
+</div>
+
+<div class="decision">
+  <h2>Confirm constraints — sign-off block</h2>
+  <p>This is the design. Each line is a constraint I'll enforce in the JSX
+  migration unless you say otherwise. Reply with the ones to keep / drop /
+  edit.</p>
+  <ol>
+    <li>
+      <strong>Op grid + active-tile-expand</strong> — Direction A base.
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>Per-host brand stripe</strong> (Revit orange, AutoCAD red,
+      Max purple, Excel cyan…). <span class="new">REUSES Slice A</span>
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>MAIN ⇄ ADVANCED I/O split</strong> — MAIN visible by default,
+      ADVANCED collapsed. Both promote on hover.
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>OUTPUT pluck section</strong> — every cooked output field
+      hover-promotes to a typed right-rail socket. Eliminates the
+      "list → filter → reduce" boilerplate of the old palette.
+      <span class="key">Y / N · this is the BIG new thing in v2</span>
+    </li>
+    <li>
+      <strong>Type-hint pill</strong> on hover — coloured by type
+      (element / num / bool / str / id / list&lt;T&gt;).
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>Floating disable-verbs bar</strong> — pin / freeze /
+      bypass / preview-off with kbd shortcuts.
+      <span class="new">REUSES AgDR-0002</span>
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>Promoted sockets feed Save-as-Skill I/O</strong> — the
+      skill wrapper preserves the host node's rail.
+      <span class="new">REUSES AgDR-0010</span>
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>Group-collapse boundary = promoted I/O</strong> —
+      no separate algorithm; uses AgDR-0005 unchanged.
+      <span class="new">REUSES AgDR-0005</span>
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>ai.plan uses promoted-socket schema as its tool surface</strong> —
+      Composer turn understands the host node's wired I/O.
+      <span class="new">REUSES AgDR-0021</span>
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>Library-first Cmd-K shows existing matches before "create new"</strong>.
+      <span class="new">REUSES AgDR-0013</span>
+      <span class="key">Y / N</span>
+    </li>
+    <li>
+      <strong>Wire colours follow Slice D palette</strong> +
+      <strong>contrast tokens pass WCAG audit</strong>.
+      <span class="new">REUSES Slice D + AgDR-0015</span>
+      <span class="key">Y / N</span>
+    </li>
+  </ol>
+  <p style="margin-top:14px; color:var(--inkSoft)">
+    Once these eleven constraints are confirmed: I write the AgDR (≈0024:
+    "Host node v2 — Direction A + ComfyUI hover-promote + ecosystem
+    integration"), then ship JSX one slice at a time, each behind a
+    feature-flag toggle (per AgDR-0022 ReactFlow scaffold pattern) so you
+    can flip between v1 + v2 without any reverts. <strong>No code happens
+    until you sign off.</strong>
+  </p>
+</div>
+
+</body>
+</html>

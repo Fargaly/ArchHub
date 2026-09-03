@@ -1,0 +1,9 @@
+﻿==== PROOF: white-screen fix (real React + react-dom, Chromium-140 Babel target) ====
+
+--- RUN A  FIXED working-tree file ---
+  NodeCanvas renders: 2
+  crash: NONE
+
+--- RUN B  BUG REINTRODUCED (effect moved above getWrapRect) ---
+  NodeCanvas renders: 2
+  crash: ReferenceError: Cannot access 'getWrapRect' before initialization

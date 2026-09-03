@@ -1,0 +1,25 @@
+{
+  "name": "archhub-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ArchHub marketing + docs site. Static Astro 6 build off COMMITTED content under src/content/ + public/ — no live daemon needed. Maintainers refresh that content with `npm run refresh-content`. NOTE: Astro 6 needs Node >=22.12.0 (see engines.node + web/Dockerfile build base).",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "refresh-content": "node scripts/refresh-content.js",
+    "build-info": "node scripts/build-info.js",
+    "from-brain": "node scripts/from-brain.js",
+    "export-web-data": "python ../tools/export_web_data.py",
+    "extract-pricing": "python scripts/extract_pricing.py"
+  },
+  "dependencies": {
+    "astro": "^7.1.3",
+    "@astrojs/mdx": "^7.0.3"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

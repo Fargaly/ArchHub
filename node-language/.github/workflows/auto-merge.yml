@@ -1,0 +1,32 @@
+name: Auto-merge
+
+# Turns on GitHub auto-merge for every non-draft pull request. GitHub then
+# merges the PR by itself once the branch-protection required checks pass
+# (the Tests workflow). A PR with a failing check never merges — it just
+# sits until the author fixes it. Nothing reaches `main` ungated.
+#
+# Requires (configured alongside this file): repo setting "Allow
+# auto-merge" ON + a branch-protection rule on `main` with required
+# status checks. Without those, enabling auto-merge is a no-op.
+#
+# pull_request_target (not pull_request) so the job has a write token for
+# fork PRs too. It only calls `gh pr merge` — it never checks out or runs
+# PR code, so there is no untrusted-code execution risk.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
+    steps:
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}" || echo "auto-merge not enabled yet (branch protection / required checks pending)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

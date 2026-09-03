@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArchHub Studio v2 — Consolidated</title>
+<style>
+  :root {
+    --bg:#0e0e11; --bgPanel:#15151a; --bgSoft:#1c1c23; --bgHover:#22222a;
+    --bgDeep:#0a0a0d; --bgCanvas:#101015; --bgInk:#18181e;
+    --ink:#ece8e0; --inkSoft:#9b938a; --inkMuted:#5e574f; --inkDim:#3a3530;
+    --line:#26262e; --lineSoft:#1e1e24; --lineHair:#1a1a20;
+    --accent:#d97757; --accentSoft:#3a2018; --accentDim:#2a1812; --accentHi:#e8896a;
+    --ok:#7ec18e; --warn:#e5b25a; --err:#e6705f; --cyan:#5fb3b3;
+    --purple:#a98cd6; --blue:#7898d6;
+    --speckle:#3a6acc; --revit:#0696D7; --autocad:#E87D0D; --excel:#107C41;
+    --serif:'Instrument Serif', Georgia, serif;
+    --sans:'Inter', system-ui, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+
+    /* Slice D — typed-wire colour key */
+    --w-walls:#e29bb5;
+    --w-rooms:#a98cd6;
+    --w-tags:#7898d6;
+    --w-list:#7898d6;
+    --w-string:#9b938a;
+    --w-number:#e3b950;
+    --w-any:#9b938a;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+                font-family:var(--sans); font-size:13px; overflow:hidden; }
+
+  .topbar { height:38px; background:var(--bgPanel);
+             border-bottom:1px solid var(--line);
+             display:flex; align-items:center; padding:0 14px; gap:14px;
+             font-family:var(--mono); font-size:11px; color:var(--inkSoft); }
+  .topbar .brand { font-family:var(--serif); font-size:18px; color:var(--ink);
+                     letter-spacing:-0.01em; }
+  .topbar .crumbs { color:var(--inkMuted); }
+  .topbar .crumbs span { color:var(--ink); }
+  .topbar .right { margin-left:auto; display:flex; gap:10px; align-items:center; }
+  .topbar .mode {
+    padding:4px 10px; border-radius:4px;
+    background:var(--accentDim); color:var(--accent); border:1px solid var(--accent);
+  }
+  .topbar .model {
+    padding:4px 10px; border-radius:4px;
+    background:var(--bgSoft); color:var(--ink); border:1px solid var(--line);
+    display:flex; gap:6px; align-items:center;
+  }
+  .topbar .model .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); }
+
+  .app { height:calc(100vh - 38px); display:grid;
+          grid-template-columns:380px 1fr 360px; }
+
+  /* ──────── COMPOSER (left) ──────── */
+  .composer { background:var(--bgPanel); border-right:1px solid var(--line);
+               display:flex; flex-direction:column; }
+  .composer-head { padding:10px 14px; border-bottom:1px solid var(--lineSoft);
+                    display:flex; gap:8px; align-items:center; }
+  .composer-head .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); }
+  .composer-head .label { font-family:var(--mono); font-size:9.5px; color:var(--accent);
+                            letter-spacing:0.18em; text-transform:uppercase; }
+  .composer-body { flex:1; overflow-y:auto; padding:14px; }
+  .turn { margin-bottom:18px; }
+  .turn .who { font-family:var(--mono); font-size:9px; color:var(--inkMuted);
+                 letter-spacing:0.18em; text-transform:uppercase; margin-bottom:4px; }
+  .turn.user .bubble { background:var(--bgSoft); color:var(--ink);
+                         border:1px solid var(--line); padding:10px 12px;
+                         border-radius:6px; font-size:13px; }
+  .turn.assistant .bubble { color:var(--ink); font-size:13px;
+                              padding:0 0 0 4px; }
+  .toolcall { background:var(--bgSoft); border:1px solid var(--lineSoft);
+               border-radius:5px; padding:8px 10px; margin:6px 0;
+               font-family:var(--mono); font-size:10.5px; color:var(--ink); }
+  .toolcall .name { color:var(--accent); }
+  .toolcall .args { color:var(--inkSoft); }
+  .toolcall .result { color:var(--inkMuted); padding-top:4px;
+                        margin-top:4px; border-top:1px dashed var(--lineHair); }
+  .toolcall.gate-deny { border-color:var(--err); background:#2a1817; }
+  .toolcall.gate-deny .name { color:var(--err); }
+  .toolcall.success { border-color:var(--ok); background:#152419; }
+  .toolcall.success .name { color:var(--ok); }
+  .composer-input { padding:10px 14px; border-top:1px solid var(--lineSoft); }
+  .composer-input textarea {
+    width:100%; background:var(--bgSoft); border:1px solid var(--line);
+    border-radius:5px; padding:8px 10px; color:var(--ink);
+    font-family:var(--sans); font-size:12.5px; resize:none; min-height:54px;
+  }
+  .composer-input .hint { font-family:var(--mono); font-size:9.5px;
+                            color:var(--inkMuted); margin-top:4px;
+                            display:flex; gap:14px; }
+  .composer-input .hint kbd {
+    background:var(--bgSoft); border:1px solid var(--line); border-radius:3px;
+    padding:1px 5px; color:var(--ink);
+  }
+
+  /* ──────── CANVAS (middle) ──────── */
+  .canvas { background:var(--bgCanvas); position:relative; overflow:hidden;
+             background-image:
+               radial-gradient(circle at 1px 1px, var(--lineHair) 1px, transparent 0);
+             background-size: 24px 24px; }
+  .canvas-toolbar { position:absolute; top:10px; left:50%;
+                     transform:translateX(-50%);
+                     background:var(--bgPanel); border:1px solid var(--line);
+                     border-radius:6px; padding:6px 8px; display:flex;
+                     gap:6px; align-items:center; z-index:10; }
+  .canvas-toolbar .ico { width:24px; height:24px; border-radius:4px;
+                          display:flex; align-items:center; justify-content:center;
+                          color:var(--inkSoft); font-family:var(--mono);
+                          font-size:12px; cursor:pointer; }
+  .canvas-toolbar .ico:hover { background:var(--bgHover); color:var(--ink); }
+  .canvas-toolbar .sep { width:1px; height:18px; background:var(--line); }
+  .canvas-toolbar .badge {
+    padding:3px 9px; border-radius:3px; font-family:var(--mono); font-size:9.5px;
+    color:var(--accent); background:var(--accentDim); border:1px solid var(--accent);
+  }
+
+  .node { position:absolute; background:var(--bgPanel);
+           border:1px solid var(--line); border-radius:6px;
+           min-width:200px; box-shadow:0 1px 2px rgba(0,0,0,0.3); }
+  .node.selected { outline:2px solid var(--accent); outline-offset:1px; }
+  .node.focused  { outline:2px solid var(--accent); outline-offset:1px;
+                   box-shadow:0 4px 12px rgba(0,0,0,0.5); }
+  .node.frozen   { background:#1a232a; }
+  .node.bypassed { border-style:dashed; opacity:0.7; }
+  .node.preview-off { opacity:0.55; }
+  .node.pinned   { border-color:var(--accent); }
+
+  .node .header { padding:6px 10px; border-bottom:1px solid var(--lineSoft);
+                   display:flex; gap:8px; align-items:center;
+                   font-family:var(--mono); font-size:10.5px; }
+  .node .header .ico { width:14px; height:14px; display:flex;
+                         align-items:center; justify-content:center;
+                         color:var(--ink); font-size:11px; }
+  .node .header .title { color:var(--ink); flex:1; }
+  .node .header .verb { padding:1px 5px; border-radius:3px;
+                          font-size:8.5px; letter-spacing:0.08em;
+                          font-family:var(--mono); margin-left:4px; }
+  .node .header .v-pin    { color:var(--accent); background:var(--accentDim); }
+  .node .header .v-frozen { color:var(--cyan);   background:#152024; }
+  .node .header .v-bypass { color:var(--err);    background:#2a1817; }
+
+  .node .host-badge { display:flex; gap:6px; align-items:center;
+                       padding:5px 10px; border-bottom:1px solid var(--lineSoft);
+                       font-family:var(--mono); font-size:10px;
+                       color:var(--inkSoft); }
+  .node .host-badge .swatch { width:8px; height:8px; border-radius:2px; }
+  .node .host-badge.revit .swatch   { background:var(--revit); }
+  .node .host-badge.autocad .swatch { background:var(--autocad); }
+  .node .host-badge.excel .swatch   { background:var(--excel); }
+  .node .host-badge .mech { margin-left:auto; color:var(--inkMuted);
+                              font-size:9px; letter-spacing:0.1em; }
+
+  .node .body { padding:8px 10px; font-family:var(--mono); font-size:10.5px; }
+  .node .body .row { display:flex; gap:6px; align-items:baseline;
+                       padding:3px 0; }
+  .node .body .row .k { color:var(--inkMuted); width:74px; }
+  .node .body .row .v { color:var(--ink); flex:1; }
+  .node .body select, .node .body input {
+    background:var(--bgSoft); border:1px solid var(--lineSoft);
+    border-radius:3px; padding:2px 5px; color:var(--ink);
+    font-family:var(--mono); font-size:10.5px;
+  }
+
+  .node .ports { position:absolute; top:34px; }
+  .node .ports.in  { left:-7px; }
+  .node .ports.out { right:-7px; }
+  .node .port { width:14px; height:14px; border-radius:50%;
+                 border:2px solid var(--bg); margin:3px 0; cursor:crosshair; }
+  .node .port[data-pt="walls"]   { background:var(--w-walls); }
+  .node .port[data-pt="rooms"]   { background:var(--w-rooms); }
+  .node .port[data-pt="tags"]    { background:var(--w-tags); }
+  .node .port[data-pt="list"]    { background:var(--w-list); }
+  .node .port[data-pt="string"]  { background:var(--w-string); }
+  .node .port[data-pt="number"]  { background:var(--w-number); }
+  .node .port[data-pt="any"]     { background:var(--w-any); }
+
+  /* Watch body (slice E) */
+  .node.watch .body { padding:8px 10px; background:var(--bgDeep); }
+  .node.watch .body ul {
+    margin:0; padding:0 0 0 18px; font-family:var(--mono); font-size:10px;
+    color:var(--ink); list-style:disc;
+  }
+
+  /* Note body (slice E) */
+  .node.note { background:#1f1e16; border-color:#3a3522; min-width:180px; }
+  .node.note .body { padding:10px; font-family:var(--serif); font-size:13px;
+                       color:var(--ink); font-style:italic; }
+
+  /* Group (slice C) */
+  .group { position:absolute; border:1.5px dashed var(--cyan); border-radius:8px;
+            background:rgba(95,179,179,0.03); }
+  .group .ghead { display:flex; padding:6px 10px; gap:8px; align-items:center;
+                    border-bottom:1.5px dashed var(--cyan);
+                    font-family:var(--mono); font-size:10px; color:var(--cyan); }
+  .group .ghead .ico { color:var(--cyan); }
+  .group .ghead .title { color:var(--ink); flex:1; font-family:var(--sans); font-size:11.5px; }
+  .group .ghead .count { color:var(--inkMuted); font-size:9.5px; }
+
+  /* Wire (slice D) */
+  svg.wires { position:absolute; top:0; left:0; width:100%; height:100%;
+              pointer-events:none; z-index:1; }
+  .wire { fill:none; stroke-width:2; }
+
+  /* ──────── INSPECTOR (right) ──────── */
+  .insp { background:var(--bgPanel); border-left:1px solid var(--line);
+           display:flex; flex-direction:column; }
+  .insp-tabs { display:flex; border-bottom:1px solid var(--line); }
+  .insp-tabs .tab { padding:10px 12px; font-family:var(--mono); font-size:10px;
+                     color:var(--inkMuted); cursor:pointer;
+                     letter-spacing:0.1em; text-transform:uppercase;
+                     border-bottom:2px solid transparent; }
+  .insp-tabs .tab.active { color:var(--ink); border-bottom-color:var(--accent); }
+  .insp-body { flex:1; overflow-y:auto; padding:14px; }
+  .insp-body h3 { font-family:var(--mono); font-size:10px; color:var(--inkMuted);
+                    letter-spacing:0.18em; text-transform:uppercase;
+                    margin:14px 0 6px 0; }
+  .insp-body h3:first-child { margin-top:0; }
+
+  .lib-row { display:flex; gap:8px; align-items:center; padding:7px 9px;
+              border:1px solid var(--lineSoft); border-radius:5px; margin:5px 0;
+              cursor:pointer; }
+  .lib-row:hover { background:var(--bgHover); border-color:var(--line); }
+  .lib-row .nm { color:var(--ink); font-size:12px; flex:1; }
+  .lib-row .tp { font-family:var(--mono); font-size:9.5px; color:var(--inkMuted); }
+  .lib-row .fx { padding:1px 6px; border-radius:999px; font-family:var(--mono);
+                  font-size:9px; border:1px solid var(--line); }
+  .lib-row .fx.pure { color:var(--ok); border-color:var(--ok); background:#152419; }
+  .lib-row .fx.host_write { color:var(--warn); border-color:var(--warn); background:#231f14; }
+  .lib-row .fx.network { color:var(--blue); border-color:var(--blue); background:#161d2a; }
+
+  .lib-row .reused { color:var(--accent); font-size:9px;
+                       letter-spacing:0.08em; }
+
+  .speckle-card { background:var(--bgSoft); border:1px solid var(--lineSoft);
+                    border-radius:5px; padding:9px 11px; margin:6px 0;
+                    font-family:var(--mono); font-size:10px; }
+  .speckle-card .ttl { color:var(--speckle); margin-bottom:3px; font-size:9.5px;
+                         letter-spacing:0.1em; text-transform:uppercase; }
+  .speckle-card .hsh { color:var(--ink); }
+  .speckle-card .meta { color:var(--inkMuted); margin-top:3px; font-size:9.5px; }
+
+  .verb-row { display:flex; gap:6px; padding:4px 0; }
+  .verb-row .verb {
+    flex:1; padding:5px 8px; border-radius:4px; text-align:center;
+    background:var(--bgSoft); border:1px solid var(--lineSoft);
+    color:var(--inkSoft); font-family:var(--mono); font-size:9.5px;
+    cursor:pointer; letter-spacing:0.08em;
+  }
+  .verb-row .verb.on.pin    { color:var(--accent); border-color:var(--accent);
+                                background:var(--accentDim); }
+  .verb-row .verb.on.frozen { color:var(--cyan); border-color:var(--cyan);
+                                background:#152024; }
+  .verb-row .verb.on.bypass { color:var(--err); border-color:var(--err);
+                                background:#2a1817; }
+
+  .legend { background:var(--bgSoft); border:1px solid var(--lineSoft);
+             border-radius:5px; padding:8px 10px; font-family:var(--mono);
+             font-size:9.5px; color:var(--inkSoft); }
+  .legend .swatch-row { display:flex; gap:14px; flex-wrap:wrap; }
+  .legend .sw { display:flex; gap:5px; align-items:center; }
+  .legend .sw .dot { width:9px; height:9px; border-radius:50%; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">ArchHub Studio</div>
+  <div class="crumbs">project · <span>Office Building 14</span> · graph · <span>Tag walls by room</span></div>
+  <div class="right">
+    <div class="mode">PLAN</div>
+    <div class="model"><div class="dot"></div>claude-sonnet-4-5</div>
+  </div>
+</div>
+
+<div class="app">
+  <!-- ─── COMPOSER (left) ──────────────────────────────────────────── -->
+  <div class="composer">
+    <div class="composer-head">
+      <div class="dot"></div>
+      <div class="label">Composer · plan</div>
+    </div>
+    <div class="composer-body">
+
+      <div class="turn user">
+        <div class="who">User</div>
+        <div class="bubble">Tag every wall in Level 1 with the room it belongs to. Use the standard family.</div>
+      </div>
+
+      <div class="turn assistant">
+        <div class="who">Assistant</div>
+        <div class="bubble">
+          Searching the library for an existing match.
+          <div class="toolcall success">
+            <div><span class="name">library_search</span><span class="args">({ intent: "tag walls by room", category: "shape" })</span></div>
+            <div class="result">→ 0 matches above 0.75 threshold · proposing new node</div>
+          </div>
+
+          Composing a modular spec.
+          <div class="toolcall gate-deny">
+            <div><span class="name">library_create_node_type</span><span class="args">({ spec: <em>bare</em> })</span></div>
+            <div class="result">GATE DENIED · validator: 4 violations (missing examples, description &lt; 80, no config_schema, side_effects=host_write needs ≥2 examples)</div>
+          </div>
+
+          Fixing violations.
+          <div class="toolcall success">
+            <div><span class="name">library_create_node_type</span><span class="args">({ spec: <em>modular</em> })</span></div>
+            <div class="result">→ registered · revit.tag_walls_by_room (REUSABLE)</div>
+          </div>
+
+          Building the graph.
+          <div class="toolcall success">
+            <div><span class="name">graph_create_node</span><span class="args">({ type: "revit.list_walls", at: [180, 200] })</span></div>
+          </div>
+          <div class="toolcall success">
+            <div><span class="name">graph_create_node</span><span class="args">({ type: "revit.list_rooms", at: [180, 360] })</span></div>
+          </div>
+          <div class="toolcall success">
+            <div><span class="name">graph_create_node</span><span class="args">({ type: "revit.tag_walls_by_room", at: [480, 280] })</span></div>
+          </div>
+          <div class="toolcall success">
+            <div><span class="name">graph_connect</span><span class="args">(list_walls.value → tag_walls.walls)</span></div>
+          </div>
+          <div class="toolcall success">
+            <div><span class="name">graph_connect</span><span class="args">(list_rooms.value → tag_walls.rooms)</span></div>
+          </div>
+
+          Plan ready. 3 nodes wired. The Tag op writes to Revit — approval required before commit (Plan mode).
+        </div>
+      </div>
+
+    </div>
+    <div class="composer-input">
+      <textarea placeholder="Ask Composer — Tab to focus library · Cmd+K to browse · Cmd+Enter to run">Approve</textarea>
+      <div class="hint">
+        <span><kbd>Tab</kbd> library</span>
+        <span><kbd>Cmd+K</kbd> palette</span>
+        <span><kbd>Cmd+Enter</kbd> run</span>
+        <span><kbd>Cmd+Z</kbd> undo via Speckle Versions</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── CANVAS (middle) ──────────────────────────────────────────── -->
+  <div class="canvas">
+    <div class="canvas-toolbar">
+      <div class="ico">⌖</div>
+      <div class="ico">⊞</div>
+      <div class="ico">⌥</div>
+      <div class="sep"></div>
+      <div class="ico">+</div>
+      <div class="ico">⎘</div>
+      <div class="ico">🔍</div>
+      <div class="sep"></div>
+      <div class="badge">◆ 27 NODES</div>
+    </div>
+
+    <!-- wires drawn first under the nodes -->
+    <svg class="wires" preserveAspectRatio="none">
+      <!-- list_walls.value → tag_walls.walls -->
+      <path class="wire" d="M 388 245 C 440 245, 440 295, 478 295" stroke="#e29bb5"></path>
+      <!-- list_rooms.value → tag_walls.rooms -->
+      <path class="wire" d="M 388 415 C 440 415, 440 325, 478 325" stroke="#a98cd6"></path>
+      <!-- tag_walls.tags → watch.value -->
+      <path class="wire" d="M 692 310 C 740 310, 740 230, 778 230" stroke="#7898d6" stroke-width="2.8"></path>
+    </svg>
+
+    <!-- Group (slice C) -->
+    <div class="group" style="left:160px; top:170px; width:240px; height:300px;">
+      <div class="ghead">
+        <span class="ico">▾</span>
+        <span class="title">Revit reads</span>
+        <span class="count">2 nodes</span>
+      </div>
+    </div>
+
+    <!-- Node 1: revit.list_walls (per-host master + connector op specialisation, slice A) -->
+    <div class="node" style="left:180px; top:200px; width:200px;">
+      <div class="header">
+        <div class="ico" style="color:var(--revit);">⌬</div>
+        <div class="title">List Walls</div>
+      </div>
+      <div class="host-badge revit">
+        <div class="swatch"></div>revit<span class="mech">BROKER</span>
+      </div>
+      <div class="body">
+        <div class="row"><div class="k">op</div><div class="v">list_walls</div></div>
+        <div class="row"><div class="k">level</div><div class="v">Level 1</div></div>
+      </div>
+      <div class="ports out"><div class="port" data-pt="walls"></div></div>
+    </div>
+
+    <!-- Node 2: revit.list_rooms (multi-select selected together w/ list_walls, slice B2) -->
+    <div class="node selected" style="left:180px; top:360px; width:200px;">
+      <div class="header">
+        <div class="ico" style="color:var(--revit);">⌬</div>
+        <div class="title">List Rooms</div>
+      </div>
+      <div class="host-badge revit">
+        <div class="swatch"></div>revit<span class="mech">BROKER</span>
+      </div>
+      <div class="body">
+        <div class="row"><div class="k">op</div><div class="v">list_rooms</div></div>
+        <div class="row"><div class="k">level</div><div class="v">Level 1</div></div>
+      </div>
+      <div class="ports out"><div class="port" data-pt="rooms"></div></div>
+    </div>
+
+    <!-- Node 3: revit.tag_walls_by_room (newly minted — REUSABLE) — focused -->
+    <div class="node focused" style="left:480px; top:260px; width:220px;">
+      <div class="header">
+        <div class="ico" style="color:var(--accent);">✦</div>
+        <div class="title">Tag Walls by Room</div>
+        <div class="verb v-pin">NEW</div>
+      </div>
+      <div class="host-badge revit">
+        <div class="swatch"></div>revit<span class="mech">TAG.write</span>
+      </div>
+      <div class="body">
+        <div class="row"><div class="k">view_id</div><div class="v">v.LVL1.tag</div></div>
+        <div class="row"><div class="k">tag_family</div><div class="v">M_Room Tag</div></div>
+      </div>
+      <div class="ports in">
+        <div class="port" data-pt="walls" title="walls in"></div>
+        <div class="port" data-pt="rooms" title="rooms in" style="margin-top:13px;"></div>
+      </div>
+      <div class="ports out"><div class="port" data-pt="tags"></div></div>
+    </div>
+
+    <!-- Node 4: watch.preview — slice E -->
+    <div class="node watch" style="left:780px; top:200px; width:220px;">
+      <div class="header">
+        <div class="ico">⊙</div>
+        <div class="title">Watch · tags</div>
+      </div>
+      <div class="body">
+        <ul>
+          <li>RoomTag #1 → "Office 101"</li>
+          <li>RoomTag #2 → "Office 102"</li>
+          <li>RoomTag #3 → "Meeting"</li>
+          <li>RoomTag #4 → "Lobby"</li>
+          <li>+6 more</li>
+        </ul>
+      </div>
+      <div class="ports in"><div class="port" data-pt="tags"></div></div>
+    </div>
+
+    <!-- Note — slice E -->
+    <div class="node note" style="left:480px; top:430px; width:220px;">
+      <div class="body">_Composer-minted 2026-05-20_</div>
+    </div>
+
+  </div>
+
+  <!-- ─── INSPECTOR (right) ───────────────────────────────────────── -->
+  <div class="insp">
+    <div class="insp-tabs">
+      <div class="tab active">Node</div>
+      <div class="tab">Wire</div>
+      <div class="tab">Library</div>
+    </div>
+    <div class="insp-body">
+
+      <h3>Focused — revit.tag_walls_by_room</h3>
+      <p style="color:var(--inkSoft); font-size:12px; margin:0 0 10px 0;">
+        Tags every wall in the input list with the room it belongs to. Uses the
+        configured tag family. Skips walls that already have a tag.
+      </p>
+      <div class="lib-row" style="margin:0 0 14px 0;">
+        <div class="nm">revit.tag_walls_by_room</div>
+        <div class="fx host_write">host_write</div>
+      </div>
+
+      <h3>Inputs</h3>
+      <div class="lib-row">
+        <div class="nm" style="font-family:var(--mono); font-size:10.5px;">walls</div>
+        <div class="tp">Objects.BuiltElements.Wall</div>
+      </div>
+      <div class="lib-row">
+        <div class="nm" style="font-family:var(--mono); font-size:10.5px;">rooms</div>
+        <div class="tp">Objects.BuiltElements.Room</div>
+      </div>
+
+      <h3>Disable verbs</h3>
+      <div class="verb-row">
+        <div class="verb">📌 PIN</div>
+        <div class="verb">FREEZE</div>
+        <div class="verb">PREVIEW</div>
+        <div class="verb">BYPASS</div>
+      </div>
+
+      <h3>Speckle Version (this wire)</h3>
+      <div class="speckle-card">
+        <div class="ttl">Outbound · tags</div>
+        <div class="hsh">3a6c f972 8b1e d403</div>
+        <div class="meta">10 objects · 4.2 KB · units: mm · stored ./speckle/office14/</div>
+      </div>
+
+      <h3>Wire colour key</h3>
+      <div class="legend">
+        <div class="swatch-row">
+          <div class="sw"><div class="dot" style="background:var(--w-walls);"></div>walls</div>
+          <div class="sw"><div class="dot" style="background:var(--w-rooms);"></div>rooms</div>
+          <div class="sw"><div class="dot" style="background:var(--w-tags);"></div>tags</div>
+          <div class="sw"><div class="dot" style="background:var(--w-number);"></div>number</div>
+          <div class="sw"><div class="dot" style="background:var(--w-string);"></div>string</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

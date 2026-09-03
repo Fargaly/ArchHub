@@ -1,0 +1,4 @@
+{"type": "user", "message": {"role": "user", "content": "build the thing"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Write", "input": {"file_path": "app/x.py"}}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "python -m pytest tests/ -q"}}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Done. Tests green, wrote app/x.py."}]}}

@@ -1,0 +1,1006 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Personal Brain MCP — Workshop · 2026-05-25</title>
+<style>
+:root{
+  --bg:#0a0a0c; --bg2:#111114; --bg3:#16161b; --bg4:#1c1c22; --line:#22222a;
+  --ink:#e8e8ea; --ink2:#9a9aa3; --ink3:#5e5e68;
+  --accent:#e8743a; --accent2:#ff9966;
+  --ok:#5fc879; --warn:#e8c54a; --err:#ff5e5e;
+  --blue:#6a9bcc; --purple:#a37bd9; --teal:#5fc8c0; --pink:#e87aa3;
+  --frost:#90c0ff;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);
+  font:13px/1.55 system-ui,-apple-system,Segoe UI,Inter,sans-serif;}
+a{color:var(--accent);text-decoration:none}
+h1{font-size:30px;line-height:1.15;margin-bottom:8px;letter-spacing:-0.02em}
+h2{font-size:22px;margin-bottom:14px;letter-spacing:-0.01em}
+h3{font-size:15px;margin-bottom:8px;color:var(--ink)}
+h4{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink2);margin-bottom:10px}
+p{color:var(--ink2);margin-bottom:8px}
+code{font-family:ui-monospace,SF Mono,Consolas,monospace;
+  background:var(--bg3);padding:1px 6px;border-radius:4px;font-size:11px;color:var(--accent2)}
+pre{font-family:ui-monospace,SF Mono,Consolas,monospace;background:var(--bg3);
+  border:1px solid var(--line);border-radius:8px;padding:14px;font-size:11px;
+  color:var(--ink);overflow:auto;line-height:1.55;margin:8px 0;white-space:pre}
+strong{color:var(--ink)}
+small{color:var(--ink3);font-size:11px}
+hr{border:0;border-top:1px solid var(--line);margin:20px 0}
+
+nav.top{position:sticky;top:0;z-index:50;background:rgba(10,10,12,0.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  padding:14px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+nav.top .brand{font-weight:700;letter-spacing:-0.02em;font-size:15px;margin-right:8px}
+nav.top .brand span{color:var(--accent)}
+nav.top a.chip{color:var(--ink2);padding:5px 10px;border-radius:8px;font-size:11px;
+  border:1px solid transparent}
+nav.top a.chip:hover{color:var(--ink);background:var(--bg2);border-color:var(--line)}
+nav.top .summary{margin-left:auto;font-size:11px;color:var(--ink2)}
+nav.top .summary span{color:var(--ok);font-weight:600}
+
+header.head{max-width:1280px;margin:0 auto;padding:48px 24px 16px}
+.intent{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin-top:16px}
+.intent .q{font-size:14px;color:var(--ink);font-style:italic;border-left:3px solid var(--accent);padding-left:14px;margin-bottom:10px;line-height:1.6}
+.intent .att{font-size:11px;color:var(--ink3);text-align:right}
+
+section.proto{max-width:1280px;margin:0 auto;padding:40px 24px;border-bottom:1px solid var(--line)}
+.tagline{font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:0.12em;
+  margin-bottom:6px;font-weight:700}
+
+/* 7-HAT TABLE */
+.hats{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;margin-top:18px}
+.hat{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.hat .name{display:flex;align-items:center;gap:8px;font-weight:700;font-size:12px;letter-spacing:0.04em;text-transform:uppercase}
+.hat .dot{width:10px;height:10px;border-radius:50%}
+.hat.architect .dot{background:var(--blue)}
+.hat.skeptic .dot{background:var(--err)}
+.hat.user .dot{background:var(--accent)}
+.hat.security .dot{background:var(--warn)}
+.hat.scout .dot{background:var(--teal)}
+.hat.pragmatist .dot{background:var(--ok)}
+.hat.visionary .dot{background:var(--purple)}
+.hat .verdict{font-size:12px;color:var(--ink)}
+.hat ul{list-style:none;padding:0;margin:0;font-size:11px;color:var(--ink2);display:flex;flex-direction:column;gap:4px}
+.hat ul li{padding-left:14px;position:relative;line-height:1.5}
+.hat ul li:before{content:"→";position:absolute;left:0;color:var(--ink3)}
+.hat ul li.warn:before{color:var(--err);content:"✕"}
+.hat ul li.ok:before{color:var(--ok);content:"✓"}
+
+/* DEMO PANE */
+.demo-frame{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:0;margin-top:14px;overflow:hidden}
+.demo-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--line);font-size:11px;color:var(--ink2)}
+.demo-bar .dots{display:flex;gap:5px}
+.demo-bar .dots span{width:9px;height:9px;border-radius:50%;background:var(--bg4)}
+.demo-bar .url{margin-left:8px;font-family:ui-monospace,monospace;color:var(--ink3)}
+.demo-bar .status{margin-left:auto;display:flex;align-items:center;gap:6px}
+.demo-bar .status .pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+.demo-grid{display:grid;grid-template-columns:1fr 1fr 1fr;min-height:560px}
+.col{padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+.col-chat{background:var(--bg2);border-right:1px solid var(--line)}
+.col-events{background:#0d0d11;border-right:1px solid var(--line)}
+.col-brain{background:var(--bg2)}
+
+.col-head{display:flex;align-items:center;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.col-head .lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink3);font-weight:700}
+.col-head .meta{margin-left:auto;font-size:10px;color:var(--ink3)}
+
+/* CLIENT SWITCHER */
+.client-bar{display:flex;gap:6px;flex-wrap:wrap}
+.client{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:10px;color:var(--ink2);cursor:pointer;display:flex;align-items:center;gap:5px;font-weight:600}
+.client:hover{color:var(--ink);border-color:var(--ink3)}
+.client.active{background:var(--accent);color:#000;border-color:var(--accent)}
+.client .ico{width:10px;height:10px;border-radius:2px;background:var(--accent2)}
+.client.active .ico{background:#000}
+
+/* CHAT */
+.chat{flex:1;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding-right:4px}
+.msg{padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5;max-width:95%}
+.msg.user{background:var(--bg4);color:var(--ink);align-self:flex-end;border:1px solid var(--line)}
+.msg.assistant{background:var(--bg3);color:var(--ink2);border:1px solid var(--line);font-family:ui-monospace,monospace;font-size:11px}
+.msg.assistant strong{color:var(--accent2)}
+.msg.system{background:transparent;color:var(--ink3);border:1px dashed var(--line);font-size:10px;font-family:ui-monospace,monospace;padding:6px 10px}
+.msg.system .label{color:var(--frost);font-weight:600}
+.msg.context-chip{background:linear-gradient(135deg,rgba(232,116,58,0.08),transparent);border:1px solid var(--accent);color:var(--ink);font-size:10px;padding:6px 10px}
+.msg.context-chip .label{color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-right:6px}
+
+.prompts-bar{display:flex;flex-direction:column;gap:6px}
+.prompts-bar .promptbtn{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--ink);text-align:left;cursor:pointer;font-family:inherit;line-height:1.4}
+.prompts-bar .promptbtn:hover{border-color:var(--accent);background:var(--bg4)}
+.prompts-bar .promptbtn .ctx{color:var(--ink3);font-size:10px;margin-top:3px}
+
+/* EVENTS */
+.events{flex:1;overflow-y:auto;font-family:ui-monospace,SF Mono,Consolas,monospace;font-size:10.5px;line-height:1.6;padding-right:4px}
+.event{padding:5px 8px;border-left:2px solid var(--bg4);margin-bottom:4px;color:var(--ink2);display:flex;gap:8px;align-items:baseline}
+.event .ts{color:var(--ink3);font-size:9px;min-width:60px}
+.event .tag{font-weight:700;text-transform:uppercase;letter-spacing:0.04em;min-width:120px;font-size:9px}
+.event .body{flex:1;color:var(--ink2)}
+.event .body strong{color:var(--ink)}
+.event.context-inject{border-left-color:var(--accent)}
+.event.context-inject .tag{color:var(--accent)}
+.event.memory-write{border-left-color:var(--teal)}
+.event.memory-write .tag{color:var(--teal)}
+.event.tool-call{border-left-color:var(--blue)}
+.event.tool-call .tag{color:var(--blue)}
+.event.skill-mint{border-left-color:var(--purple)}
+.event.skill-mint .tag{color:var(--purple)}
+.event.secret-resolve{border-left-color:var(--warn)}
+.event.secret-resolve .tag{color:var(--warn)}
+.event.wiring{border-left-color:var(--frost)}
+.event.wiring .tag{color:var(--frost)}
+.event.session{border-left-color:var(--ink3)}
+.event.session .tag{color:var(--ink3)}
+
+/* BRAIN STATE */
+.brain-section{margin-bottom:10px}
+.brain-section h4{margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.brain-section h4 .count{color:var(--accent);font-weight:700}
+.brain-list{display:flex;flex-direction:column;gap:4px}
+.brain-item{background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:10.5px;display:flex;justify-content:space-between;align-items:center;gap:6px;font-family:ui-monospace,monospace}
+.brain-item .name{color:var(--ink);font-weight:600}
+.brain-item .meta{color:var(--ink3);font-size:9px}
+.brain-item.new{border-color:var(--purple);animation:newpulse 2s}
+.brain-item.touched{border-color:var(--teal)}
+@keyframes newpulse{0%{background:var(--purple);color:#000}100%{background:var(--bg3)}}
+
+.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px}
+.kpi-card{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
+.kpi-card .v{font-size:18px;font-weight:700;color:var(--ink)}
+.kpi-card .l{font-size:9px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink3)}
+
+/* ARCH DIAGRAM */
+.arch{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:24px;font-family:ui-monospace,monospace;font-size:11px;color:var(--ink);overflow:auto}
+
+/* SLICE TABLE */
+.slice-tbl{width:100%;border-collapse:collapse;font-size:12px;margin-top:14px}
+.slice-tbl th, .slice-tbl td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.slice-tbl th{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;background:var(--bg2)}
+.slice-tbl td{color:var(--ink2)}
+.slice-tbl td strong{color:var(--ink)}
+.slice-tbl .phase-a{border-left:3px solid var(--ok)}
+.slice-tbl .phase-b{border-left:3px solid var(--warn)}
+.slice-tbl .phase-c{border-left:3px solid var(--purple)}
+.slice-tbl code{font-size:10px}
+
+/* FORK CARDS */
+.forks{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:14px}
+.fork{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.fork .id{font-size:10px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:0.08em}
+.fork .q{font-size:14px;color:var(--ink);font-weight:600;line-height:1.4}
+.fork .opts{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.fork .opts .o{background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:11px;color:var(--ink2);cursor:pointer}
+.fork .opts .o:hover{border-color:var(--accent);color:var(--ink)}
+.fork .opts .o strong{color:var(--ink);display:block;margin-bottom:2px}
+.fork .opts .o.rec{border-color:var(--ok)}
+.fork .opts .o.rec strong:after{content:" ← recommended";color:var(--ok);font-weight:400;font-size:10px}
+
+footer{max-width:1280px;margin:0 auto;padding:30px 24px 60px;color:var(--ink3);font-size:11px}
+footer .cites{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:6px}
+footer .cites a{color:var(--ink2);font-size:10.5px}
+footer .cites a:hover{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <span class="brand">Arch<span>Hub</span></span>
+  <a class="chip" href="#workshop">Workshop</a>
+  <a class="chip" href="#demo">Live demo</a>
+  <a class="chip" href="#architecture">Architecture</a>
+  <a class="chip" href="#build">Build plan</a>
+  <a class="chip" href="#forks">Open forks</a>
+  <span class="summary">Council session · <span>2026-05-25</span></span>
+</nav>
+
+<header class="head">
+  <div class="tagline">Workshop · planning council · prototype</div>
+  <h1>Personal Brain MCP</h1>
+  <p style="font-size:15px;color:var(--ink2);max-width:780px">Ambient agent substrate. Memory + skills + setups + secrets — real-time, cross-device, cross-model. Lives inside ArchHub and underneath every other AI client you touch.</p>
+  <div class="intent">
+    <div class="q">"I want it to work in real time… wiring skills MCP setups secrets… creating skills in real time after each challenge… always reading my prompt and finding relative skills instead of me enforcing them… Inside and outside of ARCHHUB… for all models and AI that I use"</div>
+    <div class="att">Founder · 2026-05-25</div>
+  </div>
+</header>
+
+<!-- ─────────────────────────── 7-HAT WORKSHOP ─────────────────────────── -->
+<section class="proto" id="workshop">
+  <div class="tagline">Planning council</div>
+  <h2>Seven-hat verdict</h2>
+  <p>Each hat read the same R&amp;D pack — 6 parallel scouts hit 50+ projects across agent memory, auto-skill mining, sync substrates, neuroscience, MCP ecosystem, and ArchHub's own code. Verdicts compressed below.</p>
+
+  <div class="hats">
+
+    <div class="hat architect">
+      <div class="name"><span class="dot"></span>Architect</div>
+      <div class="verdict"><strong>Build it as a two-tier brain on a shared substrate.</strong> Fast episodic write (hot path, &lt;200ms) + slow semantic consolidation (background worker). One MCP server, two transports (stdio + streamable HTTP). FastMCP Python. Anchored to ArchHub's existing <code>app/memory/graph.py</code>.</div>
+      <ul>
+        <li>Layer 5 hook inserts at <code>llm_router.py:1366</code> (pre-stream) + <code>:1402</code> (post-tool) + <code>:1378</code> (turn-end)</li>
+        <li>Reuse <code>LibraryGate</code> + <code>TurnState</code> patterns — Layer 5 is a sibling of Layer 3</li>
+        <li>Loro CRDT for memory graph sync; OR-Set for skill index; PN-Counter for use-counts</li>
+        <li>HLC timestamps (Lamport+wallclock, 64-bit) for cross-device ordering without clock sync</li>
+      </ul>
+    </div>
+
+    <div class="hat skeptic">
+      <div class="name"><span class="dot"></span>Skeptic</div>
+      <div class="verdict"><strong>Three landmines literature confirmed.</strong> Auto-mint without quality gate = library poisoning within ~100 skills. CRDT merges hide semantic duplicates. Echo Trap collapses exploration if you reward skill-reuse blindly.</div>
+      <ul>
+        <li class="warn">SkillReducer paper: 26.4% of real-world skills lack descriptions; auto-miner reproduces this</li>
+        <li class="warn">RAGEN "Echo Trap" — reward variance cliff when agent self-relies on past trajectories</li>
+        <li class="warn">CRDT structural merge ≠ semantic dedupe — two devices mint same skill, both keep</li>
+        <li class="warn">ACL revocation in CRDT world is hard — BeeKEM only solves forward, not retroactive</li>
+        <li class="warn">Mem0's own 2026 retrospective: 25% accuracy drop scaling 1M→10M tokens</li>
+      </ul>
+    </div>
+
+    <div class="hat user">
+      <div class="name"><span class="dot"></span>User (founder)</div>
+      <div class="verdict"><strong>"Always reading my prompt and finding relative skills"</strong> = real-time semantic skill retrieval on UserPromptSubmit. Works fully only in Claude Code + ArchHub. ChatGPT/Codex/Gemini need an MCP <code>prompt</code> primitive the user invokes (e.g. <code>/brain</code>) OR a tool the model is taught to call first.</div>
+      <ul>
+        <li>Universal silent injection IS NOT possible today across all clients — be honest about it</li>
+        <li>Claude Code + ArchHub Composer = full 5-loop substrate (silent context inject)</li>
+        <li>Cursor = partial (per-tool-call hook, no prompt-level)</li>
+        <li>ChatGPT/Codex/Gemini/Cline/Continue = server-instructions on session init + user-invoked prompts</li>
+        <li>Skill mint always works — driven by Stop hook in clients that have one, by post-turn scan elsewhere</li>
+      </ul>
+    </div>
+
+    <div class="hat security">
+      <div class="name"><span class="dot"></span>Security</div>
+      <div class="verdict"><strong>Secrets NEVER in the brain.</strong> Brain stores references only (<code>op://vault/…</code>). PreToolUse hook resolves via 1Password CLI / Infisical / Windows Credential Manager at call time, scrubs trace logs. Bipartite ACL (arXiv 2505.18279) for per-fragment access — user/project/firm/community/global scopes.</div>
+      <ul>
+        <li>OAuth 2.1 + PKCE + DCR for remote MCP (mandatory for ChatGPT desktop)</li>
+        <li>age-encrypted per-doc keys derived via HKDF from vault root (Obsidian-pattern)</li>
+        <li>Promote-with-redaction LLM pass before any fragment crosses scope boundary</li>
+        <li>Audit log per fragment access — retrospective check on every read</li>
+        <li>Stdio = env-var bearer; HTTP = OAuth — never mix</li>
+      </ul>
+    </div>
+
+    <div class="hat scout">
+      <div class="name"><span class="dot"></span>R&amp;D Scout</div>
+      <div class="verdict"><strong>Buy 80%, build the 20% that matters.</strong> Closest off-the-shelf substrate: <code>agentmemory</code> (9.3k stars, 51 MCP tools, 12 hooks, P2P mesh sync, 95.2% LongMemEval). Adopt its hook surface; bolt on bipartite ACL + redaction + ArchHub graph as the user-side layer.</div>
+      <ul>
+        <li class="ok">Voyager pattern: docstring-as-key indexing, top-5 retrieval, GPT-as-critic gate</li>
+        <li class="ok">SkillWeaver pattern: hone (N≥3 sandbox trials) before publish</li>
+        <li class="ok">Anthropic Claude Skills budget: 1% of context, least-invoked drops first when overflow</li>
+        <li class="ok">Generative Agents score: <code>α·recency + β·importance + γ·relevance</code></li>
+        <li class="ok">ExpeL: add/edit/upvote/downvote insight curation (skills as wiki, not append-only)</li>
+      </ul>
+    </div>
+
+    <div class="hat pragmatist">
+      <div class="name"><span class="dot"></span>Pragmatist</div>
+      <div class="verdict"><strong>Three phases.</strong> Phase A (2 weeks): local-only MCP server, Claude Code + ArchHub wired. Phase B (1 week): Fly.io multi-device sync. Phase C (3 weeks): ACL + redaction + federation. Total: ~6 weeks for V1. Phase A alone gets 70% of the user value.</div>
+      <ul>
+        <li class="ok">Reuse <code>app/memory/graph.py</code> (505 LoC) — already SQLite + nodes/edges shipped via AgDR-0042</li>
+        <li class="ok">Reuse <code>app/memory/sync.py</code> (267 LoC) — push/pull/merge already works; swap JsonFileTransport for Loro</li>
+        <li class="ok">Reuse <code>app/library_gate.py</code> pattern (224 LoC) — MemoryGate is its sibling</li>
+        <li>New code: ~1500 LoC for MCP server + embeddings + reflexion worker + redaction</li>
+        <li>Don't ship community tier in Phase A — moat, not table-stakes</li>
+      </ul>
+    </div>
+
+    <div class="hat visionary">
+      <div class="name"><span class="dot"></span>Visionary</div>
+      <div class="verdict"><strong>Two-year horizon: substrate becomes the network effect.</strong> ArchHub differentiates not on "we have AI" but on "your AI gets smarter the more you and your firm use it, and your skills travel with you between Claude / GPT / Cursor / desktop / mobile."</div>
+      <ul>
+        <li>Year 1: founder + early firms — local brain + firm sync</li>
+        <li>Year 2: community marketplace — signed skill exchanges between firms (Wikidata-style reputation gates)</li>
+        <li>Year 2+: brain becomes a portable layer (your skills work in ANY AI app that speaks MCP)</li>
+        <li>Macro: the moat is the consolidated graph and the network effect on skill mints, not the LLM</li>
+        <li>Risk: Anthropic, OpenAI ship their own — but they won't go cross-provider. You will.</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────── LIVE DEMO ─────────────────────────── -->
+<section class="proto" id="demo">
+  <div class="tagline">Live demo — click around</div>
+  <h2>The brain at work</h2>
+  <p>Click a sample prompt below. Watch all five loops fire in real time across the three panes — context inject, memory write, tool augment, skill mint, wiring sync. Switch the AI client up top: same brain serves all.</p>
+
+  <div class="demo-frame">
+    <div class="demo-bar">
+      <div class="dots"><span></span><span></span><span></span></div>
+      <span class="url">localhost:8473 / personal-brain</span>
+      <div class="status"><span class="pulse"></span><span id="status-text">Listening on stdio + HTTP</span></div>
+    </div>
+
+    <div class="demo-grid">
+
+      <!-- COLUMN 1 — CLIENT + CHAT -->
+      <div class="col col-chat">
+        <div class="col-head">
+          <span class="lbl">AI client</span>
+          <span class="meta" id="provider-meta">claude · sonnet-4.7</span>
+        </div>
+        <div class="client-bar">
+          <div class="client active" data-client="claude-code"><span class="ico"></span>Claude Code</div>
+          <div class="client" data-client="cursor"><span class="ico"></span>Cursor</div>
+          <div class="client" data-client="chatgpt"><span class="ico"></span>ChatGPT</div>
+          <div class="client" data-client="codex"><span class="ico"></span>Codex</div>
+          <div class="client" data-client="gemini"><span class="ico"></span>Gemini CLI</div>
+          <div class="client" data-client="archhub"><span class="ico"></span>ArchHub</div>
+        </div>
+
+        <div class="col-head" style="margin-top:8px">
+          <span class="lbl">Try a prompt</span>
+        </div>
+        <div class="prompts-bar" id="prompts-bar"></div>
+
+        <div class="col-head" style="margin-top:8px">
+          <span class="lbl">Chat</span>
+          <span class="meta" id="chat-meta">empty</span>
+        </div>
+        <div class="chat" id="chat"></div>
+      </div>
+
+      <!-- COLUMN 2 — EVENT STREAM -->
+      <div class="col col-events">
+        <div class="col-head">
+          <span class="lbl">Brain event stream</span>
+          <span class="meta" id="event-count">0 events</span>
+        </div>
+        <div class="events" id="events">
+          <div class="event session"><span class="ts">--:--:--</span><span class="tag">awaiting</span><span class="body">Pick a prompt to start</span></div>
+        </div>
+      </div>
+
+      <!-- COLUMN 3 — BRAIN STATE -->
+      <div class="col col-brain">
+        <div class="col-head">
+          <span class="lbl">Brain state</span>
+          <span class="meta">live</span>
+        </div>
+
+        <div class="kpi">
+          <div class="kpi-card"><div class="v" id="kpi-skills">12</div><div class="l">skills</div></div>
+          <div class="kpi-card"><div class="v" id="kpi-facts">347</div><div class="l">facts</div></div>
+          <div class="kpi-card"><div class="v" id="kpi-mcps">9</div><div class="l">MCPs wired</div></div>
+        </div>
+
+        <div class="brain-section">
+          <h4>Skills <span class="count" id="skills-count">(12)</span></h4>
+          <div class="brain-list" id="skills-list"></div>
+        </div>
+
+        <div class="brain-section">
+          <h4>Recent facts <span class="count" id="facts-count">(5)</span></h4>
+          <div class="brain-list" id="facts-list"></div>
+        </div>
+
+        <div class="brain-section">
+          <h4>Wiring <span class="count">(active)</span></h4>
+          <div class="brain-list" id="wiring-list"></div>
+        </div>
+
+        <div class="brain-section">
+          <h4>Secrets <span class="count">(refs only)</span></h4>
+          <div class="brain-list" id="secrets-list"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────── ARCHITECTURE ─────────────────────────── -->
+<section class="proto" id="architecture">
+  <div class="tagline">System architecture</div>
+  <h2>The substrate, the loops, the insertion points</h2>
+
+  <div class="arch">
+<pre>┌──────────────────────────────────────────────────────────────────────────────────┐
+│                          PERSONAL BRAIN MCP SERVER                               │
+│       FastMCP Python · stdio + Streamable HTTP · OAuth 2.1 · port 8473           │
+│                                                                                  │
+│   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  ┌─────────┐  │
+│   │  brain.context   │  │  brain.write     │  │  brain.skill_mint│  │ brain.  │  │
+│   │  (&lt;100ms)        │  │  (&lt;200ms)        │  │  (off-thread)    │  │ wiring  │  │
+│   └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘  └────┬────┘  │
+│            │                     │                     │                 │       │
+│   ┌────────▼─────────────────────▼─────────────────────▼─────────────────▼─────┐ │
+│   │   memory graph   │   skill library  │   wiring registry  │  secret refs   │ │
+│   │   SQLite + FTS5  │   markdown +     │   per-device MCPs  │   op://vault/* │ │
+│   │   + embeddings   │   frontmatter +  │   + creds present  │   never values │ │
+│   │   (reuse app/    │   FAISS index    │                    │                │ │
+│   │   memory/graph)  │                  │                    │                │ │
+│   └──────────────────┴──────────────────┴────────────────────┴────────────────┘ │
+│                                                                                  │
+│   background workers                                                             │
+│   ├── reflexion_worker   distills skills from successful traces (Voyager)        │
+│   ├── decay_worker       prunes stale skills (Ebbinghaus + Anthropic budget)     │
+│   ├── consolidation      hot→cold tier promotion (CLS — McClelland 1995)         │
+│   ├── federation         CRDT merge (Loro) across devices via Tailscale          │
+│   └── audit              provenance + retrospective ACL (arXiv 2505.18279)       │
+└──────────────────┬──────────────────────────────────────────────────┬────────────┘
+                   │                                                  │
+   ┌───────────────▼────────────┐                ┌────────────────────▼─────────────┐
+   │   MCP transport            │                │   Hook transport                 │
+   │   (every MCP client)       │                │   (Claude Code · ArchHub bridge) │
+   │                            │                │                                  │
+   │ • Claude Code  stdio       │                │ Events ↑ ↓                       │
+   │ • Cursor       HTTP        │                │   UserPromptSubmit               │
+   │ • ChatGPT      HTTP (OAuth)│                │   PreToolUse                     │
+   │ • Codex CLI    stdio/HTTP  │                │   PostToolUse                    │
+   │ • Gemini CLI   stdio/HTTP  │                │   Stop / SessionEnd              │
+   │ • Cline        stdio       │                │   SessionStart                   │
+   │ • ArchHub      stdio       │                │                                  │
+   └────────────────────────────┘                └──────────────────────────────────┘
+</pre>
+  </div>
+
+  <h3 style="margin-top:20px">How brain ships — bundled with ArchHub installer</h3>
+  <div class="arch" style="margin-top:8px">
+<pre>┌─ ArchHub installer (.exe / .dmg / .AppImage) ───────────────────────────────┐
+│   one download · one click · everything wired                               │
+│                                                                             │
+│   installs:                                                                 │
+│     ▸ ArchHub desktop app                  (PyQt6 + QtWebEngine)            │
+│     ▸ personal-brain-mcp daemon            (bundled Python wheel)           │
+│     ▸ Windows Service / launchd / systemd  (autostart on boot)              │
+│     ▸ MCP configs auto-written into:                                        │
+│         · ~/.claude/settings.json          (Claude Code · global)           │
+│         · ~/.cursor/mcp.json               (Cursor)                         │
+│         · ~/.codex/config.toml             (Codex CLI)                      │
+│         · ~/.gemini/settings.json          (Gemini CLI)                     │
+│         · Cline + Continue (if detected)                                    │
+│       (founder consent prompt first time — AUTOMATION MANDATE compliant)    │
+│     ▸ ChatGPT desktop OAuth client registered (user clicks "Authorize"      │
+│         once — only step that can't be automated)                           │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─ Brain daemon · always-on · per-user ───────────────────────────────────────┐
+│   localhost:8473 · stdio + HTTP · SQLite at %APPDATA%/ArchHub/brain/        │
+│   outlives ArchHub sessions — Claude Code at 3am still has full substrate   │
+└──────┬──────────┬───────────┬───────────┬───────────┬──────────┬────────────┘
+       ▼          ▼           ▼           ▼           ▼          ▼
+   ArchHub    Claude Code   Cursor    ChatGPT     Codex      Gemini
+   (Layer 5  (any project, (any...)   (web app)   CLI        CLI
+    in app)   any folder)
+       │
+       └─ ArchHub UI doubles as brain control panel: browse skills,
+          inspect facts, manage wiring, promote/redact, federation status
+</pre>
+  </div>
+
+  <h3 style="margin-top:20px">Where Layer 5 inserts into ArchHub's existing router</h3>
+  <div class="arch" style="margin-top:8px">
+<pre>app/llm_router.py · _complete_once (line 1178)
+
+  line 1231  base_prompt = self._build_system_prompt()
+  line 1232  ─┐
+             │  ◄── LAYER 5 PRE-PROMPT HOOK
+             │      brain.context(prompt=last_user_msg, k=5)
+             │       → returns: skills[], facts[], wiring[], secret_refs[]
+             │      Prepend to base_prompt as &lt;brain_context&gt; block
+             ▼
+  line 1366  client.stream_completion(system=system_prompt, ...)
+             ▼
+  line 1393  inv = ToolInvocation(tool_name=tc["name"], arguments=tc["input"], ...)
+  line 1402  if _lib_gate.is_library_tool(...):    ◄── existing Layer 3 (LibraryGate)
+                decision = _lib_gate.check(...)
+             │
+             ▼
+  line ~1410 ◄── LAYER 5 PRE-EXECUTE HOOK
+                if is_memory_tool(inv): MemoryGate.check(inv)
+                if needs_secret(inv): PreToolUse → resolve op:// reference
+             ▼
+  line ~1420 tool_result = ToolEngine.invoke(inv.tool_name, inv.arguments)
+             ▼
+  line ~1430 ◄── LAYER 5 POST-EXECUTE HOOK
+                brain.write(ops=ADD/UPDATE/DELETE/NOOP, provenance={agent,user,ts})
+             │
+             ▼  (loop back if more tool calls)
+  line 1378  if stream["type"] == "final": break
+             │
+             ▼  ◄── LAYER 5 STOP HOOK (fires once per turn)
+                brain.skill_mint(trace=all_invocations, outcome=success?)
+                  → reflexion_worker scores trajectory off-thread
+                  → if novel + clean trace → new skill candidate
+</pre>
+  </div>
+</section>
+
+<!-- ─────────────────────────── BUILD PLAN ─────────────────────────── -->
+<section class="proto" id="build">
+  <div class="tagline">Build plan · 8 slices · ~6 weeks</div>
+  <h2>Phased slice plan</h2>
+
+  <table class="slice-tbl">
+    <thead>
+      <tr><th>Slice</th><th>Phase</th><th>Ships</th><th>Touches</th><th>~Days</th><th>Demo proof</th></tr>
+    </thead>
+    <tbody>
+      <tr class="phase-a">
+        <td><strong>1</strong></td><td>A · Local</td>
+        <td><strong>FastMCP scaffold</strong> — 4 tools: <code>brain.context</code>, <code>brain.write</code>, <code>brain.skill_mint</code>, <code>brain.wiring_announce</code>. SQLite backed.</td>
+        <td>new repo <code>personal-brain-mcp/</code>; reuses <code>app/memory/graph.py</code></td>
+        <td>2</td>
+        <td>MCP Inspector shows tools listed + invocations work</td>
+      </tr>
+      <tr class="phase-a">
+        <td><strong>2</strong></td><td>A · Local</td>
+        <td><strong>Embedding + retrieval.</strong> MiniLM (384-dim) or bge-small via FastEmbed; FAISS in-memory index over skills + facts.</td>
+        <td>new <code>brain/embeddings.py</code>, <code>brain/retrieval.py</code></td>
+        <td>2</td>
+        <td>"summarize this PDF" returns <code>pdf-summarize</code> skill in &lt;100ms</td>
+      </tr>
+      <tr class="phase-a">
+        <td><strong>3</strong></td><td>A · Local</td>
+        <td><strong>Claude Code wiring.</strong> Drop-in <code>.claude/settings.json</code> hook config. SessionStart + UserPromptSubmit → brain.context. Stop → brain.skill_mint.</td>
+        <td><code>hooks/claude-code.json</code></td>
+        <td>1</td>
+        <td>Live screen recording: prompt → context auto-injected; new skill in library after Stop</td>
+      </tr>
+      <tr class="phase-a">
+        <td><strong>4</strong></td><td>A · Local</td>
+        <td><strong>ArchHub Layer 5.</strong> Insert pre-prompt + pre-execute + post-execute + stop hooks at <code>llm_router.py:1232/1410/1430/1378</code>. Mirror Claude Code hook semantics.</td>
+        <td><code>app/llm_router.py</code>, new <code>app/memory_gate.py</code></td>
+        <td>3</td>
+        <td>CDP screenshot — Composer turn shows "brain_context" chip + new skill mint badge</td>
+      </tr>
+      <tr class="phase-a">
+        <td><strong>5</strong></td><td>A · Local</td>
+        <td><strong>Reflexion worker.</strong> Voyager-pattern skill mining: trace → critic-LLM verifies → SkillWeaver-honing (3 sandbox trials) → ModularNodeSpec validator → library.</td>
+        <td>new <code>brain/reflexion.py</code>; reuses <code>app/library_validator.py</code></td>
+        <td>4</td>
+        <td>From a successful trace, a new skill appears in library with auto-generated examples</td>
+      </tr>
+
+      <tr class="phase-b">
+        <td><strong>6</strong></td><td>B · Multi-device</td>
+        <td><strong>Cloud deploy + sync.</strong> Fly.io HTTPS MCP. Loro CRDT for graph; HLC timestamps. Tailscale mesh for personal+firm tier.</td>
+        <td><code>cloud_backend/brain.py</code>; swap <code>JsonFileTransport</code> for <code>LoroTransport</code></td>
+        <td>3</td>
+        <td>Edit on laptop, retrieve on phone-ChatGPT, identical state</td>
+      </tr>
+
+      <tr class="phase-c">
+        <td><strong>7</strong></td><td>C · Federation</td>
+        <td><strong>Bipartite ACL + redaction.</strong> Per-fragment <code>scope</code> + <code>visibility</code> + <code>provenance{}</code>. Promote-with-LLM-redaction (arXiv 2505.18279).</td>
+        <td>new <code>brain/acl.py</code>, <code>brain/redaction.py</code></td>
+        <td>5</td>
+        <td>Promote a user-private fact → firm-scope with PII stripped, audit log entry</td>
+      </tr>
+      <tr class="phase-c">
+        <td><strong>8</strong></td><td>C · Federation</td>
+        <td><strong>Community tier.</strong> FICAL-pattern pattern compendium + DP-noise on gradients. ActivityPub-style discovery, content-addressed pull (Speckle transport).</td>
+        <td><code>cloud_backend/federation.py</code></td>
+        <td>10</td>
+        <td>Cross-firm skill share: firm A publishes redacted pattern → firm B's brain auto-discovers</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─────────────────────────── OPEN FORKS ─────────────────────────── -->
+<section class="proto" id="forks">
+  <div class="tagline">Decisions blocking Slice 1</div>
+  <h2>Four open forks — founder pick</h2>
+  <p>Per WORKSHOP-GATE mandate (CLAUDE.md), this is cross-surface (touches <code>app/memory</code>, <code>llm_router</code>, <code>tool_engine</code>, <code>cloud_backend</code>). Needs founder sign-off on these forks before code lands.</p>
+
+  <div class="forks">
+
+    <div class="fork">
+      <div class="id">Fork 1 — Substrate origin</div>
+      <div class="q">Buy or build the base?</div>
+      <div class="opts">
+        <div class="o rec"><strong>A · Fork agentmemory + bolt on ArchHub layer</strong>9.3k stars, 51 MCP tools, 12 hooks, P2P mesh sync, 95.2% LongMemEval already. Inherit the substrate; build the ACL + redaction + reflexion-curriculum tier on top. ~6 weeks → V1.</div>
+        <div class="o"><strong>B · Build from scratch on app/memory/graph.py</strong>Full ownership, no Apache-2.0 attribution constraint, brain shape exactly matches ArchHub's MemoryGraph. ~10 weeks → V1.</div>
+        <div class="o"><strong>C · Adopt Mem0 as managed service</strong>Fastest to demo (~1 day setup), but vendor lock-in, no on-prem option for firms, no auto-skill-mint.</div>
+      </div>
+    </div>
+
+    <div class="fork">
+      <div class="id">Fork 2 — Skill-mint trigger</div>
+      <div class="q">When does the reflexion worker decide a trace becomes a skill?</div>
+      <div class="opts">
+        <div class="o rec"><strong>A · Voyager + SkillWeaver hybrid</strong>Critic-LLM verifies trace succeeded → propose skill → 3 sandbox trials honing → publish only if ≥2/3 succeed. Highest quality, slower (~30s post-turn).</div>
+        <div class="o"><strong>B · Pure trace-similarity</strong>Hash the tool-call sequence; if ≥5 occurrences in history with success → auto-mint. Fast (&lt;1s), but late-mints.</div>
+        <div class="o"><strong>C · Founder approval-gated</strong>Brain proposes skill; founder one-click approves in side panel. Highest quality control, lowest velocity, abandonment risk.</div>
+      </div>
+    </div>
+
+    <div class="fork">
+      <div class="id">Fork 3 — Sync substrate</div>
+      <div class="q">What carries memory + skills across your devices?</div>
+      <div class="opts">
+        <div class="o rec"><strong>A · Loro CRDT + Tailscale mesh</strong>Movable-tree CRDT fits the memory graph natively; Tailscale removes "where do I host the relay." Best ergonomics, no SaaS dependency.</div>
+        <div class="o"><strong>B · Speckle Versions adapter</strong>Already shipped in AgDR-0042. Content-addressed, immutable, deterministic. But: no live offline; push/pull only.</div>
+        <div class="o"><strong>C · Custom HTTP + ts-wins (current)</strong>Stays in ArchHub's existing <code>sync.py</code> code. Brittle for multi-agent; defer the upgrade until V2.</div>
+      </div>
+    </div>
+
+    <div class="fork">
+      <div class="id">Fork 4 — Community tier timing</div>
+      <div class="q">Ship cross-firm community sharing in V1 or defer?</div>
+      <div class="opts">
+        <div class="o rec"><strong>B · Defer to V2</strong>Federation needs FICAL pattern + DP noise + reputation gating; ~3-4 weeks alone. 90% of user value lives in personal+firm tiers. Ship those first.</div>
+        <div class="o"><strong>A · Include in V1</strong>Builds the moat now. But: 10 extra weeks before any seat sees value; risk of getting attack surface wrong on first public release.</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─────────────────────────── FOOTER ─────────────────────────── -->
+<footer>
+  <strong style="color:var(--ink2)">Prototype-is-contract</strong> · this document IS the spec per founder mandate 2026-05-25. Sign-off here freezes the architecture; modifications require a new AgDR.
+  <br><br>
+  <strong style="color:var(--ink2)">Sources</strong> · R&amp;D pulled by 6 parallel scouts from 50+ projects + 30+ papers:
+  <div class="cites">
+    <a href="https://github.com/rohitg00/agentmemory">agentmemory · 9.3k★ · 12 hooks · 51 MCP tools</a>
+    <a href="https://omegamax.co/benchmarks">OMEGA · 95.4% LongMemEval #1</a>
+    <a href="https://mastra.ai/research/observational-memory">Mastra Observational Memory · 94.87%</a>
+    <a href="https://github.com/getzep/graphiti">Graphiti · bi-temporal KG</a>
+    <a href="https://www.letta.com/blog/agent-memory">Letta · OS-paged memory</a>
+    <a href="https://arxiv.org/abs/2305.16291">Voyager · auto skill library</a>
+    <a href="https://arxiv.org/abs/2308.10144">ExpeL · insight extraction</a>
+    <a href="https://arxiv.org/abs/2504.07079">SkillWeaver · hone-before-publish</a>
+    <a href="https://arxiv.org/abs/2303.11366">Reflexion · self-improvement</a>
+    <a href="https://arxiv.org/abs/2402.03620">Self-Discover · compositional reasoning</a>
+    <a href="https://arxiv.org/abs/2505.18279">Collaborative Memory · bipartite ACL</a>
+    <a href="https://arxiv.org/abs/2412.08054">FICAL · federated agent learning</a>
+    <a href="https://arxiv.org/abs/2509.14275">FedMentor · DP for federated LLMs</a>
+    <a href="https://pubmed.ncbi.nlm.nih.gov/7624455/">CLS theory · McClelland 1995</a>
+    <a href="https://www.nature.com/articles/nrn2090">Reconsolidation · Nader Nat Rev</a>
+    <a href="https://sookocheff.com/post/time/hybrid-logical-clocks/">Hybrid Logical Clocks</a>
+    <a href="https://crdt.tech/implementations">CRDT primitives · OR-Set · PN-Counter</a>
+    <a href="https://loro.dev/blog/movable-tree">Loro · movable-tree CRDT</a>
+    <a href="https://www.inkandswitch.com/keyhive/notebook/">Ink &amp; Switch Keyhive</a>
+    <a href="https://tech.anytype.io/any-sync/overview">Anytype any-sync</a>
+    <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization">MCP Authorization spec</a>
+    <a href="https://code.claude.com/docs/en/hooks">Claude Code hooks reference</a>
+    <a href="https://cursor.com/docs/mcp">Cursor MCP docs</a>
+    <a href="https://developers.openai.com/api/docs/mcp">ChatGPT desktop MCP</a>
+    <a href="https://github.com/jlowin/fastmcp">FastMCP · Python MCP framework</a>
+    <a href="https://code.claude.com/docs/en/skills">Claude Code Skills</a>
+    <a href="https://www.lisedunetwork.com/ranganathans-pmest-the-foundation-of-faceted-classification/">PMEST faceted classification</a>
+    <a href="https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf">SWIM gossip protocol</a>
+  </div>
+</footer>
+
+<script>
+// ─── DEMO STATE ──────────────────────────────────────────────────────
+const PROMPTS = [
+  {
+    id: "p1",
+    text: "Summarize the Revit Tower-A model — wall counts, levels, areas",
+    ctx: "ArchHub Composer scenario — uses revit_* tools",
+    skills_to_retrieve: ["revit-takeoff", "table-summarize"],
+    facts_to_retrieve: ["user prefers metric", "Tower-A wall type = Generic-200mm"],
+    tools: ["revit_info", "revit_execute_csharp"],
+    secret_needs: [],
+    mint_skill: null,
+  },
+  {
+    id: "p2",
+    text: "Draft a Notion page comparing Mem0 vs Letta from my research notes",
+    ctx: "Cross-app: research stored in brain, output via Notion MCP",
+    skills_to_retrieve: ["compare-tools-table", "notion-page-create"],
+    facts_to_retrieve: ["Mem0 = 56.6k stars / 4-axis identity", "Letta = no MCP server"],
+    tools: ["notion_create_page"],
+    secret_needs: ["op://personal/notion/token"],
+    mint_skill: {name: "ai-memory-compare", desc: "Compare agent-memory systems against benchmark axes"},
+  },
+  {
+    id: "p3",
+    text: "I'm onboarding a new architect — give them my Revit setup",
+    ctx: "Setup transfer — wiring + secrets pulled into a kit",
+    skills_to_retrieve: ["onboard-architect", "revit-bootstrap"],
+    facts_to_retrieve: ["firm uses Tower-A template", "default units = metric"],
+    tools: ["revit_install_template", "outlook_send_email"],
+    secret_needs: ["op://firm/revit/license-server"],
+    mint_skill: null,
+  },
+  {
+    id: "p4",
+    text: "Push the figma component spec to Code Connect for Engineering",
+    ctx: "Multi-MCP — Figma + GitHub via brain wiring",
+    skills_to_retrieve: ["figma-codeconnect-handoff"],
+    facts_to_retrieve: ["Engineering repo = archhub/web-ui", "design system = ArchHub v2"],
+    tools: ["figma_get_design_context", "gh_pr_create"],
+    secret_needs: ["op://personal/figma/pat", "op://personal/github/pat"],
+    mint_skill: null,
+  },
+];
+
+const INITIAL_SKILLS = [
+  ["revit-takeoff", "wall/floor/area extraction · 47 uses · 96% success"],
+  ["table-summarize", "structured table generation · 132 uses · 99% success"],
+  ["notion-page-create", "create + format Notion page · 23 uses · 100%"],
+  ["compare-tools-table", "side-by-side product comparison · 8 uses"],
+  ["onboard-architect", "new-seat bootstrap kit · 3 uses"],
+  ["revit-bootstrap", "Revit project template install · 14 uses"],
+  ["figma-codeconnect-handoff", "design → code spec push · 11 uses"],
+  ["outlook-bulk-categorize", "categorize by sender · 38 uses"],
+  ["pdf-summarize", "extract+summarize PDF · 67 uses"],
+  ["speckle-publish", "push geometry to Speckle stream · 22 uses"],
+  ["composer-iterate", "iteration loop scaffold · 91 uses"],
+  ["render-golden-hour", "render preset · sun + post-process · 19 uses"],
+];
+
+const INITIAL_FACTS = [
+  ["user.units = metric", "EXTRACTED · 2026-05-24"],
+  ["Tower-A.wall_type = Generic-200mm", "EXTRACTED · 2026-05-22"],
+  ["firm.template = ArchHub-Studio-v2", "EXTRACTED · 2026-05-20"],
+  ["user.preferred_renderer = blender", "INFERRED · 2026-05-15"],
+  ["firm.repo = archhub/web-ui", "EXTRACTED · 2026-05-25"],
+];
+
+const WIRING = [
+  ["revit-mcp", "localhost:48884 · ACTIVE"],
+  ["notion-mcp", "OAuth · ACTIVE"],
+  ["figma-mcp", "PAT · ACTIVE"],
+  ["github-mcp", "PAT · ACTIVE"],
+  ["outlook-mcp", "COM bridge · ACTIVE"],
+  ["speckle-mcp", "cloud · ACTIVE"],
+  ["blender-mcp", "localhost:9876 · IDLE"],
+  ["acad-mcp", "localhost:48885 · IDLE"],
+  ["max-mcp", "localhost:48886 · IDLE"],
+];
+
+const SECRETS = [
+  ["op://personal/notion/token", "1Password · resolved JIT"],
+  ["op://personal/github/pat", "1Password · resolved JIT"],
+  ["op://personal/figma/pat", "1Password · resolved JIT"],
+  ["op://firm/revit/license-server", "Vault · resolved JIT"],
+  ["op://personal/openai/key", "1Password · resolved JIT"],
+];
+
+const PROVIDERS = {
+  "claude-code":   "claude · sonnet-4.7",
+  "cursor":        "cursor agent · claude-3.5",
+  "chatgpt":       "openai · gpt-5",
+  "codex":         "openai · gpt-5-codex",
+  "gemini":        "google · gemini-2.5-pro",
+  "archhub":       "archhub composer · routed",
+};
+
+// ─── DOM HELPERS ─────────────────────────────────────────────────────
+const $ = sel => document.querySelector(sel);
+const $$ = sel => [...document.querySelectorAll(sel)];
+
+function el(tag, cls, html){
+  const e = document.createElement(tag);
+  if(cls) e.className = cls;
+  if(html != null) e.innerHTML = html;
+  return e;
+}
+
+function pad(n){ return String(n).padStart(2,"0"); }
+function now(){
+  const d = new Date();
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,"0").slice(0,2)}`;
+}
+
+let EVENT_COUNT = 0;
+let CURRENT_CLIENT = "claude-code";
+let SKILLS = [...INITIAL_SKILLS];
+let FACTS = [...INITIAL_FACTS];
+
+// ─── RENDER BRAIN STATE ──────────────────────────────────────────────
+function renderSkills(){
+  const list = $("#skills-list");
+  list.innerHTML = "";
+  SKILLS.slice(0,12).forEach(([n,m])=>{
+    const item = el("div","brain-item");
+    item.innerHTML = `<span class="name">${n}</span><span class="meta">${m}</span>`;
+    item.dataset.name = n;
+    list.appendChild(item);
+  });
+  $("#skills-count").textContent = `(${SKILLS.length})`;
+  $("#kpi-skills").textContent = SKILLS.length;
+}
+
+function renderFacts(){
+  const list = $("#facts-list");
+  list.innerHTML = "";
+  FACTS.slice(0,5).forEach(([n,m])=>{
+    const item = el("div","brain-item");
+    item.innerHTML = `<span class="name">${n}</span><span class="meta">${m}</span>`;
+    item.dataset.name = n;
+    list.appendChild(item);
+  });
+  $("#facts-count").textContent = `(${FACTS.length})`;
+  $("#kpi-facts").textContent = FACTS.length;
+}
+
+function renderWiring(){
+  const list = $("#wiring-list");
+  list.innerHTML = "";
+  WIRING.slice(0,9).forEach(([n,m])=>{
+    const item = el("div","brain-item");
+    item.innerHTML = `<span class="name">${n}</span><span class="meta">${m}</span>`;
+    list.appendChild(item);
+  });
+}
+
+function renderSecrets(){
+  const list = $("#secrets-list");
+  list.innerHTML = "";
+  SECRETS.slice(0,5).forEach(([n,m])=>{
+    const item = el("div","brain-item");
+    item.innerHTML = `<span class="name">${n}</span><span class="meta">${m}</span>`;
+    list.appendChild(item);
+  });
+}
+
+function renderPrompts(){
+  const bar = $("#prompts-bar");
+  bar.innerHTML = "";
+  PROMPTS.forEach(p=>{
+    const b = el("button","promptbtn");
+    b.innerHTML = `${p.text}<div class="ctx">${p.ctx}</div>`;
+    b.onclick = ()=> runPrompt(p);
+    bar.appendChild(b);
+  });
+}
+
+function renderClients(){
+  $$(".client").forEach(c=>{
+    c.onclick = ()=>{
+      $$(".client").forEach(x=>x.classList.remove("active"));
+      c.classList.add("active");
+      CURRENT_CLIENT = c.dataset.client;
+      $("#provider-meta").textContent = PROVIDERS[CURRENT_CLIENT];
+      logEvent("wiring", `wiring.client_switch → ${CURRENT_CLIENT}`, `provider = ${PROVIDERS[CURRENT_CLIENT]}`);
+    };
+  });
+}
+
+// ─── EVENT LOG ───────────────────────────────────────────────────────
+function logEvent(kind, tag, body){
+  EVENT_COUNT++;
+  $("#event-count").textContent = `${EVENT_COUNT} events`;
+  const e = el("div", `event ${kind}`);
+  e.innerHTML = `<span class="ts">${now()}</span><span class="tag">${tag}</span><span class="body">${body}</span>`;
+  const events = $("#events");
+  if(EVENT_COUNT === 1) events.innerHTML = "";
+  events.appendChild(e);
+  events.scrollTop = events.scrollHeight;
+}
+
+function addMsg(kind, content){
+  const c = $("#chat");
+  c.appendChild(el("div", `msg ${kind}`, content));
+  c.scrollTop = c.scrollHeight;
+  $("#chat-meta").textContent = `${c.children.length} messages`;
+}
+
+// ─── PROMPT RUN — animated 5-loop simulation ─────────────────────────
+let RUNNING = false;
+async function runPrompt(p){
+  if(RUNNING){ return; }
+  RUNNING = true;
+  $("#status-text").textContent = `Active · ${CURRENT_CLIENT}`;
+
+  // 1. User msg
+  addMsg("user", p.text);
+  await sleep(220);
+
+  // 2. UserPromptSubmit hook → brain.context
+  logEvent("session", "UserPromptSubmit", `hook fires on <strong>${CURRENT_CLIENT}</strong> · payload = prompt`);
+  await sleep(180);
+  logEvent("context-inject", "brain.context →", `embedding prompt · vector search · k=5 · scope=user+firm`);
+  await sleep(260);
+
+  // 3. Retrieved skills
+  for(const skillName of p.skills_to_retrieve){
+    logEvent("context-inject", "skill retrieved", `<strong>${skillName}</strong> (cosine 0.${82 + Math.floor(Math.random()*15)})`);
+    const skillItem = $$('#skills-list .brain-item').find(it => it.dataset.name === skillName);
+    if(skillItem){ skillItem.classList.add("touched"); setTimeout(()=>skillItem.classList.remove("touched"), 2500); }
+    await sleep(80);
+  }
+  // 4. Retrieved facts
+  for(const factName of p.facts_to_retrieve){
+    logEvent("context-inject", "fact retrieved", `${factName}`);
+    await sleep(60);
+  }
+  await sleep(120);
+
+  // 5. Show context-injection chip in chat
+  addMsg("context-chip",
+    `<span class="label">Brain → context</span> ${p.skills_to_retrieve.length} skills · ${p.facts_to_retrieve.length} facts · ${p.secret_needs.length} secret refs · injected into system prompt`);
+  await sleep(220);
+
+  // 6. Stream begins — assistant message starts
+  logEvent("session", "stream_completion", `${PROVIDERS[CURRENT_CLIENT]} · system_prompt + brain_context`);
+  await sleep(280);
+
+  // 7. Tool calls
+  for(const toolName of p.tools){
+    await sleep(200);
+    logEvent("tool-call", "PreToolUse", `<strong>${toolName}</strong> · gate check · scope=allow`);
+
+    // Secret resolution if needed
+    const secretRef = p.secret_needs.find(s => toolName.includes("notion") && s.includes("notion") ||
+                                                toolName.includes("github") && s.includes("github") ||
+                                                toolName.includes("figma") && s.includes("figma") ||
+                                                toolName.includes("revit") && s.includes("revit"));
+    if(secretRef){
+      await sleep(120);
+      logEvent("secret-resolve", "secret.resolve", `${secretRef} → 1Password CLI · injected · scrubbed from trace`);
+    }
+    await sleep(180);
+    logEvent("tool-call", "ToolEngine.invoke", `${toolName} → status:ok`);
+    await sleep(160);
+    logEvent("memory-write", "PostToolUse → brain.write", `op=ADD · provenance{agent:${PROVIDERS[CURRENT_CLIENT].split(' · ')[1]||"?"}, ts, trace_id}`);
+    await sleep(120);
+  }
+
+  // 8. Assistant response
+  await sleep(180);
+  addMsg("assistant", `<strong>${PROVIDERS[CURRENT_CLIENT]}:</strong> Done. Ran ${p.tools.length} tool${p.tools.length>1?"s":""}, used ${p.skills_to_retrieve.length} skill${p.skills_to_retrieve.length>1?"s":""} from the brain. <br><br><em style="color:var(--ink3)">[trace_id captured · brain.skill_mint queued]</em>`);
+  await sleep(260);
+
+  // 9. Stop hook → reflexion worker
+  logEvent("session", "Stop hook", `turn complete · success · trace queued for reflexion_worker`);
+  await sleep(240);
+  logEvent("skill-mint", "reflexion.score", `trace novelty=0.${50+Math.floor(Math.random()*40)} · clean=true · stability=0.${70+Math.floor(Math.random()*25)}`);
+  await sleep(220);
+
+  if(p.mint_skill){
+    logEvent("skill-mint", "skill.mint propose", `candidate: <strong>${p.mint_skill.name}</strong> — ${p.mint_skill.desc}`);
+    await sleep(220);
+    logEvent("skill-mint", "validator", `ModularNodeSpec ✓ · examples ≥ 1 · description ≥ 80 chars · honing passed 3/3`);
+    await sleep(200);
+    SKILLS.unshift([p.mint_skill.name, "new · auto-minted · 0 uses"]);
+    renderSkills();
+    const newItem = $$('#skills-list .brain-item').find(it=>it.dataset.name === p.mint_skill.name);
+    if(newItem) newItem.classList.add("new");
+    logEvent("skill-mint", "brain.skill_mint ✓", `<strong>${p.mint_skill.name}</strong> entered library · retrievable from any client`);
+    await sleep(200);
+  } else {
+    logEvent("skill-mint", "reflexion.score", `below mint threshold (novelty + repeated-pattern check); existing skills refined instead`);
+  }
+
+  // 10. Memory consolidation
+  await sleep(160);
+  logEvent("memory-write", "consolidation", `${p.facts_to_retrieve.length} facts reinforced · last_reinforced_at bumped (Nader reconsolidation)`);
+  // Add a new fact derived from this turn
+  if(p.id === "p1"){
+    FACTS.unshift([`Tower-A.wall_count = 247`, "EXTRACTED · just now"]);
+    renderFacts();
+  } else if(p.id === "p2"){
+    FACTS.unshift([`comparison.mem0_vs_letta = drafted`, "EXTRACTED · just now"]);
+    renderFacts();
+  } else if(p.id === "p3"){
+    FACTS.unshift([`onboarding.architect_2 = kit_sent`, "EXTRACTED · just now"]);
+    renderFacts();
+  } else if(p.id === "p4"){
+    FACTS.unshift([`figma_handoff.pr_url = pending`, "EXTRACTED · just now"]);
+    renderFacts();
+  }
+
+  await sleep(200);
+  logEvent("session", "SessionEnd", `turn closed · ${EVENT_COUNT} events emitted · ready for next prompt`);
+
+  $("#status-text").textContent = `Listening on stdio + HTTP`;
+  RUNNING = false;
+}
+
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+// ─── BOOT ────────────────────────────────────────────────────────────
+renderSkills();
+renderFacts();
+renderWiring();
+renderSecrets();
+renderPrompts();
+renderClients();
+// Initial wiring announce
+logEvent("wiring", "wiring.announce", `9 MCPs registered · 5 secret refs · 12 skills indexed`);
+</script>
+</body>
+</html>

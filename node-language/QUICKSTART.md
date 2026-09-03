@@ -1,0 +1,181 @@
+# ArchHub Quickstart — what to try first
+
+Seven things that exercise the whole product. Each takes under a minute
+once your tools are open. Step 7 is the flagship — read it first if
+you have a real project open and want to feel the value.
+
+## Before you start
+
+1. Open Revit. Wait until the project loads.
+2. Open Blender. Empty scene is fine.
+3. (Optional) Open AutoCAD if you want to test that path too.
+4. Launch ArchHub via the Start menu shortcut.
+5. ⚙ menu → **Reality Check**. You should see green ticks for at least
+   Revit + Blender + LLM router. If a row is amber/red, fix that one
+   thing before continuing.
+
+If Reality Check is all-green, the rest of this guide will work.
+
+## Pricing status
+
+ArchHub is currently in **open beta** and all shipped features are free.
+For canonical pricing language, see `docs/PRICING_STATUS.md`.
+
+## 1. Talk to your Revit project
+
+In ArchHub chat, type:
+
+```
+What's the title of the active document?
+```
+
+Expected: chat replies with the actual file name from Revit (within 1-3
+seconds). This is the smoke test that the whole stack — chat → LLM →
+tool engine → Revit MCP → Roslyn — is wired correctly.
+
+## 2. Annotate the active view
+
+```
+Annotate this view
+```
+
+ArchHub's matcher proposes the **Annotate active view** Skill. Click
+**Run**. ArchHub:
+
+- dimensions every wall whose curve is visible,
+- tags every door + window whose host is in the view,
+- labels every room.
+
+Each pass is wrapped in its own Revit Transaction, so you can Undo any
+one of them from Revit's Undo history if it misfires on your project's
+conventions.
+
+## 3. Export every sheet to AutoCAD
+
+```
+Export all sheets to DWG
+```
+
+Matcher proposes **Export Revit drawings to AutoCAD**. Click **Run**.
+You'll get one .dwg file per ViewSheet under
+`<project_folder>\<project>_DWG\` (or `Documents\ArchHub-DWG\` if the
+project hasn't been saved).
+
+Replace "all sheets" with "this view" or "this sheet" to scope down.
+
+## 4. Sketch → 3D mass
+
+Drag a sketch image (PNG, JPG, screenshot, hand drawing) into the chat
+input bar. Then type:
+
+```
+Build this in 3D, gabled, around 6 m wide
+```
+
+Matcher proposes **Extract mass from sketch**. Click **Run**. Claude
+reads the sketch, infers width / depth / storeys / roof type, and
+builds the corresponding mass in Blender under a `Mass_Sketch`
+collection.
+
+## 5. Build site context from a map link
+
+```
+Build the site context from this map link
+https://www.google.com/maps/@24.4539,54.3773,17z
+```
+
+ArchHub detects the Maps URL automatically and proposes **Build site
+context from a map link**. Click **Run**. ArchHub fetches surrounding
+buildings from OpenStreetMap (no API key, no money) and extrudes them
+to their real heights in Blender as a `Site_Context` collection. Drop
+your sketch mass into that scene and you have a real urban-context
+massing.
+
+You can also just paste lat/lng like `24.4539, 54.3773` and ArchHub
+parses it directly.
+
+## 6. Audit an AutoCAD drawing
+
+Open a .dwg in AutoCAD, then in chat:
+
+```
+Audit this drawing
+```
+
+Matcher proposes **Inventory the open AutoCAD drawing**. Click **Run**.
+ArchHub reads the drawing (read-only, no Transaction) and returns a
+Markdown audit:
+
+- every layer with entity count, freeze / lock / colour state,
+- every block with how many ModelSpace inserts it has,
+- every text style with font + height,
+- drawing units, extents, and total entity count,
+- a hygiene-issue list: blocks on layer 0, zero-width polylines,
+  frozen-but-used layers, etc.,
+- a 3-5 bullet "suggested clean-up" list you can paste straight
+  into a hand-over note.
+
+Verbs that trigger this Skill instead of the export one: *audit,
+inventory, what's in, inside, read, scan, hygiene, clean-up,
+list layers, list blocks*.
+
+## 7. Construction doc sprint pack (flagship)
+
+**This is the headline product.** Open the Revit project you actually
+need to ship, then in chat:
+
+```
+Run the construction doc sprint pack
+```
+
+Matcher proposes **Construction doc sprint pack**. Click **Run**.
+Expect 60–90 minutes (varies with project size). Six chained passes,
+each its own Revit Transaction so you can Undo any one independently:
+
+1. **Audit** — read levels, grids, types, sheets, schedules, rooms.
+   Flag gaps.
+2. **Sheet set** — one floor plan per Level + N/S/E/W elevations + 2
+   sections, each placed on its own sheet with the project's title
+   block. Skips duplicates.
+3. **Schedules** — Room / Door / Window schedules created if missing,
+   then auto-numbered Marks (D-001, W-001, R-001…) without overwriting
+   anything you already set.
+4. **Keynotes** — KeynoteTags placed on every Door, Window, Furniture
+   element in the new plan views.
+5. **Annotations** — wall dimensions + door/window tags + room labels
+   on every plan view, in three separate Transactions.
+6. **QC report** — final Markdown audit: snapshot, what was created,
+   what was skipped + why, every TODO inserted, suggested next moves.
+   Paste into your project hand-over note.
+
+Triggers: *construction docs, doc sprint, doc this up, build a CD set,
+production-ready, full doc pass.*
+
+This is the foot-in-the-door for the paid tier. Replaces 1–2 days of
+junior-staff work per project. Run on a real model, save the resulting
+audit, send it to me — that's the testimonial that books the next 50
+seats.
+
+---
+
+## When something fails
+
+1. ⚙ menu → **Reality Check**. Tells you which layer is broken.
+2. Tool cards expand to show the actual exception text.
+3. Skill stepper shows which stage of a multi-stage Skill failed.
+4. If LLM-generated code is off, edit the Skill's framing prompt:
+   ⚙ → **Skills…** → click **Edit** on the Skill → switch to the
+   Workflows tab → tweak the `data.template` node's text.
+
+## Pipeline
+
+The flagship is **Sketch to production** — six chained stages from a
+pasted sketch all the way to plans / sections / elevations / room
+schedule on A1 sheets. Run it after the individual stages above are
+proven on your project.
+
+```
+Take this sketch all the way to production drawings
+```
+
+(attach a sketch image first)

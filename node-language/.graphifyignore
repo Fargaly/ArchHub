@@ -1,0 +1,17 @@
+# graphify ignore — keep vendored / generated noise out of the knowledge graph.
+# Precedence: .graphifyignore wins over .gitignore. node_modules/, dist/, build/,
+# __pycache__/, .pytest_cache/, graphify-out/ are already auto-skipped by graphify.
+
+# Vendored frontend bundles — minified, zero architectural signal.
+# These 3 files alone added ~1,421 nodes (9% of the graph, 14.8% of code nodes)
+# and corrupted the god-node ranking with single-letter minified functions.
+app/web_ui/vendor/
+**/*.min.js
+**/*.min.css
+
+# Astro build cache + output (web/dist is auto-skipped by dirname; .astro is not).
+web/.astro/
+web/dist/
+
+# Graph scratch / sidecars that are not source.
+graphify-out/

@@ -1751,6 +1751,26 @@ def list_memory_facts(*, user_id: str, scope: Optional[str] = None,
     return out
 
 
+def _reader_company_id(user_id: str) -> Optional[str]:
+    """The company this reader is actually still a member of.
+
+    Read from the membership table, never from the caller and never from
+    users.current_company_id alone -- that pointer survives removal from
+    a firm, so trusting it would keep an ex-member reading the firm.
+    """
+    try:
+        with connect() as con:
+            row = con.execute(
+                "SELECT m.company_id FROM company_members m"
+                " JOIN users u ON u.id = m.user_id"
+                " WHERE m.user_id = ? AND m.company_id = u.current_company_id",
+                (str(user_id),),
+            ).fetchone()
+    except Exception:
+        return None
+    return str(row["company_id"]) if row is not None else None
+
+
 def search_memory_facts(*, user_id: str, query: str,
                          include_shared: bool = True,
                          limit: int = 10) -> list[dict]:
@@ -1785,6 +1805,8 @@ def search_memory_facts(*, user_id: str, query: str,
             (f'"{safe}"', int(limit) * 4),
         ).fetchall()
     out: list[dict] = []
+    # Resolved once, server-side, from the membership table.
+    reader_company = _reader_company_id(user_id) if include_shared else None
     # Cache replicas per owner so a multi-user shared search opens each once.
     replicas: dict[str, object] = {}
     for h in hits:
@@ -1798,10 +1820,24 @@ def search_memory_facts(*, user_id: str, query: str,
             continue
         vis = frag.get("visibility") or "private"
         # Own facts always visible; others only if shared + caller opted in.
+        #
+        # "shared_company" means shared WITH MY COMPANY, so it has to be
+        # matched against the reader's company. Admitting it on the
+        # visibility word alone handed one firm's private notes to every
+        # signed-up stranger. "shared_public" is the value that means
+        # everyone, and it still does.
         if owner == user_id:
             pass
-        elif include_shared and vis in ("shared_company", "shared_public"):
+        elif not include_shared:
+            continue
+        elif vis == "shared_public":
             pass
+        elif vis == "shared_company":
+            if reader_company is None:
+                continue
+            owner_company = (frag.get("extra") or {}).get("mf_company_id")
+            if not owner_company or str(owner_company) != reader_company:
+                continue
         else:
             continue
         row = _fragment_to_fact_row(owner, int(h["id"]), frag)

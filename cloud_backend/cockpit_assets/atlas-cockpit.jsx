@@ -145,7 +145,28 @@ function AtlasCockpit() {
   React.useEffect(() => {
     if (window.applyHBTheme) window.applyHBTheme('dark');   // cockpit is dark-only — single user
     const saved = aLoad();
-    let data = (saved && saved.M) || window.ATLAS_MAP || { domains: [], nodes: [], wires: [], w: 2448, h: 2348 };
+    // The cockpit IS the graph. When the founder's running application has pushed its
+    // projection (the server marks it ATLAS_LIVE), that push is the content; the saved
+    // snapshot contributes only what the founder did to the layout -- node and domain
+    // positions, and anything he added that the push does not know. Before this, a saved
+    // snapshot silently outranked the live push and the map showed yesterday's graph.
+    const live = window.ATLAS_LIVE ? window.ATLAS_MAP : null;
+    const mergeLive = (L, S) => {
+      if (!S || !S.nodes) return L;
+      const sn = {}; (S.nodes || []).forEach(n => sn[n.id] = n);
+      const sd = {}; (S.domains || []).forEach(d => sd[d.key] = d);
+      const ln = new Set((L.nodes || []).map(n => n.id)), ld = new Set((L.domains || []).map(d => d.key));
+      const nodes = (L.nodes || []).map(n => sn[n.id] ? { ...n, x: sn[n.id].x, y: sn[n.id].y } : n)
+        .concat((S.nodes || []).filter(n => !ln.has(n.id)));
+      const domains = (L.domains || []).map(d => sd[d.key] ? { ...d, x: sd[d.key].x, y: sd[d.key].y, w: sd[d.key].w, h: sd[d.key].h } : d)
+        .concat((S.domains || []).filter(d => !ld.has(d.key)));
+      const ids = new Set(nodes.map(n => n.id));
+      const lw = new Set((L.wires || []).map(w => w.a + '|' + w.b));
+      const wires = (L.wires || []).concat((S.wires || []).filter(w => !lw.has(w.a + '|' + w.b) && ids.has(w.a) && ids.has(w.b)));
+      return { ...L, nodes, domains, wires, fields: S.fields || L.fields, grid: L.grid || S.grid };
+    };
+    let data = live ? mergeLive(live, saved && saved.M)
+      : ((saved && saved.M) || window.ATLAS_MAP || { domains: [], nodes: [], wires: [], w: 2448, h: 2348 });
     // Attention is a real seed NODE (importance is a node, not a hardcoded rule) and it is
     // WIRED. This is a safety-net only — re-mints the node and/or its wires for any saved
     // state that predates them, so stale localStorage never shows Attention floating loose.

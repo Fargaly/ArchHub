@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -300,7 +300,9 @@ def holder_risk_class(
 ) -> dict[str, str]:
     lower = cmdline.lower()
     script_path = str(script.get("script_path") or "").lower()
-    script_name = Path(script_path).name.lower() if script_path else ""
+    # Holders are Windows processes; a Linux runner must still read the
+    # script name off a backslash path.
+    script_name = PureWindowsPath(script_path).name.lower() if script_path else ""
     if (
         holder_type == "application_server"
         and runtime_args.get("port") == 8482

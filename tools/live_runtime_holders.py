@@ -549,12 +549,16 @@ def _is_disposable_qa_state_path(
     if not candidates:
         return False
     test_results = workspace / "10.PRODUCT" / "13.NODE-LANGUAGE" / "test-results"
-    test_results_prefix = str(test_results).lower() + "\\qa-"
+    # Compare with one separator: the holders are Windows paths, the
+    # workspace may be a POSIX tmp_path on a Linux runner.
+    def _norm(path: object) -> str:
+        return str(path).replace("\\", "/").lower()
+    test_results_prefix = _norm(test_results) + "/qa-"
     for raw in candidates:
-        lower = str(Path(raw)).lower()
+        lower = _norm(raw)
         if (
-            "\\appdata\\local\\temp\\archhub-current-memory-qa-" in lower
-            or "\\appdata\\local\\temp\\archhub-universal-qa-" in lower
+            "/appdata/local/temp/archhub-current-memory-qa-" in lower
+            or "/appdata/local/temp/archhub-universal-qa-" in lower
             or lower.startswith(test_results_prefix)
         ):
             return True

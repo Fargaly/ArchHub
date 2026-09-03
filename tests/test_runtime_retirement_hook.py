@@ -70,6 +70,8 @@ def _copy_hook_fixture(tmp_path: Path) -> Path:
     (repo / "tools").mkdir()
     for name in ("pre-commit", "pre-push"):
         shutil.copyfile(REPO / ".githooks" / name, repo / ".githooks" / name)
+        # copyfile drops the execute bit; a Linux runner then answers 126.
+        (repo / ".githooks" / name).chmod(0o755)
     # The hook now runs the public-privacy ratchet first and blocks when the
     # script is missing; these courts test the retirement gate, so the
     # fixture carries a ratchet that passes under the bash the tests use as

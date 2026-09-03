@@ -20,6 +20,7 @@ from .stem_graph_evaluation import (
 )
 from .universal_application import (
     _canvas_roots,
+    _issue_resource_audience_bindings,
     _one_for_role,
     _text,
     compose_relation_cells,
@@ -270,6 +271,25 @@ def _ensure_wire_parameters(store, registry, wire_root: str):
     best-effort by construction -- it adds rows where the graph admits
     them, and stays silent where it does not.
     """
+    try:
+        # A connection is a resource on this canvas like its endpoints, so
+        # it needs the same signed audience binding before it may own a
+        # property. Without one the graph refuses the row with "view
+        # resource lacks an active signed audience binding" -- correctly,
+        # because nothing had ever released the wire to an audience.
+        authorization = registry.authorization
+        _issue_resource_audience_bindings(
+            store,
+            authorization,
+            resource_roots=(wire_root,),
+            lifecycle_root=(
+                registry.standard_library.lifecycle_protocol.states["wip"]
+            ),
+            owner_root=authorization.subject_root,
+            administrator_root=authorization.subject_root,
+        )
+    except Exception:
+        return
     try:
         held = (
             _owner_properties(store.snapshot(), registry).get(wire_root) or {}

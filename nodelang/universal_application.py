@@ -4891,6 +4891,45 @@ def _humanize_root_id(root_id: str) -> str:
     return label[:1].upper() + label[1:] if label else root_id
 
 
+def _wire_between_visible(
+    snapshot: Snapshot,
+    registry: "UniversalApplicationRegistry",
+    candidate_root: str,
+    visible_roots,
+) -> bool:
+    """Is this a connection drawn between two roots the view already shows?
+
+    A wire is a node: it owns its parameters. The Properties lens has to
+    admit it as an owner, and the honest rule is the one the canvas draws
+    by -- a connection belongs to the view that shows BOTH of its ends.
+    That grants nothing new: anyone who can see the two nodes can already
+    see the line between them.
+    """
+    roles = registry.roles
+    try:
+        members = read_relation(snapshot, candidate_root, budget=256)
+    except Exception:
+        return False
+    ends = []
+    for role in ("source", "target"):
+        matching = tuple(
+            member for member in members if member.role_id == roles[role]
+        )
+        if len(matching) != 1:
+            return False
+        # An endpoint member names an INTERFACE, not the node behind it,
+        # so resolve it the way the canvas itself does before asking
+        # whether this view shows it.
+        try:
+            owner, _interface = _canvas_endpoint(
+                snapshot, registry, matching[0], tuple(visible_roots)
+            )
+        except Exception:
+            return False
+        ends.append(owner)
+    return all(end in visible_roots for end in ends)
+
+
 def _one_for_role(members, role_id: str) -> str | None:
     found = [member.participant_id for member in members if member.role_id == role_id]
     if len(found) > 1:
@@ -44840,7 +44879,9 @@ def create_universal_property(
         candidate_visible, _, _ = _session_canvas_roots(
             snapshot, registry, candidate_view
         )
-        if owner_root in candidate_visible:
+        if owner_root in candidate_visible or _wire_between_visible(
+            snapshot, registry, owner_root, candidate_visible
+        ):
             lens_roots.append(candidate_view.properties_lens_root)
             candidate_trail = _read_view_scope_trail_structure(
                 snapshot, registry, candidate_view

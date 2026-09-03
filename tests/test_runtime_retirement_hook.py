@@ -7,9 +7,22 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
+def _git_bash() -> str:
+    # On a Windows runner a bare bash is WSL with no distribution; the hooks run under Git for Windows.
+    import os, shutil
+    if os.name == "nt":
+        for candidate in ("C:/Program Files/Git/bin/bash.exe", "C:/Program Files/Git/usr/bin/bash.exe"):
+            if Path(candidate).is_file():
+                return candidate
+    return shutil.which("bash") or "bash"
+
+
+_BASH = _git_bash()
+
+
 def _bash(repo: Path, command: str, *, input_text: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", "-lc", command],
+        [_BASH, "-lc", command],
         cwd=repo,
         input=input_text,
         capture_output=True,

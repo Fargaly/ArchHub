@@ -106,7 +106,12 @@ def test_baboom_surface_imports_transport_from_canonical_node_authority_only():
     from workflows import baboom_cell_surface
 
     runtime_root = baboom_cell_surface._canonical_node_authority_root()
-    expected = APP.parent.parent / "13.NODE-LANGUAGE"
+    # node-language/ inside the repository (main since #306) or the sibling
+    # worktree on the founder workstation -- whichever the code itself found.
+    expected = next(
+        candidate for candidate in (APP.parent / "node-language", APP.parent.parent / "13.NODE-LANGUAGE")
+        if (candidate / "nodelang").is_dir()
+    )
 
     assert runtime_root.samefile(expected)
     source = (APP / "workflows" / "baboom_cell_surface.py").read_text(

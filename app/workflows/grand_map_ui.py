@@ -26,9 +26,16 @@ _UI_COMPONENT_IDS = (
 
 
 def default_grand_map_path() -> Path:
-    """Return the workspace-local Grand Map path when running from ArchHub."""
+    """The Grand Map: the founder workspace copy when it exists, else the copy the product ships.
+
+    The surface used to reach outside the repository for 30.KNOWLEDGE, so on
+    CI and on a colleague machine it raised and every UI surface it feeds
+    reported ok=False.
+    """
     archub_root = Path(__file__).resolve().parents[4]
-    return archub_root / "30.KNOWLEDGE" / "grand-map" / "data" / "grand_domains.json"
+    workspace = archub_root / "30.KNOWLEDGE" / "grand-map" / "data" / "grand_domains.json"
+    shipped = Path(__file__).resolve().parents[1] / "data" / "grand_domains.json"
+    return workspace if workspace.is_file() else shipped
 
 
 def grand_map_ui_surface(

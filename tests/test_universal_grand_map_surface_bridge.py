@@ -199,7 +199,12 @@ def test_universal_canvas_adapter_imports_transport_from_canonical_node_authorit
     from workflows import universal_grand_map_surface
 
     runtime_root = universal_grand_map_surface._canonical_node_authority_root()
-    expected = APP.parent.parent / "13.NODE-LANGUAGE"
+    # node-language/ inside the repository (main since #306) or the sibling
+    # worktree on the founder workstation -- whichever the code itself found.
+    expected = next(
+        candidate for candidate in (APP.parent / "node-language", APP.parent.parent / "13.NODE-LANGUAGE")
+        if (candidate / "nodelang").is_dir()
+    )
 
     assert runtime_root.samefile(expected)
 

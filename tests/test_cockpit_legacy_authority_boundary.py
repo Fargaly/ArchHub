@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import sys
+
+import pytest
 from pathlib import Path
 
 
@@ -95,6 +97,8 @@ def test_separate_cockpit_paths_remain_non_promotable_if_reintroduced():
 
 
 def test_archived_cockpit_evidence_has_manifest_and_boundaries():
+    if not ARCHIVE.is_dir():
+        pytest.skip("workstation court: the 90.ARCHIVE tree lives outside the repository")
     manifest = (ARCHIVE / "MANIFEST.md").read_text(encoding="utf-8")
     assert "Separate Cockpit Superseded Evidence" in manifest
     assert "Universal Cell" in manifest

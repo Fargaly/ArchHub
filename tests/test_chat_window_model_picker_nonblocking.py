@@ -232,7 +232,11 @@ def test_populate_model_picker_boot_returns_under_100ms(monkeypatch):
         host._populate_model_picker()
     elapsed = time.perf_counter() - t0
 
-    assert elapsed < 0.1, (
+    # The court guards against the 1.5-3 s inline probe, not against a slow
+    # shared runner: macOS CI measured 315 ms of Qt model work with the probe
+    # correctly deferred. One second still catches the probe by an order of magnitude.
+    budget = 1.0 if os.environ.get("CI") else 0.1
+    assert elapsed < budget, (
         f"_populate_model_picker blocked {elapsed*1000:.0f}ms on a slow LM "
         f"Studio probe — it runs INLINE in ChatWindow.__init__ on the Qt "
         f"main thread at boot, so this IS the residual boot-hang. The boot "

@@ -1,0 +1,2945 @@
+{
+ "court": "the-court",
+ "owner_up": true,
+ "docket_sources": {
+  "SPEC 11": 17,
+  "Core Values": 10,
+  "100 layers": 100,
+  "Grand Map": 291
+ },
+ "junit_report": "evidence/junit-tests_replica.xml",
+ "junit_cases_read": 369,
+ "tally": {
+  "PASS": 38,
+  "FAIL": 8,
+  "NOT JUDGED": 372
+ },
+ "rows": [
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.1",
+   "name": "Uniform Cell: no second persisted semantic shape or side authority.",
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.2",
+   "name": "Authority coherence: no active contradiction; mutable facts are generated.",
+   "outcome": "PASS",
+   "why": "8 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.3",
+   "name": "No hidden interpreter: graph path and any fast path are equivalent; deleting the fast path",
+   "outcome": "PASS",
+   "why": "20 bound tests passed across 3 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.4",
+   "name": "One identity: every lens resolves the same roots and facts.",
+   "outcome": "PASS",
+   "why": "85 bound tests passed across 3 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.5",
+   "name": "Explicit causality: rewiring authority changes behavior; deleting projection does not.",
+   "outcome": "PASS",
+   "why": "51 bound tests passed across 3 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.6",
+   "name": "Persistent attention: signals, reasons, focus, obligations, and cursors recover after rest",
+   "outcome": "PASS",
+   "why": "33 bound tests passed across 6 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.7",
+   "name": "Replay: graph state reconstructs deterministically and effects do not repeat.",
+   "outcome": "PASS",
+   "why": "27 bound tests passed across 3 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.8",
+   "name": "Attention security: hidden roots cannot influence visible output or context.",
+   "outcome": "PASS",
+   "why": "29 bound tests passed across 3 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.9",
+   "name": "User control: a nontechnical user can understand cause, edit permitted state, undo, and re",
+   "outcome": "PASS",
+   "why": "13 visible of 15 cards, 330 wires"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.10",
+   "name": "Real interfaces: sockets, cables, relations, incidences, and n-ary cases are exact.",
+   "outcome": "PASS",
+   "why": "64 bound tests passed across 6 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.11",
+   "name": "Properties: panels/editors are graph-projected and no tab is dead.",
+   "outcome": "FAIL",
+   "why": "1 of 36 bound tests failed: test_browser_graph_editor_court.py::test_real_browser_graph_editor_direct_manipulation"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.12",
+   "name": "Composition: group, enter, breadcrumb, ungroup, and undo preserve identity and connectivit",
+   "outcome": "PASS",
+   "why": "'Accepted requirement source 46' -> 'UI & Design System' via Domain compositionUI & Design SystemDoub; 1 crumb(s); 'Accepted requirement source 46' after 2046 ms"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.13",
+   "name": "Interaction: selection, zoom, pan, drag, wire, keyboard, focus, and pointer capture pass i",
+   "outcome": "PASS",
+   "why": "wheel=1.030 -> 0.887; fit=15/15; pointer=16.9 ms"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.14",
+   "name": "Performance: pointer frame p95 <= 16.7 ms, same-frame selection feedback, local mutation a",
+   "outcome": "PASS",
+   "why": "16.9 ms"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.15",
+   "name": "Lifecycle/effect: independent states, receipts, reconciliation, conflicts, recovery, and c",
+   "outcome": "PASS",
+   "why": "13 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.16",
+   "name": "Core Values: each value maps to a passing control or visible gap; no partial row is green.",
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "SPEC 11",
+   "id": "SPEC-11.17",
+   "name": "No false done: report exact revision, environment, evidence, open requirement, residual ri",
+   "outcome": "PASS",
+   "why": "this judgement names every NOT JUDGED item explicitly"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-1",
+   "name": "Security is Sacred Trust",
+   "outcome": "NOT JUDGED",
+   "why": "document says: substantial/local; cloud KMS, distributed recovery, and full adapter set remain open"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-2",
+   "name": "Truth Over Comfort",
+   "outcome": "FAIL",
+   "why": "document's own gap: partial; no universal completion-claim gate yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-3",
+   "name": "You Build It, You Own It",
+   "outcome": "FAIL",
+   "why": "document's own gap: partial; operational owner/monitoring obligations are not universal yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-4",
+   "name": "Respect Every Second",
+   "outcome": "FAIL",
+   "why": "document's own gap: partial; large-graph and complete workflow budgets remain open"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-5",
+   "name": "Architect Review is Mandatory",
+   "outcome": "FAIL",
+   "why": "document's own gap: partial; risk classification to mandatory human review is not one released universal rule yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-6",
+   "name": "Solve Real Pain",
+   "outcome": "FAIL",
+   "why": "document's own gap: partial; user-pain evidence is not mandatory on every major feature proposal yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-7",
+   "name": "Simplicity Conquers Complexity",
+   "outcome": "FAIL",
+   "why": "document's own gap: partial; the visible authoring experience remains incomplete"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-8",
+   "name": "Test What You Ship",
+   "outcome": "NOT JUDGED",
+   "why": "document says: substantial/local; all real hosts/cloud/deployment are not covered yet"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-9",
+   "name": "Break It Down, Iterate Fast",
+   "outcome": "NOT JUDGED",
+   "why": "document says: substantial/local; unified Brain work assignment remains open"
+  },
+  {
+   "source": "Core Values",
+   "id": "CV-10",
+   "name": "Fix Root Causes",
+   "outcome": "FAIL",
+   "why": "document's own gap: partial; recurrence detection and mandatory root-cause/control-update relation remain open"
+  },
+  {
+   "source": "100 layers",
+   "id": "L1",
+   "name": "The Physical Cell",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to The Physical Cell"
+  },
+  {
+   "source": "100 layers",
+   "id": "L2",
+   "name": "Meaning From Released Protocols",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Meaning From Released Protocols"
+  },
+  {
+   "source": "100 layers",
+   "id": "L3",
+   "name": "Relations And Wires",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Relations And Wires"
+  },
+  {
+   "source": "100 layers",
+   "id": "L4",
+   "name": "Composition And Catalogue",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Composition And Catalogue"
+  },
+  {
+   "source": "100 layers",
+   "id": "L5",
+   "name": "Transactions, Revisions, And Lifecycle",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Transactions, Revisions, And Lifecycle"
+  },
+  {
+   "source": "100 layers",
+   "id": "L6",
+   "name": "Authority And Security",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Authority And Security"
+  },
+  {
+   "source": "100 layers",
+   "id": "L7",
+   "name": "External Effects And Adapters",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to External Effects And Adapters"
+  },
+  {
+   "source": "100 layers",
+   "id": "L8",
+   "name": "Brain, Attention, And Agents",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Brain, Attention, And Agents"
+  },
+  {
+   "source": "100 layers",
+   "id": "L9",
+   "name": "UI And Lawful Lenses",
+   "outcome": "PASS",
+   "why": "13 visible of 15 cards, 330 wires"
+  },
+  {
+   "source": "100 layers",
+   "id": "L10",
+   "name": "Cloud, Devices, And Migration",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Cloud, Devices, And Migration"
+  },
+  {
+   "source": "100 layers",
+   "id": "L11",
+   "name": "Stable Identity And Canonical Bytes",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Stable Identity And Canonical Bytes"
+  },
+  {
+   "source": "100 layers",
+   "id": "L12",
+   "name": "Snapshot And Commit Chain",
+   "outcome": "PASS",
+   "why": "chain checkpoint == full stream digest (57/57 kernel courts)"
+  },
+  {
+   "source": "100 layers",
+   "id": "L13",
+   "name": "Signed Bootstrap And Trusted Base",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Signed Bootstrap And Trusted Base"
+  },
+  {
+   "source": "100 layers",
+   "id": "L14",
+   "name": "Pattern, Binding, And Rewrite",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Pattern, Binding, And Rewrite"
+  },
+  {
+   "source": "100 layers",
+   "id": "L15",
+   "name": "Executable Interfaces And Relations",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Executable Interfaces And Relations"
+  },
+  {
+   "source": "100 layers",
+   "id": "L16",
+   "name": "Incremental Evaluation And Persistent Attention",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Incremental Evaluation And Persistent Attention"
+  },
+  {
+   "source": "100 layers",
+   "id": "L17",
+   "name": "Information-Flow Security",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Information-Flow Security"
+  },
+  {
+   "source": "100 layers",
+   "id": "L18",
+   "name": "Effect Uncertainty And Reconciliation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Effect Uncertainty And Reconciliation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L19",
+   "name": "Replication And Offline Work",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Replication And Offline Work"
+  },
+  {
+   "source": "100 layers",
+   "id": "L20",
+   "name": "Proof, Release, And Independent Truth",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Proof, Release, And Independent Truth"
+  },
+  {
+   "source": "100 layers",
+   "id": "L21",
+   "name": "Cell Identity Generation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Cell Identity Generation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L22",
+   "name": "Null Cell And Terminal Boundary",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Null Cell And Terminal Boundary"
+  },
+  {
+   "source": "100 layers",
+   "id": "L23",
+   "name": "Atom Codec Registry",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Atom Codec Registry"
+  },
+  {
+   "source": "100 layers",
+   "id": "L24",
+   "name": "Text And Unicode",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Text And Unicode"
+  },
+  {
+   "source": "100 layers",
+   "id": "L25",
+   "name": "Numbers, Units, And Precision",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Numbers, Units, And Precision"
+  },
+  {
+   "source": "100 layers",
+   "id": "L26",
+   "name": "Time, Clocks, And Causality",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Time, Clocks, And Causality"
+  },
+  {
+   "source": "100 layers",
+   "id": "L27",
+   "name": "Structured Data Normalization",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Structured Data Normalization"
+  },
+  {
+   "source": "100 layers",
+   "id": "L28",
+   "name": "Geometry, Images, And Documents",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Geometry, Images, And Documents"
+  },
+  {
+   "source": "100 layers",
+   "id": "L29",
+   "name": "Content-Addressed Blob Custody",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Content-Addressed Blob Custody"
+  },
+  {
+   "source": "100 layers",
+   "id": "L30",
+   "name": "Physical Store, Reachability, And Reclamation",
+   "outcome": "PASS",
+   "why": "5,266,367/5,267,928 reachable (2026-08-19 walk)"
+  },
+  {
+   "source": "100 layers",
+   "id": "L31",
+   "name": "Protocol Registry And Revision Binding",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Protocol Registry And Revision Binding"
+  },
+  {
+   "source": "100 layers",
+   "id": "L32",
+   "name": "Structural Pattern Language",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Structural Pattern Language"
+  },
+  {
+   "source": "100 layers",
+   "id": "L33",
+   "name": "Explicit Binding Environment",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Explicit Binding Environment"
+  },
+  {
+   "source": "100 layers",
+   "id": "L34",
+   "name": "Guards And Constraints",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Guards And Constraints"
+  },
+  {
+   "source": "100 layers",
+   "id": "L35",
+   "name": "Rewrite Construction",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Rewrite Construction"
+  },
+  {
+   "source": "100 layers",
+   "id": "L36",
+   "name": "Rule Competition And Confluence",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Rule Competition And Confluence"
+  },
+  {
+   "source": "100 layers",
+   "id": "L37",
+   "name": "Termination And Resource Budgets",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Termination And Resource Budgets"
+  },
+  {
+   "source": "100 layers",
+   "id": "L38",
+   "name": "Incidence Identity And Arbitrary Arity",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Incidence Identity And Arbitrary Arity"
+  },
+  {
+   "source": "100 layers",
+   "id": "L39",
+   "name": "Interface Compatibility And Adaptation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Interface Compatibility And Adaptation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L40",
+   "name": "Composition Boundary And Scope",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Composition Boundary And Scope"
+  },
+  {
+   "source": "100 layers",
+   "id": "L41",
+   "name": "Command And Proposal Envelope",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Command And Proposal Envelope"
+  },
+  {
+   "source": "100 layers",
+   "id": "L42",
+   "name": "Read Set, Write Set, And Conflict Surface",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Read Set, Write Set, And Conflict Surface"
+  },
+  {
+   "source": "100 layers",
+   "id": "L43",
+   "name": "Serializable Commit",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Serializable Commit"
+  },
+  {
+   "source": "100 layers",
+   "id": "L44",
+   "name": "Snapshot Construction And Digest",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Snapshot Construction And Digest"
+  },
+  {
+   "source": "100 layers",
+   "id": "L45",
+   "name": "Branches And Heads",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Branches And Heads"
+  },
+  {
+   "source": "100 layers",
+   "id": "L46",
+   "name": "Merge And Preserved Conflict",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Merge And Preserved Conflict"
+  },
+  {
+   "source": "100 layers",
+   "id": "L47",
+   "name": "Undo, Restore, Reversal, And Compensation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Undo, Restore, Reversal, And Compensation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L48",
+   "name": "WIP, Shared, Published, And Archived",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to WIP, Shared, Published, And Archived"
+  },
+  {
+   "source": "100 layers",
+   "id": "L49",
+   "name": "Independent State Axes",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Independent State Axes"
+  },
+  {
+   "source": "100 layers",
+   "id": "L50",
+   "name": "Durable History, Checkpoint, And Recovery",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Durable History, Checkpoint, And Recovery"
+  },
+  {
+   "source": "100 layers",
+   "id": "L51",
+   "name": "Human And Organizational Identity Roots",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Human And Organizational Identity Roots"
+  },
+  {
+   "source": "100 layers",
+   "id": "L52",
+   "name": "Device Identity And Key Custody",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Device Identity And Key Custody"
+  },
+  {
+   "source": "100 layers",
+   "id": "L53",
+   "name": "Session And Delegation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Session And Delegation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L54",
+   "name": "Relationship-Aware Authorization",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Relationship-Aware Authorization"
+  },
+  {
+   "source": "100 layers",
+   "id": "L55",
+   "name": "Policy Definition, Release, And Evaluation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Policy Definition, Release, And Evaluation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L56",
+   "name": "Authorized Projection And Noninterference",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Authorized Projection And Noninterference"
+  },
+  {
+   "source": "100 layers",
+   "id": "L57",
+   "name": "Privacy Tier And Tenant Partition",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Privacy Tier And Tenant Partition"
+  },
+  {
+   "source": "100 layers",
+   "id": "L58",
+   "name": "Secret And Key Reference Boundary",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Secret And Key Reference Boundary"
+  },
+  {
+   "source": "100 layers",
+   "id": "L59",
+   "name": "Adapter Admission And Least Privilege",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Adapter Admission And Least Privilege"
+  },
+  {
+   "source": "100 layers",
+   "id": "L60",
+   "name": "Audit, Revocation, Incident, And Recovery",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Audit, Revocation, Incident, And Recovery"
+  },
+  {
+   "source": "100 layers",
+   "id": "L61",
+   "name": "Signal",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Signal"
+  },
+  {
+   "source": "100 layers",
+   "id": "L62",
+   "name": "Candidate Admission",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Candidate Admission"
+  },
+  {
+   "source": "100 layers",
+   "id": "L63",
+   "name": "Attention Ordering",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Attention Ordering"
+  },
+  {
+   "source": "100 layers",
+   "id": "L64",
+   "name": "Focus And Bounded Working Set",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Focus And Bounded Working Set"
+  },
+  {
+   "source": "100 layers",
+   "id": "L65",
+   "name": "Obligation, Work, And Dependency",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Obligation, Work, And Dependency"
+  },
+  {
+   "source": "100 layers",
+   "id": "L66",
+   "name": "Decision And Outcome",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Decision And Outcome"
+  },
+  {
+   "source": "100 layers",
+   "id": "L67",
+   "name": "Agent Session Composition",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Agent Session Composition"
+  },
+  {
+   "source": "100 layers",
+   "id": "L68",
+   "name": "Model Context, Tools, Cost, And Evidence",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Model Context, Tools, Cost, And Evidence"
+  },
+  {
+   "source": "100 layers",
+   "id": "L69",
+   "name": "Workshop Coordination",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Workshop Coordination"
+  },
+  {
+   "source": "100 layers",
+   "id": "L70",
+   "name": "Core Values As Executable Governance",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Core Values As Executable Governance"
+  },
+  {
+   "source": "100 layers",
+   "id": "L71",
+   "name": "Lens Query And Visibility Depth",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Lens Query And Visibility Depth"
+  },
+  {
+   "source": "100 layers",
+   "id": "L72",
+   "name": "Scope Navigation And Breadcrumbs",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Scope Navigation And Breadcrumbs"
+  },
+  {
+   "source": "100 layers",
+   "id": "L73",
+   "name": "Canvas Coordinates And Transform Stack",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Canvas Coordinates And Transform Stack"
+  },
+  {
+   "source": "100 layers",
+   "id": "L74",
+   "name": "Selection And Marquee Semantics",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Selection And Marquee Semantics"
+  },
+  {
+   "source": "100 layers",
+   "id": "L75",
+   "name": "Node Presentation As Editable Composition",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Node Presentation As Editable Composition"
+  },
+  {
+   "source": "100 layers",
+   "id": "L76",
+   "name": "Socket And Public Interface Rendering",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Socket And Public Interface Rendering"
+  },
+  {
+   "source": "100 layers",
+   "id": "L77",
+   "name": "Wire Rendering And Manipulation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Wire Rendering And Manipulation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L78",
+   "name": "Properties Rail And Editor Discovery",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Properties Rail And Editor Discovery"
+  },
+  {
+   "source": "100 layers",
+   "id": "L79",
+   "name": "Catalogue, Search, And Composer",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Catalogue, Search, And Composer"
+  },
+  {
+   "source": "100 layers",
+   "id": "L80",
+   "name": "Accessibility, Locality, And Interaction Performance",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Accessibility, Locality, And Interaction Performance"
+  },
+  {
+   "source": "100 layers",
+   "id": "L81",
+   "name": "Effect Intent And Authorization",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Effect Intent And Authorization"
+  },
+  {
+   "source": "100 layers",
+   "id": "L82",
+   "name": "Attempt Identity And Idempotency",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Attempt Identity And Idempotency"
+  },
+  {
+   "source": "100 layers",
+   "id": "L83",
+   "name": "Provider Outcome And Reconciliation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Provider Outcome And Reconciliation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L84",
+   "name": "Domain Adapter Boundary",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Domain Adapter Boundary"
+  },
+  {
+   "source": "100 layers",
+   "id": "L85",
+   "name": "Remote Authority And Consensus",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Remote Authority And Consensus"
+  },
+  {
+   "source": "100 layers",
+   "id": "L86",
+   "name": "Local Replica, Offline Branch, And Sync",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Local Replica, Offline Branch, And Sync"
+  },
+  {
+   "source": "100 layers",
+   "id": "L87",
+   "name": "Artifact Transport And Delivery",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Artifact Transport And Delivery"
+  },
+  {
+   "source": "100 layers",
+   "id": "L88",
+   "name": "Events, Subscriptions, And Backpressure",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Events, Subscriptions, And Backpressure"
+  },
+  {
+   "source": "100 layers",
+   "id": "L89",
+   "name": "Runtime Ownership, Singleton, And Supervision",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Runtime Ownership, Singleton, And Supervision"
+  },
+  {
+   "source": "100 layers",
+   "id": "L90",
+   "name": "Observability, Capacity, Backup, And Disaster Recovery",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Observability, Capacity, Backup, And Disaster Recovery"
+  },
+  {
+   "source": "100 layers",
+   "id": "L91",
+   "name": "Requirement And Grand Map Traceability",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Requirement And Grand Map Traceability"
+  },
+  {
+   "source": "100 layers",
+   "id": "L92",
+   "name": "Architecture Decision And Supersession",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Architecture Decision And Supersession"
+  },
+  {
+   "source": "100 layers",
+   "id": "L93",
+   "name": "Threat Model And Security Court",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Threat Model And Security Court"
+  },
+  {
+   "source": "100 layers",
+   "id": "L94",
+   "name": "Model, Property, Fuzz, And Differential Courts",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Model, Property, Fuzz, And Differential Courts"
+  },
+  {
+   "source": "100 layers",
+   "id": "L95",
+   "name": "Real Artifact, Browser, Host, And Performance Courts",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Real Artifact, Browser, Host, And Performance Courts"
+  },
+  {
+   "source": "100 layers",
+   "id": "L96",
+   "name": "Build Provenance, SBOM, And Artifact Attestation",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Build Provenance, SBOM, And Artifact Attestation"
+  },
+  {
+   "source": "100 layers",
+   "id": "L97",
+   "name": "Independent Verification And Stewardship",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Independent Verification And Stewardship"
+  },
+  {
+   "source": "100 layers",
+   "id": "L98",
+   "name": "Promotion, Release, And Deployment Selection",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Promotion, Release, And Deployment Selection"
+  },
+  {
+   "source": "100 layers",
+   "id": "L99",
+   "name": "Capability Migration And Legacy Consumption",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Capability Migration And Legacy Consumption"
+  },
+  {
+   "source": "100 layers",
+   "id": "L100",
+   "name": "Constitutional Continuity And Controlled Evolution",
+   "outcome": "NOT JUDGED",
+   "why": "no automatic measurement bound to Constitutional Continuity And Controlled Evolution"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_design_tokens",
+   "name": "Design Tokens",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_engine",
+   "name": "Theme Engine",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_forge",
+   "name": "Theme: Forge",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_blueprint",
+   "name": "Theme: Blueprint",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_vellum",
+   "name": "Theme: Vellum",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_a11y_overlay",
+   "name": "A11y Token Overlay",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_sidebar_rail",
+   "name": "Sidebar Rail",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - the shell rail is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_composer_bar",
+   "name": "Composer Bar",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - asking in plain language is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_account_chip",
+   "name": "Account Chip",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - account surface is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_node_card",
+   "name": "Node Card Component",
+   "outcome": "NOT JUDGED",
+   "why": "drawn by the browser editor court, which is currently red"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_modal_system",
+   "name": "Modal / Panel System",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_voice_lint",
+   "name": "Voice / Microcopy Lint",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_command_palette",
+   "name": "Command Palette",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - palette is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_node_authoring",
+   "name": "UI-as-Node Authoring",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "ui_theme_authoring",
+   "name": "Theme-as-Node Authoring",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_app_is_graph",
+   "name": "App UI Is The Graph",
+   "outcome": "NOT JUDGED",
+   "why": "vision - nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_watcher_node",
+   "name": "Watcher Node",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_dragdrop_elements",
+   "name": "Edit Elements In The Node",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_save_sync",
+   "name": "Save = Live, No Turnaround",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_ui_color_slice_demo",
+   "name": "Room-One Color Proof",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_lm_graph_state",
+   "name": "LM_GRAPH State Store",
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_node_view",
+   "name": "NodeView Renderer",
+   "outcome": "NOT JUDGED",
+   "why": "drawn by the browser editor court, which is currently red"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_wire_layer",
+   "name": "WireLayer (typed edges)",
+   "outcome": "PASS",
+   "why": "11 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_typed_ports",
+   "name": "Typed Ports / Sockets",
+   "outcome": "PASS",
+   "why": "25 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_cook_engine",
+   "name": "Cook Engine (lazy-dirty-cached)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-07-15; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_dirty_cascade",
+   "name": "Dirty Cascade",
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_run_node",
+   "name": "run_node / Rerun",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - running a single node is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_inline_param_edit",
+   "name": "Inline Param Edit",
+   "outcome": "PASS",
+   "why": "24 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_drag_rewire",
+   "name": "Drag-Rewire + Cycle Guard",
+   "outcome": "PASS",
+   "why": "3 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_pan_zoom",
+   "name": "Pan / Zoom Viewport",
+   "outcome": "NOT JUDGED",
+   "why": "decided by the live browser gesture court"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_multiselect",
+   "name": "Multiselect + Marquee",
+   "outcome": "NOT JUDGED",
+   "why": "decided by the live browser gesture court"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_groups",
+   "name": "Groups / Collapse",
+   "outcome": "NOT JUDGED",
+   "why": "declared 3 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_resnap_repair",
+   "name": "Wire Resnap / Repair",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - wire repair after a port change is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "canvas_bump_graph",
+   "name": "bumpGraph Repaint Bus",
+   "outcome": "PASS",
+   "why": "2 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_interpret",
+   "name": "Interpret Runtime",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - the interpret runtime is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_group_runs",
+   "name": "Group Runs As A Node",
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_incremental",
+   "name": "Incremental Recompute",
+   "outcome": "PASS",
+   "why": "10 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_freeze_history",
+   "name": "Freeze + History In Engine",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_arch_scale_is_group",
+   "name": "Scale = Grouping",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_grammar",
+   "name": "Node Grammar",
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_category_taxonomy",
+   "name": "Category Taxonomy",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_typed_ports",
+   "name": "Typed Inputs / Outputs",
+   "outcome": "PASS",
+   "why": "25 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_config_schema",
+   "name": "Config Schema (Knobs)",
+   "outcome": "PASS",
+   "why": "23 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_library_search",
+   "name": "Library Search (search-before-create)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_library_create",
+   "name": "Library Create + Register",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_validator",
+   "name": "Modular-Spec Validator",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_smith",
+   "name": "Node Smith",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-24; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_sandbox",
+   "name": "Execution Sandbox",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - custom-code sandbox not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_custom_register",
+   "name": "Custom Node Registry",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_skill_node",
+   "name": "Skill Node",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_subgraph",
+   "name": "Subgraph (Node-of-Nodes)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_param_promote",
+   "name": "Param to Socket Promote",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_runner",
+   "name": "Graph Runner (cook)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - running the graph is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_floor_iterate",
+   "name": "Floor - Iterate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_floor_aggregate",
+   "name": "Floor - Aggregate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_floor_reference",
+   "name": "Floor - Reference",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_grammar_homoiconic_types",
+   "name": "Types Are Nodes",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_grammar_effect_split",
+   "name": "Pure vs Effectful",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_typed_wire",
+   "name": "Typed Wire",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_geometry",
+   "name": "Floor Value - Geometry",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_image_media",
+   "name": "Floor Value - Image / Media",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_val_ui_element",
+   "name": "Floor Value - UI Element",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_decision_score",
+   "name": "Decision / Valuation Node",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_decision_fuzzy",
+   "name": "Linguistic Decision Node",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nodes_autotune",
+   "name": "Constrained Auto-Tune",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_router",
+   "name": "LLM Router",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_registry",
+   "name": "Model Registry",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_claude",
+   "name": "Claude (Anthropic)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_openai",
+   "name": "OpenAI (GPT)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_gemini",
+   "name": "Google (Gemini)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_local",
+   "name": "Local Models",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_cli_sub",
+   "name": "CLI Subscriptions",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_keys",
+   "name": "Provider Keys & Auth",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_blocklist",
+   "name": "Failure Classifier & Cooldown",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_tool_engine",
+   "name": "Tool Engine",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_composer",
+   "name": "Composer Agent",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - the composer agent is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_mode_gate",
+   "name": "Write Approval Gate",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_agent_step",
+   "name": "agent_step Primitives",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "models_usage",
+   "name": "Usage & Cost Meter",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_model_ai_primitives",
+   "name": "AI Calls = Effectful Primitives",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_model_build_agent",
+   "name": "The Build Agent",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - the build agent is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_daemon",
+   "name": "Brain Daemon :8473",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_owner_binding",
+   "name": "Owner Binding",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_fact_store",
+   "name": "Fact Store (brain.db)",
+   "outcome": "NOT JUDGED",
+   "why": "brain.db is the old store - the graph is the store now, no court asserts the migration"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_layers",
+   "name": "Layered Scopes",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_write",
+   "name": "Write / Observe",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_embeddings",
+   "name": "Embedding Index",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_context_recall",
+   "name": "Context Recall",
+   "outcome": "PASS",
+   "why": "14 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_skills",
+   "name": "Skill Library",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_reflexion",
+   "name": "Reflexion Worker",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_secrets",
+   "name": "Secret Vault (op://)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_personal_cloud_sync",
+   "name": "Personal Cloud Sync",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_firm_federation",
+   "name": "Firm Federation",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_community",
+   "name": "Community Brain",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_court_gate",
+   "name": "Verify Gate (ROMA Court)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_explorer",
+   "name": "Brain Explorer / Folders",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_court_engine",
+   "name": "Court Tree = Build Engine",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_memory_is_nodes",
+   "name": "Memory Is Nodes",
+   "outcome": "PASS",
+   "why": "7 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_learns_per_slice",
+   "name": "Learns Per Slice",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_brain_always_inject",
+   "name": "Always-Inject, Not Recall",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_hybrid_recall",
+   "name": "Hybrid Recall (BM25 + dense)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_graphrag_explain",
+   "name": "Explainable Graph-RAG",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_drift_monitor",
+   "name": "Staleness / Drift Monitor",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_partial_pooling",
+   "name": "Partial-Pooling Merge",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "brain_diligence",
+   "name": "Diligence Gate (never-reward-short)",
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_contract",
+   "name": "Connector Contract (the spine)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-23; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_op_node",
+   "name": "Connector Op (the unit user turns)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-23; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_param_spec",
+   "name": "Op Parameter (the editable knob)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-24; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_host_picker",
+   "name": "Host Picker (16 hosts)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-23; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_probe",
+   "name": "Status Probe (honest 4-state)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-23; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_health_daemon",
+   "name": "Health Daemon (5s heartbeat)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_broker",
+   "name": "Loopback Broker (in-process bridge)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_self_heal",
+   "name": "Self-Heal (auto-revive)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_op_result",
+   "name": "Op Result (what flows out)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-23; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_auto_build",
+   "name": "Auto-Build Connector (ask → built)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - ask-to-built connector is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_registry",
+   "name": "Connector Registry (the roster)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_approval_gate",
+   "name": "Write Approval Gate",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_panel",
+   "name": "Connector Panel (the surface)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - the surface is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "connectors_auth",
+   "name": "Auth / Credentials (op:// refs)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on 2026-06-24; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_conn_effect_primitives",
+   "name": "Connectors = Effect Primitives",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_conn_freeze_gated",
+   "name": "Effects Are Freeze-Gated",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_session_object",
+   "name": "Session Object (.archhub-session.json)",
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_param_pool",
+   "name": "Parameter Pool",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_chain_state",
+   "name": "Chain State Machine",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_autosave",
+   "name": "Debounced Autosave",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_save_guard",
+   "name": "Save Guard + Round-Trip Verify",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_graph_migrator",
+   "name": "Graph ↔ lmGraph Migrator",
+   "outcome": "NOT JUDGED",
+   "why": "migration helper for the old format - retires with the old app"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_threads_rail",
+   "name": "Threads Rail",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - shell surface not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_open_session",
+   "name": "Open / Resume Session",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_pin",
+   "name": "Pin / Favourite",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_version_history",
+   "name": "Version History",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_clear_graph",
+   "name": "Clear / Empty Persist",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_cloud_sync",
+   "name": "Cloud Session Sync",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - cloud session sync not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_share_export",
+   "name": "Share / Export Bundle",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "sessions_replay",
+   "name": "Repeat / Replay Run",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_wip",
+   "name": "WIP - Local Graph",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_central",
+   "name": "Central - Shared Truth",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_federated",
+   "name": "Federated - Linked Models",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_history_tree",
+   "name": "History Tree - Revert",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cde_node_id_eq_element_id",
+   "name": "Node Id = Element Id",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_intent_ask",
+   "name": "Intent Ask",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_agency_gate",
+   "name": "User-Agency Gate",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_atomize",
+   "name": "Atomize",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_req_tree",
+   "name": "Requirement Tree",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_library_first",
+   "name": "Library-First Search",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_composer_build",
+   "name": "Composer Build (local)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - building a node from intent is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_executor",
+   "name": "Executor (does work)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_lens_artifact",
+   "name": "Lens 1 - Artifact",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_lens_diligence",
+   "name": "Lens 2 - Diligence",
+   "outcome": "PASS",
+   "why": "6 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_lens_independence",
+   "name": "Lens 3 - Independence",
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_convene_court",
+   "name": "ROMA Court (jury)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_settle",
+   "name": "Settle Verdict",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_learn_fact",
+   "name": "Learn Fact",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_signal",
+   "name": "court_verdict Signal",
+   "outcome": "PASS",
+   "why": "3 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_promote",
+   "name": "Promote Local to Official",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - promoting local to official is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_real_app",
+   "name": "Gate - On The Real App",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_reversible",
+   "name": "Gate - Reversible",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_loop_dry",
+   "name": "Gate - Loop Until Dry",
+   "outcome": "NOT JUDGED",
+   "why": "vision - nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_court_refute",
+   "name": "Gate - Court Refutes",
+   "outcome": "NOT JUDGED",
+   "why": "vision - nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_gate_proof_seen",
+   "name": "Gate - Proof You See",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_impossible_state",
+   "name": "Impossible-State Gate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_confidence_gate",
+   "name": "Calibrated Confidence Gate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_spec_tests",
+   "name": "Spec-Derived Tests",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_court_tail_coverage",
+   "name": "Tail + Coverage Scoring",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_loop_governor",
+   "name": "Loop Viability Governor",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_verdict_writeback",
+   "name": "Verdict → Graph Writeback",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "selfext_juror_diversity",
+   "name": "Juror Diversity + Confidence Vote",
+   "outcome": "NOT JUDGED",
+   "why": "claimed planned; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_content_source",
+   "name": "Content Source (repo facts)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_from_brain",
+   "name": "Brain Skill Export",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_changelog_parser",
+   "name": "Changelog Parser",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_build_info",
+   "name": "Build-Info Stamper",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_pricing_node",
+   "name": "Pricing Tiers",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - pricing is not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_page_renderer",
+   "name": "Astro Page Renderer",
+   "outcome": "NOT JUDGED",
+   "why": "declared 2 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_voice_lint",
+   "name": "Voice / Microcopy Lint",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_seo_meta",
+   "name": "SEO + Meta / Schema",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_download_cta",
+   "name": "Download CTA",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_signin_gateway",
+   "name": "Sign-in / Signup Gateway",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_fly_deploy",
+   "name": "Fly Deploy Host",
+   "outcome": "NOT JUDGED",
+   "why": "deployment is an open release boundary"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_analytics",
+   "name": "Marketing Analytics",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_blog_node",
+   "name": "Blog / Release Notes",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "website_contributors",
+   "name": "Contributors / Community Wall",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_identity",
+   "name": "Identity (who is asking)",
+   "outcome": "PASS",
+   "why": "19 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_signup_register",
+   "name": "Sign up / register",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_magic_link",
+   "name": "Magic-link email",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_pkce_exchange",
+   "name": "PKCE code exchange",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_google_oauth",
+   "name": "Sign in with Google",
+   "outcome": "PASS",
+   "why": "60 bound tests passed across 2 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_idtoken_verify",
+   "name": "id_token verify (JWKS RS256)",
+   "outcome": "PASS",
+   "why": "60 bound tests passed across 1 file(s)"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_session_token",
+   "name": "Session token (bearer)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_token_guard",
+   "name": "Token guard (require_user)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_logout_revoke",
+   "name": "Logout / revoke sessions",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_brain_provision",
+   "name": "Brain provision on first auth",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_firm",
+   "name": "Firm / company",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_roles",
+   "name": "Roles & membership gate",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_seats",
+   "name": "Seats (à-la-carte)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_invite",
+   "name": "Invite teammate",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_invite_accept",
+   "name": "Accept invite (email-bound)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_account_chip",
+   "name": "Account chip",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - account surface not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "users_owner_transfer",
+   "name": "Transfer ownership",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_plan_catalog",
+   "name": "Plan Catalog",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_entitlements",
+   "name": "Entitlement Resolver",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_usage_meter",
+   "name": "Usage Meter",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_quota_gate",
+   "name": "Quota Gate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_free_llm_key",
+   "name": "Free-Tier LLM Key",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_byo_key_gate",
+   "name": "BYO-Key Gate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_stripe_billing",
+   "name": "Stripe Billing",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_webhook_sync",
+   "name": "Billing Webhook Sync",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_upgrade_flow",
+   "name": "Upgrade Flow",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_firm_seats",
+   "name": "Firm Seats & Pooling",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_marketplace_rev",
+   "name": "Marketplace Revenue Share",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_project_billing",
+   "name": "Project Monetization Node",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_account_chip",
+   "name": "Account & Usage Chip",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_dunning",
+   "name": "Dunning & Downgrade",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "monetization_revenue_ledger",
+   "name": "Revenue Ledger",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_gate",
+   "name": "Founder-Only Gate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_command_bar",
+   "name": "Natural-Language Command Bar",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_agent_loop",
+   "name": "Cockpit Agent (reason→tool→observe)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_keyword_router",
+   "name": "Offline Keyword Router",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_read_tools",
+   "name": "Read Tools (run immediately)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_user_db_view",
+   "name": "User Database View",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_live_metrics",
+   "name": "Live Metrics Panel",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_write_preview",
+   "name": "Gated-Write Preview Card",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_purge_users",
+   "name": "Purge Test Users",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_kill_switch",
+   "name": "Kill Switches / Founder Flags",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_withheld",
+   "name": "Withheld Actions (founder-hands-only)",
+   "outcome": "NOT JUDGED",
+   "why": "no kernel court yet - founder-hands-only actions are not migrated"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_audit_log",
+   "name": "Audit Log",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_direct_agent",
+   "name": "Direct the Self-Extend Agent",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cockpit_secret_redactor",
+   "name": "Secret Redactor",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cockpit_surface",
+   "name": "Cockpit = First Surface",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_fly_app",
+   "name": "Fly Cloud Host",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_persistent_db",
+   "name": "Persistent SQLite (/data)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_healthz",
+   "name": "Health Check",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_auth",
+   "name": "Auth & Tokens",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_llm_proxy",
+   "name": "LLM Proxy",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_quota",
+   "name": "Quota Gate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_brain_replica",
+   "name": "Brain Replica Sync",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_sync_client",
+   "name": "Desktop Sync Client",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_brain_portal",
+   "name": "Cloud Brain Portal",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_release_updater",
+   "name": "Release Updater",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_deploy_pipeline",
+   "name": "Deploy Pipeline",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_email_sender",
+   "name": "Transactional Email",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_dns",
+   "name": "DNS & Mail Routing",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "cloud_billing",
+   "name": "Billing & Plans",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_cloud_central_home",
+   "name": "Central Lives In The Cloud",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_share_card",
+   "name": "Share to Community",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_tier_gate",
+   "name": "Tier Gate (exclusive vs knowledge)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_redaction_promote",
+   "name": "Promote + Redact",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_firm_outbox",
+   "name": "Firm Outbox (ActivityPub)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_subscribe",
+   "name": "Subscribe to Peer Firm",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_poller",
+   "name": "Community Poller",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_incoming_eval",
+   "name": "Incoming Pattern Judge",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_quarantine",
+   "name": "Quarantine Buffer",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_create_group",
+   "name": "Create Community Group",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_join_code",
+   "name": "Join-Code Issue + Verify",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fanout_export",
+   "name": "Fanout Export",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fanout_apply",
+   "name": "Fanout Apply (inbound merge)",
+   "outcome": "NOT JUDGED",
+   "why": "declared 1 test file(s) but the report has none of them"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_marketplace",
+   "name": "Marketplace Listing",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_watershed",
+   "name": "Collective-Mind Watershed",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_comm_federation",
+   "name": "Federation Across Users",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_prov_ledger",
+   "name": "Provenance Ledger (W3C PROV)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_trust_egtrl",
+   "name": "Decentralized Trust (EGT-RL)",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fingerprint_match",
+   "name": "Private Peer Matching",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "community_fair_propagation",
+   "name": "Fairness-Constrained Promotion",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_claude",
+   "name": "Orchestrator · Claude session",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on ; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_agent_build",
+   "name": "Builder Agent",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on ; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_agent_court",
+   "name": "Court Agent",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on ; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_live",
+   "name": "→ the map goes live",
+   "outcome": "NOT JUDGED",
+   "why": "claimed LIVE on ; live proof requires its evidence_ref to be a court -> not judged"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_one_primitive",
+   "name": "Law - One Primitive",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_group_only",
+   "name": "Law - Grouping Is The Only Op",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_interpret",
+   "name": "Law - Interpret All The Way",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_law_all_the_way",
+   "name": "Law - Nodes All The Way",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_prog_no80",
+   "name": "Method - No 80%",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_prog_plan_first",
+   "name": "Method - Plan Into The Map First",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice0_plan",
+   "name": "Slice 0 - Plan",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice1_room1",
+   "name": "Slice 1 - Room One",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice2_button",
+   "name": "Slice 2 - A Button",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice3_panel",
+   "name": "Slice 3 - A Panel",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice4_session",
+   "name": "Slice 4 - A Session",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_slice5_app",
+   "name": "Slice 5 - The Whole App",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_fork_bulldoze",
+   "name": "Fork - Extend Or Bulldoze",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "nl_roles",
+   "name": "Roles - Who",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orchestration_anti_redundancy",
+   "name": "Anti-Redundancy Coordination",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orchestration_model_routing",
+   "name": "Per-Agent Model Routing",
+   "outcome": "NOT JUDGED",
+   "why": "claimed vision; nothing to measure yet"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_assistant",
+   "name": "BABOOM - ArchHub Capability Assistant",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_observe",
+   "name": "BABOOM Observe",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_attention",
+   "name": "BABOOM Attention Router",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_voice",
+   "name": "BABOOM Voice and Task Input",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_capability_projection",
+   "name": "BABOOM Capability Projection",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_approval",
+   "name": "BABOOM Approval Gate",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_execute",
+   "name": "BABOOM Bounded Execution",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_receipt",
+   "name": "BABOOM Receipt Ledger",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  },
+  {
+   "source": "Grand Map",
+   "id": "orch_baboom_presence",
+   "name": "BABOOM Living Presence",
+   "outcome": "NOT JUDGED",
+   "why": "claimed partial; no automatic measurement"
+  }
+ ]
+}

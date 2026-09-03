@@ -1,0 +1,460 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ArchHub — Node Language Canvas</title>
+<style>
+:root{--bg:#0e0e11;--panel:#15151a;--soft2:#1c1c23;--line:#26262e;--ink:#ece8e0;--soft:#9b938a;--muted:#5e574f;--acc:#d97757;--grp:#7ec18e;}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;overflow:hidden}
+#top{position:fixed;top:0;left:0;right:0;height:52px;display:flex;align-items:center;gap:14px;padding:0 18px;background:#0e0e11ee;border-bottom:1px solid var(--line);z-index:5}
+h1{margin:0;font-family:'Instrument Serif',Georgia,serif;font-size:21px;font-weight:400}h1 .a{color:var(--acc)}
+#crumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--soft);flex-wrap:wrap}
+#crumb .c{cursor:pointer;padding:2px 8px;border:1px solid var(--line);border-radius:6px;background:var(--soft2)}
+#crumb .c:hover{border-color:var(--acc);color:var(--ink)}
+#crumb .sep{color:var(--muted)}
+#hint{margin-left:auto;font-size:11px;color:var(--muted)}
+/* left palette dock */
+#dock{position:fixed;top:52px;left:0;bottom:0;width:132px;background:#101015ee;border-right:1px solid var(--line);z-index:4;padding:12px 10px;overflow-y:auto}
+#dock .lbl{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin:0 0 8px 2px}
+#dock .p{display:block;width:100%;text-align:left;margin:0 0 7px 0;padding:8px 9px;background:var(--soft2);border:1px solid var(--line);border-radius:7px;color:var(--ink);font-size:12px;font-family:inherit;cursor:pointer}
+#dock .p:hover{border-color:var(--acc)}
+#dock .p .k{display:block;font-size:8px;letter-spacing:.5px;color:var(--muted);text-transform:uppercase;margin-top:2px}
+#stage{position:fixed;inset:52px 0 0 132px}
+svg{width:100%;height:100%;cursor:grab;display:block;touch-action:none}svg.drag{cursor:grabbing}svg.wiring{cursor:crosshair}
+.card{cursor:grab}
+.card rect.bg{fill:var(--panel);stroke:var(--line);stroke-width:1.2}
+.card:hover rect.bg{stroke:var(--acc)}
+.card.container rect.bg{stroke:var(--grp);stroke-width:1.6}
+.card.container:hover rect.bg{stroke:var(--acc)}
+.card.sel rect.bg{stroke:var(--acc);stroke-width:1.8}
+.card .kind{font-size:8px;letter-spacing:1px;fill:var(--muted);text-transform:uppercase}
+.card .title{font-size:12px;font-weight:700;fill:var(--ink)}
+.card .val{font-size:15px;font-weight:800;fill:var(--acc);font-family:ui-monospace,monospace}
+.card .drill{font-size:8px;fill:var(--grp);letter-spacing:.5px}
+.card .frozen{font-size:8px;fill:#e6a15f}
+.plug{fill:var(--soft2);stroke:var(--muted);stroke-width:1}
+.plug.in{cursor:crosshair}
+.plug.out{fill:var(--acc);stroke:var(--acc);cursor:crosshair}
+.plug.out:hover,.plug.in:hover{stroke:var(--ink);stroke-width:2}
+.plug.tgt{stroke:var(--grp);stroke-width:2.5}
+.wire{fill:none;stroke:var(--muted);stroke-width:1.4;opacity:.75;cursor:pointer;pointer-events:stroke}
+.wire:hover{stroke:var(--acc);opacity:1}
+.wire.gated{stroke:var(--grp);stroke-dasharray:5 4}
+.wire-hit{fill:none;stroke:transparent;stroke-width:14;cursor:pointer;pointer-events:stroke}
+.wire.live{stroke:var(--acc);stroke-dasharray:4 4;opacity:.9;pointer-events:none}
+.lasso{fill:rgba(217,119,87,.10);stroke:var(--acc);stroke-dasharray:4 3;stroke-width:1.2}
+.editing{position:fixed;z-index:9;background:var(--soft2);border:1px solid var(--acc);border-radius:7px;padding:8px;display:none}
+.editing input{background:#0e0e11;border:1px solid var(--line);color:var(--ink);border-radius:5px;padding:6px 8px;font-size:12px;font-family:ui-monospace,monospace;width:150px;outline:none}
+.editing .go{margin-left:6px;background:var(--acc);color:#1a0e08;border:0;border-radius:5px;padding:6px 10px;font-weight:700;cursor:pointer;font-size:12px}
+/* floating action buttons (group / gate menu) live in screen space */
+.float{position:fixed;z-index:10;display:none;background:var(--soft2);border:1px solid var(--acc);border-radius:7px;padding:6px;font-size:12px;box-shadow:0 6px 18px #0008}
+.float button{background:var(--acc);color:#1a0e08;border:0;border-radius:5px;padding:6px 11px;font-weight:700;cursor:pointer;font-size:12px;font-family:inherit}
+.float .ghost{background:var(--soft2);color:var(--soft);border:1px solid var(--line)}
+.float .ghost:hover{border-color:var(--acc);color:var(--ink)}
+#empty{position:fixed;inset:52px 0 0 132px;display:none;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:12;background:#2a1912;border:1px solid var(--acc);color:var(--ink);padding:8px 14px;border-radius:8px;font-size:12px;display:none}
+</style></head><body>
+<div id="top">
+  <h1>Arch<span class="a">Hub</span> · node language</h1>
+  <div id="crumb"></div>
+  <div id="hint">drag plug→plug = wire · shift-drag = lasso group · drag card = move · click value = edit · click wire = gate</div>
+</div>
+<div id="dock">
+  <p class="lbl">spawn</p>
+  <button class="p" data-kind="value" data-title="value" data-fop="value">value<span class="k">literal</span></button>
+  <button class="p" data-kind="op" data-title="+" data-fop="math" data-fn="+">op : +<span class="k">sum inputs</span></button>
+  <button class="p" data-kind="op" data-title="avg" data-fop="math" data-fn="avg">op : avg<span class="k">mean inputs</span></button>
+  <button class="p" data-kind="group" data-title="group" data-fop="">group<span class="k">empty container</span></button>
+  <button class="p" data-kind="ui" data-title="ui" data-fop="value">ui<span class="k">ui-element</span></button>
+  <button class="p" data-kind="note" data-title="note" data-fop="value">note<span class="k">annotation</span></button>
+</div>
+<div id="stage"><svg id="svg"></svg></div>
+<div id="empty">this node is a floor primitive — nothing to open</div>
+<div class="editing" id="editbox"><input id="editinp"><button class="go" id="editgo">set</button></div>
+<div class="float" id="groupbtn"><button id="grpgo">group these</button> <button class="ghost" id="grpcancel">cancel</button></div>
+<div class="float" id="gatemenu"><button id="gatetoggle">gate</button> <button class="ghost" id="gateclose">close</button></div>
+<div id="toast"></div>
+<script>
+"use strict";
+const SVG='http://www.w3.org/2000/svg';
+let stack=[];            // breadcrumb of container ids
+let view={x:0,y:0,k:1};  // pan/zoom
+let root=null;
+let lastData={nodes:[],wires:[]};  // last fetched level (for hit-tests without a re-fetch)
+let posCache={};         // id -> {x,y}  (laid-out screen-of-world positions this level)
+let selected=new Set();  // lasso selection (node ids)
+
+async function j(u,opt){
+  const r=await fetch(u,opt);
+  let body=null; try{body=await r.json();}catch(e){body=null;}
+  if(!r.ok){const msg=(body&&(body.error||body.detail))||('HTTP '+r.status);throw new Error(msg);}
+  return body===null?{}:body;
+}
+function el(t,a){const e=document.createElementNS(SVG,t);for(const k in(a||{}))e.setAttribute(k,a[k]);return e;}
+function $(id){return document.getElementById(id);}
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast._t);toast._t=setTimeout(()=>t.style.display='none',2600);}
+function fmtValue(v,err){
+  if(v===null||v===undefined)return err?'--':'';
+  if(typeof v==='object'){
+    if(v.kind==='governance'){
+      const mark=v.ok?'OK':'RED';
+      return (mark+' | '+(v.check||'governance')+' | '+(v.detail||'')).slice(0,44);
+    }
+    if(v.dry_run===true)return ('DRY RUN | '+JSON.stringify(v.plan||v.would||v.payload||{})).slice(0,44);
+    try{return JSON.stringify(v).slice(0,44);}catch(e){return '[object]';}
+  }
+  return (''+v).slice(0,44);
+}
+
+async function boot(){
+  try{
+    const meta=await j('/api/root');
+    root=meta.root; stack=[{id:root,title:meta.title||root}];
+    await draw();
+  }catch(e){toast('boot failed: '+e.message);}
+}
+async function openContainer(id,title){stack.push({id,title});view={x:0,y:0,k:1};selected.clear();await draw();}
+async function crumbTo(i){stack=stack.slice(0,i+1);view={x:0,y:0,k:1};selected.clear();await draw();}
+
+// ---- layout: pos from the server overrides; auto-layout is the fallback ----
+function layout(nodes,wires){
+  const CW=210,CH=88,GX=90,GY=40;
+  const idx={},indeg={},adj={};
+  nodes.forEach(n=>{idx[n.id]=n;indeg[n.id]=0;adj[n.id]=[];});
+  (wires||[]).forEach(w=>{if(adj[w.from]&&idx[w.to]){adj[w.from].push(w.to);indeg[w.to]++;}});
+  const layer={};let q=nodes.filter(n=>indeg[n.id]===0).map(n=>n.id);q.forEach(id=>layer[id]=0);
+  const ind=Object.assign({},indeg);
+  while(q.length){const id=q.shift();(adj[id]||[]).forEach(t=>{layer[t]=Math.max(layer[t]||0,(layer[id]||0)+1);if(--ind[t]===0)q.push(t);});}
+  nodes.forEach(n=>{if(layer[n.id]==null)layer[n.id]=0;});
+  const cols={};nodes.forEach(n=>{(cols[layer[n.id]]=cols[layer[n.id]]||[]).push(n);});
+  const pos={};
+  Object.keys(cols).forEach(L=>{cols[L].forEach((n,i)=>{pos[n.id]={x:60+L*(CW+GX),y:70+i*(CH+GY),w:CW,h:CH};});});
+  // server-provided pos wins over the auto-layout (hand layout, SPEC gesture 5)
+  nodes.forEach(n=>{const p=n.pos;
+    if(p&&typeof p.x==='number'&&typeof p.y==='number'&&isFinite(p.x)&&isFinite(p.y)){
+      pos[n.id]={x:p.x,y:p.y,w:CW,h:CH};
+    }});
+  return pos;
+}
+
+async function draw(){
+  hideEdit(); hideFloats();                 // gesture 6: never leave a stale box
+  const cont=stack[stack.length-1];
+  let data;
+  try{data=await j('/api/level?id='+encodeURIComponent(cont.id));}
+  catch(e){toast('level load failed: '+e.message);return;}
+  data.nodes=data.nodes||[]; data.wires=data.wires||[];
+  lastData=data;
+  const svg=$('svg');svg.innerHTML='';
+  $('empty').style.display=data.nodes.length?'none':'flex';
+  // crumb
+  const cb=$('crumb');cb.innerHTML='';
+  stack.forEach((s,i)=>{if(i)cb.append(Object.assign(document.createElement('span'),{className:'sep',textContent:'›'}));
+    const c=document.createElement('span');c.className='c';c.textContent=s.title;c.onclick=()=>crumbTo(i);cb.append(c);});
+  const g=el('g',{id:'world'});svg.append(g);
+  const pos=layout(data.nodes,data.wires);posCache=pos;
+  // wires first (under cards) -- fat invisible hit path + the visible stroke
+  data.wires.forEach(w=>{const a=pos[w.from],b=pos[w.to];if(!a||!b)return;
+    const x1=a.x+a.w,y1=a.y+a.h/2,x2=b.x,y2=b.y+b.h/2,mx=(x1+x2)/2;
+    const d=`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    const hit=el('path',{class:'wire-hit',d:d});
+    hit.addEventListener('click',ev=>{ev.stopPropagation();openGateMenu(w,ev);});
+    g.append(hit);
+    const path=el('path',{class:'wire'+(w.gated?' gated':''),d:d});
+    path.addEventListener('click',ev=>{ev.stopPropagation();openGateMenu(w,ev);});
+    g.append(path);});
+  // cards
+  data.nodes.forEach(n=>{const p=pos[n.id];
+    const card=el('g',{class:'card'+(n.container?' container':'')+(selected.has(n.id)?' sel':''),
+                       transform:`translate(${p.x},${p.y})`});
+    card.dataset.id=n.id;
+    card.append(el('rect',{class:'bg',x:0,y:0,width:p.w,height:p.h,rx:9}));
+    const kind=el('text',{class:'kind',x:12,y:18});kind.textContent=n.kind;card.append(kind);
+    if(n.frozen){const f=el('text',{class:'frozen',x:p.w-14,y:18,'text-anchor':'end'});f.textContent='● frozen';card.append(f);}
+    const ti=el('text',{class:'title',x:12,y:40});ti.textContent=(n.title||n.id).slice(0,26);card.append(ti);
+    const vv=el('text',{class:'val',x:12,y:68});
+    vv.textContent=fmtValue(n.value,n.error);card.append(vv);
+    if(n.container){const dd=el('text',{class:'drill',x:p.w-12,y:p.h-10,'text-anchor':'end'});dd.textContent='double-click to open ▸';card.append(dd);}
+    // plugs -- in (left) and out (right); both start/receive a wire drag
+    const pin=el('circle',{class:'plug in',cx:0,cy:p.h/2,r:5});pin.dataset.id=n.id;pin.dataset.side='in';card.append(pin);
+    const pout=el('circle',{class:'plug out',cx:p.w,cy:p.h/2,r:5});pout.dataset.id=n.id;pout.dataset.side='out';card.append(pout);
+    card.addEventListener('dblclick',ev=>{ev.stopPropagation();if(n.container)openContainer(n.id,n.title||n.id);});
+    g.append(card);});
+  applyView();
+}
+
+function applyView(){const w=$('world');if(w)w.setAttribute('transform',`translate(${view.x},${view.y}) scale(${view.k})`);}
+
+// ---------- screen <-> world coordinate helpers (stage-relative) ----------
+function stageRect(){return $('svg').getBoundingClientRect();}
+function toWorld(clientX,clientY){const r=stageRect();
+  return {x:(clientX-r.left-view.x)/view.k,y:(clientY-r.top-view.y)/view.k};}
+function worldToScreen(wx,wy){const r=stageRect();
+  return {x:r.left+view.x+wx*view.k,y:r.top+view.y+wy*view.k};}
+
+// =====================================================================
+// GESTURE 1 — DRAG A WIRE: mousedown on a plug -> live bezier -> mouseup
+//             on another node's plug -> POST /wire {from,to}.
+// A drag from an OUT plug: from=this, to=drop. From an IN plug: reversed
+// (so the flow always lands from-source -> to-consumer).
+// =====================================================================
+let wiring=null;  // {fromId, side, path}
+function plugAnchor(id,side){const p=posCache[id];if(!p)return null;
+  return side==='out'?{x:p.x+p.w,y:p.y+p.h/2}:{x:p.x,y:p.y+p.h/2};}
+function beginWire(startId,side,ev){
+  const a=plugAnchor(startId,side);if(!a)return;
+  const g=$('world');if(!g)return;
+  const path=el('path',{class:'wire live',d:''});g.append(path);
+  wiring={fromId:startId,side:side,path:path,ax:a.x,ay:a.y};
+  $('svg').classList.add('wiring');
+  updateWire(ev.clientX,ev.clientY);
+}
+function updateWire(cx,cy){if(!wiring)return;const w=toWorld(cx,cy);
+  const x1=wiring.ax,y1=wiring.ay,x2=w.x,y2=w.y,mx=(x1+x2)/2;
+  wiring.path.setAttribute('d',`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+  // highlight a compatible target plug under the cursor
+  document.querySelectorAll('.plug.tgt').forEach(e=>e.classList.remove('tgt'));
+  const t=plugAt(cx,cy);
+  if(t&&t.id!==wiring.fromId&&t.side!==wiring.side)t.node.classList.add('tgt');
+}
+function plugAt(cx,cy){const e=document.elementFromPoint(cx,cy);
+  if(e&&e.classList&&e.classList.contains('plug'))
+    return {node:e,id:e.dataset.id,side:e.dataset.side};
+  return null;}
+async function endWire(cx,cy){
+  if(!wiring)return;
+  const path=wiring.path,fromId=wiring.fromId,side=wiring.side;
+  wiring=null;$('svg').classList.remove('wiring');
+  document.querySelectorAll('.plug.tgt').forEach(e=>e.classList.remove('tgt'));
+  if(path&&path.parentNode)path.parentNode.removeChild(path);
+  const t=plugAt(cx,cy);
+  if(!t||t.id===fromId){return;}                 // cancel over empty / same node
+  if(t.side===side){return;}                      // out->out / in->in is meaningless
+  // normalize: the OUT end is the source, the IN end is the consumer
+  let from,to;
+  if(side==='out'){from=fromId;to=t.id;}else{from=t.id;to=fromId;}
+  try{await j('/wire',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({from:from,to:to})});
+      await draw();}
+  catch(e){toast('wire failed: '+e.message);}
+}
+
+// =====================================================================
+// GESTURE 5 — HAND LAYOUT: drag a card -> live move -> POST /pos on drop.
+// =====================================================================
+let moving=null;  // {id, card, ox, oy, sx, sy, moved}
+function beginMove(id,card,ev){
+  const p=posCache[id];if(!p)return;
+  moving={id:id,card:card,ox:p.x,oy:p.y,sx:ev.clientX,sy:ev.clientY,moved:false};
+}
+function updateMove(cx,cy){if(!moving)return;
+  const dx=(cx-moving.sx)/view.k,dy=(cy-moving.sy)/view.k;
+  if(Math.abs(dx)>2||Math.abs(dy)>2)moving.moved=true;
+  const nx=moving.ox+dx,ny=moving.oy+dy;
+  const p=posCache[moving.id];if(p){p.x=nx;p.y=ny;}
+  moving.card.setAttribute('transform',`translate(${nx},${ny})`);
+  redrawWiresFor(moving.id);
+}
+function redrawWiresFor(id){
+  // recompute only the wires touching the moved node (cheap live feedback)
+  const paths=document.querySelectorAll('.wire, .wire-hit');
+  (lastData.wires||[]).forEach((w,i)=>{
+    if(w.from!==id&&w.to!==id)return;
+    const a=posCache[w.from],b=posCache[w.to];if(!a||!b)return;
+    const x1=a.x+a.w,y1=a.y+a.h/2,x2=b.x,y2=b.y+b.h/2,mx=(x1+x2)/2;
+    const d=`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    // both hit + visible path share the index order (hit then path per wire)
+    const hit=paths[i*2],vis=paths[i*2+1];
+    if(hit&&hit.classList.contains('wire-hit'))hit.setAttribute('d',d);
+    if(vis&&vis.classList.contains('wire'))vis.setAttribute('d',d);
+  });
+}
+async function endMove(){
+  if(!moving)return;const m=moving;moving=null;
+  if(!m.moved)return;                              // a click, not a drag
+  const p=posCache[m.id];if(!p)return;
+  try{await j('/pos',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:m.id,x:Math.round(p.x),y:Math.round(p.y)})});}
+  catch(e){toast('pos save failed: '+e.message);}
+}
+
+// =====================================================================
+// GESTURE 2 — LASSO GROUP: shift+drag on empty canvas -> rect -> button.
+// =====================================================================
+let lasso=null;  // {rect, sx, sy}
+function beginLasso(ev){
+  const g=$('world');if(!g)return;
+  const w=toWorld(ev.clientX,ev.clientY);
+  const rect=el('rect',{class:'lasso',x:w.x,y:w.y,width:0,height:0,rx:4});
+  g.append(rect);lasso={rect:rect,sx:w.x,sy:w.y};
+  selected.clear();paintSelection();
+}
+function updateLasso(cx,cy){if(!lasso)return;
+  const w=toWorld(cx,cy);
+  const x=Math.min(lasso.sx,w.x),y=Math.min(lasso.sy,w.y),
+        ww=Math.abs(w.x-lasso.sx),hh=Math.abs(w.y-lasso.sy);
+  lasso.rect.setAttribute('x',x);lasso.rect.setAttribute('y',y);
+  lasso.rect.setAttribute('width',ww);lasso.rect.setAttribute('height',hh);
+  selected.clear();
+  (lastData.nodes||[]).forEach(n=>{const p=posCache[n.id];if(!p)return;
+    const cx0=p.x+p.w/2,cy0=p.y+p.h/2;
+    if(cx0>=x&&cx0<=x+ww&&cy0>=y&&cy0<=y+hh)selected.add(n.id);});
+  paintSelection();
+}
+function paintSelection(){
+  document.querySelectorAll('.card').forEach(c=>{
+    c.classList.toggle('sel',selected.has(c.dataset.id));});
+}
+function endLasso(){
+  if(!lasso)return;
+  if(lasso.rect&&lasso.rect.parentNode)lasso.rect.parentNode.removeChild(lasso.rect);
+  const anchor=lasso;lasso=null;
+  if(selected.size>=2){
+    // float the group button near the lasso's bottom-right, in screen space
+    const p=posCache;let maxX=-1e9,maxY=-1e9;
+    selected.forEach(id=>{const q=p[id];if(q){maxX=Math.max(maxX,q.x+q.w);maxY=Math.max(maxY,q.y+q.h);}});
+    const s=worldToScreen(maxX,maxY);
+    const b=$('groupbtn');b.style.left=Math.min(s.x,window.innerWidth-160)+'px';
+    b.style.top=Math.min(s.y+6,window.innerHeight-46)+'px';b.style.display='block';
+  }else{selected.clear();paintSelection();}
+}
+async function doGroup(){
+  const ids=[...selected];if(ids.length<2){hideFloats();return;}
+  try{await j('/group',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ids:ids,title:'group'})});
+      selected.clear();hideFloats();await draw();}
+  catch(e){toast('group failed: '+e.message);}
+}
+
+// =====================================================================
+// GESTURE 3 — PALETTE SPAWN: click a dock kind -> POST /add {kind,title,floor}.
+// =====================================================================
+function floorFor(kind,fop,fn){
+  if(kind==='group')return null;                  // container: no floor
+  if(fop==='math')return {op:'math',fn:fn||'+'};
+  return {op:'value',value:0};                     // value / ui / note literal
+}
+async function spawn(btn){
+  const kind=btn.dataset.kind,title=btn.dataset.title,
+        fop=btn.dataset.fop,fn=btn.dataset.fn;
+  const floor=floorFor(kind,fop,fn);
+  const cont=stack[stack.length-1];
+  const body={kind:kind,title:title,floor:cont.id};   // spawn INTO current level
+  if(floor!==null)body.spec=floor;                    // floor spec (backend maps as it likes)
+  try{await j('/add',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+      await draw();}
+  catch(e){toast('add failed: '+e.message);}
+}
+
+// =====================================================================
+// GESTURE 4 — GATE TOGGLE: click a wire -> menu -> POST /gate.
+// gated wires already render green-dashed (from w.gated in level_view).
+// =====================================================================
+let gateWire=null;
+function openGateMenu(w,ev){
+  gateWire=w;
+  const m=$('gatemenu');
+  $('gatetoggle').textContent=w.gated?'clear gate':'add gate';
+  m.style.left=Math.min(ev.clientX,window.innerWidth-160)+'px';
+  m.style.top=Math.min(ev.clientY,window.innerHeight-46)+'px';
+  m.style.display='block';
+}
+async function toggleGate(){
+  if(!gateWire){hideFloats();return;}
+  const w=gateWire;
+  // gate on -> point at the wire's own source as the gate node (a live truthy
+  // read from the one table); gate off -> null. The backend owns the semantics.
+  const gate_id=w.gated?null:w.from;
+  try{await j('/gate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({wire_id:w.id,gate_id:gate_id})});
+      hideFloats();gateWire=null;await draw();}
+  catch(e){toast('gate failed: '+e.message);}
+}
+
+// ---------------- pan + zoom + the gesture router (one pointer chain) --------
+(function(){const svg=$('svg');let panning=false,sx,sy;
+  svg.addEventListener('mousedown',e=>{
+    if(e.button!==0)return;
+    const plug=e.target.closest('.plug');
+    const card=e.target.closest('.card');
+    hideFloats();                                  // any fresh press dismisses menus
+    if(plug){e.preventDefault();beginWire(plug.dataset.id,plug.dataset.side,e);return;}
+    if(card){e.preventDefault();beginMove(card.dataset.id,card,e);return;}
+    if(e.shiftKey){e.preventDefault();beginLasso(e);return;}
+    // else pan; clicking empty space also clears an inline edit + selection
+    hideEdit();
+    if(selected.size){selected.clear();paintSelection();}
+    panning=true;sx=e.clientX-view.x;sy=e.clientY-view.y;svg.classList.add('drag');
+  });
+  window.addEventListener('mousemove',e=>{
+    if(wiring){updateWire(e.clientX,e.clientY);return;}
+    if(moving){updateMove(e.clientX,e.clientY);return;}
+    if(lasso){updateLasso(e.clientX,e.clientY);return;}
+    if(!panning)return;view.x=e.clientX-sx;view.y=e.clientY-sy;applyView();
+  });
+  window.addEventListener('mouseup',e=>{
+    if(wiring){endWire(e.clientX,e.clientY);return;}
+    if(moving){endMove();return;}
+    if(lasso){endLasso();return;}
+    panning=false;svg.classList.remove('drag');
+  });
+  svg.addEventListener('wheel',e=>{e.preventDefault();const f=e.deltaY<0?1.1:0.9;
+    // zoom toward the cursor so pan+zoom compose predictably
+    const r=stageRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    const wx=(mx-view.x)/view.k,wy=(my-view.y)/view.k;
+    view.k=Math.max(0.2,Math.min(2.5,view.k*f));
+    view.x=mx-wx*view.k;view.y=my-wy*view.k;applyView();},{passive:false});
+})();
+
+// ---- a plain click on a value opens the inline edit (only if it wasn't a drag) ----
+$('svg').addEventListener('click',e=>{
+  if(wiring||moving||lasso)return;
+  const card=e.target.closest('.card');if(!card)return;
+  const n=(lastData.nodes||[]).find(x=>x.id===card.dataset.id);
+  if(!n||n.container)return;                       // containers open on dblclick
+  if(e.target.closest('.plug'))return;
+  startEdit(n,e);
+});
+
+// =====================================================================
+// GESTURE 6 — inline live edit; the box HIDES on every draw + click-away.
+// =====================================================================
+let editing=null;
+function hideEdit(){$('editbox').style.display='none';editing=null;}
+function hideFloats(){$('groupbtn').style.display='none';$('gatemenu').style.display='none';}
+function startEdit(n,ev){editing=n;const box=$('editbox'),inp=$('editinp');
+  hideFloats();
+  box.style.display='block';
+  box.style.left=Math.min(ev.clientX,window.innerWidth-230)+'px';
+  box.style.top=Math.min(ev.clientY,window.innerHeight-56)+'px';
+  inp.value=(n.value===null||n.value===undefined)?'':n.value;inp.focus();inp.select();}
+async function commitEdit(){if(!editing)return;const inp=$('editinp');let v=inp.value;
+  if(v!==''&&!isNaN(Number(v)))v=Number(v);
+  const id=editing.id;hideEdit();
+  try{await j('/edit',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({node_id:id,value:v})});
+      await draw();}
+  catch(e){toast('edit failed: '+e.message);}}
+$('editgo').onclick=commitEdit;
+$('editinp').addEventListener('keydown',e=>{
+  if(e.key==='Enter')commitEdit();
+  if(e.key==='Escape')hideEdit();});
+// click-away: any press outside the edit box hides it (gesture 6, the lingering box)
+document.addEventListener('mousedown',e=>{
+  const box=$('editbox');
+  if(box.style.display==='block'&&!box.contains(e.target)&&!e.target.closest('.card'))hideEdit();
+  const gb=$('groupbtn'),gm=$('gatemenu');
+  if(gb.style.display==='block'&&!gb.contains(e.target))gb.style.display='none';
+  if(gm.style.display==='block'&&!gm.contains(e.target)&&!e.target.closest('.wire')&&!e.target.closest('.wire-hit'))gm.style.display='none';
+},true);
+window.addEventListener('keydown',e=>{if(e.key==='Escape'){hideEdit();hideFloats();
+  if(selected.size){selected.clear();paintSelection();}}});
+
+// dock wiring
+document.querySelectorAll('#dock .p').forEach(b=>b.addEventListener('click',()=>spawn(b)));
+$('grpgo').onclick=doGroup;
+$('grpcancel').onclick=()=>{selected.clear();paintSelection();hideFloats();};
+$('gatetoggle').onclick=toggleGate;
+$('gateclose').onclick=()=>{hideFloats();gateWire=null;};
+
+boot();
+</script></body></html>

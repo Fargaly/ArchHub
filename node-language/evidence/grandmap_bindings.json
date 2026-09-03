@@ -1,0 +1,746 @@
+{
+  "schema": "archhub-grandmap-bindings-v1",
+  "what_this_is": "Which kernel court decides a Grand Map requirement. The map's own evidence_ref points at a FILE in the superseded app, and a file is not proof: 159 of 187 refs aim at 12.PRODUCTION. A requirement bound here is judged by a kernel test instead. Anything unbound stays NOT JUDGED - that is the honest default, and it is what SPEC 12 calls the superseding court.",
+  "rules": {
+    "PASS": "every bound test ran and passed, and at least one matched",
+    "FAIL": "any bound test failed or errored",
+    "NOT JUDGED": "no binding declared, or no bound test in the report"
+  },
+  "bindings": {
+    "canvas_lm_graph_state": {
+      "why": "one persisted shape holds the whole graph",
+      "tests": [
+        "tests_replica/test_forcing_one_table.py"
+      ]
+    },
+    "canvas_wire_layer": {
+      "why": "wires are graph relations the canvas projects, not drawn edges",
+      "tests": [
+        "tests_replica/test_wire_is_a_member.py",
+        "tests_replica/test_cell_relations_view.py"
+      ]
+    },
+    "canvas_typed_ports": {
+      "why": "sockets carry a contract that decides which wires are legal",
+      "tests": [
+        "tests_replica/test_cell_relation_contract.py",
+        "tests_replica/test_cell_interface_view.py"
+      ]
+    },
+    "canvas_inline_param_edit": {
+      "why": "knobs edit graph-held properties, projected not hand-written",
+      "tests": [
+        "tests_replica/test_cell_properties_view.py",
+        "tests_replica/test_universal_properties_presentation.py"
+      ]
+    },
+    "canvas_drag_rewire": {
+      "why": "re-pointing an edge is a graph topology edit",
+      "tests": [
+        "tests_replica/test_relation_topology_editor.py"
+      ]
+    },
+    "canvas_groups": {
+      "why": "grouping folds members into one composition and back",
+      "tests": [
+        "tests_replica/test_wire_group_param.py",
+        "tests_replica/test_topsis_is_openable_group.py",
+        "tests_replica/test_universal_interaction_server.py::test_group_and_ungroup_toolbar_bindings_preserve_selected_root_identities"
+      ]
+    },
+    "canvas_bump_graph": {
+      "why": "a mutation reprojects exactly what changed",
+      "tests": [
+        "tests_replica/test_projection_delta.py"
+      ]
+    },
+    "canvas_dirty_cascade": {
+      "why": "derived state recomputes from the graph, never from a cache that can drift",
+      "tests": [
+        "tests_replica/test_derived_interactions_equivalence.py"
+      ]
+    },
+    "ui_design_tokens": {
+      "why": "the palette and scale are graph-held, not literals in a stylesheet",
+      "tests": [
+        "tests_replica/test_cell_design_tokens.py"
+      ]
+    },
+    "nl_arch_freeze_history": {
+      "why": "history is recorded in the graph and replays without repeating effects",
+      "tests": [
+        "tests_replica/test_cell_change_history.py"
+      ]
+    },
+    "sessions_session_object": {
+      "why": "a session is graph-held state that survives a restart",
+      "tests": [
+        "tests_replica/test_cell_browser_sessions.py",
+        "tests_replica/test_application_persistence.py"
+      ]
+    },
+    "sessions_open_session": {
+      "why": "opening a session restores its exact graph",
+      "tests": [
+        "tests_replica/test_cell_browser_sessions.py"
+      ]
+    },
+    "sessions_clear_graph": {
+      "why": "clearing does not leave a session behind",
+      "tests": [
+        "tests_replica/test_browser_sessions_do_not_accumulate.py"
+      ]
+    },
+    "sessions_version_history": {
+      "why": "every change is recorded and can be walked back",
+      "tests": [
+        "tests_replica/test_cell_change_history.py"
+      ]
+    },
+    "users_session_token": {
+      "why": "a bearer token identifies the caller and nothing else does",
+      "tests": [
+        "tests_replica/test_cell_native_auth.py"
+      ]
+    },
+    "nodes_grammar": {
+      "why": "the node catalogue is graph-held, one shape for every node",
+      "tests": [
+        "tests_replica/test_cell_catalog.py",
+        "tests_replica/test_cell_standard_library.py"
+      ]
+    },
+    "nodes_category_taxonomy": {
+      "why": "categories come from the domain catalogue, not a hard-coded list",
+      "tests": [
+        "tests_replica/test_cell_domain_catalog.py"
+      ]
+    },
+    "nodes_typed_ports": {
+      "why": "sockets carry a contract that decides legal wires",
+      "tests": [
+        "tests_replica/test_cell_relation_contract.py",
+        "tests_replica/test_cell_interface_view.py"
+      ]
+    },
+    "nodes_config_schema": {
+      "why": "knobs are projected from the graph, with real widgets",
+      "tests": [
+        "tests_replica/test_universal_properties_presentation.py"
+      ]
+    },
+    "nodes_library_search": {
+      "why": "the catalogue is searched before anything is minted",
+      "tests": [
+        "tests_replica/test_cell_catalog.py"
+      ]
+    },
+    "nodes_library_create": {
+      "why": "a new node type registers into the same one catalogue",
+      "tests": [
+        "tests_replica/test_cell_catalog.py"
+      ]
+    },
+    "nodes_param_promote": {
+      "why": "a parameter becomes a wireable socket and back",
+      "tests": [
+        "tests_replica/test_wire_group_param.py"
+      ]
+    },
+    "nodes_subgraph": {
+      "why": "a group of nodes is itself a node you can open",
+      "tests": [
+        "tests_replica/test_topsis_is_openable_group.py"
+      ]
+    },
+    "users_identity": {
+      "why": "who is asking is a signed graph fact",
+      "tests": [
+        "tests_replica/test_cell_identity.py"
+      ]
+    },
+    "users_idtoken_verify": {
+      "why": "a federated id token is verified against real keys",
+      "tests": [
+        "tests_replica/test_cell_federated_identity.py"
+      ]
+    },
+    "users_token_guard": {
+      "why": "every route refuses a caller without standing",
+      "tests": [
+        "tests_replica/test_cell_authorization.py"
+      ]
+    },
+    "users_google_oauth": {
+      "why": "sign-in is a federated identity the graph admits",
+      "tests": [
+        "tests_replica/test_cell_federated_identity.py",
+        "tests_replica/test_cell_native_auth.py"
+      ]
+    },
+    "users_roles": {
+      "why": "membership and role decide what a caller may do",
+      "tests": [
+        "tests_replica/test_cell_tenant_authority.py"
+      ]
+    },
+    "users_logout_revoke": {
+      "why": "ending a session revokes what it could reach",
+      "tests": [
+        "tests_replica/test_cell_browser_sessions.py"
+      ]
+    },
+    "models_router": {
+      "why": "choosing a model is a brokered, recorded decision",
+      "tests": [
+        "tests_replica/test_model_execution_broker.py"
+      ]
+    },
+    "models_registry": {
+      "why": "the model set is declared, not scattered in code",
+      "tests": [
+        "tests_replica/test_cell_baboom_model_execution.py"
+      ]
+    },
+    "nl_model_ai_primitives": {
+      "why": "an AI call is an effectful primitive the graph governs",
+      "tests": [
+        "tests_replica/test_cell_agent_cognition.py"
+      ]
+    },
+    "models_mode_gate": {
+      "why": "a write by a model passes an approval gate first",
+      "tests": [
+        "tests_replica/test_cell_cde_authority.py"
+      ]
+    },
+    "ui_theme_engine": {
+      "why": "themes are graph contexts and the active one is graph state, switchable",
+      "tests": [
+        "tests_replica/test_cell_theme_sets.py"
+      ]
+    },
+    "ui_theme_forge": {
+      "why": "the forge context is installed and selectable",
+      "tests": [
+        "tests_replica/test_cell_theme_sets.py"
+      ]
+    },
+    "ui_theme_blueprint": {
+      "why": "the blueprint context is installed and selectable",
+      "tests": [
+        "tests_replica/test_cell_theme_sets.py"
+      ]
+    },
+    "ui_theme_vellum": {
+      "why": "the vellum context is installed and selectable",
+      "tests": [
+        "tests_replica/test_cell_theme_sets.py"
+      ]
+    },
+    "ui_a11y_overlay": {
+      "why": "high contrast and zoom are graph contexts composed after the theme, refused when unadmitted",
+      "tests": [
+        "tests_replica/test_cell_accessibility.py"
+      ]
+    },
+    "brain_write": {
+      "why": "observing a fact writes it into the graph and it is readable back",
+      "tests": [
+        "tests_replica/test_cell_legacy_brain_governance.py"
+      ]
+    },
+    "brain_layers": {
+      "why": "scopes are graph relations, not folders on disk",
+      "tests": [
+        "tests_replica/test_cell_legacy_brain_governance.py"
+      ]
+    },
+    "nl_brain_memory_is_nodes": {
+      "why": "memory is the same one shape as everything else",
+      "tests": [
+        "tests_replica/test_cell_legacy_brain_governance.py",
+        "tests_replica/test_forcing_one_table.py"
+      ]
+    },
+    "brain_context_recall": {
+      "why": "what is in focus and what is owed survive and are recalled",
+      "tests": [
+        "tests_replica/test_cell_attention.py",
+        "tests_replica/test_universal_focus_integration.py"
+      ]
+    },
+    "brain_diligence": {
+      "why": "an obligation cannot be closed by claiming it, only by meeting it",
+      "tests": [
+        "tests_replica/test_universal_obligation_integration.py",
+        "tests_replica/test_cell_core_values.py"
+      ]
+    },
+    "brain_court_gate": {
+      "why": "a completion claim is settled by an independent court over graph-owned work",
+      "tests": [
+        "tests_replica/test_universal_work_completion_court.py"
+      ]
+    },
+    "nl_brain_court_engine": {
+      "why": "deliberation is a graph structure the runtime walks",
+      "tests": [
+        "tests_replica/test_cell_deliberation.py"
+      ]
+    },
+    "selfext_convene_court": {
+      "why": "a jury is convened over the exact artifact and its evidence",
+      "tests": [
+        "tests_replica/test_artifact_verification_court.py"
+      ]
+    },
+    "selfext_settle": {
+      "why": "a verdict settles work that the graph owns, not a claim",
+      "tests": [
+        "tests_replica/test_universal_work_completion_court.py"
+      ]
+    },
+    "selfext_lens_artifact": {
+      "why": "the artifact itself is verified, not its description",
+      "tests": [
+        "tests_replica/test_artifact_verification_court.py"
+      ]
+    },
+    "selfext_lens_diligence": {
+      "why": "shortcuts are refused by the value graph, not by good intentions",
+      "tests": [
+        "tests_replica/test_cell_core_values.py",
+        "tests_replica/test_universal_obligation_integration.py"
+      ]
+    },
+    "selfext_lens_independence": {
+      "why": "the witness is external to the thing it witnesses",
+      "tests": [
+        "tests_replica/test_cell_transparency_witness.py",
+        "tests_replica/test_external_revision_witness.py"
+      ]
+    },
+    "selfext_court_signal": {
+      "why": "a verdict emits a fact other parts of the graph can react to",
+      "tests": [
+        "tests_replica/test_cell_event_facts.py",
+        "tests_replica/test_cell_attention_reactions.py"
+      ]
+    },
+    "website_page_renderer": {
+      "why": "the site is projected from the graph, not authored beside it",
+      "tests": [
+        "tests_replica/test_node_native_website.py",
+        "tests_replica/test_universal_website.py"
+      ]
+    },
+    "website_content_source": {
+      "why": "page content comes from graph facts",
+      "tests": [
+        "tests_replica/test_universal_website.py"
+      ]
+    },
+    "website_build_info": {
+      "why": "what shipped is stamped from the exact revision",
+      "tests": [
+        "tests_replica/test_browser_publish_court.py"
+      ]
+    },
+    "connectors_broker": {
+      "why": "an adapter is reached through one brokered seam, not ad hoc",
+      "tests": [
+        "tests_replica/test_cell_adapters.py",
+        "tests_replica/test_cell_baboom_connector_execution.py"
+      ]
+    },
+    "connectors_registry": {
+      "why": "the roster of adapters is graph-held and admitted",
+      "tests": [
+        "tests_replica/test_cell_adapters.py"
+      ]
+    },
+    "connectors_approval_gate": {
+      "why": "a write through an adapter passes an approval gate first",
+      "tests": [
+        "tests_replica/test_cell_cde_authority.py"
+      ]
+    },
+    "nl_conn_effect_primitives": {
+      "why": "an adapter call is an effectful primitive the graph governs",
+      "tests": [
+        "tests_replica/test_cell_baboom_connector_execution.py"
+      ]
+    },
+    "nl_arch_group_runs": {
+      "why": "a group of nodes runs as one node, and opens back into its members",
+      "tests": [
+        "tests_replica/test_topsis_is_openable_group.py",
+        "tests_replica/test_wire_group_param.py"
+      ]
+    },
+    "nl_arch_incremental": {
+      "why": "only what changed recomputes, and the result equals a full recompute",
+      "tests": [
+        "tests_replica/test_derived_interactions_equivalence.py",
+        "tests_replica/test_chain_checkpoint_equivalence.py"
+      ]
+    },
+    "brain_skills": {
+      "why": "a skill is graph-held, names the work it was learned from, and cannot be promoted without evidence",
+      "tests": [
+        "tests_replica/test_cell_brain_skills.py"
+      ]
+    },
+    "brain_secrets": {
+      "why": "the graph holds only where a secret lives and who has custody; a value-looking reference is refused and resolution writes nothing back",
+      "tests": [
+        "tests_replica/test_cell_brain_secrets.py"
+      ]
+    },
+    "brain_reflexion": {
+      "why": "a failure closes only when a root cause AND a control are named; the same signature again is a recurrence that names the control which failed",
+      "tests": [
+        "tests_replica/test_cell_brain_reflexion.py"
+      ]
+    },
+    "brain_embeddings": {
+      "why": "embeddings are graph facts carrying their model and exact dimension; a mismatched vector is refused, recall never mixes models, and deleting the index forgets",
+      "tests": [
+        "tests_replica/test_cell_brain_recall.py"
+      ]
+    },
+    "brain_owner_binding": {
+      "why": "exactly one owner per root, no default owner, and a transfer only with consent naming both this owner and this subject",
+      "tests": [
+        "tests_replica/test_cell_brain_ownership.py"
+      ]
+    },
+    "brain_explorer": {
+      "why": "folders are derived from the facts that exist, never stored; a folder holding nothing does not exist",
+      "tests": [
+        "tests_replica/test_cell_brain_explorer.py"
+      ]
+    },
+    "brain_personal_cloud_sync": {
+      "why": "the merge law: later clock wins, ties break on origin not arrival, every arrival order reaches the same brain, and replaying a batch changes nothing",
+      "tests": [
+        "tests_replica/test_cell_brain_sync.py"
+      ]
+    },
+    "brain_firm_federation": {
+      "why": "only the owner may share a fact, only to a named firm, and only a redaction crosses",
+      "tests": [
+        "tests_replica/test_cell_brain_federation.py"
+      ]
+    },
+    "community_tier_gate": {
+      "why": "what crosses is a redaction the owner chose; someone outside the firm sees nothing",
+      "tests": [
+        "tests_replica/test_cell_brain_federation.py"
+      ]
+    },
+    "brain_community": {
+      "why": "incoming from a peer is quarantined on arrival and invisible until judged",
+      "tests": [
+        "tests_replica/test_cell_brain_community.py"
+      ]
+    },
+    "community_quarantine": {
+      "why": "nothing merges on arrival; quarantine holds it with its provenance",
+      "tests": [
+        "tests_replica/test_cell_brain_community.py"
+      ]
+    },
+    "community_subscribe": {
+      "why": "subscribing is agreeing to hear, not to believe; an unsubscribed peer is refused",
+      "tests": [
+        "tests_replica/test_cell_brain_community.py"
+      ]
+    },
+    "community_incoming_eval": {
+      "why": "a judgement admits or rejects, once, and a rejection is kept so the same claim is not argued twice",
+      "tests": [
+        "tests_replica/test_cell_brain_community.py"
+      ]
+    },
+    "community_create_group": {
+      "why": "a group has exactly one owner and the owner is already a member",
+      "tests": [
+        "tests_replica/test_cell_brain_groups.py"
+      ]
+    },
+    "community_join_code": {
+      "why": "the graph keeps only a fingerprint of a join code, never the code; only the owner issues, a code opens one group, and it cannot be spent twice",
+      "tests": [
+        "tests_replica/test_cell_brain_groups.py"
+      ]
+    },
+    "community_fanout_export": {
+      "why": "export can only see what the owner already shared, and only redactions cross",
+      "tests": [
+        "tests_replica/test_cell_brain_fanout.py"
+      ]
+    },
+    "community_fanout_apply": {
+      "why": "apply never writes a fact; every incoming card lands in quarantine to be judged",
+      "tests": [
+        "tests_replica/test_cell_brain_fanout.py"
+      ]
+    },
+    "community_firm_outbox": {
+      "why": "the outbox is derived from shares, never queued, so nothing sits in it the owner did not share",
+      "tests": [
+        "tests_replica/test_cell_brain_fanout.py"
+      ]
+    },
+    "community_share_card": {
+      "why": "a shared card is the owner's redaction bound to one firm",
+      "tests": [
+        "tests_replica/test_cell_brain_fanout.py"
+      ]
+    },
+    "community_redaction_promote": {
+      "why": "only the redaction is promoted outward; the raw fact never leaves",
+      "tests": [
+        "tests_replica/test_cell_brain_fanout.py"
+      ]
+    },
+    "community_poller": {
+      "why": "taking a peer's cards is the same quarantine path as any other incoming",
+      "tests": [
+        "tests_replica/test_cell_brain_fanout.py"
+      ]
+    },
+    "models_keys": {
+      "why": "a provider points at a secret-vault entry, never a key; a provider whose key was never put in custody cannot be registered",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "models_blocklist": {
+      "why": "every failure kind is classified and sets a cooldown the graph holds; a cooling provider must not be called",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "models_usage": {
+      "why": "every call is metered with a whole token count; a call that reports no real count is refused",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "models_claude": {
+      "why": "Claude is an admitted provider registered by reference",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "models_openai": {
+      "why": "GPT is an admitted provider registered by reference",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "models_gemini": {
+      "why": "Gemini is an admitted provider registered by reference",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "models_local": {
+      "why": "a local model is an admitted provider registered by reference",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "models_cli_sub": {
+      "why": "a signed-in CLI subscription is an admitted provider registered by reference",
+      "tests": [
+        "tests_replica/test_cell_model_providers.py"
+      ]
+    },
+    "selfext_intent_ask": {
+      "why": "an ask is recorded and grants nothing by itself",
+      "tests": [
+        "tests_replica/test_cell_selfext_intent.py"
+      ]
+    },
+    "selfext_agency_gate": {
+      "why": "only the asker may grant scope, and an intent with no granted scope cannot become work at all",
+      "tests": [
+        "tests_replica/test_cell_selfext_intent.py"
+      ]
+    },
+    "selfext_atomize": {
+      "why": "work outside the granted scope is refused, not warned about",
+      "tests": [
+        "tests_replica/test_cell_selfext_intent.py"
+      ]
+    },
+    "selfext_req_tree": {
+      "why": "the leaves inside the granted scope are the requirement tree",
+      "tests": [
+        "tests_replica/test_cell_selfext_intent.py"
+      ]
+    },
+    "selfext_library_first": {
+      "why": "nothing is built until the library was actually searched, and the search must name what it searched",
+      "tests": [
+        "tests_replica/test_cell_selfext_intent.py"
+      ]
+    },
+    "users_firm": {
+      "why": "a firm has one owner, buys seats up front, and the owner holds the first",
+      "tests": [
+        "tests_replica/test_cell_users_seats.py"
+      ]
+    },
+    "users_seats": {
+      "why": "seats are counted before they are given; a firm cannot be invited into beyond its seats",
+      "tests": [
+        "tests_replica/test_cell_users_seats.py"
+      ]
+    },
+    "users_invite": {
+      "why": "only the owner invites, the token is kept as a fingerprint and never appears in the graph",
+      "tests": [
+        "tests_replica/test_cell_users_seats.py"
+      ]
+    },
+    "users_invite_accept": {
+      "why": "the invite is bound to the address it was sent to, so a forwarded token opens nothing, and it cannot be accepted twice",
+      "tests": [
+        "tests_replica/test_cell_users_seats.py"
+      ]
+    },
+    "users_owner_transfer": {
+      "why": "ownership moves only with consent naming both the current owner and the subject",
+      "tests": [
+        "tests_replica/test_cell_brain_ownership.py"
+      ]
+    },
+    "sessions_param_pool": {
+      "why": "the parameter pool holds and replaces by name; a nameless parameter is refused",
+      "tests": [
+        "tests_replica/test_cell_session_state.py"
+      ]
+    },
+    "sessions_chain_state": {
+      "why": "draft to active to closed and no other way; a closed session accepts nothing more",
+      "tests": [
+        "tests_replica/test_cell_session_state.py"
+      ]
+    },
+    "sessions_autosave": {
+      "why": "the debounce is a fact about the payload, not a timer: saving the same thing twice does not move the revision",
+      "tests": [
+        "tests_replica/test_cell_session_state.py"
+      ]
+    },
+    "sessions_save_guard": {
+      "why": "a save is read back out of the graph and compared before it is accepted",
+      "tests": [
+        "tests_replica/test_cell_session_state.py"
+      ]
+    },
+    "sessions_pin": {
+      "why": "a session can be pinned once",
+      "tests": [
+        "tests_replica/test_cell_session_state.py"
+      ]
+    },
+    "sessions_replay": {
+      "why": "replay is every save in order; the session is its own history",
+      "tests": [
+        "tests_replica/test_cell_session_state.py"
+      ]
+    },
+    "ui_voice_lint": {
+      "why": "the voice rules refuse out-of-voice text at the moment it is written, not in review",
+      "tests": [
+        "tests_replica/test_cell_voice.py"
+      ]
+    },
+    "website_voice_lint": {
+      "why": "no emoji, no exclamation, no overclaim, and glyphs normalised, enforced by a kernel court",
+      "tests": [
+        "tests_replica/test_cell_voice.py"
+      ]
+    },
+    "website_seo_meta": {
+      "why": "title, description and canonical come out of the graph; no origin means no canonical link, and out-of-voice text is refused",
+      "tests": [
+        "tests_replica/test_cell_website_meta.py"
+      ]
+    },
+    "website_changelog_parser": {
+      "why": "the changelog holds only released revisions; a draft is not a public claim and a summary is required",
+      "tests": [
+        "tests_replica/test_cell_website_meta.py"
+      ]
+    },
+    "website_download_cta": {
+      "why": "a download is offered only for a revision the changelog calls released, and only for an artifact the graph holds",
+      "tests": [
+        "tests_replica/test_cell_website_meta.py"
+      ]
+    },
+    "brain_daemon": {
+      "why": "the capabilities the brain offers are installed into the same graph the running application serves, and a court builds the real application and asserts it can reach every one",
+      "tests": [
+        "tests_replica/test_cell_capabilities.py"
+      ]
+    }
+  },
+  "deliberately_unbound": {
+    "ui_sidebar_rail": "no kernel court yet - the shell rail is not migrated",
+    "ui_account_chip": "no kernel court yet - account surface is not migrated",
+    "ui_node_card": "drawn by the browser editor court, which is currently red",
+    "ui_modal_system": "no kernel court yet",
+    "ui_command_palette": "no kernel court yet - palette is not migrated",
+    "nl_ui_app_is_graph": "vision - nothing to measure yet",
+    "canvas_node_view": "drawn by the browser editor court, which is currently red",
+    "canvas_run_node": "no kernel court yet - running a single node is not migrated",
+    "canvas_pan_zoom": "decided by the live browser gesture court",
+    "canvas_multiselect": "decided by the live browser gesture court",
+    "canvas_resnap_repair": "no kernel court yet - wire repair after a port change is not migrated",
+    "sessions_graph_migrator": "migration helper for the old format - retires with the old app",
+    "sessions_threads_rail": "no kernel court yet - shell surface not migrated",
+    "sessions_cloud_sync": "no kernel court yet - cloud session sync not migrated",
+    "nodes_validator": "no kernel court yet",
+    "nodes_sandbox": "no kernel court yet - custom-code sandbox not migrated",
+    "nodes_custom_register": "no kernel court yet",
+    "nodes_skill_node": "no kernel court yet",
+    "nodes_runner": "no kernel court yet - running the graph is not migrated",
+    "users_signup_register": "no kernel court yet",
+    "users_magic_link": "no kernel court yet",
+    "users_pkce_exchange": "no kernel court yet",
+    "users_brain_provision": "no kernel court yet",
+    "users_account_chip": "no kernel court yet - account surface not migrated",
+    "models_tool_engine": "no kernel court yet",
+    "models_agent_step": "no kernel court yet",
+    "cockpit_keyword_router": "no kernel court yet",
+    "brain_fact_store": "brain.db is the old store - the graph is the store now, no court asserts the migration",
+    "selfext_composer_build": "no kernel court yet - building a node from intent is not migrated",
+    "selfext_executor": "no kernel court yet",
+    "selfext_learn_fact": "no kernel court yet",
+    "selfext_promote": "no kernel court yet - promoting local to official is not migrated",
+    "nl_gate_loop_dry": "vision - nothing to measure yet",
+    "nl_gate_court_refute": "vision - nothing to measure yet",
+    "website_from_brain": "no kernel court yet",
+    "website_pricing_node": "no kernel court yet - pricing is not migrated",
+    "website_signin_gateway": "no kernel court yet",
+    "website_fly_deploy": "deployment is an open release boundary",
+    "website_contributors": "no kernel court yet",
+    "connectors_health_daemon": "no kernel court yet",
+    "connectors_self_heal": "no kernel court yet",
+    "connectors_auto_build": "no kernel court yet - ask-to-built connector is not migrated",
+    "connectors_panel": "no kernel court yet - the surface is not migrated",
+    "ui_composer_bar": "no kernel court yet - asking in plain language is not migrated",
+    "nl_arch_interpret": "no kernel court yet - the interpret runtime is not migrated",
+    "models_composer": "no kernel court yet - the composer agent is not migrated",
+    "nl_model_build_agent": "no kernel court yet - the build agent is not migrated",
+    "cockpit_withheld": "no kernel court yet - founder-hands-only actions are not migrated"
+  }
+}

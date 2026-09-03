@@ -110,3 +110,14 @@ def test_brain_health_answers_from_the_live_brain_not_a_default():
     server_src = _i.getsource(srv)
     assert server_src.count("brain_state=self._brain_state()") >= 6, "directive, briefing and responder sites all feed the lens"
     assert server_src.count("brain_state=owner._brain_state()") >= 1, "the machine dispatcher feeds it too"
+
+
+def test_a_transient_open_error_never_sets_the_graph_aside():
+    """2026-09-03: a force-stopped predecessor left the WAL closing; the next launch hit
+    'disk I/O error', retried once, then quarantined 337 MB of the founder's graph and
+    opened an empty canvas. Transients are retried and then refused, never set aside."""
+    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    assert 'for _open_attempt in range(6)' in src
+    assert '"disk I/O error", "database is locked", "already owned", "unable to open"' in src
+    assert "the graph is kept in place" in src
+    assert src.index("the graph is kept in place") < src.index("old data kept in")

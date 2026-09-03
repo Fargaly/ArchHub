@@ -170,14 +170,30 @@ except Exception as refusal:
                 stale.unlink(missing_ok=True)
             except OSError:
                 pass
-    time.sleep(1.5)
-    try:
-        server = _boot()
-        print("  recovered  : the saved graph opened on a second attempt",
-              flush=True)
-        boot_refusal = None
-    except Exception as second:
-        boot_refusal = second
+    # A transient (a predecessor still closing its WAL, a lock not yet
+    # released, an I/O hiccup) is retried for a while; it is never a
+    # reason to set the founder's graph aside -- a fresh graph on the
+    # same disk would fail the same way, and the founder would open
+    # an empty canvas over 300 MB of his own work.
+    for _open_attempt in range(6):
+        time.sleep(1.5)
+        try:
+            server = _boot()
+            print("  recovered  : the saved graph opened on attempt %d"
+                  % (_open_attempt + 2), flush=True)
+            boot_refusal = None
+            break
+        except Exception as again:
+            boot_refusal = again
+if boot_refusal is not None and any(
+    mark in str(boot_refusal)
+    for mark in ("disk I/O error", "database is locked", "already owned", "unable to open")
+):
+    print("  could not open the saved graph: %s"
+          % str(boot_refusal).splitlines()[-1][:160], flush=True)
+    print("  the graph is kept in place; this is a transient, not corruption."
+          " Close every ArchHub process and launch again.", flush=True)
+    raise boot_refusal
 if boot_refusal is not None:
     print("  could not open the saved graph: %s"
           % str(boot_refusal).splitlines()[-1][:160])

@@ -1,0 +1,18 @@
+{
+  "name": "archhub-universal-ui-court",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:icons": "node packaging/generate_lucide_icon_source.mjs",
+    "test:interaction": "python -m pytest tests_replica/test_universal_ui_interactions.py -q -p no:cacheprovider --timeout=300"
+  },
+  "devDependencies": {
+    "@xyflow/react": "^12.11.2",
+    "esbuild": "^0.28.1",
+    "jsdom": "29.1.1",
+    "lucide-static": "1.25.0",
+    "playwright": "1.61.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  }
+}

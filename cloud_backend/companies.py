@@ -150,6 +150,19 @@ def create_company(req: CreateCompanyReq,
         company_id=company["id"], plan=req.plan,
         billing_email=company["billing_email"],
     )
+    # The plan came off the request body and the row was written carrying
+    # that tier's FULL message quota before anyone paid — and the checkout
+    # above is best-effort, so the row happily survives with no
+    # subscription. Until Stripe confirms, the message allowance is the
+    # trial one; seats stay at the requested tier so the team can be
+    # assembled while payment clears. Both webhook branches
+    # (checkout.session.completed and the subscription update) already call
+    # update_company(plan=...), which re-derives the real quota — so paying
+    # lifts this by itself, with no second code path.
+    if checkout_url:
+        db.set_company_message_limit(
+            company["id"], config.PLAN_QUOTAS["trial"]
+        )
     return {
         "id": company["id"],
         "slug": company["slug"],

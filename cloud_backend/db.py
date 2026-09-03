@@ -1778,6 +1778,21 @@ def list_memory_facts(*, user_id: str, scope: Optional[str] = None,
     return out
 
 
+def set_company_message_limit(company_id: str, msg_limit: int) -> None:
+    """Hold a company's message allowance below what its plan implies.
+
+    The plan/quota invariant in update_company is the right default —
+    paying for a tier gets that tier's quota. This is the one deliberate
+    exception: a company whose payment has not cleared keeps its plan and
+    seats but spends on the trial allowance until a webhook lifts it.
+    """
+    with connect() as con:
+        con.execute(
+            "UPDATE companies SET msg_limit = ? WHERE id = ?",
+            (int(msg_limit), str(company_id)),
+        )
+
+
 def clear_current_company_if(*, user_id: str, company_id: str) -> None:
     """Drop a user's company pointer when it names the firm they just left.
 

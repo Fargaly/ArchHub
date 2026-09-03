@@ -2849,7 +2849,8 @@ const SettingsProfile = () => (
   <div>
     <SHead title="Profile" sub="The grounding the model uses. Sets tone, units, and what 'we' means."/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-      <SField label="Display name" value="Fargaly Habib"/>
+      {/* The signed-in account, never an invented person. */}
+      <SField label="Display name" value={(() => { const a = (typeof acLoad === 'function' && acLoad()) || {}; return a.name || (a.email ? String(a.email).split('@')[0] : ''); })()}/>
       <SField label="Studio / firm" value={(window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.firm) || ''}/>
       <SField label="Discipline" value="Architecture" select/>
       <SField label="Role" value="Project lead" select/>

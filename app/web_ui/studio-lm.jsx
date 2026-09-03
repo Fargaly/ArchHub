@@ -51783,7 +51783,7 @@ const BrainViewModalInner = ({ _themeBump }) => {   // _themeBump: theme-repaint
           <BrainViewSectionSurface
             id="training-datasets"
             testId="brain-section-datasets"
-            title="It produces training datasets - privately"
+            title="It builds training datasets - privately"
             badge="built"
             badgeState="built"
             subtitle={"Your knowledge can train models. But nothing leaves a scope it shouldn't. Four rings, each tighter than the last - the collective only ever sees noise-protected aggregates, never your raw work."}/>

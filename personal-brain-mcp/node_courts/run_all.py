@@ -8,8 +8,17 @@ Standing + re-runnable. Honors the patent hold: local only, nothing external.
   python node_courts/run_all.py    # exit 0 = all GREEN
 """
 import sys, os
-NL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "13.NODE-LANGUAGE")
-sys.path.insert(0, os.path.abspath(NL))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# The node language lives at node-language/ inside this repository (PR #306);
+# the founder's workstation also carries it as the sibling 13.NODE-LANGUAGE
+# worktree. Whichever exists first is the one the courts run against.
+for _candidate in (
+    os.path.join(_HERE, "..", "..", "node-language"),
+    os.path.join(_HERE, "..", "..", "..", "13.NODE-LANGUAGE"),
+):
+    if os.path.isdir(os.path.join(_candidate, "nodelang")):
+        sys.path.insert(0, os.path.abspath(_candidate))
+        break
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling courts
 
 from nodelang.cell_secret_keys import MemorySigningKeyProvider

@@ -91,3 +91,33 @@ def test_the_report_names_agents_brain_and_hosts():
     # An older server without a lens leaves the report exactly as it was.
     bare = {"data": {k: v for k, v in report["data"].items() if k != "context"}}
     assert baboom_actionable_report_text(bare) == "Work: 1 active. Workshop: 0 entries. Attention: 0 blocked. Next claimed: Wire BABOOM"
+
+
+def test_the_launcher_retries_attach_under_its_own_id():
+    """connect() binds the identity before start() can time out; a retry under the same
+    id is refused as already bound and the founder gets no companion for the session."""
+    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    assert 'founder-desktop-baboom:retry-%d' in src
+    assert '"already bound" not in text' in src
+
+
+def test_brain_health_answers_from_the_live_brain_not_a_default():
+    import inspect as _i
+    import nodelang.universal_application as ua
+    import nodelang.application_server as srv
+    src = _i.getsource(ua.respond_universal_baboom_utterance)
+    assert "brain_state=brain_state, hosts=hosts" in src
+    server_src = _i.getsource(srv)
+    assert server_src.count("brain_state=self._brain_state()") >= 6, "directive, briefing and responder sites all feed the lens"
+    assert server_src.count("brain_state=owner._brain_state()") >= 1, "the machine dispatcher feeds it too"
+
+
+def test_a_transient_open_error_never_sets_the_graph_aside():
+    """2026-09-03: a force-stopped predecessor left the WAL closing; the next launch hit
+    'disk I/O error', retried once, then quarantined 337 MB of the founder's graph and
+    opened an empty canvas. Transients are retried and then refused, never set aside."""
+    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    assert 'for _open_attempt in range(6)' in src
+    assert '"disk I/O error", "database is locked", "already owned", "unable to open"' in src
+    assert "the graph is kept in place" in src
+    assert src.index("the graph is kept in place") < src.index("old data kept in")

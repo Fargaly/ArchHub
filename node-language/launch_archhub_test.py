@@ -170,14 +170,30 @@ except Exception as refusal:
                 stale.unlink(missing_ok=True)
             except OSError:
                 pass
-    time.sleep(1.5)
-    try:
-        server = _boot()
-        print("  recovered  : the saved graph opened on a second attempt",
-              flush=True)
-        boot_refusal = None
-    except Exception as second:
-        boot_refusal = second
+    # A transient (a predecessor still closing its WAL, a lock not yet
+    # released, an I/O hiccup) is retried for a while; it is never a
+    # reason to set the founder's graph aside -- a fresh graph on the
+    # same disk would fail the same way, and the founder would open
+    # an empty canvas over 300 MB of his own work.
+    for _open_attempt in range(6):
+        time.sleep(1.5)
+        try:
+            server = _boot()
+            print("  recovered  : the saved graph opened on attempt %d"
+                  % (_open_attempt + 2), flush=True)
+            boot_refusal = None
+            break
+        except Exception as again:
+            boot_refusal = again
+if boot_refusal is not None and any(
+    mark in str(boot_refusal)
+    for mark in ("disk I/O error", "database is locked", "already owned", "unable to open")
+):
+    print("  could not open the saved graph: %s"
+          % str(boot_refusal).splitlines()[-1][:160], flush=True)
+    print("  the graph is kept in place; this is a transient, not corruption."
+          " Close every ArchHub process and launch again.", flush=True)
+    raise boot_refusal
 if boot_refusal is not None:
     print("  could not open the saved graph: %s"
           % str(boot_refusal).splitlines()[-1][:160])
@@ -401,15 +417,25 @@ try:
     _attach_error = None
     for _attempt in range(6):
         try:
+            # A retry is the same launcher, not a second process: connect()
+            # binds the session identity before start() can time out, so a
+            # retry under the same id is refused as "already bound". Each
+            # attempt therefore carries its own id; the abandoned binding
+            # expires on its own lease.
             baboom_host, baboom_window = attach_baboom_companion(
                 server,
                 state_dir=state_dir,
                 descriptor_path=descriptor_path,
                 key_provider=machine_key_provider,
+                external_session_id=(
+                    "founder-desktop-baboom" if _attempt == 0
+                    else "founder-desktop-baboom:retry-%d" % _attempt
+                ),
             )
             break
-        except MachineTransportError as exc:
-            if "did not respond" not in str(exc):
+        except Exception as exc:
+            text = str(exc)
+            if "did not respond" not in text and "already bound" not in text:
                 raise
             _attach_error = exc
             time.sleep(2.5)

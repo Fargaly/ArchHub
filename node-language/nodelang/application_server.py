@@ -5091,6 +5091,8 @@ class ApplicationServer:
                                     owner.universal_registry,
                                     utterance=body['utterance'],
                                     authentication_context=binding.context,
+                                    brain_state=owner._brain_state(),
+                                    hosts=owner._host_rows(),
                                 ),
                             }
                         if payload.get('command', {}).get('intent') == (
@@ -9008,6 +9010,8 @@ class ApplicationServer:
                     self.universal_registry,
                     utterance=body["utterance"],
                     authentication_context=context,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
             if (result.get("command") or {}).get("intent") == "open-question":
                 # The shipped companion enters here, not through HTTP.

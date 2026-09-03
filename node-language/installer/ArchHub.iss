@@ -6,7 +6,7 @@
 ; share, where Windows attaches no mark-of-the-web and raises no warning.
 
 #define AppName "ArchHub"
-#define AppVersion "1.9.0"
+#define AppVersion "1.9.2"
 #define AppPublisher "Fargaly"
 ; Every shortcut opens ArchHub.vbs: it resolves the installed pythonw itself
 ; (a bare pythonw fails wherever Python was installed without Add-to-PATH)

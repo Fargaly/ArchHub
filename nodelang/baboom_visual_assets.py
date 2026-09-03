@@ -33,6 +33,19 @@ class BaboomSpriteAtlas:
     # player that cycles past its art renders an empty cell. Defaulted so
     # a hand-built atlas in a court stays valid.
     frame_counts: tuple[int, ...] = ()
+    # Where the staff orb sits in each drawn frame, per row: the centroid of
+    # the blue-dominant pixels, measured from the art. The companion lights
+    # the orb with the brain state; a light that does not follow the staff
+    # would read as a bug.
+    orb_points: tuple[tuple[tuple[int, int] | None, ...], ...] = ()
+
+    def orb_point(self, row: int, frame: int) -> tuple[int, int] | None:
+        """The staff orb (x, y) inside the cell for one drawn frame, or None."""
+        if 0 <= row < len(self.orb_points):
+            points = self.orb_points[row]
+            if 0 <= frame < len(points):
+                return points[frame]
+        return None
 
     def frames_in_row(self, row: int) -> int:
         """Frames the given motion row actually carries, never fewer than one."""
@@ -58,6 +71,33 @@ def _paeth(left: int, above: int, upper_left: int) -> int:
     if above_distance <= upper_left_distance:
         return above
     return upper_left
+
+
+def _orb_points_per_row(
+    image_rows: tuple[bytes, ...],
+    *,
+    columns: int,
+    rows: int,
+    cell_width: int,
+    cell_height: int,
+) -> tuple[tuple[tuple[int, int] | None, ...], ...]:
+    """The staff orb per cell: centroid of the blue-dominant, opaque pixels."""
+    out: list[tuple[tuple[int, int] | None, ...]] = []
+    for row_index in range(rows):
+        points: list[tuple[int, int] | None] = []
+        for column_index in range(columns):
+            sx = sy = n = 0
+            for local_y in range(cell_height):
+                scanline = image_rows[row_index * cell_height + local_y]
+                base = column_index * cell_width * 4
+                for local_x in range(cell_width):
+                    o = base + local_x * 4
+                    r, g, b, a = scanline[o], scanline[o + 1], scanline[o + 2], scanline[o + 3]
+                    if a > 200 and b > 150 and b > r + 60 and g > 90:
+                        sx += local_x; sy += local_y; n += 1
+            points.append((round(sx / n), round(sy / n)) if n else None)
+        out.append(tuple(points))
+    return tuple(out)
 
 
 def _drawn_frames_per_row(
@@ -225,6 +265,13 @@ def inspect_baboom_sprite_atlas(
         cell_width=cell_width,
         cell_height=cell_height,
         frame_counts=_drawn_frames_per_row(
+            image_rows,
+            columns=columns,
+            rows=rows,
+            cell_width=cell_width,
+            cell_height=cell_height,
+        ),
+        orb_points=_orb_points_per_row(
             image_rows,
             columns=columns,
             rows=rows,

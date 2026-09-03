@@ -26,6 +26,11 @@ namespace AcadMCP
         public Document Doc;
         public Database Db;
         public Editor Ed;
+        // The shared ScriptCompiler wrapper binds UIApp/UIDoc for every
+        // host; AutoCAD has no such split, so they mirror the document.
+        // Without these two fields EVERY /exec dies in the compiler.
+        public object UIApp;
+        public object UIDoc;
         public object result;
     }
 

@@ -4,7 +4,7 @@ timestamp: 2026-09-01T18:55:00Z
 agent: claude-code (Fable 5)
 session: archhub-application-completion
 trigger: /ship-discipline finish the application
-status: proposed
+status: executed
 category: connectors
 projects: [archhub]
 ---

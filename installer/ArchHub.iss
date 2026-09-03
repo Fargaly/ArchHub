@@ -6,7 +6,7 @@
 ; share, where Windows attaches no mark-of-the-web and raises no warning.
 
 #define AppName "ArchHub"
-#define AppVersion "1.8.7"
+#define AppVersion "1.8.8"
 #define AppPublisher "Fargaly"
 ; Every shortcut opens ArchHub.vbs: it resolves the installed pythonw itself
 ; (a bare pythonw fails wherever Python was installed without Add-to-PATH)
@@ -55,8 +55,8 @@ Source: "..\..\12.PRODUCTION\app\assets\archhub.ico"; DestDir: "{app}"; Flags: i
 ; no ~/.claude or ~/.codex, and a catalogue that only scanned those reported
 ; 0 skills everywhere but the founder desk. Snapshotted at build time from
 ; the machine that builds the installer.
-Source: "{%USERPROFILE}\.claude\skills\*"; DestDir: "{app}\skills\claude"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
-Source: "{%USERPROFILE}\.codex\skills\*"; DestDir: "{app}\skills\codex"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
+Source: "{#GetEnv("USERPROFILE")}\.claude\skills\*"; DestDir: "{app}\skills\claude"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
+Source: "{#GetEnv("USERPROFILE")}\.codex\skills\*"; DestDir: "{app}\skills\codex"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"

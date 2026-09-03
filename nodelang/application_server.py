@@ -3667,6 +3667,24 @@ def _ensure_cde_write_signing_authority(
 
 
 
+def brain_first_prompt(utterance):
+    """The founder memory recalled and placed before his words.
+
+    Shared by the studio composer and BABOOM: one recall, one prompt shape.
+    The brain daemon being down costs the recall, never the answer.
+    """
+    from .pipeline_engines import brain_recall
+    utterance = str(utterance)
+    try:
+        context_text = str(brain_recall({'prompt': utterance}, {})[0]['out'])
+    except Exception:
+        context_text = ''
+    if not context_text.strip():
+        return utterance
+    return ('Founder memory (recalled from his brain):' + chr(10)
+            + context_text[:4000] + chr(10) + chr(10) + 'Founder says: ' + utterance)
+
+
 def answer_open_question(owner, utterance, context, payload):
     """Brain first, then the model, for free text that is not a catalogue command.
 
@@ -5700,10 +5718,12 @@ class ApplicationServer:
                                 from .agent_composer import (
                                     run_agent_composer,
                                 )
+                                # Brain first, then the model: the composer used to hand the raw
+                                # prompt to the model with only the canvas as context.
                                 agent_result = run_agent_composer(
                                     owner.universal_store,
                                     owner.universal_registry,
-                                    str(body.get('prompt', '')),
+                                    brain_first_prompt(str(body.get('prompt', ''))),
                                     model=str(body.get('model') or ''),
                                     effect_engines=(
                                         owner.pipeline_effect_engines
@@ -5841,6 +5861,37 @@ class ApplicationServer:
                                         'ok': False,
                                         'error': str(refusal)[:200],
                                     })
+                                return
+                            elif self.path == '/api/universal/brain-forget':
+                                from .pipeline_engines import _brain_call
+                                fact_id = str(body.get('id') or '').strip()
+                                if not fact_id:
+                                    self._json(200, {'ok': False, 'error': 'no fact id'})
+                                    return
+                                # Soft delete: the daemon keeps the row, recoverable.
+                                _brain_call('brain.delete_fact', {'fragment_id': fact_id})
+                                self._json(200, {'ok': True})
+                                return
+                            elif self.path == '/api/universal/brain-edit':
+                                from .pipeline_engines import _brain_call
+                                fact_id = str(body.get('id') or '').strip()
+                                said = str(body.get('text') or '').strip()
+                                if not fact_id or not said:
+                                    self._json(200, {'ok': False, 'error': 'need a fact id and text'})
+                                    return
+                                # In place: the old text is replaced, never duplicated.
+                                _brain_call('brain.edit_fact', {'fragment_id': fact_id, 'text': said})
+                                self._json(200, {'ok': True})
+                                return
+                            elif self.path == '/api/universal/node-create':
+                                from .universal_pipeline import create_engine_node
+                                created = create_engine_node(
+                                    owner.universal_store, owner.universal_registry,
+                                    title=str(body.get('title') or ''), engine=str(body.get('engine') or ''),
+                                    x=float(body.get('x') or 240.0), y=float(body.get('y') or 200.0),
+                                    properties=body.get('params') or {}, authentication_context=binding.context,
+                                )
+                                self._json(200, created)
                                 return
                             elif self.path == '/api/universal/brain-remember':
                                 import hashlib as _h

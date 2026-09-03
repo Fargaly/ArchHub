@@ -259,22 +259,19 @@ const _SEED_GRAPH = {
 // ─── Library of nodes that can be inserted — Grasshopper/Dynamo style
 const LM_LIBRARY = [
   { cat:'host', items:[
-    { id:'h_revit',   title:'Revit',    sub:'open document, view, selection' },
-    { id:'h_rhino',   title:'Rhino',    sub:'curves, meshes, layers' },
-    { id:'h_blender', title:'Blender',  sub:'mesh, sketch, render' },
-    { id:'h_speckle', title:'Speckle',  sub:'commit, stream, branch' },
-    { id:'h_dropbox', title:'Dropbox',  sub:'folder watch, upload' },
-    { id:'h_outlook', title:'Outlook',  sub:'inbox watch, draft, route' },
+    // Only hosts an engine can drive are offered; the rest return when a wire exists.
+    { id:'h_revit',   title:'Revit',    sub:'live sessions on this machine', engine:'revit.sessions' },
+    { id:'h_autocad', title:'AutoCAD',  sub:'line work from the live drawing', engine:'cad.host_lines' },
   ]},
   { cat:'read', items:[
-    { id:'r_walls',     title:'list_walls',    sub:'pull walls from active view' },
-    { id:'r_doors',     title:'list_doors',    sub:'pull doors + swings + marks' },
-    { id:'r_windows',   title:'list_windows',  sub:'pull windows + types' },
-    { id:'r_sheets',    title:'list_sheets',   sub:'enumerate sheets in set' },
-    { id:'r_views',     title:'list_views',    sub:'plans, sections, schedules' },
-    { id:'r_levels',    title:'list_levels',   sub:'levels + elevations' },
-    { id:'r_selection', title:'get_selection', sub:'whatever is selected in host' },
-    { id:'r_warnings',  title:'list_warnings', sub:'host warnings · by severity' },
+    { id:'r_walls',     title:'list_walls',    sub:'pull walls from active view', engine:'revit.read', params:{ operation:'revit.list_walls' } },
+    { id:'r_doors',     title:'list_doors',    sub:'pull doors + swings + marks', engine:'revit.read', params:{ operation:'revit.list_doors' } },
+    { id:'r_windows',   title:'list_windows',  sub:'pull windows + types', engine:'revit.read', params:{ operation:'revit.list_windows' } },
+    { id:'r_sheets',    title:'list_sheets',   sub:'enumerate sheets in set', engine:'revit.read', params:{ operation:'revit.list_sheets' } },
+    { id:'r_views',     title:'list_views',    sub:'plans, sections, schedules', engine:'revit.read', params:{ operation:'revit.list_views' } },
+    { id:'r_levels',    title:'list_levels',   sub:'levels + elevations', engine:'revit.read', params:{ operation:'revit.list_levels' } },
+    { id:'r_selection', title:'get_selection', sub:'whatever is selected in host', engine:'revit.read', params:{ operation:'revit.get_selection' } },
+    { id:'r_warnings',  title:'list_warnings', sub:'host warnings · by severity', engine:'revit.read', params:{ operation:'revit.list_warnings' } },
   ]},
   { cat:'filter', items:[
     { id:'f_type',  title:'where type',      sub:'by family/type' },
@@ -373,6 +370,14 @@ const StudioLM = () => {
       params: tmpl.params || [],
       _user: true,
     };
+    if (libItem.engine && window.ARCHHUB_NODE_CREATE) {
+      // A node with an engine is created ON THE GRAPH through the same governed
+      // write the seed uses, then the canvas reloads from the graph.
+      window.ARCHHUB_NODE_CREATE({ title: libItem.title, engine: libItem.engine, x, y, params: libItem.params || {} })
+        .then(r => { if (r && r.ok !== false) window.location.reload(); else window.alert('not created: ' + ((r && r.error) || '')); })
+        .catch(e => window.alert('not created: ' + (e && e.message || e)));
+      return;
+    }
     setUserNodes(ns => [...ns, newNode]);
     setFocusId(id);
   };
@@ -1015,6 +1020,18 @@ const ChatView = ({ session, model, setMode }) => {
     const text = draft.trim();
     if (!text || busy || !window.ARCHHUB_AGENT) return;
     setMessages(m => [...m, { me:true, time:stamp(), text }]);
+    // /remember <fact> is a command, not a question: it lands in the brain.
+    const remember = text.match(/^\/remember\s+(.+)/s);
+    if (remember) {
+      setDraft('');
+      try {
+        const r = await window.ARCHHUB_REMEMBER(remember[1].trim());
+        setMessages(m => [...m, { me:false, time:stamp(), text: r && r.ok === false ? 'not saved: ' + (r.error || '') : 'remembered.' }]);
+      } catch (error) {
+        setMessages(m => [...m, { me:false, time:stamp(), text:'not saved: ' + (error?.message || error) }]);
+      }
+      return;
+    }
     setDraft('');
     setBusy(true);
     try {
@@ -2718,16 +2735,9 @@ const SHead = ({ title, sub }) => (
 );
 
 // ── Memory: things the AI remembers about you (Notion AI / Claude style)
-const LM_MEMORY = [
-  { id:'m1', text:'Works at Habib Studio · architect, project lead on Tower A.', src:'profile' },
-  { id:'m2', text:'Prefers millimeters and ISO drafting conventions, never imperial.', src:'preference · 12 confirmations' },
-  { id:'m3', text:'Tower-A_central.rvt is the central model; never edit linked files.', src:'project' },
-  { id:'m4', text:'Skip walls shorter than 800 mm when dimensioning interior partitions.', src:'learned · 4 sessions' },
-  { id:'m5', text:'Door schedule QA runs are usually reviewed before publishing.', src:'learned · 8 sessions' },
-  { id:'m6', text:'Wants explanations to be terse and technical, no preamble.', src:'preference' },
-  { id:'m7', text:'Always exports PDF sets to the team Dropbox, not local.', src:'workflow · 38 runs' },
-  { id:'m8', text:'Hates emoji in chat output.', src:'preference · explicit' },
-];
+// What the brain remembers, loaded at boot from brain.list_facts (see studio.html).
+// Eight invented facts used to sit here; a colleague would have read them as his own.
+const LM_MEMORY = (window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.memory) || [];
 const SettingsMemory = ({ store, patch }) => (
   <div>
     <SHead title="Memory" sub="What Claude remembers about you across sessions. Edit, forget, or pin. Nothing is sent to the model unless you load this session."/>
@@ -2768,13 +2778,19 @@ const SettingsMemory = ({ store, patch }) => (
             const b = e.currentTarget;
             b.textContent = 'saving…';
             try {
-              await window.ARCHHUB_REMEMBER(said.trim());
+              // In place: the old text is replaced, not duplicated.
+              await window.ARCHHUB_BRAIN_EDIT(m.id, said.trim());
+              m.text = said.trim();
               b.textContent = 'saved';
             } catch (error) { b.textContent = 'refused'; }
             setTimeout(() => { b.textContent = 'edit'; }, 4000);
           }} style={{ ...smallBtn(), padding:'3px 8px' }}>edit</button>
           <button title={'Forget: ' + m.text}
-            onClick={() => patch('forgotten', (store.forgotten || []).concat(m.id))}
+            onClick={async () => {
+              // The brain forgets first; the panel follows.
+              try { await window.ARCHHUB_BRAIN_FORGET(m.id); } catch (e) { return; }
+              patch('forgotten', (store.forgotten || []).concat(m.id));
+            }}
             style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>
         </div>
       ))}
@@ -2834,7 +2850,7 @@ const SettingsProfile = () => (
     <SHead title="Profile" sub="The grounding the model uses. Sets tone, units, and what 'we' means."/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
       <SField label="Display name" value="Fargaly Habib"/>
-      <SField label="Studio / firm" value="Habib Studio"/>
+      <SField label="Studio / firm" value={(window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.firm) || ''}/>
       <SField label="Discipline" value="Architecture" select/>
       <SField label="Role" value="Project lead" select/>
       <SField label="Units" value="Millimeters (mm)" select/>
@@ -2849,7 +2865,7 @@ const SettingsProfile = () => (
         borderRadius:LM.rad.sm, padding:'10px 13px', fontFamily:LM.serif, fontStyle:'italic',
         fontSize:13, color:LM.inkSoft, lineHeight:1.55,
       }}>
-        You are working with Fargaly Habib, an architect leading Tower A at Habib Studio. Use millimeters, ISO conventions. Be terse and technical, no preamble. Never propose imperial units. Never use emoji. The active Revit document is the source of truth.
+        You are working with the signed-in architect inside ArchHub. Use millimeters, ISO conventions. Be terse and technical, no preamble. Never propose imperial units. Never use emoji. The active Revit document is the source of truth.
       </div>
       <div style={{ display:'flex', gap:6, marginTop:LM.sp.sm }}>
         <button onClick={async (e) => {
@@ -3141,7 +3157,7 @@ const SettingsAbout = () => (
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'14px 16px', fontFamily:LM.mono, fontSize:11.5, color:LM.inkSoft, lineHeight:1.85 }}>
       <div><span style={{ color:LM.inkMuted }}>version    </span> 1.4.0-prototype</div>
-      <div><span style={{ color:LM.inkMuted }}>license    </span> proprietary · Habib Studio</div>
+      <div><span style={{ color:LM.inkMuted }}>license    </span> proprietary · Fargaly</div>
       <div><span style={{ color:LM.inkMuted }}>server     </span> localhost:7300 · running</div>
       <div><span style={{ color:LM.inkMuted }}>hosts      </span> {LM_HOSTS.length} configured · {LM_HOSTS.filter(h=>h.state!=='off').length} live</div>
       <div><span style={{ color:LM.inkMuted }}>providers  </span> Anthropic, OpenAI, OpenRouter, Ollama</div>

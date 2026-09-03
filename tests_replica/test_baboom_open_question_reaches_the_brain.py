@@ -72,3 +72,13 @@ def test_the_machine_dispatcher_answers_open_questions_too():
     assert "return respond_universal_baboom_utterance" not in locked_block, (
         "the dispatcher must not return the canned response from inside the lock"
     )
+
+
+def test_the_studio_composer_is_brain_first_too(monkeypatch):
+    import nodelang.pipeline_engines as engines
+    monkeypatch.setattr(engines, "brain_recall", lambda p, f: ({"out": "he prefers millimetres"}, "1"))
+    prompt = app_server.brain_first_prompt("draw the wall")
+    assert "he prefers millimetres" in prompt and prompt.endswith("Founder says: draw the wall")
+    source = inspect.getsource(app_server.ApplicationServer)
+    agent_branch = source[source.index("self.path == '/api/universal/agent'"):][:3000]
+    assert "brain_first_prompt(" in agent_branch, "the studio composer must recall before it asks the model"

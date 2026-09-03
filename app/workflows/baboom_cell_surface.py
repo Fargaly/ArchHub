@@ -22,10 +22,14 @@ class _RuntimeStatusClient(Protocol):
 
 
 def _canonical_node_authority_root() -> Path:
+    # node-language/ inside this repository first (PR #306); the sibling
+    # 13.NODE-LANGUAGE worktree is the founder-workstation fallback.
+    repo_root = Path(__file__).resolve().parents[2]
     product_root = Path(__file__).resolve().parents[3]
-    root = product_root / "13.NODE-LANGUAGE"
-    if not root.is_dir():
-        raise FileNotFoundError(str(root))
+    candidates = (repo_root / "node-language", product_root / "13.NODE-LANGUAGE")
+    root = next((c for c in candidates if (c / "nodelang").is_dir()), None)
+    if root is None:
+        raise FileNotFoundError(str(candidates[0]))
     text = str(root)
     if text not in sys.path:
         sys.path.insert(0, text)

@@ -310,10 +310,15 @@ window.setWindowTitle("ArchHub TEST")
 import ctypes
 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub.Test")
 from PyQt6.QtGui import QIcon
-_icon_path = (
+# The installer ships archhub.ico beside this file; the 12.PRODUCTION tree
+# exists only on the founder workstation, so it is the fallback, not the
+# first look -- a colleague window carried the default python icon.
+_icon_candidates = (
+    Path(__file__).resolve().parent / "archhub.ico",
     Path(__file__).resolve().parents[1]
-    / "12.PRODUCTION" / "app" / "assets" / "archhub.ico"
+    / "12.PRODUCTION" / "app" / "assets" / "archhub.ico",
 )
+_icon_path = next((c for c in _icon_candidates if c.is_file()), _icon_candidates[0])
 if _icon_path.is_file():
     app.setWindowIcon(QIcon(str(_icon_path)))
     window.setWindowIcon(QIcon(str(_icon_path)))

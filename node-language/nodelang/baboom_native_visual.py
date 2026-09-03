@@ -121,8 +121,12 @@ def baboom_sprite_source(
     row = _MOTION_ROWS[motion]
     if row >= atlas.rows or atlas.columns < 2:
         raise ValueError("BABOOM atlas cannot render the released motion")
+    # Cycle only the poses this row was drawn with. The grid is 8 wide and
+    # most action rows carry 6, so cycling the grid rendered a fully
+    # transparent cell every few ticks -- the companion blinked out of
+    # existence and left an empty outline on the desktop.
     return Rect(
-        (animation_tick % atlas.columns) * atlas.cell_width,
+        (animation_tick % atlas.frames_in_row(row)) * atlas.cell_width,
         row * atlas.cell_height,
         atlas.cell_width,
         atlas.cell_height,

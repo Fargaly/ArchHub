@@ -11,12 +11,15 @@ from collections.abc import Callable, Iterable, Mapping
 import ctypes
 from ctypes import wintypes
 from dataclasses import replace
+import json
 import os
 from pathlib import Path
 import threading
 from typing import Any
 
 from .baboom_companion_placement import (
+    _bounded_rect,
+    _clear_message,
     BaboomCompanionLayout,
     Rect,
     place_baboom_companion,
@@ -102,6 +105,34 @@ def foreground_application_windows() -> str | None:
         finally:
             kernel32.CloseHandle(process)
     except (AttributeError, OSError):
+        return None
+
+
+def _message_beside(screen: Rect, sprite: Rect, width: int, height: int) -> Rect | None:
+    """A report rectangle next to a sprite that stays where it is.
+
+    Above or below first (the released placement's own preference), then to
+    the side the screen has room on. The sprite never moves to make room for
+    its own words -- a companion that hops to fit a sentence reads as broken.
+    """
+    if width <= 0 or height <= 0:
+        return None
+    clear = _clear_message(
+        screen,
+        sprite=sprite,
+        message_width=width,
+        message_height=height,
+        gap=8,
+        obstacles=(),
+    )
+    if clear is not None:
+        return clear
+    x = sprite.x - 8 - width
+    if x < screen.x:
+        x = sprite.right + 8
+    try:
+        return _bounded_rect(screen, width=width, height=height, x=x, y=sprite.y)
+    except ValueError:
         return None
 
 
@@ -235,7 +266,13 @@ class BaboomNativeCompanionController:
         self._host = host
         self._atlas = atlas
         self._occupied_provider = occupied_provider
+        self._user_origin: tuple[int, int] | None = None
         self._animation_tick = 0
+
+    def pin_sprite_origin(self, x: int, y: int) -> None:
+        """The founder put BABOOM here; it stays here until he moves it again."""
+        self._user_origin = (int(x), int(y))
+        self._pinned_layout = None
 
     def _occupied_rectangles(self) -> tuple[Rect, ...]:
         raw = self._occupied_provider()
@@ -267,9 +304,55 @@ class BaboomNativeCompanionController:
         # founder's foreground windows change, the placement search
         # answers differently, and the sprite hops around the desktop.
         # It lives in ONE place until the screen itself changes.
+        user = self._user_origin
+        if user is not None:
+            # The founder dragged it here. His placement outranks every
+            # search: BABOOM sits where he put it, and its report opens
+            # beside it rather than moving it.
+            base = frame.layout
+            sprite = _bounded_rect(
+                screen,
+                width=base.sprite.width,
+                height=base.sprite.height,
+                x=user[0],
+                y=user[1],
+            )
+            message = None
+            if base.message is not None:
+                message = _message_beside(
+                    screen, sprite, base.message.width, base.message.height
+                )
+            layout = replace(
+                base,
+                sprite=sprite,
+                message=message,
+                edge="founder",
+                overlap_area=0,
+                collision_state="clear",
+            )
+            return replace(
+                frame,
+                layout=layout,
+                report=frame.report if message is not None else None,
+            )
         pinned = getattr(self, "_pinned_layout", None)
         pinned_screen = getattr(self, "_pinned_screen", None)
-        if pinned is not None and pinned_screen == screen:
+        if pinned is not None:
+            if pinned_screen != screen:
+                # The screen changed shape (a taskbar, a dock, a fullscreen
+                # app). Keep the companion where it already is, clamped
+                # inside the new bounds -- never search for a new home,
+                # which is what made it jump across the desktop.
+                sprite = _bounded_rect(
+                    screen,
+                    width=pinned.sprite.width,
+                    height=pinned.sprite.height,
+                    x=pinned.sprite.x,
+                    y=pinned.sprite.y,
+                )
+                pinned = replace(pinned, sprite=sprite, message=None)
+                self._pinned_layout = pinned
+                self._pinned_screen = screen
             return replace(frame, layout=pinned)
         if frame.layout.collision_state == "clear":
             self._pinned_layout = frame.layout
@@ -312,6 +395,7 @@ def create_baboom_native_companion_window(
     *,
     on_response: Callable[[Mapping[str, object]], None] | None = None,
     voice_input: BaboomVoiceInput | None = None,
+    position_path: Path | None = None,
 ) -> Any:
     """Create, but never show or start, the one transparent companion window."""
     if type(controller) is not BaboomNativeCompanionController:
@@ -321,7 +405,7 @@ def create_baboom_native_companion_window(
     if voice_input is not None and type(voice_input) is not BaboomVoiceInput:
         raise ValueError("BABOOM native companion voice input is invalid")
     try:
-        from PyQt6.QtCore import QPoint, QRect, QTimer, Qt, pyqtSignal
+        from PyQt6.QtCore import QEvent, QPoint, QRect, QTimer, Qt, pyqtSignal
         from PyQt6.QtGui import QFont, QFontDatabase, QImage, QPainter
         from PyQt6.QtWidgets import QLineEdit, QLabel, QToolButton, QWidget
     except ImportError as exc:  # pragma: no cover - exercised by desktop packaging
@@ -348,6 +432,17 @@ def create_baboom_native_companion_window(
             self._atlas = QImage(str(controller._atlas.path))
             if self._atlas.isNull():
                 raise ValueError("BABOOM native atlas cannot be loaded")
+            if position_path is not None and position_path.is_file():
+                # Where the founder last put it, across restarts.
+                try:
+                    remembered = json.loads(
+                        position_path.read_text(encoding="utf-8")
+                    )
+                    controller.pin_sprite_origin(
+                        int(remembered["x"]), int(remembered["y"])
+                    )
+                except (OSError, ValueError, KeyError, TypeError):
+                    pass
             self._frame: BaboomNativeVisualFrame | None = None
             self._layout: BaboomCompanionLayout | None = None
             self._sprite: Any = None
@@ -359,6 +454,10 @@ def create_baboom_native_companion_window(
             self._pending_task_utterance: str | None = None
             self._submitted_utterance = ""
             self._interaction_requested = False
+            self._press_global: Any = None
+            self._press_window_pos: Any = None
+            self._dragged = False
+            self._position_path = position_path
             self._voice_input = voice_input or BaboomVoiceInput()
             self._voice_cancel: threading.Event | None = None
             self._companion_font = companion_font()
@@ -380,6 +479,7 @@ def create_baboom_native_companion_window(
                 "border-radius:0;font-size:12px;"
             )
             self._input.returnPressed.connect(self._submit_input)
+            self._input.installEventFilter(self)
             self._input.hide()
             self._talk = QToolButton(self)
             self._talk.setText("Talk")
@@ -412,7 +512,9 @@ def create_baboom_native_companion_window(
             self._projection_timer.setInterval(750)
             self._projection_timer.timeout.connect(self.refresh)
             self._animation_timer = QTimer(self)
-            self._animation_timer.setInterval(420)
+            # A companion that changes pose three times a second reads as
+            # restless. It breathes, it does not fidget.
+            self._animation_timer.setInterval(900)
             self._animation_timer.timeout.connect(self._advance_animation)
             self.response_ready.connect(self._apply_response)
             self.execution_ready.connect(self._apply_execution)
@@ -442,6 +544,25 @@ def create_baboom_native_companion_window(
             geometry = screen.availableGeometry()
             return Rect(geometry.x(), geometry.y(), geometry.width(), geometry.height())
 
+        def _report_size(self, text: str) -> tuple[int, int]:
+            """Size the report box from the REAL font, so nothing is clipped.
+
+            The pure geometry assumes a fixed characters-per-line. That is
+            close but not exact for the installed UI font, and the founder's
+            own briefing wrapped one line further than the estimate: its last
+            line fell outside the box, so he could not read the end of what
+            BABOOM was telling him. Qt knows the true wrap, so it decides the
+            height here. The estimate stays the floor.
+            """
+            width, minimum = baboom_compact_message_size(text)
+            padding_x, padding_y = 12, 8
+            wrapped = self._report.fontMetrics().boundingRect(
+                QRect(0, 0, width - padding_x, 1 << 16),
+                int(Qt.TextFlag.TextWordWrap),
+                text,
+            )
+            return (width, max(minimum, wrapped.height() + padding_y))
+
         def _layout_for_report(
             self,
             frame: BaboomNativeVisualFrame,
@@ -452,7 +573,7 @@ def create_baboom_native_companion_window(
             layout = frame.layout
             if not report:
                 return layout
-            message_size = baboom_compact_message_size(report)
+            message_size = self._report_size(report)
             if (
                 layout.message is not None
                 and
@@ -460,12 +581,13 @@ def create_baboom_native_companion_window(
                 and layout.message.height == message_size[1]
             ):
                 return layout
-            occupied = controller._occupied_rectangles()
-            return place_baboom_companion(
-                screen,
-                sprite_size=(layout.sprite.width, layout.sprite.height),
-                message_size=message_size,
-                occupied=occupied,
+            # A longer report never relocates the companion; the report
+            # opens beside it instead.
+            message = _message_beside(
+                screen, layout.sprite, message_size[0], message_size[1]
+            )
+            return replace(
+                layout, message=message, overlap_area=0, collision_state="clear"
             )
 
         def _advance_animation(self) -> None:
@@ -485,6 +607,10 @@ def create_baboom_native_companion_window(
             self.update()
 
         def refresh(self) -> None:
+            if self._dragged:
+                # A drag in progress owns the geometry; the 750ms
+                # projection must not fight the founder's hand.
+                return
             screen = self._screen_rect()
             if screen is None:
                 return
@@ -569,31 +695,111 @@ def create_baboom_native_companion_window(
             painter.drawImage(self._sprite_rect, self._sprite)
             painter.end()
 
+        def _open_interaction(self) -> None:
+            """Show the ask box: BABOOM is listening."""
+            if self._frame is None or self._layout is None:
+                return
+            self._pending_task_utterance = None
+            self._confirm.hide()
+            self._transient_report = None
+            self._transient_revision = None
+            self._interaction_requested = True
+            self.refresh()
+            if self._message_rect is None:
+                return
+            self._report.hide()
+            self._input.show()
+            self._input.setTextMargins(0, 0, 40, 0)
+            self._talk.setGeometry(
+                self._message_rect.right() - 42,
+                self._message_rect.top() + 4,
+                38,
+                22,
+            )
+            self._talk.show()
+            self._talk.raise_()
+            self._input.setFocus()
+
+        def _close_interaction(self) -> None:
+            """Back to the sprite alone: no box, no stale answer."""
+            self._interaction_requested = False
+            self._transient_report = None
+            self._transient_revision = None
+            self._pending_task_utterance = None
+            self._input.clear()
+            self._input.setEnabled(True)
+            self._input.hide()
+            self._talk.hide()
+            self._confirm.hide()
+            self._report.hide()
+            self.refresh()
+
+        def _save_position(self, x: int, y: int) -> None:
+            if self._position_path is None:
+                return
+            try:
+                self._position_path.parent.mkdir(parents=True, exist_ok=True)
+                self._position_path.write_text(
+                    json.dumps({"x": int(x), "y": int(y)}), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
+        def eventFilter(self, obj, event) -> bool:  # noqa: N802 - Qt callback name
+            # Escape inside the ask box closes it, rather than leaving the
+            # founder with a text field and no way out.
+            if (
+                obj is self._input
+                and event.type() == QEvent.Type.KeyPress
+                and event.key() == Qt.Key.Key_Escape
+            ):
+                self._close_interaction()
+                return True
+            return super().eventFilter(obj, event)
+
+        def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            if event.key() == Qt.Key.Key_Escape:
+                self._close_interaction()
+                return
+            super().keyPressEvent(event)
+
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
-            if self._frame is not None and self._layout is not None:
-                self._pending_task_utterance = None
-                self._confirm.hide()
-                self._transient_report = None
-                self._transient_revision = None
-                self._interaction_requested = True
-                self.refresh()
-                if self._message_rect is None:
-                    super().mousePressEvent(event)
-                    return
-                self._report.hide()
-                self._input.show()
-                if self._message_rect is not None:
-                    self._input.setTextMargins(0, 0, 40, 0)
-                    self._talk.setGeometry(
-                        self._message_rect.right() - 42,
-                        self._message_rect.top() + 4,
-                        38,
-                        22,
-                    )
-                    self._talk.show()
-                    self._talk.raise_()
-                self._input.setFocus()
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._press_global = event.globalPosition().toPoint()
+                self._press_window_pos = self.pos()
+                self._dragged = False
             super().mousePressEvent(event)
+
+        def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            if self._press_global is not None and (
+                event.buttons() & Qt.MouseButton.LeftButton
+            ):
+                delta = event.globalPosition().toPoint() - self._press_global
+                # A few pixels of travel separate a drag from a click, so a
+                # slightly shaky click still opens the ask box.
+                if self._dragged or delta.manhattanLength() > 4:
+                    self._dragged = True
+                    self.move(self._press_window_pos + delta)
+            super().mouseMoveEvent(event)
+
+        def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            if (
+                event.button() == Qt.MouseButton.LeftButton
+                and self._press_global is not None
+            ):
+                if self._dragged:
+                    origin = self.pos() + self._sprite_rect.topLeft()
+                    self._dragged = False
+                    controller.pin_sprite_origin(origin.x(), origin.y())
+                    self._save_position(origin.x(), origin.y())
+                    self.refresh()
+                elif self._input.isVisible() or self._transient_report is not None:
+                    self._close_interaction()
+                else:
+                    self._open_interaction()
+                self._press_global = None
+                self._dragged = False
+            super().mouseReleaseEvent(event)
 
         def _submit_input(self) -> None:
             utterance = self._input.text().strip()

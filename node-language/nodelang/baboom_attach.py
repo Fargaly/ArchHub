@@ -137,6 +137,7 @@ def attach_baboom_companion(
         client,
         external_session_id=external_session_id,
         device_credential_provider=device_credential,
+        position_path=state_dir / "baboom-position.json",
     )
     host.connect()
     host.start()

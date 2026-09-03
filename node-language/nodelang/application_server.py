@@ -7691,6 +7691,39 @@ class ApplicationServer:
         )
         return session_root, observation.root_id, evidence_root
 
+    def _brain_state(self) -> dict:
+        """brain.health, cached 15 s: ok + facts. Feeds the BABOOM lens; never blocks a frame long."""
+        import time as _t
+        cache = getattr(self, "_brain_state_cache", None)
+        if cache and _t.time() - cache[0] < 15.0:
+            return cache[1]
+        state = {"ok": False, "facts": 0}
+        try:
+            import json as _j
+            from .pipeline_engines import _brain_call
+            raw = _brain_call("brain.health", {})
+            data = _j.loads(raw) if isinstance(raw, str) else dict(raw)
+            state = {"ok": bool(data.get("ok")), "facts": int(data.get("facts") or 0)}
+        except Exception:
+            pass
+        self._brain_state_cache = (_t.time(), state)
+        return state
+
+    def _host_rows(self) -> list:
+        """probe_connectors, cached 30 s: which drivable hosts are up."""
+        import time as _t
+        cache = getattr(self, "_host_rows_cache", None)
+        if cache and _t.time() - cache[0] < 30.0:
+            return cache[1]
+        rows = []
+        try:
+            from .pipeline_engines import probe_connectors
+            rows = list(probe_connectors())
+        except Exception:
+            pass
+        self._host_rows_cache = (_t.time(), rows)
+        return rows
+
     def _machine_agent_runtime_presence(self) -> dict[str, object]:
         """Project bounded live capability state for the BABOOM graph lens.
 
@@ -8727,6 +8760,8 @@ class ApplicationServer:
                 runtime_presence=runtime_presence,
                 authentication_context=context,
                 work_index=work_index,
+                brain_state=self._brain_state(),
+                hosts=self._host_rows(),
             )
         if method == "GET" and path == "/api/universal/runtime-backend":
             if body:
@@ -8781,6 +8816,8 @@ class ApplicationServer:
                 runtime_presence=runtime_presence,
                 authentication_context=context,
                 work_index=work_index,
+                brain_state=self._brain_state(),
+                hosts=self._host_rows(),
             )
         if method == "GET" and path == "/api/universal/baboom-native-frame":
             if body:
@@ -8812,6 +8849,8 @@ class ApplicationServer:
                     runtime_presence=runtime_presence,
                     authentication_context=context,
                     work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
                 directive = project_universal_baboom_companion_directive(
                     self.universal_store,
@@ -8819,6 +8858,8 @@ class ApplicationServer:
                     runtime_presence=runtime_presence,
                     authentication_context=context,
                     work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
                 revision = self.universal_store.revision
                 if (
@@ -8835,6 +8876,8 @@ class ApplicationServer:
                         self.universal_store,
                         self.universal_registry,
                         authentication_context=context,
+                        brain_state=self._brain_state(),
+                        hosts=self._host_rows(),
                     )
                     if briefing.get("revision") != revision:
                         raise InvalidCell("BABOOM native frame report drifted")
@@ -8892,6 +8935,8 @@ class ApplicationServer:
                     self.universal_store,
                     self.universal_registry,
                     authentication_context=context,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
         if method == "GET" and path == "/api/universal/baboom-capabilities":
             if body:
@@ -13245,6 +13290,8 @@ class ApplicationServer:
                     runtime_presence=self._machine_agent_runtime_presence(),
                     authentication_context=context,
                     work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
             warmed_revision = self.universal_store.revision
             ok = warmed_revision == revision

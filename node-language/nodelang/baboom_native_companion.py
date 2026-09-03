@@ -170,6 +170,20 @@ def render_baboom_native_sprite(
         atlas,
         QRect(source.x, source.y, source.width, source.height),
     )
+    # The staff orb is the brain light: cyan when the brain answers and
+    # holds facts, grey when it answers empty, red when it is down. It
+    # follows the orb measured from the art for this exact pose.
+    orb = getattr(frame, "orb", None)
+    state = getattr(frame, "brain_state", "unknown")
+    if orb is not None and state != "unknown":
+        from PyQt6.QtGui import QColor, QRadialGradient
+        colour = {"lit": QColor(126, 223, 211), "dim": QColor(150, 150, 150), "down": QColor(200, 68, 59)}[state]
+        radius = max(6, round(image.width() * 0.09))
+        glow = QRadialGradient(orb[0], orb[1], radius)
+        core = QColor(colour); core.setAlpha(230); halo = QColor(colour); halo.setAlpha(0)
+        glow.setColorAt(0.0, core); glow.setColorAt(1.0, halo)
+        painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(glow)
+        painter.drawEllipse(orb[0] - radius, orb[1] - radius, radius * 2, radius * 2)
     painter.end()
     return image
 

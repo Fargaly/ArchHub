@@ -834,6 +834,33 @@ PROFILE_FIELDS = frozenset({
 })
 
 
+def user_profile_is_empty(user_id: str) -> bool:
+    """Has this account never had a profile written onto it?
+
+    The signal that separates "the row this unauthenticated call just
+    created" from "somebody's established account". True only when every
+    whitelisted profile column is still unset.
+    """
+    columns = [name for name in PROFILE_FIELDS]
+    if not columns:
+        return True
+    try:
+        with connect() as con:
+            row = con.execute(
+                "SELECT %s FROM users WHERE id = ?"
+                % ", ".join('"%s"' % name for name in columns),
+                (str(user_id),),
+            ).fetchone()
+    except Exception:
+        return False
+    if row is None:
+        return True
+    return all(
+        row[name] is None or str(row[name]).strip() == ""
+        for name in columns
+    )
+
+
 def update_user_profile(user_id: str, **fields) -> None:
     """Write whitelisted profile fields onto the users row.
 
@@ -1749,6 +1776,21 @@ def list_memory_facts(*, user_id: str, scope: Optional[str] = None,
         if len(out) >= int(limit):
             break
     return out
+
+
+def clear_current_company_if(*, user_id: str, company_id: str) -> None:
+    """Drop a user's company pointer when it names the firm they just left.
+
+    Entitlement resolution reads users.current_company_id on its own, so
+    a pointer that outlives the membership row is a live entitlement an
+    ex-member keeps spending.
+    """
+    with connect() as con:
+        con.execute(
+            "UPDATE users SET current_company_id = NULL"
+            " WHERE id = ? AND current_company_id = ?",
+            (str(user_id), str(company_id)),
+        )
 
 
 def _reader_company_id(user_id: str) -> Optional[str]:

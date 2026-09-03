@@ -349,7 +349,16 @@ async def register(req: RegisterReq) -> dict:
     # User row was created inside register_via_email — write profile
     # fields onto it. db.update_user_profile drops unknown keys so
     # this is safe to call with the full request dict.
+    # This endpoint is unauthenticated by design -- it only mails a magic
+    # link -- so the profile fields on the request are an ANONYMOUS claim
+    # about whoever owns that address. Writing them onto an existing row
+    # let a stranger rewrite a real account's name, firm and role by
+    # posting their email. Only a row this call actually created may be
+    # filled in; an established account keeps what it has until its owner
+    # signs in and edits it.
     user = db.get_user_by_email(str(req.email))
+    if user is not None and not db.user_profile_is_empty(user["id"]):
+        return {"status": "accepted"}
     if user is not None:
         profile = req.model_dump(exclude={"email", "code_challenge",
                                           "redirect"}, exclude_none=True)
@@ -848,10 +857,27 @@ async def brain_sync(req: Request,
     # whatever community keys this very delta contributed to (below), so a
     # first-ever push immediately round-trips. Keys are sanitised in the
     # replica layer; an unsafe one is skipped, never fatal.
-    community_keys = body.get("community_keys") or []
-    if not isinstance(community_keys, list):
-        community_keys = []
-    community_keys = [str(k) for k in community_keys if k]
+    # A key the CALLER names is a claim, not a membership. The cloud has
+    # no community membership table, so the only honest evidence it holds
+    # is what this user has actually contributed to before -- naming a
+    # community you never wrote to used to read every fact in it, which
+    # made any guessed id a key.
+    claimed_community_keys = body.get("community_keys") or []
+    if not isinstance(claimed_community_keys, list):
+        claimed_community_keys = []
+    claimed_community_keys = {
+        str(key) for key in claimed_community_keys if key
+    }
+    try:
+        earned_community_keys = {
+            str(key)
+            for key in brain_replica.BrainReplica.open(
+                user_id=user["id"], firm_keys=[], community_keys=[]
+            ).contributed_community_keys()
+        }
+    except Exception:
+        earned_community_keys = set()
+    community_keys = sorted(claimed_community_keys & earned_community_keys)
 
     try:
         replica = brain_replica.BrainReplica.open(

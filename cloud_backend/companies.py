@@ -292,6 +292,17 @@ def accept_invite(req: AcceptInviteReq,
     if not invited_email or invited_email != user_email:
         raise HTTPException(status_code=403,
                             detail="invite_email_mismatch")
+    # The seat limit was checked when the invite was SENT, and an invite
+    # outlives a downgrade: lowering the subscription compares the new
+    # quantity against members only, so pending invites walked a roster
+    # past the paid quantity. Re-check at the moment the seat is actually
+    # taken -- that is when it starts costing.
+    company = db.get_company(invite["company_id"])
+    seat_limit = int((company or {}).get("seat_limit") or 0)
+    if seat_limit and db.count_company_members(
+        invite["company_id"]
+    ) >= seat_limit:
+        raise HTTPException(status_code=409, detail="seat_limit_reached")
     db.add_company_member(
         company_id=invite["company_id"],
         user_id=user["id"],
@@ -318,6 +329,12 @@ def remove_member(company_id: str, user_id: str,
     if db.get_membership(company_id, user_id) is None:
         raise HTTPException(status_code=404, detail="member_not_found")
     db.remove_company_member(company_id, user_id)
+    # Removing the membership row is not removing the person from the
+    # firm: every entitlement resolver (quota, hosted credits, AI mode)
+    # keys off users.current_company_id ALONE, with no membership join.
+    # Left behind, that pointer kept an ex-member spending the firm's
+    # quota and burning its credit packs.
+    db.clear_current_company_if(user_id=user_id, company_id=company_id)
     return {"ok": True}
 
 

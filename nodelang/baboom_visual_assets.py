@@ -29,6 +29,16 @@ class BaboomSpriteAtlas:
     rows: int
     cell_width: int
     cell_height: int
+    # Drawn frames per row. A row is not obliged to fill the grid, and a
+    # player that cycles past its art renders an empty cell. Defaulted so
+    # a hand-built atlas in a court stays valid.
+    frame_counts: tuple[int, ...] = ()
+
+    def frames_in_row(self, row: int) -> int:
+        """Frames the given motion row actually carries, never fewer than one."""
+        if 0 <= row < len(self.frame_counts):
+            return max(1, self.frame_counts[row])
+        return max(1, self.columns)
 
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -48,6 +58,46 @@ def _paeth(left: int, above: int, upper_left: int) -> int:
     if above_distance <= upper_left_distance:
         return above
     return upper_left
+
+
+def _drawn_frames_per_row(
+    image_rows: tuple[bytes, ...],
+    *,
+    columns: int,
+    rows: int,
+    cell_width: int,
+    cell_height: int,
+) -> tuple[int, ...]:
+    """How many frames each motion row actually carries art for.
+
+    A sheet is a grid, but an animation is not obliged to fill its row: this
+    atlas draws seven idle poses and six for most actions, leaving the last
+    cells of those rows fully transparent. A player that cycles the full
+    grid therefore renders nothing every few ticks, and the companion blinks
+    out of existence. Counting the drawn frames here is what lets the player
+    cycle only the poses that exist.
+
+    Trailing empties are what a spritesheet leaves behind, so counting stops
+    at the first blank cell rather than skipping holes -- a gap in the middle
+    of a row is broken art, not a shorter animation, and is left visible.
+    """
+    counts: list[int] = []
+    for row_index in range(rows):
+        drawn = 0
+        for column_index in range(columns):
+            top = row_index * cell_height
+            left_byte = column_index * cell_width * 4
+            right_byte = left_byte + cell_width * 4
+            opaque = any(
+                alpha > 0
+                for scanline in image_rows[top:top + cell_height]
+                for alpha in scanline[left_byte + 3:right_byte:4]
+            )
+            if not opaque:
+                break
+            drawn += 1
+        counts.append(drawn or 1)
+    return tuple(counts)
 
 
 def _unfilter_rgba_rows(payload: bytes, *, width: int, height: int) -> tuple[bytes, ...]:
@@ -164,14 +214,23 @@ def inspect_baboom_sprite_atlas(
     image_rows = _unfilter_rgba_rows(decoded, width=width, height=height)
     if not any(alpha < 255 for row in image_rows for alpha in row[3::4]):
         raise BaboomVisualAssetError("BABOOM atlas has no actual transparent pixels")
+    cell_width = width // columns
+    cell_height = height // rows
     return BaboomSpriteAtlas(
         path=candidate,
         width=width,
         height=height,
         columns=columns,
         rows=rows,
-        cell_width=width // columns,
-        cell_height=height // rows,
+        cell_width=cell_width,
+        cell_height=cell_height,
+        frame_counts=_drawn_frames_per_row(
+            image_rows,
+            columns=columns,
+            rows=rows,
+            cell_width=cell_width,
+            cell_height=cell_height,
+        ),
     )
 
 

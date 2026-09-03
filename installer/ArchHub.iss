@@ -8,7 +8,11 @@
 #define AppName "ArchHub"
 #define AppVersion "1.8.4"
 #define AppPublisher "Fargaly"
-#define AppExe "ArchHub.bat"
+; Every shortcut opens ArchHub.vbs: it resolves the installed pythonw itself
+; (a bare pythonw fails wherever Python was installed without Add-to-PATH)
+; and hands a first run to ArchHub.bat, whose window stays open if setup
+; refuses. ArchHub.bat is never a shortcut target.
+#define AppExe "ArchHub.vbs"
 
 [Setup]
 ; The AppId of the install already on every machine (v1.7.0), so Windows

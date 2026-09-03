@@ -12,12 +12,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+# (pip name, import probe). What the DESKTOP boot reaches, measured by
+# importing the launcher modules and reading sys.modules -- not a guess. A
+# court holds this list against that measurement, so a dependency added to
+# the app cannot ship without landing here too. Before that court, rpds-py,
+# fastapi and uvicorn were missing and a first launch on a clean machine
+# died on import with no window and no message.
 PACKAGES = (
     ("PyQt6", "PyQt6"),
     ("PyQt6-WebEngine", "PyQt6.QtWebEngineWidgets"),
     ("cryptography", "cryptography"),
     ("httpx", "httpx"),
     ("joserfc", "joserfc"),
+    ("fastapi", "fastapi"),
+    ("uvicorn", "uvicorn"),
+    ("rpds-py", "rpds"),
     ("opencv-python-headless", "cv2"),
     ("ezdxf", "ezdxf"),
     ("numpy", "numpy"),
@@ -55,18 +64,18 @@ def main():
     if not (root / "launch_archhub_test.py").is_file():
         print("  REFUSED: launch_archhub_test.py is not beside this file.")
         return 3
-    windowless = sys.executable.replace("python.exe", "pythonw.exe")
-    desktop = Path(os.path.expanduser("~")) / "Desktop" / "ArchHub.bat"
-    desktop.write_text(
-        chr(13).join([
-            "@echo off",
-            'cd /d "%s"' % root,
-            'start "" "%s" launch_archhub_test.py' % windowless,
-            "",
-        ]).replace(chr(13), chr(13) + chr(10)),
-        encoding="utf-8",
-    )
-    print("  shortcut   :", desktop)
+    # Prove the boot imports resolve NOW, in this interpreter, so a failure
+    # is a sentence on this screen rather than a window that never opens.
+    for _pip_name, probe in PACKAGES:
+        if probe in ("cv2", "ezdxf", "numpy"):
+            continue  # optional engines; the app reports them as absent
+        if not _has(probe):
+            print("  REFUSED: %s installed but cannot be imported." % probe)
+            print("  send this window text to Ahmed.")
+            return 4
+    # The installer owns the shortcuts (Start menu + Desktop, both opening
+    # ArchHub.vbs). Writing a second one here put two different ArchHub
+    # entries on the Desktop.
     print("  ready. Double-click ArchHub on your Desktop.")
     return 0
 

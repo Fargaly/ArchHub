@@ -74,8 +74,7 @@ def _copy_hook_fixture(tmp_path: Path) -> Path:
     # script is missing; these courts test the retirement gate, so the
     # fixture carries a ratchet that passes under the bash the tests use as
     # ARCHHUB_PYTHON.
-    (repo / "tools" / "public_privacy_ratchet.py").write_text("exit 0
-", encoding="utf-8")
+    (repo / "tools" / "public_privacy_ratchet.py").write_text("exit 0" + chr(10), encoding="utf-8")
     (repo / "tools" / "legacy_runtime_drain.py").write_text(
         "echo '{\"retirement_gate\":{\"archive_allowed\":false}}'\n"
         "exit 2\n",

@@ -91,3 +91,11 @@ def test_the_report_names_agents_brain_and_hosts():
     # An older server without a lens leaves the report exactly as it was.
     bare = {"data": {k: v for k, v in report["data"].items() if k != "context"}}
     assert baboom_actionable_report_text(bare) == "Work: 1 active. Workshop: 0 entries. Attention: 0 blocked. Next claimed: Wire BABOOM"
+
+
+def test_the_launcher_retries_attach_under_its_own_id():
+    """connect() binds the identity before start() can time out; a retry under the same
+    id is refused as already bound and the founder gets no companion for the session."""
+    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    assert 'founder-desktop-baboom:retry-%d' in src
+    assert '"already bound" not in text' in src

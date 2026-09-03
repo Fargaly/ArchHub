@@ -401,15 +401,25 @@ try:
     _attach_error = None
     for _attempt in range(6):
         try:
+            # A retry is the same launcher, not a second process: connect()
+            # binds the session identity before start() can time out, so a
+            # retry under the same id is refused as "already bound". Each
+            # attempt therefore carries its own id; the abandoned binding
+            # expires on its own lease.
             baboom_host, baboom_window = attach_baboom_companion(
                 server,
                 state_dir=state_dir,
                 descriptor_path=descriptor_path,
                 key_provider=machine_key_provider,
+                external_session_id=(
+                    "founder-desktop-baboom" if _attempt == 0
+                    else "founder-desktop-baboom:retry-%d" % _attempt
+                ),
             )
             break
-        except MachineTransportError as exc:
-            if "did not respond" not in str(exc):
+        except Exception as exc:
+            text = str(exc)
+            if "did not respond" not in text and "already bound" not in text:
                 raise
             _attach_error = exc
             time.sleep(2.5)

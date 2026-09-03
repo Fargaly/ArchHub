@@ -9595,6 +9595,8 @@ def respond_universal_baboom_utterance(
     *,
     utterance: str,
     authentication_context: object | None = None,
+    brain_state: Mapping[str, object] | None = None,
+    hosts: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Resolve one founder utterance to a graph-backed, non-chat response.
 
@@ -9701,7 +9703,7 @@ def respond_universal_baboom_utterance(
             },
         }
     elif intent == "brain-health":
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
         brain = lens.get("brain") or {}
         response = {
             "kind": "brain-health",
@@ -9717,7 +9719,7 @@ def respond_universal_baboom_utterance(
             ),
         }
     elif intent in {"check-meetings", "meeting-brief", "open-meeting", "start-meeting-notes", "stop-meeting-notes"}:
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
         notes = lens.get("meeting_notes") or {}
         response = {
             "kind": "meeting-notes",
@@ -9725,7 +9727,7 @@ def respond_universal_baboom_utterance(
             "data": {"meeting_notes": notes, "route": "/api/universal/baboom-meeting-notes"},
         }
     elif intent == "archhub-map":
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
         response = {
             "kind": "archhub-map",
             "summary": "The cockpit is the live map of this graph; open /founder on the cloud.",

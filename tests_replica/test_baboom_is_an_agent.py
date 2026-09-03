@@ -99,3 +99,14 @@ def test_the_launcher_retries_attach_under_its_own_id():
     src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
     assert 'founder-desktop-baboom:retry-%d' in src
     assert '"already bound" not in text' in src
+
+
+def test_brain_health_answers_from_the_live_brain_not_a_default():
+    import inspect as _i
+    import nodelang.universal_application as ua
+    import nodelang.application_server as srv
+    src = _i.getsource(ua.respond_universal_baboom_utterance)
+    assert "brain_state=brain_state, hosts=hosts" in src
+    server_src = _i.getsource(srv)
+    assert server_src.count("brain_state=self._brain_state()") >= 6, "directive, briefing and responder sites all feed the lens"
+    assert server_src.count("brain_state=owner._brain_state()") >= 1, "the machine dispatcher feeds it too"

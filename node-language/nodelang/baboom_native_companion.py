@@ -13,6 +13,7 @@ from ctypes import wintypes
 from dataclasses import replace
 import json
 import os
+import time
 from pathlib import Path
 import threading
 from typing import Any
@@ -249,6 +250,10 @@ def compact_baboom_response_report(response: Mapping[str, object]) -> str:
     return compact if compact else "BABOOM has no report yet."
 
 
+# A poll can land a few seconds late on a busy machine; that is not a dead server.
+_FRAME_GRACE_SECONDS = 20.0
+
+
 class BaboomNativeCompanionController:
     """Volatile visual controller; host snapshots remain the only input truth."""
 
@@ -292,6 +297,12 @@ class BaboomNativeCompanionController:
         """Project one host snapshot without polling, writing, or moving Work."""
         snapshot = self._host.latest_snapshot
         if snapshot is None:
+            return None
+        # A frame carries the lease the server gave it. Painting it past
+        # that lease shows "Work: 7 active" an hour after the server died,
+        # pixel-identical to live. Past the lease the companion disappears
+        # rather than lies; the widget already hides on None.
+        if time.time() > float(snapshot.frame_expires_at) + _FRAME_GRACE_SECONDS:
             return None
         frame = project_baboom_native_visual_frame(
             snapshot,
@@ -507,6 +518,10 @@ def create_baboom_native_companion_window(
                 | Qt.WindowType.WindowStaysOnTopHint
             )
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            # Never let Qt or the system paint a background behind the sprite:
+            # with the ask box open the founder saw the whole window rectangle
+            # filled light grey with a rounded border around his companion.
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
             self.setStyleSheet("background:transparent;border:0;")
             self._projection_timer = QTimer(self)
             self._projection_timer.setInterval(750)
@@ -689,11 +704,31 @@ def create_baboom_native_companion_window(
             self.update()
 
         def paintEvent(self, event) -> None:  # noqa: N802 - Qt callback name
-            if self._sprite is None or self._frame is None:
-                return
             painter = QPainter(self)
-            painter.drawImage(self._sprite_rect, self._sprite)
+            # Clear the whole window to transparent first, every paint, so no
+            # frame and no fill ever shows around the sprite and its box.
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+            painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+            if self._sprite is not None and self._frame is not None:
+                painter.drawImage(self._sprite_rect, self._sprite)
             painter.end()
+
+        def showEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            super().showEvent(event)
+            # Windows 11 draws a rounded corner and a 1px border on every
+            # top-level window; on a transparent companion that border IS the
+            # frame the founder saw. Tell the compositor: no corners, no border.
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                dwm = ctypes.windll.dwmapi
+                corner = ctypes.c_int(1)          # DWMWCP_DONOTROUND
+                dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), 33, ctypes.byref(corner), 4)
+                border = ctypes.c_uint(0xFFFFFFFE)  # DWMWA_COLOR_NONE
+                dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), 34, ctypes.byref(border), 4)
+            except Exception:
+                pass
 
         def _open_interaction(self) -> None:
             """Show the ask box: BABOOM is listening."""

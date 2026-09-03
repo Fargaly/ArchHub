@@ -26,6 +26,25 @@ _log_dir.mkdir(parents=True, exist_ok=True)
 _log = open(_log_dir / "launcher.log", "a", encoding="utf-8", buffering=1)
 sys.stdout = _log
 sys.stderr = _log
+
+
+# pythonw has no console and stdout is the log file above, so a boot that
+# refuses -- Qt missing, WebEngine refusing the GPU, a port held -- was a
+# window that never opened and a colleague with nothing to send. The log
+# keeps the full traceback; the colleague gets its last line and where the
+# log is, in a box he can read.
+def _tell_the_person(kind, value, tb):
+    traceback.print_exception(kind, value, tb)
+    try:
+        import ctypes
+        last = ''.join(traceback.format_exception_only(kind, value)).strip().splitlines()[-1]
+        message = 'ArchHub could not open.' + chr(10) + chr(10) + last[:300]
+        message += chr(10) + chr(10) + 'The full log is at:' + chr(10) + str(_log_path)
+        message += chr(10) + chr(10) + 'Send that file to Ahmed.'
+        ctypes.windll.user32.MessageBoxW(0, message, 'ArchHub', 0x10)
+    except Exception:
+        pass
+sys.excepthook = _tell_the_person
 print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
 faulthandler.enable(file=_log)
 
@@ -58,6 +77,9 @@ for _attempt in range(12):
         # than exiting silently and leaving the founder with no window.
         time.sleep(0.5)
 else:
+    # Say so in the log: a second launch that exits without a word
+    # leaves an orphan header and reads as a crash.
+    print("  another ArchHub is already running on this machine; this launch exits", flush=True)
     sys.exit(0)
 
 # listdir membership: Path.exists() returns False on a Windows sharing
@@ -371,12 +393,28 @@ window.activateWindow()
 baboom_host = None
 try:
     from nodelang.baboom_attach import attach_baboom_companion
-    baboom_host, baboom_window = attach_baboom_companion(
-        server,
-        state_dir=state_dir,
-        descriptor_path=descriptor_path,
-        key_provider=machine_key_provider,
-    )
+    from nodelang.application_machine_transport import MachineTransportError
+    # The runtime pipe comes up a beat after the HTTP server on a busy
+    # machine. One attempt printed "universal runtime did not respond" and
+    # left the founder with no companion for the whole session; a short
+    # retry is what every client of a just-started service does.
+    _attach_error = None
+    for _attempt in range(6):
+        try:
+            baboom_host, baboom_window = attach_baboom_companion(
+                server,
+                state_dir=state_dir,
+                descriptor_path=descriptor_path,
+                key_provider=machine_key_provider,
+            )
+            break
+        except MachineTransportError as exc:
+            if "did not respond" not in str(exc):
+                raise
+            _attach_error = exc
+            time.sleep(2.5)
+    else:
+        raise _attach_error
     baboom_window.show()
     # show() only makes the widget exist; projection is what makes BABOOM
     # actually draw itself and follow the graph.

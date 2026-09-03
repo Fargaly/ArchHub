@@ -80,6 +80,12 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       jpost('/api/universal/brain-remember', {text});
     window.ARCHHUB_BRAIN_EXPORT = async () =>
       (await jpost('/api/universal/brain-export', {})).facts || [];
+    window.ARCHHUB_BRAIN_FORGET = id =>
+      jpost('/api/universal/brain-forget', {id});
+    window.ARCHHUB_BRAIN_EDIT = (id, text) =>
+      jpost('/api/universal/brain-edit', {id, text});
+    window.ARCHHUB_NODE_CREATE = spec =>
+      jpost('/api/universal/node-create', spec);
     window.ARCHHUB_RETRACT = root =>
       jpost('/api/universal/retract', {root});
     window.ARCHHUB_REVEAL = what =>
@@ -194,6 +200,22 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
           + (canvas.wires || []).length + ' wires',
       }],
       hosts, connectors, graph:{nodes, wires},
+      // What the brain actually remembers, for the Memory panel: real facts,
+      // flattened from the daemon folders. Eight fixture lines used to sit there.
+      memory:(await (async () => {
+        try {
+          const held = (await jpost('/api/universal/brain-export', {})).facts || {};
+          const out = [];
+          for (const folder of (held.folders || [])) {
+            for (const f of (folder.facts || [])) {
+              if (f.archived) continue;
+              out.push({id:String(f.id), text:String(f.desc || f.name || f.body || '').slice(0, 240),
+                        src:String(folder.label || f.kind || '')});
+            }
+          }
+          return out;
+        } catch (e) { return []; }
+      })()),
       skills:(await (async () => {
         try {
           return (await jpost('/api/universal/skills', {want:'catalogue'})).result || [];

@@ -300,6 +300,32 @@ def connector_status(params: Mapping[str, object],
 
 
 
+def _skill_description(text: str) -> str:
+    """The front-matter description, including a YAML folded or literal block.
+
+    A description written as "description: >" continues on the indented
+    lines below it; reading only the first line rendered one of the five
+    binding laws as a lone ">" in the composed thinking chain.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith("description:"):
+            continue
+        head = line.split(":", 1)[1].strip()
+        if head and head not in (">", "|", ">-", "|-"):
+            return head[:240]
+        parts = []
+        for continuation in lines[index + 1:]:
+            if continuation.strip() == "" and not parts:
+                continue
+            if continuation.startswith((chr(32), chr(9))):
+                parts.append(continuation.strip())
+            else:
+                break
+        return " ".join(parts)[:240]
+    return ""
+
+
 def skills_catalogue(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Every skill this machine holds, as one list any agent can read.
 
@@ -312,10 +338,17 @@ def skills_catalogue(params: Mapping[str, object], feeds: Mapping[str, object]):
 
     wanted = str(params.get("match") or "").strip().casefold()
     home = Path(os.path.expanduser("~"))
+    shipped = Path(__file__).resolve().parents[1] / "skills"
     found = []
+    seen = set()
+    # The founder's live folders first (his own edits win on his own desk),
+    # then the library the installer ships, so a colleague's machine holds
+    # the same skills he has.
     for root, source in (
         (home / ".claude" / "skills", "claude"),
         (home / ".codex" / "skills", "codex"),
+        (shipped / "claude", "claude"),
+        (shipped / "codex", "codex"),
     ):
         if not root.is_dir():
             continue
@@ -323,12 +356,11 @@ def skills_catalogue(params: Mapping[str, object], feeds: Mapping[str, object]):
             manifest = entry / "SKILL.md"
             if not manifest.is_file():
                 continue
+            if (source, entry.name) in seen:
+                continue
+            seen.add((source, entry.name))
             text = manifest.read_text(encoding="utf-8", errors="replace")
-            description = ""
-            for line in text.splitlines():
-                if line.startswith("description:"):
-                    description = line.split(":", 1)[1].strip()[:240]
-                    break
+            description = _skill_description(text)
             record = {
                 "name": entry.name, "source": source,
                 "description": description,
@@ -474,8 +506,11 @@ def probe_connectors():
                 revit.append(session)
     except Exception:
         pass
+    # Every row says whether the product can DRIVE the host, not only see it.
+    # A row with no drive is never shown green: the founder's rule is that
+    # nothing appears that is not wired.
     found.append({
-        "id": "revit", "name": "Revit",
+        "id": "revit", "name": "Revit", "drive": "revit.build_walls",
         "state": "connected" if revit else "absent",
         "detail": (
             "%d session(s)" % len(revit) if revit
@@ -483,7 +518,7 @@ def probe_connectors():
         ),
     })
     found.append({
-        "id": "autocad", "name": "AutoCAD",
+        "id": "autocad", "name": "AutoCAD", "drive": "cad.host_lines",
         "state": "connected" if acad else "absent",
         "detail": (
             "%d session(s)" % len(acad) if acad
@@ -491,11 +526,12 @@ def probe_connectors():
         ),
     })
     found.append({
-        "id": "rhino", "name": "Rhino",
-        "state": "listening" if port_open(9879) else "absent",
+        "id": "rhino", "name": "Rhino", "drive": "",
+        "state": "reachable" if port_open(9879) else "absent",
         "detail": (
-            "bridge on :9879" if port_open(9879)
-            else "bridge not running (start it inside Rhino)"
+            "bridge on :9879 · no wire in this build"
+            if port_open(9879)
+            else "bridge not running · no wire in this build"
         ),
     })
     appdata = os.environ.get("APPDATA", "")
@@ -503,31 +539,17 @@ def probe_connectors():
         os.path.join(appdata, "Speckle")
     )
     found.append({
-        "id": "speckle", "name": "Speckle",
+        "id": "speckle", "name": "Speckle", "drive": "",
         "state": "installed" if speckle_installed else "absent",
         "detail": (
-            "Manager installed · local wire on demand"
+            "Manager installed · no wire in this build"
             if speckle_installed else "Manager not found"
         ),
     })
-    try:
-        tasks = subprocess.run(
-            ["tasklist", "/fo", "csv", "/nh"],
-            capture_output=True, text=True, timeout=8,
-        ).stdout.casefold()
-    except Exception:
-        tasks = ""
-    for exe, cid, name in (
-        ("outlook.exe", "outlook", "Outlook"),
-        ("dropbox.exe", "dropbox", "Dropbox"),
-        ("blender.exe", "blender", "Blender"),
-    ):
-        running = exe in tasks
-        found.append({
-            "id": cid, "name": name,
-            "state": "connected" if running else "absent",
-            "detail": "running" if running else "not running",
-        })
+    # Outlook, Dropbox and Blender used to be reported CONNECTED from a
+    # tasklist string match -- a process being open is not a connection,
+    # and nothing in the runtime can drive any of them. They are not
+    # listed until a wire exists.
     return found
 
 

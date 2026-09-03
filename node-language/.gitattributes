@@ -1,4 +1,2 @@
-app/web_ui/studio-lm.jsx text eol=lf
-app/web_ui/studio-lm.compiled.js text eol=lf
-app/web_ui/app-boot.jsx text eol=lf
-app/web_ui/app-boot.compiled.js text eol=lf
+* text=auto eol=lf
+*.png binary

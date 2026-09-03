@@ -9,6 +9,9 @@ import hmac
 import json
 import os
 import re
+
+# RFC 6265 cookie-octet: printable ASCII minus CTL, SP, DQUOTE, ',', ';', '\'.
+_COOKIE_OCTETS = re.compile(r"[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]+")
 import secrets
 import sys
 import threading
@@ -4357,6 +4360,12 @@ class ApplicationServer:
                 )
 
             def _set_browser_cookie(self, token):
+                # RFC 6265 cookie-octets only. The token is server-issued,
+                # so anything outside that set is not a session at all --
+                # and refusing it here keeps a CR/LF or ';' out of the
+                # header line whatever the caller passed.
+                if not _COOKIE_OCTETS.fullmatch(str(token or '')):
+                    raise AuthorizationDenied('malformed browser session token')
                 attributes = [
                     'ArchHub-Session=%s' % token,
                     'Path=/',

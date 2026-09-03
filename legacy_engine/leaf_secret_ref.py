@@ -50,8 +50,8 @@ def main():
     # what protects us, not a dead/empty value). This value is used and discarded
     # here — it never touches the graph.
     runtime_secret = g._resolve_secret("stripe_key")
-    print("_resolve_secret (runtime)-> %r  (used + discarded, never stored)"
-          % ("<resolved>" if runtime_secret == SECRET else runtime_secret,))
+    print("_resolve_secret (runtime)-> %s  (used + discarded, never stored, never printed)"
+          % ("<resolved>" if runtime_secret == SECRET else "<unexpected value, redacted>",))
     assert runtime_secret == SECRET, "resolver must fetch the real secret at run time"
 
     # Wire it through another node too, to be sure a consumer doesn't leak it either.
@@ -96,8 +96,8 @@ def main():
         assert "sk_live" not in blob, "%s leaked an sk_live secret!" % name
 
     print("-" * 64)
-    print('Reference "%s" present on every surface; resolved secret "%s" present on NONE.'
-          % (REF, SECRET))
+    print('Reference "%s" present on every surface; the resolved secret present on NONE.'
+          % (REF,))
     print("SECRET_REF_OK")
 
 

@@ -6,12 +6,15 @@
 ; share, where Windows attaches no mark-of-the-web and raises no warning.
 
 #define AppName "ArchHub"
-#define AppVersion "1.5.1"
+#define AppVersion "1.8.0"
 #define AppPublisher "Fargaly"
 #define AppExe "ArchHub.bat"
 
 [Setup]
-AppId={{8B6A2E31-3F4C-4E77-9C21-ARCHHUB000001}
+; The AppId of the install already on every machine (v1.7.0), so Windows
+; and Inno treat this as an UPGRADE of that entry -- one ArchHub in
+; Apps & Features, same folder -- rather than a second product beside it.
+AppId={{B6C0E10F-1F8E-4AAB-9A8F-4F2E3A2C4BAE}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
@@ -39,6 +42,10 @@ Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\colleague_setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion
+; Replaces the previous launcher of the same name, so every shortcut a
+; colleague already has opens the new application. The old app\ tree is
+; left in place: it still hosts the brain MCP server on :8473.
+Source: "ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\12.PRODUCTION\app\assets\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

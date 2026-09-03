@@ -80,7 +80,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         continue
     fi
 
-    mapfile -t range_args < <(introduced_range_args "$local_sha" "$remote_sha")
+    # mapfile needs bash 4; macOS ships 3.2 and answered 127.
+    range_args=()
+    while IFS= read -r range_arg; do
+        range_args+=("$range_arg")
+    done < <(introduced_range_args "$local_sha" "$remote_sha")
 
     cs_changes=$(git log --name-only --pretty=format: "${range_args[@]}" -- \
                  ':(glob)payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)

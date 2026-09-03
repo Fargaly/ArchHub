@@ -13,7 +13,7 @@ import json
 import socket
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -56,9 +56,11 @@ def _norm(path: str | Path) -> str:
 
 
 def _under(path: str, root: str) -> bool:
-    path_norm = _norm(path)
-    root_norm = _norm(root)
-    return path_norm == root_norm or path_norm.startswith(root_norm + "\\")
+    # One separator on every runner: the records are Windows paths, the
+    # runtime copy under test may be a POSIX tmp_path.
+    path_norm = _norm(path).replace("\\", "/")
+    root_norm = _norm(root).replace("\\", "/").rstrip("/")
+    return path_norm == root_norm or path_norm.startswith(root_norm + "/")
 
 
 def iter_processes() -> list[ProcessRecord]:
@@ -797,7 +799,9 @@ def _process_risk_class(
     cmd = " ".join(argv).lower()
     cwd_lower = str(cwd or "").lower()
     script_path = str(script.get("script_path") or "").lower()
-    script_name = Path(script_path).name.lower() if script_path else ""
+    # Holders are Windows processes; a POSIX runner must still read the
+    # script name off a backslash path.
+    script_name = PureWindowsPath(script_path).name.lower() if script_path else ""
     if (
         "run_application_server.py" in cmd
         and "--port 8482" in cmd

@@ -8,7 +8,10 @@ process environment can be mutated after launch.
 from __future__ import annotations
 
 import json
+import os
 import sys
+
+import pytest
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
@@ -96,6 +99,10 @@ def test_cmd_shim_uses_absolute_target_to_avoid_recursion(tmp_path):
     assert "brainwrap.py" in text
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows desktop sessions: WindowsApps discovery, .cmd shims and Windows path quoting",
+)
 def test_cmd_shim_install_is_idempotent_with_crlf(tmp_path, monkeypatch):
     real_bin = tmp_path / "real-bin"
     real_bin.mkdir()
@@ -178,6 +185,10 @@ def test_quarantine_ungoverned_sessions_records_no_restart_state(tmp_path):
     assert "retroactive audit" in payload["policy"]["effect"].lower()
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows desktop sessions: WindowsApps discovery, .cmd shims and Windows path quoting",
+)
 def test_desktop_watchdog_restarts_only_primary_ungoverned_apps(tmp_path):
     actions = gs.desktop_watchdog_plan(
         {
@@ -282,6 +293,10 @@ def test_install_governed_shortcuts_writes_existing_shortcut_path(tmp_path):
     assert written[0]["name"] == "Codex"
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows desktop sessions: WindowsApps discovery, .cmd shims and Windows path quoting",
+)
 def test_desktop_apps_from_sessions_discovers_store_window_apps():
     apps = gs.desktop_apps_from_sessions(
         {

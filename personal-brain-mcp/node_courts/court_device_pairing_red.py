@@ -27,7 +27,13 @@ from types import MappingProxyType
 
 import pytest
 
-NL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "13.NODE-LANGUAGE")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# node-language/ inside this repository first (PR #306); the sibling
+# 13.NODE-LANGUAGE worktree is the founder-workstation fallback.
+NL = next((c for c in (os.path.join(_HERE, "..", "..", "node-language"),
+                       os.path.join(_HERE, "..", "..", "..", "13.NODE-LANGUAGE"))
+           if os.path.isdir(os.path.join(c, "nodelang"))),
+          os.path.join(_HERE, "..", "..", "..", "13.NODE-LANGUAGE"))
 sys.path.insert(0, os.path.abspath(NL))
 
 from nodelang.cell_cloud_sessions import device_root_for_thumbprint

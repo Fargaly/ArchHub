@@ -11,8 +11,13 @@ Standing court: re-run any time to catch a regression to blob-storage.
 """
 import sys, os
 
-NL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                  "..", "..", "..", "13.NODE-LANGUAGE")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# node-language/ inside this repository first (PR #306); the sibling
+# 13.NODE-LANGUAGE worktree is the founder-workstation fallback.
+NL = next((c for c in (os.path.join(_HERE, "..", "..", "node-language"),
+                       os.path.join(_HERE, "..", "..", "..", "13.NODE-LANGUAGE"))
+           if os.path.isdir(os.path.join(c, "nodelang"))),
+          os.path.join(_HERE, "..", "..", "..", "13.NODE-LANGUAGE"))
 sys.path.insert(0, os.path.abspath(NL))
 
 from nodelang.cell_secret_keys import MemorySigningKeyProvider

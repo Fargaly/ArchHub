@@ -1653,6 +1653,17 @@
     "missing_deps": []
   },
   {
+    "slug": "agdr/AgDR-0062-acad-script-context-ui-fields",
+    "title": "AutoCAD script context gains the UIApp / UIDoc fields its wrapper binds",
+    "path": "docs/agdr/AgDR-0062-acad-script-context-ui-fields.md",
+    "word_count": 263,
+    "mtime": 1788421847,
+    "deps": [
+      "AgDR-0062"
+    ],
+    "missing_deps": []
+  },
+  {
     "slug": "adr/ADR-001-cloud-hosting",
     "title": "ADR-001: ArchHub cloud backend hosting choice",
     "path": "docs/adr/ADR-001-cloud-hosting.md",

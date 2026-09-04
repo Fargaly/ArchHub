@@ -122,6 +122,30 @@ def _ensure_compose_at_user_dir() -> Path:
     return user_compose
 
 
+def _local_secrets_env(user_dir: Path) -> dict:
+    """Per-machine random credentials for the local Speckle stack.
+
+    Generated once into <user_dir>/speckle.env and handed to docker compose
+    as environment; the compose template carries only ${...} references, so
+    no fixed password or session secret ever ships or lands in the repo."""
+    import secrets as _secrets
+    env_path = Path(user_dir) / "speckle.env"
+    values: dict[str, str] = {}
+    if env_path.is_file():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.startswith("#"):
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip()
+    changed = False
+    for key in ("SPECKLE_PG_PASSWORD", "SPECKLE_S3_SECRET", "SPECKLE_SESSION_SECRET"):
+        if not values.get(key):
+            values[key] = _secrets.token_urlsafe(24)
+            changed = True
+    if changed:
+        env_path.write_text("".join("%s=%s" % (k, v) + chr(10) for k, v in values.items()), encoding="utf-8")
+    return {**os.environ, **values}
+
+
 def _minimal_compose_yaml() -> str:
     """Fallback when the bundled template isn't shipped yet. Pulls the
     official Speckle compose-published images; spins up a usable
@@ -144,7 +168,7 @@ services:
     environment:
       POSTGRES_DB: speckle
       POSTGRES_USER: speckle
-      POSTGRES_PASSWORD: speckle
+      POSTGRES_PASSWORD: ${SPECKLE_PG_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
@@ -160,7 +184,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: speckle
-      MINIO_ROOT_PASSWORD: speckle1234
+      MINIO_ROOT_PASSWORD: ${SPECKLE_S3_SECRET}
     volumes:
       - minio-data:/data
 
@@ -171,15 +195,15 @@ services:
     ports:
       - "3000:3000"
     environment:
-      POSTGRES_URL: "postgres:5432/speckle?user=speckle&password=speckle"
+      POSTGRES_URL: "postgres:5432/speckle?user=speckle&password=${SPECKLE_PG_PASSWORD}"
       REDIS_URL: "redis://redis:6379"
       S3_ENDPOINT: "http://minio:9000"
       S3_ACCESS_KEY: speckle
-      S3_SECRET_KEY: speckle1234
+      S3_SECRET_KEY: ${SPECKLE_S3_SECRET}
       S3_BUCKET: speckle-server
       S3_CREATE_BUCKET: "true"
       CANONICAL_URL: "http://localhost:3000"
-      SESSION_SECRET: "archhub-local-dev-secret-replace-in-prod"
+      SESSION_SECRET: ${SPECKLE_SESSION_SECRET}
       LOG_LEVEL: info
       LOG_PRETTY: "true"
 
@@ -242,6 +266,7 @@ def start_local(port: int = _DEFAULT_PORT,
         subprocess.run(
             ["docker", "compose", "-f", str(compose_path),
              "up", "-d"],
+            env=_local_secrets_env(compose_path.parent),
             capture_output=True, text=True, timeout=120, check=True,
             creationflags=(subprocess.CREATE_NO_WINDOW
                            if sys.platform == "win32" else 0),

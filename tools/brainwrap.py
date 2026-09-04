@@ -590,6 +590,20 @@ def _completion_gate_verdict(
             "vendor": runtime,
         })
         if not isinstance(state, dict):
+            # The founder's app restarting orphans every enrolled Agent
+            # Session. That is the runtime's lifecycle, not the agent's
+            # fault: re-enroll against the new runtime once and retry,
+            # instead of denying the stop and demanding a human ritual.
+            call_tool("brain.hook_session_start", {
+                "session_id": session_id,
+                "vendor": runtime,
+                "cwd": cwd or str(Path.cwd()),
+            })
+            state = call_tool("brain.universal_work_status", {
+                "session_id": session_id,
+                "vendor": runtime,
+            })
+        if not isinstance(state, dict):
             return True, "Universal work authority is unavailable; stop denied."
         session_root = state.get("agent_session")
         owned = [

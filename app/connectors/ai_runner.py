@@ -177,7 +177,7 @@ def _gemini_via_rest(api_key: str, prompt: str, model: Optional[str],
                       temperature: Optional[float]) -> tuple[str, str]:
     m = model or DEFAULT_GEMINI_MODEL
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{m}:generateContent?key={api_key}")
+           f"{m}:generateContent")
     body: dict = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
     }
@@ -188,7 +188,8 @@ def _gemini_via_rest(api_key: str, prompt: str, model: Optional[str],
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url, data=data,
-        headers={"Content-Type": "application/json"},
+        # Key as a header, never in the URL (proxy logs, error messages).
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as resp:

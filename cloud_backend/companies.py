@@ -159,10 +159,11 @@ def create_company(req: CreateCompanyReq,
     # (checkout.session.completed and the subscription update) already call
     # update_company(plan=...), which re-derives the real quota — so paying
     # lifts this by itself, with no second code path.
-    if checkout_url:
-        db.set_company_message_limit(
-            company["id"], config.PLAN_QUOTAS["trial"]
-        )
+    # Unconditional: with Stripe unconfigured there is no checkout and no
+    # webhook, so a conditional hold left the full paid quota in place.
+    db.set_company_message_limit(
+        company["id"], config.PLAN_QUOTAS["trial"]
+    )
     return {
         "id": company["id"],
         "slug": company["slug"],

@@ -4541,11 +4541,11 @@ class SecretsTab(QWidget):
         )
 
     def _probe_google(self, api_key: str) -> tuple[bool, str]:
-        # Gemini API: the key is a query param, not a bearer header.
+        # Gemini accepts the key as the x-goog-api-key header; a query
+        # parameter would put it in every proxy and browser log.
         return self._http_probe(
-            "https://generativelanguage.googleapis.com/v1beta/models"
-            f"?key={api_key}",
-            {"Accept": "application/json"},
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            {"Accept": "application/json", "x-goog-api-key": api_key},
             ok_label="models reachable",
         )
 

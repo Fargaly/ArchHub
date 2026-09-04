@@ -66,10 +66,21 @@ app = FastAPI(
 # Only the desktop client + the public website need to call this
 # backend. CORS-allow our own origin so the public dashboard at
 # archhub.io can fetch /v1/me from the browser.
+_PROD_ORIGINS = ["https://archhub.io"]
+_DEV_ORIGINS = ["http://localhost:5173", "http://localhost:3000"]
+
+
+def _cors_origins() -> list[str]:
+    """Dev origins only when NOT production and NOT on Fly (the same gate
+    as the docs endpoints); a credentialed allowlist must not ship them."""
+    if _HIDE_API_DOCS:
+        return list(_PROD_ORIGINS)
+    return _PROD_ORIGINS + _DEV_ORIGINS
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://archhub.io", "http://localhost:5173",
-                    "http://localhost:3000"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

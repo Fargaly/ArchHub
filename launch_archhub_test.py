@@ -23,7 +23,8 @@ _log_dir = Path(
     or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
-_log = open(_log_dir / "launcher.log", "a", encoding="utf-8", buffering=1)
+_log_path = _log_dir / "launcher.log"
+_log = open(_log_path, "a", encoding="utf-8", buffering=1)
 sys.stdout = _log
 sys.stderr = _log
 
@@ -146,6 +147,25 @@ def _boot():
         machine_key_provider=machine_key_provider,
     ).start()
 
+def _release_own_fence(refusal) -> None:
+    """A failed _boot() can leave this process holding the store fence twice over:
+    the .owner.lock file AND an in-memory path set. Both must go or every retry
+    fails on ourselves."""
+    if "already owned by this same process" not in str(refusal):
+        return
+    try:
+        from nodelang.universal_cell import InterprocessOwnerFence as _Fence
+        key = os.path.normcase(os.path.realpath(os.path.abspath(str(state_path))))
+        with _Fence._process_guard:
+            _Fence._process_paths.discard(key)
+    except Exception:
+        pass
+    for stale in state_dir.glob(state_path.name + ".owner.lock"):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 boot_refusal = None
 try:
     server = _boot()
@@ -164,12 +184,7 @@ except Exception as refusal:
     # A failed first attempt can leave OUR OWN owner fence behind; the
     # conflict then names this very process. Releasing our own lock is
     # honest -- it is nobody else's.
-    if "already owned by this same process" in str(refusal):
-        for stale in state_dir.glob(state_path.name + ".owner.lock"):
-            try:
-                stale.unlink(missing_ok=True)
-            except OSError:
-                pass
+    _release_own_fence(refusal)
     # A transient (a predecessor still closing its WAL, a lock not yet
     # released, an I/O hiccup) is retried for a while; it is never a
     # reason to set the founder's graph aside -- a fresh graph on the
@@ -185,9 +200,13 @@ except Exception as refusal:
             break
         except Exception as again:
             boot_refusal = again
+            # Each failed attempt can leave OUR OWN fence behind; without
+            # clearing it every later attempt fails on ourselves.
+            _release_own_fence(again)
 if boot_refusal is not None and any(
     mark in str(boot_refusal)
-    for mark in ("disk I/O error", "database is locked", "already owned", "unable to open")
+    for mark in ("disk I/O error", "database is locked", "already owned", "unable to open",
+                 "held by another live process", "owner fence could not be taken")
 ):
     print("  could not open the saved graph: %s"
           % str(boot_refusal).splitlines()[-1][:160], flush=True)

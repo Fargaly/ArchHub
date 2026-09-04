@@ -406,6 +406,19 @@ class BaboomNativeCompanionController:
             self._atlas, motion=motion, animation_tick=self._animation_tick
         )
 
+    def orb_for(self, motion: str, sprite_size: tuple[int, int]) -> tuple[int, int] | None:
+        """The staff orb for the pose the CURRENT tick shows, scaled to the sprite.
+
+        The orb travels with the arm; a light left at the previous pose"s orb
+        floats beside the staff every other frame."""
+        from .baboom_native_visual import _MOTION_ROWS
+        row = _MOTION_ROWS[motion]
+        raw = self._atlas.orb_point(row, self._animation_tick % self._atlas.frames_in_row(row))
+        if raw is None:
+            return None
+        return (round(raw[0] * sprite_size[0] / self._atlas.cell_width),
+                round(raw[1] * sprite_size[1] / self._atlas.cell_height))
+
     def respond(self, utterance: str) -> Mapping[str, object]:
         """Return a graph-backed response before any founder-confirmed action."""
         return self._host.respond_input(utterance)
@@ -627,9 +640,11 @@ def create_baboom_native_companion_window(
             # IS something: a report, or the founder talking to it.
             if self._frame.report is None and not self._interaction_requested:
                 return
+            sprite = self._frame.layout.sprite
             frame = replace(
                 self._frame,
                 source=controller.next_sprite_source(self._frame.motion),
+                orb=controller.orb_for(self._frame.motion, (sprite.width, sprite.height)),
             )
             self._frame = frame
             self._sprite = render_baboom_native_sprite(self._atlas, frame)

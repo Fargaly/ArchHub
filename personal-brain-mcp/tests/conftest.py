@@ -126,6 +126,10 @@ _put_node_language_on_path()
 _WORKSTATION_ONLY = (
     "test_universal_session_manager.py", "test_universal_runtime_bridge.py",
     "test_owner_binding.py", "test_hook_coverage.py",
+    # grand-map sync, the dispatcher and active-work courts drive the governed
+    # workspace itself (00.GOVERNANCE + the live grand map)
+    "test_grand_map_sync.py", "test_dispatcher.py", "test_active_work_db.py",
+    "test_active_work_cell_migration.py",
 )
 if not (Path(__file__).resolve().parents[4] / "00.GOVERNANCE").is_dir():
     collect_ignore = list(_WORKSTATION_ONLY)

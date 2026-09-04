@@ -160,3 +160,18 @@ def test_the_orb_advances_with_the_pose():
     src = _i.getsource(c)
     assert "orb=controller.orb_for(self._frame.motion" in src
     assert "def orb_for(self, motion: str, sprite_size" in src
+
+
+def test_right_click_is_all_of_archhub_and_run_engine_acts_on_the_graph():
+    """BABOOM is the brain and the graph: right-click offers brain, graph runs on the
+    brokers, work, agents, reports, updates, cockpit; 'run <engine> on the graph'
+    creates the node and runs the pipeline."""
+    import inspect as _i
+    import nodelang.universal_application as ua
+    from nodelang.baboom_native_companion import create_baboom_native_companion_window
+    src = _i.getsource(create_baboom_native_companion_window)
+    for label in ("Ask the brain...", "Graph: run on the canvas", "Assign a task...", "Agents:", "Know", "Open the cockpit", "def contextMenuEvent"):
+        assert label in src, label
+    assert any(spec[0] == "run-engine" for spec in ua._BABOOM_COMMAND_SPECS)
+    ex = _i.getsource(ua.execute_universal_baboom_utterance)
+    assert 'command["intent"] == "run-engine"' in ex and "create_engine_node" in ex and "run_universal_pipeline" in ex

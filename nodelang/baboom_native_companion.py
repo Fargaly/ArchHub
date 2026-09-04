@@ -827,6 +827,65 @@ def create_baboom_native_companion_window(
                 return
             super().keyPressEvent(event)
 
+        # Right-click: all of ArchHub, from the graph itself. Every entry is an
+        # utterance the graph already answers or executes; nothing here is a
+        # promise the runtime cannot keep.
+        def _say(self, utterance: str) -> None:
+            self._open_interaction()
+            self._input.setText(utterance)
+            self._submit_input()
+
+        def _prefill(self, prefix: str) -> None:
+            self._open_interaction()
+            self._input.setText(prefix)
+            self._input.setFocus()
+            self._input.setCursorPosition(len(prefix))
+
+        def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt callback name
+            from PyQt6.QtWidgets import QMenu
+            snapshot = self._host.latest_snapshot
+            context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
+            menu = QMenu(self)
+            brain = context.get("brain") or {}
+            brain_line = ("Brain: %d facts" % int(brain.get("facts") or 0)) if brain.get("ok") else ("Brain: not answering" if brain.get("ok") is False else "Brain")
+            b = menu.addMenu(brain_line)
+            b.addAction("Ask the brain...", lambda: self._prefill(""))
+            b.addAction("Remember...", lambda: self._prefill("remember: "))
+            b.addAction("Recall on the graph", lambda: self._say("run brain.recall on the graph"))
+            b.addAction("Brain health", lambda: self._say("brain health"))
+            g = menu.addMenu("Graph: run on the canvas")
+            for label, engine in (("Revit sessions", "revit.sessions"), ("Revit walls", "revit.read"), ("AutoCAD lines", "cad.host_lines"),
+                                  ("Excel workbooks", "office.read"), ("Outlook inbox", "outlook.inbox"), ("3ds Max", "max.exec"),
+                                  ("Rhino", "rhino.exec"), ("Blender", "blender.exec"), ("Notion search", "notion.search"),
+                                  ("Dropbox files", "dropbox.list"), ("Connector status", "connector.status"), ("Skills catalogue", "skills.catalogue")):
+                g.addAction(label, (lambda e=engine: self._say("run %s on the graph" % e)))
+            w = menu.addMenu("Work")
+            w.addAction("Assign a task...", lambda: self._prefill("Assign task: "))
+            w.addAction("Take on this task...", lambda: self._prefill("take on this task: "))
+            w.addAction("Show governed work", lambda: self._say("show governed work"))
+            w.addAction("Show my plan", lambda: self._say("show my plan"))
+            w.addAction("Claim next work", lambda: self._say("claim next work"))
+            agents = (context.get("agents") or {}).get("working") or []
+            a = menu.addMenu("Agents: %d working" % len(agents))
+            for row in agents[:8]:
+                a.addAction("%s on: %s" % (row.get("agent"), row.get("title")), lambda: self._say("show governed work"))
+            a.addAction("Queue work for the agents...", lambda: self._prefill("Assign task: "))
+            a.addAction("Send a task to a model...", lambda: self._prefill("assign task to claude: "))
+            k = menu.addMenu("Know")
+            for label, phrase in (("Status", "status"), ("Brief me on ArchHub", "brief me on archhub"), ("What matters now", "what matters now"),
+                                  ("Workshop report", "workshop report"), ("Model council", "model council"), ("My meetings", "check my meetings"),
+                                  ("Capability map", "capability map"), ("Repo status", "repo status")):
+                k.addAction(label, (lambda ph=phrase: self._say(ph)))
+            menu.addSeparator()
+            update = context.get("update") or {}
+            if update.get("build_id"):
+                menu.addAction("Restart to install build %s" % update["build_id"], lambda: self._say("restart-to-update"))
+            else:
+                menu.addAction("Check for updates", lambda: self._say("restart-to-update"))
+            menu.addAction("Open the cockpit (api.archhub.io)", lambda: __import__("webbrowser").open("https://api.archhub.io/founder"))
+            menu.addAction("Hide BABOOM until next launch", self.hide)
+            menu.exec(event.globalPos())
+
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             if event.button() == Qt.MouseButton.LeftButton:
                 self._press_global = event.globalPosition().toPoint()

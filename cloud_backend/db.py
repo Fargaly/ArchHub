@@ -3023,6 +3023,48 @@ def claim_agent_task(task_id: str, claimed_by: str):
     return dict(r) if r else None
 
 
+def claim_next_agent_task(*, claimed_by: str,
+                          kinds: tuple = ("app", "app-execute")):
+    """Atomically claim the OLDEST queued task whose kind is in `kinds`.
+    This is how the founder's running application drains the cockpit: it asks
+    for the next instruction addressed to it. None when nothing is queued."""
+    now = int(time.time())
+    kinds = tuple(str(k) for k in kinds) or ("app",)
+    marks = ",".join("?" for _ in kinds)
+    with connect() as con:
+        for _ in range(3):
+            r = con.execute(
+                "SELECT id FROM agent_tasks WHERE status='queued' AND kind IN (%s) "
+                "ORDER BY created_at ASC, id ASC LIMIT 1" % marks, kinds).fetchone()
+            if r is None:
+                return None
+            cur = con.execute(
+                "UPDATE agent_tasks SET status='claimed', claimed_by=?, "
+                "claimed_at=? WHERE id=? AND status='queued'",
+                (claimed_by, now, r["id"]))
+            if cur.rowcount:
+                row = con.execute(
+                    "SELECT * FROM agent_tasks WHERE id = ?", (r["id"],)).fetchone()
+                return dict(row) if row else None
+    return None
+
+
+def finish_agent_task(task_id: str, *, ok: bool, result: str):
+    """The app posts what it did: the claimed row becomes done/failed with the
+    answer text. None when the task was never claimed (nothing to finish)."""
+    now = int(time.time())
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE agent_tasks SET status=?, finished_at=?, result=? "
+            "WHERE id=? AND status IN ('claimed','running')",
+            ("done" if ok else "failed", now, str(result or "")[:8000], task_id))
+        if cur.rowcount == 0:
+            return None
+        row = con.execute(
+            "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(row) if row else None
+
+
 # ---------------------------------------------------------------------------
 # Community Gallery — votes (one per user) + promotion
 # ---------------------------------------------------------------------------

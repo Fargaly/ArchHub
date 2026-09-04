@@ -1215,6 +1215,42 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
     }) || {}).col || HB.inkMute;
   };
   // Filled by the domain map, emitted after the wire layer — see "DOMAIN IDENTITY" below.
+  // upp/scr/cardFs are defined BEFORE the eager wire render below (it calls cardFs at build time).
+  // SCREEN-CONSTANT TYPE — the whole model is ~2700×3000 world units, so at "fit all" a
+  // 20px world label renders at ~5px and the map turns into unreadable confetti. Domain
+  // identity (title, count, tally) is chrome, not geometry: it keeps a fixed SCREEN size
+  // by scaling with world-units-per-pixel (observed, not measured mid-render), clamped so
+  // it never dwarfs its own box.
+  // Measure the element LIVE rather than trusting the pxW state mirror: pxW is only a
+  // re-render trigger, and if its observer subscription goes stale the mirror silently keeps
+  // the mount-time width — which made every screen floor below compute against 808px while
+  // the map was actually 420px, dragging domain titles to 6px. The live rect is the truth at
+  // paint time; pxW stays purely as the signal that tells React to re-render.
+  // WORLD UNITS PER SCREEN PIXEL — read from the RENDERED transform, not from state.
+  // The viewBox is written imperatively to the DOM by pushVB during pan/zoom without a state
+  // update, so the `vb` state and the real viewBox routinely diverge; dividing the STATE width
+  // by the live pixel width therefore under-reported the zoom-out and silently collapsed every
+  // screen-size floor below (domain titles rendered at 7px on a narrow map). getScreenCTM().a
+  // is the actual world→screen scale the browser is painting with, so it cannot disagree with
+  // what the user sees. vbRef (the imperative source of truth) is the fallback, never `vb`.
+  var upp = function () {
+    var el = svgRef.current;
+    if (el && el.getScreenCTM) {
+      var m = el.getScreenCTM();
+      if (m && m.a) return 1 / m.a;
+    }
+    // hostW is a change-signal, not a measurement — always measure the element itself.
+    var w = el && el.getBoundingClientRect().width || props.hostW || pxW;
+    var src = vbRef.current || vb;
+    return w ? src.w / w : 1;
+  }();
+  var scr = function scr(px, maxWorld) {
+    return Math.min(maxWorld == null ? Infinity : maxWorld, px * Math.max(1, upp));
+  };
+  var macro = upp > 1.9; // zoomed out far enough that node-level detail is noise
+  var cardFs = function cardFs(px) {
+    return Math.max(9 * upp, px * Math.max(1, upp * 0.55));
+  };
   var domChrome = [];
   var wireEls = vis.wires ? function () {
     var bundles = {};
@@ -1431,9 +1467,6 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
   var tallyFit = function tallyFit(b) {
     return tallyFs(b) <= tallyPitch(b) * 0.2;
   }; // is a node card wide enough to carry text?
-  var cardFs = function cardFs(px) {
-    return Math.max(9 * upp, px * Math.max(1, upp * 0.55));
-  };
   var fitStr = function fitStr(str, availWorld, fsz) {
     var t = String(str || '');
     var max = Math.floor(availWorld / Math.max(0.001, fsz * 0.44));
@@ -1441,39 +1474,6 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
     if (max < 2) return '';
     return t.slice(0, max - 1).replace(/[\s:·,&]+$/, '') + "\u2026";
   };
-
-  // SCREEN-CONSTANT TYPE — the whole model is ~2700×3000 world units, so at "fit all" a
-  // 20px world label renders at ~5px and the map turns into unreadable confetti. Domain
-  // identity (title, count, tally) is chrome, not geometry: it keeps a fixed SCREEN size
-  // by scaling with world-units-per-pixel (observed, not measured mid-render), clamped so
-  // it never dwarfs its own box.
-  // Measure the element LIVE rather than trusting the pxW state mirror: pxW is only a
-  // re-render trigger, and if its observer subscription goes stale the mirror silently keeps
-  // the mount-time width — which made every screen floor below compute against 808px while
-  // the map was actually 420px, dragging domain titles to 6px. The live rect is the truth at
-  // paint time; pxW stays purely as the signal that tells React to re-render.
-  // WORLD UNITS PER SCREEN PIXEL — read from the RENDERED transform, not from state.
-  // The viewBox is written imperatively to the DOM by pushVB during pan/zoom without a state
-  // update, so the `vb` state and the real viewBox routinely diverge; dividing the STATE width
-  // by the live pixel width therefore under-reported the zoom-out and silently collapsed every
-  // screen-size floor below (domain titles rendered at 7px on a narrow map). getScreenCTM().a
-  // is the actual world→screen scale the browser is painting with, so it cannot disagree with
-  // what the user sees. vbRef (the imperative source of truth) is the fallback, never `vb`.
-  var upp = function () {
-    var el = svgRef.current;
-    if (el && el.getScreenCTM) {
-      var m = el.getScreenCTM();
-      if (m && m.a) return 1 / m.a;
-    }
-    // hostW is a change-signal, not a measurement — always measure the element itself.
-    var w = el && el.getBoundingClientRect().width || props.hostW || pxW;
-    var src = vbRef.current || vb;
-    return w ? src.w / w : 1;
-  }();
-  var scr = function scr(px, maxWorld) {
-    return Math.min(maxWorld == null ? Infinity : maxWorld, px * Math.max(1, upp));
-  };
-  var macro = upp > 1.9; // zoomed out far enough that node-level detail is noise
 
   // ── active run flow: animated pulse along wires currently carrying a run ──
   var flowEls = activeWires && activeWires.size ? _toConsumableArray(activeWires).map(function (key) {

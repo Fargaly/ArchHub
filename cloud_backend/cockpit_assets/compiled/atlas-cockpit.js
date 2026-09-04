@@ -453,14 +453,11 @@ function AtlasCockpit() {
         ld = new Set((L.domains || []).map(function (d) {
           return d.key;
         }));
-      var nodes = (L.nodes || []).map(function (n) {
-        return sn[n.id] ? _objectSpread(_objectSpread({}, n), {}, {
-          x: sn[n.id].x,
-          y: sn[n.id].y
-        }) : n;
-      }).concat((S.nodes || []).filter(function (n) {
-        return !ln.has(n.id);
-      }));
+      // A saved domain is the SAME domain as a live one when only the graph prefix differs
+      // ("gm:domain:ui" vs "ui"): it is layout for the live card, never a second card.
+      var same = function same(k) {
+        return ld.has(k) || ld.has(String(k).replace(/^gm:domain:/, '')) || ld.has('gm:domain:' + k);
+      };
       var domains = (L.domains || []).map(function (d) {
         return sd[d.key] ? _objectSpread(_objectSpread({}, d), {}, {
           x: sd[d.key].x,
@@ -469,7 +466,18 @@ function AtlasCockpit() {
           h: sd[d.key].h
         }) : d;
       }).concat((S.domains || []).filter(function (d) {
-        return !ld.has(d.key);
+        return !same(d.key);
+      }));
+      var keptDoms = new Set(domains.map(function (d) {
+        return d.key;
+      }));
+      var nodes = (L.nodes || []).map(function (n) {
+        return sn[n.id] ? _objectSpread(_objectSpread({}, n), {}, {
+          x: sn[n.id].x,
+          y: sn[n.id].y
+        }) : n;
+      }).concat((S.nodes || []).filter(function (n) {
+        return !ln.has(n.id) && keptDoms.has(n.dom);
       }));
       var ids = new Set(nodes.map(function (n) {
         return n.id;
@@ -648,6 +656,46 @@ function AtlasCockpit() {
               return (byId[k] || {}).title;
             }))))
           }) : f;
+        })
+      });
+    }
+    // Two domains in one grid cell draw on top of each other. Whatever put them there
+    // (a stale snapshot, a push laid out on the same lattice), the later arrival moves to
+    // the next free cell and its nodes move with it -- the map is never unreadable.
+    if (data.grid && data.domains.length) {
+      var g = data.grid,
+        used = new Set(),
+        shifted = {};
+      var cell = function cell(i) {
+        return i % 4 + ',' + Math.floor(i / 4);
+      };
+      var _domains = data.domains.map(function (d) {
+        var c = Math.round((d.x - g.x0) / g.px) + ',' + Math.round((d.y - g.y0) / g.py);
+        if (!used.has(c)) {
+          used.add(c);
+          return d;
+        }
+        var i = 0;
+        while (used.has(cell(i))) i++;
+        used.add(cell(i));
+        var nx = g.x0 + i % 4 * g.px,
+          ny = g.y0 + Math.floor(i / 4) * g.py;
+        shifted[d.key] = {
+          dx: nx - d.x,
+          dy: ny - d.y
+        };
+        return _objectSpread(_objectSpread({}, d), {}, {
+          x: nx,
+          y: ny
+        });
+      });
+      if (Object.keys(shifted).length) data = _objectSpread(_objectSpread({}, data), {}, {
+        domains: _domains,
+        nodes: data.nodes.map(function (n) {
+          return shifted[n.dom] ? _objectSpread(_objectSpread({}, n), {}, {
+            x: n.x + shifted[n.dom].dx,
+            y: n.y + shifted[n.dom].dy
+          }) : n;
         })
       });
     }

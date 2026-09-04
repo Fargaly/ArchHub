@@ -156,10 +156,14 @@ function AtlasCockpit() {
       const sn = {}; (S.nodes || []).forEach(n => sn[n.id] = n);
       const sd = {}; (S.domains || []).forEach(d => sd[d.key] = d);
       const ln = new Set((L.nodes || []).map(n => n.id)), ld = new Set((L.domains || []).map(d => d.key));
-      const nodes = (L.nodes || []).map(n => sn[n.id] ? { ...n, x: sn[n.id].x, y: sn[n.id].y } : n)
-        .concat((S.nodes || []).filter(n => !ln.has(n.id)));
+      // A saved domain is the SAME domain as a live one when only the graph prefix differs
+      // ("gm:domain:ui" vs "ui"): it is layout for the live card, never a second card.
+      const same = (k) => ld.has(k) || ld.has(String(k).replace(/^gm:domain:/, '')) || ld.has('gm:domain:' + k);
       const domains = (L.domains || []).map(d => sd[d.key] ? { ...d, x: sd[d.key].x, y: sd[d.key].y, w: sd[d.key].w, h: sd[d.key].h } : d)
-        .concat((S.domains || []).filter(d => !ld.has(d.key)));
+        .concat((S.domains || []).filter(d => !same(d.key)));
+      const keptDoms = new Set(domains.map(d => d.key));
+      const nodes = (L.nodes || []).map(n => sn[n.id] ? { ...n, x: sn[n.id].x, y: sn[n.id].y } : n)
+        .concat((S.nodes || []).filter(n => !ln.has(n.id) && keptDoms.has(n.dom)));
       const ids = new Set(nodes.map(n => n.id));
       const lw = new Set((L.wires || []).map(w => w.a + '|' + w.b));
       const wires = (L.wires || []).concat((S.wires || []).filter(w => !lw.has(w.a + '|' + w.b) && ids.has(w.a) && ids.has(w.b)));
@@ -211,6 +215,23 @@ function AtlasCockpit() {
         ...(f.domKeys || []).map(k => (data.domains.find(d => d.key === k) || {}).title),
         ...(f.fieldIds || []).map(k => (byId[k] || {}).title),
       ]) } : f) };
+    }
+    // Two domains in one grid cell draw on top of each other. Whatever put them there
+    // (a stale snapshot, a push laid out on the same lattice), the later arrival moves to
+    // the next free cell and its nodes move with it -- the map is never unreadable.
+    if (data.grid && data.domains.length) {
+      const g = data.grid, used = new Set(), shifted = {};
+      const cell = (i) => (i % 4) + ',' + Math.floor(i / 4);
+      const domains = data.domains.map(d => {
+        const c = Math.round((d.x - g.x0) / g.px) + ',' + Math.round((d.y - g.y0) / g.py);
+        if (!used.has(c)) { used.add(c); return d; }
+        let i = 0; while (used.has(cell(i))) i++;
+        used.add(cell(i));
+        const nx = g.x0 + (i % 4) * g.px, ny = g.y0 + Math.floor(i / 4) * g.py;
+        shifted[d.key] = { dx: nx - d.x, dy: ny - d.y };
+        return { ...d, x: nx, y: ny };
+      });
+      if (Object.keys(shifted).length) data = { ...data, domains, nodes: data.nodes.map(n => shifted[n.dom] ? { ...n, x: n.x + shifted[n.dom].dx, y: n.y + shifted[n.dom].dy } : n) };
     }
     setM(data);
     setVis({ domains: new Set(data.domains.map(d => d.key)), status: new Set(STATUS_ORDER), wires: true, params: true, labels: true });

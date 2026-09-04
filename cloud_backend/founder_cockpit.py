@@ -370,9 +370,15 @@ _INTENTS = [
     ("set_plan",         [r"\bset\b.*\bplan\b", r"\b(set|make|move|upgrade|downgrade)\b.*\bto\s+(trial|solo|studio|firm)\b",
                           r"\b(plan|tier)\b.*\b(trial|solo|studio|firm)\b"]),
     ("toggle_free",      [r"\bfree[\s_-]?default\b", r"\bfree tier\b", r"\bfree\b.*\b(on|off|enable|disable)\b"]),
+    ("help",             [r"\bhelp\b", r"\bwhat can you do\b", r"\bcommands\b"]),
+    # Anything about the founder's RUNNING application -- its graph, BABOOM,
+    # the agents on his machine, hosts/brokers, brain, engines, work -- is
+    # answered by that application through the relay, never by the cloud.
+    ("app",              [r"^\s*(app|baboom)\b",
+                          r"\b(agents?|baboom|graph|engines?|hosts?|brokers?|brain|blocked|focus|meetings?|map|update|restart|canvas|nodes?|wires?|work)\b",
+                          r"^\s*(tell|interrupt|run|check|show|what|who|which|where|is|are|how|claim|plan|draft)\b"]),
     ("direct_agent",     [r"\b(build|extend|create|implement|make|add)\b",
                           r"\bself[\s_-]?extend\b", r"\bagent\b", r"\bbuild me\b"]),
-    ("help",             [r"\bhelp\b", r"\bwhat can you do\b", r"\bcommands\b"]),
 ]
 
 _PLANS = ("trial", "solo", "studio", "firm")
@@ -589,6 +595,13 @@ def route_command(text: str, *, actor: str, confirm: bool = False,
                       "message": (f"Free default turned {'ON' if val else 'OFF'}. "
                                   f"Serving free now: {available}.")}
 
+    elif action == "app":
+        import app_relay
+        spoken = re.sub(r"^\s*(?:app|baboom)\s*[:,-]?\s*", "", text, flags=re.IGNORECASE).strip() or text
+        result = app_relay.relay(spoken, actor=actor, execute=bool(confirm))
+        ok = bool(result.get("ok"))
+        target = result.get("task_id")
+
     elif action == "direct_agent":
         directive = (args.get("directive") or text).strip()
         if not directive:
@@ -608,12 +621,11 @@ def route_command(text: str, *, actor: str, confirm: bool = False,
                                   f"(status={task['status']}). The self-extension "
                                   f"loop will pick it up.")}
 
-    else:  # unknown
-        ok = False
-        result = {"action": "unknown",
-                  "message": ("I didn't recognise that command. Type 'help' "
-                              "for the list."),
-                  "help": HELP_TEXT}
+    else:  # not a cloud verb -> the founder's application is the authority
+        import app_relay
+        result = app_relay.relay(text, actor=actor, execute=bool(confirm))
+        ok = bool(result.get("ok"))
+        target = result.get("task_id")
 
     # Audit every executed command (success or handled failure).
     db.log_founder_action(
@@ -733,6 +745,50 @@ def api_agent_tasks(_founder: dict = Depends(require_founder)) -> JSONResponse:
     })
 
 
+# --- The founder's application drains the cockpit -----------------------------
+class AgentTaskClaimReq(BaseModel):
+    claimed_by: str = "archhub-app"
+    kinds: list[str] = ["app", "app-execute"]
+
+
+class AgentTaskResultReq(BaseModel):
+    ok: bool = True
+    result: str = ""
+
+
+@router.post("/api/agent-tasks/claim")
+def api_agent_task_claim(body: Optional[AgentTaskClaimReq] = None,
+                         _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The founder's running application claims the oldest instruction
+    addressed to it (kind app / app-execute). {task: null} when idle."""
+    import app_relay
+    body = body or AgentTaskClaimReq()
+    kinds = tuple(k for k in body.kinds if k in app_relay.APP_KINDS) or app_relay.APP_KINDS
+    task = db.claim_next_agent_task(
+        claimed_by=str(body.claimed_by or "archhub-app")[:120], kinds=kinds)
+    return JSONResponse({"ok": True, "task": task})
+
+
+@router.post("/api/agent-tasks/{task_id}/result")
+def api_agent_task_result(task_id: str, body: AgentTaskResultReq,
+                          _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The application posts BABOOM's answer for a task it claimed."""
+    row = db.finish_agent_task(task_id, ok=bool(body.ok), result=body.result)
+    if row is None:
+        return JSONResponse({"ok": False, "error": "task is not claimed"},
+                            status_code=409)
+    return JSONResponse({"ok": True, "task": row})
+
+
+@router.get("/api/agent-tasks/{task_id}")
+def api_agent_task_get(task_id: str,
+                       _founder: dict = Depends(require_founder)) -> JSONResponse:
+    row = db.get_agent_task(task_id)
+    if row is None:
+        return JSONResponse({"ok": False, "error": "unknown task"}, status_code=404)
+    return JSONResponse({"ok": True, "task": row})
+
+
 # --- Test-account purge (founder-gated, confirm-required) -------------------
 class PurgeTestUsersReq(BaseModel):
     """Body for POST /founder/api/purge-test-users. `confirm` MUST be true —
@@ -795,7 +851,9 @@ _COCKPIT_ASSETS = Path(__file__).resolve().parent / "cockpit_assets"
 _ASSET_SUFFIXES = frozenset({"js", "jsx", "html", "css", "json", "png", "svg", "woff2", "map"})
 
 
-_MAP_STATE = Path(__file__).resolve().parent / "data" / "founder-map.json"
+# On the durable data volume (config.DATA_DIR = /data on Fly): a deploy replaces the
+# machine and its code directory, and the founder's pushed map must outlive that.
+_MAP_STATE = Path(config.DATA_DIR) / "founder-map.json"
 
 
 @router.post("/map-state")

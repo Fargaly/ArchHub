@@ -536,6 +536,23 @@ _ATLAS_COLORS = (
 )
 
 
+def _public_value(label: object, value: object) -> str:
+    """A property value as the published map may show it.
+
+    File locations stay on the machine: a path-shaped value (or any *_path
+    property) is reduced to its file name before it leaves for the cockpit.
+    """
+    text = str(value)
+    key = str(label).casefold()
+    looks_like_path = (
+        len(text) > 2 and (text[1:3] == ":" + chr(92) or text.startswith((chr(92) * 2, "/", "~")))
+    )
+    if key.endswith("_path") or key in {"path", "file", "image"} or looks_like_path:
+        name = text.replace(chr(92), "/").rstrip("/").rsplit("/", 1)[-1]
+        return name[:48]
+    return text[:48]
+
+
 def project_atlas_map(store, registry, *, authentication_context=None):
     """The cockpit map IS the live graph: domains and their members.
 
@@ -583,7 +600,7 @@ def project_atlas_map(store, registry, *, authentication_context=None):
             data = {label: value for label, (_r, value) in held.items()}
             title = data.get("title") or data.get("label") or member
             params = [
-                {"k": label, "v": str(value)[:48], "rel": rel, "t": "string"}
+                {"k": label, "v": _public_value(label, value), "rel": rel, "t": "string"}
                 for label, (rel, value) in held.items()
                 if label not in {
                     "title", "label", "status", "position_x", "position_y",

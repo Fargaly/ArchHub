@@ -51,8 +51,13 @@ def main():
     missing = [name for name, probe in PACKAGES if not _has(probe)]
     if missing:
         print("  installing :", ", ".join(missing))
+        # Versions come from the shipped requirements.txt, the same pins the
+        # founder machine runs; an unpinned "pip install <name>" would put
+        # whatever PyPI serves today on a colleague machine.
+        pinned = Path(__file__).resolve().parent / "requirements.txt"
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--user", *missing]
+            [sys.executable, "-m", "pip", "install", "--user",
+             "-r", str(pinned)]
         )
         if result.returncode != 0:
             print("  REFUSED: the install did not finish. Nothing was faked;")

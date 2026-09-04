@@ -65,7 +65,7 @@ from .cell_catalog import with_catalog_verification_scope
 from .cell_protocols import read_relation, with_relation_projection_scope
 from .core import relation_stages
 from .domains.cockpit import submit_cockpit_command
-from .http_server import QuietThreadingHTTPServer
+from .http_server import QuietThreadingHTTPServer, local_browser_admission_error
 from .laws_surface import ui_element
 from .laws_relation import (append_stage, attach_payload, build_aead_stage,
                              build_json_codec_stage, build_payload_envelope,
@@ -3022,10 +3022,20 @@ class _CleanAuthorityHttpServer:
                 return token.strip()
 
             def _body(self) -> dict[str, object]:
-                length = int(self.headers.get("Content-Length", "0"))
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError as exc:
+                    raise InvalidCell("request content length is invalid") from exc
                 if length <= 0:
                     return {}
+                # Bounded before any read: an unauthenticated caller must not
+                # be able to make this process swallow gigabytes.
+                if length > MAX_REQUEST_BODY_BYTES:
+                    self.close_connection = True
+                    raise InvalidCell("request body exceeds the admitted limit")
                 raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise InvalidCell("request body is incomplete")
                 try:
                     body = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -3035,35 +3045,12 @@ class _CleanAuthorityHttpServer:
                 return body
 
             def _admit_local_request(self) -> bool:
-                """Refuse a request that only LOOKS local to the browser.
-
-                Every same-origin proof this server relies on is a header
-                the browser fills in, and DNS rebinding makes an attacker's
-                page genuinely same-origin: it re-resolves its own hostname
-                to 127.0.0.1, so `Sec-Fetch-Site` says same-origin, no
-                preflight is sent, and script may read the reply. The one
-                header that still tells the truth is Host -- it carries the
-                name the CLIENT dialled, and a rebound page dialled the
-                attacker's domain, not loopback. This is the same admission
-                clean_coordination_service and clean_application_server
-                already apply; it was simply never applied here.
-                """
-                origin = self.headers.get("Origin")
-                expected_port = self.server.server_address[1]
-                if origin not in {
-                    None,
-                    "http://127.0.0.1:%s" % expected_port,
-                    "http://localhost:%s" % expected_port,
-                    "http://127.0.0.1",
-                    "http://localhost",
-                }:
-                    self._json(403, {"ok": False, "error": "origin denied"})
-                    return False
-                if self.headers.get("Host", "") not in {
-                    "127.0.0.1:%s" % expected_port,
-                    "localhost:%s" % expected_port,
-                }:
-                    self._json(403, {"ok": False, "error": "host denied"})
+                """One admission for every loopback surface; see http_server."""
+                denied = local_browser_admission_error(
+                    self.headers, self.server.server_address[1]
+                )
+                if denied:
+                    self._json(403, {"ok": False, "error": denied})
                     return False
                 return True
 
@@ -4487,6 +4474,11 @@ class ApplicationServer:
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
             def do_GET(self):
+                denied = local_browser_admission_error(
+                    self.headers, self.server.server_address[1])
+                if denied:
+                    self._json(403, {'ok': False, 'error': denied})
+                    return
                 if owner._runtime_handoff_exit.is_set():
                     self._json(503, {
                         'ok': False,
@@ -5036,6 +5028,12 @@ class ApplicationServer:
             @with_session_canvas_roots_scope
             def do_POST(self):
                 try:
+                    denied = local_browser_admission_error(
+                        self.headers, self.server.server_address[1])
+                    if denied:
+                        self._discard_admitted_body()
+                        self._json(403, {'ok': False, 'error': denied})
+                        return
                     if owner._runtime_handoff_exit.is_set():
                         self._discard_admitted_body()
                         self._json(503, {
@@ -5787,9 +5785,17 @@ class ApplicationServer:
                                         'ahmed.fargaly98@gmail.com'
                                     ),
                                 )
+                                # Identity is an email account; the only proof of one on this
+                                # machine is the cloud session opened with Google. A typed
+                                # email that is not that account is refused.
+                                from .cloud_session import signed_in_cloud_account
+                                wanted = str(body.get('email') or '').strip().casefold()
+                                if not wanted or wanted != signed_in_cloud_account():
+                                    raise AuthorizationDenied(
+                                        'sign in to the cloud with this account first')
                                 _root, mail, tier = upsert_account(
                                     owner.universal_store,
-                                    body.get('email'),
+                                    wanted,
                                 )
                                 self._json(200, {
                                     'ok': True, 'email': mail, 'tier': tier,
@@ -5809,6 +5815,7 @@ class ApplicationServer:
                                         'ahmed.fargaly98@gmail.com'
                                     ),
                                 )
+                                owner._require_founder_machine()
                                 self._json(200, {
                                     'ok': True,
                                     'accounts': read_accounts(
@@ -5818,6 +5825,7 @@ class ApplicationServer:
                                 return
                             elif self.path == '/api/universal/account-tier':
                                 from .cell_accounts import set_tier
+                                owner._require_founder_machine()
                                 tier = set_tier(
                                     owner.universal_store,
                                     body.get('email'),
@@ -7692,6 +7700,16 @@ class ApplicationServer:
             )
         )
         return session_root, observation.root_id, evidence_root
+
+    def _require_founder_machine(self) -> None:
+        """Account administration is the founder's alone: the cloud session on
+        this machine must be the founder's own account."""
+        from .cell_accounts import founder_email
+        from .cloud_session import signed_in_cloud_account
+        who = signed_in_cloud_account()
+        founder = founder_email(self.universal_store.snapshot())
+        if not who or not founder or who != str(founder).strip().casefold():
+            raise AuthorizationDenied("account administration is the founder's alone")
 
     def _brain_state(self) -> dict:
         """Last known brain.health (ok + facts). Never probes on the caller's thread:
@@ -13696,7 +13714,9 @@ def main(argv=None):
                                 )).start()
     # The unauthenticated root is deliberately denied. Hand the launcher the
     # one-use bootstrap URL instead of advertising an unusable bare address.
-    print('Node-native ArchHub: %s' % server.bootstrap_url, flush=True)
+    # The bootstrap token is a bearer credential; the console and any log
+    # tee of it are not. Print the origin only.
+    print('Node-native ArchHub: %s' % server.bootstrap_url.split('?', 1)[0], flush=True)
     try:
         while (
             server.thread.is_alive()

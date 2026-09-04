@@ -11,7 +11,7 @@ import time
 from typing import Callable, Iterator, Mapping
 from urllib.parse import urlsplit
 
-from .http_server import QuietThreadingHTTPServer
+from .http_server import QuietThreadingHTTPServer, local_browser_admission_error
 
 
 MAX_GATEWAY_BODY_BYTES = 1_048_576
@@ -183,6 +183,13 @@ class RuntimeGateway:
                     body = self._body()
                 except GatewayError as exc:
                     self._error(413, str(exc).encode("utf-8"))
+                    return
+                # The gateway rewrites Host for the backend, so the backend can
+                # never judge the client's Host itself; the front door must.
+                denied = local_browser_admission_error(
+                    self.headers, self.server.server_address[1])
+                if denied:
+                    self._error(403, denied.encode("utf-8"))
                     return
                 try:
                     with owner.gate.admit(owner.admission_timeout) as backend:

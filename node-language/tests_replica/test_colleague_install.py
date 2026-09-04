@@ -90,3 +90,28 @@ def test_window_icon_is_the_one_the_installer_ships():
     assert "Path(__file__).resolve().parent / \"archhub.ico\"" in launcher
     iss = (ROOT / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
     assert "archhub.ico" in iss
+
+
+def test_no_surface_runs_a_bare_named_interpreter():
+    """A bare 'py'/'python'/'pythonw' resolves from the user-writable install (or
+    setup) folder first; a planted binary would run as the person."""
+    iss = (ROOT / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
+    assert "Exec('py'" not in iss and "Exec('python'" not in iss
+    assert "function FindPython(): String;" in iss and "Exec(Py," in iss
+    assert "DisableDirPage=yes" in iss
+    vbs = (ROOT / "installer" / "ArchHub.vbs").read_text(encoding="utf-8")
+    assert 'py = "pythonw"' not in vbs
+    assert 'Function FindPython(kind)' in vbs
+    bat = (ROOT / "installer" / "ArchHub.bat").read_text(encoding="utf-8")
+    assert "py -3 colleague_setup.py" not in bat and "\npython colleague_setup.py" not in bat
+    assert '"%ARCHHUB_PY%" colleague_setup.py' in bat
+
+
+def test_setup_exit_code_is_read_outside_any_block_and_deps_are_pinned():
+    bat = (ROOT / "installer" / "ArchHub.bat").read_text(encoding="utf-8")
+    # `%errorlevel%` inside a parenthesised block expands at parse time (always 0).
+    read = bat.index('set "ARCHHUB_SETUP_RC=%errorlevel%"')
+    assert bat.rfind("(", 0, read) < bat.rfind(")", 0, read) or bat.rfind("(", 0, read) == -1
+    assert bat.index('echo ready>') > bat.index('if not "%ARCHHUB_SETUP_RC%"=="0"')
+    setup = (ROOT / "colleague_setup.py").read_text(encoding="utf-8")
+    assert '"-r", str(pinned)' in setup and '"--user", *missing' not in setup

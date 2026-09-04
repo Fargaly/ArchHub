@@ -378,14 +378,14 @@ InstallDir:" prompt — the trailing-backslash quoting bug ate the parameter,
 and PowerShell fell back to interactive input.
 
 **What ships now:**
-- `Install.vbs` — the file the user double-clicks. Zero visible cmd or
+- `scripts\Install.vbs` — the file the user double-clicks. Zero visible cmd or
   PowerShell. Reads VERSION, fires PowerShell with `-WindowStyle Hidden` via
   `WScript.Shell.Run(..., 0, False)` (invisible, fire-and-forget).
 - `installer/install_gui.ps1` — replaces `upgrade.ps1`. Runs all install
   logic but presents it through a `System.Windows.Forms` dialog: dark-themed
   header, Claude-orange progress bar, single status line, single button.
   No console output, ever.
-- `Install.bat` — kept as a fallback for users who prefer the cmd route.
+- `scripts\Install.bat` — kept as a fallback for users who prefer the cmd route.
   Now strips the trailing backslash from `%~dp0` before passing arguments
   (the original v0.5.0 bug fix).
 
@@ -429,7 +429,7 @@ the running app, preserves user data, and replaces only what changed. v0.4.0's
   their contents, mirrors code dirs with `robocopy /MIR` (so files removed
   in the new version are cleaned up), and writes a fresh version stamp
   including the previous version for upgrade history.
-- `Install.bat` — now a thin wrapper that reads `VERSION`, calls
+- `scripts\Install.bat` — now a thin wrapper that reads `VERSION`, calls
   `upgrade.ps1`, writes the launcher .cmd files, calls `make_shortcuts.ps1`,
   and launches the app. About 50 lines, all of them honest.
 - `version.json` — written into the install dir on every install. Contains

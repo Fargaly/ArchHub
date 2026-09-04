@@ -3,7 +3,7 @@ echo ================================================
 echo  Building RevitMCP for Revit 2023
 echo ================================================
 echo.
-cd /d "%~dp0app"
+cd /d "%~dp0..\app"
 py -c "
 import sys, os
 sys.path.insert(0, '.')

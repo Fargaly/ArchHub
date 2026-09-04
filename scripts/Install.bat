@@ -6,7 +6,7 @@ setlocal
 :: PowerShell argument parsing. (Trailing \ before " is the classic Windows
 :: quoting trap — \" gets read as an escape, eating the next argument.)
 :: ----------------------------------------------------------------------
-set "ROOT=%~dp0"
+set "ROOT=%~dp0.."
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 if not exist "%ROOT%\VERSION" (

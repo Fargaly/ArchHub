@@ -122,7 +122,7 @@ You bumped `VERSION` but never published the release. Run the release workflow (
 
 ### `local.boot_log` — FAIL boot.log not found / too old
 
-You haven't launched the desktop app in over 24h, or `boot.log` was deleted. Launch ArchHub from `Launch.bat` to write a fresh entry.
+You haven't launched the desktop app in over 24h, or `boot.log` was deleted. Launch ArchHub from `scripts\Launch.bat` to write a fresh entry.
 
 ### `local.ai_runner_providers` — FAIL N providers (expected 4)
 

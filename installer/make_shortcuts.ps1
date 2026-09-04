@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
     Creates the ArchHub Start Menu shortcut and the Windows Startup shortcut.
-    Called by Install.bat with two arguments:
+    Called by scripts\Install.bat with two arguments:
         $args[0] = install dir (e.g. C:\Users\fargaly\AppData\Local\ArchHub)
         $args[1] = python launcher path (full path to ArchHub.cmd)
 #>

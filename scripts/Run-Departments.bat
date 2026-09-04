@@ -7,7 +7,7 @@ REM Double-click this file to start the company. Close the window to
 REM stop. To run hidden / on Windows startup, see agents\README.md.
 
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 REM Quick check Ollama is running
 powershell -NoProfile -Command "try { Invoke-WebRequest -Uri http://localhost:11434/api/tags -UseBasicParsing -TimeoutSec 1 | Out-Null; exit 0 } catch { exit 1 }"

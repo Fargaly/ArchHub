@@ -69,16 +69,14 @@ a cloud account so it can give you a chat-capable AI to drive your graphs:
 2. ArchHub sends you a **magic link** — open the email and click the link to
    confirm. (There is no password to create.)
 3. You land back in the app, signed in on the **free open-beta tier**. No credit
-   card is required to start, and a number of trial messages are included.
+   card, no trial clock.
 
 > **Note on sign-in options.** Email magic-link sign-in is the supported path
 > today. "Sign in with Google" is built but not yet switched on — it needs
 > final account configuration, so use email for now.
 
-> **Note on the AI model.** The free trial gives you a working hosted AI to get
-> started. A permanently free, zero-setup cloud model is still being finalized,
-> so once your trial messages run low you may be asked to add your own AI
-> provider key or pick a paid plan. You can also point ArchHub at a **local
+> **Note on the AI model.** A permanently free, zero-setup cloud model is still
+> being finalized, so you may be asked to add your own AI provider key. You can also point ArchHub at a **local
 > model** you run yourself (see *Settings* below) — those are detected
 > automatically and preferred when available.
 

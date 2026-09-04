@@ -9,7 +9,7 @@ Dim shell, fso, scriptDir, versionPath, version, file, cmd
 
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+scriptDir = fso.GetParentFolderName(fso.GetParentFolderName(WScript.ScriptFullName))
 
 versionPath = scriptDir & "\VERSION"
 If Not fso.FileExists(versionPath) Then

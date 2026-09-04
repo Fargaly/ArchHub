@@ -45,7 +45,7 @@ if errorlevel 1 (
 ::    deploy manifest.
 echo.
 echo  [4] Building RevitMCP shim + Core for Revit 2025...
-set "ROOT=%~dp0"
+set "ROOT=%~dp0.."
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 pushd "%ROOT%\app" >nul
 py auto_build.py revit 2025

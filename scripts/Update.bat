@@ -4,12 +4,12 @@ REM from GitHub, close any running ArchHub, and relaunch with the new code.
 REM After the next launch you can use the in-app "Update" button in the
 REM header instead of this script.
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 echo ============================================
 echo ArchHub Updater
 echo ============================================
-echo Repo: %~dp0
+echo Repo: %~dp0..
 echo.
 
 echo [1/4] Killing any running ArchHub instance...

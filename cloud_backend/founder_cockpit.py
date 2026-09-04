@@ -1334,7 +1334,8 @@ function renderAgentTasks(d){
   let t=head;
   a.slice(0,8).forEach(x=>{
     t+=`<div class="err"><div class="t">${ago(x.created_at)} &middot; <span class="w">${esc(x.status)}</span> &middot; ${esc(x.kind)}</div>`+
-       `<div class="m">${esc(x.directive)}</div></div>`; });
+       `<div class="m">${esc(x.directive)}</div>`+
+       (x.result?`<div class="m" style="opacity:.8;white-space:pre-wrap">&rarr; ${esc(String(x.result).slice(0,600))}</div>`:'')+`</div>`; });
   $('agentTasks').innerHTML=t;
 }
 async function loadActions(){

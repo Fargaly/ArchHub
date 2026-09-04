@@ -33,17 +33,18 @@ jobs:
 
     strategy:
       fail-fast: false
+      # Two self-contained entries, no top-level lists: a leftover
+      # `python-version: [...]` list next to `include` made GitHub merge both
+      # entries into one combination and the Windows job never existed.
+      # 3.13 pinned: PyO3 (pydantic-core's Rust core) caps at 3.13.
       matrix:
         include:
           - os: windows-latest
+            python-version: '3.13'
             suite: desktop
           - os: ubuntu-latest
+            python-version: '3.13'
             suite: cloud
-        # 3.13 pinned: PyO3 (pydantic-core's Rust core) caps at 3.13.
-        # Local dev boxes can run 3.14; CI cannot until pydantic-core
-        # ships against PyO3 0.23+. Bump alongside build-macos /
-        # build-linux when that lands.
-        python-version: ['3.13']
 
     steps:
       - name: Checkout

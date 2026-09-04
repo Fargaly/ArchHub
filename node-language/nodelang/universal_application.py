@@ -1624,6 +1624,9 @@ _BABOOM_COMMAND_SPECS = (
     ("open-meeting", ("open next meeting", "join my next meeting")),
     ("restart-to-update", ("restart-to-update", "restart to update", "install the update", "update now")),
     ("run-engine", ("run-engine", "run an engine on the graph")),
+    ("agents-online", ("agents", "list agents", "who is online", "which agents are online")),
+    ("agent-message", ("agent-message", "tell an agent")),
+    ("agent-interrupt", ("agent-interrupt", "interrupt an agent")),
 )
 _RUNTIME_COMPLIANCE_PROTOCOL_PREFIX = "app:compliance-protocol:v1"
 _RUNTIME_COMPLIANCE_COURT_ROOT = "app:court:runtime-compliance"
@@ -9488,9 +9491,24 @@ def resolve_universal_baboom_utterance(
                 re.IGNORECASE,
             )
             run_engine = re.fullmatch(
-                r"run\s+(?:engine\s*[:,-]?\s*)?([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)(?:\s+on\s+the\s+graph)?",
+                r"run\s+(?:engine(?:\s*[:,-])?\s*)?([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)(?:\s+on\s+the\s+graph)?",
                 spoken,
                 re.IGNORECASE,
+            )
+            # The agents on this machine: who is online, tell one, stop one.
+            agents_q = re.fullmatch(
+                r"(?:list\s+|show\s+|which\s+|who\s+(?:is|are)\s+)?(?:the\s+)?agents"
+                r"(?:\s+(?:are\s+)?(?:online|working|on\s+this\s+machine))?"
+                r"|who\s+is\s+(?:online|working)",
+                spoken, re.IGNORECASE,
+            )
+            tell = re.fullmatch(
+                r"(?:tell|message|msg|ask)\s+(?!me\b|us\b|him\b|her\b|them\b)([a-z0-9_.\-]+(?::[a-z0-9_.\-]+)*)(?:\s*[:,-])?\s+(.+)",
+                spoken, re.IGNORECASE | re.DOTALL,
+            )
+            interrupt = re.fullmatch(
+                r"(?:interrupt|stop)\s+(?:agent\s+)?([a-z0-9_.\-]+(?::[a-z0-9_.\-]+)*)(?:(?:\s*[:,-])?\s+(.+))?",
+                spoken, re.IGNORECASE | re.DOTALL,
             )
             if task:
                 intent, payload = "assign-task", task.group(1).strip()
@@ -9498,6 +9516,14 @@ def resolve_universal_baboom_utterance(
                 intent, payload = "assign-and-claim", take_on.group(1).strip()
             elif run_engine:
                 intent, payload = "run-engine", run_engine.group(1).casefold()
+            elif agents_q:
+                intent, payload = "agents-online", spoken
+            elif tell:
+                intent = "agent-message"
+                payload = json.dumps({"target": tell.group(1), "message": tell.group(2).strip()}, separators=(",", ":"))
+            elif interrupt:
+                intent = "agent-interrupt"
+                payload = json.dumps({"target": interrupt.group(1), "reason": (interrupt.group(2) or "").strip()}, separators=(",", ":"))
     return {
         "catalog": registry.baboom_command_catalog.root_id,
         "intent": intent,
@@ -9529,6 +9555,26 @@ def execute_universal_baboom_utterance(
         utterance=utterance,
         authentication_context=authentication_context,
     )
+    if command["intent"] in {"agent-message", "agent-interrupt"}:
+        # BABOOM acts on the agents: one signed message through the coordination host.
+        from . import baboom_agent_link
+        spec = json.loads(str(command["payload"]))
+        target = baboom_agent_link.resolve_target(str(spec.get("target") or ""))
+        if target is None:
+            raise InvalidCell("no agent named %r is registered on this machine" % spec.get("target"))
+        root = str(target.get("session_root") or "")
+        if command["intent"] == "agent-message":
+            sent = baboom_agent_link.send_message(root, str(spec.get("message") or ""))
+            kind, verb = "agent-messaged", "Sent to"
+        else:
+            sent = baboom_agent_link.interrupt_agent(root, str(spec.get("reason") or "the founder asked you to stop"))
+            kind, verb = "agent-interrupted", "Interrupt requested for"
+        return {
+            "kind": kind,
+            "summary": "%s %s (%s %s)." % (verb, root, target.get("provider"), target.get("runtime")),
+            "data": {"target": target, "message": sent.get("message")},
+            "command": command,
+        }
     if command["intent"] == "run-engine":
         # BABOOM acts on the graph: one engine node, created the way the seed
         # does and run at once, so the result stands on the canvas.
@@ -9732,6 +9778,49 @@ def respond_universal_baboom_utterance(
                 "task": model_request["task"],
                 "requires": "cognition request and founder approval",
             },
+        }
+    elif intent == "agents-online":
+        from . import baboom_agent_link
+        try:
+            rows = baboom_agent_link.list_agents()
+        except Exception as exc:
+            response = {
+                "kind": "agents-unavailable",
+                "summary": "The coordination host on this machine is not answering (%s)." % exc,
+                "data": {},
+            }
+        else:
+            tally: dict[str, int] = {}
+            for row in rows:
+                name = str(row.get("provider") or row.get("runtime") or "agent")
+                tally[name] = tally.get(name, 0) + 1
+            response = {
+                "kind": "agents-online",
+                "summary": (
+                    "%d agent session(s) on this machine: %s." % (
+                        len(rows), ", ".join("%s x%d" % item for item in sorted(tally.items()))
+                    ) if rows else "No agent sessions are registered on this machine."
+                ),
+                "data": {"agents": [
+                    {
+                        "session": str(row.get("session_root") or ""),
+                        "provider": str(row.get("provider") or ""),
+                        "runtime": str(row.get("runtime") or ""),
+                        "model": str(row.get("model") or ""),
+                        "status": str(row.get("status") or ""),
+                    }
+                    for row in rows[:24]
+                ]},
+            }
+    elif intent in {"agent-message", "agent-interrupt"}:
+        spec = json.loads(str(command["payload"]))
+        verb = "send to" if intent == "agent-message" else "interrupt"
+        response = {
+            "kind": intent + "-ready",
+            "summary": "Ready to %s %s: %s" % (
+                verb, spec.get("target"), (spec.get("message") or spec.get("reason") or "")[:120]
+            ),
+            "data": {**spec, "requires": "explicit execute"},
         }
     elif intent == "brain-health":
         lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
@@ -36380,6 +36469,7 @@ def project_universal_baboom_companion_directive(
         work_index=work_index,
         brain_state=brain_state,
         hosts=hosts,
+        staged_update=staged_update,
     )
     work = context["work"]
     attention = context["attention"]

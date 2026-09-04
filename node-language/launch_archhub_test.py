@@ -147,7 +147,7 @@ try:
     if _applied.get("applied"):
         print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
         import subprocess as _sp
-        _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True)
+        _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
         raise SystemExit(0)
     elif _applied.get("reason") == "nothing staged":
         # Nothing was staged while the app last ran: look once now, quickly,
@@ -159,7 +159,7 @@ try:
             if _applied.get("applied"):
                 print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
                 import subprocess as _sp
-                _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True)
+                _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
                 raise SystemExit(0)
     else:
         print("  update     : %s" % _applied.get("reason"), flush=True)
@@ -264,7 +264,6 @@ print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 # shipped personal_brain package is started here, hidden, once.
 def _ensure_brain() -> str:
     import subprocess as _sp
-    import urllib.request as _ur
     # The brain serves /mcp (a GET answers 405); any HTTP answer, or simply an
     # open port, means a brain is there -- never start a second one on it.
     def _alive() -> bool:
@@ -523,7 +522,7 @@ def _tray_check_updates():
 def _tray_restart_to_update():
     import subprocess as _sp
     window.quitting = True
-    _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True)
+    _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
     app.quit()
 
 def _tray_quit():
@@ -598,6 +597,24 @@ try:
     # show() only makes the widget exist; projection is what makes BABOOM
     # actually draw itself and follow the graph.
     baboom_window.start_projection()
+    # The cockpit drives THIS application: instructions typed into the cloud
+    # ask bar are claimed here, put to BABOOM through its own signed session,
+    # and answered back; the live map projection is re-published as it changes.
+    try:
+        from nodelang.cloud_relay import start_cloud_relay as _start_relay
+        from nodelang.universal_pipeline import project_atlas_map as _atlas
+
+        _controller = getattr(baboom_window, "controller", None) or getattr(baboom_host, "controller", None)
+        _respond = (lambda u: _controller.respond(u)) if _controller is not None else (lambda u: baboom_host.respond_input(u))
+        _execute = (lambda u: _controller.execute(u)) if _controller is not None else (lambda u: baboom_host.execute_input(u))
+        cloud_relay = _start_relay(
+            appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
+            respond=_respond, execute=_execute,
+            map_script=lambda: _atlas(server.universal_store, server.universal_registry),
+        )
+        print("  cockpit    :", "relay on (%s)" % cloud_relay.base_url if cloud_relay else "relay off (no cloud session or consent)", flush=True)
+    except Exception as _relay_error:
+        print("  cockpit    : relay failed (%s)" % str(_relay_error)[:120], flush=True)
     # Say honestly whether the companion has anything to draw: a host
     # with no snapshot, or a screen too crowded for a clear placement,
     # hides itself -- and a silent hide reads as "BABOOM is broken".

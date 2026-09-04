@@ -5985,7 +5985,7 @@ class ApplicationServer:
                                                  'on this machine yet',
                                     })
                                     return
-                                _sub.Popen(['explorer', str(target)])
+                                _sub.Popen(['explorer', str(target)], creationflags=getattr(_sub, "CREATE_NO_WINDOW", 0))
                                 self._json(200, {
                                     'ok': True, 'opened': str(target),
                                 })
@@ -7760,6 +7760,7 @@ class ApplicationServer:
         """The build the quiet updater staged (state_dir/updates/staged.json), cached 30 s."""
         import json as _j, os as _os, time as _t
         from pathlib import Path as _P
+        from .quiet_update import ASSET_NAME as _ASSET
         cache = getattr(self, "_staged_update_cache", None)
         if cache and _t.time() - cache[0] < 30.0:
             return cache[1]
@@ -7767,7 +7768,7 @@ class ApplicationServer:
         try:
             state_dir = _os.environ.get("ARCHHUB_STATE_DIR", "")
             marker = _P(state_dir) / "updates" / "staged.json"
-            if state_dir and marker.is_file() and (marker.parent / "ArchHub-Setup-0.exe").is_file():
+            if state_dir and marker.is_file() and (marker.parent / _ASSET).is_file():
                 staged = dict(_j.loads(marker.read_text(encoding="utf-8")))
         except Exception:
             staged = {}
@@ -7781,7 +7782,7 @@ class ApplicationServer:
         launcher_dir = _P(_sys.argv[0]).resolve().parent if _sys.argv and _sys.argv[0] else _P.cwd()
         vbs = launcher_dir / "ArchHub.vbs"
         def _go():
-            _sp.Popen(["wscript.exe", str(vbs)] if vbs.exists() else [_sys.executable, str(launcher_dir / "launch_archhub_test.py")], close_fds=True)
+            _sp.Popen(["wscript.exe", str(vbs)] if vbs.exists() else [_sys.executable, str(launcher_dir / "launch_archhub_test.py")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
             _os._exit(0)
         _th.Timer(2.0, _go).start()
 

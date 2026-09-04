@@ -82,6 +82,8 @@ def test_baboom_offers_restart_when_a_build_is_staged():
     import nodelang.universal_application as ua
     src = inspect.getsource(ua.project_universal_baboom_companion_directive)
     assert '"update-ready"' in src and '"restart-to-update"' in src and '"Restart now"' in src
+    # The directive must FORWARD the staged build into the lens, or the branch is dead code.
+    assert "staged_update=staged_update," in src
     lens = inspect.getsource(ua.project_universal_baboom_context)
     assert '"update":' in lens and "staged_update" in lens
     responder = inspect.getsource(ua.respond_universal_baboom_utterance)

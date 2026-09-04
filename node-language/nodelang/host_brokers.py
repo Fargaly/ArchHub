@@ -13,6 +13,10 @@ import json
 import os
 import socket
 import subprocess
+
+# The app is windowless (pythonw): a child console would POP UP on the founder's desktop
+# at every probe. Every spawn in this module carries this flag; a court asserts it.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -53,7 +57,7 @@ def _running(names: tuple[str, ...]) -> bool:
     if os.name != "nt":
         return False
     try:
-        listing = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=8).stdout.casefold()
+        listing = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=8, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW).stdout.casefold()
     except Exception:
         return False
     return any(name.casefold() in listing for name in names)

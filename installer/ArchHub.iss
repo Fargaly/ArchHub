@@ -2,8 +2,8 @@
 ;
 ; It carries the application, checks for a usable Python, installs the
 ; packages that are missing, and leaves a Start-menu and Desktop entry.
-; Nothing is signed yet, so the package is meant to travel on the firm
-; share, where Windows attaches no mark-of-the-web and raises no warning.
+; Not signed (code-signing is geo-blocked for the founder's region);
+; distributed on the firm share. The setup never runs a bare-named program.
 
 #define AppName "ArchHub"
 #define AppVersion "0"
@@ -23,6 +23,9 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={localappdata}\ArchHub
+; The folder is fixed: a chooser would let one user aim the launcher at a
+; folder another user can write to.
+DisableDirPage=yes
 DefaultGroupName=ArchHub
 DisableProgramGroupPage=yes
 OutputDir=..\dist
@@ -67,20 +70,64 @@ Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}
 Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now"; Flags: postinstall nowait skipifsilent
 
 [Code]
+function FindPython(): String;
+var
+  Base: String;
+  Rec: TFindRec;
+begin
+  { Absolute paths only. A bare 'py' or 'python' is resolved from the
+    installer's own folder first, so a file planted beside the setup on a
+    share would run before the person has consented to anything. }
+  Result := '';
+  Base := ExpandConstant('{localappdata}') + '\Python';
+  if FindFirst(Base + '\pythoncore*', Rec) then
+  begin
+    try
+      repeat
+        if (Rec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and
+           FileExists(Base + '\' + Rec.Name + '\python.exe') then
+          Result := Base + '\' + Rec.Name + '\python.exe';
+      until not FindNext(Rec);
+    finally
+      FindClose(Rec);
+    end;
+  end;
+  if Result <> '' then exit;
+  Base := ExpandConstant('{localappdata}') + '\Programs\Python';
+  if FindFirst(Base + '\Python3*', Rec) then
+  begin
+    try
+      repeat
+        if FileExists(Base + '\' + Rec.Name + '\python.exe') then
+          Result := Base + '\' + Rec.Name + '\python.exe';
+      until not FindNext(Rec);
+    finally
+      FindClose(Rec);
+    end;
+  end;
+  if Result <> '' then exit;
+  if FindFirst(ExpandConstant('{pf}') + '\Python3*', Rec) then
+  begin
+    try
+      repeat
+        if FileExists(ExpandConstant('{pf}') + '\' + Rec.Name + '\python.exe') then
+          Result := ExpandConstant('{pf}') + '\' + Rec.Name + '\python.exe';
+      until not FindNext(Rec);
+    finally
+      FindClose(Rec);
+    end;
+  end;
+end;
+
 function PythonPresent(): Boolean;
 var
   Code: Integer;
+  Py: String;
 begin
-  { Two honest attempts, no shell operators: the launcher and the plain
-    interpreter. Either answering 3.11+ is enough. }
   Result := False;
-  if Exec('py', '-3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
-          '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
-  begin
-    Result := True;
-    exit;
-  end;
-  if Exec('python', '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
+  Py := FindPython();
+  if Py = '' then exit;
+  if Exec(Py, '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
           '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
     Result := True;
 end;

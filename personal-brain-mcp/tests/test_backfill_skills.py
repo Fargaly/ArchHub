@@ -81,12 +81,26 @@ def test_synth_traces_mint_at_least_one_skill(store):
     assert store.count_skills() > before
 
 
-def test_synth_from_git_helper_shapes_traces():
-    """_synth_traces_from_git produces floor-clearing traces from real
-    commits in THIS repo (every trace has >= 2 ok calls + success)."""
-    traces = bf._synth_traces_from_git(_REPO, n=15)
-    assert traces, "expected at least one conventional commit in git log"
-    for t in traces:
+def test_synth_from_git_helper_shapes_traces(tmp_path):
+    """_synth_traces_from_git produces floor-clearing traces from conventional
+    commits (every trace has >= 2 ok calls + success).
+
+    Seeded on a throwaway repo: asserting on THIS repo's last 15 subjects made
+    the court red whenever recent history happened to carry merge or plain
+    subjects (2026-09-04, PR #311) -- a fact about history, not about the
+    helper. The real repo is still walked below, shape-only."""
+    import subprocess
+    repo = tmp_path / "seed"
+    repo.mkdir()
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    git("init", "-q"); git("config", "user.email", "t@example.invalid"); git("config", "user.name", "Court")
+    for i, subject in enumerate(("feat(cloud): wire sync round-trip", "fix(brain): keep owner binding", "plain subject")):
+        (repo / f"f{i}.txt").write_text(subject, encoding="utf-8")
+        git("add", "."); git("commit", "-q", "-m", subject)
+    traces = bf._synth_traces_from_git(repo, n=15)
+    assert len(traces) == 2, "two conventional subjects, one plain"
+    for t in traces + bf._synth_traces_from_git(_REPO, n=15):
         ok = [tc for tc in t["tool_calls"] if tc.get("status") == "ok"]
         assert len(ok) >= 2, t
         assert t["outcome"] == "success"

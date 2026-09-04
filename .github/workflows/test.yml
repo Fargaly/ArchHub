@@ -75,7 +75,7 @@ jobs:
             libfontconfig1 libdbus-1-3
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -168,7 +168,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: pip
@@ -227,7 +227,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: pip
@@ -258,7 +258,7 @@ jobs:
             libasound2t64 xvfb
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: pip

@@ -103,6 +103,14 @@ class TestVersionBumped:
         assert path.exists(), "VERSION file is missing"
         v = path.read_text(encoding="utf-8").strip()
         assert v, "VERSION file is empty"
+        if v == "0":
+            # Open beta (founder decision 2026-09-04): the one label "0" on every
+            # surface. The mechanism this court guards is AGREEMENT, so check
+            # the shipped installer carries the same label.
+            iss = Path(__file__).resolve().parent.parent / "node-language" / "installer" / "ArchHub.iss"
+            if iss.exists():
+                assert '#define AppVersion "0"' in iss.read_text(encoding="utf-8"), "installer label must be 0 too"
+            return
 
         # 1) Well-formed STABLE semver MAJOR.MINOR.PATCH — no pre-release /
         #    alpha / build suffix. A stable release ships a clean triple

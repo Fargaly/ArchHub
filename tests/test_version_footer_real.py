@@ -113,7 +113,9 @@ class TestVersionFallbacksUnified:
 
     def test_version_file_is_semver(self):
         ver = (APP_ROOT.parent / "VERSION").read_text(encoding="utf-8").strip()
-        assert re.fullmatch(r"\d+\.\d+\.\d+", ver), f"VERSION must be clean semver, got {ver!r}"
+        # Open beta ships under the single label "0" (founder decision 2026-09-04);
+        # once out of beta it is a clean MAJOR.MINOR.PATCH again.
+        assert ver == "0" or re.fullmatch(r"\d+\.\d+\.\d+", ver), f"VERSION must be 0 (open beta) or clean semver, got {ver!r}"
 
 
 # ──────────────────────────── bundle guard ────────────────────────────

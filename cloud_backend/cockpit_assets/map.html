@@ -9,16 +9,65 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Architects+Daughter&display=swap" rel="stylesheet" />
 <style>
+  :root{--accent:#d97757;--ink:#ECE6DA;--paper:#0B0B0C;}
   *,*::before,*::after{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:#0B0B0C;color:#ECE6DA;font-family:'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
   ::selection{background:#F0DDD1;color:#A23E1F;}
   button{font-family:inherit;} input,select,textarea{font-family:inherit;}
+  /* Command surface: the same /founder/api/command the old cockpit spoke to,
+     mounted on the atlas. Plan-mode: a change is previewed and confirmed. */
+  #cmdbar{position:fixed;left:12px;right:110px;bottom:12px;z-index:98;display:flex;gap:8px;align-items:center;background:#1a1a1cdd;border:1px solid #33322f;border-radius:8px;padding:8px 10px;backdrop-filter:blur(6px)}
+  #cmdbar .eyebrow{font-family:'Instrument Serif',Georgia,serif;font-style:italic;color:var(--accent);font-size:15px;white-space:nowrap}
+  #cmd{flex:1;min-width:120px;background:#0B0B0C;color:var(--ink);border:1px solid #33322f;border-radius:6px;padding:7px 10px;font-size:13px;outline:none}
+  #cmd:focus{border-color:var(--accent)}
+  #cmdbar label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;color:#a8a29a;display:flex;gap:4px;align-items:center;white-space:nowrap}
+  #cmdLive{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;color:#a8a29a;white-space:nowrap}
+  #cmdRun{background:var(--accent);color:#1b120d;border:0;border-radius:6px;padding:7px 12px;font-weight:600;cursor:pointer}
+  #cmdRun:disabled{opacity:.5;cursor:wait}
+  #cmdOut{position:fixed;left:12px;right:110px;bottom:60px;z-index:98;max-height:38vh;overflow:auto;display:none;background:#141416f2;border:1px solid #33322f;border-radius:8px;padding:10px 12px;font-size:13px;color:var(--ink)}
+  #cmdOut .turn{margin:4px 0} #cmdOut .me{color:#a8a29a} #cmdOut .bad{color:#e0776a}
+  #cmdOut .card{border:1px solid var(--accent);border-radius:6px;padding:8px;margin:6px 0} #cmdOut pre{font:11px/1.35 'JetBrains Mono',monospace;white-space:pre-wrap;margin:6px 0}
+  #cmdOut button{border-radius:5px;border:1px solid #33322f;background:#1a1a1c;color:var(--ink);padding:4px 10px;margin-right:6px;cursor:pointer} #cmdOut button.yes{background:var(--accent);color:#1b120d;border-color:var(--accent)}
   #admin-link{position:fixed;right:12px;bottom:12px;z-index:99;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;color:#ECE6DA;background:#1a1a1cdd;border:1px solid #33322f;border-radius:5px;padding:5px 10px;text-decoration:none}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <a id="admin-link" href="/founder/admin">admin →</a>
+<div id="cmdOut" aria-live="polite"></div>
+<form id="cmdbar" autocomplete="off">
+  <span class="eyebrow">Ask the cockpit</span>
+  <span id="cmdLive" title="live from /founder/api/overview, refreshed every 60 s">…</span>
+  <input id="cmd" placeholder="e.g. what is blocked? · move node K to review · summarise the brain domain" />
+  <label><input type="checkbox" id="cmdConfirm" checked /> Confirm before any change</label>
+  <button id="cmdRun" type="submit">Run</button>
+</form>
+<script>
+(function(){
+  const $=id=>document.getElementById(id); const out=$("cmdOut"); const HISTORY=[];
+  const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+  function turn(who,text,bad){ out.style.display="block"; const d=document.createElement("div"); d.className="turn "+who+(bad?" bad":""); d.textContent=(who==="me"?"› ":"")+text; out.appendChild(d); out.scrollTop=out.scrollHeight; }
+  async function post(body){ const r=await fetch("/founder/api/command",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)}); return r.json(); }
+  function confirmCard(d){ const pv=d.preview||{}, tgt=pv.target||{}, chg=pv.change||{}; const card=document.createElement("div"); card.className="card";
+    card.innerHTML="<b>Confirm: "+esc(d.action)+"</b><div>"+(Object.keys(tgt).map(k=>esc(k)+": <b>"+esc(tgt[k])+"</b>").join(" · ")||"—")+"</div><pre>"+esc(JSON.stringify(chg,null,2))+"</pre><div><button class=yes>Confirm &amp; apply</button><button class=no>Cancel</button></div>";
+    out.appendChild(card); out.style.display="block"; out.scrollTop=out.scrollHeight;
+    card.querySelector(".yes").onclick=async()=>{ try{ const res=await post({command:d.message||"",confirm:true,pending:d.pending}); card.remove(); turn("agent",res.message||(res.ok?"Done.":"Failed."),!res.ok); if(window.ATLAS_RELOAD) window.ATLAS_RELOAD(); }catch(e){ turn("agent","Apply failed: "+e,true);} };
+    card.querySelector(".no").onclick=()=>{ card.remove(); turn("agent","Cancelled — nothing was changed."); }; }
+  // Auto-refresh: the cockpit is the live state, not a snapshot. The same
+  // overview the old page rendered, now a status line beside the command box.
+  async function live(){ try{ const r=await fetch("/founder/api/overview",{headers:{"Accept":"application/json"}}); if(!r.ok) return; const o=await r.json();
+    const u=(o.users||{}), s=(o.system||{}), e=(o.errors||[]); const parts=[];
+    if(u.total!=null) parts.push(u.total+" users"); if(s.version) parts.push("cloud "+s.version); parts.push(e.length+" recent errors");
+    $("cmdLive").textContent=parts.join(" · ")+" · "+new Date((o.generated_at||0)*1000).toLocaleTimeString(); }catch(_e){} }
+  live(); setInterval(live, 60000);
+  $("cmdbar").addEventListener("submit",async ev=>{ ev.preventDefault(); const inp=$("cmd"), btn=$("cmdRun"); const command=inp.value.trim(); if(!command) return;
+    turn("me",command); HISTORY.push({role:"user",content:command}); inp.value=""; btn.disabled=true;
+    try{ const d=await post({command,confirm:$("cmdConfirm").checked,history:HISTORY.slice(-8)});
+      if(d.needs_confirm){ turn("agent",d.message||"Please confirm this change."); confirmCard(d); }
+      else { turn("agent",d.message||(d.ok?"Done.":"Failed."),!d.ok); if(d.message) HISTORY.push({role:"assistant",content:d.message}); }
+    }catch(e){ turn("agent","Command failed: "+e,true); } finally { btn.disabled=false; inp.focus(); } });
+})();
+</script>
 <script src="/founder/map-assets/vendor/react.js"></script>
 <script src="/founder/map-assets/vendor/react-dom.js"></script>
 <script src="/founder/map-assets/compiled/tokens.js"></script>

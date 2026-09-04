@@ -51,6 +51,15 @@ def _mcp_servers() -> list[tuple[str, str, dict]]:
     if claude.exists():
         for name, spec in (json.loads(claude.read_text(encoding="utf-8")).get("mcpServers") or {}).items():
             rows.append(("claude", name, spec))
+    opencode = HOME / ".config" / "opencode" / "opencode.jsonc"
+    if opencode.exists():
+        text = re.sub(r"^\s*//.*$", "", opencode.read_text(encoding="utf-8"), flags=re.M)
+        for name, spec in (json.loads(text).get("mcp") or {}).items():
+            if spec.get("enabled") is False:
+                continue
+            cmd = spec.get("command") or []
+            rows.append(("opencode", name, {"url": spec.get("url"), "command": cmd[0] if cmd else None,
+                                            "args": cmd[1:], "env": spec.get("environment") or {}}))
     codex = HOME / ".codex" / "config.toml"
     if codex.exists():
         for name, spec in (tomllib.loads(codex.read_text(encoding="utf-8")).get("mcp_servers") or {}).items():
@@ -122,16 +131,21 @@ def run_mcp(spec: dict) -> tuple[bool, str]:
 
 
 def main() -> int:
+    only = sys.argv[1] if len(sys.argv) > 1 else ""
     results = []
     hooks = (_hooks_from_json(HOME / ".claude" / "settings.json", "claude")
              + _hooks_from_json(HOME / ".gemini" / "settings.json", "gemini")
              + _hooks_from_json(HOME / ".codex" / "hooks.json", "codex"))
     for vendor, event, cmd in hooks:
+        if only and vendor != only:
+            continue
         for shell in SHELLS:
             ok, note = run_hook(shell, cmd)
             results.append(ok)
             print(f"{'PASS' if ok else 'FAIL'}  hook {vendor}/{event} under {shell}: {note}", flush=True)
     for vendor, name, spec in _mcp_servers():
+        if only and vendor != only:
+            continue
         ok, note = run_mcp(spec)
         results.append(ok)
         print(f"{'PASS' if ok else 'FAIL'}  mcp {vendor}/{name}: {note}", flush=True)

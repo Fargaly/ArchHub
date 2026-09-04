@@ -85,7 +85,7 @@ _log = logging.getLogger("archhub.cloud_client")
 # other client all read through `base_url()`. Stays overridable via
 # ARCHHUB_CLOUD_BASE_URL for staging / a future custom domain.
 DEFAULT_BASE = os.environ.get(
-    "ARCHHUB_CLOUD_BASE_URL", "https://archhub-cloud.fly.dev"
+    "ARCHHUB_CLOUD_BASE_URL", "https://api.archhub.io"
 )
 
 # Legacy secrets-store keys. cloud.json is now the source of truth (see module

@@ -159,3 +159,11 @@ founder_msgs.txt
 
 # Private peer-bus location pointer (T2 path — never literal in public source)
 .peer_bus_dir
+
+# Client residue never enters the public product repo (T2). BBC4 stubs were
+# committed as a CI fixture in June 2026 and purged 2026-09-04; the pre-commit
+# hook refuses these paths too.
+proof_bbc4/
+**/proof_bbc4/
+**/*bbc4*
+**/*BBC4*

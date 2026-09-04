@@ -63,6 +63,17 @@ EOF
     exit 1
 fi
 
+
+# Client residue guard (T2): no BBC4 / client-project paths may be staged into
+# the public product repo. Names, sheet numbers and fixtures of a client job
+# are client data even when the files are one-line stubs.
+CLIENT_RESIDUE=$(git diff --cached --name-only --diff-filter=ACMR | grep -iE "(^|/)proof_bbc4/|bbc4" || true)
+if [ -n "$CLIENT_RESIDUE" ]; then
+    echo "COMMIT BLOCKED - client residue staged (T2):" >&2
+    echo "$CLIENT_RESIDUE" | sed "s/^/  /" >&2
+    exit 1
+fi
+
 # Public privacy ratchet. This blocks widening already-known private
 # client/project identifier debt in the T0 public product tree.
 PYTHON_BIN="$(resolve_python_bin || true)"

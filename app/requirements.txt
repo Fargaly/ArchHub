@@ -29,7 +29,7 @@ specklepy>=3.2.8,<4
 # mcp floor 1.27.2 (origin/main dependabot patch bump, merge 2026-06-04) — safe;
 # the in-house brain MCP only uses mcp.types, and app/archhub_mcp_server uses the
 # stable server surface.
-mcp>=1.28.0,<2
+mcp>=1.28.1,<2
 # starlette + uvicorn power archhub_mcp_server.py's persistent HTTP/SSE mode
 # (`--http`) — the always-ready MCP the app starts on launch so the Claude-CLI
 # brain connects to a READY url instead of racing a cold per-turn stdio spawn

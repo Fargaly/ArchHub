@@ -61,6 +61,24 @@ def _user(suffix: str = "") -> tuple[dict, dict]:
     return u, {"Authorization": f"Bearer {token}"}
 
 
+def _join(client, headers, community_id):
+    """Membership is what the cloud verified from the owner's signed join-code,
+    never a key named on the wire (2026-09-04 audit finding 23)."""
+    import base64, time, uuid
+    sys.path.insert(0, str(BACKEND_ROOT.parent / "personal-brain-mcp" / "src"))
+    from personal_brain.firm import _generate_keypair, _sign
+    from community_join import _payload_bytes
+    priv, pub = _generate_keypair()
+    now = time.time()
+    data = {"community_id": community_id, "name": "Court", "owner_pub": pub, "role": "member",
+            "transport": {}, "issued_by": "owner", "issued_at": now, "expires_at": now + 3600,
+            "nonce": uuid.uuid4().hex[:12]}
+    payload = _payload_bytes(data)
+    env = base64.urlsafe_b64encode(payload).decode() + "." + _sign(priv, payload)
+    r = client.post("/v1/community/join", headers=headers, json={"envelope": env})
+    assert r.status_code == 200, r.text
+
+
 def _frag(fid, scope, text, hlc, **extra):
     f = {"id": fid, "kind": "fact", "text": text, "scope": scope, "hlc": hlc}
     f.update(extra)
@@ -128,8 +146,12 @@ class TestFirmFanoutCrossMember:
             _frag("solo-firm", "firm", "solo firm note",
                   "0000000000000001.aaaaaaaa", firm_id="local-firm-xyz"),
         ]}}).json()
+        # Firm writes obey the server-resolved company membership (security
+        # closure 2026-09-03): a solo user names no company, so the firm
+        # fragment is refused -- and nothing else of theirs is touched.
+        assert any("firm" in (x.get("reason") or "") for x in r["rejected"]), r["rejected"]
         ids = {f["id"] for f in r["merged"]["fragments"]}
-        assert "solo-firm" in ids  # round-trips to the contributor
+        assert "solo-firm" not in ids
 
 
 # ===========================================================================
@@ -142,9 +164,12 @@ class TestSecondDevice:
         # Same account, two devices = same bearer/user_id. Device 1 pushes
         # firm + community facts; device 2 (empty push) pulls them.
         user, h = _user("multidev")
+        _join(client, h, "comm-foo-123")
+        import db
+        firm_k = db.create_company(name="Studio K", owner_user_id=user["id"])["id"]
         client.post("/v1/brain/sync", headers=h, json={"delta": {"fragments": [
             _frag("dev1-firm", "firm", "firm-wide note",
-                  "0000000000000001.aaaaaaaa", firm_id="firm-K"),
+                  "0000000000000001.aaaaaaaa", firm_id=firm_k),
             _frag("dev1-comm", "community", "community pattern",
                   "0000000000000001.aaaaaaab",
                   extra={"community_id": "comm-foo-123"}),
@@ -171,6 +196,8 @@ class TestCommunityFanout:
         a, ha = _user("commA")
         b, hb = _user("commB")
         cid = "comm-bar-777"
+        _join(client, ha, cid)
+        _join(client, hb, cid)
         # Member A contributes a community fragment.
         client.post("/v1/brain/sync", headers=ha, json={
             "delta": {"fragments": [
@@ -192,6 +219,7 @@ class TestCommunityFanout:
         a, ha = _user("commowner2")
         outsider, ho = _user("outsider")
         cid = "comm-secret-999"
+        _join(client, ha, cid)
         client.post("/v1/brain/sync", headers=ha, json={
             "delta": {"fragments": [
                 _frag("secretfrag", "community", "members-only",

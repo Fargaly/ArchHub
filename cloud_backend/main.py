@@ -820,6 +820,30 @@ def _firm_keys_for_user(user: dict) -> list[str]:
     return [str(c["id"]) for c in companies if c.get("id")]
 
 
+def _community_keys_for_user(user: dict) -> list[str]:
+    """Community replica keys this user may read and write: the memberships
+    the cloud recorded from verified join-codes. Never the wire."""
+    return db.list_community_keys_for_user(user["id"])
+
+
+@app.post("/v1/community/join")
+async def community_join(req: Request,
+                         authorization: str | None = Header(None)) -> dict:
+    """Present a community join-code; the cloud verifies it against the owner
+    key inside it and records the membership that gates the shared replica."""
+    user = _require_user(authorization)
+    body = await req.json() if await _has_body(req) else {}
+    from community_join import verify_join_code
+    payload, reason = verify_join_code(str((body or {}).get("envelope") or ""))
+    if payload is None:
+        raise HTTPException(status_code=400, detail={"error": reason})
+    db.add_community_member(str(payload["community_id"]), user["id"],
+                            role=str(payload.get("role") or "member"),
+                            owner_pub=str(payload["owner_pub"]))
+    return {"joined": True, "community_id": str(payload["community_id"]),
+            "community_keys": _community_keys_for_user(user)}
+
+
 @app.post("/v1/brain/sync")
 async def brain_sync(req: Request,
                       authorization: str | None = Header(None)) -> dict:
@@ -873,22 +897,10 @@ async def brain_sync(req: Request,
     # is what this user has actually contributed to before -- naming a
     # community you never wrote to used to read every fact in it, which
     # made any guessed id a key.
-    claimed_community_keys = body.get("community_keys") or []
-    if not isinstance(claimed_community_keys, list):
-        claimed_community_keys = []
-    claimed_community_keys = {
-        str(key) for key in claimed_community_keys if key
-    }
-    try:
-        earned_community_keys = {
-            str(key)
-            for key in brain_replica.BrainReplica.open(
-                user_id=user["id"], firm_keys=[], community_keys=[]
-            ).contributed_community_keys()
-        }
-    except Exception:
-        earned_community_keys = set()
-    community_keys = sorted(claimed_community_keys & earned_community_keys)
+    # Community read/write set: memberships the cloud recorded from a
+    # verified join-code (POST /v1/community/join). Nothing named on the
+    # wire, nothing earned by having written before.
+    community_keys = _community_keys_for_user(user)
 
     try:
         replica = brain_replica.BrainReplica.open(
@@ -907,10 +919,9 @@ async def brain_sync(req: Request,
             set(replica.firm_keys)
             | set(replica.contributed_firm_keys())
             | set(merge_result.get("firm_keys") or []))
-        replica.community_keys = sorted(
-            set(replica.community_keys)
-            | set(replica.contributed_community_keys())
-            | set(merge_result.get("community_keys") or []))
+        # Community read-set stays the membership list; contributions can
+        # only have landed in member communities now.
+        replica.community_keys = sorted(set(replica.community_keys))
         merged = replica.export_delta(since_hlc=since_hlc)
     except ValueError as ex:
         raise HTTPException(status_code=400, detail={"error": str(ex)})

@@ -280,6 +280,21 @@ CREATE TABLE IF NOT EXISTS company_invites (
 
 CREATE INDEX IF NOT EXISTS idx_companies_owner ON companies(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_company_members_user ON company_members(user_id);
+
+-- Community membership, recorded ONLY from a join-code the cloud verified
+-- against the community owner's key. A community key named on the wire is a
+-- claim; a row here is a membership. Gates both read and write of the shared
+-- community replica, exactly as company_members gates the firm replica.
+CREATE TABLE IF NOT EXISTS community_members (
+    community_id    TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'member',
+    owner_pub       TEXT NOT NULL,
+    joined_at       INTEGER NOT NULL,
+    PRIMARY KEY (community_id, user_id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_community_members_user ON community_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_company_invites_company ON company_invites(company_id);
 CREATE INDEX IF NOT EXISTS idx_company_invites_email ON company_invites(email);
 
@@ -2354,6 +2369,26 @@ def list_companies_for_user(user_id: str) -> list[dict]:
             (user_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def add_community_member(community_id: str, user_id: str, *, role: str, owner_pub: str) -> None:
+    """Record a membership proven by a verified join-code (idempotent)."""
+    with connect() as con:
+        con.execute(
+            "INSERT OR IGNORE INTO community_members"
+            " (community_id, user_id, role, owner_pub, joined_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (community_id, user_id, role or "member", owner_pub, int(time.time())),
+        )
+
+
+def list_community_keys_for_user(user_id: str) -> list[str]:
+    """Community replica keys this user may read and write -- server-resolved."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT community_id FROM community_members WHERE user_id = ?"
+            " ORDER BY joined_at", (user_id,)).fetchall()
+    return [str(r[0]) for r in rows]
 
 
 def get_membership(company_id: str, user_id: str) -> Optional[dict]:

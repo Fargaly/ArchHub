@@ -909,6 +909,17 @@ class BrainReplica:
                                      "reason": f"firm route failed: {ex}"})
                     accepted -= 1
         for key, frags in community_routes.items():
+            # Same law as the firm route: the write must obey the server-
+            # resolved membership list. Routing on the fragment's own
+            # community_id let any signed-in user write into any community
+            # from a guessed id -- and contributing widened the reader's
+            # key set, so one write made them a permanent reader.
+            if str(key) not in {str(k) for k in self.community_keys}:
+                for f in frags:
+                    rejected.append({"id": f.get("id"),
+                                     "reason": "community %s: not a member" % key})
+                    accepted -= 1
+                continue
             try:
                 shared = BrainReplica.open_shared("community", key, root=self.root)
                 shared.apply_delta({"fragments": frags})

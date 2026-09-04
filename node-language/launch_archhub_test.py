@@ -425,7 +425,7 @@ from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 app = QApplication(sys.argv)
-app.setApplicationName("ArchHub TEST")
+app.setApplicationName("ArchHub")
 app.setOrganizationName("ArchHub")
 
 profile_root = state_dir / "web-profile"
@@ -434,8 +434,25 @@ profile = QWebEngineProfile.defaultProfile()
 profile.setPersistentStoragePath(str(profile_root))
 profile.setCachePath(str(profile_root / "cache"))
 
-window = QMainWindow()
-window.setWindowTitle("ArchHub TEST")
+class _ArchHubWindow(QMainWindow):
+    """Closing the window hides it: ArchHub keeps running in the background
+    (the brain, BABOOM, the agents) exactly like Chrome or Claude Desktop, and
+    the tray icon brings it back or quits it for real."""
+    quitting = False
+
+    def closeEvent(self, event):
+        if self.quitting or getattr(self, "_tray", None) is None:
+            return super().closeEvent(event)
+        event.ignore()
+        self.hide()
+        try:
+            self._tray.showMessage("ArchHub keeps running", "Open it again from the tray icon; Quit is there too.")
+        except Exception:
+            pass
+
+
+window = _ArchHubWindow()
+window.setWindowTitle("ArchHub")
 # The brand icon, and a distinct AppUserModelID so the taskbar shows
 # ArchHub rather than grouping under python's default.
 import ctypes
@@ -491,6 +508,49 @@ def _revive(_status, _code):
 view.page().renderProcessTerminated.connect(_revive)
 view.load(QUrl(server.bootstrap_url))
 window.show()
+
+# The tray icon: the visible sign that ArchHub is running in the background.
+from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
+
+def _tray_open():
+    window.showNormal(); window.raise_(); window.activateWindow()
+
+def _tray_check_updates():
+    import threading as _t
+    _t.Thread(target=_stage_once, name="archhub-update-check", daemon=True).start()
+    _tray.showMessage("ArchHub", "Checking for a newer build; BABOOM will offer Restart now if there is one.")
+
+def _tray_restart_to_update():
+    import subprocess as _sp
+    window.quitting = True
+    _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True)
+    app.quit()
+
+def _tray_quit():
+    window.quitting = True
+    app.quit()
+
+def _tray_menu_about_to_show():
+    _restart_action.setVisible((state_dir / "updates" / "staged.json").is_file())
+
+if QSystemTrayIcon.isSystemTrayAvailable():
+    _tray = QSystemTrayIcon(app.windowIcon(), app)
+    _tray.setToolTip("ArchHub - running")
+    _menu = QMenu()
+    _menu.addAction("Open ArchHub", _tray_open)
+    _menu.addAction("Check for updates now", _tray_check_updates)
+    _restart_action = _menu.addAction("Restart to install the update", _tray_restart_to_update)
+    _menu.addSeparator()
+    _menu.addAction("Quit ArchHub", _tray_quit)
+    _menu.aboutToShow.connect(_tray_menu_about_to_show)
+    _tray.setContextMenu(_menu)
+    _tray.activated.connect(lambda reason: _tray_open() if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick) else None)
+    _tray.show()
+    window._tray = _tray
+    app.setQuitOnLastWindowClosed(False)
+    print("  tray       : icon shown (close hides to tray; Quit is in the menu)", flush=True)
+else:
+    print("  tray       : no system tray on this desktop", flush=True)
 # A window that opens BEHIND the founder's other windows reads as "the
 # app didn't open". Every launch lands on top, once.
 window.raise_()

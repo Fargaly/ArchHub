@@ -1623,6 +1623,7 @@ _BABOOM_COMMAND_SPECS = (
     ("stop-meeting-notes", ("stop meeting notes",)),
     ("open-meeting", ("open next meeting", "join my next meeting")),
     ("restart-to-update", ("restart-to-update", "restart to update", "install the update", "update now")),
+    ("run-engine", ("run-engine", "run an engine on the graph")),
 )
 _RUNTIME_COMPLIANCE_PROTOCOL_PREFIX = "app:compliance-protocol:v1"
 _RUNTIME_COMPLIANCE_COURT_ROOT = "app:court:runtime-compliance"
@@ -9486,10 +9487,17 @@ def resolve_universal_baboom_utterance(
                 spoken,
                 re.IGNORECASE,
             )
+            run_engine = re.fullmatch(
+                r"run\s+(?:engine\s*[:,-]?\s*)?([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)(?:\s+on\s+the\s+graph)?",
+                spoken,
+                re.IGNORECASE,
+            )
             if task:
                 intent, payload = "assign-task", task.group(1).strip()
             elif take_on:
                 intent, payload = "assign-and-claim", take_on.group(1).strip()
+            elif run_engine:
+                intent, payload = "run-engine", run_engine.group(1).casefold()
     return {
         "catalog": registry.baboom_command_catalog.root_id,
         "intent": intent,
@@ -9521,6 +9529,25 @@ def execute_universal_baboom_utterance(
         utterance=utterance,
         authentication_context=authentication_context,
     )
+    if command["intent"] == "run-engine":
+        # BABOOM acts on the graph: one engine node, created the way the seed
+        # does and run at once, so the result stands on the canvas.
+        from .pipeline_engines import PIPELINE_ENGINES
+        from .universal_pipeline import create_engine_node, run_universal_pipeline
+        engine = str(command["payload"])
+        if engine not in PIPELINE_ENGINES:
+            raise InvalidCell("no engine named %r" % engine)
+        created = create_engine_node(
+            store, registry, title="BABOOM: " + engine, engine=engine,
+            x=260.0, y=200.0, properties={}, authentication_context=authentication_context,
+        )
+        outcome = run_universal_pipeline(store, registry, effect_engines=PIPELINE_ENGINES)
+        return {
+            "kind": "engine-ran",
+            "summary": "%s ran on the graph (%d node(s) ran)." % (engine, int(outcome.get("ran") or 0)),
+            "data": {"engine": engine, "node": created if isinstance(created, (str, dict)) else str(created), "ran": outcome.get("ran")},
+            "command": command,
+        }
     if command["intent"] not in {"assign-task", "assign-and-claim"}:
         raise InvalidCell(
             "only an explicit 'Assign task:' BABOOM command can create Work"

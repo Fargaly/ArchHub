@@ -119,6 +119,18 @@ def _put_node_language_on_path() -> None:
 _put_node_language_on_path()
 
 
+# Courts that need the founder's workstation itself -- the governed workspace
+# root (00.GOVERNANCE), the agent hook configs under the profile, the DPAPI
+# owner store -- run there and nowhere else. On a bare checkout they are not
+# collected, which is what a CI runner is.
+_WORKSTATION_ONLY = (
+    "test_universal_session_manager.py", "test_universal_runtime_bridge.py",
+    "test_owner_binding.py", "test_hook_coverage.py",
+)
+if not (Path(__file__).resolve().parents[4] / "00.GOVERNANCE").is_dir():
+    collect_ignore = list(_WORKSTATION_ONLY)
+
+
 def _pin_real_mcp() -> None:
     saved_path = list(sys.path)
     try:

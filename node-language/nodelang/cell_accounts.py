@@ -115,6 +115,10 @@ def set_tier(store, email, tier):
     snapshot = store.snapshot()
     if email == founder_email(snapshot):
         raise InvalidCell("the founder account cannot be re-tiered")
+    if tier == "founder":
+        # There is one founder, declared at bootstrap; the tier cannot be
+        # handed to a second account through the tier dial.
+        raise InvalidCell("the founder tier is not assignable")
     root = _account_root(email)
     if root not in snapshot.cells:
         raise InvalidCell("no account for %s" % email)

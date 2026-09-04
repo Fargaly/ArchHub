@@ -23,9 +23,29 @@ _log_dir = Path(
     or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
-_log = open(_log_dir / "launcher.log", "a", encoding="utf-8", buffering=1)
+_log_path = _log_dir / "launcher.log"
+_log = open(_log_path, "a", encoding="utf-8", buffering=1)
 sys.stdout = _log
 sys.stderr = _log
+
+
+# pythonw has no console and stdout is the log file above, so a boot that
+# refuses -- Qt missing, WebEngine refusing the GPU, a port held -- was a
+# window that never opened and a colleague with nothing to send. The log
+# keeps the full traceback; the colleague gets its last line and where the
+# log is, in a box he can read.
+def _tell_the_person(kind, value, tb):
+    traceback.print_exception(kind, value, tb)
+    try:
+        import ctypes
+        last = ''.join(traceback.format_exception_only(kind, value)).strip().splitlines()[-1]
+        message = 'ArchHub could not open.' + chr(10) + chr(10) + last[:300]
+        message += chr(10) + chr(10) + 'The full log is at:' + chr(10) + str(_log_path)
+        message += chr(10) + chr(10) + 'Send that file to Ahmed.'
+        ctypes.windll.user32.MessageBoxW(0, message, 'ArchHub', 0x10)
+    except Exception:
+        pass
+sys.excepthook = _tell_the_person
 print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
 faulthandler.enable(file=_log)
 
@@ -58,6 +78,9 @@ for _attempt in range(12):
         # than exiting silently and leaving the founder with no window.
         time.sleep(0.5)
 else:
+    # Say so in the log: a second launch that exits without a word
+    # leaves an orphan header and reads as a crash.
+    print("  another ArchHub is already running on this machine; this launch exits", flush=True)
     sys.exit(0)
 
 # listdir membership: Path.exists() returns False on a Windows sharing
@@ -124,6 +147,25 @@ def _boot():
         machine_key_provider=machine_key_provider,
     ).start()
 
+def _release_own_fence(refusal) -> None:
+    """A failed _boot() can leave this process holding the store fence twice over:
+    the .owner.lock file AND an in-memory path set. Both must go or every retry
+    fails on ourselves."""
+    if "already owned by this same process" not in str(refusal):
+        return
+    try:
+        from nodelang.universal_cell import InterprocessOwnerFence as _Fence
+        key = os.path.normcase(os.path.realpath(os.path.abspath(str(state_path))))
+        with _Fence._process_guard:
+            _Fence._process_paths.discard(key)
+    except Exception:
+        pass
+    for stale in state_dir.glob(state_path.name + ".owner.lock"):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 boot_refusal = None
 try:
     server = _boot()
@@ -142,20 +184,35 @@ except Exception as refusal:
     # A failed first attempt can leave OUR OWN owner fence behind; the
     # conflict then names this very process. Releasing our own lock is
     # honest -- it is nobody else's.
-    if "already owned by this same process" in str(refusal):
-        for stale in state_dir.glob(state_path.name + ".owner.lock"):
-            try:
-                stale.unlink(missing_ok=True)
-            except OSError:
-                pass
-    time.sleep(1.5)
-    try:
-        server = _boot()
-        print("  recovered  : the saved graph opened on a second attempt",
-              flush=True)
-        boot_refusal = None
-    except Exception as second:
-        boot_refusal = second
+    _release_own_fence(refusal)
+    # A transient (a predecessor still closing its WAL, a lock not yet
+    # released, an I/O hiccup) is retried for a while; it is never a
+    # reason to set the founder's graph aside -- a fresh graph on the
+    # same disk would fail the same way, and the founder would open
+    # an empty canvas over 300 MB of his own work.
+    for _open_attempt in range(6):
+        time.sleep(1.5)
+        try:
+            server = _boot()
+            print("  recovered  : the saved graph opened on attempt %d"
+                  % (_open_attempt + 2), flush=True)
+            boot_refusal = None
+            break
+        except Exception as again:
+            boot_refusal = again
+            # Each failed attempt can leave OUR OWN fence behind; without
+            # clearing it every later attempt fails on ourselves.
+            _release_own_fence(again)
+if boot_refusal is not None and any(
+    mark in str(boot_refusal)
+    for mark in ("disk I/O error", "database is locked", "already owned", "unable to open",
+                 "held by another live process", "owner fence could not be taken")
+):
+    print("  could not open the saved graph: %s"
+          % str(boot_refusal).splitlines()[-1][:160], flush=True)
+    print("  the graph is kept in place; this is a transient, not corruption."
+          " Close every ArchHub process and launch again.", flush=True)
+    raise boot_refusal
 if boot_refusal is not None:
     print("  could not open the saved graph: %s"
           % str(boot_refusal).splitlines()[-1][:160])
@@ -182,6 +239,12 @@ def _publish_map_to_cloud():
     import json
     import urllib.request
 
+    # The website promises nothing leaves this machine. The upload runs
+    # only when this machine holds an explicit consent record; deleting
+    # that file closes the path again.
+    from nodelang.cloud_publish_consent import cloud_publish_allowed
+    if not cloud_publish_allowed(state_dir):
+        return "off (no consent recorded; nothing left this machine)"
     cloud = (
         Path(os.environ["APPDATA"]) / "ArchHub" / "brain" / "cloud.json"
     )
@@ -310,10 +373,15 @@ window.setWindowTitle("ArchHub TEST")
 import ctypes
 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub.Test")
 from PyQt6.QtGui import QIcon
-_icon_path = (
+# The installer ships archhub.ico beside this file; the 12.PRODUCTION tree
+# exists only on the founder workstation, so it is the fallback, not the
+# first look -- a colleague window carried the default python icon.
+_icon_candidates = (
+    Path(__file__).resolve().parent / "archhub.ico",
     Path(__file__).resolve().parents[1]
-    / "12.PRODUCTION" / "app" / "assets" / "archhub.ico"
+    / "12.PRODUCTION" / "app" / "assets" / "archhub.ico",
 )
+_icon_path = next((c for c in _icon_candidates if c.is_file()), _icon_candidates[0])
 if _icon_path.is_file():
     app.setWindowIcon(QIcon(str(_icon_path)))
     window.setWindowIcon(QIcon(str(_icon_path)))
@@ -366,12 +434,38 @@ window.activateWindow()
 baboom_host = None
 try:
     from nodelang.baboom_attach import attach_baboom_companion
-    baboom_host, baboom_window = attach_baboom_companion(
-        server,
-        state_dir=state_dir,
-        descriptor_path=descriptor_path,
-        key_provider=machine_key_provider,
-    )
+    from nodelang.application_machine_transport import MachineTransportError
+    # The runtime pipe comes up a beat after the HTTP server on a busy
+    # machine. One attempt printed "universal runtime did not respond" and
+    # left the founder with no companion for the whole session; a short
+    # retry is what every client of a just-started service does.
+    _attach_error = None
+    for _attempt in range(6):
+        try:
+            # A retry is the same launcher, not a second process: connect()
+            # binds the session identity before start() can time out, so a
+            # retry under the same id is refused as "already bound". Each
+            # attempt therefore carries its own id; the abandoned binding
+            # expires on its own lease.
+            baboom_host, baboom_window = attach_baboom_companion(
+                server,
+                state_dir=state_dir,
+                descriptor_path=descriptor_path,
+                key_provider=machine_key_provider,
+                external_session_id=(
+                    "founder-desktop-baboom" if _attempt == 0
+                    else "founder-desktop-baboom:retry-%d" % _attempt
+                ),
+            )
+            break
+        except Exception as exc:
+            text = str(exc)
+            if "did not respond" not in text and "already bound" not in text:
+                raise
+            _attach_error = exc
+            time.sleep(2.5)
+    else:
+        raise _attach_error
     baboom_window.show()
     # show() only makes the widget exist; projection is what makes BABOOM
     # actually draw itself and follow the graph.

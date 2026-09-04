@@ -75,6 +75,7 @@ def baboom_actionable_report_text(report: object) -> str:
     data = report.get("data")
     if not isinstance(data, dict):
         raise ValueError("BABOOM native report is invalid")
+    lens = data.get("context") if isinstance(data.get("context"), dict) else {}
     work = data.get("governed_work")
     workshop = data.get("workshop")
     attention = data.get("attention")
@@ -100,6 +101,22 @@ def baboom_actionable_report_text(report: object) -> str:
         title = items[0].get("title")
         if isinstance(state, str) and isinstance(title, str) and title:
             parts.append(f"Next {state}: {title}")
+    # What the founder asked the companion to tell him: who is working on
+    # what, whether the brain answers, which hosts are down. Absent keys
+    # (an older server) leave the report as it was.
+    agents = lens.get("agents") if isinstance(lens.get("agents"), dict) else {}
+    for row in (agents.get("working") or [])[:2]:
+        if isinstance(row, dict) and row.get("title"):
+            parts.append(f"{row.get('agent') or 'Agent'} on: {row['title']}")
+    brain = lens.get("brain") if isinstance(lens.get("brain"), dict) else {}
+    if brain.get("ok") is True:
+        parts.append(f"Brain: {int(brain.get('facts') or 0)} facts.")
+    elif brain.get("ok") is False:
+        parts.append("Brain: not answering.")
+    hosts = lens.get("hosts") if isinstance(lens.get("hosts"), dict) else {}
+    down = [str(name) for name in (hosts.get("down") or [])]
+    if down:
+        parts.append("Hosts down: " + ", ".join(down) + ".")
     return " ".join(parts)
 
 
@@ -121,8 +138,12 @@ def baboom_sprite_source(
     row = _MOTION_ROWS[motion]
     if row >= atlas.rows or atlas.columns < 2:
         raise ValueError("BABOOM atlas cannot render the released motion")
+    # Cycle only the poses this row was drawn with. The grid is 8 wide and
+    # most action rows carry 6, so cycling the grid rendered a fully
+    # transparent cell every few ticks -- the companion blinked out of
+    # existence and left an empty outline on the desktop.
     return Rect(
-        (animation_tick % atlas.columns) * atlas.cell_width,
+        (animation_tick % atlas.frames_in_row(row)) * atlas.cell_width,
         row * atlas.cell_height,
         atlas.cell_width,
         atlas.cell_height,
@@ -143,6 +164,9 @@ class BaboomNativeVisualFrame:
     action: str
     action_label: str
     report_style: str
+    # The staff orb inside the sprite (already scaled), and what lights it.
+    orb: tuple[int, int] | None = None
+    brain_state: str = "unknown"
 
 
 def project_baboom_native_visual_frame(
@@ -205,6 +229,21 @@ def project_baboom_native_visual_frame(
         message_size=effective_message_size,
         occupied=occupied,
     )
+    row = _MOTION_ROWS[motion]
+    frame_index = animation_tick % atlas.frames_in_row(row)
+    raw_orb = atlas.orb_point(row, frame_index)
+    scale_x = sprite_size[0] / atlas.cell_width
+    scale_y = sprite_size[1] / atlas.cell_height
+    orb = (round(raw_orb[0] * scale_x), round(raw_orb[1] * scale_y)) if raw_orb else None
+    brain = snapshot.context.get("brain") if isinstance(snapshot.context, dict) or hasattr(snapshot.context, "get") else None
+    if not isinstance(brain, dict) and brain is not None:
+        brain = dict(brain)
+    if not brain or brain.get("ok") is None:
+        brain_state = "unknown"
+    elif brain.get("ok"):
+        brain_state = "lit" if int(brain.get("facts") or 0) > 0 else "dim"
+    else:
+        brain_state = "down"
     return BaboomNativeVisualFrame(
         revision=snapshot.revision,
         atlas_path=str(atlas.path),
@@ -216,6 +255,8 @@ def project_baboom_native_visual_frame(
         action=action,
         action_label=action_label,
         report_style="flat-no-border",
+        orb=orb,
+        brain_state=brain_state,
     )
 
 

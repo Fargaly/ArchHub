@@ -33,6 +33,7 @@ def create_baboom_native_runtime(
     external_session_id: str,
     device_credential_provider: Callable[[Mapping[str, object]], Mapping[str, object]],
     atlas_path: Path | None = None,
+    position_path: Path | None = None,
 ) -> tuple[BaboomNativeHost, Any]:
     """Assemble one dormant projection; the graph remains the only authority."""
     selected_path = atlas_path or default_baboom_sprite_atlas_path()
@@ -44,7 +45,9 @@ def create_baboom_native_runtime(
         activity_provider=foreground_application_windows,
     )
     controller = BaboomNativeCompanionController(host, atlas)
-    return host, create_baboom_native_companion_window(controller)
+    return host, create_baboom_native_companion_window(
+        controller, position_path=position_path
+    )
 
 
 __all__ = [

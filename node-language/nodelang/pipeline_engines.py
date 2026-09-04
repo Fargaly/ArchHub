@@ -539,15 +539,6 @@ def probe_connectors():
             else "no session listening"
         ),
     })
-    found.append({
-        "id": "rhino", "name": "Rhino", "drive": "",
-        "state": "reachable" if port_open(9879) else "absent",
-        "detail": (
-            "bridge on :9879 · no wire in this build"
-            if port_open(9879)
-            else "bridge not running · no wire in this build"
-        ),
-    })
     appdata = os.environ.get("APPDATA", "")
     speckle_installed = bool(appdata) and os.path.isdir(
         os.path.join(appdata, "Speckle")
@@ -560,11 +551,18 @@ def probe_connectors():
             if speckle_installed else "Manager not found"
         ),
     })
-    # Outlook, Dropbox and Blender used to be reported CONNECTED from a
-    # tasklist string match -- a process being open is not a connection,
-    # and nothing in the runtime can drive any of them. They are not
-    # listed until a wire exists.
+    # Every other program the founder works with: Max, Rhino, Blender, Excel,
+    # Word, PowerPoint, Outlook, Notion, Dropbox and the rest of the old
+    # catalogue. Each row is probed for real and names its wire; a host with
+    # no wire yet says so instead of disappearing.
+    from .host_brokers import probe_catalogue_rows, probe_host_rows
+    found.extend(probe_host_rows())
+    found.extend(probe_catalogue_rows())
     return found
 
+
+from .host_brokers import ENGINES as _HOST_ENGINES  # noqa: E402
+
+PIPELINE_ENGINES.update(_HOST_ENGINES)
 
 __all__ = ["PIPELINE_ENGINES", "probe_connectors"]

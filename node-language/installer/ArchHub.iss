@@ -7,6 +7,11 @@
 
 #define AppName "ArchHub"
 #define AppVersion "0"
+; Every build has its own identity even though the beta ships under one label:
+; the launcher compares BUILD_ID with the latest release to update quietly.
+#ifndef BuildId
+#define BuildId GetDateTimeString('yyyymmdd-hhnnss', '', '')
+#endif
 #define AppPublisher "Fargaly"
 ; Every shortcut opens ArchHub.vbs: it resolves the installed pythonw itself
 ; (a bare pythonw fails wherever Python was installed without Add-to-PATH)
@@ -130,6 +135,13 @@ begin
   if Exec(Py, '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
           '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
     Result := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  { The installed build's identity, read by the quiet updater. }
+  if CurStep = ssPostInstall then
+    SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False);
 end;
 
 function InitializeSetup(): Boolean;

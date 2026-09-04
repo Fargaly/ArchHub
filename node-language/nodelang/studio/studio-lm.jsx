@@ -259,9 +259,19 @@ const _SEED_GRAPH = {
 // ─── Library of nodes that can be inserted — Grasshopper/Dynamo style
 const LM_LIBRARY = [
   { cat:'host', items:[
-    // Only hosts an engine can drive are offered; the rest return when a wire exists.
+    // Every host the founder works with. Each row is a real wire; the node
+    // itself says when its host is closed, so nothing here is a promise.
     { id:'h_revit',   title:'Revit',    sub:'live sessions on this machine', engine:'revit.sessions' },
     { id:'h_autocad', title:'AutoCAD',  sub:'line work from the live drawing', engine:'cad.host_lines' },
+    { id:'h_max',     title:'3ds Max',  sub:'MAXScript / Python in the open scene', engine:'max.exec', params:{ code:'' } },
+    { id:'h_rhino',   title:'Rhino',    sub:'RhinoPython in the open model', engine:'rhino.exec', params:{ code:'' } },
+    { id:'h_blender', title:'Blender',  sub:'Python in the open scene', engine:'blender.exec', params:{ code:'' } },
+    { id:'h_excel',   title:'Excel',    sub:'open workbooks and their sheets', engine:'office.read', params:{ operation:'excel.list_workbooks' } },
+    { id:'h_word',    title:'Word',     sub:'open documents and their paragraphs', engine:'office.read', params:{ operation:'word.list_documents' } },
+    { id:'h_ppt',     title:'PowerPoint', sub:'open decks and their slides', engine:'office.read', params:{ operation:'powerpoint.list_presentations' } },
+    { id:'h_outlook', title:'Outlook',  sub:'the inbox, newest first', engine:'outlook.inbox', params:{ count:20 } },
+    { id:'h_notion',  title:'Notion',   sub:'search your workspace', engine:'notion.search', params:{ query:'' } },
+    { id:'h_dropbox', title:'Dropbox',  sub:'files in your Dropbox folder', engine:'dropbox.list', params:{ path:'' } },
   ]},
   { cat:'read', items:[
     { id:'r_walls',     title:'list_walls',    sub:'pull walls from active view', engine:'revit.read', params:{ operation:'revit.list_walls' } },
@@ -272,6 +282,9 @@ const LM_LIBRARY = [
     { id:'r_levels',    title:'list_levels',   sub:'levels + elevations', engine:'revit.read', params:{ operation:'revit.list_levels' } },
     { id:'r_selection', title:'get_selection', sub:'whatever is selected in host', engine:'revit.read', params:{ operation:'revit.get_selection' } },
     { id:'r_warnings',  title:'list_warnings', sub:'host warnings · by severity', engine:'revit.read', params:{ operation:'revit.list_warnings' } },
+    { id:'r_xl_sheets', title:'excel worksheets', sub:'sheets of the workbook in front', engine:'office.read', params:{ operation:'excel.list_worksheets' } },
+    { id:'r_doc_paras', title:'word paragraphs', sub:'paragraphs of the document in front', engine:'office.read', params:{ operation:'word.list_paragraphs' } },
+    { id:'r_ppt_slides', title:'powerpoint slides', sub:'slides of the deck in front', engine:'office.read', params:{ operation:'powerpoint.list_slides' } },
   ]},
   { cat:'filter', items:[
     { id:'f_type',  title:'where type',      sub:'by family/type' },
@@ -447,6 +460,14 @@ const LM_NODE_TEMPLATES = {
   // hosts
   h_revit:    { w:220, h:118, outs:[{ id:'view', label:'active view', t:'view' }, { id:'sel', label:'selection', t:'selection' }] },
   h_rhino:    { w:220, h:118, outs:[{ id:'mesh', label:'mesh', t:'view' }, { id:'crv', label:'curves', t:'walls' }] },
+  h_max:      { w:220, h:118, outs:[{ id:'out', label:'result', t:'trace' }] },
+  h_blender:  { w:220, h:118, outs:[{ id:'out', label:'result', t:'trace' }] },
+  h_excel:    { w:220, h:118, outs:[{ id:'out', label:'workbooks', t:'sheets' }] },
+  h_word:     { w:220, h:118, outs:[{ id:'out', label:'documents', t:'sheets' }] },
+  h_ppt:      { w:220, h:118, outs:[{ id:'out', label:'decks', t:'sheets' }] },
+  h_outlook:  { w:220, h:118, outs:[{ id:'out', label:'inbox', t:'trace' }] },
+  h_notion:   { w:220, h:118, outs:[{ id:'out', label:'pages', t:'trace' }] },
+  h_dropbox:  { w:220, h:118, outs:[{ id:'out', label:'files', t:'trace' }] },
   h_blender:  { w:220, h:118, outs:[{ id:'mesh', label:'mesh', t:'view' }, { id:'sk', label:'sketch', t:'view' }] },
   h_speckle:  { w:240, h:140, ins:[{ id:'sheet', label:'sheet', t:'sheets' }, { id:'view', label:'model', t:'view' }], outs:[{ id:'commit', label:'commit', t:'trace' }] },
   h_dropbox:  { w:220, h:90, ins:[{ id:'file', label:'file', t:'file' }], outs:[{ id:'url', label:'url', t:'file' }] },

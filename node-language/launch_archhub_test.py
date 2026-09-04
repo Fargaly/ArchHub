@@ -136,6 +136,24 @@ machine_key_provider = WindowsDpapiSigningKeyProvider(
 )
 descriptor_path = state_dir / "runtime-descriptor.json"
 
+# Quiet update, the Chrome way: a build the previous run downloaded and
+# verified is applied now, before anything boots, and this launcher hands
+# over to the freshly installed one. The graph is never touched.
+try:
+    from nodelang.quiet_update import apply_staged as _apply_staged
+    _applied = _apply_staged(state_dir, Path(__file__).resolve().parent)
+    if _applied.get("applied"):
+        print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
+        import subprocess as _sp
+        _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True)
+        raise SystemExit(0)
+    elif _applied.get("reason") not in ("nothing staged",):
+        print("  update     : %s" % _applied.get("reason"), flush=True)
+except SystemExit:
+    raise
+except Exception as _update_refusal:
+    print("  update     : not applied -- %s" % _update_refusal, flush=True)
+
 started = time.perf_counter()
 
 def _boot():
@@ -490,6 +508,19 @@ try:
     print("  BABOOM     : attached (signed agent session)", flush=True)
 except Exception as refusal:
     print("  BABOOM     : not attached -- %s" % refusal, flush=True)
+
+# While the founder works, look once for a newer release and stage it for
+# the next launch. Never applied here; never blocks the window.
+def _stage_update_quietly():
+    try:
+        from nodelang.quiet_update import stage_if_newer
+        outcome = stage_if_newer(state_dir, Path(__file__).resolve().parent)
+        print("  update     : %s%s" % (outcome.get("reason"), " (build %s)" % outcome["build_id"] if outcome.get("build_id") else ""), flush=True)
+    except Exception as refusal:
+        print("  update     : check failed -- %s" % refusal, flush=True)
+
+import threading as _threading
+_threading.Thread(target=_stage_update_quietly, name="archhub-quiet-update", daemon=True).start()
 
 try:
     code = app.exec()

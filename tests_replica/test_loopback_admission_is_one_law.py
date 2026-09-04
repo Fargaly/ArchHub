@@ -26,3 +26,11 @@ def test_every_loopback_surface_calls_the_one_admission():
     gsrc = inspect.getsource(gw)
     fwd = gsrc.index("def _forward(self):")
     assert gsrc.index("local_browser_admission_error(", fwd) < gsrc.index('headers["Host"] = ', fwd)
+
+
+def test_the_legacy_canvas_server_admits_through_the_same_law():
+    import nodelang.serve_canvas as sc
+    src = inspect.getsource(sc)
+    assert src.count("local_browser_admission_error(") >= 2, "GET and POST"
+    post = src.index("def do_POST(self):")
+    assert src.index("exceeds the admitted limit", post) < src.index("raw = self.rfile.read(n)", post)

@@ -215,9 +215,6 @@ def blender_execute_python(code: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    mcp.run()
-
 @mcp.tool()
 def hosts_state() -> Dict[str, Any]:
     """Every host the founder works with and its real state right now."""
@@ -258,3 +255,7 @@ def notion_search(query: str = "") -> Dict[str, Any]:
 def dropbox_list(path: str = "") -> Dict[str, Any]:
     """Files under the Dropbox folder (relative path optional)."""
     return _broker("dropbox.list", path=path)
+
+
+if __name__ == "__main__":
+    mcp.run()

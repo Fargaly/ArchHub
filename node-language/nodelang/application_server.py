@@ -7694,37 +7694,47 @@ class ApplicationServer:
         return session_root, observation.root_id, evidence_root
 
     def _brain_state(self) -> dict:
-        """brain.health, cached 15 s: ok + facts. Feeds the BABOOM lens; never blocks a frame long."""
-        import time as _t
-        cache = getattr(self, "_brain_state_cache", None)
-        if cache and _t.time() - cache[0] < 15.0:
-            return cache[1]
-        state = {"ok": False, "facts": 0}
-        try:
-            import json as _j
-            from .pipeline_engines import _brain_call
-            raw = _brain_call("brain.health", {})
-            data = _j.loads(raw) if isinstance(raw, str) else dict(raw)
-            state = {"ok": bool(data.get("ok")), "facts": int(data.get("facts") or 0)}
-        except Exception:
-            pass
-        self._brain_state_cache = (_t.time(), state)
-        return state
+        """Last known brain.health (ok + facts). Never probes on the caller's thread:
+        callers hold the mutation lock, so a slow daemon would stall every request.
+        A stale value starts one background refresh and is returned as-is."""
+        return self._cached_probe("_brain_state_cache", 15.0, {"ok": None, "facts": 0}, self._probe_brain)
 
     def _host_rows(self) -> list:
-        """probe_connectors, cached 30 s: which drivable hosts are up."""
-        import time as _t
-        cache = getattr(self, "_host_rows_cache", None)
-        if cache and _t.time() - cache[0] < 30.0:
-            return cache[1]
-        rows = []
+        """Last known probe_connectors rows; refreshed in the background every 30 s."""
+        return self._cached_probe("_host_rows_cache", 30.0, [], self._probe_hosts)
+
+    def _cached_probe(self, slot: str, ttl: float, default, probe):
+        import threading as _th, time as _t
+        cache = getattr(self, slot, None)
+        if cache is None or _t.time() - cache[0] >= ttl:
+            flag = slot + "_refreshing"
+            if not getattr(self, flag, False):
+                setattr(self, flag, True)
+                def _refresh():
+                    try:
+                        value = probe()
+                    except Exception:
+                        value = default
+                    setattr(self, slot, (_t.time(), value))
+                    setattr(self, flag, False)
+                _th.Thread(target=_refresh, name=slot, daemon=True).start()
+        return cache[1] if cache is not None else default
+
+    @staticmethod
+    def _probe_brain() -> dict:
+        import json as _j
+        from .pipeline_engines import _brain_call
         try:
-            from .pipeline_engines import probe_connectors
-            rows = list(probe_connectors())
+            raw = _brain_call("brain.health", {})
+            data = _j.loads(raw) if isinstance(raw, str) else dict(raw)
+            return {"ok": bool(data.get("ok")), "facts": int(data.get("facts") or 0)}
         except Exception:
-            pass
-        self._host_rows_cache = (_t.time(), rows)
-        return rows
+            return {"ok": False, "facts": 0}
+
+    @staticmethod
+    def _probe_hosts() -> list:
+        from .pipeline_engines import probe_connectors
+        return list(probe_connectors())
 
     def _machine_agent_runtime_presence(self) -> dict[str, object]:
         """Project bounded live capability state for the BABOOM graph lens.

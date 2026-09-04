@@ -118,6 +118,45 @@ def test_a_transient_open_error_never_sets_the_graph_aside():
     opened an empty canvas. Transients are retried and then refused, never set aside."""
     src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
     assert 'for _open_attempt in range(6)' in src
-    assert '"disk I/O error", "database is locked", "already owned", "unable to open"' in src
+    assert '"disk I/O error", "database is locked", "already owned", "unable to open",' in src
     assert "the graph is kept in place" in src
     assert src.index("the graph is kept in place") < src.index("old data kept in")
+
+
+def test_every_utterance_answers_end_to_end_on_a_real_graph():
+    """A source-level court let a NameError ship: the responder's revision check lost its
+    assignment and every BABOOM answer raised. This court speaks to a real graph."""
+    from nodelang.map_import import resolve_map_path
+    from nodelang.universal_application import build_universal_application, respond_universal_baboom_utterance
+    store, registry = build_universal_application(resolve_map_path())
+    context = registry.authorization.session.context()
+    brain = {"ok": True, "facts": 2298}
+    kinds = {}
+    for utterance in ("status", "brain health", "brief me on ArchHub", "what matters now", "work focus",
+                      "check meetings", "archhub map", "show governed work", "do a backflip"):
+        result = respond_universal_baboom_utterance(
+            store, registry, utterance=utterance, authentication_context=context, brain_state=brain, hosts=[])
+        kinds[utterance] = result["response"]["kind"]
+        assert result["command"]["revision"] == store.revision
+    assert kinds["brain health"] == "brain-health"
+    assert "command-guidance" not in kinds.values()
+    health = respond_universal_baboom_utterance(
+        store, registry, utterance="brain health", authentication_context=context, brain_state=brain, hosts=[])
+    assert health["response"]["data"]["brain"] == {"ok": True, "facts": 2298}
+    assert "2298 facts" in health["response"]["summary"]
+
+
+def test_only_claimed_work_counts_as_an_agent_working():
+    import inspect as _i
+    import nodelang.universal_application as ua
+    src = _i.getsource(ua.project_universal_baboom_context)
+    assert 'if state != "claimed":' in src
+    assert '{"claimed", "blocked", "review"}' not in src
+
+
+def test_the_orb_advances_with_the_pose():
+    import inspect as _i
+    import nodelang.baboom_native_companion as c
+    src = _i.getsource(c)
+    assert "orb=controller.orb_for(self._frame.motion" in src
+    assert "def orb_for(self, motion: str, sprite_size" in src

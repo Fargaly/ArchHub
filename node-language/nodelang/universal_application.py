@@ -9618,7 +9618,8 @@ def respond_universal_baboom_utterance(
             "kind": "baboom-context",
             "summary": "Current BABOOM and Workshop state.",
             "data": project_universal_baboom_context(
-                store, registry, authentication_context=authentication_context
+                store, registry, authentication_context=authentication_context,
+                brain_state=brain_state, hosts=hosts,
             ),
         }
     elif intent == "steward-briefing":
@@ -9626,7 +9627,8 @@ def respond_universal_baboom_utterance(
             "kind": "steward-briefing",
             "summary": "Founder-local Work, Workshop, and attention briefing.",
             "data": project_universal_founder_baboom_steward_briefing(
-                store, registry, authentication_context=authentication_context
+                store, registry, authentication_context=authentication_context,
+                brain_state=brain_state, hosts=hosts,
             ),
         }
     elif intent == "attention-briefing":
@@ -9741,7 +9743,9 @@ def respond_universal_baboom_utterance(
             "summary": ("BABOOM cannot do %r in this build yet." % intent),
             "data": {"intent": intent, "available": False},
         }
-
+    revision = response["data"].get("revision") if isinstance(
+        response["data"], Mapping
+    ) else None
     if revision is not None and revision != command["revision"]:
         raise InvalidCell("BABOOM command response changed during projection")
     return {"command": command, "response": response}
@@ -36270,7 +36274,9 @@ def project_universal_baboom_context(
     for item in ((work_index or {}).get("items") or ()):
         operational = item.get("operational") if isinstance(item, Mapping) else None
         state = str((operational or {}).get("current_state_label") or "").casefold()
-        if state not in {"claimed", "blocked", "review"}:
+        # Only a CLAIMED item is an agent at work. Blocked has its own
+        # (warning) branch and review is the founder's turn, not the agent's.
+        if state != "claimed":
             continue
         title_interface = (item.get("interfaces") or {}).get("title")
         title = str((title_interface or {}).get("value") or "untitled")[:80]

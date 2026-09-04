@@ -9491,7 +9491,7 @@ def resolve_universal_baboom_utterance(
                 re.IGNORECASE,
             )
             run_engine = re.fullmatch(
-                r"run\s+(?:engine\s*[:,-]?\s*)?([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)(?:\s+on\s+the\s+graph)?",
+                r"run\s+(?:engine(?:\s*[:,-])?\s*)?([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)(?:\s+on\s+the\s+graph)?",
                 spoken,
                 re.IGNORECASE,
             )
@@ -9503,11 +9503,11 @@ def resolve_universal_baboom_utterance(
                 spoken, re.IGNORECASE,
             )
             tell = re.fullmatch(
-                r"(?:tell|message|msg|ask)\s+(?!me\b|us\b|him\b|her\b|them\b)([a-z0-9_:.\-]+)\s*[:,-]?\s+(.+)",
+                r"(?:tell|message|msg|ask)\s+(?!me\b|us\b|him\b|her\b|them\b)([a-z0-9_.\-]+(?::[a-z0-9_.\-]+)*)(?:\s*[:,-])?\s+(.+)",
                 spoken, re.IGNORECASE | re.DOTALL,
             )
             interrupt = re.fullmatch(
-                r"(?:interrupt|stop)\s+(?:agent\s+)?([a-z0-9_:.\-]+)(?:\s*[:,-]?\s+(.+))?",
+                r"(?:interrupt|stop)\s+(?:agent\s+)?([a-z0-9_.\-]+(?::[a-z0-9_.\-]+)*)(?:(?:\s*[:,-])?\s+(.+))?",
                 spoken, re.IGNORECASE | re.DOTALL,
             )
             if task:

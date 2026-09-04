@@ -29,7 +29,7 @@ jobs:
     # wall → the job was cancelled mid-run (a false red). macos/ubuntu finish
     # both suites in ~3m, so the extra margin only ever applies to a slow windows
     # runner; it never masks a real hang (a genuine deadlock still trips 30m).
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     strategy:
       fail-fast: false

@@ -117,7 +117,7 @@ def supervise(*, runtime_url: str = "http://127.0.0.1:8482",
             environment = dict(os.environ)
             environment["ARCHHUB_DESKTOP_ATTEMPT"] = attempt
             write_lifecycle("starting", attempt=attempt)
-            worker = subprocess.Popen(_worker_command(), env=environment)
+            worker = subprocess.Popen(_worker_command(), env=environment, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             exit_code = worker.wait()
             receipt = read_lifecycle()
             if classify_worker_exit(receipt, attempt, exit_code) == "stop":

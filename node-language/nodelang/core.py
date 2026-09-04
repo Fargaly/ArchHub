@@ -142,7 +142,7 @@ def _run_probe(kind, spec):
         if kind == 'py_compile':
             p = spec.get('path', '')
             proc = subprocess.run([sys.executable, '-m', 'py_compile', p],
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             ok = proc.returncode == 0
             return {'ok': ok, 'kind': kind,
                     'detail': 'compiles' if ok else proc.stderr.strip()[:200]}
@@ -151,7 +151,7 @@ def _run_probe(kind, spec):
             cwd = spec.get('cwd') or None
             proc = subprocess.run([sys.executable, '-m', 'pytest', sel, '-q',
                                    '-p', 'no:cacheprovider'],
-                                  capture_output=True, text=True, timeout=600, cwd=cwd)
+                                  capture_output=True, text=True, timeout=600, cwd=cwd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             ok = proc.returncode == 0
             tail = (proc.stdout or proc.stderr).strip().splitlines()
             return {'ok': ok, 'kind': kind, 'detail': tail[-1] if tail else 'no output'}

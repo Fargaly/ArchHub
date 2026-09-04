@@ -181,7 +181,7 @@ def _read_status_report(spec: dict[str, Any]) -> dict[str, Any]:
         text=True,
         timeout=float(spec.get("timeout", 30.0)),
         **_hidden_subprocess_kwargs(),
-    )
+    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout or "status command failed").strip())
     data = json.loads(proc.stdout)
@@ -250,7 +250,7 @@ def _scheduled_task_exists(spec: dict[str, Any]) -> bool:
             text=True,
             timeout=float(spec.get("timeout", 5.0)),
             **_hidden_subprocess_kwargs(),
-        )
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception:
         return False
     return proc.returncode == 0

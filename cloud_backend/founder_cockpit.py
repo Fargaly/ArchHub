@@ -285,17 +285,21 @@ def _replica_count() -> Optional[int]:
 
 def _system_panel() -> dict:
     """Brain replica status, health, version/build, deploy info."""
-    version = "unknown"
-    try:
-        # Repo VERSION file lives at the repo root (two levels up from this
-        # module: cloud_backend/ -> repo root). Falls back to the FastAPI
-        # app version when not found.
-        from pathlib import Path
-        vf = Path(__file__).resolve().parent.parent / "VERSION"
-        if vf.exists():
-            version = vf.read_text(encoding="utf-8").strip()
-    except Exception:
-        pass
+    # The image is built from cloud_backend/ alone, so the repo-root VERSION
+    # file is not inside it: the deploy declares ARCHHUB_VERSION (fly.toml
+    # [env]); the VERSION file serves a local checkout; "unknown" is honest.
+    version = os.environ.get("ARCHHUB_VERSION", "").strip() or "unknown"
+    if version == "unknown":
+        try:
+            from pathlib import Path
+            vf = Path(__file__).resolve().parent.parent / "VERSION"
+            if vf.exists():
+                version = vf.read_text(encoding="utf-8").strip() or "unknown"
+        except Exception:
+            pass
+    image = os.environ.get("FLY_IMAGE_REF", "").rsplit(":", 1)[-1][-14:]
+    if image and version != "unknown":
+        version = "%s (%s)" % (version, image)
 
     return {
         "healthz":          {"ok": True, "ts": int(time.time())},

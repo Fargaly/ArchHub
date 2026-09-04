@@ -98,6 +98,27 @@ def _is_app_root_path(path_text: str) -> bool:
 # any test module can insert ArchHub/app (whose `app/mcp/` package would shadow
 # it) onto sys.path. Done at conftest import time so it runs ahead of all
 # collection. Degrade gracefully if `mcp` is not installed in this env.
+# ── The node language, wherever it is. Eight test modules insert the
+# workstation path 10.PRODUCT/13.NODE-LANGUAGE; on a CI checkout that path
+# does not exist and the nested copy at <repo>/node-language does. Resolve
+# it once here, ahead of collection, so `import nodelang` works on both.
+def _put_node_language_on_path() -> None:
+    here = Path(__file__).resolve()
+    candidates = (
+        here.parents[4] / "10.PRODUCT" / "13.NODE-LANGUAGE",
+        here.parents[2] / "node-language",
+    )
+    for candidate in candidates:
+        if (candidate / "nodelang" / "__init__.py").is_file():
+            text = str(candidate)
+            if text not in sys.path:
+                sys.path.insert(0, text)
+            return
+
+
+_put_node_language_on_path()
+
+
 def _pin_real_mcp() -> None:
     saved_path = list(sys.path)
     try:

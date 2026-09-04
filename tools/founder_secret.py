@@ -148,6 +148,33 @@ def stored_digest() -> Optional[str]:
     return None
 
 
+_PBKDF2_ROUNDS = 600_000
+
+
+def make_digest(secret: str) -> str:
+    """pbkdf2$<rounds>$<salt hex>$<hex>: a slow hash, so a leaked digest is not a
+    cheap brute-force target the way a bare SHA-256 of a passphrase is."""
+    import os as _os
+    salt = _os.urandom(16)
+    derived = hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt, _PBKDF2_ROUNDS)
+    return "pbkdf2$%d$%s$%s" % (_PBKDF2_ROUNDS, salt.hex(), derived.hex())
+
+
+def verify_digest(provided: str, digest: str) -> bool:
+    """Constant-time compare against a pbkdf2 digest; a legacy 64-hex SHA-256 digest
+    (files made before 2026-09-04) is still honoured until the founder re-runs
+    --make-digest."""
+    if digest.startswith("pbkdf2$"):
+        try:
+            _, rounds, salt_hex, want = digest.split("$", 3)
+            got = hashlib.pbkdf2_hmac("sha256", provided.encode("utf-8"), bytes.fromhex(salt_hex), int(rounds)).hex()
+        except (ValueError, TypeError):
+            return False
+        return hmac.compare_digest(got, want)
+    legacy = hashlib.sha256(provided.encode("utf-8")).hexdigest()  # legacy digest files only
+    return hmac.compare_digest(legacy, digest)
+
+
 def is_authorised() -> bool:
     """True iff the founder provisioned a digest AND the current process carries
     a PROVIDED_ENV plaintext whose sha256 matches it. False on every gap
@@ -161,8 +188,7 @@ def is_authorised() -> bool:
         provided = os.environ.get(PROVIDED_ENV, "")
         if not provided:
             return False
-        got = hashlib.sha256(provided.encode("utf-8")).hexdigest()
-        return hmac.compare_digest(got, digest)
+        return verify_digest(provided, digest)
     except Exception:
         return False  # FAIL-CLOSED on our own error
 
@@ -201,7 +227,7 @@ def _cli(argv: list[str]) -> int:
         if not secret:
             print("empty passphrase — nothing to do", file=sys.stderr)
             return 2
-        print(hashlib.sha256(secret.encode("utf-8")).hexdigest())
+        print(make_digest(secret))
         return 0
     # default: report authorisation status as an exit code (for the hooks).
     if is_authorised():

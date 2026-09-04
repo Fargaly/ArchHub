@@ -120,7 +120,11 @@ def can_wire(output_port_type: TypeRef, input_port_type: TypeRef,
         return True
     if _matches_type_family(output_ref, input_ref):
         return True
-    legacy_inputs = _COERCIONS.get(output_ref, set())
+    try:
+        output_key = PortType(output_ref)
+    except ValueError:
+        output_key = None
+    legacy_inputs = _COERCIONS.get(output_key, set()) if output_key is not None else set()
     return input_ref in {normalize_type_ref(value) for value in legacy_inputs}
 
 

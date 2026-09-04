@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,9 +36,39 @@ def brainwrap_argv(config: dict[str, Any], payload: dict[str, Any]) -> list[str]
         "--cwd",
         str(payload.get("cwd") or config["workspace_root"]),
         "--",
-        str(payload["target"]),
-        *[str(item) for item in payload.get("args") or []],
+        # The launched program is the CONFIGURED path (validate_payload proved
+        # the request names the same file); arguments are shape-checked.
+        _configured_target(config, payload),
+        *[_shaped_arg(item) for item in payload.get("args") or []],
     ]
+
+
+def _configured_target(config: dict[str, Any], payload: dict[str, Any]) -> str:
+    """The configured program path for the requested app -- the launch runs the
+    file the config names, never a path typed into the request."""
+    apps = config.get("apps") if isinstance(config.get("apps"), dict) else {}
+    requested = str(payload.get("target") or "")
+    app = str(payload.get("app") or "")
+    entry = apps.get(app) if isinstance(apps.get(app), dict) else None
+    if entry is None:
+        for candidate in apps.values():
+            if isinstance(candidate, dict) and _same_windows_path(str(candidate.get("path") or ""), requested):
+                entry = candidate
+                break
+    configured = str((entry or {}).get("path") or "")
+    if not configured or not _same_windows_path(configured, requested):
+        raise ValueError("target is not a configured app")
+    return configured
+
+
+_ARG_SHAPE = re.compile(r"^[A-Za-z0-9_./:" + chr(92) + chr(92) + r"=+,@%" + chr(92) + r"- ]{0,512}$")
+
+
+def _shaped_arg(item: Any) -> str:
+    text = str(item)
+    if not _ARG_SHAPE.match(text):
+        raise ValueError("argument carries characters a launch never needs")
+    return text
 
 
 def _entry_for_app(config: dict[str, Any], app: str) -> dict[str, Any]:

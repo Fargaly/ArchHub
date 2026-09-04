@@ -792,6 +792,7 @@ def api_purge_test_users(
 
 
 _COCKPIT_ASSETS = Path(__file__).resolve().parent / "cockpit_assets"
+_ASSET_SUFFIXES = frozenset({"js", "jsx", "html", "css", "json", "png", "svg", "woff2", "map"})
 
 
 _MAP_STATE = Path(__file__).resolve().parent / "data" / "founder-map.json"
@@ -817,7 +818,11 @@ async def cockpit_map_state(request: Request,
         return JSONResponse({"ok": False, "error": "map state is not JSON"},
                             status_code=400)
     _MAP_STATE.parent.mkdir(parents=True, exist_ok=True)
-    _MAP_STATE.write_bytes(payload)
+    # Atomic: readers see the previous complete state or the new one, never
+    # a half-written file served as the cockpit map.
+    tmp = _MAP_STATE.with_suffix(_MAP_STATE.suffix + ".tmp")
+    tmp.write_bytes(payload)
+    os.replace(tmp, _MAP_STATE)
     return {"ok": True, "bytes": len(payload)}
 
 
@@ -832,9 +837,17 @@ def cockpit_asset(asset: str,
             + b"; window.ATLAS_LIVE = true;",
             media_type="text/javascript; charset=utf-8",
         )
-    target = (_COCKPIT_ASSETS / asset).resolve()
-    if _COCKPIT_ASSETS not in target.parents or not target.is_file():
+    # The asset name comes off the URL: normalise it, refuse anything that
+    # climbs out or names a drive, and only then touch the filesystem.
+    relative = os.path.normpath(asset).replace(chr(92), "/")
+    if (relative.startswith(("..", "/")) or os.path.isabs(relative) or ":" in relative
+            or relative.rsplit(".", 1)[-1].lower() not in _ASSET_SUFFIXES):
         return Response(status_code=404)
+    base = os.path.realpath(str(_COCKPIT_ASSETS))
+    full = os.path.realpath(os.path.join(base, relative))
+    if not full.startswith(base + os.sep) or not os.path.isfile(full):
+        return Response(status_code=404)
+    target = Path(full)
     kind = (
         "text/javascript; charset=utf-8"
         if target.suffix in (".js", ".jsx")

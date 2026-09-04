@@ -44,8 +44,12 @@ def main() -> int:
     )
     if proc.stderr:
         sys.stderr.write(proc.stderr)
-    if proc.stdout.strip():
-        sys.stdout.write(proc.stdout)
+    if not proc.stdout.strip():
+        # A gate that crashed or said nothing must not read as consent.
+        sys.stdout.write(json.dumps({"decision": "deny",
+                                     "reason": "ArchHub scope gate gave no verdict (exit %s)" % proc.returncode}))
+        return 0
+    sys.stdout.write(proc.stdout)
     return 0
 
 

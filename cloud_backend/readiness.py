@@ -67,7 +67,11 @@ def _email_status() -> dict[str, Any]:
 
 
 def _website_status() -> dict[str, Any]:
-    configured = "https://archhub.io" in config.WEBSITE_RETURN_ORIGINS
+    from urllib.parse import urlsplit
+    configured = any(
+        urlsplit(origin).scheme == "https" and urlsplit(origin).netloc == "archhub.io"
+        for origin in config.WEBSITE_RETURN_ORIGINS
+    )
     return _status(configured, "configured" if configured else "configuration_incomplete",
                    origin="https://archhub.io" if configured else None)
 

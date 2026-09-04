@@ -465,6 +465,16 @@ def _founder_authorised() -> bool:
 # ── main ────────────────────────────────────────────────────────────────
 
 
+_SECRET_VALUE = re.compile(r"(?i)((?:secret|token|key|password|passphrase)\s*[:=]\s*)\S+")
+_LONG_TOKEN = re.compile(r"[A-Za-z0-9+/_=-]{24,}")
+
+
+def _redact(text: str) -> str:
+    """Evidence of a credential names the class, never the credential."""
+    text = _SECRET_VALUE.sub(lambda m: m.group(1) + "[redacted]", str(text))
+    return _LONG_TOKEN.sub("[redacted]", text)
+
+
 def _print(msg: str) -> None:
     sys.stderr.write(f"[safety-court] {msg}\n")
 
@@ -553,7 +563,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         _print(f"RISKY CLASS(ES) FIRED: {fired}")
         for name, evid in classes.items():
             for e in evid[:4]:
-                _print(f"  - [{name}] {e}")
+                _print(f"  - [{name}] {_redact(e)}")
 
         if _founder_authorised():
             _print("FOUNDER-SIGNOFF verified (un-forgeable secret matched) — "

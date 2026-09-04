@@ -21,5 +21,5 @@
   "autoupdate": {
     "url": "https://github.com/Fargaly/ArchHub/releases/download/v$version/ArchHub-Setup-$version.exe"
   },
-  "hash": "sha256:adb6575251fb16d57bb75b93494bb3a788292168b8f906b2bb9fe2d8199bb985"
+  "hash": "sha256:697ea009f46ceefc0032a3c18c71add1629d926e628f5b10e1fe3c93114caaa1"
 }

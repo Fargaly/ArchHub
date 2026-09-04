@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from pathlib import Path
 
 from nodelang import quiet_update as qu
 
@@ -95,3 +96,15 @@ def test_the_server_hands_over_to_a_fresh_launcher_on_restart():
     assert "def _staged_update(self)" in src and "def _restart_to_update(self)" in src
     assert src.count("staged_update=self._staged_update()") >= 5
     assert 'result.get("kind") == "update-ready"' in src
+
+
+def test_the_app_lives_in_the_tray_and_closing_hides_it():
+    """The founder asked where the app is: a tray icon says it is running in the
+    background; close hides; Quit and Restart-to-update live in the tray menu."""
+    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    assert "QSystemTrayIcon" in src and "class _ArchHubWindow(QMainWindow)" in src
+    assert "event.ignore()" in src and "self.hide()" in src
+    for label in ("Open ArchHub", "Check for updates now", "Restart to install the update", "Quit ArchHub"):
+        assert label in src, label
+    assert 'window.setWindowTitle("ArchHub")' in src
+    assert "app.setQuitOnLastWindowClosed(False)" in src

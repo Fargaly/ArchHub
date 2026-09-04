@@ -7712,48 +7712,49 @@ class ApplicationServer:
         if not who or not founder or who != str(founder).strip().casefold():
             raise AuthorizationDenied("account administration is the founder's alone")
 
-    def _brain_state(self) -> dict:
-        """Last known brain.health (ok + facts). Never probes on the caller's thread:
-        callers hold the mutation lock, so a slow daemon would stall every request.
-        A stale value starts one background refresh and is returned as-is."""
-        return self._cached_probe("_brain_state_cache", 15.0, {"ok": None, "facts": 0}, self._probe_brain)
-
-    def _host_rows(self) -> list:
-        """Last known probe_connectors rows; refreshed in the background every 30 s."""
-        return self._cached_probe("_host_rows_cache", 30.0, [], self._probe_hosts)
-
-    def _cached_probe(self, slot: str, ttl: float, default, probe):
+    # Brain health and host probes are read by every BABOOM frame. They are never
+    # awaited inside a request: the last known value answers at once and a
+    # daemon thread refreshes it, so a slow tasklist or a COM check can never
+    # stall a frame past its lease (the companion blinked out while it waited).
+    def _refresh_in_background(self, key: str, ttl: float, producer) -> object:
         import threading as _th, time as _t
-        cache = getattr(self, slot, None)
-        if cache is None or _t.time() - cache[0] >= ttl:
-            flag = slot + "_refreshing"
-            if not getattr(self, flag, False):
-                setattr(self, flag, True)
-                def _refresh():
-                    try:
-                        value = probe()
-                    except Exception:
-                        value = default
-                    setattr(self, slot, (_t.time(), value))
-                    setattr(self, flag, False)
-                _th.Thread(target=_refresh, name=slot, daemon=True).start()
-        return cache[1] if cache is not None else default
+        caches = self.__dict__.setdefault("_probe_caches", {})
+        entry = caches.get(key)
+        now = _t.time()
+        if entry is None or (now - entry[0] >= ttl and not entry[2]):
+            fresh = [entry[0] if entry else 0.0, entry[1] if entry else None, True]
+            caches[key] = fresh
+            def _run():
+                try:
+                    value = producer()
+                except Exception:
+                    value = fresh[1]
+                caches[key] = [_t.time(), value, False]
+            _th.Thread(target=_run, name="archhub-probe-" + key, daemon=True).start()
+        return caches[key][1]
 
     @staticmethod
     def _probe_brain() -> dict:
         import json as _j
         from .pipeline_engines import _brain_call
-        try:
-            raw = _brain_call("brain.health", {})
-            data = _j.loads(raw) if isinstance(raw, str) else dict(raw)
-            return {"ok": bool(data.get("ok")), "facts": int(data.get("facts") or 0)}
-        except Exception:
-            return {"ok": False, "facts": 0}
+        raw = _brain_call("brain.health", {})
+        data = _j.loads(raw) if isinstance(raw, str) else dict(raw)
+        return {"ok": bool(data.get("ok")), "facts": int(data.get("facts") or 0)}
 
     @staticmethod
     def _probe_hosts() -> list:
         from .pipeline_engines import probe_connectors
         return list(probe_connectors())
+
+    def _brain_state(self) -> dict:
+        """brain.health (ok + facts), refreshed every 15 s off the request path."""
+        value = self._refresh_in_background("brain", 15.0, self._probe_brain)
+        return value if isinstance(value, dict) else {"ok": None, "facts": 0}
+
+    def _host_rows(self) -> list:
+        """probe_connectors rows, refreshed every 30 s off the request path."""
+        value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
+        return value if isinstance(value, list) else []
 
     def _staged_update(self) -> dict:
         """The build the quiet updater staged (state_dir/updates/staged.json), cached 30 s."""

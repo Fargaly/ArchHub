@@ -148,10 +148,9 @@ web brain portal is coming soon.
 A clean path for a brand-new user:
 
 1. **Install the app (Windows, no terminal needed).** From
-   **[archhub.io](https://archhub.io)** click **Download**, or install via
-   `winget install Fargaly.ArchHub`. You can also download the
-   **ArchHub-Setup** installer from the project's GitHub releases and
-   double-click it. The installer adds a desktop icon and a Start-menu shortcut.
+   **[archhub.io](https://archhub.io)** click **Download**, which takes you to
+   the **ArchHub-Setup-0.exe** installer on the project's GitHub releases;
+   double-click it. (Package managers are not published yet.) The installer adds a desktop icon and a Start-menu shortcut.
    - *On first launch you may see a Windows SmartScreen warning* (until the app
      is code-signed) — this is expected; choose to run anyway.
 2. **First launch & sign-in.** The app opens and walks you through signing in to

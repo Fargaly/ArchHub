@@ -16,9 +16,9 @@ This page walks you through each one the way you would actually meet it, the fir
 
 You do not need a terminal. Install the app one of these ways:
 
-- **winget** (Windows package manager): `winget install Fargaly.ArchHub`
-- **scoop** or **choco**, if you already use them
-- Or download `ArchHub-Setup-x.y.z.exe` directly from the [Releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click it.
+- Download `ArchHub-Setup-0.exe` from the [Releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click it.
+- **scoop**, if you already use it: `scoop install https://raw.githubusercontent.com/Fargaly/ArchHub/main/installer/scoop/archhub.json`
+- winget and choco packages are not published yet.
 
 The installer puts a desktop icon and a Start-menu shortcut in place. (Until the app has a code-signing certificate, Windows SmartScreen may show a warning the first time — that is expected for new installers.)
 

@@ -24,8 +24,8 @@ Pick whichever of these you prefer. All three install the same app.
 **Option A — Direct download (simplest):**
 
 1. Go to **[github.com/Fargaly/ArchHub/releases/latest](https://github.com/Fargaly/ArchHub/releases/latest)**.
-2. Download the file named **`ArchHub-Setup-x.y.z.exe`** (the `x.y.z` is the
-   version number).
+2. Download the file named **`ArchHub-Setup-0.exe`** (the version label is `0`
+   while the product is in open beta).
 3. Double-click it and follow the installer.
 
 > **Heads-up about the Windows warning.** Windows SmartScreen may show a blue
@@ -33,20 +33,14 @@ Pick whichever of these you prefer. All three install the same app.
 > code-signed. Click **More info → Run anyway** to continue. (Code signing is
 > on the roadmap.)
 
-**Option B — winget** (if you use the Windows package manager):
-
-```
-winget install Fargaly.ArchHub
-```
-
-**Option C — scoop or choco:**
+**Option B — scoop** (if you already use it):
 
 ```
 scoop install https://raw.githubusercontent.com/Fargaly/ArchHub/main/installer/scoop/archhub.json
 ```
-```
-choco install archhub
-```
+
+winget and Chocolatey packages are **not published yet**; `winget install
+Fargaly.ArchHub` does not resolve today. Use Option A.
 
 The installer creates a **desktop icon** and a **Start-menu shortcut**, so after
 this you launch ArchHub like any normal Windows app.

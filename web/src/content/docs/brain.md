@@ -133,7 +133,7 @@ The brain works regardless of which AI you use. ArchHub supports two modes:
 
 ## Quick start with the brain
 
-1. **Install and open ArchHub.** (Windows: `winget install Fargaly.ArchHub`, or download the installer from the [releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click.)
+1. **Install and open ArchHub.** (Windows: download `ArchHub-Setup-0.exe` from the [releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click.)
 2. **Sign in** through the first-run wizard (a magic link to your email — free tier, no card).
 3. **Work normally** — draft on the canvas, run a connector, talk to the composer. The brain learns as you go.
 4. **Open the Brain folders view** to browse what it has remembered.

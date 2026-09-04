@@ -15,6 +15,24 @@ import json
 from typing import Mapping
 
 
+def _local_input_path(path: str, *, label: str) -> str:
+    """An input file the graph names must be a local file, never a UNC share.
+
+    A graph is data anyone can hand you; a UNC path in it makes this process
+    authenticate to a remote SMB host (NTLM credential leak) and read whatever
+    sits there. Local drives only, and the file must exist.
+    """
+    text = str(path or "").strip()
+    if not text:
+        raise ValueError("no %s; set it or wire a file in" % label)
+    if text.startswith(("\\\\", "//")) or text.upper().startswith(("\\\\?\\UNC", "SMB:", "FILE:")):
+        raise ValueError("%s must be a local file, not a network share" % label)
+    import os as _os
+    if not _os.path.isfile(text):
+        raise ValueError("%s does not exist: %s" % (label, text))
+    return text
+
+
 def _lines_of(value: object) -> list:
     if isinstance(value, str):
         value = json.loads(value or "[]")
@@ -28,9 +46,7 @@ def sketch_lines(params: Mapping[str, object], feeds: Mapping[str, object]):
     import cv2
     import numpy
 
-    path = str(feeds.get("in") or params.get("image_path") or "").strip()
-    if not path:
-        raise ValueError("no image path; set image_path or wire a file in")
+    path = _local_input_path(feeds.get("in") or params.get("image_path"), label="image_path")
     image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if image is None:
         raise ValueError("could not read image: %s" % path)
@@ -57,9 +73,7 @@ def cad_lines(params: Mapping[str, object], feeds: Mapping[str, object]):
     """DXF file -> the same line segments the sketch engine emits."""
     import ezdxf
 
-    path = str(feeds.get("in") or params.get("file_path") or "").strip()
-    if not path:
-        raise ValueError("no file path; set file_path or wire a file in")
+    path = _local_input_path(feeds.get("in") or params.get("file_path"), label="file_path")
     wanted_layer = str(params.get("layer") or "").strip()
     document = ezdxf.readfile(path)
     lines = []

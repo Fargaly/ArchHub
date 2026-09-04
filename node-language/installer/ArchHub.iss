@@ -2,13 +2,17 @@
 ;
 ; It carries the application, checks for a usable Python, installs the
 ; packages that are missing, and leaves a Start-menu and Desktop entry.
-; Nothing is signed yet, so the package is meant to travel on the firm
-; share, where Windows attaches no mark-of-the-web and raises no warning.
+; Not signed (code-signing is geo-blocked for the founder's region);
+; distributed on the firm share. The setup never runs a bare-named program.
 
 #define AppName "ArchHub"
-#define AppVersion "1.8.1"
+#define AppVersion "0"
 #define AppPublisher "Fargaly"
-#define AppExe "ArchHub.bat"
+; Every shortcut opens ArchHub.vbs: it resolves the installed pythonw itself
+; (a bare pythonw fails wherever Python was installed without Add-to-PATH)
+; and hands a first run to ArchHub.bat, whose window stays open if setup
+; refuses. ArchHub.bat is never a shortcut target.
+#define AppExe "ArchHub.vbs"
 
 [Setup]
 ; The AppId of the install already on every machine (v1.7.0), so Windows
@@ -19,6 +23,9 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={localappdata}\ArchHub
+; The folder is fixed: a chooser would let one user aim the launcher at a
+; folder another user can write to.
+DisableDirPage=yes
 DefaultGroupName=ArchHub
 DisableProgramGroupPage=yes
 OutputDir=..\dist
@@ -47,6 +54,12 @@ Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion
 ; left in place: it still hosts the brain MCP server on :8473.
 Source: "ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\12.PRODUCTION\app\assets\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
+; The skill library travels with the application: a colleague machine has
+; no ~/.claude or ~/.codex, and a catalogue that only scanned those reported
+; 0 skills everywhere but the founder desk. Snapshotted at build time from
+; the machine that builds the installer.
+Source: "{#GetEnv("USERPROFILE")}\.claude\skills\*"; DestDir: "{app}\skills\claude"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
+Source: "{#GetEnv("USERPROFILE")}\.codex\skills\*"; DestDir: "{app}\skills\codex"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"
@@ -57,20 +70,64 @@ Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}
 Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now"; Flags: postinstall nowait skipifsilent
 
 [Code]
+function FindPython(): String;
+var
+  Base: String;
+  Rec: TFindRec;
+begin
+  { Absolute paths only. A bare 'py' or 'python' is resolved from the
+    installer's own folder first, so a file planted beside the setup on a
+    share would run before the person has consented to anything. }
+  Result := '';
+  Base := ExpandConstant('{localappdata}') + '\Python';
+  if FindFirst(Base + '\pythoncore*', Rec) then
+  begin
+    try
+      repeat
+        if (Rec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and
+           FileExists(Base + '\' + Rec.Name + '\python.exe') then
+          Result := Base + '\' + Rec.Name + '\python.exe';
+      until not FindNext(Rec);
+    finally
+      FindClose(Rec);
+    end;
+  end;
+  if Result <> '' then exit;
+  Base := ExpandConstant('{localappdata}') + '\Programs\Python';
+  if FindFirst(Base + '\Python3*', Rec) then
+  begin
+    try
+      repeat
+        if FileExists(Base + '\' + Rec.Name + '\python.exe') then
+          Result := Base + '\' + Rec.Name + '\python.exe';
+      until not FindNext(Rec);
+    finally
+      FindClose(Rec);
+    end;
+  end;
+  if Result <> '' then exit;
+  if FindFirst(ExpandConstant('{pf}') + '\Python3*', Rec) then
+  begin
+    try
+      repeat
+        if FileExists(ExpandConstant('{pf}') + '\' + Rec.Name + '\python.exe') then
+          Result := ExpandConstant('{pf}') + '\' + Rec.Name + '\python.exe';
+      until not FindNext(Rec);
+    finally
+      FindClose(Rec);
+    end;
+  end;
+end;
+
 function PythonPresent(): Boolean;
 var
   Code: Integer;
+  Py: String;
 begin
-  { Two honest attempts, no shell operators: the launcher and the plain
-    interpreter. Either answering 3.11+ is enough. }
   Result := False;
-  if Exec('py', '-3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
-          '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
-  begin
-    Result := True;
-    exit;
-  end;
-  if Exec('python', '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
+  Py := FindPython();
+  if Py = '' then exit;
+  if Exec(Py, '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
           '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
     Result := True;
 end;

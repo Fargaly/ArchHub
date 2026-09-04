@@ -23,7 +23,7 @@ import sqlite3
 import threading
 import time
 from types import MappingProxyType
-from typing import Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping, Sequence
 from urllib.parse import quote
 import uuid
 from weakref import WeakKeyDictionary
@@ -911,12 +911,27 @@ _WORKSHOP_REQUIREMENT_SPECS = (
 
 
 def _workspace_root_for_map(map_path: str | Path) -> Path:
+    """The governed workspace root: the founder tree when the map sits in one.
+
+    Elsewhere -- a colleague install, a CI runner -- there is no 00.GOVERNANCE
+    above the map and the application still has to open. ARCHHUB_WORKSPACE_ROOT
+    names it explicitly; otherwise the root is the tree that holds the node
+    language itself (the parent of the nodelang package), which is what a
+    colleague machine has.
+    """
+    import os
     resolved = Path(map_path).expanduser().resolve()
     for candidate in (resolved.parent, *resolved.parents):
         if (
             (candidate / "00.GOVERNANCE").is_dir()
             and (candidate / "10.PRODUCT").is_dir()
         ):
+            return candidate
+    named = os.environ.get("ARCHHUB_WORKSPACE_ROOT", "").strip()
+    if named and Path(named).expanduser().is_dir():
+        return Path(named).expanduser().resolve()
+    for candidate in (resolved.parent, *resolved.parents):
+        if (candidate / "nodelang" / "__init__.py").is_file():
             return candidate
     raise InvalidCell("ArchHub workspace root is unavailable")
 
@@ -3312,6 +3327,9 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/reveal", "inspect"),
     ("POST", "/api/universal/retract", "edit"),
     ("POST", "/api/universal/brain-remember", "edit"),
+    ("POST", "/api/universal/brain-forget", "edit"),
+    ("POST", "/api/universal/brain-edit", "edit"),
+    ("POST", "/api/universal/node-create", "edit"),
     ("POST", "/api/universal/brain-export", "read"),
     ("POST", "/api/universal/skills", "read"),
     ("POST", "/api/universal/login", "edit"),
@@ -9502,7 +9520,7 @@ def execute_universal_baboom_utterance(
         utterance=utterance,
         authentication_context=authentication_context,
     )
-    if command["intent"] != "assign-task":
+    if command["intent"] not in {"assign-task", "assign-and-claim"}:
         raise InvalidCell(
             "only an explicit 'Assign task:' BABOOM command can create Work"
         )
@@ -9577,6 +9595,8 @@ def respond_universal_baboom_utterance(
     *,
     utterance: str,
     authentication_context: object | None = None,
+    brain_state: Mapping[str, object] | None = None,
+    hosts: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Resolve one founder utterance to a graph-backed, non-chat response.
 
@@ -9598,7 +9618,8 @@ def respond_universal_baboom_utterance(
             "kind": "baboom-context",
             "summary": "Current BABOOM and Workshop state.",
             "data": project_universal_baboom_context(
-                store, registry, authentication_context=authentication_context
+                store, registry, authentication_context=authentication_context,
+                brain_state=brain_state, hosts=hosts,
             ),
         }
     elif intent == "steward-briefing":
@@ -9606,7 +9627,8 @@ def respond_universal_baboom_utterance(
             "kind": "steward-briefing",
             "summary": "Founder-local Work, Workshop, and attention briefing.",
             "data": project_universal_founder_baboom_steward_briefing(
-                store, registry, authentication_context=authentication_context
+                store, registry, authentication_context=authentication_context,
+                brain_state=brain_state, hosts=hosts,
             ),
         }
     elif intent == "attention-briefing":
@@ -9651,7 +9673,7 @@ def respond_universal_baboom_utterance(
         }
     elif intent == "assign-and-claim":
         response = {
-            "kind": "task-claim-requirement",
+            "kind": "task-confirmation",
             "summary": (
                 "BABOOM can claim a task only through a live device-proven "
                 "runtime session."
@@ -9682,25 +9704,44 @@ def respond_universal_baboom_utterance(
                 "requires": "cognition request and founder approval",
             },
         }
-    else:
+    elif intent == "brain-health":
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
+        brain = lens.get("brain") or {}
         response = {
-            "kind": "command-guidance",
-            "summary": (
-                "Use a known BABOOM command or assign a bounded task for the "
-                "graph to govern."
+            "kind": "brain-health",
+            "summary": ("Brain: %s, %d facts." % ("answering" if brain.get("ok") else "not answering", int(brain.get("facts") or 0))),
+            "data": {"brain": brain, "agents": lens.get("agents"), "hosts": lens.get("hosts")},
+        }
+    elif intent in {"work-focus", "plan-claimed-work", "claim-governed-work"}:
+        response = {
+            "kind": "governed-work-report",
+            "summary": "Governed Work as the graph holds it.",
+            "data": project_universal_founder_governed_work_report(
+                store, registry, authentication_context=authentication_context
             ),
-            "data": {
-                "available": [
-                    "status",
-                    "brief me on ArchHub",
-                    "what matters now",
-                    "workshop report",
-                    "model council",
-                    "show governed work",
-                    "assign task: <task>",
-                    "assign task to <provider>: <task>",
-                ],
-            },
+        }
+    elif intent in {"check-meetings", "meeting-brief", "open-meeting", "start-meeting-notes", "stop-meeting-notes"}:
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
+        notes = lens.get("meeting_notes") or {}
+        response = {
+            "kind": "meeting-notes",
+            "summary": ("Meeting notes: %s active session(s)." % int(notes.get("active_sessions") or 0)),
+            "data": {"meeting_notes": notes, "route": "/api/universal/baboom-meeting-notes"},
+        }
+    elif intent == "archhub-map":
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
+        response = {
+            "kind": "archhub-map",
+            "summary": "The cockpit is the live map of this graph; open /founder on the cloud.",
+            "data": {"revision": lens.get("revision"), "work": lens.get("work")},
+        }
+    else:
+        # A catalogue command this build cannot perform says so, in one
+        # sentence, instead of handing back a menu.
+        response = {
+            "kind": "not-in-this-build",
+            "summary": ("BABOOM cannot do %r in this build yet." % intent),
+            "data": {"intent": intent, "available": False},
         }
     revision = response["data"].get("revision") if isinstance(
         response["data"], Mapping
@@ -36020,6 +36061,8 @@ def project_universal_baboom_context(
     runtime_presence: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
     work_index: Mapping[str, object] | None = None,
+    brain_state: Mapping[str, object] | None = None,
+    hosts: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Return the narrow shared-application lens admitted to BABOOM voice.
 
@@ -36225,9 +36268,35 @@ def project_universal_baboom_context(
             "issued_cloud_sessions": issued_cloud_sessions,
         })
 
+    # What the agents are doing, what the brain is, which drivable hosts are
+    # down: the founder reads these off BABOOM, so they travel in the lens.
+    agents_working = []
+    for item in ((work_index or {}).get("items") or ()):
+        operational = item.get("operational") if isinstance(item, Mapping) else None
+        state = str((operational or {}).get("current_state_label") or "").casefold()
+        # Only a CLAIMED item is an agent at work. Blocked has its own
+        # (warning) branch and review is the founder's turn, not the agent's.
+        if state != "claimed":
+            continue
+        title_interface = (item.get("interfaces") or {}).get("title")
+        title = str((title_interface or {}).get("value") or "untitled")[:80]
+        body = str(item.get("claimant_agent_body") or "")
+        agents_working.append({"title": title, "state": state,
+                               "agent": body.rsplit(":", 1)[-1] or "agent"})
+    brain_view = {"ok": None, "facts": 0}
+    if isinstance(brain_state, Mapping):
+        brain_view = {"ok": bool(brain_state.get("ok")), "facts": int(brain_state.get("facts") or 0)}
+    hosts_down = [
+        str(row.get("name") or row.get("id"))
+        for row in (hosts or ())
+        if isinstance(row, Mapping) and row.get("drive") and row.get("state") == "absent"
+    ]
     return {
         "cell_native": True,
         "context_lens": _BABOOM_CONTEXT_LENS_VERSION,
+        "agents": {"working": agents_working, "count": len(agents_working)},
+        "brain": brain_view,
+        "hosts": {"down": hosts_down},
         "revision": snapshot.revision,
         "work": work,
         "workshop": {
@@ -36251,6 +36320,8 @@ def project_universal_baboom_companion_directive(
     runtime_presence: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
     work_index: Mapping[str, object] | None = None,
+    brain_state: Mapping[str, object] | None = None,
+    hosts: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Project one content-free desktop directive from the Universal graph.
 
@@ -36266,6 +36337,8 @@ def project_universal_baboom_companion_directive(
         runtime_presence=runtime_presence,
         authentication_context=authentication_context,
         work_index=work_index,
+        brain_state=brain_state,
+        hosts=hosts,
     )
     work = context["work"]
     attention = context["attention"]
@@ -36304,6 +36377,26 @@ def project_universal_baboom_companion_directive(
             ),
             "review-governed-work",
             "Review Work",
+        )
+    elif context.get("brain", {}).get("ok") is False:
+        # The founder reads the brain off the staff; a dead daemon is the
+        # one thing every other report silently depends on.
+        key, motion, message, action, action_label = (
+            "brain-down",
+            "warning",
+            "Your brain is not answering.",
+            "brain-health",
+            "Check brain",
+        )
+    elif context.get("agents", {}).get("count"):
+        # An agent holds claimed Work: BABOOM works alongside it and says
+        # on what. The plan is one command away, so the state is actionable.
+        working = context["agents"]["working"]
+        first = working[0]
+        message = (first["agent"] + " is on: " + first["title"]
+                   + (" (+%d more)" % (len(working) - 1) if len(working) > 1 else ""))
+        key, motion, action, action_label = (
+            "agents-working", "working", "show-claimed-work-plan", "Show plan",
         )
     elif review_work:
         key, motion, message, action, action_label = (
@@ -36723,6 +36816,9 @@ def project_universal_founder_baboom_steward_briefing(
     registry: UniversalApplicationRegistry,
     *,
     authentication_context: object | None = None,
+    work_index: Mapping[str, object] | None = None,
+    brain_state: Mapping[str, object] | None = None,
+    hosts: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Return BABOOM's complete founder-local proactive briefing from Cells.
 
@@ -36730,8 +36826,13 @@ def project_universal_founder_baboom_steward_briefing(
     function. That keeps every nested projection on the same graph revision;
     the desktop Steward only transports and renders the resulting lens.
     """
+    if work_index is None:
+        work_index = project_universal_governed_work_index(
+            store, registry, authentication_context=authentication_context
+        )
     context = project_universal_baboom_context(
-        store, registry, authentication_context=authentication_context
+        store, registry, authentication_context=authentication_context,
+        work_index=work_index, brain_state=brain_state, hosts=hosts,
     )
     governed_work = project_universal_founder_governed_work_report(
         store, registry, authentication_context=authentication_context

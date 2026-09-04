@@ -9,6 +9,7 @@ page is not a picture of the graph; it drives the real engine over HTTP.
 from __future__ import annotations
 
 import json
+from .http_server import local_browser_admission_error
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +41,9 @@ class CanvasServer:
                 self._send(code, 'application/json', json.dumps(obj).encode('utf-8'))
 
             def do_GET(self):
+                denied = local_browser_admission_error(self.headers, self.server.server_address[1])
+                if denied:
+                    return self._json({'error': denied}, 403)
                 path = self.path.split('?', 1)[0]
                 if path in ('/', ''):
                     with open(_HTML, 'rb') as fh:
@@ -62,8 +66,16 @@ class CanvasServer:
             def do_POST(self):
                 # Always DRAIN the request body first -- replying (esp. a 404)
                 # before reading the sent bytes aborts the connection on Windows.
+                # Bounded, and only for a caller that really dialled loopback:
+                # /add reaches the engine, so a rebound page must not reach it.
                 n = int(self.headers.get('Content-Length') or 0)
+                if n < 0 or n > 1_048_576:
+                    self.close_connection = True
+                    return self._json({'error': 'request body exceeds the admitted limit'}, 413)
                 raw = self.rfile.read(n)
+                denied = local_browser_admission_error(self.headers, self.server.server_address[1])
+                if denied:
+                    return self._json({'error': denied}, 403)
                 path = self.path.split('?', 1)[0]
                 handler = {
                     '/edit': outer.edit,

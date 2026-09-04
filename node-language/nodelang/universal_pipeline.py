@@ -375,6 +375,54 @@ def _persist(write, attempts: int = 5, store=None):
             _time.sleep(0.15)
 
 
+def create_engine_node(
+    store,
+    registry,
+    *,
+    title: str,
+    engine: str,
+    x: float = 240.0,
+    y: float = 200.0,
+    properties=None,
+    authentication_context: object | None = None,
+):
+    """Create ONE engine-backed node on the graph, the way the seed does.
+
+    The library used to add a card to local React state; it ran nothing and
+    was gone on reload. This is the governed write seed_wall_pipeline performs
+    per node: instantiate the released definition, declare the engine and its
+    parameters as properties, ensure the pipeline interfaces.
+    """
+    from .pipeline_engines import PIPELINE_ENGINES
+    engine = str(engine or "").strip()
+    if engine not in PIPELINE_ENGINES:
+        raise ValueError("no engine named %r" % engine)
+    title = str(title or engine).strip()[:80]
+    projection = project_universal_canvas(store, registry, authentication_context=authentication_context)
+    catalogue = projection.get("catalog") or ()
+    definition_root = next(
+        (str(item["id"]) for item in catalogue if str(item.get("name")) == "Ordered List"),
+        None,
+    ) or (str(catalogue[0]["id"]) if catalogue else None)
+    if definition_root is None:
+        raise ValueError("no released definition is available to place")
+    root, _revision = _persist(lambda: instantiate_universal_definition(
+        store, registry, definition_root, x=float(x), y=float(y),
+        title_override=title, authentication_context=authentication_context,
+    ), store=store)
+    values = {"engine": engine}
+    for label, value in dict(properties or {}).items():
+        label = str(label).strip()
+        if label and label != "engine":
+            values[label] = str(value)
+    for label, value in values.items():
+        _persist(lambda label=label, value=value: create_universal_property(
+            store, registry, root, label, value, authentication_context=authentication_context,
+        ), store=store)
+    _persist(lambda: _ensure_pipeline_node_interfaces(store, registry, root), store=store)
+    return {"ok": True, "root": root, "engine": engine, "title": title}
+
+
 def seed_wall_pipeline(
     store,
     registry,
@@ -488,6 +536,23 @@ _ATLAS_COLORS = (
 )
 
 
+def _public_value(label: object, value: object) -> str:
+    """A property value as the published map may show it.
+
+    File locations stay on the machine: a path-shaped value (or any *_path
+    property) is reduced to its file name before it leaves for the cockpit.
+    """
+    text = str(value)
+    key = str(label).casefold()
+    looks_like_path = (
+        len(text) > 2 and (text[1:3] == ":" + chr(92) or text.startswith((chr(92) * 2, "/", "~")))
+    )
+    if key.endswith("_path") or key in {"path", "file", "image"} or looks_like_path:
+        name = text.replace(chr(92), "/").rstrip("/").rsplit("/", 1)[-1]
+        return name[:48]
+    return text[:48]
+
+
 def project_atlas_map(store, registry, *, authentication_context=None):
     """The cockpit map IS the live graph: domains and their members.
 
@@ -535,7 +600,7 @@ def project_atlas_map(store, registry, *, authentication_context=None):
             data = {label: value for label, (_r, value) in held.items()}
             title = data.get("title") or data.get("label") or member
             params = [
-                {"k": label, "v": str(value)[:48], "rel": rel, "t": "string"}
+                {"k": label, "v": _public_value(label, value), "rel": rel, "t": "string"}
                 for label, (rel, value) in held.items()
                 if label not in {
                     "title", "label", "status", "position_x", "position_y",

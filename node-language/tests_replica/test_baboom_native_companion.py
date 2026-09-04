@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QColor, QImage, QPainter
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtTest import QTest
 
 from nodelang.baboom_companion_placement import BaboomCompanionLayout, Rect
@@ -190,11 +190,17 @@ def test_native_companion_controller_executes_only_the_host_confirmed_task(tmp_p
     host.connect()
 
     controller = BaboomNativeCompanionController(host, atlas)
-    assert BaboomNativeCompanionController(
+    # A desktop with a maximised window has no clear ground. A companion
+    # that answers that by vanishing is one nobody ever sees, so it settles
+    # into a screen corner above the work instead -- present, without the
+    # report panel.
+    crowded = BaboomNativeCompanionController(
         host,
         atlas,
-        occupied_provider=lambda: Rect(0, 0, 1920, 1080),
-    ).next_frame(Rect(0, 0, 1920, 1080)) is None
+        occupied_provider=lambda: (Rect(0, 0, 1920, 1080),),
+    ).next_frame(Rect(0, 0, 1920, 1080))
+    assert crowded is not None
+    assert crowded.layout.sprite.contained_by(Rect(0, 0, 1920, 1080))
 
     result = controller.execute(
         "Assign task: review the bounded Workshop"
@@ -283,9 +289,15 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
         app.processEvents()
         assert window.geometry() == first_geometry
         assert window._projection_timer.interval() >= 500
-        assert window._animation_timer.interval() == 160
-        assert not bool(
+        assert window._animation_timer.interval() == 900
+        # An ambient companion that sits behind the founder's work is one he
+        # never sees. It stays on top, frameless and click-through outside
+        # its own sprite, which is how every desktop companion behaves.
+        assert bool(
             window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        )
+        assert bool(
+            window.windowFlags() & Qt.WindowType.FramelessWindowHint
         )
         assert "border:0" in window._report.styleSheet()
         assert "border-radius:0" in window._report.styleSheet()
@@ -313,3 +325,241 @@ def test_native_companion_keeps_reply_available_without_relaying_every_tick(tmp_
     finally:
         window.stop_projection()
         window.close()
+
+
+def test_native_companion_stays_where_the_founder_puts_it(tmp_path):
+    """The founder's placement outranks every search, and survives a restart.
+
+    His report: "BABOOM has a transparent frame around it and keeps hopping
+    left and right across the screen." The hop was the 750ms projection
+    re-running the placement search as his foreground windows changed. A
+    pinned companion answers a changed screen by staying put -- clamped
+    inside the new bounds, never re-searched -- and a companion he drags
+    stays exactly where he dropped it, across restarts.
+    """
+    app = QApplication.instance() or QApplication([])
+    atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    atlas_image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(atlas_image)
+    painter.fillRect(240, 50, 96, 120, QColor(28, 187, 171, 255))
+    painter.end()
+    atlas_path = tmp_path / "pinned.png"
+    assert atlas_image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(
+        path=atlas_path,
+        width=1536,
+        height=2288,
+        columns=8,
+        rows=11,
+        cell_width=192,
+        cell_height=208,
+    )
+    host = BaboomNativeHost(
+        _Transport(),
+        external_session_id="companion-pinned-court",
+        device_credential_provider=lambda challenge: {"proof": "approved"},
+    )
+    host.connect()
+
+    # A screen whose occupied windows keep changing must not move it.
+    moving = [(), (Rect(0, 0, 1920, 200),), (Rect(0, 0, 1920, 1080),)]
+    calls = {"n": 0}
+
+    def shifting_windows():
+        seen = moving[min(calls["n"], len(moving) - 1)]
+        calls["n"] += 1
+        return seen
+
+    screen = Rect(0, 0, 1920, 1080)
+    controller = BaboomNativeCompanionController(
+        host, atlas, occupied_provider=shifting_windows
+    )
+    homes = {
+        (
+            controller.next_frame(screen).layout.sprite.x,
+            controller.next_frame(screen).layout.sprite.y,
+        )
+        for _ in range(4)
+    }
+    assert len(homes) == 1, "the companion re-placed itself as windows changed"
+
+    # A narrower screen keeps it, clamped, rather than sending it hunting.
+    narrow = controller.next_frame(Rect(0, 0, 1280, 720))
+    assert narrow is not None
+    assert narrow.layout.sprite.contained_by(Rect(0, 0, 1280, 720))
+
+    # Where the founder drops it is where it lives.
+    controller.pin_sprite_origin(410, 260)
+    placed = controller.next_frame(screen)
+    assert (placed.layout.sprite.x, placed.layout.sprite.y) == (410, 260)
+    assert controller.next_frame(screen).layout.sprite.x == 410
+
+    # And it is remembered across a restart.
+    position_path = tmp_path / "baboom-position.json"
+    position_path.write_text('{"x": 410, "y": 260}', encoding="utf-8")
+    restarted = BaboomNativeCompanionController(
+        host, atlas, occupied_provider=lambda: ()
+    )
+    window = create_baboom_native_companion_window(
+        restarted, position_path=position_path
+    )
+    try:
+        assert restarted.next_frame(screen).layout.sprite.x == 410
+        assert restarted.next_frame(screen).layout.sprite.y == 260
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_native_companion_click_opens_and_closes_the_ask_box(tmp_path):
+    """A click opens the box, a second click or Escape closes it.
+
+    His report: "I do not know how to deal with it." There was a press
+    handler that only ever opened the input, and no way back -- no second
+    click, no Escape, no drag.
+    """
+    app = QApplication.instance() or QApplication([])
+    atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    atlas_image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(atlas_image)
+    painter.fillRect(240, 50, 96, 120, QColor(28, 187, 171, 255))
+    painter.end()
+    atlas_path = tmp_path / "click.png"
+    assert atlas_image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(
+        path=atlas_path,
+        width=1536,
+        height=2288,
+        columns=8,
+        rows=11,
+        cell_width=192,
+        cell_height=208,
+    )
+    host = BaboomNativeHost(
+        _Transport(),
+        external_session_id="companion-click-court",
+        device_credential_provider=lambda challenge: {"proof": "approved"},
+    )
+    host.connect()
+    controller = BaboomNativeCompanionController(
+        host, atlas, occupied_provider=lambda: ()
+    )
+    window = create_baboom_native_companion_window(controller)
+    try:
+        window.start_projection()
+        app.processEvents()
+        window.refresh()
+        app.processEvents()
+        assert not window._input.isVisible()
+
+        window._open_interaction()
+        app.processEvents()
+        assert window._input.isVisible(), "a click must open the ask box"
+
+        window._close_interaction()
+        app.processEvents()
+        assert not window._input.isVisible(), "a second click must close it"
+        assert not window._talk.isVisible()
+        assert not window._confirm.isVisible()
+
+        # Escape, from inside the box, is the same exit.
+        window._open_interaction()
+        app.processEvents()
+        assert window._input.isVisible()
+        QTest.keyClick(window._input, Qt.Key.Key_Escape)
+        app.processEvents()
+        assert not window._input.isVisible(), "Escape must close the ask box"
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_native_companion_report_box_fits_the_whole_briefing(tmp_path):
+    """Every line of what BABOOM says must fit inside its box.
+
+    His words: "the text of what it says is very long" -- and then, exactly:
+    "I do not mean shorten the message, I mean I cannot see all of it." The
+    box was sized from an assumed characters-per-line, the real font wrapped
+    one line further, and the last line fell outside the box.
+    """
+    app = QApplication.instance() or QApplication([])
+    atlas_image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    atlas_image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(atlas_image)
+    painter.fillRect(240, 50, 96, 120, QColor(28, 187, 171, 255))
+    painter.end()
+    atlas_path = tmp_path / "fit.png"
+    assert atlas_image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(
+        path=atlas_path,
+        width=1536,
+        height=2288,
+        columns=8,
+        rows=11,
+        cell_width=192,
+        cell_height=208,
+    )
+    host = BaboomNativeHost(
+        _Transport(),
+        external_session_id="companion-fit-court",
+        device_credential_provider=lambda challenge: {"proof": "approved"},
+    )
+    host.connect()
+    controller = BaboomNativeCompanionController(
+        host, atlas, occupied_provider=lambda: ()
+    )
+    window = create_baboom_native_companion_window(controller)
+    try:
+        window.refresh()
+        app.processEvents()
+        # The briefing his machine actually showed, whose last line was cut.
+        briefing = (
+            "Work: 2 active. Workshop: 563 entries. Attention: 0 blocked. "
+            "Next open: A wire can own its parameters"
+        )
+        width, height = window._report_size(briefing)
+        needed = window._report.fontMetrics().boundingRect(
+            QRect(0, 0, width - 12, 1 << 16),
+            int(Qt.TextFlag.TextWordWrap),
+            briefing,
+        )
+        assert height >= needed.height(), "the briefing does not fit its box"
+
+        # And the box the layout actually hands the label is that size.
+        window._transient_report = briefing
+        window._transient_revision = None
+        window.refresh()
+        app.processEvents()
+        assert window._message_rect is not None
+        assert window._message_rect.height() >= needed.height()
+        assert window._report.text() == briefing
+    finally:
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_native_companion_disappears_past_its_lease_rather_than_lie(tmp_path):
+    """An expired frame is not painted. The founder read live-looking counts
+    off a panel whose server had been gone for an hour; past the lease the
+    companion hides instead."""
+    import time as _time
+    from dataclasses import replace as _replace
+
+    atlas_path = tmp_path / "lease.png"
+    image = QImage(1536, 2288, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QColor(0, 0, 0, 0))
+    assert image.save(str(atlas_path))
+    atlas = BaboomSpriteAtlas(path=atlas_path, width=1536, height=2288, columns=8, rows=11, cell_width=192, cell_height=208)
+    host = BaboomNativeHost(_Transport(), external_session_id="companion-lease-court",
+                            device_credential_provider=lambda challenge: {"proof": "approved"})
+    host.connect()
+    controller = BaboomNativeCompanionController(host, atlas, occupied_provider=lambda: ())
+    screen = Rect(0, 0, 1920, 1080)
+    assert controller.next_frame(screen) is not None, "a live lease must draw"
+    stale = _replace(host.latest_snapshot, frame_expires_at=_time.time() - 3600.0)
+    with host._lock:
+        host._latest = stale
+    assert controller.next_frame(screen) is None, "an expired lease must not be painted"

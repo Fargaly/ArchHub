@@ -65,7 +65,7 @@ from .cell_catalog import with_catalog_verification_scope
 from .cell_protocols import read_relation, with_relation_projection_scope
 from .core import relation_stages
 from .domains.cockpit import submit_cockpit_command
-from .http_server import QuietThreadingHTTPServer
+from .http_server import QuietThreadingHTTPServer, local_browser_admission_error
 from .laws_surface import ui_element
 from .laws_relation import (append_stage, attach_payload, build_aead_stage,
                              build_json_codec_stage, build_payload_envelope,
@@ -3022,10 +3022,20 @@ class _CleanAuthorityHttpServer:
                 return token.strip()
 
             def _body(self) -> dict[str, object]:
-                length = int(self.headers.get("Content-Length", "0"))
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError as exc:
+                    raise InvalidCell("request content length is invalid") from exc
                 if length <= 0:
                     return {}
+                # Bounded before any read: an unauthenticated caller must not
+                # be able to make this process swallow gigabytes.
+                if length > MAX_REQUEST_BODY_BYTES:
+                    self.close_connection = True
+                    raise InvalidCell("request body exceeds the admitted limit")
                 raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise InvalidCell("request body is incomplete")
                 try:
                     body = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -3035,35 +3045,12 @@ class _CleanAuthorityHttpServer:
                 return body
 
             def _admit_local_request(self) -> bool:
-                """Refuse a request that only LOOKS local to the browser.
-
-                Every same-origin proof this server relies on is a header
-                the browser fills in, and DNS rebinding makes an attacker's
-                page genuinely same-origin: it re-resolves its own hostname
-                to 127.0.0.1, so `Sec-Fetch-Site` says same-origin, no
-                preflight is sent, and script may read the reply. The one
-                header that still tells the truth is Host -- it carries the
-                name the CLIENT dialled, and a rebound page dialled the
-                attacker's domain, not loopback. This is the same admission
-                clean_coordination_service and clean_application_server
-                already apply; it was simply never applied here.
-                """
-                origin = self.headers.get("Origin")
-                expected_port = self.server.server_address[1]
-                if origin not in {
-                    None,
-                    "http://127.0.0.1:%s" % expected_port,
-                    "http://localhost:%s" % expected_port,
-                    "http://127.0.0.1",
-                    "http://localhost",
-                }:
-                    self._json(403, {"ok": False, "error": "origin denied"})
-                    return False
-                if self.headers.get("Host", "") not in {
-                    "127.0.0.1:%s" % expected_port,
-                    "localhost:%s" % expected_port,
-                }:
-                    self._json(403, {"ok": False, "error": "host denied"})
+                """One admission for every loopback surface; see http_server."""
+                denied = local_browser_admission_error(
+                    self.headers, self.server.server_address[1]
+                )
+                if denied:
+                    self._json(403, {"ok": False, "error": denied})
                     return False
                 return True
 
@@ -3664,6 +3651,69 @@ def _ensure_cde_write_signing_authority(
     elif len(members) != 1:
         raise InvalidCell("CDE write signing authority membership drifted")
     return descriptor_root
+
+
+
+def brain_first_prompt(utterance):
+    """The founder memory recalled and placed before his words.
+
+    Shared by the studio composer and BABOOM: one recall, one prompt shape.
+    The brain daemon being down costs the recall, never the answer.
+    """
+    from .pipeline_engines import brain_recall
+    utterance = str(utterance)
+    try:
+        context_text = str(brain_recall({'prompt': utterance}, {})[0]['out'])
+    except Exception:
+        context_text = ''
+    if not context_text.strip():
+        return utterance
+    return ('Founder memory (recalled from his brain):' + chr(10)
+            + context_text[:4000] + chr(10) + chr(10) + 'Founder says: ' + utterance)
+
+
+def answer_open_question(owner, utterance, context, payload):
+    """Brain first, then the model, for free text that is not a catalogue command.
+
+    Both entry points -- the browser HTTP handler and the machine dispatcher
+    the shipped BABOOM companion and the cloud gateway actually use -- call
+    this. Before it was shared, the brain-first answer existed only on the
+    HTTP path and the desktop companion still handed the founder a canned
+    menu. Runs OUTSIDE the mutation lock: a model turn takes seconds and the
+    lock is what the whole application writes through. The brain daemon
+    being down costs the recall, never the answer.
+    """
+    from .agent_composer import run_agent_composer
+    from .pipeline_engines import brain_recall
+    utterance = str(utterance)
+    try:
+        context_text = str(brain_recall({"prompt": utterance}, {})[0]["out"])
+    except Exception:
+        context_text = ""
+    prompt = utterance if not context_text.strip() else (
+        "Founder memory (recalled from his brain):" + chr(10)
+        + context_text[:4000] + chr(10) + chr(10) + "Founder says: " + utterance
+    )
+    agent_result = run_agent_composer(
+        owner.universal_store,
+        owner.universal_registry,
+        prompt,
+        model="",
+        effect_engines=owner.pipeline_effect_engines,
+        authentication_context=context,
+    )
+    answered = dict(payload)
+    answered["command"] = {**dict(payload.get("command") or {}), "intent": "ask"}
+    answered["response"] = {
+        "kind": "answer",
+        "summary": str(agent_result.get("answer") or ""),
+        "data": {
+            "brain_context_lines": len([
+                line for line in context_text.splitlines() if line.strip()
+            ]),
+        },
+    }
+    return answered
 
 
 class ApplicationServer:
@@ -4424,6 +4474,11 @@ class ApplicationServer:
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
             def do_GET(self):
+                denied = local_browser_admission_error(
+                    self.headers, self.server.server_address[1])
+                if denied:
+                    self._json(403, {'ok': False, 'error': denied})
+                    return
                 if owner._runtime_handoff_exit.is_set():
                     self._json(503, {
                         'ok': False,
@@ -4473,7 +4528,7 @@ class ApplicationServer:
                                     'file': item['detail'],
                                 }
                                 for item in catalogue
-                                if item['state'] in (
+                                if item.get('drive') and item['state'] in (
                                     'connected', 'listening',
                                 )
                             ],
@@ -4973,6 +5028,12 @@ class ApplicationServer:
             @with_session_canvas_roots_scope
             def do_POST(self):
                 try:
+                    denied = local_browser_admission_error(
+                        self.headers, self.server.server_address[1])
+                    if denied:
+                        self._discard_admitted_body()
+                        self._json(403, {'ok': False, 'error': denied})
+                        return
                     if owner._runtime_handoff_exit.is_set():
                         self._discard_admitted_body()
                         self._json(503, {
@@ -5028,8 +5089,16 @@ class ApplicationServer:
                                     owner.universal_registry,
                                     utterance=body['utterance'],
                                     authentication_context=binding.context,
+                                    brain_state=owner._brain_state(),
+                                    hosts=owner._host_rows(),
                                 ),
                             }
+                        if payload.get('command', {}).get('intent') == (
+                            'open-question'
+                        ):
+                            payload = answer_open_question(
+                                owner, body['utterance'], binding.context, payload,
+                            )
                         self._json(200, payload)
                         return
                     if self.path == '/api/universal/baboom-command-execute':
@@ -5649,10 +5718,12 @@ class ApplicationServer:
                                 from .agent_composer import (
                                     run_agent_composer,
                                 )
+                                # Brain first, then the model: the composer used to hand the raw
+                                # prompt to the model with only the canvas as context.
                                 agent_result = run_agent_composer(
                                     owner.universal_store,
                                     owner.universal_registry,
-                                    str(body.get('prompt', '')),
+                                    brain_first_prompt(str(body.get('prompt', ''))),
                                     model=str(body.get('model') or ''),
                                     effect_engines=(
                                         owner.pipeline_effect_engines
@@ -5714,9 +5785,17 @@ class ApplicationServer:
                                         'ahmed.fargaly98@gmail.com'
                                     ),
                                 )
+                                # Identity is an email account; the only proof of one on this
+                                # machine is the cloud session opened with Google. A typed
+                                # email that is not that account is refused.
+                                from .cloud_session import signed_in_cloud_account
+                                wanted = str(body.get('email') or '').strip().casefold()
+                                if not wanted or wanted != signed_in_cloud_account():
+                                    raise AuthorizationDenied(
+                                        'sign in to the cloud with this account first')
                                 _root, mail, tier = upsert_account(
                                     owner.universal_store,
-                                    body.get('email'),
+                                    wanted,
                                 )
                                 self._json(200, {
                                     'ok': True, 'email': mail, 'tier': tier,
@@ -5736,6 +5815,7 @@ class ApplicationServer:
                                         'ahmed.fargaly98@gmail.com'
                                     ),
                                 )
+                                owner._require_founder_machine()
                                 self._json(200, {
                                     'ok': True,
                                     'accounts': read_accounts(
@@ -5745,6 +5825,7 @@ class ApplicationServer:
                                 return
                             elif self.path == '/api/universal/account-tier':
                                 from .cell_accounts import set_tier
+                                owner._require_founder_machine()
                                 tier = set_tier(
                                     owner.universal_store,
                                     body.get('email'),
@@ -5790,6 +5871,37 @@ class ApplicationServer:
                                         'ok': False,
                                         'error': str(refusal)[:200],
                                     })
+                                return
+                            elif self.path == '/api/universal/brain-forget':
+                                from .pipeline_engines import _brain_call
+                                fact_id = str(body.get('id') or '').strip()
+                                if not fact_id:
+                                    self._json(200, {'ok': False, 'error': 'no fact id'})
+                                    return
+                                # Soft delete: the daemon keeps the row, recoverable.
+                                _brain_call('brain.delete_fact', {'fragment_id': fact_id})
+                                self._json(200, {'ok': True})
+                                return
+                            elif self.path == '/api/universal/brain-edit':
+                                from .pipeline_engines import _brain_call
+                                fact_id = str(body.get('id') or '').strip()
+                                said = str(body.get('text') or '').strip()
+                                if not fact_id or not said:
+                                    self._json(200, {'ok': False, 'error': 'need a fact id and text'})
+                                    return
+                                # In place: the old text is replaced, never duplicated.
+                                _brain_call('brain.edit_fact', {'fragment_id': fact_id, 'text': said})
+                                self._json(200, {'ok': True})
+                                return
+                            elif self.path == '/api/universal/node-create':
+                                from .universal_pipeline import create_engine_node
+                                created = create_engine_node(
+                                    owner.universal_store, owner.universal_registry,
+                                    title=str(body.get('title') or ''), engine=str(body.get('engine') or ''),
+                                    x=float(body.get('x') or 240.0), y=float(body.get('y') or 200.0),
+                                    properties=body.get('params') or {}, authentication_context=binding.context,
+                                )
+                                self._json(200, created)
                                 return
                             elif self.path == '/api/universal/brain-remember':
                                 import hashlib as _h
@@ -7589,6 +7701,59 @@ class ApplicationServer:
         )
         return session_root, observation.root_id, evidence_root
 
+    def _require_founder_machine(self) -> None:
+        """Account administration is the founder's alone: the cloud session on
+        this machine must be the founder's own account."""
+        from .cell_accounts import founder_email
+        from .cloud_session import signed_in_cloud_account
+        who = signed_in_cloud_account()
+        founder = founder_email(self.universal_store.snapshot())
+        if not who or not founder or who != str(founder).strip().casefold():
+            raise AuthorizationDenied("account administration is the founder's alone")
+
+    def _brain_state(self) -> dict:
+        """Last known brain.health (ok + facts). Never probes on the caller's thread:
+        callers hold the mutation lock, so a slow daemon would stall every request.
+        A stale value starts one background refresh and is returned as-is."""
+        return self._cached_probe("_brain_state_cache", 15.0, {"ok": None, "facts": 0}, self._probe_brain)
+
+    def _host_rows(self) -> list:
+        """Last known probe_connectors rows; refreshed in the background every 30 s."""
+        return self._cached_probe("_host_rows_cache", 30.0, [], self._probe_hosts)
+
+    def _cached_probe(self, slot: str, ttl: float, default, probe):
+        import threading as _th, time as _t
+        cache = getattr(self, slot, None)
+        if cache is None or _t.time() - cache[0] >= ttl:
+            flag = slot + "_refreshing"
+            if not getattr(self, flag, False):
+                setattr(self, flag, True)
+                def _refresh():
+                    try:
+                        value = probe()
+                    except Exception:
+                        value = default
+                    setattr(self, slot, (_t.time(), value))
+                    setattr(self, flag, False)
+                _th.Thread(target=_refresh, name=slot, daemon=True).start()
+        return cache[1] if cache is not None else default
+
+    @staticmethod
+    def _probe_brain() -> dict:
+        import json as _j
+        from .pipeline_engines import _brain_call
+        try:
+            raw = _brain_call("brain.health", {})
+            data = _j.loads(raw) if isinstance(raw, str) else dict(raw)
+            return {"ok": bool(data.get("ok")), "facts": int(data.get("facts") or 0)}
+        except Exception:
+            return {"ok": False, "facts": 0}
+
+    @staticmethod
+    def _probe_hosts() -> list:
+        from .pipeline_engines import probe_connectors
+        return list(probe_connectors())
+
     def _machine_agent_runtime_presence(self) -> dict[str, object]:
         """Project bounded live capability state for the BABOOM graph lens.
 
@@ -8625,6 +8790,8 @@ class ApplicationServer:
                 runtime_presence=runtime_presence,
                 authentication_context=context,
                 work_index=work_index,
+                brain_state=self._brain_state(),
+                hosts=self._host_rows(),
             )
         if method == "GET" and path == "/api/universal/runtime-backend":
             if body:
@@ -8679,6 +8846,8 @@ class ApplicationServer:
                 runtime_presence=runtime_presence,
                 authentication_context=context,
                 work_index=work_index,
+                brain_state=self._brain_state(),
+                hosts=self._host_rows(),
             )
         if method == "GET" and path == "/api/universal/baboom-native-frame":
             if body:
@@ -8710,6 +8879,8 @@ class ApplicationServer:
                     runtime_presence=runtime_presence,
                     authentication_context=context,
                     work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
                 directive = project_universal_baboom_companion_directive(
                     self.universal_store,
@@ -8717,6 +8888,8 @@ class ApplicationServer:
                     runtime_presence=runtime_presence,
                     authentication_context=context,
                     work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
                 revision = self.universal_store.revision
                 if (
@@ -8733,6 +8906,8 @@ class ApplicationServer:
                         self.universal_store,
                         self.universal_registry,
                         authentication_context=context,
+                        brain_state=self._brain_state(),
+                        hosts=self._host_rows(),
                     )
                     if briefing.get("revision") != revision:
                         raise InvalidCell("BABOOM native frame report drifted")
@@ -8790,6 +8965,8 @@ class ApplicationServer:
                     self.universal_store,
                     self.universal_registry,
                     authentication_context=context,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
         if method == "GET" and path == "/api/universal/baboom-capabilities":
             if body:
@@ -8856,12 +9033,20 @@ class ApplicationServer:
                 method, path, authentication_context=context
             )
             with self.mutation_lock:
-                return respond_universal_baboom_utterance(
+                result = respond_universal_baboom_utterance(
                     self.universal_store,
                     self.universal_registry,
                     utterance=body["utterance"],
                     authentication_context=context,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
+            if (result.get("command") or {}).get("intent") == "open-question":
+                # The shipped companion enters here, not through HTTP.
+                result = answer_open_question(
+                    self, body["utterance"], context, result
+                )
+            return result
         if method == "POST" and path == "/api/universal/baboom-command-execute":
             if set(body) != {"utterance"}:
                 raise InvalidCell(
@@ -13137,6 +13322,8 @@ class ApplicationServer:
                     runtime_presence=self._machine_agent_runtime_presence(),
                     authentication_context=context,
                     work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
                 )
             warmed_revision = self.universal_store.revision
             ok = warmed_revision == revision
@@ -13527,7 +13714,9 @@ def main(argv=None):
                                 )).start()
     # The unauthenticated root is deliberately denied. Hand the launcher the
     # one-use bootstrap URL instead of advertising an unusable bare address.
-    print('Node-native ArchHub: %s' % server.bootstrap_url, flush=True)
+    # The bootstrap token is a bearer credential; the console and any log
+    # tee of it are not. Print the origin only.
+    print('Node-native ArchHub: %s' % server.bootstrap_url.split('?', 1)[0], flush=True)
     try:
         while (
             server.thread.is_alive()

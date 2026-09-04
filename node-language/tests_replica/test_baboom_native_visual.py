@@ -139,3 +139,64 @@ def test_native_visual_frame_uses_one_same_revision_actionable_report():
         "Next review: Review the native-frame contract"
     )
     assert frame.layout.message is not None
+
+
+def test_every_motion_pose_is_drawn_art_not_an_empty_cell():
+    """BABOOM must never render a transparent cell and vanish.
+
+    The founder's report: "BABOOM has a transparent frame around it and it
+    is not stable." The sheet is 8 columns wide, but the idle row carries 7
+    poses and each action row 6 -- so cycling the grid drew a fully
+    transparent cell every few ticks and the companion blinked out, leaving
+    the empty outline he saw. The player cycles the frames a row actually
+    has; this holds it there.
+    """
+    from pathlib import Path
+
+    from nodelang.baboom_native_visual import _MOTION_ROWS, baboom_sprite_source
+    from nodelang.baboom_visual_assets import inspect_baboom_sprite_atlas_v2
+
+    sheet = Path(__file__).resolve().parents[1] / "nodelang" / "data" / "baboom" / "spritesheet.png"
+    atlas = inspect_baboom_sprite_atlas_v2(sheet)
+
+    # Measured from the shipped art: seven idle poses, six per action row.
+    assert atlas.frame_counts == (7, 8, 8, 4, 5, 8, 6, 6, 6, 8, 8)
+    assert atlas.frames_in_row(0) == 7
+    assert atlas.frames_in_row(7) == 6
+
+    payload = sheet.read_bytes()
+    import zlib
+
+    from nodelang.baboom_visual_assets import _unfilter_rgba_rows
+
+    idat = []
+    offset = 8
+    width = height = 0
+    while offset < len(payload):
+        length = int.from_bytes(payload[offset:offset + 4], "big")
+        kind = payload[offset + 4:offset + 8]
+        data = payload[offset + 8:offset + 8 + length]
+        if kind == b"IHDR":
+            width = int.from_bytes(data[0:4], "big")
+            height = int.from_bytes(data[4:8], "big")
+        elif kind == b"IDAT":
+            idat.append(data)
+        elif kind == b"IEND":
+            break
+        offset += length + 12
+    scanlines = _unfilter_rgba_rows(
+        zlib.decompress(b"".join(idat)), width=width, height=height
+    )
+
+    for motion in _MOTION_ROWS:
+        for tick in range(24):
+            source = baboom_sprite_source(atlas, motion=motion, animation_tick=tick)
+            opaque = any(
+                alpha > 0
+                for scanline in scanlines[source.y:source.y + source.height]
+                for alpha in scanline[source.x * 4 + 3:(source.x + source.width) * 4:4]
+            )
+            assert opaque, (
+                "motion %r tick %d renders an empty cell -- BABOOM would vanish"
+                % (motion, tick)
+            )

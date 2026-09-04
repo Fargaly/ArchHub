@@ -1,12 +1,12 @@
 name: Tests
 
-# Cross-platform test matrix. Runs the top-level `tests/` suite and the
-# `cloud_backend/tests/` suite on Windows + macOS + Linux for every push
-# to main and every pull request. Python 3.14 to match production.
-#
-# Win32 COM tests (Outlook) are skipped on macOS/Linux via
-# `pytest.mark.skipif(sys.platform != 'win32', ...)` at the test module
-# level — pywin32 is not installed on non-Windows runners.
+# One matrix per truth. The desktop app is Windows-only (its users are
+# architects on Windows), so `tests/` runs on windows-latest. The cloud
+# (archhub-cloud, archhub-web, the brain daemon) runs as Linux containers on
+# Fly, so `cloud_backend/tests/` and personal-brain-mcp run on ubuntu-latest.
+# Nothing ships on macOS, so nothing is tested there. Running every suite on
+# every OS is what kept this workflow red for months: Windows-only desktop
+# behaviour was guaranteed red on Linux/macOS and the reds were then ignored.
 
 on:
   push:
@@ -29,17 +29,22 @@ jobs:
     # wall → the job was cancelled mid-run (a false red). macos/ubuntu finish
     # both suites in ~3m, so the extra margin only ever applies to a slow windows
     # runner; it never masks a real hang (a genuine deadlock still trips 30m).
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     strategy:
       fail-fast: false
+      # Two self-contained entries, no top-level lists: a leftover
+      # `python-version: [...]` list next to `include` made GitHub merge both
+      # entries into one combination and the Windows job never existed.
+      # 3.13 pinned: PyO3 (pydantic-core's Rust core) caps at 3.13.
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        # 3.13 pinned: PyO3 (pydantic-core's Rust core) caps at 3.13.
-        # Local dev boxes can run 3.14; CI cannot until pydantic-core
-        # ships against PyO3 0.23+. Bump alongside build-macos /
-        # build-linux when that lands.
-        python-version: ['3.13']
+        include:
+          - os: windows-latest
+            python-version: '3.13'
+            suite: desktop
+          - os: ubuntu-latest
+            python-version: '3.13'
+            suite: cloud
 
     steps:
       - name: Checkout
@@ -112,11 +117,13 @@ jobs:
       # local dev command / daily-audit. --strict-markers (also in addopts)
       # makes a typo'd mark an error, not a silent skip.
       - name: Run app test suite
+        if: matrix.suite == 'desktop'
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest tests/ -v
 
       - name: Run cloud backend test suite
+        if: matrix.suite == 'cloud'
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest cloud_backend/tests/ -v
@@ -133,8 +140,10 @@ jobs:
       # The clip/boto3/fastapi-gated tests SKIP cleanly here (no extras) — the
       # brain-extras job below installs those so they RUN (TCI-08).
       - name: Install brain package + dev deps
+        if: matrix.suite == 'cloud'
         run: python -m pip install -e "personal-brain-mcp/.[dev]"
       - name: Run personal-brain-mcp test suite
+        if: matrix.suite == 'cloud'
         working-directory: personal-brain-mcp
         env:
           PYTHONPATH: src

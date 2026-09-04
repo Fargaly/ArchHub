@@ -149,7 +149,19 @@ try:
         import subprocess as _sp
         _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True)
         raise SystemExit(0)
-    elif _applied.get("reason") not in ("nothing staged",):
+    elif _applied.get("reason") == "nothing staged":
+        # Nothing was staged while the app last ran: look once now, quickly,
+        # so a close-and-open lands a build published in the meantime.
+        from nodelang.quiet_update import stage_if_newer as _stage_now
+        _staged = _stage_now(state_dir, Path(__file__).resolve().parent)
+        if _staged.get("staged"):
+            _applied = _apply_staged(state_dir, Path(__file__).resolve().parent)
+            if _applied.get("applied"):
+                print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
+                import subprocess as _sp
+                _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True)
+                raise SystemExit(0)
+    else:
         print("  update     : %s" % _applied.get("reason"), flush=True)
 except SystemExit:
     raise
@@ -253,12 +265,17 @@ print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 def _ensure_brain() -> str:
     import subprocess as _sp
     import urllib.request as _ur
-    try:
-        with _ur.urlopen("http://127.0.0.1:8473/health", timeout=2) as _r:
-            if _r.status == 200:
-                return "answering on :8473"
-    except Exception:
-        pass
+    # The brain serves /mcp (a GET answers 405); any HTTP answer, or simply an
+    # open port, means a brain is there -- never start a second one on it.
+    def _alive() -> bool:
+        import socket as _sk
+        probe = _sk.socket(); probe.settimeout(1.0)
+        try:
+            return probe.connect_ex(("127.0.0.1", 8473)) == 0
+        finally:
+            probe.close()
+    if _alive():
+        return "answering on :8473"
     app_dir = Path(__file__).resolve().parent
     if not (app_dir / "personal_brain" / "__init__.py").is_file():
         return "no brain package shipped beside this launcher"
@@ -269,12 +286,8 @@ def _ensure_brain() -> str:
               creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0))
     for _ in range(20):
         time.sleep(0.5)
-        try:
-            with _ur.urlopen("http://127.0.0.1:8473/health", timeout=1) as _r:
-                if _r.status == 200:
-                    return "started on :8473"
-        except Exception:
-            continue
+        if _alive():
+            return "started on :8473"
     return "started, not answering yet on :8473"
 
 try:

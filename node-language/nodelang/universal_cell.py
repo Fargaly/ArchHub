@@ -461,10 +461,15 @@ class _LoadingHeadMap(MutableMapping):
 class _HeadRowReader:
     """One journal connection answering head reads, remembering what it read."""
 
-    __slots__ = ("_connection", "_cache", "_missing")
+    __slots__ = ("_connection", "_cache", "_missing", "_lock")
 
-    def __init__(self, connection) -> None:
+    def __init__(self, connection, lock=None) -> None:
+        # The connection is shared with the writer (check_same_thread=False);
+        # a lazy read from another thread while append() runs is SQLITE_MISUSE
+        # ("bad parameter or other API misuse") and a None row mid-chain
+        # ("relation chain contains a dangling cell"). One lock, both sides.
         self._connection = connection
+        self._lock = lock if lock is not None else threading.RLock()
         self._cache: dict[str, Cell] = {}
         self._missing: set[str] = set()
 
@@ -474,10 +479,11 @@ class _HeadRowReader:
             return held
         if cell_id in self._missing:
             return None
-        row = self._connection.execute(
-            "SELECT link0, link1, atom FROM current_cells WHERE cell_id = ?",
-            (cell_id,),
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT link0, link1, atom FROM current_cells WHERE cell_id = ?",
+                (cell_id,),
+            ).fetchone()
         if row is None:
             self._missing.add(cell_id)
             return None
@@ -497,11 +503,13 @@ class _HeadRowReader:
         ]
         for start in range(0, len(wanted), 800):
             batch = wanted[start:start + 800]
-            rows = self._connection.execute(
-                "SELECT cell_id, link0, link1, atom FROM current_cells "
-                "WHERE cell_id IN (%s)" % ",".join("?" * len(batch)),
-                batch,
-            ).fetchall()
+            with self._lock:
+                with self._lock:
+                    rows = self._connection.execute(
+                        "SELECT cell_id, link0, link1, atom FROM current_cells "
+                        "WHERE cell_id IN (%s)" % ",".join("?" * len(batch)),
+                        batch,
+                    ).fetchall()
             seen = set()
             for cell_id, link0, link1, atom in rows:
                 key = str(cell_id)
@@ -852,6 +860,7 @@ class _SqliteJournal:
         self._owner_fence = InterprocessOwnerFence(self._path)
         self._connection = None
         try:
+            self._io_lock = threading.RLock()
             self._connection = sqlite3.connect(
                 self._path,
                 timeout=30,
@@ -1016,7 +1025,11 @@ class _SqliteJournal:
             ),
         )
 
-    def load(
+    def load(self, *args, **kwargs):
+        with self._io_lock:
+            return self._load_unlocked(*args, **kwargs)
+
+    def _load_unlocked(
         self,
     ) -> tuple[
         Mapping[str, Cell],
@@ -1054,7 +1067,11 @@ class _SqliteJournal:
         latest = max(versions)
         return MappingProxyType(current), latest, versions, changes
 
-    def load_head(self) -> LoadedJournalHead:
+    def load_head(self, *args, **kwargs):
+        with self._io_lock:
+            return self._load_head_unlocked(*args, **kwargs)
+
+    def _load_head_unlocked(self) -> LoadedJournalHead:
         """Read one same-transaction head and bounded history reader."""
         self._connection.execute("BEGIN")
         try:
@@ -1146,7 +1163,7 @@ class _SqliteJournal:
                 # Materialising it cost 46s of sqlite and 20s of object
                 # construction on every open, to answer questions about a
                 # few hundred cells.
-                reader = _HeadRowReader(self._connection)
+                reader = _HeadRowReader(self._connection, self._io_lock)
                 lazy_head = _LazyHeadCellMap(reader, None, None, 0)
                 current = _LoadingHeadMap(lazy_head)
 
@@ -1307,7 +1324,11 @@ class _SqliteJournal:
             history=history,
         )
 
-    def append(
+    def append(self, *args, **kwargs):
+        with self._io_lock:
+            return self._append_unlocked(*args, **kwargs)
+
+    def _append_unlocked(
         self,
         expected_revision: int,
         next_revision: int,
@@ -1399,7 +1420,11 @@ class _SqliteJournal:
     def shared_writers(self) -> bool:
         return False
 
-    def backup_to(self, destination: str | os.PathLike[str]) -> str:
+    def backup_to(self, *args, **kwargs):
+        with self._io_lock:
+            return self._backup_to_unlocked(*args, **kwargs)
+
+    def _backup_to_unlocked(self, destination: str | os.PathLike[str]) -> str:
         """Create one transactionally consistent online SQLite backup."""
         target = os.path.abspath(os.fspath(destination))
         if target == self._path:

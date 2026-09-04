@@ -5091,6 +5091,7 @@ class ApplicationServer:
                                     authentication_context=binding.context,
                                     brain_state=owner._brain_state(),
                                     hosts=owner._host_rows(),
+                                    staged_update=owner._staged_update(),
                                 ),
                             }
                         if payload.get('command', {}).get('intent') == (
@@ -7754,6 +7755,35 @@ class ApplicationServer:
         from .pipeline_engines import probe_connectors
         return list(probe_connectors())
 
+    def _staged_update(self) -> dict:
+        """The build the quiet updater staged (state_dir/updates/staged.json), cached 30 s."""
+        import json as _j, os as _os, time as _t
+        from pathlib import Path as _P
+        cache = getattr(self, "_staged_update_cache", None)
+        if cache and _t.time() - cache[0] < 30.0:
+            return cache[1]
+        staged = {}
+        try:
+            state_dir = _os.environ.get("ARCHHUB_STATE_DIR", "")
+            marker = _P(state_dir) / "updates" / "staged.json"
+            if state_dir and marker.is_file() and (marker.parent / "ArchHub-Setup-0.exe").is_file():
+                staged = dict(_j.loads(marker.read_text(encoding="utf-8")))
+        except Exception:
+            staged = {}
+        self._staged_update_cache = (_t.time(), staged)
+        return staged
+
+    def _restart_to_update(self) -> None:
+        """Hand over to a fresh launcher, which applies the staged build before booting."""
+        import os as _os, subprocess as _sp, sys as _sys, threading as _th
+        from pathlib import Path as _P
+        launcher_dir = _P(_sys.argv[0]).resolve().parent if _sys.argv and _sys.argv[0] else _P.cwd()
+        vbs = launcher_dir / "ArchHub.vbs"
+        def _go():
+            _sp.Popen(["wscript.exe", str(vbs)] if vbs.exists() else [_sys.executable, str(launcher_dir / "launch_archhub_test.py")], close_fds=True)
+            _os._exit(0)
+        _th.Timer(2.0, _go).start()
+
     def _machine_agent_runtime_presence(self) -> dict[str, object]:
         """Project bounded live capability state for the BABOOM graph lens.
 
@@ -8792,6 +8822,7 @@ class ApplicationServer:
                 work_index=work_index,
                 brain_state=self._brain_state(),
                 hosts=self._host_rows(),
+                staged_update=self._staged_update(),
             )
         if method == "GET" and path == "/api/universal/runtime-backend":
             if body:
@@ -8848,6 +8879,7 @@ class ApplicationServer:
                 work_index=work_index,
                 brain_state=self._brain_state(),
                 hosts=self._host_rows(),
+                staged_update=self._staged_update(),
             )
         if method == "GET" and path == "/api/universal/baboom-native-frame":
             if body:
@@ -8881,6 +8913,7 @@ class ApplicationServer:
                     work_index=work_index,
                     brain_state=self._brain_state(),
                     hosts=self._host_rows(),
+                    staged_update=self._staged_update(),
                 )
                 directive = project_universal_baboom_companion_directive(
                     self.universal_store,
@@ -8890,6 +8923,7 @@ class ApplicationServer:
                     work_index=work_index,
                     brain_state=self._brain_state(),
                     hosts=self._host_rows(),
+                    staged_update=self._staged_update(),
                 )
                 revision = self.universal_store.revision
                 if (
@@ -8908,6 +8942,7 @@ class ApplicationServer:
                         authentication_context=context,
                         brain_state=self._brain_state(),
                         hosts=self._host_rows(),
+                        staged_update=self._staged_update(),
                     )
                     if briefing.get("revision") != revision:
                         raise InvalidCell("BABOOM native frame report drifted")
@@ -8967,6 +9002,7 @@ class ApplicationServer:
                     authentication_context=context,
                     brain_state=self._brain_state(),
                     hosts=self._host_rows(),
+                    staged_update=self._staged_update(),
                 )
         if method == "GET" and path == "/api/universal/baboom-capabilities":
             if body:
@@ -9040,7 +9076,12 @@ class ApplicationServer:
                     authentication_context=context,
                     brain_state=self._brain_state(),
                     hosts=self._host_rows(),
+                    staged_update=self._staged_update(),
                 )
+            if result.get("kind") == "update-ready" and (result.get("data") or {}).get("restart"):
+                # The one runtime action BABOOM performs itself: hand over to a
+                # fresh launcher that installs the staged build before booting.
+                self._restart_to_update()
             if (result.get("command") or {}).get("intent") == "open-question":
                 # The shipped companion enters here, not through HTTP.
                 result = answer_open_question(
@@ -13324,6 +13365,7 @@ class ApplicationServer:
                     work_index=work_index,
                     brain_state=self._brain_state(),
                     hosts=self._host_rows(),
+                    staged_update=self._staged_update(),
                 )
             warmed_revision = self.universal_store.revision
             ok = warmed_revision == revision

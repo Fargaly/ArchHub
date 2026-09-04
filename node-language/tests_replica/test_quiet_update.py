@@ -74,3 +74,24 @@ def test_apply_refuses_a_staged_file_that_changed_on_disk(tmp_path):
     (updates / qu.ASSET_NAME).write_bytes(b"changed"); (updates / "staged.json").write_text(json.dumps({"build_id": "new", "sha256": "0" * 64}), encoding="utf-8")
     out = qu.apply_staged(tmp_path / "state", app, runner=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
     assert out["applied"] is False and "SHA-256" in out["reason"]
+
+
+def test_baboom_offers_restart_when_a_build_is_staged():
+    import inspect
+    import nodelang.universal_application as ua
+    src = inspect.getsource(ua.project_universal_baboom_companion_directive)
+    assert '"update-ready"' in src and '"restart-to-update"' in src and '"Restart now"' in src
+    lens = inspect.getsource(ua.project_universal_baboom_context)
+    assert '"update":' in lens and "staged_update" in lens
+    responder = inspect.getsource(ua.respond_universal_baboom_utterance)
+    assert 'intent == "restart-to-update"' in responder and '"update-none"' in responder
+    assert any(spec[0] == "restart-to-update" for spec in ua._BABOOM_COMMAND_SPECS)
+
+
+def test_the_server_hands_over_to_a_fresh_launcher_on_restart():
+    import inspect
+    import nodelang.application_server as srv
+    src = inspect.getsource(srv)
+    assert "def _staged_update(self)" in src and "def _restart_to_update(self)" in src
+    assert src.count("staged_update=self._staged_update()") >= 5
+    assert 'result.get("kind") == "update-ready"' in src

@@ -1622,6 +1622,7 @@ _BABOOM_COMMAND_SPECS = (
     ("start-meeting-notes", ("start meeting notes",)),
     ("stop-meeting-notes", ("stop meeting notes",)),
     ("open-meeting", ("open next meeting", "join my next meeting")),
+    ("restart-to-update", ("restart-to-update", "restart to update", "install the update", "update now")),
 )
 _RUNTIME_COMPLIANCE_PROTOCOL_PREFIX = "app:compliance-protocol:v1"
 _RUNTIME_COMPLIANCE_COURT_ROOT = "app:court:runtime-compliance"
@@ -9597,6 +9598,7 @@ def respond_universal_baboom_utterance(
     authentication_context: object | None = None,
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
+    staged_update: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Resolve one founder utterance to a graph-backed, non-chat response.
 
@@ -9705,7 +9707,7 @@ def respond_universal_baboom_utterance(
             },
         }
     elif intent == "brain-health":
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
         brain = lens.get("brain") or {}
         response = {
             "kind": "brain-health",
@@ -9721,15 +9723,23 @@ def respond_universal_baboom_utterance(
             ),
         }
     elif intent in {"check-meetings", "meeting-brief", "open-meeting", "start-meeting-notes", "stop-meeting-notes"}:
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
         notes = lens.get("meeting_notes") or {}
         response = {
             "kind": "meeting-notes",
             "summary": ("Meeting notes: %s active session(s)." % int(notes.get("active_sessions") or 0)),
             "data": {"meeting_notes": notes, "route": "/api/universal/baboom-meeting-notes"},
         }
+    elif intent == "restart-to-update":
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
+        staged = lens.get("update") or {}
+        response = {
+            "kind": "update-ready" if staged.get("build_id") else "update-none",
+            "summary": ("Restarting to install build %s." % staged["build_id"]) if staged.get("build_id") else "No update is staged; this build is current.",
+            "data": {"update": staged, "restart": bool(staged.get("build_id"))},
+        }
     elif intent == "archhub-map":
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
         response = {
             "kind": "archhub-map",
             "summary": "The cockpit is the live map of this graph; open /founder on the cloud.",
@@ -36063,6 +36073,7 @@ def project_universal_baboom_context(
     work_index: Mapping[str, object] | None = None,
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
+    staged_update: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Return the narrow shared-application lens admitted to BABOOM voice.
 
@@ -36297,6 +36308,8 @@ def project_universal_baboom_context(
         "agents": {"working": agents_working, "count": len(agents_working)},
         "brain": brain_view,
         "hosts": {"down": hosts_down},
+        "update": ({"build_id": str(staged_update.get("build_id")), "tag": str(staged_update.get("tag") or "")}
+                   if isinstance(staged_update, Mapping) and staged_update.get("build_id") else {}),
         "revision": snapshot.revision,
         "work": work,
         "workshop": {
@@ -36322,6 +36335,7 @@ def project_universal_baboom_companion_directive(
     work_index: Mapping[str, object] | None = None,
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
+    staged_update: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Project one content-free desktop directive from the Universal graph.
 
@@ -36397,6 +36411,16 @@ def project_universal_baboom_companion_directive(
                    + (" (+%d more)" % (len(working) - 1) if len(working) > 1 else ""))
         key, motion, action, action_label = (
             "agents-working", "working", "show-claimed-work-plan", "Show plan",
+        )
+    elif context.get("update", {}).get("build_id"):
+        # A newer build is downloaded and verified. The companion says so
+        # once and offers the one action that installs it: a restart.
+        key, motion, message, action, action_label = (
+            "update-ready",
+            "review",
+            "Update ready (build %s). Restart to install it." % context["update"]["build_id"],
+            "restart-to-update",
+            "Restart now",
         )
     elif review_work:
         key, motion, message, action, action_label = (
@@ -36819,6 +36843,7 @@ def project_universal_founder_baboom_steward_briefing(
     work_index: Mapping[str, object] | None = None,
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
+    staged_update: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Return BABOOM's complete founder-local proactive briefing from Cells.
 
@@ -36832,7 +36857,7 @@ def project_universal_founder_baboom_steward_briefing(
         )
     context = project_universal_baboom_context(
         store, registry, authentication_context=authentication_context,
-        work_index=work_index, brain_state=brain_state, hosts=hosts,
+        work_index=work_index, brain_state=brain_state, hosts=hosts, staged_update=staged_update,
     )
     governed_work = project_universal_founder_governed_work_report(
         store, registry, authentication_context=authentication_context

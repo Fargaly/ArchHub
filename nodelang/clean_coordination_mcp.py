@@ -113,6 +113,9 @@ def identity_from_environment(
         "claude": ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"),
         "gemini": ("GEMINI_SESSION_ID",),
         "antigravity": ("ANTIGRAVITY_SESSION_ID",),
+        # OpenCode passes no session variable to MCP servers; its config carries a
+        # stable identity per install, set by the plugin per session when it can.
+        "opencode": ("OPENCODE_SESSION_ID", "ARCHHUB_COORDINATION_SESSION"),
     }.get(vendor, ())
     derived = next(
         (

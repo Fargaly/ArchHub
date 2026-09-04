@@ -86,6 +86,8 @@ else:
 # listdir membership: Path.exists() returns False on a Windows sharing
 # violation (a dying prior instance still holds the handle), which would
 # mislabel a warm store as a first boot.
+# The server reads the staged-update marker from here (BABOOM's "Restart now").
+os.environ["ARCHHUB_STATE_DIR"] = str(state_dir)
 first_boot = state_path.name not in os.listdir(state_dir)
 if first_boot:
     for stale in state_dir.glob(state_path.name + "*"):
@@ -244,6 +246,41 @@ if boot_refusal is not None:
     print("  old data kept in %s -- starting a fresh graph ..." % set_aside.name)
     server = _boot()
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
+
+# Every user gets their own brain. The daemon on :8473 is what BABOOM, the
+# memory panel and every agent speak to; on a machine that has none, the
+# shipped personal_brain package is started here, hidden, once.
+def _ensure_brain() -> str:
+    import subprocess as _sp
+    import urllib.request as _ur
+    try:
+        with _ur.urlopen("http://127.0.0.1:8473/health", timeout=2) as _r:
+            if _r.status == 200:
+                return "answering on :8473"
+    except Exception:
+        pass
+    app_dir = Path(__file__).resolve().parent
+    if not (app_dir / "personal_brain" / "__init__.py").is_file():
+        return "no brain package shipped beside this launcher"
+    env = dict(os.environ); env["PYTHONPATH"] = str(app_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    windowless = Path(sys.executable).with_name("pythonw.exe")
+    exe = str(windowless if windowless.exists() else sys.executable)
+    _sp.Popen([exe, "-m", "personal_brain.server", "--http", "8473"], env=env, cwd=str(app_dir), close_fds=True,
+              creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0))
+    for _ in range(20):
+        time.sleep(0.5)
+        try:
+            with _ur.urlopen("http://127.0.0.1:8473/health", timeout=1) as _r:
+                if _r.status == 200:
+                    return "started on :8473"
+        except Exception:
+            continue
+    return "started, not answering yet on :8473"
+
+try:
+    print("  brain      : %s" % _ensure_brain(), flush=True)
+except Exception as _brain_refusal:
+    print("  brain      : not started -- %s" % _brain_refusal, flush=True)
 print("  URL:", server.bootstrap_url, flush=True)
 
 
@@ -512,6 +549,15 @@ except Exception as refusal:
 # While the founder works, look once for a newer release and stage it for
 # the next launch. Never applied here; never blocks the window.
 def _stage_update_quietly():
+    # First look two minutes after boot, then every thirty minutes: a build
+    # published while the app is open is staged within the half hour and
+    # installed by the next close-and-open, or by the Restart button.
+    time.sleep(120)
+    while True:
+        _stage_once()
+        time.sleep(1800)
+
+def _stage_once():
     try:
         from nodelang.quiet_update import stage_if_newer
         outcome = stage_if_newer(state_dir, Path(__file__).resolve().parent)

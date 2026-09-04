@@ -21,10 +21,10 @@ _JSX = os.path.join(_WEB, "studio-lm.jsx")
 _COMPILED = os.path.join(_WEB, "studio-lm.compiled.js")
 
 _MARKERS = (
-    "ParamPromoteDot",          # the per-knob toggle (connector tiles only)
-    "param-promote-",           # its data-testid prefix (the live hook)
-    "lm-param-promote",         # the gesture event
-    "onParamPromote",           # the handler (socket add/remove + wire drop)
+    "connector.param.promote",      # node-surface action from connector params
+    "lm-param-promote",             # the gesture event
+    "onParamPromote",               # the handler (socket add/remove + wire drop)
+    "ConnectorParamsSurface",       # production right-rail surface
 )
 
 
@@ -49,16 +49,29 @@ def test_compiled_artifact_carries_param_promote():
         f"(run `python tools/build_jsx.py`)")
 
 
-def test_dot_is_scoped_to_connector_tiles():
-    """A named socket on a non-connector cell would be a DEAD plug (their
-    executors don't merge inputs by param key) — the dot must bail without
-    node.op_id."""
+def test_no_legacy_param_promote_widget_left():
+    """The connector rail now promotes params through graph-authored surface
+    actions. The old React-only dot must not remain as a parallel authority."""
     src = _read(_JSX)
-    i = src.find("const ParamPromoteDot")
+    assert "const ParamPromoteDot" not in src
+    assert "data-testid={'param-promote-'" not in src
+    assert "const FullParam" not in src
+    assert "const ParamField" not in src
+
+
+def test_connector_param_surface_dispatches_promote_event():
+    """A named socket on a non-connector cell would be a DEAD plug. The
+    connector promote affordance now lives only inside ConnectorParamsSurface
+    and dispatches the existing socket toggle event for the selected connector."""
+    src = _read(_JSX)
+    i = src.find("const ConnectorParamsSurface")
     assert i != -1
-    head = src[i:i + 400]
-    assert "op_id" in head and "return null" in head, (
-        "ParamPromoteDot lost its connector-only guard — dead plugs incoming")
+    body = src[i:src.find("const ConnectorDescriptionSurface", i)]
+    assert "connector.param.promote" in body
+    assert "lm-param-promote" in body
+    assert "detail: {" in body
+    assert "node_id: node.id" in body
+    assert "key: d.args.key" in body
 
 
 def test_unpromote_drops_feeding_wires():
@@ -70,6 +83,17 @@ def test_unpromote_drops_feeding_wires():
     body = src[i:i + 1200]
     assert "wires" in body and "filter" in body, (
         "onParamPromote no longer drops wires on un-promote")
+
+
+def test_promote_type_map_keeps_color_socket_string_typed():
+    """A color value is a hex string. Promoting it should create a string
+    socket, not a vague any socket or a dead color-only wire type."""
+    src = _read(_JSX)
+    i = src.find("const onParamPromote")
+    assert i != -1
+    body = src[i:i + 1800]
+    assert "pt === 'color'" in body
+    assert "? 'string'" in body
 
 
 def test_engine_merges_inputs_by_param_key():

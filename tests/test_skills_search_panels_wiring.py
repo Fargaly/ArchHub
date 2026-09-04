@@ -41,6 +41,8 @@ if str(APP_ROOT) not in sys.path:
 _JSX_SRC = (APP_ROOT / "web_ui" / "studio-lm.jsx").read_text(encoding="utf-8")
 _COMPILED = (APP_ROOT / "web_ui" / "studio-lm.compiled.js").read_text(
     encoding="utf-8")
+_GRAPH_AUTHORITY = (APP_ROOT / "workflows" / "grand_map_ui.py").read_text(
+    encoding="utf-8")
 # Comment-stripped view so an assertion can't be satisfied by a comment, and
 # whitespace-flat views so spacing/line-wrap differences never break a match
 # (the compiled bundle strips inter-token spaces).
@@ -214,12 +216,18 @@ class TestSkillsPanelWiring:
         assert "bridgeJson('get_saved_skills')" not in block
 
     def test_skills_panel_spawns_via_real_event(self):
-        block = _jsx_window("const SkillsPanel = (", size=3600)
+        row = _jsx_window("const SkillsPanelRow = (", size=2400)
+        authority = (APP_ROOT / "workflows" / "grand_map_ui.py").read_text(
+            encoding="utf-8"
+        )
         # Click + drag both route to the real spawn path.
-        assert "lm-spawn-skill" in block, (
-            "clicking a skill must dispatch lm-spawn-skill (→ onSpawnSkill "
-            "→ load_skill → real canvas splice)")
-        assert "application/x-archhub-skill" in block, (
+        assert "registerUiHostCapability('skills.row.spawn'" in row, (
+            "clicking a skill must dispatch through the graph-owned spawn action "
+            "(→ onSpawnSkill → load_skill → real canvas splice)")
+        assert "spawn && spawn" in row
+        assert 'action="skills.row.spawn"' in authority
+        assert "draggable=True" in authority
+        assert 'drag_mime="application/x-archhub-skill"' in authority, (
             "dragging a skill must carry the typed payload the canvas accepts")
 
     def test_skills_panel_refreshes_on_mutation(self):
@@ -253,14 +261,21 @@ class TestSearchPanelWiring:
     def test_search_panel_hits_route_to_real_destinations(self):
         block = _jsx_window("const SearchPanel = (", size=8000)
         # A session hit opens; a node hit focuses; a skill hit spawns; a
-        # library hit adds the node — all real, wired destinations.
-        assert "onOpen && onOpen(s.id)" in block
-        assert "setFocusId && setFocusId(n.id)" in block
-        assert "lm-spawn-skill" in block
+        # library hit adds the node. The visible hit row itself is graph-owned:
+        # the UI node carries action=search.hit.activate, and the React host
+        # registers the narrow capability that dispatches to these destinations.
+        assert "onOpen && onOpen(hit.id)" in block
+        assert "setFocusId && setFocusId(hit.id)" in block
+        assert "new CustomEvent('lm-spawn-skill'" in block
         assert "addNodeFromLibrary({" in block
+        assert "SearchPanelHitSurface" in block
+        assert "registerUiHostCapability('search.hit.activate'" in _JSX_CODE
+        assert 'action="search.hit.activate"' in _GRAPH_AUTHORITY
+        assert '"ui:grandmap:search-hit-row"' in _GRAPH_AUTHORITY
 
     def test_searchhit_component_restored(self):
-        assert "const SearchHit = (" in _JSX_CODE
+        assert "const SearchPanelHitSurface = (" in _JSX_CODE
+        assert 'surface="search-panel-hit-row"' in _JSX_CODE
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -275,11 +290,15 @@ class TestPanelsReachable:
         # rail (redundant with the graph library / Cmd-K). Search stays. This
         # locks the strip so they can't silently return to the rail.
         block = re.sub(r"\s+", " ", _jsx_window("const IconRailInner = (", size=2200))
-        assert "id:'search', title:'Search'" in block, (
-            "the left rail must keep a Search destination icon")
-        assert "id:'skills', title:'Skills'" not in block, (
+        assert "registerUiHostCapability('rail.search.open'" in block, (
+            "the left rail must keep a graph-owned Search destination action")
+        assert 'action="rail.search.open"' in _GRAPH_AUTHORITY
+        assert 'test_id="rail-search"' in _GRAPH_AUTHORITY
+        assert 'action="rail.skills.open"' not in _GRAPH_AUTHORITY and \
+            "registerUiHostCapability('rail.skills.open'" not in _JSX_CODE, (
             "Skills must NOT be a rail icon anymore (reachable via Cmd-K)")
-        assert "id:'nodes', title:'Nodes'" not in block, (
+        assert 'action="rail.nodes.open"' not in _GRAPH_AUTHORITY and \
+            "registerUiHostCapability('rail.nodes.open'" not in _JSX_CODE, (
             "Nodes must NOT be a rail icon anymore (reachable via the library)")
 
     def test_sidebar_mounts_panels_on_rail_switch(self):
@@ -336,7 +355,7 @@ class TestCompiledBundleParity:
     def test_rail_items_in_bundle(self):
         # Stripped rail (founder 2026-06-20): Search is the kept rail destination.
         # (Skills/Nodes are no longer rail items — reachable via Cmd-K/library.)
-        assert "id:'search'" in _COMPILED_FLAT
+        assert "registerUiHostCapability('rail.search.open'" in _COMPILED_FLAT
 
     def test_canvas_skill_drop_in_bundle(self):
         assert "application/x-archhub-skill" in _COMPILED, (

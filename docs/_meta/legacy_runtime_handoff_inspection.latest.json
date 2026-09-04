@@ -1,0 +1,377 @@
+{
+  "schema": "archhub-runtime-handoff-pid-inspection/v1",
+  "handoff_board": {
+    "schema": "archhub-runtime-handoff-board/v1",
+    "purpose": "compact visual/control evidence for draining copied node_runtime without interrupting running sessions",
+    "archive_allowed": false,
+    "summary": {
+      "holders": 1,
+      "application_servers": 1,
+      "blocked_endpoints": 1,
+      "runnable_endpoints": 0,
+      "unknown_endpoints": 0,
+      "passive_wait_pids": 0,
+      "long_running_test_pids": 0,
+      "low_activity_test_pids": 0,
+      "inspect_pids": 0,
+      "handoff_steps": 2,
+      "replacement_specs": 1,
+      "source_drift_count": 32,
+      "visible_authority_handoff_ready": true
+    },
+    "blockers": {
+      "source_drift": {
+        "ok": false,
+        "archive_ready": true,
+        "readiness_state": "classified_migration_evidence_ready_for_archive",
+        "drift_count": 32,
+        "missing_in_authority": 8,
+        "different_from_authority": 24
+      },
+      "passive_wait_pids": [],
+      "long_running_test_pids": [],
+      "low_activity_test_pids": [],
+      "inspect_before_touch_pids": [],
+      "blocked_endpoint_pids": [
+        52484
+      ]
+    },
+    "risk_classes": {
+      "visible_legacy_endpoint": 1
+    },
+    "visible_authority_handoff": {
+      "available": true,
+      "mode": "attach_to_active_authority_bridge",
+      "server_url": "http://127.0.0.1:65486",
+      "one_use_route": "POST /api/universal/browser-handoff",
+      "requires_endpoint_free": false,
+      "requires_process_interruption": false,
+      "token_issued_by_this_board": false,
+      "protected_visible_endpoint_pids": [
+        52484
+      ],
+      "allowed_action": "operator may initiate browser handoff from the active authority bridge when ready; this board remains read-only and never issues the token"
+    },
+    "inspect_cards": [],
+    "endpoint_cards": [
+      {
+        "pid": 52484,
+        "status": "blocked_by_this_live_holder",
+        "ports": [
+          8482,
+          8484
+        ],
+        "port_owners": {
+          "8482": [
+            52484
+          ],
+          "8484": [
+            52484
+          ]
+        },
+        "co_owner_pids": [],
+        "non_holder_port_owner_pids": [],
+        "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
+        "age_seconds": 589427.0599319935,
+        "process_status": "running",
+        "cpu_total_seconds": 880.5625,
+        "holder_risk_class": "visible_legacy_endpoint",
+        "drain_posture": "coordinate visible endpoint handoff; this is the user-facing old runtime",
+        "script_evidence": {
+          "launch_mode": "python_script",
+          "module": null,
+          "stdin_mode": false,
+          "script_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\run_application_server.py",
+          "script_exists": true,
+          "script_size_bytes": 178,
+          "script_mtime_utc": 1783951608.740216,
+          "script_sha256": "7d54be373cd81420c7d83e263d45b2220acc0b5b361ebc9b5120ff491b2e636f"
+        },
+        "authority_relaunch": {
+          "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+          "command": [
+            "python",
+            "-m",
+            "nodelang.application_server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8482",
+            "--cloud-host",
+            "127.0.0.1",
+            "--cloud-port",
+            "8484",
+            "--state-path",
+            "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
+          ],
+          "dry_run_only": true,
+          "machine_transport": false,
+          "note": "Derived raw server relaunch command only; this planner does not execute it. This preserves parsed server flags but does not enable the Brain/Workshop machine transport."
+        },
+        "desktop_authority_handoff": {
+          "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+          "command": [
+            "python",
+            "-m",
+            "nodelang.desktop"
+          ],
+          "dry_run_only": true,
+          "machine_transport": true,
+          "visible_url": "http://127.0.0.1:8482",
+          "state_path": "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
+          "status": "blocked_until_visible_authority_handoff",
+          "requires_endpoint_free": true,
+          "requires_machine_descriptor_free": true,
+          "requires_browser_session_handoff": true,
+          "safe_to_execute_now": false,
+          "note": "DesktopRuntime is the intended founder-facing authority launch path, but this card is not executable evidence. A real handoff must prove the visible endpoint is free, the machine descriptor is not owned by another authority bridge, and the browser session can be transferred without falling back to a copied runtime."
+        },
+        "allowed_action": "keep running until the visible session is no longer needed, then relaunch from 10.PRODUCT/13.NODE-LANGUAGE with the same port/state arguments",
+        "forbidden_action": "kill, move, or archive as an uncoordinated cleanup"
+      }
+    ],
+    "rule": "This board is read-only evidence. It may name a relaunch command, but it must not execute, kill, archive, or move any holder."
+  },
+  "inspection": {
+    "schema": "archhub-live-runtime-pid-inspection/v1",
+    "observed_at": 1784590267.1893017,
+    "available": true,
+    "processes": [
+      {
+        "pid": 52484,
+        "exists": true,
+        "name": "pythonw.exe",
+        "status": "running",
+        "cwd": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+        "cmdline": "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe run_application_server.py --host 127.0.0.1 --port 8482 --cloud-host 127.0.0.1 --cloud-port 8484 --state-path C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz",
+        "cmdline_argv": [
+          "C:\\Users\\fargaly\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe",
+          "run_application_server.py",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8482",
+          "--cloud-host",
+          "127.0.0.1",
+          "--cloud-port",
+          "8484",
+          "--state-path",
+          "C:\\Users\\fargaly\\AppData\\Local\\ArchHub\\node-native-wip.json.gz"
+        ],
+        "create_time": 1784000816.2812548,
+        "age_seconds": 589450.9080469608,
+        "cpu_user_seconds": 850.1875,
+        "cpu_system_seconds": 30.375,
+        "cpu_total_seconds": 880.5625,
+        "parent_pid": null,
+        "child_pids": [],
+        "listening_ports": [
+          8482,
+          8484
+        ],
+        "established_connection_count": 0,
+        "endpoint_fingerprints": [
+          {
+            "port": 8482,
+            "path": "/",
+            "url": "http://127.0.0.1:8482/",
+            "ok": true,
+            "status": 200,
+            "content_type": "text/html; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>ArchHub</title><style>:root{--bg:#0e0e11;--bg-panel:#1515"
+          },
+          {
+            "port": 8482,
+            "path": "/api/state",
+            "url": "http://127.0.0.1:8482/api/state",
+            "ok": true,
+            "status": 200,
+            "content_type": "application/json; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "{\"ok\":true,\"application_node\":\"n030223\",\"ui_root\":\"n031322\",\"focus\":\"n000518\",\"container\":\"n029326\",\"container_title\":\"ArchHub Operating Graph\",\"node_count\":131660,\"schema_version\""
+          },
+          {
+            "port": 8482,
+            "path": "/api/universal/health",
+            "url": "http://127.0.0.1:8482/api/universal/health",
+            "ok": true,
+            "status": 404,
+            "content_type": "application/json; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "{\"ok\":false,\"error\":\"not found\"}"
+          },
+          {
+            "port": 8482,
+            "path": "/health",
+            "url": "http://127.0.0.1:8482/health",
+            "ok": true,
+            "status": 404,
+            "content_type": "application/json; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "{\"ok\":false,\"error\":\"not found\"}"
+          },
+          {
+            "port": 8484,
+            "path": "/",
+            "url": "http://127.0.0.1:8484/",
+            "ok": true,
+            "status": 404,
+            "content_type": "application/json; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "{\"error\":\"route not found\",\"ok\":false}"
+          },
+          {
+            "port": 8484,
+            "path": "/api/state",
+            "url": "http://127.0.0.1:8484/api/state",
+            "ok": true,
+            "status": 404,
+            "content_type": "application/json; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "{\"error\":\"route not found\",\"ok\":false}"
+          },
+          {
+            "port": 8484,
+            "path": "/api/universal/health",
+            "url": "http://127.0.0.1:8484/api/universal/health",
+            "ok": true,
+            "status": 404,
+            "content_type": "application/json; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "{\"error\":\"route not found\",\"ok\":false}"
+          },
+          {
+            "port": 8484,
+            "path": "/health",
+            "url": "http://127.0.0.1:8484/health",
+            "ok": true,
+            "status": 200,
+            "content_type": "application/json; charset=utf-8",
+            "server": "BaseHTTP/0.6 Python/3.14.3",
+            "body_prefix": "{\"adapter\":{\"evidence\":\"ThreadingHTTPServer socket bound locally\",\"host\":\"127.0.0.1\",\"observed_at\":\"2026-07-14T03:47:21.396788Z\",\"online\":true,\"port\":8484},\"external_cloud\":\"not in"
+          }
+        ],
+        "launch_mode": "python_script",
+        "module": null,
+        "stdin_mode": false,
+        "script_path": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\run_application_server.py",
+        "script_exists": true,
+        "script_size_bytes": 178,
+        "script_mtime_utc": 1783951608.740216,
+        "script_sha256": "7d54be373cd81420c7d83e263d45b2220acc0b5b361ebc9b5120ff491b2e636f",
+        "process_risk_class": "visible_legacy_endpoint",
+        "drain_posture": "coordinate visible endpoint handoff; do not stop mid-flight",
+        "allowed_action": "inspect only; this function never interrupts a process"
+      }
+    ]
+  },
+  "rule": "read-only inspection only; no process may be killed, moved, archived, or relaunched by this command",
+  "disposable_holder_court": {
+    "schema": "archhub-disposable-runtime-holder-court/v1",
+    "available": true,
+    "cleanup_allowed_pids": [],
+    "blocked_pids": [
+      52484
+    ],
+    "rows": [
+      {
+        "pid": 52484,
+        "verdict": "blocked_or_unknown_holder",
+        "cleanup_allowed": false,
+        "checks": {
+          "exists": true,
+          "is_inspect_before_touch_holder": false,
+          "not_protected_endpoint_or_coowner": false,
+          "known_disposable_shape": false,
+          "no_child_dependency": true,
+          "no_established_clients": true,
+          "known_local_qa_ports_only": false,
+          "fingerprint_matches_expected_qa_surface": true
+        },
+        "failed_checks": [
+          "is_inspect_before_touch_holder",
+          "not_protected_endpoint_or_coowner",
+          "known_disposable_shape",
+          "known_local_qa_ports_only"
+        ],
+        "risk_class": "visible_legacy_endpoint",
+        "listening_ports": [
+          8482,
+          8484
+        ],
+        "established_connection_count": 0,
+        "rule": "This row is a decision court only; it does not stop, relaunch, move, or archive the process."
+      }
+    ],
+    "rule": "A copied-runtime holder may be cleaned only when this court proves it is a non-visible disposable holder. The court itself remains read-only and never interrupts a process."
+  },
+  "holder_tree_court": {
+    "schema": "archhub-runtime-holder-tree-court/v1",
+    "available": true,
+    "tree_count": 1,
+    "trees": [
+      {
+        "root_pid": 52484,
+        "pids": [
+          52484
+        ],
+        "posture": "coordinate_visible_endpoint_handoff",
+        "risk_classes": [
+          "visible_legacy_endpoint"
+        ],
+        "listening_ports": [
+          8482,
+          8484
+        ],
+        "established_connection_count": 0,
+        "interrupt_allowed": false,
+        "rule": "Tree grouping is evidence only; it does not stop, relaunch, move, archive, or mark a holder safe."
+      }
+    ],
+    "rule": "A holder tree is one live blocker group when parent/child evidence connects its PIDs; cleanup still requires a separate disposable holder court."
+  },
+  "stale_stdin_tree_court": {
+    "schema": "archhub-stale-stdin-holder-tree-court/v1",
+    "available": true,
+    "cleanup_allowed_trees": [],
+    "blocked_trees": [
+      {
+        "root_pid": 52484,
+        "pids": [
+          52484
+        ]
+      }
+    ],
+    "rows": [
+      {
+        "root_pid": 52484,
+        "pids": [
+          52484
+        ],
+        "cleanup_allowed": false,
+        "checks": {
+          "tree_is_unknown_stdin": false,
+          "all_processes_present": true,
+          "only_stdin_python_risks": false,
+          "has_listener": true,
+          "no_protected_visible_ports": false,
+          "no_established_clients": true,
+          "stale_by_age": true,
+          "low_cpu_activity": true,
+          "no_http_identity": false,
+          "root_has_child": false
+        },
+        "failed_checks": [
+          "tree_is_unknown_stdin",
+          "only_stdin_python_risks",
+          "no_protected_visible_ports",
+          "no_http_identity",
+          "root_has_child"
+        ],
+        "rule": "This row is a decision court only. Cleanup still requires an immediate exact PID/command/port recheck."
+      }
+    ],
+    "rule": "Only stale stdin process trees with no clients, no protected ports, low activity, and no HTTP identity may be cleaned."
+  }
+}

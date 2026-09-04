@@ -1,0 +1,55 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-21T01:35:29.4024610+04:00",
+  "migration_track": "application_graph_projection",
+  "slice": "cell_native_application_projection_delta_and_root_identity",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "decision": {
+    "summary": "The ignored runtime projection_delta court remains migration evidence only because it tests the old typed application runtime through inline params and legacy UI endpoints. The accepted replacement is a canonical Universal Cell court at the same relative path, proving revision-bound projection deltas over real Cell roots and no duplicate application truth.",
+    "accepted_canonical_behavior": [
+      "application and canvas are compositions in one Uniform Cell store",
+      "visible wires resolve to real interface roots and incidence roots",
+      "interaction deltas are revision-bound and omit static graph/catalog/configuration data",
+      "topology deltas transmit graph-root patches instead of a copied application surface",
+      "duplicate projected graph identities are rejected before mutation",
+      "stale projection revisions fail closed"
+    ],
+    "rejected_or_not_promoted": [
+      "ignored node_runtime/tests_replica/test_projection_delta.py old typed-node /api/edit proof",
+      "ignored node_runtime/nodelang/universal_application.py as runtime-copy authority",
+      "bulk copy from ignored runtime into canonical authority"
+    ]
+  },
+  "canonical_files": {
+    "tests_replica/test_projection_delta.py": "3d85251d38453ada62a8b5473bef361ff6969ce9940dd56d764e292ea93a5585",
+    "tests_replica/test_universal_application.py": "2f690dc278ce8c9851bffc4770b24423cbb29b3c2069e95a8f8af91d8d869ff8",
+    "tests_replica/test_universal_interaction_server.py": "c6a6e527be813968b5773aee9ebcc3dadcf781af97f50c329ec25bbcd49bf51c",
+    "tests_replica/test_universal_ui_interactions.py": "cd0bc7cb6cb59ec1ce37fcda7bbc245b81362323ee58d15dc769111ad410fd6a",
+    "nodelang/universal_application.py": "047c4f7f50952fc3fcd180ed803f02820475c7830ab335439abc00c01d72b403",
+    "nodelang/application_server.py": "d1fb44cfd949087799866c7afd18e27a234c7c24a2f7b263c3532968d4048121"
+  },
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_application.py tests_replica\\test_universal_interaction_server.py -q --timeout=180 -k \"canvas_and_map_are_compositions or topology_delta or interaction_delta or scope or duplicate_projection\"",
+      "result": "12 passed, 79 deselected in 133.14s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_projection_delta.py -q --timeout=180",
+      "result": "2 passed in 41.76s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_application.py tests_replica\\test_universal_interaction_server.py tests_replica\\test_universal_ui_interactions.py -q --timeout=180 -k \"top_canvas_is_the_application_scope or exact_interface_migration or domain_public_interfaces or interaction_delta or topology_delta or duplicate_projected_graph_identity\"",
+      "result": "9 passed, 151 deselected in 65.57s"
+    }
+  ],
+  "not_claimed": [
+    "This evidence does not make the ignored node_runtime copy authoritative.",
+    "This evidence does not certify subjective UI polish or final product usability.",
+    "This evidence does not close BABOOM, governed-work, revision-integrity, or public-site tracks.",
+    "This evidence did not stop, restart, or mutate running sessions."
+  ]
+}

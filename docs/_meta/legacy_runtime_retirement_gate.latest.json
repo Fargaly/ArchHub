@@ -1,0 +1,40 @@
+{
+  "schema": "archhub-runtime-copy-retirement-gate/v1",
+  "archive_allowed": false,
+  "checks": {
+    "runtime_copy_exists": true,
+    "runtime_copy_source_drift_archive_ready": true,
+    "authority_launch_ready": true,
+    "authority_shadow_launch_proven": true,
+    "active_authority_runtime_bridge": true,
+    "no_live_holders": false,
+    "no_blocked_exact_replacements": false,
+    "handoff_schedule_non_interrupting": true,
+    "baboom_runtime_single_authority_ready": true
+  },
+  "source_drift_archive_readiness": {
+    "ok": true,
+    "state": "classified_migration_evidence_ready_for_archive",
+    "drift_count": 103,
+    "candidate_count": 103,
+    "allowed_resolution_states": [
+      "canonical_evidence_recorded_pending_runtime_retirement",
+      "pending_canonical_root_decision",
+      "preserved_as_migration_evidence_pending_runtime_retirement"
+    ],
+    "seen_resolution_states": [
+      "canonical_evidence_recorded_pending_runtime_retirement",
+      "preserved_as_migration_evidence_pending_runtime_retirement"
+    ],
+    "disallowed_resolution_states": [],
+    "unmapped_paths": [],
+    "promotion_allowed": false,
+    "bulk_copy_allowed": false,
+    "reason": "runtime source drift is physically present but fully classified as non-promotable migration evidence; archive may preserve it only after live holders are gone"
+  },
+  "failures": [
+    "no_live_holders",
+    "no_blocked_exact_replacements"
+  ],
+  "required_action": "do not archive copied node_runtime; complete the non-interrupting handoff schedule and rerun this gate"
+}

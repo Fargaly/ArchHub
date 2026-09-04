@@ -1,0 +1,62 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-22T00:01:00+04:00",
+  "migration_track": "visual_workspace_interaction",
+  "slice": "canonical_control_view_identity_binding",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "runtime_copy_promoted": false,
+  "bulk_copy_performed": false,
+  "live_process_interruption": false,
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true
+  },
+  "decision": {
+    "accepted_canonical_behavior": [
+      "The control-list view uses the released control identity for its action attribute.",
+      "The copied generic transition flag is not accepted as a control authority substitute.",
+      "The canonical court proves bounded joins, ordered incidences, representative parity, partial projections, and live Universal application states."
+    ],
+    "pending_not_ported": [
+      "The ignored copied control-list implementation and court remain read-only migration evidence until controlled runtime retirement."
+    ],
+    "forbidden": [
+      "Restore the copied generic transition flag as UI action authority.",
+      "Restart, stop, or replace a live runtime holder from this evidence pass."
+    ]
+  },
+  "canonical_files": {
+    "nodelang/cell_control_view.py": "e82cfeb9eb27d0a44568a7c3dd1c5f184b87b726186258dae44aec1ef6290f67",
+    "tests_replica/test_cell_control_view.py": "aacd9aa89ea8803c8370abbdf5f8aab9009d11c55e0695273f7315838cbb9af4"
+  },
+  "runtime_candidate_decisions": [
+    {
+      "path": "nodelang/cell_control_view.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The canonical view binds an action to the released control identity. The copied generic transition flag would weaken that identity binding."
+    },
+    {
+      "path": "tests_replica/test_cell_control_view.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The canonical court retains parity coverage and supplies the released control identities needed to prove the current interaction contract."
+    }
+  ],
+  "runtime_evidence_read_only": {
+    "nodelang/cell_control_view.py": "1bfc223b9cfc59a879fc1b3a75a7605c140a2bbd64fc945fb0eaaa3d90b735f5",
+    "tests_replica/test_cell_control_view.py": "5620e37bdad1b5264b16e864f392c8dbb01dd4b4d9369bf0d63d31d841f8f717"
+  },
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_cell_control_view.py -q",
+      "result": "8 passed in 9.43s"
+    }
+  ],
+  "not_claimed": [
+    "This evidence does not launch a visual projection or establish live desktop rendering.",
+    "This evidence does not retire the copied runtime or complete a controlled handoff."
+  ]
+}

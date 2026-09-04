@@ -75,8 +75,7 @@ class TestLiveWireState:
         # _JSX_CODE). The memo reads the live store keyed by the canonical
         # edge id + maps it through wireStateMeta.
         assert "LM_WIRE_STATE[lmWireEdgeId(w)]" in _JSX_CODE
-        block = _jsx_window("LM_WIRE_STATE[lmWireEdgeId(w)]", size=400)
-        assert "wireStateMeta" in block
+        assert "const lm = live && wireStateMeta(live.state);" in _JSX_CODE
 
     def test_workflow_done_applies_edges_state(self):
         block = _jsx_window("const onWorkflowDone", size=1400)

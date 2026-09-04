@@ -89,6 +89,7 @@ def test_bridge_has_brain_slots():
     from bridge import ArchHubBridge
     required = [
         "brain_status",
+        "brain_compliance_report",
         "brain_firm_create",
         "brain_firm_invite_create",
         "brain_firm_invite_accept",
@@ -117,6 +118,7 @@ def test_brain_slots_return_str_annotation():
     from bridge import ArchHubBridge
     for name in (
         "brain_status",
+        "brain_compliance_report",
         "brain_firm_create",
         "brain_firm_invite_create",
         "brain_firm_invite_accept",
@@ -183,6 +185,28 @@ def test_brain_status_returns_ok_envelope_on_success(
 
 
 # ─────────────────────── per-slot proxy tests ────────────────────────
+
+
+def test_brain_compliance_report_proxies_to_mcp_tool(
+    bridge_inst, mock_brain_call
+):
+    """The app compliance surface must read the real Brain report, not a
+    fabricated local status object."""
+    mock_brain_call["set"]({
+        "ok": True,
+        "overall": "green",
+        "hook_coverage": {"status": "green"},
+        "history": {"events": [{"event_type": "hook_coverage_audit"}]},
+    })
+
+    raw = bridge_inst.brain_compliance_report("founder")
+    data = json.loads(raw)
+
+    assert data.get("ok") is True
+    assert data.get("overall") == "green"
+    rec = mock_brain_call["calls"][0]
+    assert rec["tool"] == "brain.compliance_report"
+    assert rec["params"]["owner_user"] == "founder"
 
 
 def test_brain_firm_create_passes_args_to_mcp_tool(

@@ -1,7 +1,9 @@
-"""ArchHub node grammar — the canonical primitive node set.
+"""Legacy typed-runtime node grammar.
 
-Single source of truth for the redesigned node system. See
-`docs/NODE_GRAMMAR.md` for the rationale.
+This module is not the active node-language authority. It remains as a
+compatibility grammar for saved typed Studio graphs while the public app is
+consumed into the Universal Cell authority in `10.PRODUCT/13.NODE-LANGUAGE`.
+See `docs/NODE_GRAMMAR.md` for the retirement boundary.
 
 The old model enumerated 80 `LM_LIBRARY` nodes the engine never caught
 up to — 0 of 80 ran. This module replaces that catalogue with a SMALL
@@ -27,6 +29,17 @@ and a roadmap-slice note; it is not placeable until the slice ships.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+AUTHORITY_METADATA = {
+    "legacy_migration_only": LEGACY_MIGRATION_ONLY,
+    "authority_status": AUTHORITY_STATUS,
+    "active_authority": ACTIVE_AUTHORITY,
+    "promotion_allowed": PROMOTION_ALLOWED,
+}
 
 # ── Build status ──────────────────────────────────────────────────────
 READY = "ready"                  # every engine type it resolves to exists
@@ -121,8 +134,8 @@ PRIMITIVES: list[Primitive] = [
         "boolean", "Boolean", "input", "",
         {"": "data.constant"}, READY,
         "data.constant typed as boolean — toggle widget",
-        # Param type 'boolean' (not 'bool') so the inspector's FullParam
-        # widget dispatches to the toggle renderer rather than text.
+        # Param type 'boolean' (not 'bool') so node-backed property surfaces
+        # dispatch to the toggle renderer rather than text.
         params=({"k": "value", "v": False, "type": "boolean"},
                 {"k": "value_type", "v": "boolean", "type": "text"}),
         blurb="True or false",
@@ -140,7 +153,7 @@ PRIMITIVES: list[Primitive] = [
         "color", "Color", "input", "",
         {"": "data.constant"}, READY,
         "data.constant typed as hex colour — color-picker widget",
-        params=({"k": "value", "v": "#d97757", "type": "text"},
+        params=({"k": "value", "v": "#d97757", "type": "color"},
                 {"k": "value_type", "v": "string", "type": "text"}),
         blurb="A colour value",
     ),
@@ -222,6 +235,15 @@ PRIMITIVES: list[Primitive] = [
                 {"k": "replay", "v": False, "type": "boolean"},
                 {"k": "allowed_tools", "v": "", "type": "text"}),
         blurb="Persisted, replayable AI turn",
+    ),
+    # Legacy typed-runtime UI compatibility. Universal Cell is the active
+    # authority; this primitive remains only so saved typed graphs can cook.
+    Primitive(
+        "ui.element", "UI Element", "ui", "",
+        {"": "ui.element"}, READY,
+        "ui.element - legacy typed UI compatibility card",
+        params=({"k": "label", "v": "UI Element", "type": "text"},),
+        blurb="A canvas UI card",
     ),
     # Legacy back-compat — hidden from palette but kept for engine
     # resolution so graphs saved before slice I still cook.
@@ -1113,6 +1135,7 @@ def _synthesized_primitives() -> list[dict]:
                 "config_schema": _config_schema_for(t),   # ← ADDITIVE
                 "params": [],
                 "_source": "registry",
+                **AUTHORITY_METADATA,
             })
     except Exception:
         pass
@@ -1154,6 +1177,7 @@ def _synthesized_primitives() -> list[dict]:
                 "config_schema": {},
                 "params": [],
                 "_source": "library",
+                **AUTHORITY_METADATA,
             })
     except Exception:
         pass
@@ -1236,6 +1260,7 @@ def grammar_payload() -> list[dict]:
             "ports": _ports_for(rep),
             "config_schema": _config_schema_for(rep),   # ← ADDITIVE
             "params": [dict(x) for x in p.params],
+            **AUTHORITY_METADATA,
         })
     # AgDR-0041 / Tier 0/1/2 — surface registry + library entries.
     out.extend(_synthesized_primitives())
@@ -1482,6 +1507,631 @@ def expand_collapsed_groups(graph: dict) -> dict:
     return {**graph, "wires": out_wires}
 
 
+def _canvas_node_data(node: dict) -> dict:
+    """Merged node metadata used by the node-native runtime adapter."""
+    out: dict = {}
+    cfg = node.get("config")
+    data = node.get("data")
+    if isinstance(cfg, dict):
+        out.update(cfg)
+    if isinstance(data, dict):
+        out.update(data)
+    return out
+
+
+_LEGACY_ROLE_CAPABILITIES = {
+    "application": {"application", "container", "runtime", "presentation"},
+    "parameter": {"parameter"},
+    "wire": {"relation"},
+    "wire_layer": {"relation-stage"},
+}
+
+
+def node_capabilities(node: dict) -> frozenset[str]:
+    """Return the open-ended capabilities attached to one universal node.
+
+    Capabilities are data, not a closed node-kind catalogue. A node may gain
+    or lose any capability at runtime, and unknown capabilities are preserved.
+    Legacy ``role``/``param_family`` fields are read only as a migration view
+    over the same node so existing production sessions remain executable.
+    """
+    data = _canvas_node_data(node)
+    raw = data.get("capabilities", node.get("capabilities"))
+    capabilities: set[str] = set()
+    if isinstance(raw, str):
+        capabilities.update(part.strip() for part in raw.split(",") if part.strip())
+    elif isinstance(raw, dict):
+        capabilities.update(str(key) for key, enabled in raw.items() if enabled)
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        capabilities.update(str(value) for value in raw if value not in (None, ""))
+
+    capabilities.update(_LEGACY_ROLE_CAPABILITIES.get(str(data.get("role") or ""), set()))
+    if data.get("param_family") == "port" or data.get("port_node"):
+        capabilities.update({"parameter", "port"})
+    if data.get("group_nodes") or data.get("members"):
+        capabilities.add("container")
+    return frozenset(capabilities)
+
+
+def node_has_capability(node: dict, capability: str) -> bool:
+    return str(capability) in node_capabilities(node)
+
+
+def _canvas_wire_data(wire: dict) -> dict:
+    data = wire.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _canvas_wire_src(wire: dict) -> tuple:
+    src = wire.get("from")
+    if isinstance(src, (list, tuple)):
+        vals = list(src) + [None, None]
+        return vals[0], vals[1]
+    if isinstance(src, dict):
+        return src.get("node") or src.get("id"), src.get("port")
+    return wire.get("src_node"), wire.get("src_port")
+
+
+def _canvas_wire_dst(wire: dict) -> tuple:
+    dst = wire.get("to")
+    if isinstance(dst, (list, tuple)):
+        vals = list(dst) + [None, None]
+        return vals[0], vals[1]
+    if isinstance(dst, dict):
+        return dst.get("node") or dst.get("id"), dst.get("port")
+    return wire.get("dst_node"), wire.get("dst_port")
+
+
+_WIRE_LAYER_VALUE_KEYS = {
+    "source_port": "from_port",
+    "target_port": "to_port",
+    "source_field": "src_field",
+    "target_field": "dst_field",
+    "type": "value_type",
+    "schema": "schema_ref",
+    "gate": "gate_policy",
+    "codec": "codec",
+    "encryption": "encryption",
+    "key_ref": "encryption_key_ref",
+    "behavior": "behavior",
+    "routing": "routing",
+    "aggregation": "aggregation",
+    "presentation": "presentation",
+    "provenance": "provenance",
+    "history": "history_policy",
+    "runtime": "runtime_state",
+}
+
+
+_RUNTIME_WIRE_EDGE_KEYS = (
+    "cache_key",
+    "state",
+    "src_field",
+    "dst_field",
+    "value_type",
+    "schema_ref",
+    "gate_policy",
+    "codec",
+    "encryption",
+    "encryption_key_ref",
+    "behavior",
+    "routing",
+    "aggregation",
+    "presentation",
+    "provenance",
+    "history_policy",
+    "runtime_state",
+)
+
+
+_MISSING = object()
+
+
+def _parameter_node_values(nodes: list) -> dict[tuple[str, str], object]:
+    """Return first-class parameter-node values keyed by (owner, key).
+
+    The canvas stores editable settings twice during migration: copied onto the
+    owner for legacy readers, and also as real parameter nodes. Runtime should
+    prefer the real dial when it exists, so the visible graph is the authority.
+    """
+    values: dict[tuple[str, str], object] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        data = _canvas_node_data(node)
+        if not node_has_capability(node, "parameter"):
+            continue
+        params_cfg = _params_to_config(node.get("params"))
+        owner = (
+            data.get("owner")
+            or data.get("owner_id")
+            or params_cfg.get("owner")
+            or params_cfg.get("owner_id")
+        )
+        key = (
+            data.get("key")
+            or data.get("param_key")
+            or params_cfg.get("key")
+            or params_cfg.get("param_key")
+        )
+        if not owner or not key:
+            continue
+        value = data["value"] if "value" in data else params_cfg.get("value", _MISSING)
+        if value is _MISSING:
+            continue
+        values[(str(owner), str(key))] = value
+    return values
+
+
+def _parameter_node_value(param_values: dict[tuple[str, str], object],
+                          owner_id: object, key: str) -> object:
+    if not owner_id:
+        return _MISSING
+    return param_values.get((str(owner_id), str(key)), _MISSING)
+
+
+def _parameter_node_value_or_none(param_values: dict[tuple[str, str], object],
+                                  owner_id: object, key: str) -> object | None:
+    value = _parameter_node_value(param_values, owner_id, key)
+    return None if value is _MISSING else value
+
+
+def _parameter_node_config(param_values: dict[tuple[str, str], object],
+                           owner_id: object) -> dict:
+    if not owner_id:
+        return {}
+    owner = str(owner_id)
+    return {
+        key: value for (param_owner, key), value in param_values.items()
+        if param_owner == owner
+    }
+
+
+def _port_parameter_endpoint(nodes_by_id: dict[str, dict],
+                             port_node_id: object) -> tuple[object | None,
+                                                            object | None]:
+    if not port_node_id:
+        return None, None
+    node = nodes_by_id.get(str(port_node_id))
+    if not isinstance(node, dict):
+        return None, None
+    data = _canvas_node_data(node)
+    capabilities = node_capabilities(node)
+    if not {"parameter", "port"} <= capabilities:
+        return None, None
+    params_cfg = _params_to_config(node.get("params"))
+    owner = (
+        data.get("owner")
+        or data.get("owner_id")
+        or params_cfg.get("owner")
+        or params_cfg.get("owner_id")
+    )
+    port = (
+        data.get("port_id")
+        or data.get("port")
+        or data.get("value")
+        or params_cfg.get("port_id")
+        or params_cfg.get("port")
+        or params_cfg.get("value")
+    )
+    return owner, port
+
+
+def _relation_endpoint_parameter_nodes(
+        relation_node: dict,
+        nodes_by_id: dict[str, dict],
+        param_values: dict[tuple[str, str], object]) -> list[dict]:
+    """Resolve the ordered incidence set owned by one relation node.
+
+    Each endpoint is a parameter node whose atomic value identifies a
+    participant node and port.  The compact records returned here are a runtime
+    view only; the endpoint nodes remain the editable authority.
+    """
+    relation_id = str(relation_node.get("id") or "")
+    data = _canvas_node_data(relation_node)
+    raw_ids = data.get("endpoint_node_ids")
+    endpoint_ids = [str(value) for value in raw_ids if value] if isinstance(raw_ids, list) else []
+    if not endpoint_ids:
+        endpoint_ids = [
+            node_id for node_id, node in nodes_by_id.items()
+            if isinstance(node, dict)
+            and _canvas_node_data(node).get("param_family") == "relation_endpoint"
+            and str(_canvas_node_data(node).get("owner") or "") == relation_id
+        ]
+
+    out: list[dict] = []
+    for fallback_index, endpoint_id in enumerate(endpoint_ids):
+        endpoint_node = nodes_by_id.get(endpoint_id)
+        if not isinstance(endpoint_node, dict):
+            continue
+        endpoint_data = _canvas_node_data(endpoint_node)
+        if endpoint_data.get("param_family") != "relation_endpoint":
+            continue
+        if str(endpoint_data.get("owner") or "") != relation_id:
+            continue
+
+        def endpoint_value(key: str, fallback: object = None) -> object:
+            value = _parameter_node_value(param_values, endpoint_id, key)
+            return fallback if value is _MISSING else value
+
+        participant_port_node_id = endpoint_value(
+            "participant_port_node_id",
+            endpoint_data.get("participant_port_node_id"),
+        )
+        port_owner, resolved_port = _port_parameter_endpoint(
+            nodes_by_id, participant_port_node_id
+        )
+        participant_node_id = endpoint_value(
+            "participant_node_id",
+            endpoint_data.get("participant_node_id") or port_owner,
+        )
+        participant_port_id = endpoint_value(
+            "participant_port_id",
+            endpoint_data.get("participant_port_id") or resolved_port,
+        )
+        if not participant_node_id or not participant_port_id:
+            continue
+        raw_index = endpoint_value(
+            "endpoint_index", endpoint_data.get("endpoint_index", fallback_index)
+        )
+        try:
+            endpoint_index = int(raw_index)
+        except (TypeError, ValueError):
+            endpoint_index = fallback_index
+        out.append({
+            "endpoint_node": endpoint_id,
+            "index": endpoint_index,
+            "role": str(endpoint_value(
+                "endpoint_role", endpoint_data.get("endpoint_role") or ""
+            ) or ""),
+            "direction": str(endpoint_value(
+                "direction", endpoint_data.get("direction") or ""
+            ) or ""),
+            "node": str(participant_node_id),
+            "port": str(participant_port_id),
+            "port_node": str(participant_port_node_id or ""),
+            "cardinality": str(endpoint_value(
+                "cardinality", endpoint_data.get("cardinality") or "one"
+            ) or "one"),
+        })
+    return sorted(out, key=lambda endpoint: endpoint["index"])
+
+
+def _wire_layer_runtime_values(wire_node: dict,
+                               nodes_by_id: dict[str, dict],
+                               param_values: dict[tuple[str, str], object]) -> dict:
+    """Values from a workflow wire's inner layer nodes.
+
+    The wire node is authoritative, but each layer is also a real node. If the
+    right rail focuses the gate/codec/encryption layer and edits its `value`,
+    this adapter must read that node rather than treating the layer as a label.
+    """
+    wire_id = str(wire_node.get("id") or "")
+    data = _canvas_node_data(wire_node)
+    layer_ids: list[str] = []
+    for key in ("layer_nodes", "group_nodes"):
+        raw = data.get(key)
+        if isinstance(raw, dict):
+            layer_ids.extend(str(v) for v in raw.values() if v)
+        elif isinstance(raw, list):
+            layer_ids.extend(str(v) for v in raw if v)
+
+    out: dict = {}
+    seen: set[str] = set()
+    for layer_id in layer_ids:
+        if layer_id in seen:
+            continue
+        seen.add(layer_id)
+        layer_node = nodes_by_id.get(layer_id)
+        if not isinstance(layer_node, dict):
+            continue
+        layer_data = _canvas_node_data(layer_node)
+        if not node_has_capability(layer_node, "relation-stage"):
+            continue
+        if str(layer_data.get("owner") or "") != wire_id:
+            continue
+        layer = str(layer_data.get("layer") or "")
+        value_key = layer_data.get("value_key") or _WIRE_LAYER_VALUE_KEYS.get(layer)
+        if not value_key:
+            continue
+        param_value = _parameter_node_value(param_values, layer_id, "value")
+        value = param_value if param_value is not _MISSING else layer_data.get("value")
+        if param_value is _MISSING and value in (None, ""):
+            value = _params_to_config(layer_node.get("params")).get("value")
+        if value not in (None, ""):
+            out[str(value_key)] = value
+        for extra_key in _RUNTIME_WIRE_EDGE_KEYS:
+            if extra_key == value_key:
+                continue
+            extra_param = _parameter_node_value(param_values, layer_id, extra_key)
+            extra_value = (
+                extra_param if extra_param is not _MISSING
+                else layer_data.get(extra_key)
+            )
+            if extra_value in (None, ""):
+                extra_value = _params_to_config(layer_node.get("params")).get(extra_key)
+            if extra_value not in (None, ""):
+                out[extra_key] = extra_value
+    return out
+
+
+def _wire_junction_nodes_for(wire_node: dict,
+                             nodes_by_id: dict[str, dict]) -> list[dict]:
+    """Return parent fan-out/fan-in relation nodes for a branch wire.
+
+    A one-to-one workflow edge still has its own wire node. When several
+    branches share a source or target, the visual graph may also materialize a
+    parent junction relation node. Runtime keeps executing concrete branch
+    edges, but the parent junction owns shared transport layers.
+    """
+    data = _canvas_node_data(wire_node)
+    parent_ids: list[object] = []
+    raw_ids = data.get("junction_nodes")
+    if isinstance(raw_ids, list):
+        parent_ids.extend(raw_ids)
+    parent_ids.append(
+        data.get("junction_node")
+        or data.get("parent_junction")
+        or data.get("hyperedge_node")
+    )
+    out: list[dict] = []
+    seen: set[str] = set()
+    for parent_id in parent_ids:
+        if not parent_id:
+            continue
+        key = str(parent_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        parent = nodes_by_id.get(key)
+        if not isinstance(parent, dict):
+            continue
+        parent_data = _canvas_node_data(parent)
+        if not node_has_capability(parent, "relation"):
+            continue
+        if parent_data.get("wire_family") != data.get("wire_family"):
+            continue
+        if str(parent_data.get("wire_topology") or "") not in {
+            "fanout",
+            "fanin",
+            "junction",
+            "hyperedge",
+        }:
+            continue
+        out.append(parent)
+    return out
+
+
+def _is_node_graph_plumbing(node: dict) -> bool:
+    data = _canvas_node_data(node)
+    capabilities = node_capabilities(node)
+    if capabilities.intersection({
+        "relation", "relation-stage", "parameter", "port", "application"
+    }):
+        return True
+    if data.get("param_family") or data.get("port_node"):
+        return True
+    return False
+
+
+def _is_node_graph_plumbing_wire(wire: dict, plumbing_ids: set) -> bool:
+    wid = str(wire.get("id") or "")
+    data = _canvas_wire_data(wire)
+    if wid.startswith("w:param:"):
+        return True
+    if data.get("role") == "wire_endpoint":
+        return True
+    if data.get("role") == "wire_layer_link":
+        return True
+    if data.get("presentation_edge") and data.get("relation_node"):
+        return True
+    src_node, src_port = _canvas_wire_src(wire)
+    dst_node, dst_port = _canvas_wire_dst(wire)
+    if src_node in plumbing_ids or dst_node in plumbing_ids:
+        return True
+    if str(src_port or "").startswith("param:") or str(dst_port or "").startswith("param:"):
+        return True
+    return False
+
+
+def _runtime_relations_from_node_native_graph(graph: dict) -> list:
+    """Project executable relations from authoritative relation nodes.
+
+    The saved canvas graph is node-native: wire nodes, port parameter nodes,
+    endpoint wires, and a raw Bezier presentation edge can all coexist. The
+    runner consumes a compact relation projection. The universal relation node
+    remains authoritative; canvas wires and legacy edges are compatibility or
+    presentation records only.
+    """
+    nodes = graph.get("nodes") or []
+    wires = graph.get("wires") or []
+    nodes_by_id = {
+        str(n.get("id")): n for n in nodes
+        if isinstance(n, dict) and n.get("id")
+    }
+    param_values = _parameter_node_values(nodes)
+    plumbing_ids = {
+        n.get("id") for n in nodes
+        if isinstance(n, dict) and n.get("id") and _is_node_graph_plumbing(n)
+    }
+    presentation_by_wire_node: dict[str, dict] = {}
+    for wire in wires:
+        if not isinstance(wire, dict):
+            continue
+        data = _canvas_wire_data(wire)
+        relation_node = data.get("relation_node")
+        if relation_node and data.get("presentation_edge"):
+            presentation_by_wire_node[str(relation_node)] = wire
+
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    workflow_wire_nodes = [
+        n for n in nodes
+        if isinstance(n, dict)
+        and node_has_capability(n, "relation")
+        and (
+            _canvas_node_data(n).get("relation_family") == "workflow_wire"
+            or _canvas_node_data(n).get("wire_family") == "workflow_wire"
+        )
+    ]
+    for node in workflow_wire_nodes:
+        data = _canvas_node_data(node)
+        wire_id = str(node.get("id") or "")
+        layer_values = _wire_layer_runtime_values(
+            node, nodes_by_id, param_values
+        )
+        junction_nodes = _wire_junction_nodes_for(node, nodes_by_id)
+        junction_data: dict = {}
+        junction_layer_values: dict = {}
+        for junction_node in junction_nodes:
+            junction_data.update(_canvas_node_data(junction_node))
+            junction_layer_values.update(
+                _wire_layer_runtime_values(
+                    junction_node, nodes_by_id, param_values
+                )
+            )
+        effective_layer_values = {
+            **layer_values,
+            **junction_layer_values,
+        }
+        endpoint_nodes = _relation_endpoint_parameter_nodes(
+            node, nodes_by_id, param_values
+        )
+        endpoint_authoritative = bool(
+            data.get("endpoint_set_authoritative")
+            or data.get("endpoint_authority") == "ordered-parameter-set"
+            or data.get("endpoint_node_ids")
+        )
+        if endpoint_authoritative:
+            sources = [
+                endpoint for endpoint in endpoint_nodes
+                if endpoint["role"] == "source"
+                or endpoint["direction"] in {"out", "read", "source"}
+            ]
+            targets = [
+                endpoint for endpoint in endpoint_nodes
+                if endpoint["role"] == "target"
+                or endpoint["direction"] in {"in", "write", "target"}
+            ]
+            if not sources or not targets:
+                continue
+            branches = [
+                (source, target) for source in sources for target in targets
+            ]
+        else:
+            source_port_owner, source_port = _port_parameter_endpoint(
+                nodes_by_id,
+                data.get("from_port_node") or data.get("source_port_node"),
+            )
+            target_port_owner, target_port = _port_parameter_endpoint(
+                nodes_by_id,
+                data.get("to_port_node") or data.get("target_port_node"),
+            )
+            src_node = (
+                layer_values.get("source_owner")
+                or layer_values.get("from_node")
+                or _parameter_node_value_or_none(param_values, wire_id, "source_owner")
+                or _parameter_node_value_or_none(param_values, wire_id, "from_node")
+                or source_port_owner
+                or data.get("source_owner")
+                or data.get("from_node")
+            )
+            dst_node = (
+                layer_values.get("target_owner")
+                or layer_values.get("to_node")
+                or _parameter_node_value_or_none(param_values, wire_id, "target_owner")
+                or _parameter_node_value_or_none(param_values, wire_id, "to_node")
+                or target_port_owner
+                or data.get("target_owner")
+                or data.get("to_node")
+            )
+            src_port = (
+                layer_values.get("from_port")
+                or _parameter_node_value_or_none(param_values, wire_id, "from_port")
+                or source_port
+                or data.get("from_port")
+            )
+            dst_port = (
+                layer_values.get("to_port")
+                or _parameter_node_value_or_none(param_values, wire_id, "to_port")
+                or target_port
+                or data.get("to_port")
+            )
+            if not (src_node and dst_node and src_port and dst_port):
+                continue
+            branches = [(
+                {"node": src_node, "port": src_port, "endpoint_node": ""},
+                {"node": dst_node, "port": dst_port, "endpoint_node": ""},
+            )]
+        edge_id = data.get("wire_id") or data.get("edge_id") or node.get("id")
+        raw = presentation_by_wire_node.get(str(node.get("id") or ""))
+        for branch_index, (source, target) in enumerate(branches):
+            branch_id = edge_id if len(branches) == 1 else f"{edge_id}:branch:{branch_index}"
+            edge = {
+                "id": branch_id,
+                "from": [source["node"], source["port"]],
+                "to": [target["node"], target["port"]],
+                "wire_node": node.get("id"),
+            }
+            if endpoint_authoritative:
+                edge["endpoint_nodes"] = [
+                    endpoint["endpoint_node"] for endpoint in endpoint_nodes
+                ]
+                edge["source_endpoint_node"] = source["endpoint_node"]
+                edge["target_endpoint_node"] = target["endpoint_node"]
+                edge["source_cardinality"] = source.get("cardinality", "one")
+                edge["target_cardinality"] = target.get("cardinality", "one")
+                edge["fan_in_count"] = len(sources)
+                edge["fan_out_count"] = len(targets)
+            if junction_nodes:
+                edge["junction_node"] = junction_nodes[0].get("id")
+                edge["junction_nodes"] = [n.get("id") for n in junction_nodes]
+            for key in _RUNTIME_WIRE_EDGE_KEYS:
+                value = effective_layer_values.get(key)
+                if value in (None, ""):
+                    param_value = _parameter_node_value(param_values, wire_id, key)
+                    if param_value is not _MISSING:
+                        value = param_value
+                if value in (None, ""):
+                    junction_value = junction_data.get(key)
+                    if junction_value not in (None, ""):
+                        value = junction_value
+                if value in (None, ""):
+                    value = data.get(key)
+                if (raw and raw.get(key) not in (None, "")
+                        and (key in {"cache_key", "state", "src_field", "dst_field"}
+                             or value in (None, ""))):
+                    value = raw.get(key)
+                if value not in (None, ""):
+                    edge[key] = value
+            key = (edge["from"][0], edge["from"][1], edge["to"][0], edge["to"][1])
+            if key not in seen:
+                seen.add(key)
+                out.append(edge)
+
+    for wire in wires:
+        if not isinstance(wire, dict):
+            continue
+        relation_node_id = _canvas_wire_data(wire).get("relation_node")
+        if relation_node_id and str(relation_node_id) not in nodes_by_id:
+            continue
+        if _is_node_graph_plumbing_wire(wire, plumbing_ids):
+            continue
+        src_node, src_port = _canvas_wire_src(wire)
+        dst_node, dst_port = _canvas_wire_dst(wire)
+        key = (src_node, src_port, dst_node, dst_port)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(wire)
+    return out
+
+
+# Compatibility for callers that imported the migration helper by its old
+# name. New code must describe the projected records as relations.
+_runtime_wires_from_node_native_graph = _runtime_relations_from_node_native_graph
+
+
 def normalize_canvas_graph(graph: dict) -> dict:
     """Stamp each canvas node with the engine `type` + `config` that
     `WorkflowRunner` dispatches on — the canvas/engine "one node model".
@@ -1518,11 +2168,16 @@ def normalize_canvas_graph(graph: dict) -> dict:
     if not isinstance(graph, dict):
         return graph
     graph = expand_collapsed_groups(graph)
+    param_values = _parameter_node_values(graph.get("nodes") or [])
+    runtime_relations = _runtime_relations_from_node_native_graph(graph)
     out_nodes = []
     for n in graph.get("nodes") or []:
         n = dict(n)
+        if _is_node_graph_plumbing(n):
+            continue
         cfg = (n["config"] if isinstance(n.get("config"), dict)
                else _params_to_config(n.get("params")))
+        cfg = {**cfg, **_parameter_node_config(param_values, n.get("id"))}
         n["config"] = cfg
         # PIN — wins over freeze; return snapshot regardless of upstream.
         # Strip the disable-verb metadata after rewriting so the runner's
@@ -1551,7 +2206,7 @@ def normalize_canvas_graph(graph: dict) -> dict:
 
     # BYPASS — graph surgery. Done in a second pass so PIN/FREEZE
     # type-stamping settles before rewiring.
-    wires = list(graph.get("wires") or [])
+    relations = list(runtime_relations)
     bypassed = {n["id"] for n in out_nodes if n.get("bypass")}
     if bypassed:
         def _src(w):
@@ -1566,9 +2221,9 @@ def normalize_canvas_graph(graph: dict) -> dict:
 
         rewired = []
         for bid in bypassed:
-            inbound = next((w for w in wires if _dst(w)[0] == bid),
+            inbound = next((w for w in relations if _dst(w)[0] == bid),
                            None)
-            outbound = next((w for w in wires if _src(w)[0] == bid),
+            outbound = next((w for w in relations if _src(w)[0] == bid),
                             None)
             if inbound and outbound:
                 src_node, src_port = _src(inbound)
@@ -1576,11 +2231,18 @@ def normalize_canvas_graph(graph: dict) -> dict:
                 rewired.append({"from": [src_node, src_port],
                                 "to": [dst_node, dst_port]})
         # Drop every wire touching a bypassed node.
-        wires = [w for w in wires
-                 if _src(w)[0] not in bypassed
-                 and _dst(w)[0] not in bypassed]
-        wires.extend(rewired)
+        relations = [relation for relation in relations
+                     if _src(relation)[0] not in bypassed
+                     and _dst(relation)[0] not in bypassed]
+        relations.extend(rewired)
         # Drop the bypassed nodes themselves.
         out_nodes = [n for n in out_nodes if n["id"] not in bypassed]
 
-    return {**graph, "nodes": out_nodes, "wires": wires}
+    return {
+        **graph,
+        "nodes": out_nodes,
+        "relations": relations,
+        # Temporary save/API compatibility. This is the same projection, not
+        # a second authority; the relation nodes remain in the source graph.
+        "wires": relations,
+    }

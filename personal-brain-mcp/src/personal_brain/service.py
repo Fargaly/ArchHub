@@ -29,6 +29,7 @@ import logging
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -49,13 +50,12 @@ DEFAULT_PORT = 8473
 # ─────────────────────── supervisor liveness knobs ─────────────────────
 # How often the supervisor probes the daemon on :PORT, how many consecutive
 # probe failures force a restart, and how long any single probe may block.
-# These bound the recovery window: with the defaults a dead OR HUNG daemon
-# is brought back within ~ (HEALTH_FAIL_THRESHOLD * HEALTH_INTERVAL_S +
-# probe timeouts) ≈ under a minute. Overridable via env so a wedge can be
-# tuned without a code change.
+# These bound the recovery window. The default keeps the supervisor's
+# liveness budget aligned with the bounded BABOOM local Brain read and remains
+# overridable via environment when an operator has measured a different host.
 HEALTH_INTERVAL_S = float(os.environ.get("BRAIN_SUPERVISE_INTERVAL", "10"))
 HEALTH_FAIL_THRESHOLD = int(os.environ.get("BRAIN_SUPERVISE_FAILS", "3"))
-HEALTH_TIMEOUT_S = float(os.environ.get("BRAIN_SUPERVISE_TIMEOUT", "4"))
+HEALTH_TIMEOUT_S = float(os.environ.get("BRAIN_SUPERVISE_TIMEOUT", "12"))
 # A respawn after a kill needs a grace period before probing counts again
 # (the fresh daemon binds the socket + warms the store).
 RESPAWN_GRACE_S = float(os.environ.get("BRAIN_SUPERVISE_GRACE", "12"))
@@ -80,6 +80,74 @@ def _supervisor_log_path() -> Path:
 
 def _heartbeat_path() -> Path:
     return _supervisor_log_dir() / "brain-supervisor.heartbeat"
+
+
+def _supervisor_state_path() -> Path:
+    return _supervisor_log_dir() / "brain-supervisor.state.json"
+
+
+def _write_supervisor_state(
+    *,
+    port: int,
+    mode: str,
+    listener: str,
+    child_pid: int | None = None,
+    consecutive_failures: int = 0,
+) -> None:
+    """Persist a bounded local receipt for the supervisor's role.
+
+    This is operational observation, not Brain authority and not a source of
+    user context. It lets desktop projections distinguish an adopted listener
+    from an owned child without inspecting process command lines.
+    """
+    if mode not in {"adopting", "waiting", "starting", "owning", "recovering"}:
+        return
+    if listener not in {"healthy", "occupied", "available"}:
+        return
+    payload = {
+        "schema": "archhub.personal-brain-supervisor/v1",
+        "pid": os.getpid(),
+        "port": int(port),
+        "mode": mode,
+        "listener": listener,
+        "child_pid": int(child_pid) if isinstance(child_pid, int) and child_pid > 0 else None,
+        "consecutive_failures": max(0, int(consecutive_failures)),
+        "observed_at": time.time(),
+    }
+    try:
+        path = _supervisor_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name(".%s.%s.tmp" % (path.name, os.getpid()))
+        temp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        temp.replace(path)
+    except (OSError, TypeError, ValueError):
+        return
+
+
+def _read_supervisor_state() -> dict[str, Any]:
+    """Read a validated, non-sensitive supervisor receipt if it is fresh."""
+    try:
+        raw = json.loads(_supervisor_state_path().read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"state": "unavailable"}
+    if not isinstance(raw, dict):
+        return {"state": "unavailable"}
+    modes = {"adopting", "waiting", "starting", "owning", "recovering"}
+    listeners = {"healthy", "occupied", "available"}
+    observed_at = raw.get("observed_at")
+    if (
+        raw.get("schema") != "archhub.personal-brain-supervisor/v1"
+        or raw.get("mode") not in modes
+        or raw.get("listener") not in listeners
+        or not isinstance(observed_at, (int, float))
+    ):
+        return {"state": "unavailable"}
+    return {
+        "state": "fresh" if time.time() - float(observed_at) <= max(HEALTH_INTERVAL_S * 2, HEALTH_TIMEOUT_S * 2) else "stale",
+        "mode": raw["mode"],
+        "listener": raw["listener"],
+        "age_seconds": round(max(0.0, time.time() - float(observed_at)), 1),
+    }
 
 
 def _build_supervisor_logger() -> logging.Logger:
@@ -115,6 +183,67 @@ def _touch_heartbeat() -> None:
         p.write_text(str(time.time()), encoding="utf-8")
     except OSError:
         pass
+
+
+def _probe_daemon_details(
+    port: int,
+    timeout: float = HEALTH_TIMEOUT_S,
+) -> dict[str, Any] | None:
+    """Read a PID-bound liveness reply from the listener, if available.
+
+    A response from another Brain process is operational evidence, not proof
+    that this supervisor's child owns the listener. The supervision loop uses
+    it to adopt a peer instead of multiplying Brain engines.
+    """
+    url = f"http://127.0.0.1:{port}/mcp"
+    payload = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "brain.liveness", "arguments": {}},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=payload, method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                return None
+            body = resp.read(8192).decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    for line in body.splitlines():
+        if not line.lstrip().startswith("data:"):
+            continue
+        try:
+            envelope = json.loads(line.split("data:", 1)[1].strip())
+        except (TypeError, ValueError):
+            continue
+        result = envelope.get("result") if isinstance(envelope, dict) else None
+        if not isinstance(result, dict):
+            continue
+        value = result.get("structuredContent")
+        if not isinstance(value, dict):
+            for item in result.get("content") or []:
+                if not isinstance(item, dict) or item.get("type") != "text":
+                    continue
+                try:
+                    candidate = json.loads(str(item.get("text") or ""))
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(candidate, dict):
+                    value = candidate
+                    break
+        if (
+            isinstance(value, dict)
+            and value.get("ok") is True
+            and isinstance(value.get("server_pid"), int)
+            and value["server_pid"] > 0
+        ):
+            return value
+    return None
 
 
 def _probe_daemon(port: int, timeout: float = HEALTH_TIMEOUT_S) -> bool:
@@ -153,6 +282,108 @@ def _probe_daemon(port: int, timeout: float = HEALTH_TIMEOUT_S) -> bool:
     if '"error"' in body and '"result"' not in body:
         return False
     return True
+
+
+def _listener_is_owned_by_child(
+    probe: dict[str, Any] | None,
+    child_pid: int,
+) -> bool:
+    """Return whether a PID-bound liveness reply proves child ownership."""
+    return (
+        isinstance(probe, dict)
+        and isinstance(probe.get("server_pid"), int)
+        and probe["server_pid"] == child_pid
+    )
+
+
+def _port_is_bound(port: int) -> bool:
+    """Return whether another process may own the Brain listener port.
+
+    This is deliberately an exclusive bind probe rather than a client
+    connection. A saturated or wedged listener can stop accepting connections
+    while still owning the port. On Windows, a normal bind can appear to work
+    alongside a listener that permits address reuse, only for the real daemon
+    bind to fail later with WinError 10048. Ask Windows for exclusive address
+    use before probing so that ambiguity is treated as occupied. When we
+    cannot prove the port is available, we do not compete with the existing
+    process.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if sys.platform == "win32":
+            exclusive_address_use = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive_address_use is not None:
+                probe.setsockopt(socket.SOL_SOCKET, exclusive_address_use, 1)
+        probe.bind(("127.0.0.1", port))
+        return False
+    except OSError:
+        # Safety over a speculative respawn: any bind failure means a
+        # competing daemon is not permitted.
+        return True
+    finally:
+        probe.close()
+
+
+def _existing_daemon_state(port: int) -> str:
+    """Classify an already-bound daemon without competing for its socket."""
+    if _probe_daemon(port):
+        return "healthy"
+    return "occupied" if _port_is_bound(port) else "available"
+
+
+def _supervisor_heartbeat_age_s() -> Optional[float]:
+    """Return the supervisor heartbeat age without assuming it owns the daemon."""
+    try:
+        return max(0.0, time.time() - _heartbeat_path().stat().st_mtime)
+    except OSError:
+        return None
+
+
+def _runtime_status(port: int) -> dict[str, Any]:
+    """Read-only transport health for operators and assistant projections.
+
+    A fresh supervisor heartbeat proves only that the supervisor loop is
+    awake. It does not imply that it owns the live daemon, so lineage is never
+    overstated here. Recovery remains an explicit operator action.
+    """
+    # Prefer the transport-safe identity proof. A legacy daemon can still
+    # answer the full diagnostic, but it has not proven its serving process or
+    # loaded the current lightweight continuity contract.
+    liveness = _probe_daemon_details(port)
+    listener = _existing_daemon_state(port)
+    if liveness is not None:
+        liveness_mode = "pid-bound"
+    elif listener == "healthy":
+        liveness_mode = "legacy-health"
+    else:
+        liveness_mode = "unavailable"
+    heartbeat_age = _supervisor_heartbeat_age_s()
+    heartbeat_fresh = (
+        heartbeat_age is not None
+        and heartbeat_age <= max(HEALTH_INTERVAL_S * 2, HEALTH_TIMEOUT_S * 2)
+    )
+    if listener == "healthy" and liveness_mode == "pid-bound":
+        health, next_action = "healthy", "none"
+    elif listener == "healthy":
+        health, next_action = "degraded", "controlled_rollover_required"
+    elif listener == "occupied":
+        health, next_action = "unresponsive", "controlled_handoff_required"
+    else:
+        health, next_action = "offline", "start_supervisor_required"
+    return {
+        "port": port,
+        "listener": listener,
+        "liveness": liveness_mode,
+        "health": health,
+        "supervisor_heartbeat": (
+            "fresh" if heartbeat_fresh else "stale" if heartbeat_age is not None else "missing"
+        ),
+        "supervisor_heartbeat_age_s": (
+            round(heartbeat_age, 1) if heartbeat_age is not None else None
+        ),
+        "recovery_action": next_action,
+        "supervisor": _read_supervisor_state(),
+    }
 
 
 def _brain_command() -> str:
@@ -228,7 +459,42 @@ def _supervise(port: int = DEFAULT_PORT, db: Optional[str] = None) -> dict[str, 
 
     backoff = 2
     while True:
+        # A prior direct launch or an older service can legitimately own this
+        # endpoint. Adopt a healthy peer; never create a second full Brain
+        # engine only to lose the bind race after it has consumed resources.
+        existing = _existing_daemon_state(port)
+        if existing != "available":
+            if existing == "healthy":
+                _write_supervisor_state(
+                    port=port,
+                    mode="adopting",
+                    listener=existing,
+                )
+                log.info(
+                    "healthy existing Brain detected on port=%s; "
+                    "supervising without a competing child",
+                    port,
+                )
+            else:
+                _write_supervisor_state(
+                    port=port,
+                    mode="waiting",
+                    listener=existing,
+                )
+                log.error(
+                    "unhealthy listener already owns port=%s; "
+                    "waiting for release instead of spawning a conflicting child",
+                    port,
+                )
+            _touch_heartbeat()
+            time.sleep(HEALTH_INTERVAL_S)
+            continue
         started = time.monotonic()
+        _write_supervisor_state(
+            port=port,
+            mode="starting",
+            listener=existing,
+        )
         # ROOT FIX (founder 2026-06-21 — brain "down": daemon died rc=1 ~12s in,
         # over and over). The supervisor runs windowless (pythonw, no console),
         # so a child spawned with no stdout/stderr inherited a None/closed handle;
@@ -255,6 +521,12 @@ def _supervise(port: int = DEFAULT_PORT, db: Optional[str] = None) -> dict[str, 
             backoff = min(backoff * 2, 30)
             continue
         log.info("daemon spawned: child_pid=%s", proc.pid)
+        _write_supervisor_state(
+            port=port,
+            mode="starting",
+            listener="available",
+            child_pid=proc.pid,
+        )
 
         # Give the fresh daemon time to bind the socket + warm up before the
         # first probe counts against it.
@@ -264,20 +536,58 @@ def _supervise(port: int = DEFAULT_PORT, db: Optional[str] = None) -> dict[str, 
         consecutive_fail = 0
         died = False
         hung = False
+        foreign_listener = False
         while True:
             _touch_heartbeat()
             rc = proc.poll()
             if rc is not None:
+                _write_supervisor_state(
+                    port=port,
+                    mode="recovering",
+                    listener=_existing_daemon_state(port),
+                    child_pid=proc.pid,
+                    consecutive_failures=consecutive_fail,
+                )
                 log.warning("daemon exited: child_pid=%s rc=%s", proc.pid, rc)
                 died = True
                 break
-            if _probe_daemon(port):
+            probe = _probe_daemon_details(port)
+            if _listener_is_owned_by_child(probe, proc.pid):
+                _write_supervisor_state(
+                    port=port,
+                    mode="owning",
+                    listener="healthy",
+                    child_pid=proc.pid,
+                )
                 if consecutive_fail:
                     log.info("daemon healthy again after %s miss(es)",
                              consecutive_fail)
                 consecutive_fail = 0
+            elif probe:
+                listener_pid = probe["server_pid"]
+                _write_supervisor_state(
+                    port=port,
+                    mode="adopting",
+                    listener="healthy",
+                    child_pid=proc.pid,
+                    consecutive_failures=consecutive_fail,
+                )
+                log.warning(
+                    "foreign Brain listener pid=%s answered while child_pid=%s "
+                    "was being supervised; stopping duplicate child and adopting peer",
+                    listener_pid, proc.pid,
+                )
+                foreign_listener = True
+                break
             else:
                 consecutive_fail += 1
+                _write_supervisor_state(
+                    port=port,
+                    mode="recovering",
+                    listener="occupied" if _port_is_bound(port) else "available",
+                    child_pid=proc.pid,
+                    consecutive_failures=consecutive_fail,
+                )
                 log.warning("health probe miss %s/%s (child_pid=%s)",
                             consecutive_fail, HEALTH_FAIL_THRESHOLD, proc.pid)
                 if consecutive_fail >= HEALTH_FAIL_THRESHOLD:
@@ -302,7 +612,7 @@ def _supervise(port: int = DEFAULT_PORT, db: Optional[str] = None) -> dict[str, 
             backoff = min(backoff * 2, 30)
         wait = min(backoff, 30)
         log.info("respawning in %ss (ran %.1fs, reason=%s)", wait, ran_for,
-                 "hung" if hung else "died" if died else "loop-exit")
+                 "foreign-listener" if foreign_listener else "hung" if hung else "died" if died else "loop-exit")
         _touch_heartbeat()
         time.sleep(wait)
 
@@ -719,7 +1029,10 @@ def run(
             if plat == "windows":
                 return fn(port=port, db=db, elevated=elevated)
             return fn(port=port, db=db)
-        return fn()
+        result = fn()
+        if action == "status":
+            result["runtime"] = _runtime_status(port)
+        return result
     except FileNotFoundError as ex:
         return {"ok": False, "error": f"required binary not found: {ex}"}
 

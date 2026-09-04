@@ -66,7 +66,9 @@ class TestFix1GraphHealthChip:
     def test_chip_dispatches_real_health_open_event(self):
         """The Home chip must dispatch lm-graph-health-open (open the REAL
         detail), NOT the old dead-end self-heal-inspector event."""
-        win = _window("data-testid=\"home-graph-health-chip\" data-graph-state=\"active\"")
+        win = _window("const HomeGraphHealthChip", size=6000)
+        assert "'data-testid': 'home-graph-health-chip'" in win
+        assert "action: 'graph.health.open'" in win
         assert "lm-graph-health-open" in win, (
             "active graph-health chip must dispatch lm-graph-health-open")
 
@@ -86,7 +88,8 @@ class TestFix1GraphHealthChip:
         """On Home with an empty LM_GRAPH the chip is a neutral 'no canvas
         open', NOT a green 'healthy'. Gated by the empty-state branch."""
         comp = _window("const HomeGraphHealthChip", size=4000)
-        assert "data-graph-state=\"empty\"" in comp
+        assert "const graphState = hasGraph ? 'active' : 'empty';" in comp
+        assert "putGrandMapSlot('slot:home-graph-health-state'" in comp
         assert "no canvas open" in comp
         # The empty branch is driven by a real node-count check, not a constant.
         assert "hasGraph" in comp and "LM_GRAPH.nodes.length" in _JSX_CODE
@@ -138,10 +141,14 @@ class TestFix2AccountIdentity:
         assert "get_models" in comp, "tags derived from the live model list"
 
     def test_account_identity_signed_out_is_honest(self):
-        """Signed-out must render an honest 'Sign in', never a fabricated name."""
-        comp = _window("const AccountIdentity = ()", size=4200)
-        assert "data-account-state=\"signed-out\"" in comp
-        assert "Sign in" in comp
+        """Signed-out is a graph state/slot, never a hardcoded fallback branch."""
+        comp = _window("const AccountIdentity = ()", size=7000)
+        helper = _window("const seedGrandMapAccountIdentityFallbackNodes", size=5200)
+        assert "<UiNodeSurface rootId={rootId} surface=\"account-identity-footer\"/>" in comp
+        assert "if (!rootId) return null;" in comp
+        assert "'slot:account-identity-label': slots && slots.label ? slots.label : 'Sign in'" in helper
+        assert "'slot:account-identity-state': slots && slots.state ? slots.state : 'signed-out'" in helper
+        assert "data-account-state=\"signed-out\"" not in comp
 
     def test_rendered_in_both_footers(self):
         """<AccountIdentity/> must be rendered in BOTH panel footers so they

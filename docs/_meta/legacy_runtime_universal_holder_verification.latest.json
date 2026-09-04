@@ -1,0 +1,20 @@
+{
+  "schema": "archhub-runtime-holder-universal-verification/v1",
+  "source_schema": "archhub-legacy-runtime-drain-plan/v1",
+  "holder_count": 1,
+  "verified_count": 1,
+  "missing_count": 0,
+  "ok": true,
+  "verified": [
+    {
+      "external_key": "runtime-holder:52484:1784000816281",
+      "pid": 52484,
+      "holder_risk_class": "visible_legacy_endpoint",
+      "work_root": "assembly-instance:fe81143cce904f5eaedacf2fb2e078d5"
+    }
+  ],
+  "missing": [],
+  "runtime_revision": 978,
+  "known_external_keys": 1,
+  "non_destructive": true
+}

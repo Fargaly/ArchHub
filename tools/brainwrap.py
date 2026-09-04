@@ -2,7 +2,7 @@
 
 Two roles, one tool:
 
-1. Universal HOOK ADAPTER (subcommands `context` / `stop` / `health`).
+1. Universal HOOK ADAPTER (`session-start` / `context` / `stop` / `health`).
    The installer points a vendor's hooks here when the vendor's hook
    runner spawns an *executable* over stdio (Cursor) rather than calling
    MCP tools directly. It translates the vendor's stdio contract to/from
@@ -19,7 +19,7 @@ Two roles, one tool:
                    way personal_brain.service does (reused, not guessed).
      (2) ANNOUNCE  brain.wiring_announce with cwd + git remote (scope hint).
      (3) INJECT    brain.context → prepend the <brain_context> block to the
-                   vendor's --context-file, or pipe it on the child's stdin.
+                   vendor's --context-file or native interactive prompt flag.
      (4) EXEC      run the vendor CLI (argv after `--`); its exit code is
                    preserved verbatim.
      (5) DILIGENCE on exit, build the SAME evidence the Stop gate sends
@@ -35,6 +35,11 @@ Subcommands
         Pre-prompt inject. Reads the vendor's prompt payload on stdin, calls
         brain.context, and emits the vendor's expected response carrying the
         brain's injection block. NEVER blocks a prompt (continue=true always).
+
+    brainwrap session-start [--vendor claude-code|generic]
+        Session registration. Reads the lifecycle payload on stdin and
+        announces the already-running session to Brain. It never launches,
+        stops, or supervises the vendor process.
 
     brainwrap stop     [--vendor cursor|generic]
         Stop-gate. Reads the vendor's stop payload on stdin and runs the same
@@ -58,25 +63,41 @@ user's prompt, traps their agent, or stops their CLI from running.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 DAEMON_URL = os.environ.get("BRAIN_DAEMON_URL", "http://127.0.0.1:8473/mcp")
 _TIMEOUT = 6
+GOVERNANCE_BLOCK_EXIT = 78
+_GOVERNED_ENV_KEYS = (
+    "ARCHHUB_GOVERNED_SESSION",
+    "ARCHHUB_REQUIRE_ACTIVE_CDE",
+    "BRAIN_COMPLIANCE_EVENT_APPEND",
+    "BRAIN_BROKER_EVENT_APPEND",
+    "BRAIN_DAEMON_URL",
+    "ARCHHUB_ACTIVE_CDE_STATE",
+    "ARCHHUB_AGENT_RUNTIME",
+    "ARCHHUB_EXTERNAL_SESSION_ID",
+    "ARCHHUB_SESSION_CWD",
+)
 # Port the daemon listens on (parsed from DAEMON_URL → 8473 by default).
 try:
     DAEMON_PORT = int(DAEMON_URL.rsplit(":", 1)[1].split("/", 1)[0])
 except Exception:
     DAEMON_PORT = 8473
 
-# Make the bundled brain package importable for the offline fallback, the
+# Make the bundled brain package importable for the daemon command path, the
 # same way anti_laziness_gate.py does.
 _REPO = Path(__file__).resolve().parent.parent
 _TOOLS = Path(__file__).resolve().parent
@@ -161,45 +182,191 @@ def _injection_from_context(ctx: Optional[dict]) -> str:
     return ""
 
 
-def fetch_drive_block(*, runtime: str) -> str:
+def _external_session_id(payload: dict) -> str:
+    return str(
+        payload.get("session_id")
+        or payload.get("conversationId")
+        or payload.get("conversation_id")
+        or os.environ.get("ARCHHUB_EXTERNAL_SESSION_ID")
+        or ""
+    ).strip()
+
+
+def _payload_cwd(payload: dict) -> str:
+    cwd = str(payload.get("cwd") or "").strip()
+    if cwd:
+        return cwd
+    paths = payload.get("workspacePaths")
+    if isinstance(paths, list):
+        for path in paths:
+            if isinstance(path, str) and path.strip():
+                return path
+    return os.getcwd()
+
+
+def ensure_universal_agent_session(payload: dict, *, vendor: str) -> Optional[dict]:
+    """Idempotently bind the vendor session to its Cell Agent Session."""
+    session_id = _external_session_id(payload)
+    if not session_id:
+        return None
+    return call_tool("brain.hook_session_start", {
+        "session_id": session_id,
+        "cwd": str(payload.get("cwd") or os.getcwd()),
+        "vendor": vendor,
+        "source": payload.get("source") or "brainwrap",
+    })
+
+
+def _active_cde_state_path(
+    *, session_id: str = "", runtime: str = ""
+) -> Path:
+    raw = os.environ.get("ARCHHUB_ACTIVE_CDE_STATE", "").strip()
+    if raw:
+        return Path(raw)
+    base = os.environ.get("LOCALAPPDATA")
+    root = (Path(base) / "ArchHub") if base else (Path.home() / ".archhub")
+    identity = (
+        session_id.strip()
+        or os.environ.get("ARCHHUB_EXTERNAL_SESSION_ID", "").strip()
+    )
+    runtime_name = (
+        runtime.strip()
+        or os.environ.get("ARCHHUB_AGENT_RUNTIME", "").strip()
+    ).lower()
+    if identity:
+        digest = hashlib.sha256(
+            runtime_name.encode("utf-8")
+            + b"\x00"
+            + identity.encode("utf-8")
+        ).hexdigest()
+        return root / "active_cde" / (digest + ".json")
+    if runtime_name:
+        safe = "".join(
+            character if character.isalnum() else "_"
+            for character in runtime_name
+        ).strip("_")
+        if safe:
+            return root / ("active_cde_%s.json" % safe)
+    return root / "active_cde_container.json"
+
+
+def _cde_container_from_leaf(leaf: Optional[dict]) -> Optional[dict]:
+    if not isinstance(leaf, dict):
+        return None
+    for key in ("cde_container", "metadata"):
+        value = leaf.get(key)
+        if isinstance(value, dict) and value.get("container_id"):
+            return value
+    gate_spec = leaf.get("gate_spec")
+    if isinstance(gate_spec, dict):
+        value = gate_spec.get("cde_container")
+        if isinstance(value, dict) and value.get("container_id"):
+            return value
+    return None
+
+
+def _write_active_cde_state(
+    leaf: Optional[dict], *, runtime: str, session_id: str = ""
+) -> None:
+    container = _cde_container_from_leaf(leaf)
+    path = _active_cde_state_path(session_id=session_id, runtime=runtime)
+    if not container:
+        return
+    payload = {
+        "schema": "archhub-active-cde/v1",
+        "runtime": runtime,
+        "session_id": session_id,
+        "leaf_id": leaf.get("leaf_id", "") if isinstance(leaf, dict) else "",
+        "title": leaf.get("title", "") if isinstance(leaf, dict) else "",
+        "cwd": os.getcwd(),
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "container": container,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[brainwrap] active CDE state not written (fail-open): {exc!r}",
+              file=sys.stderr)
+
+
+def _clear_active_cde_state(*, runtime: str = "", session_id: str = "") -> None:
+    path = _active_cde_state_path(session_id=session_id, runtime=runtime)
+    try:
+        if path.exists():
+            path.unlink()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[brainwrap] active CDE state not cleared (fail-open): {exc!r}",
+              file=sys.stderr)
+
+
+def _clear_expired_active_cde_state(
+    *, runtime: str, session_id: str, now: Optional[datetime] = None
+) -> bool:
+    """Delete only an expired or malformed time-bounded state projection."""
+    path = _active_cde_state_path(session_id=session_id, runtime=runtime)
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        container = payload.get("container") if isinstance(payload, dict) else None
+        expiry_text = container.get("expires_at") if isinstance(container, dict) else None
+        if not expiry_text:
+            return False
+        expiry = datetime.fromisoformat(str(expiry_text).replace("Z", "+00:00"))
+        if expiry.tzinfo is None:
+            raise ValueError("CDE expiry must be timezone-aware")
+        observed = now or datetime.now(timezone.utc)
+        if observed.astimezone(timezone.utc) < expiry.astimezone(timezone.utc):
+            return False
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    _clear_active_cde_state(runtime=runtime, session_id=session_id)
+    return True
+
+
+def fetch_drive_block(*, runtime: str, session_id: str = "") -> str:
     """THE DRIVE (pre-prompt). Ask the brain for this runtime's next leaf, CLAIM
     it, and return the ready-to-prepend <assigned_leaf> block.
 
-    Two transports, ONE ledger (mirrors brain_ledger / client_hook):
+    Historical migration note (removed from this path):
       1. DAEMON — POST brain.work_assigned_block (the daemon's single store +
          the BEGIN IMMEDIATE critical section serialise the claim across every
          client). Preferred so two runtimes never grab the same leaf.
       2. IN-PROCESS fallback — if the daemon is down but the package imports,
          claim through the SAME on-disk brain.db via client_hook.
 
-    Fail-OPEN: returns "" on any error / empty frontier so a pre-prompt is never
-    blocked by the drive being idle or offline."""
+    Current behavior returns "" on error, an empty frontier, a missing session,
+    or a non-Universal response. It never claims from a local Brain database.
+    """
+    if not session_id.strip():
+        return ""
+    _clear_expired_active_cde_state(runtime=runtime, session_id=session_id)
     owner = os.environ.get("BRAIN_OWNER_USER")
     fit = _drive_fit()
     # 1) daemon — the cross-process-safe path.
     res = call_tool("brain.work_assigned_block", {
         "runtime": runtime,
+        "session_id": session_id,
         "fit": fit,
         "owner_user": owner,
         "wrap": True,
+        "write": True,
     })
-    if isinstance(res, dict) and res.get("ok") and res.get("block"):
-        return res["block"]
-    if isinstance(res, dict) and res.get("ok"):
-        return ""  # daemon answered, frontier dry
-    # 2) in-process fallback — same brain.db, no daemon.
-    try:
-        from personal_brain import client_hook as ch  # type: ignore
-        from personal_brain.storage import BrainStore, default_brain_path
-        db = os.environ.get("ARCHHUB_BRAIN_DB") or str(default_brain_path())
-        store = BrainStore.open(db)
-        try:
-            return ch.assigned_leaf_block(
-                runtime=runtime, fit=fit, owner_user=owner, store=store)
-        finally:
-            store.close()
-    except Exception:
-        return ""
+    if (
+        isinstance(res, dict)
+        and res.get("ok")
+        and res.get("universal") is True
+        and isinstance(res.get("agent_session"), str)
+        and res["agent_session"].strip()
+    ):
+        block = res.get("block")
+        if isinstance(block, str) and block:
+            _write_active_cde_state(
+                res.get("leaf"), runtime=runtime, session_id=session_id
+            )
+            return block
+    return ""
 
 
 def _drive_fit() -> Optional[list[str]]:
@@ -215,10 +382,11 @@ def _drive_fit() -> Optional[list[str]]:
 
 def cmd_context(vendor: str) -> int:
     payload = _read_stdin_json()
+    ensure_universal_agent_session(payload, vendor=vendor)
     prompt = payload.get("prompt") or payload.get("user_message") or ""
     ctx = call_tool("brain.context", {
         "prompt": prompt,
-        "cwd": os.getcwd(),
+        "cwd": _payload_cwd(payload),
         "owner_user": os.environ.get("BRAIN_OWNER_USER"),
     })
     injection = _injection_from_context(ctx)
@@ -227,7 +395,9 @@ def cmd_context(vendor: str) -> int:
     # work the brain hands this runtime (<assigned_leaf>, claimed atomically).
     # This is what wires the foreign-vendor pre-prompt into the brain-driver —
     # without it the brain drives Claude Code but not Codex/Gemini/Cursor.
-    drive = fetch_drive_block(runtime=vendor)
+    drive = fetch_drive_block(
+        runtime=vendor, session_id=_external_session_id(payload)
+    )
     combined = "\n".join(b for b in (injection, drive) if b).strip()
 
     if vendor == "cursor":
@@ -240,6 +410,27 @@ def cmd_context(vendor: str) -> int:
         # generic: print recall + drive for the agent/wrapper to prepend.
         if combined:
             sys.stdout.write(combined)
+    return 0
+
+
+def cmd_session_start(vendor: str) -> int:
+    """Register a live vendor session without taking ownership of its process.
+
+    Claude's SessionStart event can run before an MCP client context exists, so
+    an mcp_tool hook is skipped even though its settings schema is valid.  The
+    command adapter uses the same daemon transport and wrapper tool instead.
+    It is deliberately side-effect-only: printing nothing keeps Claude's
+    startup context free of transport/audit JSON.
+    """
+    payload = _read_stdin_json()
+    cwd = _payload_cwd(payload)
+    session_id = _external_session_id(payload) or None
+    call_tool("brain.hook_session_start", {
+        "session_id": session_id,
+        "cwd": cwd,
+        "vendor": vendor,
+        "source": payload.get("source"),
+    })
     return 0
 
 
@@ -264,6 +455,7 @@ def _diligence_verdict(payload: dict) -> tuple[dict, dict]:
         return {}, {}
 
     transcript = (payload.get("transcript_path")
+                  or payload.get("transcriptPath")
                   or payload.get("transcript") or "")
     cwd = payload.get("cwd") or os.getcwd()
     events = gate._read_jsonl(transcript) if transcript else []
@@ -380,84 +572,142 @@ def flush_turn_memory(evidence: dict, *, vendor: str, blocked: bool,
         return None
 
 
-def _completion_gate_verdict(cwd: Optional[str] = None) -> tuple[bool, str]:
-    """THE DRIVE's Stop consumer for foreign vendors. Ask the BRAIN (over the
-    SAME daemon transport every other brainwrap call uses) for this owner's
-    active-work ledger, derive the pending done-gates from its actionable
-    (open/claimed) leaves, run each gate against the REAL artifact (resolved
-    against the AGENT's `cwd`, not brainwrap's), and return (block?, reason).
+def _completion_gate_verdict(
+    cwd: Optional[str] = None,
+    *,
+    runtime: str = "",
+    session_id: str = "",
+) -> tuple[bool, str]:
+    """Evaluate only graph-owned Work for the exact vendor session.
 
-    Mirrors what the Claude Code Stop hook gets from completion_gate.py — but
-    fetches the ledger via `call_tool("brain.work_get")` (the daemon's single
-    BEGIN-IMMEDIATE-serialised store) rather than opening brain.db directly, so:
-      * it goes through the cross-process-safe daemon arbiter, and
-      * it respects the same transport seam the rest of brainwrap does (a dead
-        daemon → no ledger → fall through to the diligence verdict, never a
-        spurious block off some unrelated on-disk default ledger).
-
-    A red machine-gate under the cap → BLOCK (keep working). A human-only/cdp
-    leaf or the cap → ESCALATE (surfaced as a block-with-reason so the agent is
-    told to escalate, never silently quits). Fail-OPEN: any error → (False, "")
-    so a dead/erroring brain never traps the agent."""
-    res = call_tool("brain.work_get",
-                    {"owner_user": os.environ.get("BRAIN_OWNER_USER")})
-    if not isinstance(res, dict) or not res.get("ok"):
-        return False, ""  # daemon down / no ledger → defer to diligence
-    ledger = res.get("ledger") or {}
-    try:
-        import completion_gate as cg  # tools/ already on sys.path
-        import brain_ledger as bl     # pure gate-mapping helpers
-    except Exception:
-        return False, ""
-    # Derive completion_gate Gates from the ledger's ACTIONABLE leaves (a DONE
-    # leaf is already green; a BLOCKED leaf is a needs-root escalation), reusing
-    # brain_ledger's pure (gate_kind, gate_spec) → Gate mapping — NO DB open.
-    gate_dicts: list[dict] = []
-    for lf in (ledger.get("leaves") or {}).values():
-        state = lf.get("state")
-        if state == "done":
-            continue
-        gk = lf.get("gate_kind", "manual")
-        spec = lf.get("gate_spec") or {}
-        if state == "blocked":
-            gate_dicts.append({"name": lf.get("title", ""), "kind": "manual",
-                               "arg": "", "machine_resolvable": False})
-            continue
-        gate_dicts.append({
-            "name": lf.get("title", ""),
-            "kind": bl._GATE_KIND_MAP.get(gk, "manual"),
-            "arg": bl._gate_arg_from_spec(gk, spec),
-            "arg2": ",".join(spec.get("paths", [])) if gk == "grep_clean" else "",
-            "machine_resolvable": gk not in ("manual", "cdp"),
+    The graph declares the gate, receives the submit evidence, and runs its
+    independent court. Without a Universal Agent Session there is no stop-gate
+    decision and no read from the legacy Brain ledger.
+    """
+    if session_id:
+        state = call_tool("brain.universal_work_status", {
+            "session_id": session_id,
+            "vendor": runtime,
         })
-    if not gate_dicts:
-        return False, ""  # drive dry → nothing to block on
-    gates = [cg._gate_from_dict(g) for g in gate_dicts]
-    iters = int(ledger.get("iterations", 0))
-    cap = int(ledger.get("cap", cg.CAP_DEFAULT))
-    root = Path(cwd) if cwd else Path.cwd()
-    v = cg.evaluate(gates, iters, cap, runner=lambda g: cg.run_gate(g, root))
-    if v.action == "block":
-        return True, f"{v.reason} [brain:daemon]"
-    if v.action == "escalate":
-        return True, f"ESCALATE → founder: {v.reason} [brain:daemon]"
+        if not isinstance(state, dict):
+            # The founder's app restarting orphans every enrolled Agent
+            # Session. That is the runtime's lifecycle, not the agent's
+            # fault: re-enroll against the new runtime once and retry,
+            # instead of denying the stop and demanding a human ritual.
+            call_tool("brain.hook_session_start", {
+                "session_id": session_id,
+                "vendor": runtime,
+                "cwd": cwd or str(Path.cwd()),
+            })
+            state = call_tool("brain.universal_work_status", {
+                "session_id": session_id,
+                "vendor": runtime,
+            })
+        if not isinstance(state, dict):
+            return True, "Universal work authority is unavailable; stop denied."
+        session_root = state.get("agent_session")
+        owned = [
+            item for item in (state.get("items") or [])
+            if item.get("claimant_session") == session_root
+            and str(
+                (item.get("operational") or {}).get("current_state_label", "")
+            ).casefold() == "claimed"
+        ]
+        if len(owned) > 1:
+            return True, (
+                "Agent Session owns multiple active work nodes; governance "
+                "repair is required before stop."
+            )
+        if not owned:
+            return False, ""
+        item = owned[0]
+        requirement = (item.get("resolved") or {}).get("requirements") or {}
+        gate = requirement.get("gate") if isinstance(requirement, dict) else {}
+        gate = gate if isinstance(gate, dict) else {}
+        gate_kind = str(gate.get("kind") or "manual")
+        gate_spec = gate.get("spec") or {}
+        try:
+            import completion_gate as cg
+            import brain_ledger as bl
+            gate_value = cg._gate_from_dict({
+                "name": (
+                    (item.get("interfaces") or {}).get("title") or {}
+                ).get("value", item.get("root", "work")),
+                "kind": bl._GATE_KIND_MAP.get(gate_kind, "manual"),
+                "arg": bl._gate_arg_from_spec(gate_kind, gate_spec),
+                "arg2": (
+                    ",".join(gate_spec.get("paths", []))
+                    if gate_kind == "grep_clean" else ""
+                ),
+                "machine_resolvable": gate_kind not in ("manual", "cdp"),
+            })
+            history = (item.get("operational") or {}).get("history") or []
+            root = Path(cwd) if cwd else Path.cwd()
+            verdict = cg.evaluate(
+                [gate_value],
+                len(history),
+                cg.CAP_DEFAULT,
+                runner=lambda value: cg.run_gate(value, root),
+            )
+        except Exception as exc:
+            return True, (
+                "Universal work court could not execute: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        if verdict.action != "allow":
+            prefix = "ESCALATE -> founder: " if verdict.action == "escalate" else ""
+            return True, prefix + verdict.reason + " [universal-cell]"
+        evidence = json.dumps({
+            "court": "brainwrap-stop",
+            "gate_kind": gate_kind,
+            "gate_spec": gate_spec,
+            "verdict": "green",
+        }, separators=(",", ":"))
+        submitted = call_tool("brain.universal_work_transition", {
+            "session_id": session_id,
+            "vendor": runtime,
+            "work_root": item.get("root"),
+            "event": "submit",
+            "evidence": evidence,
+        })
+        if not isinstance(submitted, dict):
+            return True, "Green work could not be submitted to graph review."
+        adjudicated = call_tool("brain.universal_work_court", {
+            "session_id": session_id,
+            "vendor": runtime,
+            "work_root": item.get("root"),
+        })
+        if not isinstance(adjudicated, dict):
+            return True, "Independent work court is unavailable; stop denied."
+        if not adjudicated.get("passed"):
+            return True, (
+                "NOT DONE: the independent work court returned the work after "
+                "rerunning its graph-declared gate. [universal-cell]"
+            )
+        counts = (adjudicated.get("status") or {}).get("counts") or {}
+        if int(counts.get("complete", 0)) < 1:
+            return True, "Independent court did not complete the work node."
+        return False, ""
+
+    # Legacy ledger state is not Work authority without a graph Agent Session.
     return False, ""
 
 
 def cmd_stop(vendor: str) -> int:
     payload = _read_stdin_json()
+    ensure_universal_agent_session(payload, vendor=vendor)
     verdict, evidence = _diligence_verdict(payload)
     blocked = bool(verdict) and verdict.get("verdict") == "block"
     reason = (verdict or {}).get("reason") or "Work incomplete — keep going."
 
-    # THE DRIVE's Stop gate: BEFORE the diligence verdict decides, check the
-    # BRAIN ledger — if a leaf this runtime pulled is still open/red, BLOCK the
-    # exit (the half that makes the pre-prompt pull binding for foreign vendors,
-    # same as Claude Code's Stop → completion_gate). The ledger gate takes
-    # precedence: undone, gated work is the strongest "keep going" signal. The
-    # gate predicate runs against the AGENT's cwd (from the stop payload).
+    # THE DRIVE's Stop gate checks only graph Work owned by this exact Agent
+    # Session. Its graph-declared gate takes precedence over the advisory
+    # diligence result and never consults a legacy ledger.
     drive_blocked, drive_reason = _completion_gate_verdict(
-        cwd=payload.get("cwd") or os.getcwd())
+        cwd=_payload_cwd(payload),
+        runtime=vendor,
+        session_id=_external_session_id(payload),
+    )
     if drive_blocked:
         blocked = True
         reason = drive_reason or reason
@@ -478,6 +728,12 @@ def cmd_stop(vendor: str) -> int:
                 {"continue": False, "followup_message": reason}))
         else:
             sys.stdout.write(json.dumps({"continue": True}))
+    elif vendor == "antigravity":
+        if blocked:
+            sys.stdout.write(json.dumps(
+                {"decision": "continue", "reason": reason}))
+        else:
+            sys.stdout.write(json.dumps({"decision": ""}))
     else:
         # generic: mirror Claude Code's block contract on stdout.
         if blocked:
@@ -670,10 +926,13 @@ _CTX_END = "<!-- brainwrap:context:end -->"
 
 def inject_context(injection: str, *, context_file: Optional[str],
                    cwd: str) -> str:
-    """PREPEND the brain context to the vendor's context file (never
-    clobber), or write a sidecar when no context file was named. Returns a
-    human note. Re-runs refresh the brainwrap block instead of stacking
-    duplicates (bounded by the start/end markers)."""
+    """PREPEND Brain context to an explicitly named vendor context file.
+
+    Without an explicit sink, persistence is forbidden: ``cmd_launch`` may
+    still use a vendor-supported interactive prompt flag, but a launcher must
+    never create an instruction sidecar inside the governed workspace.
+    Re-runs refresh the bounded block instead of stacking duplicates.
+    """
     block = injection.rstrip() + "\n"
     wrapped = f"{_CTX_START}\n{block}{_CTX_END}\n"
 
@@ -701,57 +960,120 @@ def inject_context(injection: str, *, context_file: Optional[str],
         except Exception as ex:
             return f"context fetched but write failed: {ex}"
 
-    # No context file → sidecar the user/vendor can pick up.
-    side = Path(cwd) / ".brainwrap_context.md"
-    try:
-        side.write_text(wrapped, encoding="utf-8")
-        return f"context written to {side} (no --context-file given)"
-    except Exception as ex:
-        return f"context fetched but no sink: {ex}"
+    # No explicit file means no persistent sink. cmd_launch may use a vendor
+    # native context flag while preserving the terminal's standard streams.
+    return "context ready for vendor adapter (no workspace file written)"
 
 
 # ── 4. exec the vendor CLI (exit code preserved) ────────────────────────
 
 
+def _runtime_context_file(injection: str) -> Path:
+    """Write one bounded private launch artifact outside the workspace."""
+    root = Path(
+        os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    ) / "ArchHub" / "runtime-context"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, raw_path = tempfile.mkstemp(
+        prefix="brainwrap-",
+        suffix=".md",
+        dir=root,
+    )
+    path = Path(raw_path)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(injection.encode("utf-8"))
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+        return path
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _vendor_context_argv(
+    argv: list[str], context_path: Path
+) -> Optional[list[str]]:
+    """Return a vendor-supported interactive context invocation.
+
+    Full-screen CLIs must inherit the console. Piping a context prefix through
+    stdin turns their TTY into a closed pipe and leaves the apparent session
+    frozen. Only documented native channels are admitted here.
+    """
+    if not argv:
+        return list(argv)
+    name = Path(argv[0]).stem.casefold()
+    if name in {"claude", "claude-code"}:
+        return [
+            argv[0],
+            "--append-system-prompt-file",
+            str(context_path),
+            *argv[1:],
+        ]
+    if name == "gemini":
+        prompt = (
+            "Apply the startup governance context from @%s as session "
+            "instructions, then continue interactively without summarizing it."
+            % context_path
+        )
+        return [argv[0], "--prompt-interactive", prompt, *argv[1:]]
+    if name == "codex" and len(argv) == 1:
+        prompt = (
+            "Apply the startup governance context at %s as session "
+            "instructions, then continue interactively." % context_path
+        )
+        return [argv[0], prompt]
+    return None
+
+
 def run_vendor(argv: list[str], *, cwd: str,
-               stdin_prefix: Optional[str] = None) -> int:
+               context_injection: Optional[str] = None) -> int:
     """Exec the vendor command, preserving its exit code exactly.
 
-    When `stdin_prefix` is given (the brain context, used only when there is
-    no --context-file sink and the vendor reads stdin), feed it ahead of the
-    child's input. Otherwise inherit our streams so the CLI is interactive.
+    Brain context is carried only through a native interactive vendor option.
+    Standard input, output, and error always remain inherited from the terminal.
     """
     if not argv:
         print("[brainwrap] no vendor command after `--`", file=sys.stderr)
         return 2
 
-    exe = shutil.which(argv[0]) or argv[0]
+    requested = argv[0]
+    requested_path = Path(requested)
+    if requested_path.suffix.casefold() == ".ps1":
+        cmd_peer = requested_path.with_suffix(".cmd")
+        if cmd_peer.is_file():
+            requested = str(cmd_peer)
+    exe = shutil.which(requested) or requested
     full = [exe] + argv[1:]
 
-    if stdin_prefix:
-        try:
-            proc = subprocess.Popen(full, cwd=cwd, stdin=subprocess.PIPE)
-            try:
-                proc.stdin.write(stdin_prefix.encode("utf-8"))
-            finally:
-                try:
-                    proc.stdin.close()
-                except Exception:
-                    pass
-            return proc.wait()
-        except FileNotFoundError:
-            print(f"[brainwrap] vendor not found: {argv[0]}", file=sys.stderr)
-            return 127
-        except KeyboardInterrupt:
-            return 130
-
+    context_path: Optional[Path] = None
     try:
+        if context_injection:
+            context_path = _runtime_context_file(context_injection)
+            contextualized = _vendor_context_argv(full, context_path)
+            if contextualized is None:
+                print(
+                    "[brainwrap] vendor has no admitted interactive context "
+                    f"adapter: {Path(full[0]).name}",
+                    file=sys.stderr,
+                )
+                return GOVERNANCE_BLOCK_EXIT
+            full = contextualized
         return subprocess.call(full, cwd=cwd)
     except FileNotFoundError:
         print(f"[brainwrap] vendor not found: {argv[0]}", file=sys.stderr)
         return 127
     except KeyboardInterrupt:
         return 130
+    finally:
+        if context_path is not None:
+            context_path.unlink(missing_ok=True)
 
 
 # ── 5. diligence (post-hoc, advisory) + skill mint ──────────────────────
@@ -865,29 +1187,226 @@ def run_diligence(transcript: Optional[str], cwd: str,
     return summary
 
 
+def _coverage_client_for_vendor(vendor: str) -> Optional[str]:
+    stem = Path(vendor or "").name.lower()
+    if stem.endswith(".exe"):
+        stem = stem[:-4]
+    if "claude" in stem:
+        return "claude-code"
+    if "cursor" in stem:
+        return "cursor"
+    if "codex" in stem:
+        return "codex"
+    if "gemini" in stem:
+        return "gemini-cli"
+    if "antigravity" in stem:
+        return "antigravity"
+    return None
+
+
+def governed_session_env(
+    *, cwd: str, vendor: str, session_id: str
+) -> dict[str, str]:
+    env = {
+        "ARCHHUB_GOVERNED_SESSION": "1",
+        "ARCHHUB_WORKSHOP_AUTHORITY_REQUIRED": "1",
+        "ARCHHUB_REQUIRE_ACTIVE_CDE": "1",
+        "BRAIN_COMPLIANCE_EVENT_APPEND": "1",
+        "BRAIN_BROKER_EVENT_APPEND": "1",
+        "BRAIN_DAEMON_URL": os.environ.get("BRAIN_DAEMON_URL", DAEMON_URL),
+        "ARCHHUB_ACTIVE_CDE_STATE": str(_active_cde_state_path(
+            session_id=session_id, runtime=vendor
+        )),
+        "ARCHHUB_AGENT_RUNTIME": vendor or "unknown",
+        "ARCHHUB_EXTERNAL_SESSION_ID": session_id,
+        "ARCHHUB_SESSION_CWD": cwd,
+    }
+    return env
+
+
+def _push_env(values: dict[str, str]) -> dict[str, Optional[str]]:
+    old = {key: os.environ.get(key) for key in values}
+    for key, value in values.items():
+        os.environ[key] = value
+    return old
+
+
+def _restore_env(old: dict[str, Optional[str]]) -> None:
+    for key, value in old.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+def _status_from_hook_audit(res: Optional[dict]) -> str:
+    if not isinstance(res, dict) or not res.get("ok"):
+        return "unknown"
+    report = res.get("report") if isinstance(res.get("report"), dict) else res
+    status = str(report.get("status") or res.get("status") or "").lower()
+    if status:
+        return status
+    summary = report.get("summary") if isinstance(report, dict) else {}
+    if isinstance(summary, dict) and int(summary.get("red") or 0) > 0:
+        return "red"
+    return "unknown"
+
+
+def _status_from_compliance_report(res: Optional[dict]) -> str:
+    if not isinstance(res, dict) or not res.get("ok"):
+        return "unknown"
+    overall = str(res.get("overall") or "").lower()
+    if overall:
+        return overall
+    hook = res.get("hook_coverage") if isinstance(res.get("hook_coverage"), dict) else {}
+    status = str(hook.get("status") or "").lower()
+    if status:
+        return status
+    return "unknown"
+
+
+def _workshop_authority_probe(*, vendor: str, client: Optional[str]) -> dict[str, Any]:
+    """Prove the Brain workshop is reachable before a governed child starts.
+
+    The workshop is the shared authority for coordination. Hook/compliance green
+    without the room means the session can still drift silently, so strict
+    governed launch treats a missing room as a hard preflight failure.
+    """
+    agent = f"brainwrap:{client or Path(vendor or 'unknown').name or 'unknown'}"
+    res = call_tool("brain.room_read", {
+        "agent": agent,
+        "limit": 1,
+        "mark": True,
+    }, timeout=5.0)
+    if isinstance(res, dict) and res.get("ok"):
+        return {
+            "ok": True,
+            "agent": agent,
+            "result": res,
+            "status": "green",
+            "channel": "brain.room_read",
+        }
+
+    context = call_tool("brain.context", {
+        "prompt": "workshop authority preflight probe",
+        "cwd": os.environ.get("ARCHHUB_SESSION_CWD") or os.getcwd(),
+    }, timeout=8.0)
+    injection = ""
+    if isinstance(context, dict):
+        injection = str(context.get("injection") or "")
+    ok = "<meeting_room>" in injection and "</meeting_room>" in injection
+    return {
+        "ok": ok,
+        "agent": agent,
+        "result": res,
+        "context_probe": {
+            "ok": bool(isinstance(context, dict)),
+            "has_meeting_room": ok,
+        },
+        "status": "green" if ok else "red",
+        "channel": "brain.context" if ok else "",
+    }
+
+
+def governed_preflight(*, vendor: str) -> tuple[bool, str, dict[str, Any]]:
+    owner = os.environ.get("BRAIN_OWNER_USER")
+    client = _coverage_client_for_vendor(vendor)
+    audit_args: dict[str, Any] = {"owner_user": owner}
+    if client:
+        audit_args["only"] = [client]
+    audit = call_tool(
+        "brain.hook_coverage_audit_cell_first",
+        audit_args,
+        timeout=8.0,
+    )
+    audit_status = _status_from_hook_audit(audit)
+
+    comp = call_tool("brain.compliance_report",
+                     {"owner_user": owner}, timeout=5.0)
+    comp_status = _status_from_compliance_report(comp)
+    workshop = _workshop_authority_probe(vendor=vendor, client=client)
+
+    details = {
+        "hook_coverage": audit,
+        "hook_coverage_status": audit_status,
+        "compliance_report": comp,
+        "compliance_status": comp_status,
+        "workshop_authority": workshop,
+        "workshop_authority_status": workshop["status"],
+        "client": client,
+    }
+    if audit_status != "green":
+        return False, f"hook coverage {audit_status}", details
+    if comp_status != "green":
+        return False, f"compliance report {comp_status}", details
+    if not workshop["ok"]:
+        return False, "workshop authority unreachable", details
+    return True, "governance green", details
+
+
 def cmd_launch(opts: argparse.Namespace, vendor_argv: list[str]) -> int:
     """Full lifecycle around a hookless vendor CLI. Returns the vendor's
     exit code (preserved verbatim)."""
     cwd = opts.cwd or os.getcwd()
     vendor = vendor_argv[0] if vendor_argv else "(none)"
     prompt = opts.prompt or " ".join(vendor_argv[1:]) or vendor
+    governed = bool(getattr(opts, "governed", False)
+                    or getattr(opts, "governed_strict", False))
+    governed_strict = bool(getattr(opts, "governed_strict", False))
+    external_session_id = (
+        os.environ.get("ARCHHUB_EXTERNAL_SESSION_ID", "").strip()
+        or secrets.token_hex(16)
+    )
+    if governed:
+        _push_env(governed_session_env(
+            cwd=cwd, vendor=vendor, session_id=external_session_id
+        ))
 
     # 1. CONNECT — health + (if down) start the daemon the service way.
     ok, note = ensure_daemon(auto_start=not opts.skip_daemon_start)
     print(f"[brainwrap] connect: {note}", file=sys.stderr)
+    if governed_strict and not ok:
+        print("[brainwrap] governance: blocked (brain unreachable)",
+              file=sys.stderr)
+        return GOVERNANCE_BLOCK_EXIT
 
-    stdin_prefix: Optional[str] = None
+    context_injection: Optional[str] = None
     if ok:
+        if governed:
+            green, reason, _details = governed_preflight(vendor=vendor)
+            print(f"[brainwrap] governance: {reason}", file=sys.stderr)
+            if governed_strict and not green:
+                return GOVERNANCE_BLOCK_EXIT
         # 2. ANNOUNCE wiring (scope hint for context retrieval).
         announce_wiring(cwd, vendor)
+        ensure_universal_agent_session(
+            {
+                "session_id": external_session_id,
+                "cwd": cwd,
+                "source": "brainwrap-launch",
+            },
+            vendor=vendor,
+        )
         # 3. INJECT context.
         injection = fetch_context(prompt, cwd)
         if injection:
             inote = inject_context(injection, context_file=opts.context_file,
                                    cwd=cwd)
             print(f"[brainwrap] inject: {inote}", file=sys.stderr)
-            if (not opts.context_file) and (not opts.no_stdin_context):
-                stdin_prefix = injection.rstrip() + "\n"
+            if not opts.context_file:
+                probe_path = Path("brainwrap-context.md")
+                if _vendor_context_argv(vendor_argv, probe_path) is not None:
+                    context_injection = injection.rstrip()
+                else:
+                    print(
+                        "[brainwrap] inject: no admitted interactive context "
+                        "adapter; pass --context-file",
+                        file=sys.stderr,
+                    )
+                    if governed_strict:
+                        print("[brainwrap] governance: blocked (context was not "
+                              "delivered)", file=sys.stderr)
+                        return GOVERNANCE_BLOCK_EXIT
         else:
             print("[brainwrap] inject: no context returned (empty brain) -- "
                   "continuing", file=sys.stderr)
@@ -900,7 +1419,11 @@ def cmd_launch(opts: argparse.Namespace, vendor_argv: list[str]) -> int:
         print("[brainwrap] nothing to run. Usage: brainwrap launch [opts] -- "
               "<cli> [args]", file=sys.stderr)
         return 2
-    code = run_vendor(vendor_argv, cwd=cwd, stdin_prefix=stdin_prefix)
+    code = run_vendor(
+        vendor_argv,
+        cwd=cwd,
+        context_injection=context_injection,
+    )
 
     # 5. DILIGENCE (post-hoc, advisory) + skill mint.
     if ok:
@@ -943,6 +1466,12 @@ def _add_launch_opts(p: argparse.ArgumentParser) -> None:
                         "--context-file sink exists.")
     p.add_argument("--skip-daemon-start", action="store_true",
                    help="Probe health but never auto-start the daemon.")
+    p.add_argument("--governed", action="store_true",
+                   help="Stamp the child process as a governed ArchHub "
+                        "session and run Brain governance preflight.")
+    p.add_argument("--governed-strict", action="store_true",
+                   help="Like --governed, but fail closed when Brain, hook "
+                        "coverage, or compliance report are not green.")
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -954,17 +1483,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         description="Universal brain adapter + launcher for any agent client.",
     )
     sub = parser.add_subparsers(dest="cmd")
-    for name in ("context", "stop"):
+    for name in ("session-start", "context", "stop"):
         sp = sub.add_parser(name)
         sp.add_argument("--vendor", default="generic",
-                        choices=["cursor", "generic"])
+                        choices=["claude-code", "codex", "cursor",
+                                 "gemini-cli", "antigravity", "generic"])
     sub.add_parser("health")
     _add_launch_opts(sub.add_parser("launch"))
 
     # A bare `brainwrap -- <cli>` (no subcommand) defaults to `launch`.
     if vendor_argv and (not wrapper_args
                         or wrapper_args[0] not in
-                        ("context", "stop", "health", "launch")):
+                        ("session-start", "context", "stop", "health",
+                         "launch")):
         wrapper_args = ["launch"] + wrapper_args
 
     args = parser.parse_args(wrapper_args)
@@ -976,6 +1507,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_launch(args, vendor_argv)
 
     try:
+        if args.cmd == "session-start":
+            return cmd_session_start(args.vendor)
         if args.cmd == "context":
             return cmd_context(args.vendor)
         if args.cmd == "stop":

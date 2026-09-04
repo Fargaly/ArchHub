@@ -60,6 +60,11 @@ SAFETY / HONESTY FLOOR (ANTI-LIE, MAKE-IT-REAL):
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 import hashlib
 import hmac
 import json
@@ -87,6 +92,13 @@ VERIFY_VERSION = "roma-server-verify-v1"
 # founder sets this (or BRAIN_VERIFY_SIGNING_KEY) so attestations are signed.
 DEFAULT_SIGNING_KEY_REF = "op://archhub/roma-verify/signing_key"
 
+
+def ensure_court_signing_key() -> dict[str, Any]:
+    """Ensure the Court signing capability exists, returning safe metadata."""
+    from .secret_resolver import ensure_secret
+
+    return ensure_secret(DEFAULT_SIGNING_KEY_REF)
+
 # Gate kinds that can be honestly re-executed in a clean subprocess: they are
 # pure functions of (gate_spec, real disk). `cdp` (live app) and `manual`
 # (founder) cannot — they get an honest applied=False, never a fake green.
@@ -94,6 +106,36 @@ _REEXECUTABLE_GATE_KINDS = ("py_compile", "file_exists", "pytest")
 
 # Hard ceiling so a wedged child can never block the verifier forever.
 _SUBPROCESS_TIMEOUT_S = 120.0
+_MAX_SUBPROCESS_TIMEOUT_S = 900.0
+
+
+def _verifier_python_executable(python_exe: Optional[str] = None) -> str:
+    """Use a console-capable sibling when the daemon runs under pythonw.
+
+    The Brain service intentionally uses ``pythonw.exe`` so it never opens a
+    terminal window. Court children, however, must capture stdout/stderr and
+    wait on nested pytest processes. The matching ``python.exe`` shares the
+    same environment without inheriting the GUI-subsystem I/O semantics.
+    """
+    executable = str(python_exe or sys.executable)
+    basename = os.path.basename(executable)
+    if basename.casefold().startswith("pythonw"):
+        console_name = basename[:6] + basename[7:]
+        console = os.path.join(os.path.dirname(executable), console_name)
+        if os.path.isfile(console):
+            return console
+    return executable
+
+
+def _declared_gate_timeout(gate_spec: dict[str, Any]) -> float:
+    """Return the work node's bounded Court timeout or the safe default."""
+    try:
+        timeout = float(gate_spec.get("timeout_s"))
+    except (TypeError, ValueError):
+        return _SUBPROCESS_TIMEOUT_S
+    if timeout <= 0:
+        return _SUBPROCESS_TIMEOUT_S
+    return min(timeout, _MAX_SUBPROCESS_TIMEOUT_S)
 
 
 # ─────────────────────────── attestation type ──────────────────────────
@@ -241,7 +283,7 @@ def run_artifact_gate_subprocess(
             child_pid=None, returncode=None, stderr="", spawned=False,
         )
 
-    exe = python_exe or sys.executable
+    exe = _verifier_python_executable(python_exe)
     if not exe:
         return _SubprocessProbe(
             result=ProbeResult(passed=False, detail="no python interpreter to spawn"),
@@ -440,6 +482,7 @@ def server_side_verify(
     sub = run_artifact_gate_subprocess(
         gate_kind=gate_kind, gate_spec=gate_spec, context=ctx,
         python_exe=python_exe,
+        timeout=_declared_gate_timeout(gate_spec),
     )
     res = sub.result
     if not res.applied:

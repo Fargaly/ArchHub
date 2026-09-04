@@ -50,38 +50,22 @@ as a **Skill** — copy-paste shareable JSON your firm owns.
 
 ### Install (Windows)
 
-**Easiest** — via package manager (no SmartScreen warning, signed by
-the package transport):
+**Download** — `ArchHub-Setup-0.exe`, double-click to install:
 
-```cmd
-winget install Fargaly.ArchHub
-```
-
-or
-
-```cmd
-scoop install https://raw.githubusercontent.com/Fargaly/ArchHub/main/installer/scoop/archhub.json
-```
-
-or
-
-```cmd
-choco install archhub
-```
-
-**Direct download** — installer .exe, double-click to install:
-
-1. Download the latest `ArchHub-Setup-x.y.z.exe` from
+1. Download `ArchHub-Setup-0.exe` from
    [Releases](https://github.com/Fargaly/ArchHub/releases/latest).
-2. Double-click the installer. Desktop icon, Start menu shortcut, and
-   optional sign-in-on-startup are added.
-3. Launch ArchHub. The first-run wizard signs you in to a cloud LLM
-   and shows what AEC tools are detected.
+2. Double-click the installer. It upgrades any earlier ArchHub in place;
+   Desktop icon and Start-menu shortcut are added.
+3. Launch ArchHub. Free in open beta: no credit card, no trial clock.
 
-The direct-download path will show a Windows SmartScreen warning until
-the SignPath OSS Authenticode application clears (in progress). The
-package-manager paths sidestep this entirely because the package
-manager itself is signed.
+The installer is not code-signed yet (code-signing is geo-blocked for the
+founder's region), so Windows SmartScreen shows a warning: **More info →
+Run anyway**. The version label is `0` while the product is in open beta.
+
+**Package managers** — a Scoop manifest is in the repo
+(`scoop install https://raw.githubusercontent.com/Fargaly/ArchHub/main/installer/scoop/archhub.json`).
+winget and Chocolatey manifests are drafts in `installer/` and are **not
+published** yet: `winget install Fargaly.ArchHub` does not resolve today.
 
 ### Install (from source, any OS)
 

@@ -79,20 +79,72 @@ from __future__ import annotations
 
 import sys
 import threading
+from pathlib import Path
 
 import pytest
+
+
+_APP_ROOT = Path(__file__).resolve().parents[2] / "app"
+
+
+def _is_app_root_path(path_text: str) -> bool:
+    try:
+        return Path(path_text).resolve() == _APP_ROOT.resolve()
+    except Exception:
+        return False
 
 
 # ── Root-cause fix: pin the genuine installed `mcp` SDK in sys.modules BEFORE
 # any test module can insert ArchHub/app (whose `app/mcp/` package would shadow
 # it) onto sys.path. Done at conftest import time so it runs ahead of all
 # collection. Degrade gracefully if `mcp` is not installed in this env.
+# ── The node language, wherever it is. Eight test modules insert the
+# workstation path 10.PRODUCT/13.NODE-LANGUAGE; on a CI checkout that path
+# does not exist and the nested copy at <repo>/node-language does. Resolve
+# it once here, ahead of collection, so `import nodelang` works on both.
+def _put_node_language_on_path() -> None:
+    here = Path(__file__).resolve()
+    candidates = (
+        here.parents[4] / "10.PRODUCT" / "13.NODE-LANGUAGE",
+        here.parents[2] / "node-language",
+    )
+    for candidate in candidates:
+        if (candidate / "nodelang" / "__init__.py").is_file():
+            text = str(candidate)
+            if text not in sys.path:
+                sys.path.insert(0, text)
+            return
+
+
+_put_node_language_on_path()
+
+
+# Courts that need the founder's workstation itself -- the governed workspace
+# root (00.GOVERNANCE), the agent hook configs under the profile, the DPAPI
+# owner store -- run there and nowhere else. On a bare checkout they are not
+# collected, which is what a CI runner is.
+_WORKSTATION_ONLY = (
+    "test_universal_session_manager.py", "test_universal_runtime_bridge.py",
+    "test_owner_binding.py", "test_hook_coverage.py",
+    # grand-map sync, the dispatcher and active-work courts drive the governed
+    # workspace itself (00.GOVERNANCE + the live grand map)
+    "test_grand_map_sync.py", "test_dispatcher.py", "test_active_work_db.py",
+    "test_active_work_cell_migration.py",
+)
+if not (Path(__file__).resolve().parents[4] / "00.GOVERNANCE").is_dir():
+    collect_ignore = list(_WORKSTATION_ONLY)
+
+
 def _pin_real_mcp() -> None:
+    saved_path = list(sys.path)
     try:
+        sys.path[:] = [p for p in sys.path if not _is_app_root_path(p)]
         import mcp  # noqa: F401  (caches the real top-level package)
         import mcp.types  # noqa: F401  (the submodule build_server's tools need)
     except Exception:
         return
+    finally:
+        sys.path[:] = saved_path
 
 
 _pin_real_mcp()
@@ -109,6 +161,124 @@ _BRAIN_WORKER_THREAD_NAMES = frozenset({
     "brain-publish-worker",
     "reflexion-worker",
 })
+
+
+class _OwnerBindingCellBridge:
+    def __init__(self):
+        self.created = []
+        self.synced = []
+        self.route_trees = {}
+
+    def assembly_create(
+        self,
+        *,
+        definition_key,
+        fields,
+        idempotency_field=None,
+        x=0.0,
+        y=0.0,
+    ):
+        record = {
+            "created_root": f"assembly-instance:owner-{len(self.created) + 1}",
+            "definition_key": definition_key,
+            "fields": dict(fields or {}),
+            "idempotency_field": idempotency_field,
+        }
+        self.created.append(record)
+        return record
+
+    def roma_tree_sync(self, tree, *, source="brain.roma", **_kwargs):
+        self.route_trees[str(tree["tree_id"])] = dict(tree or {})
+        record = {
+            "ok": True,
+            "tree_root": f"app:roma-tree:{tree['tree_id']}",
+            "tree": dict(tree or {}),
+            "source": source,
+            "node_count": len((tree or {}).get("nodes", {})),
+        }
+        self.synced.append(record)
+        return record
+
+    def roma_tree_get(self, *, tree_id, **_kwargs):
+        if str(tree_id) not in self.route_trees:
+            raise RuntimeError("cell tree not found")
+        tree = self.route_trees[str(tree_id)]
+        tree_id = str(tree["tree_id"])
+        nodes = tree.get("nodes", {})
+        root_for_id = {
+            node_id: f"app:roma-tree:{tree_id}:node:{node_id}"
+            for node_id in nodes
+        }
+        projected_nodes = {}
+        for node_id, node in nodes.items():
+            root = root_for_id[node_id]
+            projected_nodes[root] = {
+                "root": root,
+                "node_id": node_id,
+                "parent": node.get("parent") or "",
+                "title": node.get("title") or "",
+                "predicate": node.get("predicate") or "",
+                "state": node.get("state") or "open",
+                "gate_kind": node.get("gate_kind") or "manual",
+                "gate_spec": dict(node.get("gate_spec") or {}),
+                "verdict": node.get("verdict") or "",
+                "evidence_ref": node.get("evidence_ref") or "",
+                "claimed_by": node.get("claimed_by") or "",
+                "past_claimants": list(node.get("past_claimants") or []),
+                "judged_by": node.get("judged_by") or "",
+                "attempts": int(node.get("attempts") or 0),
+                "created_at": node.get("created_at"),
+                "updated_at": node.get("updated_at"),
+                "children": [
+                    root_for_id[child] for child in node.get("children", [])
+                ],
+            }
+        return {
+            "ok": True,
+            "tree_id": tree_id,
+            "tree_root": f"app:roma-tree:{tree_id}",
+            "owner": tree.get("owner_user", "founder"),
+            "title": tree.get("title", ""),
+            "created_at": tree.get("created_at"),
+            "updated_at": tree.get("updated_at"),
+            "root_node": root_for_id[tree["root_id"]],
+            "nodes": projected_nodes,
+        }
+
+    def roma_tree_list(self, **_kwargs):
+        return {
+            "ok": True,
+            "tree_ids": sorted(self.route_trees),
+            "tree_count": len(self.route_trees),
+        }
+
+
+@pytest.fixture(autouse=True)
+def _legacy_tool_cell_bridge(request, monkeypatch):
+    """Legacy MCP tool tests that now prove Cell-first writes get a test bridge.
+
+    The production route remains fail-closed when Universal Cell is unreachable;
+    this fixture just keeps older behavior courts focused on their domain
+    contract instead of on desktop runtime availability.
+    """
+    module_name = getattr(request.module, "__name__", "")
+    if not module_name.endswith((
+        "test_owner_binding",
+        "test_fanout_tools",
+        "test_firm",
+        "test_community_mcp_tools",
+        "test_community_groups",
+        "test_slices_9_through_16",
+        "test_sync_worker",
+        "test_court_unrig",
+        "test_dispatcher",
+    )):
+        return None
+    from personal_brain import universal_runtime as ur
+
+    bridge = _OwnerBindingCellBridge()
+    monkeypatch.setattr(ur, "UniversalRuntimeBridge", lambda: bridge)
+    return bridge
 
 
 def _real_mcp_is_pinned() -> bool:

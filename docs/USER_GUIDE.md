@@ -280,7 +280,7 @@ each host node now.
 
 **Revit `/exec` errors with "Microsoft.CodeAnalysis 4.11.0.0":**
 - Add-in DLL needs the AssemblyResolve handler patch. Close Revit,
-  run `Install.bat` to redeploy the add-in, reopen Revit.
+  run `scripts\Install.bat` to redeploy the add-in, reopen Revit.
 
 **Session graph won't save:**
 - Check `%LOCALAPPDATA%\ArchHub\sessions\` for write access. Each

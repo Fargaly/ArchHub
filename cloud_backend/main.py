@@ -46,6 +46,7 @@ import founder_cockpit
 import google_auth
 import marketplace
 import proxy
+import readiness
 
 
 # Hide the interactive API docs + OpenAPI schema in production / on Fly so
@@ -65,10 +66,21 @@ app = FastAPI(
 # Only the desktop client + the public website need to call this
 # backend. CORS-allow our own origin so the public dashboard at
 # archhub.io can fetch /v1/me from the browser.
+_PROD_ORIGINS = ["https://archhub.io"]
+_DEV_ORIGINS = ["http://localhost:5173", "http://localhost:3000"]
+
+
+def _cors_origins() -> list[str]:
+    """Dev origins only when NOT production and NOT on Fly (the same gate
+    as the docs endpoints); a credentialed allowlist must not ship them."""
+    if _HIDE_API_DOCS:
+        return list(_PROD_ORIGINS)
+    return _PROD_ORIGINS + _DEV_ORIGINS
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://archhub.io", "http://localhost:5173",
-                    "http://localhost:3000"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -323,6 +335,11 @@ def healthz() -> dict:
     return {"ok": True, "ts": int(time.time())}
 
 
+@app.get("/readyz")
+def readyz() -> dict:
+    return readiness.capability_report()
+
+
 @app.post("/v1/auth/register", status_code=202)
 async def register(req: RegisterReq) -> dict:
     """Trigger the magic-link email + capture the PKCE challenge.
@@ -343,7 +360,16 @@ async def register(req: RegisterReq) -> dict:
     # User row was created inside register_via_email — write profile
     # fields onto it. db.update_user_profile drops unknown keys so
     # this is safe to call with the full request dict.
+    # This endpoint is unauthenticated by design -- it only mails a magic
+    # link -- so the profile fields on the request are an ANONYMOUS claim
+    # about whoever owns that address. Writing them onto an existing row
+    # let a stranger rewrite a real account's name, firm and role by
+    # posting their email. Only a row this call actually created may be
+    # filled in; an established account keeps what it has until its owner
+    # signs in and edits it.
     user = db.get_user_by_email(str(req.email))
+    if user is not None and not db.user_profile_is_empty(user["id"]):
+        return {"status": "accepted"}
     if user is not None:
         profile = req.model_dump(exclude={"email", "code_challenge",
                                           "redirect"}, exclude_none=True)
@@ -794,6 +820,30 @@ def _firm_keys_for_user(user: dict) -> list[str]:
     return [str(c["id"]) for c in companies if c.get("id")]
 
 
+def _community_keys_for_user(user: dict) -> list[str]:
+    """Community replica keys this user may read and write: the memberships
+    the cloud recorded from verified join-codes. Never the wire."""
+    return db.list_community_keys_for_user(user["id"])
+
+
+@app.post("/v1/community/join")
+async def community_join(req: Request,
+                         authorization: str | None = Header(None)) -> dict:
+    """Present a community join-code; the cloud verifies it against the owner
+    key inside it and records the membership that gates the shared replica."""
+    user = _require_user(authorization)
+    body = await req.json() if await _has_body(req) else {}
+    from community_join import verify_join_code
+    payload, reason = verify_join_code(str((body or {}).get("envelope") or ""))
+    if payload is None:
+        raise HTTPException(status_code=400, detail={"error": reason})
+    db.add_community_member(str(payload["community_id"]), user["id"],
+                            role=str(payload.get("role") or "member"),
+                            owner_pub=str(payload["owner_pub"]))
+    return {"joined": True, "community_id": str(payload["community_id"]),
+            "community_keys": _community_keys_for_user(user)}
+
+
 @app.post("/v1/brain/sync")
 async def brain_sync(req: Request,
                       authorization: str | None = Header(None)) -> dict:
@@ -842,10 +892,15 @@ async def brain_sync(req: Request,
     # whatever community keys this very delta contributed to (below), so a
     # first-ever push immediately round-trips. Keys are sanitised in the
     # replica layer; an unsafe one is skipped, never fatal.
-    community_keys = body.get("community_keys") or []
-    if not isinstance(community_keys, list):
-        community_keys = []
-    community_keys = [str(k) for k in community_keys if k]
+    # A key the CALLER names is a claim, not a membership. The cloud has
+    # no community membership table, so the only honest evidence it holds
+    # is what this user has actually contributed to before -- naming a
+    # community you never wrote to used to read every fact in it, which
+    # made any guessed id a key.
+    # Community read/write set: memberships the cloud recorded from a
+    # verified join-code (POST /v1/community/join). Nothing named on the
+    # wire, nothing earned by having written before.
+    community_keys = _community_keys_for_user(user)
 
     try:
         replica = brain_replica.BrainReplica.open(
@@ -864,10 +919,9 @@ async def brain_sync(req: Request,
             set(replica.firm_keys)
             | set(replica.contributed_firm_keys())
             | set(merge_result.get("firm_keys") or []))
-        replica.community_keys = sorted(
-            set(replica.community_keys)
-            | set(replica.contributed_community_keys())
-            | set(merge_result.get("community_keys") or []))
+        # Community read-set stays the membership list; contributions can
+        # only have landed in member communities now.
+        replica.community_keys = sorted(set(replica.community_keys))
         merged = replica.export_delta(since_hlc=since_hlc)
     except ValueError as ex:
         raise HTTPException(status_code=400, detail={"error": str(ex)})

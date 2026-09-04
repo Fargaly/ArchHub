@@ -840,6 +840,19 @@ class BrainReplica:
                                 "id": fid,
                                 "reason": "firm scope fragment missing firm_id"})
                             continue
+                        # The READ set is resolved server-side from
+                        # company_members; the write must obey the same
+                        # list. Routing on the fragment's own firm_id let
+                        # any signed-in stranger write into another firm's
+                        # shared brain -- and because contributing widens
+                        # the reader's key set, that one write turned them
+                        # into a permanent reader of that firm.
+                        if str(key) not in {str(k) for k in self.firm_keys}:
+                            rejected.append({
+                                "id": fid,
+                                "reason": "firm scope fragment names a firm "
+                                          "this caller is not a member of"})
+                            continue
                         firm_routes.setdefault(str(key), []).append(frag)
                     else:  # community
                         key = _community_key_of(frag)
@@ -896,6 +909,17 @@ class BrainReplica:
                                      "reason": f"firm route failed: {ex}"})
                     accepted -= 1
         for key, frags in community_routes.items():
+            # Same law as the firm route: the write must obey the server-
+            # resolved membership list. Routing on the fragment's own
+            # community_id let any signed-in user write into any community
+            # from a guessed id -- and contributing widened the reader's
+            # key set, so one write made them a permanent reader.
+            if str(key) not in {str(k) for k in self.community_keys}:
+                for f in frags:
+                    rejected.append({"id": f.get("id"),
+                                     "reason": "community %s: not a member" % key})
+                    accepted -= 1
+                continue
             try:
                 shared = BrainReplica.open_shared("community", key, root=self.root)
                 shared.apply_delta({"fragments": frags})

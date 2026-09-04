@@ -1,0 +1,19 @@
+{
+  "schema": "archhub-baboom-runtime-single-authority-status/v1",
+  "ok": true,
+  "product_root": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION",
+  "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+  "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+  "scan_roots": [
+    "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime\\nodelang"
+  ],
+  "scanned_files": 158,
+  "violation_count": 0,
+  "authority_selector_count": 0,
+  "runtime_reference_count": 0,
+  "violations": [],
+  "authority_court": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_baboom_single_authority.py",
+  "authority_court_expected_state": "green: copied runtime has no BABOOM authority selectors",
+  "required_action": "BABOOM runtime selector scan is clear",
+  "rule": "The copied runtime may not select a second BABOOM authority. This status is read-only evidence and does not remove or edit files."
+}

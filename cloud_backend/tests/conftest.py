@@ -12,8 +12,22 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 
 
+def _prefer_cloud_backend_main() -> None:
+    """Cloud backend tests import top-level ``main``; other suites may have
+    cached app/main.py under that name in the same pytest process."""
+    if str(BACKEND_ROOT) in sys.path:
+        sys.path.remove(str(BACKEND_ROOT))
+    sys.path.insert(0, str(BACKEND_ROOT))
+    loaded = sys.modules.get("main")
+    if loaded is not None:
+        loaded_path = Path(getattr(loaded, "__file__", "") or "")
+        if loaded_path.resolve() != (BACKEND_ROOT / "main.py").resolve():
+            sys.modules.pop("main", None)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_db(tmp_path, monkeypatch):
+    _prefer_cloud_backend_main()
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DATABASE_URL", str(db_path))
     # Force config to pick up the new path on the next module load.

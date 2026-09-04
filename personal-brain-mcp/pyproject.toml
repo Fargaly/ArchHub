@@ -96,3 +96,7 @@ addopts = [
 # their config stays plugin-agnostic. "auto" means the first async brain test
 # added is awaited, not silently collected-but-skipped (a false green).
 asyncio_mode = "auto"
+
+[tool.pyright]
+extraPaths = ["../../13.NODE-LANGUAGE"]
+

@@ -19,7 +19,7 @@ This is the Python half of the contract:
      (list of `{k, v}`) and `_params_to_config` still folds that to the flat
      `config` dict the executor reads.
 
-The JSX renderer reuses the existing `FullParam` widget; the schema→widget
+The JSX renderer feeds node-backed property surfaces; the schema→control
 mapping it relies on (options→select, boolean→checkbox, number→number,
 string→text) is pinned here so a schema-shape change can't silently break the
 inspector.
@@ -170,9 +170,9 @@ def test_params_to_config_passthrough_dict_unchanged():
 # ── 4. Pin the schema→widget mapping the JSX relies on ───────────────
 #
 # The JSX `_schemaFieldToParam` helper turns a JSON-Schema property into the
-# {k,type,...} shape `FullParam` renders. We can't run JS here, but we CAN pin
-# the schema shapes it keys off so a registry-side change that would silently
-# break the inspector mapping is caught in Python.
+# {k,type,...} shape node-backed property surfaces render. We can't run JS here,
+# but we CAN pin the schema shapes it keys off so a registry-side change that
+# would silently break the inspector mapping is caught in Python.
 
 
 @pytest.mark.parametrize("kind,prop,expected_widget", [

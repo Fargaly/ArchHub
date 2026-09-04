@@ -555,7 +555,9 @@ def test_aibody_send_wired_to_send_chat_history():
     body = _component_body(src, "AIBody")
     assert "send_chat_history" in body, "AIBody Send must call send_chat_history"
     assert "sendReply" in body, "AIBody Send must be wired to sendReply"
-    assert "onClick={sendReply}" in body
+    assert "<ConversationReplyComposerSurface" in body
+    assert "onSubmit={sendReply}" in body
+    assert "conversation.reply.submit" in src
 
 
 def test_outputbody_save_wired_to_save_node_output():
@@ -564,6 +566,10 @@ def test_outputbody_save_wired_to_save_node_output():
     body = _component_body(src, "OutputBody")
     assert "save_node_output" in body, "OutputBody save must call save_node_output"
     assert "onSave" in body
+    assert "<NodeOutputBodySurface" in body
+    assert "node-output.save" in src
+    assert "style={smallBtn" not in body
+    assert "onClick={onSave}" not in body
 
 
 def test_focus_node_listener_present():
@@ -574,10 +580,17 @@ def test_focus_node_listener_present():
         "lm-focus-node listener missing — clicking a health issue must pan "
         "the canvas to the flagged node"
     )
-    # The listener must do real work: pan + select + focus.
-    seg = src[src.index("addEventListener('lm-focus-node'") - 1200:
-              src.index("addEventListener('lm-focus-node'") + 200]
-    assert "setPan(" in seg and "setSelectedIds(" in seg and "setFocusId(" in seg
+    # The listener must do real canvas work: pan + select + focus. There is
+    # also a root-shell listener for right-rail focus context, so inspect every
+    # lm-focus-node listener window instead of only the first occurrence.
+    listener_windows = [
+        src[max(0, m.start() - 1800):m.end() + 500]
+        for m in re.finditer(r"addEventListener\('lm-focus-node'", src)
+    ]
+    assert any(
+        "setPan(" in seg and "setSelectedIds(" in seg and "setFocusId(" in seg
+        for seg in listener_windows
+    )
 
 
 def test_date_divider_is_computed_not_hardcoded():

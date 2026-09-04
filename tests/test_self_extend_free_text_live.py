@@ -160,6 +160,8 @@ def _reachable_provider_model():
     """Return the (model_string) to pin for a real run, or None to skip. Prefers
     NVIDIA Llama-3.3-70B (the reachable_model the free-default resolves); falls
     back to letting the router auto-pick when only another key is configured."""
+    if os.environ.get("ARCHHUB_RUN_LIVE_LLM_TESTS") != "1":
+        return None
     try:
         from llm_router import load_api_key
     except Exception:
@@ -183,10 +185,14 @@ def _reachable_provider_model():
 def test_free_text_live_real_model_picks_and_court_greens():
     """REAL MODEL: a typed free-text ask makes the live model EMIT
     create_connector; the loop builds the real connector + the ROMA court greens
-    it. Skipped when no provider key is reachable (CI without secrets)."""
+    it. Skipped unless live LLM tests are explicitly enabled and a provider key
+    is reachable."""
     model = _reachable_provider_model()
     if model is None:
-        pytest.skip("no reachable LLM provider key (set NVIDIA_API_KEY to run live)")
+        pytest.skip(
+            "live LLM witness is opt-in; set ARCHHUB_RUN_LIVE_LLM_TESTS=1 "
+            "and a provider key to run"
+        )
 
     from manager import ConnectorManager
     from tool_engine import ToolEngine

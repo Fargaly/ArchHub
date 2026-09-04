@@ -8,7 +8,35 @@ APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ArchHub"
 SECRETS_FILE = APP_DIR / "secrets.dat"
 SETTINGS_FILE = APP_DIR / "settings.json"
 APP_DIR.mkdir(parents=True, exist_ok=True)
+# Legacy pad: only ever used to READ a file written before the DPAPI
+# migration below; nothing is written with it any more.
 _PAD = b"ArchHub-fallback-not-secure-use-keyring"
+_DPAPI_MARK = b"ARCHHUB-DPAPI-1:"
+_DPAPI_ENTROPY = b"ArchHub secrets.dat"
+
+
+def _dpapi(data: bytes, *, protect: bool) -> bytes:
+    """Windows DPAPI bound to the current user; the OS holds the key."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    def _blob(raw: bytes) -> _Blob:
+        buf = ctypes.create_string_buffer(raw, len(raw))
+        return _Blob(len(raw), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    inp, ent, out = _blob(data), _blob(_DPAPI_ENTROPY), _Blob()
+    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    if not fn(ctypes.byref(inp), None, ctypes.byref(ent), None, None, 0, ctypes.byref(out)):
+        raise OSError("DPAPI refused (%s)" % ("protect" if protect else "unprotect"))
+    try:
+        return ctypes.string_at(out.pbData, out.cbData)
+    finally:
+        kernel32.LocalFree(out.pbData)
 
 def _try_keyring():
     try:
@@ -22,12 +50,20 @@ def _xor(data: bytes) -> bytes:
 def _read_file() -> dict:
     if not SECRETS_FILE.exists(): return {}
     try:
-        return json.loads(_xor(base64.b64decode(SECRETS_FILE.read_bytes())).decode("utf-8"))
+        raw = SECRETS_FILE.read_bytes()
+        if raw.startswith(_DPAPI_MARK):
+            return json.loads(_dpapi(base64.b64decode(raw[len(_DPAPI_MARK):]), protect=False).decode("utf-8"))
+        # Pre-migration file: readable once, rewritten protected on the next save.
+        return json.loads(_xor(base64.b64decode(raw)).decode("utf-8"))
     except Exception:
         return {}
 
 def _write_file(data: dict) -> None:
-    SECRETS_FILE.write_bytes(base64.b64encode(_xor(json.dumps(data).encode("utf-8"))))
+    """Written with the user's DPAPI key; the hardcoded pad is never written again."""
+    if os.name != "nt":
+        raise OSError("the file fallback protects secrets with Windows DPAPI only; use keyring")
+    payload = _DPAPI_MARK + base64.b64encode(_dpapi(json.dumps(data).encode("utf-8"), protect=True))
+    SECRETS_FILE.write_bytes(payload)
 
 def _read_settings() -> dict:
     if not SETTINGS_FILE.exists(): return {}

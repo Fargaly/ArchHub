@@ -183,7 +183,7 @@ def apply_update() -> tuple[bool, str]:
     if after.local_commit == status.local_commit:
         return False, (
             "git pull reported success but the local commit didn't change. "
-            "Run Update.bat from the repo folder to diagnose."
+            "Run scripts\\Update.bat from the repo folder to diagnose."
         )
     return True, (
         f"Updated {status.local_commit} → {after.local_commit}\n"

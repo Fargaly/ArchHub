@@ -136,11 +136,12 @@ def test_host_node_v2_s2_has_floating_disable_verbs_bar():
     start = src.find("const HostNodeV2Body = ")
     end = src.find("\nconst ", start + 10)
     body = src[start:end if end > 0 else start + 8000]
-    # Each verb fires a dedicated lm-node-toggle-* event from the bar.
-    assert "lm-node-toggle-pin" in body
-    assert "lm-node-toggle-freeze" in body
-    assert "lm-node-toggle-bypass" in body
-    assert "lm-node-toggle-preview" in body
+    # Each verb is exposed as a graph-owned node action from the bar.
+    assert "NodeIconButtonSurface" in body
+    assert "toggleHostVerb(v.key)" in body
+    assert "node.verb.' + v.key + '.toggle" in body
+    for verb in ("pin", "freeze", "bypass", "preview"):
+        assert f"key:'{verb}'" in body
 
 
 def test_host_node_v2_s3_has_output_pluck_section():
@@ -150,9 +151,11 @@ def test_host_node_v2_s3_has_output_pluck_section():
     end = src.find("\nconst ", start + 10)
     body = src[start:end if end > 0 else start + 8000]
     # Per AgDR-0024 S3 — outputs render with hover-to-promote affordance
-    # and dispatch lm-host-promote-output.
+    # and promote through the graph-owned output-row action.
     assert "HOVER TO PROMOTE" in body
-    assert "lm-host-promote-output" in body
+    assert "NodeOutputPortRowSurface" in body
+    assert 'action="connector.output.promote"' in body
+    assert "promoteOutput(out)" in body
 
 
 def test_host_node_v2_s2_has_advanced_inputs_section():

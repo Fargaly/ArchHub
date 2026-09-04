@@ -139,11 +139,13 @@ jobs:
       # --strict-markers contract, so this is a bare `pytest` from the package.
       # The clip/boto3/fastapi-gated tests SKIP cleanly here (no extras) — the
       # brain-extras job below installs those so they RUN (TCI-08).
+      # The brain's universal-runtime bridge is a Windows named pipe and its
+      # owner binding is DPAPI: those courts run where the pipe exists.
       - name: Install brain package + dev deps
-        if: matrix.suite == 'cloud'
+        if: matrix.suite == 'desktop'
         run: python -m pip install -e "personal-brain-mcp/.[dev]"
       - name: Run personal-brain-mcp test suite
-        if: matrix.suite == 'cloud'
+        if: matrix.suite == 'desktop'
         working-directory: personal-brain-mcp
         env:
           PYTHONPATH: src

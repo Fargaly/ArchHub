@@ -1,21 +1,25 @@
 {
   "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
-  "version": "0.16.0",
+  "version": "0",
   "description": "AI cockpit for architects — drives Revit, Blender, AutoCAD, 3ds Max and Speckle from one chat.",
   "homepage": "https://github.com/Fargaly/ArchHub",
   "license": "MIT",
-  "url": "https://github.com/Fargaly/ArchHub/releases/download/v0.16.0/ArchHub-Setup-0.16.0.exe",
+  "url": "https://github.com/Fargaly/ArchHub/releases/download/v0/ArchHub-Setup-0.exe",
   "innosetup": true,
   "shortcuts": [
-    [ "ArchHub.cmd", "ArchHub" ]
+    [
+      "ArchHub.vbs",
+      "ArchHub"
+    ]
   ],
   "post_install": [
-    "Write-Host 'ArchHub installed. Launch from Start Menu or run: archhub'"
+    "Write-Host 'ArchHub installed. Launch it from the Start menu.'"
   ],
   "checkver": {
     "github": "https://github.com/Fargaly/ArchHub"
   },
   "autoupdate": {
     "url": "https://github.com/Fargaly/ArchHub/releases/download/v$version/ArchHub-Setup-$version.exe"
-  }
+  },
+  "hash": "sha256:697ea009f46ceefc0032a3c18c71add1629d926e628f5b10e1fe3c93114caaa1"
 }

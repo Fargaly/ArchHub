@@ -36,9 +36,11 @@ enqueue work onto the live ReflexionWorker without re-creating it.
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from .storage import BrainStore
@@ -263,7 +265,12 @@ class WorkerSupervisor:
         # Default DiskTransport co-located with the brain db, matching the
         # ARCHITECTURE LOCK "DiskTransport at .speckle/<project>/" spirit:
         # a single JSON snapshot next to brain.db. No server, fully offline.
-        snap_path = self.store.path.parent / "brain-sync-snapshot.json"
+        if str(self.store.path) == ":memory:":
+            snap_root = Path(tempfile.gettempdir()) / "archhub-brain-worker"
+            snap_root.mkdir(parents=True, exist_ok=True)
+            snap_path = snap_root / ("brain-sync-snapshot-%s.json" % id(self.store))
+        else:
+            snap_path = self.store.path.parent / "brain-sync-snapshot.json"
         transport = JsonFileTransport(snap_path)
 
         # Dynamic scope: always sync FIRM + PROJECT; ALSO sync COMMUNITY

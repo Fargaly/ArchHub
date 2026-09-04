@@ -24,6 +24,11 @@ immediately with the proposal preview.
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 import hashlib
 import json
 import queue
@@ -60,10 +65,133 @@ class LLMCritic(Protocol):
     def generate_eval_queries(self, skill_text: str, n: int = 20) -> list[dict[str, Any]]: ...
 
 
+_INTENT_STOP_WORDS = {
+    "a", "an", "and", "as", "at", "for", "from", "in", "into", "of",
+    "on", "the", "this", "to", "with", "save", "saved", "reusable",
+    "reuse", "skill",
+}
+_GENERIC_SKILL_NAMES = {
+    "auto_skill", "skill", "skill_flow", "workflow", "workflow_flow",
+    "compose_group_flow", "archhub_compose_group_flow",
+}
+
+
+def normalise_critic_policy(policy: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Bound the editable policy accepted from a visible critic group."""
+    raw = policy if isinstance(policy, dict) else {}
+    mode = str(raw.get("mode") or "intent_first")[:64]
+    if mode not in ("intent_first", "llm_first"):
+        mode = "intent_first"
+    provider_mode = str(
+        raw.get("provider_mode") or "configured_if_enabled")[:64]
+    if provider_mode not in (
+        "configured_if_enabled", "deterministic", "real_if_available",
+    ):
+        provider_mode = "configured_if_enabled"
+    generic_name_policy = str(
+        raw.get("generic_name_policy") or "reject")[:64]
+    if generic_name_policy not in ("reject", "allow"):
+        generic_name_policy = "reject"
+    try:
+        minimum_intent_terms = int(raw.get("minimum_intent_terms") or 2)
+    except (TypeError, ValueError):
+        minimum_intent_terms = 2
+    return {
+        "mode": mode,
+        "provider_mode": provider_mode,
+        "source_label": str(raw.get("source_label") or "")[:256],
+        "source_role": str(raw.get("source_role") or "workflow")[:128],
+        "generic_name_policy": generic_name_policy,
+        "minimum_intent_terms": max(1, min(minimum_intent_terms, 8)),
+    }
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def _semantic_intent(
+    trace_text: str,
+    policy: dict[str, Any],
+    tool_names: list[str],
+) -> dict[str, Any]:
+    user_match = re.search(r"^USER:\s*(.+)$", trace_text, re.MULTILINE)
+    prompt_match = re.search(r"^PROMPT:\s*(.+)$", trace_text, re.MULTILINE)
+    request = (user_match or prompt_match)
+    request_text = request.group(1).strip() if request else "Reuse the saved workflow"
+    label = policy.get("source_label", "").strip()
+    if not label:
+        quoted = re.search(r"['\"]([^'\"]{2,128})['\"]", request_text)
+        label = quoted.group(1).strip() if quoted else request_text
+    label = re.sub(
+        r"^(?:please\s+)?(?:save|reuse|build|run|apply)\s+", "", label,
+        flags=re.IGNORECASE,
+    )
+    label = re.sub(
+        r"\s+(?:as\s+)?(?:a\s+)?reusable(?:\s+archhub)?\s+skill.*$", "",
+        label, flags=re.IGNORECASE,
+    ).strip(" .:-") or "Saved workflow"
+    terms = [
+        word.lower() for word in re.findall(r"[A-Za-z0-9]+", label)
+        if word.lower() not in _INTENT_STOP_WORDS
+    ]
+    required = policy["minimum_intent_terms"]
+    if len(terms) < required:
+        tool_terms = []
+        for tool in tool_names:
+            tool_terms.extend(
+                term for term in tool.lower().split("_")
+                if term not in _INTENT_STOP_WORDS
+            )
+        terms = _ordered_unique(terms + tool_terms)[:8]
+    if len(terms) < required:
+        terms = _ordered_unique(terms + ["saved", "workflow"])
+    name = "_".join(terms[:8])[:64].strip("_") or "saved_workflow"
+    rejected = False
+    if policy["generic_name_policy"] == "reject" \
+            and name in _GENERIC_SKILL_NAMES:
+        rejected = True
+        name = "_".join(_ordered_unique(terms + ["reusable", "workflow"])[:8])
+        name = name[:64].strip("_") or "saved_reusable_workflow"
+    phrase = " ".join(terms[:8]) or label.lower()
+    triggers = _ordered_unique([
+        f"reuse {phrase}",
+        f"apply {phrase}",
+        f"build {phrase}",
+        request_text.lower()[:160],
+    ])[:5]
+    return {
+        "request": request_text[:512],
+        "label": label[:256],
+        "name": name,
+        "terms": terms[:8],
+        "triggers": triggers,
+        "generic_name_rejected": rejected,
+        "source_role": policy["source_role"],
+    }
+
+
+def _intent_description(intent: dict[str, Any], tools: list[str]) -> str:
+    observed = ", then ".join(
+        tool.replace("_", " ") for tool in _ordered_unique(tools)[:4]
+    ) or "the observed node composition"
+    return (
+        f"Reuse the {intent['label']} {intent['source_role']} captured by the "
+        f"successful source session, preserving its validated sequence "
+        f"({observed}) and explicit outcome as a governed, repeatable skill."
+    )[:1536]
+
+
 class HeuristicCritic:
-    """Zero-LLM fallback critic. Pattern-matches the trace text + tool
-    call sequence to produce reasonable proposals. Used when no real LLM
-    is wired."""
+    """Deterministic, intent-aware fallback for an unavailable LLM critic.
+
+    The policy is supplied by the caller's visible critic node group. Tool
+    names remain evidence, but the user's stated intent and source label own
+    the skill's name, triggers, and examples.
+    """
+
+    def __init__(self, policy: Optional[dict[str, Any]] = None):
+        self.policy = normalise_critic_policy(policy)
 
     def classify(self, trace_text: str) -> dict[str, Any]:
         # Look for explicit failure signals
@@ -74,18 +202,19 @@ class HeuristicCritic:
         return {
             "verdict": "success" if success_score > 0.5 else "failure",
             "confidence": success_score,
-            "rationale": "heuristic; no LLM critic wired",
+            "rationale": "deterministic intent critic; live LLM not selected",
+            "critic": {
+                "mode": self.policy["mode"],
+                "provider": "deterministic",
+                "fallback_used": True,
+            },
         }
 
     def extract(self, trace_text: str) -> dict[str, Any]:
         # Pull tool name signature
         tool_names = re.findall(r"\b([a-z_][a-z0-9_]*)\s*\(", trace_text)
         tool_names = [t for t in tool_names if "_" in t or len(t) > 4]
-        first = tool_names[0] if tool_names else "skill"
-        # First-token base name
-        parts = first.split("_", 1)
-        base = parts[-1] if len(parts) > 1 else first
-        prefix = parts[0] if len(parts) > 1 else "auto"
+        intent = _semantic_intent(trace_text, self.policy, tool_names)
         side_effects = "host_write" if any(
             "execute" in t or "create" in t or "set_" in t
             for t in tool_names
@@ -95,11 +224,13 @@ class HeuristicCritic:
         # replace this with semantically meaningful examples.
         min_examples = 2 if side_effects in ("host_write", "network") else 1
         examples: list[dict[str, Any]] = []
-        for i, t in enumerate(tool_names[:max(min_examples, 2)]):
+        observed = tool_names[:max(min_examples, 2)] or ["validated workflow"]
+        for i, t in enumerate(observed):
             examples.append({
-                "input": f"trigger phrase that calls {t}",
-                "output": f"{t} executed successfully",
-                "note": "auto-generated from trace; refine on first use",
+                "input": intent["request"] if i == 0 else
+                f"Reuse {intent['label']} for another governed session",
+                "output": f"{intent['label']} completed through {t}",
+                "note": "grounded in the saved source intent and observed trace",
             })
         # Ensure we hit the floor even when tool_names is short
         while len(examples) < min_examples:
@@ -109,16 +240,25 @@ class HeuristicCritic:
                 "note": "placeholder",
             })
         return {
-            "proposed_name": f"{prefix}_{base}_flow"[:64],
-            "description": _heuristic_description(tool_names, trace_text),
-            "triggers": list({
-                t.replace("_", " ") for t in tool_names[:5]
-            }),
-            "requires_mcps": list({
+            "proposed_name": intent["name"],
+            "description": _intent_description(intent, tool_names),
+            "triggers": intent["triggers"],
+            "requires_mcps": _ordered_unique([
                 t.split("_")[0] for t in tool_names if "_" in t
-            })[:5],
+            ])[:5],
             "side_effects": side_effects,
+            "steps": [
+                {"tool": tool, "intent": f"Run the observed {tool} step"}
+                for tool in tool_names
+            ],
             "examples": examples,
+            "critic_evidence": {
+                "mode": self.policy["mode"],
+                "provider": "deterministic",
+                "source_label": intent["label"],
+                "intent_terms": intent["terms"],
+                "generic_name_rejected": intent["generic_name_rejected"],
+            },
         }
 
     def generate_eval_queries(self, skill_text: str, n: int = 20) -> list[dict[str, Any]]:
@@ -347,7 +487,11 @@ class ResilientCritic:
             return self.fallback.generate_eval_queries(skill_text, n=n)
 
 
-def default_critic(*, allow_real: bool = True) -> "LLMCritic":
+def default_critic(
+    *,
+    allow_real: bool = True,
+    policy: Optional[dict[str, Any]] = None,
+) -> "LLMCritic":
     """Return the best critic available in this environment.
 
     When a real LLM key is reachable (see :func:`detect_real_llm_key`) and
@@ -374,21 +518,29 @@ def default_critic(*, allow_real: bool = True) -> "LLMCritic":
     flag (explicit offline callers / tests)."""
     import os
 
+    critic_policy = normalise_critic_policy(policy)
     flag = (os.environ.get("BRAIN_REFLEXION_LLM") or "").strip().lower()
     real_enabled = flag in ("1", "true", "yes", "on")
+    if critic_policy["provider_mode"] == "real_if_available":
+        real_enabled = True
+    if critic_policy["provider_mode"] == "deterministic":
+        real_enabled = False
     if allow_real and real_enabled:
         found = detect_real_llm_key()
         if found is not None:
             provider, key = found
             if provider == "anthropic":
                 try:
-                    return ResilientCritic(AnthropicCritic(api_key=key))
+                    return ResilientCritic(
+                        AnthropicCritic(api_key=key),
+                        fallback=HeuristicCritic(critic_policy),
+                    )
                 except Exception:
                     pass
             # OpenAI (or anthropic SDK missing): no OpenAI critic class is
             # shipped yet, so fall through to the heuristic. The detection
             # still surfaces that a real key exists for the orchestrator.
-    return HeuristicCritic()
+    return HeuristicCritic(critic_policy)
 
 
 def _parse_json_response(text: str, *, default: Any) -> Any:
@@ -773,11 +925,74 @@ def classify_outcome(
     return critic.classify(_render_trace_text(trace))
 
 
+_SECRET_ARG_MARKERS = (
+    "authorization", "credential", "password", "secret", "token", "api_key",
+    "private_key",
+)
+
+
+def _bounded_step_argument(value: Any, *, depth: int = 0) -> Any:
+    """Keep replay structure while refusing secrets and unbounded trace data."""
+    if depth > 3:
+        return "[bounded]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:512]
+    if isinstance(value, list):
+        return [
+            _bounded_step_argument(item, depth=depth + 1)
+            for item in value[:16]
+        ]
+    if isinstance(value, dict):
+        bounded = {}
+        for key, item in list(value.items())[:24]:
+            safe_key = str(key)[:128]
+            if any(marker in safe_key.lower() for marker in _SECRET_ARG_MARKERS):
+                bounded[safe_key] = "[secret-ref-required]"
+            else:
+                bounded[safe_key] = _bounded_step_argument(
+                    item, depth=depth + 1)
+        return bounded
+    return str(value)[:512]
+
+
+def _observed_skill_steps(trace: dict[str, Any]) -> list[dict[str, Any]]:
+    steps = []
+    for call in (trace.get("tool_calls") or [])[:64]:
+        if not isinstance(call, dict) or not call.get("name"):
+            continue
+        tool = str(call["name"])[:256]
+        args = call.get("args") or call.get("arguments") or {}
+        safe_args = _bounded_step_argument(args)
+        subject = ""
+        if isinstance(safe_args, dict):
+            subject = str(
+                safe_args.get("title") or safe_args.get("name") or
+                safe_args.get("node_id") or ""
+            )[:256]
+        intent = "Run the observed %s step" % tool
+        if subject:
+            intent += " for %s" % subject
+        steps.append({
+            "order": len(steps) + 1,
+            "tool": tool,
+            "intent": intent,
+            "arguments": safe_args if isinstance(safe_args, dict) else {},
+        })
+    return steps
+
+
 def extract_skill_draft(
     trace: dict[str, Any], *, critic: Optional[LLMCritic] = None
 ) -> dict[str, Any]:
     critic = critic or HeuristicCritic()
-    return critic.extract(_render_trace_text(trace))
+    draft = critic.extract(_render_trace_text(trace))
+    draft = dict(draft) if isinstance(draft, dict) else {}
+    observed_steps = _observed_skill_steps(trace)
+    if observed_steps:
+        draft["steps"] = observed_steps
+    return draft
 
 
 def extract_tutorial_draft(
@@ -825,7 +1040,7 @@ def extract_tutorial_draft(
         return None
 
     # Re-use the skill extractor so name + description + prerequisites
-    # come from a single source of truth. Tutorials and skills share the
+    # come from one extractor path. Tutorials and skills share the
     # same Voyager critic gate per §3.
     draft = skill_draft if skill_draft is not None else extract_skill_draft(
         trace, critic=critic,
@@ -1074,7 +1289,7 @@ def publish_skill(
         triggers=triggers,
         requires_mcps=requires_mcps,
         requires_secrets=requires_secrets,
-        body=body or _default_body(name, description),
+        body=body or _default_body(name, description, draft.get("steps") or []),
         examples=examples,
         eval_queries=eval_queries or [],
         scope=scope,
@@ -1096,14 +1311,30 @@ def publish_skill(
     return skill
 
 
-def _default_body(name: str, description: str) -> str:
-    return f"""# {name}
-
-{description}
-
-> Auto-minted by the reflexion worker (Voyager + SkillWeaver pipeline).
-> Refine triggers, examples, and steps after a few uses.
-"""
+def _default_body(
+    name: str,
+    description: str,
+    steps: Optional[list[dict[str, Any]]] = None,
+) -> str:
+    lines = [f"# {name}", "", description, "", "## Steps"]
+    for index, step in enumerate(steps or [], start=1):
+        tool = str(step.get("tool") or "unknown")
+        intent = str(step.get("intent") or ("Run " + tool))
+        arguments = step.get("arguments")
+        lines.append(f"{index}. `{tool}` - {intent}")
+        if isinstance(arguments, dict) and arguments:
+            lines.append(
+                "   Arguments: `" + json.dumps(
+                    arguments, ensure_ascii=True, sort_keys=True,
+                    separators=(",", ":"),
+                )[:1024] + "`"
+            )
+    lines.extend([
+        "",
+        "> Auto-minted from a successful, trace-grounded workflow.",
+        "> Review editable step parameters before replaying host writes.",
+    ])
+    return "\n".join(lines)
 
 
 # ─────────────────────── orchestrator ──────────────────────────────────
@@ -1132,6 +1363,7 @@ def reflect_on_trace(
     owner_user: str,
     contributing_agent: str = "unknown",
     critic: Optional[LLMCritic] = None,
+    critic_policy: Optional[dict[str, Any]] = None,
     sandbox: Optional[SandboxRunner] = None,
     embedder: Optional[Embedder] = None,
     publish: bool = True,
@@ -1149,12 +1381,18 @@ def reflect_on_trace(
     consistency), not a seed coin-flip. Callers/tests may still inject a
     custom ``SandboxRunner`` to override."""
     t0 = time.perf_counter()
-    critic = critic or default_critic()
+    critic_policy = normalise_critic_policy(critic_policy)
+    critic = critic or default_critic(policy=critic_policy)
     if sandbox is None:
         sandbox = trace_grounded_sandbox(trace)
 
     # 1. classify
     classification = classify_outcome(trace, critic=critic)
+    classification.setdefault("critic", {
+        "mode": critic_policy["mode"],
+        "provider": type(critic).__name__,
+        "fallback_used": isinstance(critic, HeuristicCritic),
+    })
     if classification.get("verdict") != "success":
         return ReflexionResult(
             accepted=False,

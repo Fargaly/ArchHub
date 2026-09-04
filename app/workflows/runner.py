@@ -1,4 +1,8 @@
-"""WorkflowRunner — wires are real data bridges, not decoration.
+"""Legacy typed-runtime WorkflowRunner.
+
+Wires are real data bridges, not decoration, inside the old typed runtime.
+This runner is compatibility machinery while behavior is consumed into the
+Universal Cell authority in `10.PRODUCT/13.NODE-LANGUAGE`.
 
 Per ADR-003 + the wire-as-data-bridge research:
   • Each edge carries a typed runtime VALUE (not just a position record).
@@ -27,6 +31,7 @@ never bloats the JSON.
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import re
@@ -36,6 +41,24 @@ from typing import Any, Callable, Optional
 from . import registry
 from . import typesystem
 from .graph import PortType
+
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
+
+def _node_bool(node: dict, key: str, *aliases: str) -> bool:
+    """Read a node behavior flag from top-level or config, with aliases."""
+    if not isinstance(node, dict):
+        return False
+    keys = (key,) + aliases
+    for k in keys:
+        if node.get(k) is True:
+            return True
+    cfg = node.get("config") if isinstance(node.get("config"), dict) else {}
+    return any(cfg.get(k) is True for k in keys)
 
 
 # ── profound-wire field selectors ───────────────────────────────────
@@ -197,6 +220,338 @@ PERSISTABLE_TYPES = (str, int, float, bool, list, dict, tuple, type(None))
 MAX_PERSIST_BYTES = 64 * 1024   # 64 KB upper bound per wire cache
 
 
+RUNTIME_WIRE_FIELDS = (
+    "wire_node",
+    "endpoint_nodes",
+    "source_endpoint_node",
+    "target_endpoint_node",
+    "source_cardinality",
+    "target_cardinality",
+    "fan_in_count",
+    "fan_out_count",
+    "junction_node",
+    "junction_nodes",
+    "value_type",
+    "schema_ref",
+    "gate_policy",
+    "codec",
+    "encryption",
+    "encryption_key_ref",
+    "behavior",
+    "routing",
+    "aggregation",
+    "presentation",
+    "provenance",
+    "history_policy",
+    "runtime_state",
+)
+
+
+_BLOCKING_GATE_POLICIES = {
+    "0",
+    "false",
+    "off",
+    "disabled",
+    "disable",
+    "blocked",
+    "block",
+    "deny",
+    "denied",
+    "closed",
+    "stop",
+}
+
+
+def _wire_gate_blocks(edge: dict) -> bool:
+    """Return True when the wire relation's gate layer rejects flow."""
+    if edge.get("enabled") is False:
+        return True
+    policy = str(edge.get("gate_policy") or "").strip().lower()
+    if not policy:
+        return False
+    return (
+        policy in _BLOCKING_GATE_POLICIES
+        or policy.startswith("deny:")
+        or policy.startswith("block:")
+    )
+
+
+def _coerce_port_type(value: Any) -> str:
+    return typesystem.normalize_type_ref(value)
+
+
+def _port_contract(node: dict, port_name: str, direction: str) -> tuple[str, bool]:
+    """Read a node port's type/exec contract from canvas or Workflow shape."""
+    ports = []
+    if direction == "out":
+        ports = node.get("outs") or node.get("outputs") or []
+    else:
+        ports = node.get("ins") or node.get("inputs") or []
+    for port in ports:
+        if not isinstance(port, dict):
+            continue
+        name = port.get("id") or port.get("name")
+        if name != port_name:
+            continue
+        raw_type = (
+            port.get("t")
+            or port.get("type")
+            or port.get("speckle_type")
+            or "any"
+        )
+        return _coerce_port_type(raw_type), bool(port.get("exec"))
+    return PortType.ANY.value, False
+
+
+def _input_port_accepts_multiple(node: dict, port_name: str) -> bool:
+    for port in node.get("ins") or node.get("inputs") or []:
+        if not isinstance(port, dict):
+            continue
+        if (port.get("id") or port.get("name")) == port_name:
+            return bool(port.get("multiple"))
+    return False
+
+
+def _wire_type_block_reason(edge: dict,
+                            nodes_by_id: dict[str, dict]) -> str:
+    """Return a human-readable reason when the type gate rejects the edge."""
+    policy = str(edge.get("gate_policy") or "").strip().lower()
+    if "type-compatible" not in policy:
+        return ""
+    src_node = nodes_by_id.get(edge.get("src_node")) or {}
+    dst_node = nodes_by_id.get(edge.get("dst_node")) or {}
+    src_type, src_exec = _port_contract(src_node, edge.get("src_port"), "out")
+    dst_type, dst_exec = _port_contract(dst_node, edge.get("dst_port"), "in")
+    if edge.get("value_type") not in (None, ""):
+        src_type = _coerce_port_type(edge.get("value_type"))
+    if typesystem.can_wire(src_type, dst_type,
+                           output_is_exec=src_exec,
+                           input_is_exec=dst_exec):
+        return ""
+    return f"type_mismatch:{src_type}->{dst_type}"
+
+
+def _wire_schema_block_reason(edge: dict) -> str:
+    policy = str(edge.get("gate_policy") or "").strip().lower()
+    if "require-schema" not in policy:
+        return ""
+    if edge.get("schema_ref") in (None, ""):
+        return "schema_required"
+    return ""
+
+
+def _wire_block_reason(edge: dict,
+                       nodes_by_id: dict[str, dict]) -> str:
+    if _wire_gate_blocks(edge):
+        return str(edge.get("gate_policy") or "blocked")[:200]
+    schema_reason = _wire_schema_block_reason(edge)
+    if schema_reason:
+        return schema_reason[:200]
+    try:
+        fan_in_count = int(edge.get("fan_in_count") or 1)
+    except (TypeError, ValueError):
+        fan_in_count = 1
+    target_cardinality = str(edge.get("target_cardinality") or "one").lower()
+    target_node = nodes_by_id.get(edge.get("dst_node")) or {}
+    accepts_many = (
+        target_cardinality in {"many", "multiple", "list", "collection", "*"}
+        or _input_port_accepts_multiple(target_node, edge.get("dst_port"))
+    )
+    if fan_in_count > 1 and not accepts_many:
+        return "multiple_sources_require_many_target"
+    return _wire_type_block_reason(edge, nodes_by_id)[:200]
+
+
+def _wire_layer_name(edge: dict, key: str) -> str:
+    return str(edge.get(key) or "none").strip().lower()
+
+
+_FORCE_RECOOK_WIRE_BEHAVIORS = {
+    "always",
+    "always-recook",
+    "force",
+    "force-recook",
+    "live",
+    "no-cache",
+}
+
+
+def _wire_forces_source_recook(edge: dict) -> bool:
+    """Return True when the behavior layer makes this relation sample live."""
+    return _wire_layer_name(edge, "behavior") in _FORCE_RECOOK_WIRE_BEHAVIORS
+
+
+def _wire_codec_roundtrip(value: Any, codec: str) -> tuple[Any, Any, str]:
+    """Encode/decode one wire payload through its codec layer.
+
+    Returns (transport_value, delivered_value, error). The transport value is
+    what lives on the wire bus; delivered value is what the downstream input
+    receives after decoding.
+    """
+    if codec in ("", "none", "raw", "pass", "passthrough"):
+        return value, value, ""
+    if codec in ("json", "application/json"):
+        try:
+            text = json.dumps(value, sort_keys=True, default=str)
+            return text, json.loads(text), ""
+        except Exception as ex:
+            return None, None, f"codec_json:{type(ex).__name__}: {ex}"
+    if codec in ("text", "string", "utf8", "utf-8"):
+        text = "" if value is None else str(value)
+        return text, text, ""
+    if codec in ("base64", "binary", "image-uri"):
+        try:
+            if isinstance(value, bytes):
+                raw = value
+                media_type = "application/octet-stream"
+                delivered = value
+            else:
+                raw = json.dumps(value, sort_keys=True, default=str).encode("utf-8")
+                media_type = "application/json"
+                delivered = json.loads(raw.decode("utf-8"))
+            encoded = base64.b64encode(raw).decode("ascii")
+            if codec == "image-uri":
+                if isinstance(value, str) and value.startswith("data:image/"):
+                    return value, value, ""
+                return f"data:{media_type};base64,{encoded}", delivered, ""
+            return {
+                "codec": f"{codec}:v1",
+                "media_type": media_type,
+                "data": encoded,
+            }, delivered, ""
+        except Exception as ex:
+            return None, None, f"codec_{codec}:{type(ex).__name__}: {ex}"
+    if codec in ("geometry-json", "ifc-fragment", "speckle-object"):
+        try:
+            text = json.dumps(value, sort_keys=True, default=str)
+            return {
+                "codec": f"{codec}:v1",
+                "payload": json.loads(text),
+            }, json.loads(text), ""
+        except Exception as ex:
+            return None, None, f"codec_{codec}:{type(ex).__name__}: {ex}"
+    return None, None, f"unknown_codec:{codec}"
+
+
+def _resolve_secret_reference(ref: str, ctx: Any) -> Any:
+    """Resolve an ``op://`` reference at runtime without storing its value."""
+    if not ref or not str(ref).startswith("op://"):
+        return None
+    for attr in ("resolve_secret_ref", "secret_resolver"):
+        resolver = getattr(ctx, attr, None)
+        if callable(resolver):
+            return resolver(str(ref))
+    secrets = getattr(ctx, "secret_refs", None)
+    if isinstance(secrets, dict):
+        return secrets.get(str(ref))
+    return None
+
+
+def _fernet_key_from_context(edge: dict, ctx: Any) -> bytes | None:
+    """Resolve a Fernet key without requiring graph-stored secrets.
+
+    Runtime can provide an ``op://`` key reference resolver, a scoped context
+    key, or an environment key. Raw key material on a graph edge is forbidden.
+    """
+    encryption = _wire_layer_name(edge, "encryption")
+    scoped_attrs = {
+        "local-key": ("local_wire_fernet_key", "ARCHHUB_LOCAL_WIRE_FERNET_KEY"),
+        "workspace-key": ("workspace_wire_fernet_key", "ARCHHUB_WORKSPACE_WIRE_FERNET_KEY"),
+        "user-key": ("user_wire_fernet_key", "ARCHHUB_USER_WIRE_FERNET_KEY"),
+    }
+    attr_name, env_name = scoped_attrs.get(encryption, ("wire_fernet_key", "ARCHHUB_WIRE_FERNET_KEY"))
+    key_ref = str(edge.get("encryption_key_ref") or "")
+    raw = (
+        _resolve_secret_reference(key_ref, ctx)
+        or getattr(ctx, attr_name, None)
+        or getattr(ctx, "wire_fernet_key", None)
+        or os.environ.get(env_name)
+        or os.environ.get("ARCHHUB_WIRE_FERNET_KEY")
+    )
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, bytes):
+        return raw
+    return str(raw).encode("utf-8")
+
+
+def _wire_transport_roundtrip(value: Any, edge: dict,
+                              ctx: Any) -> tuple[Any, Any, str]:
+    """Apply codec/encryption layers as a real wire transport.
+
+    Downstream receives the decoded/decrypted value. The WireBus receives the
+    transported representation, so encrypted wires do not expose plaintext via
+    `wire_value`.
+    """
+    codec = _wire_layer_name(edge, "codec")
+    encryption = _wire_layer_name(edge, "encryption")
+    if edge.get("_raw_encryption_key_present"):
+        return None, None, "raw_encryption_key_forbidden"
+    key_ref = str(edge.get("encryption_key_ref") or "")
+    if key_ref and not key_ref.startswith("op://"):
+        return None, None, "encryption_key_ref_must_be_op_reference"
+    if encryption in ("", "none", "off", "false", "0"):
+        return _wire_codec_roundtrip(value, codec)
+
+    if encryption == "redacted":
+        transport_codec = codec if codec not in ("", "none", "raw", "pass", "passthrough") else "json"
+        _transport_value, delivered_value, err = _wire_codec_roundtrip(value, transport_codec)
+        if err:
+            return None, None, err
+        return {
+            "redacted": True,
+            "scheme": "redacted:v1",
+            "codec": transport_codec,
+            "value_type": type(value).__name__,
+        }, delivered_value, ""
+
+    if encryption == "secret-ref":
+        if isinstance(value, str) and value.startswith("op://"):
+            return {
+                "secret_ref": value,
+                "scheme": "secret-ref:v1",
+            }, value, ""
+        return None, None, "secret_ref_required"
+
+    if encryption == "external-kms":
+        return None, None, "encryption_kms_resolver_missing"
+
+    if encryption not in ("fernet", "fernet:v1", "local-fernet",
+                          "local-key", "workspace-key", "user-key"):
+        return None, None, f"unknown_encryption:{encryption}"
+
+    # Encryption needs bytes. If no codec was selected, JSON is the reversible
+    # default for ordinary graph values.
+    transport_codec = codec if codec not in ("", "none", "raw", "pass", "passthrough") else "json"
+    encoded, decoded, err = _wire_codec_roundtrip(value, transport_codec)
+    if err:
+        return None, None, err
+    key = _fernet_key_from_context(edge, ctx)
+    if not key:
+        return None, None, "encryption_key_missing:fernet"
+    try:
+        from cryptography.fernet import Fernet
+        fernet = Fernet(key)
+        raw = encoded if isinstance(encoded, bytes) else str(encoded).encode("utf-8")
+        token = fernet.encrypt(raw)
+        restored_raw = fernet.decrypt(token)
+        if transport_codec in ("json", "application/json"):
+            restored_value = json.loads(restored_raw.decode("utf-8"))
+        elif transport_codec in ("text", "string", "utf8", "utf-8"):
+            restored_value = restored_raw.decode("utf-8")
+        else:
+            restored_value = decoded
+        envelope = {
+            "encrypted": True,
+            "scheme": "fernet:v1",
+            "codec": transport_codec,
+            "token": token.decode("ascii"),
+        }
+        return envelope, restored_value, ""
+    except Exception as ex:
+        return None, None, f"encryption_fernet:{type(ex).__name__}: {ex}"
+
+
 def _wire_safe(v):
     """Return True if `v` is small + simple enough to keep on the WireBus.
 
@@ -214,6 +569,46 @@ def _wire_safe(v):
         return False
     except Exception:
         return False
+
+
+def _has_node_native_runtime_nodes(graph: dict) -> bool:
+    """True when the graph carries first-class runtime plumbing nodes.
+
+    The bridge normally calls node_grammar.normalize_canvas_graph before
+    constructing a runner. Direct runner callers must get the same wire and
+    parameter-node authority instead of silently depending on legacy flat
+    inline config/edges.
+    """
+    if not isinstance(graph, dict):
+        return False
+    from .node_grammar import node_capabilities
+
+    for node in graph.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        capabilities = node_capabilities(node)
+        if capabilities.intersection({"parameter", "port", "relation-stage"}):
+            return True
+        if ("relation" in capabilities
+                and (data.get("relation_family") == "workflow_wire"
+                     or data.get("wire_family") == "workflow_wire")):
+            return True
+    return False
+
+
+def _runner_graph(graph: dict) -> dict:
+    """Return the executable graph shape used by WorkflowRunner.
+
+    For legacy/engine-native graphs this is the original graph. For
+    node-native workflow graphs, normalize once so wire nodes, layer nodes,
+    parameter nodes, and presentation edges resolve to the same runtime edge
+    model the bridge uses.
+    """
+    if not _has_node_native_runtime_nodes(graph):
+        return graph
+    from .node_grammar import normalize_canvas_graph
+    return normalize_canvas_graph(graph)
 
 
 class CycleDetected(RuntimeError):
@@ -250,6 +645,7 @@ class WorkflowRunner:
                                    tool_engine=tool_engine,
                                    manager=manager)
         self.ctx = ctx
+        graph = _runner_graph(graph)
         self.nodes_by_id: dict[str, dict] = {}
         for n in graph.get("nodes") or []:
             nid = n.get("id")
@@ -257,8 +653,12 @@ class WorkflowRunner:
                 continue
             self.nodes_by_id[nid] = dict(n)
 
-        self.edges: list[dict] = []
-        for e in (graph.get("wires") or graph.get("edges") or []):
+        relation_records = (
+            graph["relations"] if "relations" in graph
+            else graph.get("wires") or graph.get("edges") or []
+        )
+        self.relations: list[dict] = []
+        for e in relation_records:
             # Normalise to a canonical {src_node, src_port, dst_node, dst_port}
             if "from" in e and "to" in e:
                 f, t = e["from"], e["to"]
@@ -283,7 +683,17 @@ class WorkflowRunner:
                     "src_field": e.get("src_field", "") or "",
                     "dst_field": e.get("dst_field", "") or "",
                 }
-            self.edges.append(edge)
+            for key in RUNTIME_WIRE_FIELDS:
+                value = e.get(key)
+                if value not in (None, ""):
+                    edge[key] = value
+            if e.get("encryption_key") not in (None, ""):
+                edge["_raw_encryption_key_present"] = True
+            self.relations.append(edge)
+
+        # Compatibility view for bridge/tests that still use the historic
+        # name. It is the same list object, never a second topology model.
+        self.edges = self.relations
 
         # WireBus: edge_id → value. Never persisted.
         self.wire_bus: dict[str, Any] = {}
@@ -329,7 +739,7 @@ class WorkflowRunner:
     def _emit(self, edge_id: str, state: str,
               preview: str = "") -> None:
         try:
-            for e in self.edges:
+            for e in self.relations:
                 if e["id"] == edge_id:
                     e["state"] = state
                     if preview:
@@ -345,10 +755,10 @@ class WorkflowRunner:
 
     # ── topology ────────────────────────────────────────────────────
     def _upstream_edges(self, node_id: str) -> list[dict]:
-        return [e for e in self.edges if e["dst_node"] == node_id]
+        return [e for e in self.relations if e["dst_node"] == node_id]
 
     def _downstream_edges(self, node_id: str) -> list[dict]:
-        return [e for e in self.edges if e["src_node"] == node_id]
+        return [e for e in self.relations if e["src_node"] == node_id]
 
     def would_create_cycle(self, src_node: str, dst_node: str) -> bool:
         """Returns True if adding src→dst would create a cycle.
@@ -420,6 +830,19 @@ class WorkflowRunner:
                 h.update(sf.encode("utf-8"))
                 h.update(b"|df|")
                 h.update(df.encode("utf-8"))
+            for key in (
+                "value_type",
+                "schema_ref",
+                "gate_policy",
+                "codec",
+                "encryption",
+                "encryption_key_ref",
+                "behavior",
+            ):
+                value = e.get(key)
+                if value not in (None, ""):
+                    h.update(f"|{key}|".encode("utf-8"))
+                    h.update(str(value).encode("utf-8"))
         return h.hexdigest()
 
     # ── pull (lazy + cached) ────────────────────────────────────────
@@ -463,7 +886,7 @@ class WorkflowRunner:
             return {"status": "error", "error": f"unknown node {node_id}"}
 
         node = self.nodes_by_id[node_id]
-        if node.get("frozen") is True:
+        if _node_bool(node, "frozen"):
             return self.node_outputs.get(node_id,
                 {"status": "ok", "frozen": True})
         node_type = node.get("type") or ""
@@ -472,6 +895,12 @@ class WorkflowRunner:
         self._visiting.add(node_id)
         try:
             for e in self._upstream_edges(node_id):
+                block_reason = _wire_block_reason(e, self.nodes_by_id)
+                if block_reason:
+                    self._emit(e["id"], "blocked", block_reason)
+                    continue
+                if _wire_forces_source_recook(e):
+                    self.node_dirty.add(e["src_node"])
                 parent_out = self.pull(e["src_node"])
                 if isinstance(parent_out, dict):
                     if parent_out.get("status") == "error":
@@ -493,12 +922,35 @@ class WorkflowRunner:
                 df = e.get("dst_field") or ""
                 if df:
                     value = _wrap_field(value, df)
-                inputs[e["dst_port"]] = value
+                transport_value, delivered_value, wire_error = (
+                    _wire_transport_roundtrip(value, e, self.ctx)
+                )
+                if wire_error:
+                    self._emit(e["id"], "error", wire_error[:200])
+                    return {"status": "wire_error",
+                            "from": e["src_node"],
+                            "edge": e["id"],
+                            "error": wire_error}
+                target_cardinality = str(e.get("target_cardinality") or "one").lower()
+                accepts_many = (
+                    target_cardinality in {"many", "multiple", "list", "collection", "*"}
+                    or _input_port_accepts_multiple(node, e["dst_port"])
+                )
+                if accepts_many:
+                    existing = inputs.get(e["dst_port"])
+                    if existing is None:
+                        inputs[e["dst_port"]] = [delivered_value]
+                    elif isinstance(existing, list):
+                        existing.append(delivered_value)
+                    else:
+                        inputs[e["dst_port"]] = [existing, delivered_value]
+                else:
+                    inputs[e["dst_port"]] = delivered_value
                 # Park value on the bus + emit "flowing" then "cached".
                 # Only whitelisted, size-capped values go on the wire bus —
                 # see PERSISTABLE_TYPES / MAX_PERSIST_BYTES at module scope.
-                if _wire_safe(value):
-                    self.wire_bus[e["id"]] = value
+                if _wire_safe(transport_value):
+                    self.wire_bus[e["id"]] = transport_value
                 self._emit(e["id"], "flowing")
         finally:
             self._visiting.discard(node_id)
@@ -518,7 +970,7 @@ class WorkflowRunner:
         # downstream outputs. Greedy match: out_port name == in_port
         # name (best), else first in_port with same type, else None.
         # No cache held; re-cooks every upstream change.
-        if node.get("bypassed") is True:
+        if _node_bool(node, "bypass", "bypassed"):
             outputs: dict[str, Any] = {}
             outs = node.get("outs") or []
             ins = node.get("ins") or []
@@ -567,13 +1019,27 @@ class WorkflowRunner:
         _spec, executor = spec_tup
 
         cfg = dict(node.get("config") or {})
+        _ctx_node_missing = object()
+        _ctx_prev_node = getattr(self.ctx, "node", _ctx_node_missing)
         try:
+            try:
+                setattr(self.ctx, "node", node)
+            except Exception:
+                pass
             outputs = executor(cfg, inputs, self.ctx)
             if not isinstance(outputs, dict):
                 outputs = {"value": outputs}
         except Exception as ex:
             outputs = {"status": "error",
                         "error": f"{type(ex).__name__}: {ex}"}
+        finally:
+            try:
+                if _ctx_prev_node is _ctx_node_missing:
+                    delattr(self.ctx, "node")
+                else:
+                    setattr(self.ctx, "node", _ctx_prev_node)
+            except Exception:
+                pass
 
         # Stash + flip wires to "cached".
         self.node_outputs[node_id] = outputs
@@ -593,6 +1059,32 @@ class WorkflowRunner:
 
         return outputs
 
+    def _edge_state_entry(self, edge: dict) -> dict:
+        entry = {
+            "id": edge["id"],
+            "state": edge.get("state", "idle"),
+        }
+        preview = edge.get("value_preview") or ""
+        if preview:
+            entry["preview"] = preview
+        if edge["id"] in self.wire_bus:
+            transport_value = self.wire_bus.get(edge["id"])
+            if _wire_safe(transport_value):
+                entry["transport_value"] = transport_value
+        for key in ("src_field", "dst_field", *RUNTIME_WIRE_FIELDS):
+            value = edge.get(key)
+            if value not in (None, ""):
+                entry[key] = value
+        presentation = str(edge.get("presentation") or "").strip().lower()
+        if presentation:
+            entry["presentation_state"] = (
+                "hidden" if presentation == "hidden" else "visible"
+            )
+        return entry
+
+    def _edges_state(self) -> list[dict]:
+        return [self._edge_state_entry(e) for e in self.relations]
+
     # ── workflow-level run (Houdini "render", Comfy "queue") ────────
     def run_all(self) -> dict:
         """Cook every sink node in the graph (nodes with no downstream
@@ -604,14 +1096,14 @@ class WorkflowRunner:
         after the cook (+ optional server push). Failure to publish
         does NOT taint the cook — `published` list includes both
         successes and failures honestly."""
-        downstream_targets = {e["src_node"] for e in self.edges}
+        downstream_targets = {e["src_node"] for e in self.relations}
         sinks = [nid for nid in self.nodes_by_id
                   if nid not in downstream_targets]
         if not sinks:
             # No clear sinks (e.g. all nodes feed each other) — cook
             # every non-frozen node so user gets some progress.
             sinks = [nid for nid, n in self.nodes_by_id.items()
-                      if not n.get("frozen")]
+                      if not _node_bool(n, "frozen")]
         out: dict[str, dict] = {}
         for nid in sinks:
             try:
@@ -623,10 +1115,7 @@ class WorkflowRunner:
         result = {"status": "ok",
                    "sinks": sinks,
                    "results": out,
-                   "edges_state": [
-                       {"id": e["id"], "state": e.get("state", "idle")}
-                       for e in self.edges
-                   ]}
+                   "edges_state": self._edges_state()}
         if published is not None:
             result["auto_publish"] = published
         return result
@@ -645,7 +1134,7 @@ class WorkflowRunner:
         """
         if node_id not in self.nodes_by_id:
             return []
-        downstream_targets = {e["src_node"] for e in self.edges}
+        downstream_targets = {e["src_node"] for e in self.relations}
         seen: set[str] = set()
         sinks: list[str] = []
         stack = [node_id]
@@ -696,10 +1185,7 @@ class WorkflowRunner:
                    "recooked_from": node_id,
                    "sinks": sinks,
                    "results": out,
-                   "edges_state": [
-                       {"id": e["id"], "state": e.get("state", "idle")}
-                       for e in self.edges
-                   ]}
+                   "edges_state": self._edges_state()}
         if published is not None:
             result["auto_publish"] = published
         return result
@@ -768,7 +1254,7 @@ class WorkflowRunner:
 
     # ── observability ───────────────────────────────────────────────
     def wire_state(self, edge_id: str) -> str:
-        for e in self.edges:
+        for e in self.relations:
             if e["id"] == edge_id:
                 return e.get("state", "idle")
         return "unknown"
@@ -783,11 +1269,14 @@ class WorkflowRunner:
         drops the actual values (those re-cook on demand)."""
         return {
             "edges": [
-                {"id": e["id"],
-                 "cache_key": e.get("cache_key", ""),
-                 "state":     e.get("state", "idle"),
-                 "value_preview": e.get("value_preview", "")}
-                for e in self.edges
+                {k: v for k, v in {
+                    "id": e["id"],
+                    "cache_key": e.get("cache_key", ""),
+                    "state": e.get("state", "idle"),
+                    "value_preview": e.get("value_preview", ""),
+                    **{key: e.get(key) for key in RUNTIME_WIRE_FIELDS},
+                }.items() if v not in (None, "")}
+                for e in self.relations
             ],
             "node_cache_keys": dict(self.node_cache_keys),
         }

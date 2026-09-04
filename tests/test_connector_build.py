@@ -424,7 +424,7 @@ def test_build_revit_connector_uses_helper(monkeypatch):
 
 def test_fix_and_test_bat_delegates_to_python():
     root = Path(__file__).resolve().parents[1]
-    bat = (root / "FixAndTestRevit2025.bat").read_text(encoding="utf-8")
+    bat = (root / "scripts" / "FixAndTestRevit2025.bat").read_text(encoding="utf-8")
     # Old inline `dotnet build` for the shim only must be gone.
     assert "dotnet build \"%CSPROJ%\"" not in bat
     # New canonical path.

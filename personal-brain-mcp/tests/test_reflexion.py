@@ -115,6 +115,68 @@ def test_extract_skill_draft_pulls_tool_names():
     assert draft["side_effects"] in ("pure", "host_write")
 
 
+def test_intent_policy_names_the_saved_graph_instead_of_the_first_tool():
+    trace = {
+        "user_message": "Save 'ArchHub Operating Graph' as a reusable ArchHub skill",
+        "prompt": "Reuse the node composition and relations.",
+        "tool_calls": [
+            {"name": "archhub_compose_group", "status": "ok"},
+            {"name": "archhub_connect_nodes", "status": "ok"},
+        ],
+        "outcome": "success",
+    }
+    draft = extract_skill_draft(
+        trace,
+        critic=HeuristicCritic({
+            "mode": "intent_first",
+            "provider_mode": "deterministic",
+            "source_label": "ArchHub Operating Graph",
+            "source_role": "node graph",
+            "generic_name_policy": "reject",
+            "minimum_intent_terms": 2,
+        }),
+    )
+
+    assert draft["proposed_name"] == "archhub_operating_graph"
+    assert draft["proposed_name"] != "archhub_compose_group_flow"
+    assert "ArchHub Operating Graph" in draft["description"]
+    assert "reuse archhub operating graph" in draft["triggers"]
+    assert draft["critic_evidence"]["source_label"] == \
+        "ArchHub Operating Graph"
+
+
+def test_observed_steps_preserve_order_and_redact_secret_arguments(store):
+    trace = {
+        "user_message": "Publish the governed graph",
+        "tool_calls": [
+            {"name": "archhub_compile", "status": "ok",
+             "args": {"node_id": "n1", "api_key": "must-not-leak"}},
+            {"name": "archhub_publish", "status": "ok",
+             "args": {"target": "production", "authorization": "Bearer x"}},
+        ],
+        "outcome": "success",
+    }
+    result = reflect_on_trace(
+        trace, store=store, owner_user="founder", publish=True,
+        critic_policy={
+            "source_label": "Governed Graph Publication",
+            "source_role": "workflow",
+            "provider_mode": "deterministic",
+        },
+    )
+
+    assert result.accepted is True
+    assert [step["tool"] for step in result.proposal["steps"]] == [
+        "archhub_compile", "archhub_publish"]
+    assert result.proposal["steps"][0]["arguments"]["api_key"] == \
+        "[secret-ref-required]"
+    assert result.proposal["steps"][1]["arguments"]["authorization"] == \
+        "[secret-ref-required]"
+    assert "1. `archhub_compile`" in result.skill.body
+    assert "2. `archhub_publish`" in result.skill.body
+    assert "must-not-leak" not in result.skill.body
+
+
 def test_extract_skill_draft_with_critic():
     class FixedCritic:
         def classify(self, t): return {"verdict": "success", "confidence": 1.0}

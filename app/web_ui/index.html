@@ -132,10 +132,10 @@
      precompiled artifact is missing or its sha doesn't match the live
      .jsx (the in-browser fallback path). -->
 
-<!-- DESIGN-SYSTEM SoT — window.AH (single source of truth for every design
-     token), loaded EAGERLY as plain JS BEFORE the bundle so it exists when
+<!-- DESIGN-SYSTEM PROJECTION — window.AH (legacy design-token projection),
+     loaded EAGERLY as plain JS BEFORE the bundle so it exists when
      studio-lm's IIFE runs.  THEMES.forge derives FROM window.AH (no hand-copied
-     hexes) and LM.fs / LM.arch read the canonical type scale + architect's-hand
+     hexes) and LM.fs / LM.arch read the shared type scale + architect's-hand
      face from here.  Pure assignment — no JSX — so it needs no Babel and adds
      no cold-start cost.  Mirror of _handoff/archhub/project/tokens.jsx. -->
 <script src="tokens.jsx"></script>

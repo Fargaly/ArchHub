@@ -188,6 +188,66 @@ class TestEdgeRoundTrip:
         e = Edge.from_dict(d)
         assert e.src_field == ""
         assert e.dst_field == ""
+        assert e.schema_ref == ""
+        assert e.gate_policy == ""
+        assert e.codec == ""
+        assert e.encryption == ""
+        assert e.junction_node == ""
+        assert e.junction_nodes == []
+
+    def test_edge_to_dict_includes_wire_layers(self):
+        e = Edge(id="e1", src_node="a", src_port="o",
+                  dst_node="b", dst_port="i",
+                  wire_node="wire:a-b",
+                  junction_node="wire:junction:a-o",
+                  junction_nodes=["wire:junction:a-o"],
+                  value_type="geometry",
+                  schema_ref="archhub.geometry.mesh",
+                  gate_policy="type-compatible-and-enabled",
+                  codec="json",
+                  encryption="fernet",
+                  behavior="pull-on-demand",
+                  presentation="canvas-bezier",
+                  provenance={"source": "test"})
+        d = e.to_dict()
+        assert d["wire_node"] == "wire:a-b"
+        assert d["junction_node"] == "wire:junction:a-o"
+        assert d["junction_nodes"] == ["wire:junction:a-o"]
+        assert d["value_type"] == "geometry"
+        assert d["schema_ref"] == "archhub.geometry.mesh"
+        assert d["gate_policy"] == "type-compatible-and-enabled"
+        assert d["codec"] == "json"
+        assert d["encryption"] == "fernet"
+        assert d["behavior"] == "pull-on-demand"
+        assert d["presentation"] == "canvas-bezier"
+        assert d["provenance"] == {"source": "test"}
+
+    def test_edge_from_dict_round_trips_wire_layers(self):
+        d = {"id": "e1", "src_node": "a", "src_port": "o",
+             "dst_node": "b", "dst_port": "i",
+             "wire_node": "wire:a-b",
+             "junction_node": "wire:junction:a-o",
+             "junction_nodes": ["wire:junction:a-o"],
+             "value_type": "geometry",
+             "schema_ref": "archhub.geometry.mesh",
+             "gate_policy": "type-compatible-and-enabled",
+             "codec": "json",
+             "encryption": "fernet",
+             "behavior": "pull-on-demand",
+             "presentation": "canvas-bezier",
+             "provenance": {"source": "test"}}
+        e = Edge.from_dict(d)
+        assert e.wire_node == "wire:a-b"
+        assert e.junction_node == "wire:junction:a-o"
+        assert e.junction_nodes == ["wire:junction:a-o"]
+        assert e.value_type == "geometry"
+        assert e.schema_ref == "archhub.geometry.mesh"
+        assert e.gate_policy == "type-compatible-and-enabled"
+        assert e.codec == "json"
+        assert e.encryption == "fernet"
+        assert e.behavior == "pull-on-demand"
+        assert e.presentation == "canvas-bezier"
+        assert e.provenance == {"source": "test"}
 
     def test_workflow_round_trip_preserves_edge_fields(self):
         wf = Workflow.new("test")
@@ -204,6 +264,37 @@ class TestEdgeRoundTrip:
         wf2 = Workflow.from_json(wf.to_json())
         assert wf2.edges[0].src_field == "walls[0].id"
         assert wf2.edges[0].dst_field == "payload"
+
+    def test_workflow_round_trip_preserves_wire_layers(self):
+        wf = Workflow.new("test")
+        wf.add_node(Node(id="a", type="_test.struct",
+                          outputs=[Port(name="selection",
+                                          type=PortType.OBJECT)]))
+        wf.add_node(Node(id="b", type="_test.passthrough",
+                          inputs=[Port(name="value",
+                                         type=PortType.ANY)]))
+        wf.add_edge(Edge(id="e1", src_node="a", src_port="selection",
+                          dst_node="b", dst_port="value",
+                          wire_node="wire:a-b",
+                          value_type="object",
+                          schema_ref="archhub.workflow.object",
+                          gate_policy="type-compatible-and-enabled",
+                          codec="json",
+                          encryption="none",
+                          behavior="pull-on-demand",
+                          presentation="canvas-bezier",
+                          provenance={"source": "test"}))
+        wf2 = Workflow.from_json(wf.to_json())
+        e = wf2.edges[0]
+        assert e.wire_node == "wire:a-b"
+        assert e.value_type == "object"
+        assert e.schema_ref == "archhub.workflow.object"
+        assert e.gate_policy == "type-compatible-and-enabled"
+        assert e.codec == "json"
+        assert e.encryption == "none"
+        assert e.behavior == "pull-on-demand"
+        assert e.presentation == "canvas-bezier"
+        assert e.provenance == {"source": "test"}
 
 
 # ── Runner honours src_field ────────────────────────────────────────

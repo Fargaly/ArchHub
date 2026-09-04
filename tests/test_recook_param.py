@@ -376,9 +376,10 @@ class TestJsxSourceGuards:
     def test_onparamchange_schedules_debounced_recook(self):
         # NodeRail.onParamChange: mid-drag tick → reCookParamTick (debounced);
         # commit/release → flushReCook (flush now).
-        block = _jsx_window("const onParamChange")
-        assert "reCookParamTick(node.id)" in block
-        assert "flushReCook(node.id)" in block
+        block = _jsx_window("const onParamChange", size=2200)
+        assert "const cookNodeId" in block
+        assert "reCookParamTick(cookNodeId)" in block
+        assert "flushReCook(cookNodeId)" in block
         # The debounced path is the NON-commit branch (no per-tick cook).
         assert "if (commit)" in block
 

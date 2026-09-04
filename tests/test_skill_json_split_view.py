@@ -260,14 +260,21 @@ class TestSkillJsonActions:
 
 class TestSkillJsonReachable:
     def test_skills_panel_row_opens_the_view(self):
-        block = _jsx_window("const SkillsPanel = (", size=5200)
-        assert 'data-testid="skill-row-view-json"' in block, (
-            "each SkillsPanel row must expose a '{ }' view-JSON affordance")
-        assert "lm-skill-json-open" in block, (
+        authority = (APP_ROOT / "workflows" / "grand_map_ui.py").read_text(
+            encoding="utf-8"
+        )
+        assert '"ui:grandmap:skills-row-json"' in authority, (
+            "each SkillsPanel row must expose a graph-owned '{ }' view-JSON affordance")
+        assert 'test_id="skill-row-view-json"' in authority
+        assert 'action="skills.row.view-json"' in authority
+        assert "stop_click=True" in authority, (
+            "view JSON must stop propagation so it does not also spawn the skill")
+        row = _jsx_window("const SkillsPanelRow = (", size=2400)
+        assert "registerUiHostCapability('skills.row.view-json'" in row
+        assert "viewJson && viewJson" in row
+        panel = _jsx_window("const SkillsPanel = (", size=6200)
+        assert "lm-skill-json-open" in panel, (
             "the row affordance must dispatch lm-skill-json-open")
-        # It must stop propagation so it opens JSON instead of spawning.
-        flat = re.sub(r"\s+", " ", block)
-        assert "e.stopPropagation(); viewJson(s)" in flat
 
     def test_modal_mounted_at_root(self):
         # Mounted alongside the other always-mounted modals.
@@ -295,7 +302,7 @@ class TestCompiledBundleParity:
     def test_panes_and_actions_in_bundle(self):
         for needle in ("YOU OWN THIS", "skill-json-source",
                        "skill-json-copy", "skill-json-fork",
-                       "skill-json-open-chat", "skill-row-view-json"):
+                       "skill-json-open-chat", "skills.row.view-json"):
             assert needle in _COMPILED, (
                 f"{needle!r} must be in the compiled bundle")
 

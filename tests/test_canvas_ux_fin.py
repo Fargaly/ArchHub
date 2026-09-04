@@ -152,8 +152,12 @@ def test_node_render_map_iterates_culled_set_not_all_nodes():
     assert "visibleNodesSrc.map(n =>" in flat, (
         "the node render map must iterate the viewport-culled visibleNodesSrc")
     # And the culled set is actually built from cullToViewport.
-    assert "cullToViewport(allNodes" in flat or "cullToViewport((allNodes" in flat, (
-        "visibleNodesSrc must be derived via cullToViewport over allNodes")
+    assert (
+        "cullToViewport(allNodes" in flat
+        or "cullToViewport((allNodes" in flat
+        or "cullToViewport(canvasNodes" in flat
+        or "cullToViewport((canvasNodes" in flat
+    ), "visibleNodesSrc must be derived via cullToViewport over the rendered node source"
 
 
 def test_wire_render_map_iterates_culled_set_not_all_wires():
@@ -203,7 +207,7 @@ def test_account_chip_component_exists_and_mounted_in_header():
 def test_account_chip_uses_real_cloud_status_slot():
     """The chip drives its signed-in/out state from the EXISTING cheap
     cloud_status() slot (no fabricated state)."""
-    block = _block("const AccountChip", size=8000)
+    block = _block("const AccountChip", size=18000)
     assert "bridgeAsync('cloud_status')" in block, (
         "AccountChip must read the real cloud_status() slot")
     assert "signed_in" in block, "AccountChip must read the signed_in flag"
@@ -213,7 +217,7 @@ def test_account_chip_uses_real_cloud_status_slot():
 def test_account_chip_reads_email_from_signin_signal_not_fabricated():
     """The email shown comes from the real cloud_signin_done signal payload —
     never invented. Signed-out flips back via cloud_signout_done."""
-    block = _block("const AccountChip", size=8000)
+    block = _block("const AccountChip", size=18000)
     assert "cloud_signin_done" in block, (
         "AccountChip must listen to cloud_signin_done for the real email")
     assert "cloud_signout_done" in block, (
@@ -225,10 +229,19 @@ def test_account_chip_reads_email_from_signin_signal_not_fabricated():
 def test_account_chip_menu_has_account_dashboard_signout():
     """Signed-in menu: Account / Open cloud dashboard / Sign out — and Sign out
     calls the REAL cloud_sign_out slot (server revoke + local clear)."""
-    block = _block("const AccountChip", size=8000)
-    assert "Account" in block
-    assert "Open cloud dashboard" in block
-    assert "Sign out" in block
+    block = _block("const AccountChip", size=18000)
+    authority = (REPO / "app" / "workflows" / "grand_map_ui.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"Account"' in authority
+    assert '"Open cloud dashboard"' in authority
+    assert '"Sign out"' in authority
+    assert 'action="account.menu.account"' in authority
+    assert 'action="account.menu.dashboard"' in authority
+    assert 'action="account.menu.signout"' in authority
+    assert "registerUiHostCapability('account.menu.account'" in block
+    assert "registerUiHostCapability('account.menu.dashboard'" in block
+    assert "registerUiHostCapability('account.menu.signout'" in block
     assert "bridgeAsync('cloud_sign_out')" in block, (
         "Sign out must call the real cloud_sign_out slot")
     # Account routes to the real Settings → Account surface.
@@ -239,11 +252,16 @@ def test_account_chip_menu_has_account_dashboard_signout():
 def test_account_chip_signed_out_shows_sign_in_cta():
     """Signed-out state shows a real "Sign in" CTA that drives the actual PKCE
     browser sign-in (cloud_sign_in), with the Settings fallback."""
-    block = _block("const AccountChip", size=8000)
-    assert "Sign in" in block
+    block = _block("const AccountChip", size=18000)
+    authority = (REPO / "app" / "workflows" / "grand_map_ui.py").read_text(
+        encoding="utf-8"
+    )
+    assert '_slot("slot:canvas-account-label", "account label", "Sign in")' in authority
+    assert '_slot("slot:canvas-account-state", "account state", "signed-out")' in authority
+    assert 'action="account.chip.activate"' in authority
+    assert "registerUiHostCapability('account.chip.activate'" in block
     assert "bridgeAsync('cloud_sign_in')" in block, (
         "the signed-out CTA must drive the real cloud_sign_in flow")
-    assert 'data-account-state="signed-out"' in block
 
 
 # ── b2. Brain cold-start shimmer ─────────────────────────────────────────────

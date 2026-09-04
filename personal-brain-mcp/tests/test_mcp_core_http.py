@@ -43,6 +43,8 @@ import asyncio
 import importlib.util
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -235,6 +237,58 @@ def test_ping_over_http_returns_empty_result(app):
     resp = httpx_post(app, {"jsonrpc": "2.0", "id": 7, "method": "ping"})
     assert resp.status_code == 200
     assert parse_sse_first_data(resp.text)["result"] == {}
+
+
+def test_long_tool_runs_off_event_loop_so_parallel_ping_stays_responsive(
+        toy, app):
+    entered = threading.Event()
+    release = threading.Event()
+
+    @toy.tool(name="toy.blocking", description="Wait for the forcing test.")
+    def toy_blocking():
+        entered.set()
+        release.wait(timeout=5)
+        return {"ok": True}
+
+    # On the broken implementation the event loop cannot reach the ping until
+    # this independent timer releases the blocking tool two seconds later.
+    failsafe = threading.Timer(2.0, release.set)
+    failsafe.start()
+    transport = httpx.ASGITransport(app=app)
+
+    async def _go():
+        async with httpx.AsyncClient(
+                transport=transport, base_url="http://brain.test") as client:
+            started = time.monotonic()
+            blocking = asyncio.create_task(client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0", "id": 201, "method": "tools/call",
+                    "params": {"name": "toy.blocking", "arguments": {}},
+                },
+                headers={"Accept": ACCEPT},
+            ))
+            assert await asyncio.to_thread(entered.wait, 1.0)
+            ping = await client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 202, "method": "ping"},
+                headers={"Accept": ACCEPT},
+            )
+            elapsed = time.monotonic() - started
+            release.set()
+            blocked_response = await blocking
+            return elapsed, ping, blocked_response
+
+    try:
+        elapsed, ping, blocked_response = asyncio.run(_go())
+    finally:
+        release.set()
+        failsafe.cancel()
+
+    assert elapsed < 1.0
+    assert parse_sse_first_data(ping.text)["result"] == {}
+    blocked_result = parse_sse_first_data(blocked_response.text)["result"]
+    assert blocked_result["structuredContent"] == {"ok": True}
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -19,7 +19,7 @@ Every department's output lands in `agents/outputs/<dept>/<task-id>/`.
 
 ## How to run it
 
-Double-click **`Run-Departments.bat`** at the repo root. It checks that
+Double-click **`scripts\Run-Departments.bat`** in the repo. It checks that
 Ollama is running, then starts a daemon that:
 
 1. Reads `agents/recurring.yaml` and creates fresh tasks whenever each
@@ -88,9 +88,9 @@ branch + opens a draft PR. Never let an agent push to `main`.
 Three options, in order of "I just want it on":
 
 **Easiest — hidden background process (no console window):**
-Double-click `Run-Departments-Hidden.vbs` at the repo root. Nothing
+Double-click `scripts\Run-Departments-Hidden.vbs` in the repo. Nothing
 visibly happens but the daemon is now running. Check `agents\logs\`
-to verify. Stop it with `Stop-Departments.bat` (only kills the
+to verify. Stop it with `scripts\Stop-Departments.bat` (only kills the
 `agents.run` python process, leaves your other python tools alone).
 
 **Always-on at login** — drop a shortcut to the .vbs into your
@@ -103,7 +103,7 @@ Startup folder:
 
 ```cmd
 schtasks /create /tn "ArchHub Departments" ^
-  /tr "wscript.exe \"C:\Users\fargaly\00.ARCHUB\ArchHub\Run-Departments-Hidden.vbs\"" ^
+  /tr "wscript.exe \"C:\Users\fargaly\00.ARCHUB\ArchHub\scripts\Run-Departments-Hidden.vbs\"" ^
   /sc onlogon /rl HIGHEST /f
 ```
 

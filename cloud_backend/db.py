@@ -28,7 +28,7 @@ from typing import Iterable, Optional
 import config
 
 
-# Bearer-token lifetime. Single source of truth — auth.exchange_code
+# Bearer-token lifetime. One shared constant: auth.exchange_code
 # returns this same value to the client as `expires_at`, and
 # issue_token stamps `tokens.expires_at = created_at + TOKEN_TTL_SECONDS`
 # so the client's expiry and the server's enforced expiry AGREE.
@@ -280,6 +280,21 @@ CREATE TABLE IF NOT EXISTS company_invites (
 
 CREATE INDEX IF NOT EXISTS idx_companies_owner ON companies(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_company_members_user ON company_members(user_id);
+
+-- Community membership, recorded ONLY from a join-code the cloud verified
+-- against the community owner's key. A community key named on the wire is a
+-- claim; a row here is a membership. Gates both read and write of the shared
+-- community replica, exactly as company_members gates the firm replica.
+CREATE TABLE IF NOT EXISTS community_members (
+    community_id    TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'member',
+    owner_pub       TEXT NOT NULL,
+    joined_at       INTEGER NOT NULL,
+    PRIMARY KEY (community_id, user_id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_community_members_user ON community_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_company_invites_company ON company_invites(company_id);
 CREATE INDEX IF NOT EXISTS idx_company_invites_email ON company_invites(email);
 
@@ -430,11 +445,11 @@ CREATE TABLE IF NOT EXISTS memory_facts (
 -- it — it reads/writes the user's replica fragments so a fact added via
 -- /v1/memory and a fragment synced via /v1/brain/sync share one table.
 --
--- `memory_fact_index` is the DERIVED index over those fragments (NOT a
--- second source of truth): it mints the global-unique INTEGER fact-id the
+-- `memory_fact_index` is the DERIVED index over those fragments, not a
+-- second content store: it mints the global-unique INTEGER fact-id the
 -- /v1/memory/facts/{id} API has always exposed, maps it to the per-user
 -- replica fragment (user_id, frag_id), and carries the optional embedding.
--- The canonical CONTENT (text/scope/visibility/confidence/valid_until/…)
+-- The fragment content (text/scope/visibility/confidence/valid_until/...)
 -- lives in the fragment; this table is the lookup + search spine only.
 CREATE TABLE IF NOT EXISTS memory_fact_index (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -592,6 +607,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_project ON memory_facts(project_id);
 CREATE INDEX IF NOT EXISTS idx_memory_op_user ON memory_op_log(user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_memory_access_reader ON memory_access_log(reader_user_id, ts);
 CREATE INDEX IF NOT EXISTS idx_collective_domain ON collective_memory(domain);
+
 """
 
 
@@ -697,6 +713,19 @@ def init_schema() -> None:
             "ALTER TABLE marketplace_packs ADD COLUMN at_own_risk INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE marketplace_packs ADD COLUMN promoted_at INTEGER",
             "ALTER TABLE marketplace_packs ADD COLUMN promoted_by TEXT",
+            # BABOOM recipient encryption keys are independent from the DPoP
+            # signing identity and remain nullable for legacy metadata-only
+            # device enrollments.
+            "ALTER TABLE baboom_devices ADD COLUMN recipient_public_jwk_json TEXT",
+            "ALTER TABLE baboom_devices ADD COLUMN recipient_thumbprint TEXT",
+            # Universal Device Custody uses a distinct DPoP key.  The relay
+            # records only its public identity and proof-bound thumbprint.
+            "ALTER TABLE baboom_devices ADD COLUMN universal_device_public_jwk_json TEXT",
+            "ALTER TABLE baboom_devices ADD COLUMN universal_device_thumbprint TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN recipient_public_jwk_json TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN recipient_thumbprint TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN universal_device_public_jwk_json TEXT",
+            "ALTER TABLE baboom_enrollment_challenges ADD COLUMN universal_device_thumbprint TEXT",
         ):
             try:
                 con.execute(ddl)
@@ -818,6 +847,33 @@ PROFILE_FIELDS = frozenset({
     "signup_source",
     "landing_variant",
 })
+
+
+def user_profile_is_empty(user_id: str) -> bool:
+    """Has this account never had a profile written onto it?
+
+    The signal that separates "the row this unauthenticated call just
+    created" from "somebody's established account". True only when every
+    whitelisted profile column is still unset.
+    """
+    columns = [name for name in PROFILE_FIELDS]
+    if not columns:
+        return True
+    try:
+        with connect() as con:
+            row = con.execute(
+                "SELECT %s FROM users WHERE id = ?"
+                % ", ".join('"%s"' % name for name in columns),
+                (str(user_id),),
+            ).fetchone()
+    except Exception:
+        return False
+    if row is None:
+        return True
+    return all(
+        row[name] is None or str(row[name]).strip() == ""
+        for name in columns
+    )
 
 
 def update_user_profile(user_id: str, **fields) -> None:
@@ -1488,12 +1544,12 @@ def memory_stats(user_id: str) -> dict:
 # ---------------------------------------------------------------------------
 #
 # cloud-brain-unify (2026-05-31): a "memory fact" IS a fragment in the user's
-# replica (brain_replica.py → data/replicas/<user_id>/brain.db). The DAO
-# below reads/writes THAT canonical store so a fact added via /v1/memory and
+# replica (brain_replica.py -> data/replicas/<user_id>/brain.db). The DAO
+# below reads/writes that legacy cloud-brain store so a fact added via /v1/memory and
 # a fragment synced via /v1/brain/sync share ONE table — the two-brains
 # duplicate is gone. `memory_fact_index` mints the global-unique INTEGER
 # fact-id the /v1/memory/facts/{id} API exposes and maps it to the replica
-# fragment (+ holds the FTS/embedding index). The canonical CONTENT lives in
+# fragment (+ holds the FTS/embedding index). The content lives in
 # the fragment, never in a second per-user table.
 #
 # Mem0-style ADD/UPDATE/DELETE/NOOP operations apply through memory_writer.
@@ -1649,7 +1705,7 @@ def insert_memory_fact(*, user_id: str, text: str,
         raise ValueError("text required")
     now = int(time.time())
     replica = _open_replica(user_id)
-    # Write the fact as a fragment (the canonical store). The replica's
+    # Write the fact as a fragment in the legacy cloud-brain store. The replica's
     # secret-leak gate runs here too — /v1/memory can't smuggle a bare
     # credential past the BRAIN-FIRST contract any more than /v1/brain/sync.
     res = replica.upsert_fragment({
@@ -1737,6 +1793,56 @@ def list_memory_facts(*, user_id: str, scope: Optional[str] = None,
     return out
 
 
+def set_company_message_limit(company_id: str, msg_limit: int) -> None:
+    """Hold a company's message allowance below what its plan implies.
+
+    The plan/quota invariant in update_company is the right default —
+    paying for a tier gets that tier's quota. This is the one deliberate
+    exception: a company whose payment has not cleared keeps its plan and
+    seats but spends on the trial allowance until a webhook lifts it.
+    """
+    with connect() as con:
+        con.execute(
+            "UPDATE companies SET msg_limit = ? WHERE id = ?",
+            (int(msg_limit), str(company_id)),
+        )
+
+
+def clear_current_company_if(*, user_id: str, company_id: str) -> None:
+    """Drop a user's company pointer when it names the firm they just left.
+
+    Entitlement resolution reads users.current_company_id on its own, so
+    a pointer that outlives the membership row is a live entitlement an
+    ex-member keeps spending.
+    """
+    with connect() as con:
+        con.execute(
+            "UPDATE users SET current_company_id = NULL"
+            " WHERE id = ? AND current_company_id = ?",
+            (str(user_id), str(company_id)),
+        )
+
+
+def _reader_company_id(user_id: str) -> Optional[str]:
+    """The company this reader is actually still a member of.
+
+    Read from the membership table, never from the caller and never from
+    users.current_company_id alone -- that pointer survives removal from
+    a firm, so trusting it would keep an ex-member reading the firm.
+    """
+    try:
+        with connect() as con:
+            row = con.execute(
+                "SELECT m.company_id FROM company_members m"
+                " JOIN users u ON u.id = m.user_id"
+                " WHERE m.user_id = ? AND m.company_id = u.current_company_id",
+                (str(user_id),),
+            ).fetchone()
+    except Exception:
+        return None
+    return str(row["company_id"]) if row is not None else None
+
+
 def search_memory_facts(*, user_id: str, query: str,
                          include_shared: bool = True,
                          limit: int = 10) -> list[dict]:
@@ -1771,6 +1877,8 @@ def search_memory_facts(*, user_id: str, query: str,
             (f'"{safe}"', int(limit) * 4),
         ).fetchall()
     out: list[dict] = []
+    # Resolved once, server-side, from the membership table.
+    reader_company = _reader_company_id(user_id) if include_shared else None
     # Cache replicas per owner so a multi-user shared search opens each once.
     replicas: dict[str, object] = {}
     for h in hits:
@@ -1784,10 +1892,24 @@ def search_memory_facts(*, user_id: str, query: str,
             continue
         vis = frag.get("visibility") or "private"
         # Own facts always visible; others only if shared + caller opted in.
+        #
+        # "shared_company" means shared WITH MY COMPANY, so it has to be
+        # matched against the reader's company. Admitting it on the
+        # visibility word alone handed one firm's private notes to every
+        # signed-up stranger. "shared_public" is the value that means
+        # everyone, and it still does.
         if owner == user_id:
             pass
-        elif include_shared and vis in ("shared_company", "shared_public"):
+        elif not include_shared:
+            continue
+        elif vis == "shared_public":
             pass
+        elif vis == "shared_company":
+            if reader_company is None:
+                continue
+            owner_company = (frag.get("extra") or {}).get("mf_company_id")
+            if not owner_company or str(owner_company) != reader_company:
+                continue
         else:
             continue
         row = _fragment_to_fact_row(owner, int(h["id"]), frag)
@@ -2146,8 +2268,8 @@ def create_company(*, name: str, owner_user_id: str,
     now = int(time.time())
     raw_slug = slug.strip() if slug else _slugify(name)
     final_slug = _unique_slug(_slugify(raw_slug))
-    # Seat + message limits both DERIVE from the plan. config is the
-    # single source of truth (config.PLAN_SEATS / config.PLAN_QUOTAS) —
+    # Seat + message limits both derive from the plan config
+    # (config.PLAN_SEATS / config.PLAN_QUOTAS);
     # never hardcode a mirror here, it drifts. config imports only
     # os+pathlib, so there is no circular import (db imports config).
     if seat_limit is None:
@@ -2247,6 +2369,26 @@ def list_companies_for_user(user_id: str) -> list[dict]:
             (user_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def add_community_member(community_id: str, user_id: str, *, role: str, owner_pub: str) -> None:
+    """Record a membership proven by a verified join-code (idempotent)."""
+    with connect() as con:
+        con.execute(
+            "INSERT OR IGNORE INTO community_members"
+            " (community_id, user_id, role, owner_pub, joined_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (community_id, user_id, role or "member", owner_pub, int(time.time())),
+        )
+
+
+def list_community_keys_for_user(user_id: str) -> list[str]:
+    """Community replica keys this user may read and write -- server-resolved."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT community_id FROM community_members WHERE user_id = ?"
+            " ORDER BY joined_at", (user_id,)).fetchall()
+    return [str(r[0]) for r in rows]
 
 
 def get_membership(company_id: str, user_id: str) -> Optional[dict]:
@@ -2884,7 +3026,7 @@ def claim_agent_task(task_id: str, claimed_by: str):
 # ---------------------------------------------------------------------------
 # Community Gallery — votes (one per user) + promotion
 # ---------------------------------------------------------------------------
-# The vote ledger (marketplace_pack_votes) is the source of truth; the
+# The vote ledger (marketplace_pack_votes) is the durable vote ledger; the
 # up_votes/down_votes columns on marketplace_packs are a denormalised cache
 # recomputed from the ledger on every write — the SAME honest-from-ledger
 # discipline as credit_balance vs credit_grants. One vote per user is the

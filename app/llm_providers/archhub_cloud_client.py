@@ -30,7 +30,7 @@ from .openai_client import OpenAIClient
 # (POST /v1/chat/completions). Overridable via ARCHHUB_CLOUD_LLM_BASE.
 import os
 DEFAULT_BASE_URL = os.environ.get(
-    "ARCHHUB_CLOUD_LLM_BASE", "https://archhub-cloud.fly.dev/v1"
+    "ARCHHUB_CLOUD_LLM_BASE", "https://api.archhub.io/v1"
 )
 
 

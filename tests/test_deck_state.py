@@ -113,8 +113,8 @@ def test_deck_state_returns_parseable_json_instantly(bridge_inst):
     data = json.loads(raw)  # MUST parse
     assert isinstance(data, dict)
     # Every tile key is present even on the cold call (typed empties).
-    for tile in ("burndown", "brain", "code", "connectors", "inbox",
-                 "finances"):
+    for tile in ("burndown", "brain", "compliance", "code", "connectors",
+                 "inbox", "finances"):
         assert tile in data, f"deck_state missing tile '{tile}': {data}"
 
 
@@ -208,6 +208,14 @@ def test_deck_state_real_shape_from_live_bridge(bridge_inst, monkeypatch):
                  "claim": {"agent_id": "claude", "runtime": "claude-code"},
                  "title": "wire the deck"},
             ]}}
+        if tool == "brain.compliance_report":
+            return {"ok": True, "overall": "green",
+                    "hook_coverage": {"status": "green",
+                                      "summary": {"green": 5, "red": 0}},
+                    "history": {"events": [
+                        {"event_type": "hook_coverage_audit"},
+                        {"event_type": "active_cde_assignment"},
+                    ]}}
         return {"ok": True}
     monkeypatch.setattr(memory_gate.BrainClient, "_call", fake_call)
 
@@ -237,6 +245,14 @@ def test_deck_state_real_shape_from_live_bridge(bridge_inst, monkeypatch):
     assert br["available"] is True
     assert br["skills"] == 7 and br["facts"] == 42
     assert br["wiring"] == 3
+
+    # ── compliance tile ───────────────────────────────────────────────
+    comp = data["compliance"]
+    assert comp["source"] == "brain.compliance_report"
+    assert comp["available"] is True
+    assert comp["overall"] == "green"
+    assert comp["hook_coverage_status"] == "green"
+    assert comp["recent_events"] == 2
 
     # ── code tile (REAL git probe) ─────────────────────────────────
     code = data["code"]
@@ -296,6 +312,8 @@ def test_deck_state_honest_empty_when_brain_down(bridge_inst, monkeypatch):
     assert data["brain"]["available"] is False
     assert data["brain"].get("skills") in (None, 0)
     assert data["burndown"]["available"] is False
+    assert data["compliance"]["available"] is False
+    assert data["compliance"]["source"] == "brain.compliance_report"
     # counts present + zeroed (typed empty), never invented.
     assert data["burndown"]["counts"]["green"] == 0
     assert data["burndown"]["work"]["available"] is False
@@ -325,3 +343,13 @@ def test_deck_state_connectors_status_is_honest(bridge_inst, monkeypatch):
     assert total == len(conn["hosts"]), (
         "connector status buckets must sum to the host count (honest, "
         "no fabricated rows)")
+
+
+def test_command_deck_renders_compliance_tile():
+    """The real Command Deck compliance tile must stay visible through the
+    node-backed tile surface, not a debug-only bridge slot or raw JSX card."""
+    src = (APP_ROOT / "web_ui" / "studio-lm.jsx").read_text(encoding="utf-8")
+    assert '<CommandDeckTileSurface id="compliance"' in src
+    assert 'testId="deck-tile-compliance"' in src
+    assert "get_grand_map_ui_surface', 'command-deck-tile'" in src
+    assert "brain.compliance_report" in src

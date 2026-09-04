@@ -1,0 +1,62 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-22T00:36:42+04:00",
+  "migration_track": "governed_work_lifecycle",
+  "slice": "canonical_cell_first_brain_governance_contract",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "runtime_copy_promoted": false,
+  "bulk_copy_performed": false,
+  "live_process_interruption": false,
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true
+  },
+  "decision": {
+    "accepted_canonical_behavior": [
+      "The canonical governance contract is a Cell relation and declares its digest, capability boundaries, authority status, and non-promotable migration limits.",
+      "Canonical capability entries require Cell-first routes and prohibit Brain metadata writes for universal work, hook coverage, compliance history, run reports, Core Values audits, ROMA requirements, and Grand Map sync.",
+      "The canonical court verifies real public source and court references, rejects graph drift and unadmitted channels, and verifies that the governance module neither imports nor executes Brain infrastructure."
+    ],
+    "pending_not_ported": [
+      "The ignored copied Brain-governance implementation and its court remain read-only migration evidence until the protected copied runtime is retired through a controlled handoff."
+    ],
+    "forbidden": [
+      "Treat this governance contract as a direct Brain daemon connection or use it to make a live Brain metadata write.",
+      "Bulk-copy the ignored implementation into Node Language authority or interrupt a live runtime holder while classifying drift."
+    ]
+  },
+  "canonical_files": {
+    "nodelang/cell_legacy_brain_governance.py": "47874b48a991a9ebe8f8a74600f9366a78b618ef7dc0fc510c604b3925a5d439",
+    "tests_replica/test_cell_legacy_brain_governance.py": "e549822841ed4adea6b5b0e2e852322cc034383d0c39016744864481b57e13d2"
+  },
+  "runtime_candidate_decisions": [
+    {
+      "path": "nodelang/cell_legacy_brain_governance.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The canonical contract replaces mixed Cell/metadata migration declarations with Cell-first routes and graph-held non-promotable governance boundaries."
+    },
+    {
+      "path": "tests_replica/test_cell_legacy_brain_governance.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The canonical seven-court suite covers the copied contract projection and adds source/court alignment, metadata-fallback rejection, Core Values audit, and no-Brain-execution proof."
+    }
+  ],
+  "runtime_evidence_read_only": {
+    "nodelang/cell_legacy_brain_governance.py": "71c21ff82562ab47cc2677b91b89de0f4acd96d24da7aece4d595311d5093076",
+    "tests_replica/test_cell_legacy_brain_governance.py": "32ad48ee8f6cb5541f556b0fe98ffd1c1aae492dac9e3a0e9e5d82b83df73880"
+  },
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_cell_legacy_brain_governance.py -q",
+      "result": "7 passed in 0.64s; before/after canonical SHA-256 values matched"
+    }
+  ],
+  "not_claimed": [
+    "This governance evidence does not prove in-session Brain MCP availability or direct Brain daemon liveness.",
+    "This evidence does not activate the canonical runtime, retire the copied runtime, or complete a controlled handoff."
+  ]
+}

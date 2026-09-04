@@ -1,0 +1,66 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-23T12:35:00+04:00",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+  "public_repo": "10.PRODUCT/12.PRODUCTION",
+  "migration_track": "visual_workspace_interaction",
+  "slice": "canonical_properties_view_template_drift_repair",
+  "decision": {
+    "accepted_as_authority": true,
+    "runtime_copy_promoted": false,
+    "bulk_copy_performed": false,
+    "live_process_interruption": false,
+    "summary": "Canonical 13.NODE-LANGUAGE owns the properties presentation and view-template migration court. The copied runtime version is preserved only as non-promoting migration evidence until runtime retirement; it is not a source of product authority."
+  },
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true,
+    "no_browser_handoff_token_issued": true,
+    "heavy_default_state_preflight_held_for_machine_priority": true
+  },
+  "authority_files": [
+    {
+      "path": "tests_replica/test_universal_properties_presentation.py",
+      "sha256": "816f43803d7cd70ab21c87648ca3c97a5ff1bc4424a579cb8fc1b27c6d7991e3",
+      "evidence": "Properties/view-template court includes same-root deterministic view-template replacement and idempotence for released template drift."
+    },
+    {
+      "path": "nodelang/universal_application.py",
+      "sha256": "73bcb35200725ed130594c5fec1eb8970e9fc2f8381614c6053f3e52acaaad04",
+      "evidence": "Restore path appends missing state-machine protocol vocabulary roles and replaces only drifted deterministic view-template cells while failing closed for non-view-template deterministic drift."
+    }
+  ],
+  "runtime_candidate_decisions": [
+    {
+      "path": "tests_replica/test_universal_properties_presentation.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The accepted court lives in 13.NODE-LANGUAGE and proves the canonical graph migration. The ignored runtime test is a drift candidate only until the copied runtime is retired."
+    }
+  ],
+  "runtime_evidence_read_only": {
+    "tests_replica/test_universal_properties_presentation.py": "9543bc313eecd4a63f54492a5167378ec5bebd0d9b7ce7f8bfb021787dc618ee"
+  },
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "py -3.14 -m pytest tests_replica\\test_baboom_single_authority.py::test_restore_migration_appends_missing_state_machine_role_as_graph_vocabulary tests_replica\\test_universal_properties_presentation.py::test_same_root_view_template_upgrade_replaces_released_marker_once -q --timeout=120 --tb=short",
+      "result": "2 passed in 0.96s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "py -3.14 -m pytest tests_replica\\test_universal_properties_presentation.py -q --timeout=180 --tb=short",
+      "result": "23 passed in 88.25s"
+    },
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "py -3.14 -m py_compile nodelang\\universal_application.py",
+      "result": "passed"
+    }
+  ],
+  "not_claimed": [
+    "This does not promote ignored node_runtime files.",
+    "This does not interrupt, restart, or replace PID 52484 or PID 540.",
+    "This does not prove default-state BABOOM preflight green; that heavy copied-state preflight remains held for machine-priority production work."
+  ]
+}

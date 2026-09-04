@@ -77,6 +77,6 @@ claude mcp remove archhub
   your `py` launcher points at a Python without the MCP SDK
   installed.  Install with `py -m pip install mcp`.
 - **`archhub_offline` on every call.**  Launch ArchHub first
-  (`Run.bat` at the repo root).  The MCP server proxies into the
+  (`scripts\Run.bat` at the repo root).  The MCP server proxies into the
   broker modules in-process; if no broker is reachable it returns
   the offline error.

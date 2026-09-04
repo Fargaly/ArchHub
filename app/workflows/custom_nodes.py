@@ -1,9 +1,12 @@
-"""Custom node-type loader.
+"""Legacy typed-runtime custom node loader.
 
 The founder wants to mint new node types from the UI without editing
 the codebase. Specs are persisted as JSON under
 `%LOCALAPPDATA%\\ArchHub\\custom_nodes\\<type>.json` and re-registered
 on every bridge boot.
+
+This is compatibility machinery for the old typed runtime, not Universal Cell
+authority. New product authority lives in `10.PRODUCT/13.NODE-LANGUAGE`.
 
 Spec shape (all keys but `type` are optional):
 
@@ -46,12 +49,18 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .graph import Port, PortType
+from .graph import Port, PortType, normalize_port_type_ref
 from .registry import NodeSpec, _REGISTRY, get as _registry_get, register
 # AgDR-0038 Delta 4 — reuse the code.python sandbox contract (AgDR-0020)
 # so a Capability Node's python body runs with RESTRICTED builtins, not
 # the real __builtins__.  One sandbox contract for the whole codebase.
 from .nodes.code import _build_safe_builtins, _has_forbidden_token
+
+
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
 
 
 def custom_nodes_dir() -> Path:
@@ -94,10 +103,7 @@ def _coerce_port(p: Any) -> Port:
     if isinstance(p, str):
         return Port(name=p, type=PortType.ANY)
     if isinstance(p, dict):
-        try:
-            t = PortType(p.get("type", "any"))
-        except Exception:
-            t = PortType.ANY
+        t = normalize_port_type_ref(p.get("type", "any"))
         return Port(
             name=str(p.get("name", "")),
             type=t,
@@ -323,7 +329,7 @@ def _graph_executor(impl: dict, output_names: list[str]):
     inner_outputs = impl.get("inner_outputs")
     # AgDR-0040 slice 3 — when the I/O maps are absent, auto-derive them
     # from the inner graph's open ports. Wire the inside; the outer
-    # contract appears. One source of truth.
+    # typed-runtime facade appears as a legacy projection.
     if inner_inputs is None or inner_outputs is None:
         d_in, d_out = _derive_graph_io(inner_graph)
         if inner_inputs is None:

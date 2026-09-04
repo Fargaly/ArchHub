@@ -1,0 +1,56 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-22T00:18:00+04:00",
+  "migration_track": "visual_workspace_interaction",
+  "slice": "canonical_universal_browser_document_runtime",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "runtime_copy_promoted": false,
+  "bulk_copy_performed": false,
+  "live_process_interruption": false,
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true
+  },
+  "decision": {
+    "accepted_canonical_behavior": [
+      "The canonical browser document emits only UNIVERSAL_CANVAS_SCRIPT.",
+      "The legacy typed browser controller and its batch dispatcher are excluded from the rendered document.",
+      "Browser behavior remains a projection of the Universal graph rather than a second client control plane."
+    ],
+    "pending_not_ported": [
+      "The ignored copied view remains read-only migration evidence until controlled runtime retirement.",
+      "The separate copied performance court remains unresolved and is not covered by this decision."
+    ],
+    "forbidden": [
+      "Concatenate the retired typed client script into the canonical browser document.",
+      "Treat this evidence as a live browser deployment or runtime-handoff proof."
+    ]
+  },
+  "canonical_files": {
+    "nodelang/universal_view.py": "d99f7a6aae88a7c4cd0ddcd8c79e765bba4b180034315e7275fdf7ec6e1f7870",
+    "tests_replica/test_universal_ui_interactions.py": "e3818e4bbf02ba7378d77abc9da21e2980171d1efbf27ce25889dbf0db4ab3c2"
+  },
+  "runtime_candidate_decisions": [
+    {
+      "path": "nodelang/universal_view.py",
+      "decision": "reconstruct_in_canonical_authority",
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "rationale": "The canonical view intentionally removes CLIENT_SCRIPT from the rendered document and the current browser court proves its exclusion."
+    }
+  ],
+  "runtime_evidence_read_only": {
+    "nodelang/universal_view.py": "8a3e70d01cc640b5c05bc2445807e21e18e4f4db8eb0b5a785753ae9d51ecd61"
+  },
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_universal_ui_interactions.py::test_universal_document_excludes_the_legacy_typed_browser_controller -q",
+      "result": "1 passed in 8.87s; before/after canonical SHA-256 values matched"
+    }
+  ],
+  "not_claimed": [
+    "This evidence does not prove the unresolved universal UI performance court.",
+    "This evidence does not activate a live browser projection or retire the copied runtime."
+  ]
+}

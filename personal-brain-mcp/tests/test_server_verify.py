@@ -22,12 +22,15 @@ hermetic because the gate target is this package's own __init__.py.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
 from personal_brain import court_harness as ch
 from personal_brain import requirement_tree as rt
 from personal_brain import roma
+from personal_brain import secret_resolver as sr
+from personal_brain import server as brain_server
 from personal_brain import server_verify as sv
 from personal_brain.storage import BrainStore
 
@@ -54,6 +57,19 @@ def signing_key(monkeypatch):
 # ───────────────── out-of-process re-execution (the core) ─────────────────
 
 
+def test_verifier_uses_console_sibling_when_brain_runs_windowless(tmp_path):
+    pythonw = tmp_path / "pythonw.exe"
+    python = tmp_path / "python.exe"
+    pythonw.write_bytes(b"")
+    python.write_bytes(b"")
+
+    assert sv._verifier_python_executable(str(pythonw)) == str(python)
+    assert sv._verifier_python_executable(str(python)) == str(python)
+
+    python.unlink()
+    assert sv._verifier_python_executable(str(pythonw)) == str(pythonw)
+
+
 def test_server_side_verify_reexecutes_real_gate_off_process(signing_key):
     """A green is produced ONLY after the gate is re-run in a DIFFERENT process
     (proof: child pid != this pid) and the attestation is signed + authentic."""
@@ -72,6 +88,83 @@ def test_server_side_verify_reexecutes_real_gate_off_process(signing_key):
     assert att.signed is True and att.signature
     ok, reason = sv.verify_attestation(att)
     assert ok is True, reason
+
+
+def test_server_side_verify_normalizes_grand_map_pytest_gate_without_shelling(
+        signing_key, tmp_path):
+    runtime = tmp_path / "runtime"
+    tests = runtime / "tests"
+    tests.mkdir(parents=True)
+    target = tests / "test_generated_gate.py"
+    target.write_text("def test_real_artifact():\n    assert 6 * 7 == 42\n", encoding="utf-8")
+    shell_marker = tmp_path / "command-was-executed"
+
+    att = sv.server_side_verify(
+        node_id="grand-map-pytest",
+        gate_kind="pytest",
+        gate_spec={
+            "path": "runtime/tests/test_generated_gate.py",
+            "command": (
+                "python -m pytest tests/test_generated_gate.py -q && "
+                "python -c \"open(r'%s','w').write('unsafe')\"" % shell_marker
+            ),
+        },
+        claimed_by="exec-A",
+        judged_by="server-X",
+        context={
+            "repo_root": str(tmp_path),
+            "evidence": {
+                "last_message": "implemented the gate normalization and ran tests",
+                "session_signals": {"ran_tests": True, "wrote_files": True},
+            },
+        },
+    )
+
+    assert att.green is True and att.reexecuted is True
+    assert att.evidence_ref == "tests/test_generated_gate.py"
+    assert Path(att.evidence_ref).as_posix() == "tests/test_generated_gate.py"
+    assert shell_marker.exists() is False
+
+
+def test_server_side_verify_executes_every_declared_pytest_selector_without_shelling(
+        signing_key, tmp_path):
+    runtime = tmp_path / "runtime"
+    tests = runtime / "tests"
+    tests.mkdir(parents=True)
+    first = tests / "test_first.py"
+    second = tests / "test_second.py"
+    first.write_text("def test_first():\n    assert True\n", encoding="utf-8")
+    second.write_text("def test_second():\n    assert False\n", encoding="utf-8")
+    shell_marker = tmp_path / "selector-command-was-executed"
+    gate = {
+        "path": "runtime/tests/test_first.py",
+        "selectors": ["tests/test_first.py", "tests/test_second.py"],
+        "command": (
+            "python -m pytest tests/test_first.py tests/test_second.py -q && "
+            "python -c \"open(r'%s','w').write('unsafe')\"" % shell_marker
+        ),
+    }
+    context = {
+        "repo_root": str(tmp_path),
+        "evidence": {
+            "last_message": "ran the complete declared pytest selector list",
+            "session_signals": {"ran_tests": True, "wrote_files": True},
+        },
+    }
+
+    red = sv.server_side_verify(
+        node_id="multi-selector-red", gate_kind="pytest", gate_spec=gate,
+        claimed_by="exec-A", judged_by="server-X", context=context)
+    assert red.green is False and red.verdict == "red"
+    assert red.evidence_ref == "tests/test_first.py | tests/test_second.py"
+
+    second.write_text("def test_second():\n    assert True\n", encoding="utf-8")
+    green = sv.server_side_verify(
+        node_id="multi-selector-green", gate_kind="pytest", gate_spec=gate,
+        claimed_by="exec-A", judged_by="server-X", context=context)
+    assert green.green is True and green.verdict == "green"
+    assert green.evidence_ref == "tests/test_first.py | tests/test_second.py"
+    assert shell_marker.exists() is False
 
 
 def test_server_side_verify_refutes_missing_artifact(signing_key):
@@ -254,3 +347,103 @@ def test_brain_roma_server_verify_tool_registered(store):
     assert "brain.roma_server_verify" in names
     # existing roma + core tools untouched
     assert {"brain.roma_judge", "brain.roma_sweep", "brain.health"} <= names
+
+
+def test_court_signing_key_provisioning_uses_the_authoritative_ref(monkeypatch):
+    observed = {}
+
+    def fake_ensure(ref):
+        observed["ref"] = ref
+        return {
+            "ok": True,
+            "created": True,
+            "ref": ref,
+            "backend": "os_keyring",
+        }
+
+    monkeypatch.setattr(sr, "ensure_secret", fake_ensure)
+
+    result = sv.ensure_court_signing_key()
+
+    assert observed["ref"] == sv.DEFAULT_SIGNING_KEY_REF
+    assert result == {
+        "ok": True,
+        "created": True,
+        "ref": sv.DEFAULT_SIGNING_KEY_REF,
+        "backend": "os_keyring",
+    }
+    assert "value" not in result
+    assert "secret" not in result
+
+
+def test_daemon_startup_ensures_court_key_without_logging_it(monkeypatch, capsys):
+    calls = []
+
+    class FakeServer:
+        def run(self, **kwargs):
+            calls.append(("run", kwargs))
+
+    monkeypatch.setattr(
+        sv,
+        "ensure_court_signing_key",
+        lambda: {
+            "ok": True,
+            "created": False,
+            "ref": sv.DEFAULT_SIGNING_KEY_REF,
+            "backend": "existing",
+        },
+    )
+    monkeypatch.setattr(
+        brain_server,
+        "build_server",
+        lambda **_kwargs: FakeServer(),
+    )
+
+    brain_server.main(["--http", "9843"])
+
+    captured = capsys.readouterr()
+    assert calls == [("run", {
+        "transport": "http",
+        "host": "127.0.0.1",
+        "port": 9843,
+        "stateless_http": True,
+    })]
+    assert "court signing capability READY" in captured.err
+    assert sv.DEFAULT_SIGNING_KEY_REF in captured.err
+    assert "BRAIN_VERIFY_SIGNING_KEY" not in captured.err
+
+
+def test_server_verify_uses_bounded_declared_gate_timeout(
+        signing_key, monkeypatch):
+    observed = []
+
+    def fake_subprocess(**kwargs):
+        observed.append(kwargs["timeout"])
+        return sv._SubprocessProbe(
+            result=sv.ProbeResult(
+                passed=True, applied=True, detail="verified",
+                evidence_ref="pytest:verified"),
+            child_pid=os.getpid() + 1,
+            returncode=0,
+            stderr="",
+            spawned=True,
+        )
+
+    monkeypatch.setattr(sv, "run_artifact_gate_subprocess", fake_subprocess)
+
+    cases = [
+        ({"selector": "tests/test_x.py", "timeout_s": 600}, 600.0),
+        ({"selector": "tests/test_x.py", "timeout_s": 99999}, 900.0),
+        ({"selector": "tests/test_x.py", "timeout_s": 0}, 120.0),
+        ({"selector": "tests/test_x.py", "timeout_s": "invalid"}, 120.0),
+    ]
+    for index, (gate_spec, expected) in enumerate(cases):
+        att = sv.server_side_verify(
+            node_id=f"timeout-{index}",
+            gate_kind="pytest",
+            gate_spec=gate_spec,
+            claimed_by="agent-A",
+            judged_by="court-B",
+        )
+        assert att.green is True
+        assert observed[-1] == expected

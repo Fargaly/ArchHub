@@ -300,7 +300,7 @@ class UpdateDialog(QDialog):
             self.detail_line.setText(
                 f"<pre style='white-space:pre-wrap;font-size:11px;color:#c9c4bc;'>"
                 f"{safe_msg}</pre>"
-                f"<br><i>Tip: double-click <b>Update.bat</b> in the repo folder "
+                f"<br><i>Tip: double-click <b>scripts\\Update.bat</b> in the repo folder "
                 f"for a verbose log if this keeps happening.</i>"
             )
             self.recheck_btn.setEnabled(True)

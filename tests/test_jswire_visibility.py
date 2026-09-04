@@ -417,23 +417,37 @@ def test_jsx_surfaces_present():
     assert "· ready`" in src, "BrainChip 'ready' label missing"
     # S2 — chat_status subscription + the route-meta line under the bubble.
     assert "wire('chat_status'" in src, "chat_status not subscribed in JSX"
-    assert 'data-testid="route-meta"' in src, "router meta line not rendered"
+    authority = (JSX.parent.parent / "workflows" / "grand_map_ui.py").read_text(
+        encoding="utf-8"
+    )
+    assert "ConversationRouteMetaSurface" in src, "router meta surface not mounted"
+    assert 'surface="conversation-route-meta"' in src, "router meta UiNodeSurface missing"
+    assert "if (d.test_id) props['data-testid'] = d.test_id" in src
+    assert 'test_id="route-meta"' in authority, "router meta test id missing from graph authority"
     # S2 — ModelStrip real router state (no more hardcoded green latency dot).
     assert "get_provider_stats" in src, "ModelStrip does not read provider stats"
     assert "data-router-blocked" in src, "ModelStrip blocked-provider state missing"
-    # S4 — AccountChip plan/remaining label.
-    assert "data-account-plan" in src, "AccountChip plan attribute missing"
+    # S4 — AccountChip plan/remaining label lives in graph-owned state fields.
+    assert "syncGrandMapAccountChipState" in src, "AccountChip graph state sync missing"
+    assert "account_plan" in src, "AccountChip plan state missing"
+    assert "account_remaining_messages" in src, "AccountChip remaining quota state missing"
     assert "left`" in src or "left'" in src, "AccountChip 'left' label missing"
-    # S5 — Sync sessions button.
-    assert 'data-testid="sync-sessions-btn"' in src, "Sync sessions button missing"
-    assert "cloud_sync_sessions" in src, "Sync button does not call the slot"
-    assert "<SyncSessionsButton/>" in src, "Sync button not mounted in Home header"
-    # S4b — AccountChip must ALSO be in the HOME header (the landing screen),
-    # not only WsHeader. The non-compact <BrainChip/> + <HomeGraphHealthChip/>
-    # pair is unique to the Home header, so this pins AccountChip between them.
-    import re as _re
-    assert _re.search(r"<BrainChip/>\s*<AccountChip compact/>\s*<HomeGraphHealthChip/>", src), \
-        "AccountChip not mounted in the Home header (was WsHeader-only -> invisible on landing)"
+    # S5 — Sync sessions is graph-owned: the authority defines the button node,
+    # Studio binds the action, and the action calls the real bridge slot.
+    assert '"ui:grandmap:session-sync"' in authority, "sync sessions button node missing from graph authority"
+    assert 'action="sessions.sync"' in authority, "sync sessions action missing from graph authority"
+    assert "_slot(\"slot:session-sync-label\", \"sync\", \"sync sessions\")" in authority, \
+        "sync sessions label slot missing from graph authority"
+    assert "ensureGrandMapSessionToolbarNodes" in src, "Home session toolbar graph mount missing"
+    assert "bindHomeAction('sessions.sync'" in src, "sync sessions action not bound in Studio"
+    assert "bridgeAsync('cloud_sync_sessions')" in src, "sync sessions action does not call the bridge slot"
+    # S4b — AccountChip must be a graph-owned surface, not a dead header island.
+    assert "const AccountChip = ({ compact }) =>" in src, "AccountChip component missing"
+    assert "ensureGrandMapCanvasAccountChipNodes" in src, "AccountChip graph node materializer missing"
+    assert 'surface="canvas-account-chip"' in src, "AccountChip UiNodeSurface missing"
+    assert "action=\"account.chip.activate\"" in authority, "AccountChip activation action missing from authority"
+    assert '"ui:grandmap:canvas-account-chip"' in authority, "AccountChip graph node missing from authority"
+    assert "source_id = \"ui_account_chip\"" in authority, "AccountChip authority source node missing"
 
 
 def test_jsx_no_pictographic_emoji_in_new_copy():

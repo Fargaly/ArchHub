@@ -22,6 +22,7 @@ test errors; the file makes them pass.
 from __future__ import annotations
 
 import os
+import inspect
 
 import pytest
 
@@ -334,3 +335,12 @@ def test_status_has_the_spec_keys(store, tmp_path):
                 "providers_used", "cost_usd", "killswitch"):
         assert key in s, f"status() missing spec key '{key}'"
     assert s["cost_usd"] == 0.0
+
+
+def test_dispatcher_default_path_uses_cell_first_roma_helpers():
+    run_source = inspect.getsource(dz.run_standing)
+    court_source = inspect.getsource(dz._default_court_fn)
+    assert "roma.claim_leaf_cell_first(" in run_source
+    assert "rt.claim_leaf(store" not in run_source
+    assert "roma.judge_leaf_cell_first(" in court_source
+    assert "roma.judge_leaf(" not in court_source

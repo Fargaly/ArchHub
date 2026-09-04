@@ -1,84 +1,156 @@
 #!/usr/bin/env bash
-# Pre-push guard — second line of defense if pre-commit was bypassed
-# (--no-verify) or a foreign branch was force-pushed with .cs edits.
-# Inspects every commit being pushed for staged broker edits; rejects
-# the push when any are present without ARCHHUB_ALLOW_CS_EDIT=1.
+# Pre-push guard for ArchHub local safety gates.
+#
+# This is a second line of defense if pre-commit was bypassed. It checks the
+# commits introduced by the push, not the current working tree.
 
 set -euo pipefail
+
+resolve_python_bin() {
+    if [[ -n "${ARCHHUB_PYTHON:-}" ]]; then
+        printf '%s\n' "$ARCHHUB_PYTHON"
+        return 0
+    fi
+    if command -v python >/dev/null 2>&1; then
+        command -v python
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        command -v python3
+        return 0
+    fi
+    for candidate in \
+        "/mnt/c/Users/fargaly/AppData/Local/Python/bin/python.exe" \
+        "/c/Users/fargaly/AppData/Local/Python/bin/python.exe"
+    do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+remote="${1:-}"
+url="${2:-}"
+_unused_remote="$remote"
+_unused_url="$url"
 
 if [[ "${ARCHHUB_ALLOW_CS_EDIT:-0}" == "1" ]]; then
     exit 0
 fi
 
-# stdin lines: <local_ref> <local_sha> <remote_ref> <remote_sha>
-remote="$1"
-url="$2"
+introduced_range_args() {
+    local local_sha="$1"
+    local remote_sha="$2"
+    if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
+        local base
+        base=$(git rev-parse --verify --quiet refs/remotes/origin/main || true)
+        if [[ -n "$base" ]]; then
+            printf '%s\n' "$base..$local_sha"
+        else
+            printf '%s\n' "-50"
+            printf '%s\n' "$local_sha"
+        fi
+    else
+        printf '%s\n' "$remote_sha..$local_sha"
+    fi
+}
+
+PYTHON_BIN="$(resolve_python_bin || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "[public-privacy-ratchet] python unavailable; blocking push." >&2
+    exit 1
+fi
+if [ ! -f tools/public_privacy_ratchet.py ]; then
+    echo "[public-privacy-ratchet] gate script missing; blocking push." >&2
+    exit 1
+fi
+"$PYTHON_BIN" tools/public_privacy_ratchet.py
 
 while read -r local_ref local_sha remote_ref remote_sha; do
-    # Skip branch deletions (local_sha = 40 zeros).
+    local_ref="${local_ref//$'\r'/}"
+    local_sha="${local_sha//$'\r'/}"
+    remote_ref="${remote_ref//$'\r'/}"
+    remote_sha="${remote_sha//$'\r'/}"
+    if [[ -z "${local_sha:-}" ]]; then
+        continue
+    fi
     if [[ "$local_sha" == "0000000000000000000000000000000000000000" ]]; then
         continue
     fi
 
-    # Determine the commit range this push INTRODUCES (what's new on the
-    # remote), then look for broker .cs edits ONLY within it.
-    if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
-        # New branch on the remote. Inspect only the commits NOT already on the
-        # remote's main — a branch cut from upstream (INCLUDING a squashed main
-        # that itself contains every .cs) introduces no NEW .cs and must not be
-        # flagged. (Bug fixed 2026-06-04: the old `-50 $local_sha` heuristic
-        # walked back THROUGH origin/main's squash commit — which touches all
-        # .cs — and false-blocked every clean feature-branch first-push.)
-        # Fall back to the last-50 heuristic only when there is genuinely no
-        # origin/main to diff against (the very first push of the repo).
-        base=$(git rev-parse --verify --quiet refs/remotes/origin/main || true)
-        if [[ -n "$base" ]]; then
-            range_args=("$base..$local_sha")
-        else
-            range_args=(-50 "$local_sha")
-        fi
-    else
-        range_args=("$remote_sha..$local_sha")
-    fi
+    # mapfile needs bash 4; macOS ships 3.2 and answered 127.
+    range_args=()
+    while IFS= read -r range_arg; do
+        range_args+=("$range_arg")
+    done < <(introduced_range_args "$local_sha" "$remote_sha")
+
     cs_changes=$(git log --name-only --pretty=format: "${range_args[@]}" -- \
                  ':(glob)payload/sources/**/*.cs' 2>/dev/null | sort -u | grep -v '^$' || true)
-
     if [[ -n "$cs_changes" ]]; then
         cat >&2 <<EOF
-═══════════════════════════════════════════════════════════════════════
-  PUSH BLOCKED — $local_ref carries broker .cs edits
-═══════════════════════════════════════════════════════════════════════
+================================================================
+  PUSH BLOCKED - $local_ref carries broker .cs edits
+================================================================
 Files touched in commits being pushed:
 $(echo "$cs_changes" | sed 's/^/  /')
 
-Founder mandate (AGENTS.md): broker .cs needs AgDR + sign-off.
-Bypass: ARCHHUB_ALLOW_CS_EDIT=1 git push ...
-═══════════════════════════════════════════════════════════════════════
+Broker source files require an AgDR and founder sign-off.
+Bypass with explicit founder approval:
+  ARCHHUB_ALLOW_CS_EDIT=1 git push ...
+================================================================
 EOF
         exit 1
     fi
+
+    if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
+        runtime_changes=$(git log --name-only --pretty=format: "${range_args[@]}" -- \
+                          node_runtime 2>/dev/null | sort -u | grep -v '^$' || true)
+    else
+        runtime_changes=$(git diff --name-only "$remote_sha..$local_sha" -- \
+                          node_runtime 2>/dev/null | sort -u | grep -v '^$' || true)
+    fi
+    if [[ -n "$runtime_changes" ]]; then
+        if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -f "$PYTHON_BIN" ]; then
+            echo "[runtime-retirement-gate] python unavailable; blocking node_runtime push." >&2
+            exit 1
+        fi
+        if [ ! -f tools/legacy_runtime_drain.py ]; then
+            echo "[runtime-retirement-gate] tools/legacy_runtime_drain.py missing; blocking node_runtime push." >&2
+            exit 1
+        fi
+        GATE_RC=0
+        "$PYTHON_BIN" tools/legacy_runtime_drain.py --no-write --enforce-retirement-gate >/dev/null || GATE_RC=$?
+        if [ "$GATE_RC" != "0" ]; then
+            cat >&2 <<EOF
+================================================================
+  PUSH BLOCKED - node_runtime retirement gate is red
+================================================================
+Pushed commits touch node_runtime/:
+$(echo "$runtime_changes" | sed 's/^/  /')
+
+Run:
+  python tools/legacy_runtime_drain.py --no-write --enforce-retirement-gate
+
+Then inspect the retirement_gate failures before pushing node_runtime changes.
+================================================================
+EOF
+            exit 1
+        fi
+    fi
 done
 
-# ─────────────────────────────────────────────────────────────────────────
-# AgDR-0050 — no-brain-on-commit floor (ADDITIVE; runs AFTER the .cs guard).
-# Second line for the brain gate too, mirroring pre-commit. At push time there
-# is no staged index, so brain_commit_gate.py (which reads `git diff --cached`)
-# normally finds nothing staged and SKIPS (exit 0) — the commit-time hook is
-# where this gate really bites. It is wired here for parity + WARN-mode
-# completeness; it still warns by default and only blocks on the explicit
-# ARCHHUB_BRAIN_COMMIT_GATE=block opt-in. Default is WARN
-# (ARCHHUB_BRAIN_COMMIT_GATE unset/warn). Fail-open is absolute: a missing
-# python, an absent gate file, or any invocation error must NOT block the push.
-PYTHON_BIN="${ARCHHUB_PYTHON:-python}"
-if command -v "$PYTHON_BIN" >/dev/null 2>&1 \
-   && [ -f tools/brain_commit_gate.py ]; then
+# Brain commit gate parity. This remains warn/fail-open by default and only
+# blocks when the gate deliberately exits 1.
+if command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ -f tools/brain_commit_gate.py ]; then
     GATE_RC=0
     "$PYTHON_BIN" tools/brain_commit_gate.py || GATE_RC=$?
     if [ "$GATE_RC" = "1" ]; then
         exit 1
     fi
 else
-    echo "[brain-commit-gate] python or gate script unavailable — fail-open, not blocking." >&2
+    echo "[brain-commit-gate] python or gate script unavailable; fail-open, not blocking." >&2
 fi
 
 exit 0

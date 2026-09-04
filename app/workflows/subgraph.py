@@ -1,5 +1,10 @@
-"""Subgraph-as-node: wrap N nodes into a single composite that cooks
+"""Legacy typed-runtime subgraph compatibility.
+
+Subgraph-as-node wraps N nodes into a single composite that cooks
 its inner graph when pulled.
+
+This is old typed-runtime behavior. It remains only as migration evidence and
+compatibility machinery until consumed by Universal Cell graph protocols.
 
 Founder direction (2026-05-13): a user selects ≥2 nodes on the canvas
 and presses Cmd-G (Ctrl-G on Windows). Those nodes — plus the wires
@@ -60,6 +65,12 @@ from . import registry
 from .graph import Port, PortType
 
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "superseded_by_universal_cell"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
+
 # ───────────────────────── port-shape inference ─────────────────────
 # Different node shapes show up in the wild:
 #   • JSX canvas nodes: `n.outs = [{id, label, t}, ...]`, `n.ins = [...]`
@@ -88,6 +99,32 @@ def _node_port_type(node: dict, port_id: str, *,
             if pid == port_id:
                 return p.get("t") or p.get("type") or "any"
     return "any"
+
+
+def _node_ports(node: dict, *, side: str = "out") -> list[dict[str, str]]:
+    """Return normalised port descriptors for a node.
+
+    Closed composite groups need to expose terminal inner-node outputs even
+    when no wire crosses the group boundary. Older graphs are inconsistent
+    about canvas (`outs`/`ins`) versus workflow (`outputs`/`inputs`) port
+    shape, so keep the lookup beside `_node_port_type`.
+    """
+    if not node:
+        return [{"id": "value", "label": "value", "type": "any"}]
+    raw = (node.get("outs") or node.get("outputs") or []) if side == "out" else (
+        node.get("ins") or node.get("inputs") or []
+    )
+    ports: list[dict[str, str]] = []
+    for p in raw:
+        pid = p.get("id") or p.get("name")
+        if not pid:
+            continue
+        ports.append({
+            "id": str(pid),
+            "label": str(p.get("label") or pid),
+            "type": str(p.get("t") or p.get("type") or "any"),
+        })
+    return ports or [{"id": "value", "label": "value", "type": "any"}]
 
 
 def _iter_wires(graph: dict) -> list[dict]:
@@ -228,6 +265,29 @@ def compose_subgraph(graph: dict,
             "type":       port_type,
             "label":      f"{inner_node}.{inner_port}",
         })
+
+    # Closed group: if nothing crosses out of the selection, expose the
+    # terminal inner node outputs as facade outputs. Otherwise the composite
+    # has no live value even though its inner graph has a sink, breaking the
+    # group-as-node law and making the result invisible to users.
+    if not facade_outputs:
+        inner_sources = {w["from"][0] for w in inner_wires if w.get("from")}
+        terminal_ids = [nid for nid in inner_ids if nid not in inner_sources]
+        for inner_node in terminal_ids:
+            for port in _node_ports(nodes_by_id.get(inner_node), side="out"):
+                inner_port = port["id"]
+                key = (inner_node, inner_port)
+                if key in seen_out:
+                    continue
+                port_id = f"out__{inner_node}__{inner_port}"
+                seen_out[key] = port_id
+                facade_outputs.append({
+                    "port":       port_id,
+                    "inner_node": inner_node,
+                    "inner_port": inner_port,
+                    "type":       port["type"],
+                    "label":      f"{inner_node}.{port['label']}",
+                })
 
     # Place the composite roughly at the centroid of its inner nodes
     # so the canvas drops it somewhere sensible.
@@ -499,9 +559,35 @@ def add_wire(graph: dict,
             if (w["from"][0] == src_node and w["from"][1] == src_port and
                     w["to"][0] == dst_node and w["to"][1] == dst_port):
                 return new_graph
+    src_type = _node_port_type(nodes_by_id[src_node], src_port, side="out")
+    dst_type = _node_port_type(nodes_by_id[dst_node], dst_port, side="in")
+    value_type = src_type if src_type != "any" else dst_type
+    wire_id = f"edge:{src_node}.{src_port}->{dst_node}.{dst_port}"
+    wire_layers = {
+        "value_type": value_type or "any",
+        "schema_ref": f"archhub.workflow.{value_type or 'any'}",
+        "gate_policy": "type-compatible-and-enabled",
+        "codec": "none",
+        "encryption": "none",
+        "behavior": "data-flow",
+        "presentation": "canvas-bezier",
+        "provenance": "backend:subgraph.add_wire",
+    }
     wires.append({
+        "id": wire_id,
         "from": [src_node, src_port],
         "to":   [dst_node, dst_port],
+        **wire_layers,
+        "data": {
+            "relation": "data_flow",
+            "source_owner": src_node,
+            "target_owner": dst_node,
+            "from_node": src_node,
+            "from_port": src_port,
+            "to_node": dst_node,
+            "to_port": dst_port,
+            **wire_layers,
+        },
     })
     return new_graph
 

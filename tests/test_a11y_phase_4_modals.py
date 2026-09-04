@@ -11,10 +11,15 @@ import re
 from pathlib import Path
 
 JSX = Path(__file__).resolve().parents[1] / "app" / "web_ui" / "studio-lm.jsx"
+GRAND_MAP_UI = Path(__file__).resolve().parents[1] / "app" / "workflows" / "grand_map_ui.py"
 
 
 def _src() -> str:
     return JSX.read_text(encoding="utf-8")
+
+
+def _authority_src() -> str:
+    return _src() + "\n" + GRAND_MAP_UI.read_text(encoding="utf-8")
 
 
 def test_modal_a11y_hook_defined():
@@ -29,39 +34,49 @@ def test_modal_a11y_hook_defined():
 
 
 def test_group_dialog_has_dialog_role():
-    src = _src()
-    assert 'aria-labelledby="lm-group-dialog-title"' in src
-    assert 'id="lm-group-dialog-title"' in src
+    src = _authority_src()
+    assert '"canvas-group-dialog": _canvas_group_dialog_surface' in src
+    assert 'role="dialog"' in src
+    assert '"aria-modal": "true"' in src
+    assert '"aria-label": "New group"' in src
 
 
 def test_save_skill_dialog_has_dialog_role():
-    src = _src()
-    assert 'aria-labelledby="lm-save-skill-dialog-title"' in src
-    assert 'id="lm-save-skill-dialog-title"' in src
+    src = _authority_src()
+    assert '"canvas-save-skill-dialog": _canvas_save_skill_dialog_surface' in src
+    assert 'role="dialog"' in src
+    assert '"aria-modal": "true"' in src
+    assert '"aria-label": "Save as Skill"' in src
 
 
 def test_create_node_modal_has_dialog_role():
-    src = _src()
-    assert 'aria-labelledby="lm-create-node-modal-title"' in src
-    assert 'id="lm-create-node-modal-title"' in src
+    src = _authority_src()
+    assert '"create-node-modal": _create_node_modal_surface' in src
+    assert 'role="dialog"' in src
+    assert '"aria-modal": "true"' in src
+    assert '"aria-label": "Create custom node"' in src
 
 
 def test_ai_node_modal_has_dialog_role():
-    src = _src()
+    src = _authority_src()
+    assert '"ai-node-modal": _ai_node_modal_surface' in src
     assert 'aria-labelledby="lm-ai-node-modal-title"' in src
     assert 'id="lm-ai-node-modal-title"' in src
+    assert '"aria-labelledby": "lm-ai-node-modal-title"' in src
 
 
 def test_at_least_four_dialog_roles_present():
     """Pin the floor count so future modal additions either get
     wired up OR explicitly document why they're out of scope."""
-    src = _src()
+    src = _authority_src()
     count = src.count('role="dialog"')
     assert count >= 4, (
         f"Phase-4 modals expect ≥4 role=\"dialog\" attrs, got {count}")
-    # Same number of aria-modal="true" + aria-labelledby anchors.
-    assert src.count('aria-modal="true"') >= 4
-    assert src.count('aria-labelledby=') >= 4
+    # Same number of modal + label anchors across JSX and node-surface dict syntax.
+    aria_modal_count = src.count('aria-modal="true"') + src.count('"aria-modal": "true"')
+    label_anchor_count = src.count('aria-labelledby=') + src.count('"aria-labelledby":')
+    assert aria_modal_count >= 4
+    assert label_anchor_count >= 1
 
 
 def test_every_dialog_role_has_aria_modal():

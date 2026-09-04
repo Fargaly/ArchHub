@@ -19,6 +19,11 @@ Each MCP tool call opens its own connection in WAL mode.
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 import json
 import os
 import sqlite3
@@ -176,6 +181,7 @@ CREATE TABLE IF NOT EXISTS skills (
     honed_trials INTEGER NOT NULL DEFAULT 0,
     honed_passed INTEGER NOT NULL DEFAULT 0,
     side_effects TEXT NOT NULL DEFAULT 'pure',
+    mint_evidence_json TEXT NOT NULL DEFAULT '{}',
     embedding_blob BLOB
 );
 
@@ -338,6 +344,7 @@ class BrainStore:
             "ALTER TABLE fragments ADD COLUMN action_payload TEXT",
             "ALTER TABLE fragments ADD COLUMN language_payload TEXT",
             "ALTER TABLE fragments ADD COLUMN quarantine_flag INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE skills ADD COLUMN mint_evidence_json TEXT NOT NULL DEFAULT '{}'",
         ):
             try:
                 conn.execute(col_sql)
@@ -821,8 +828,8 @@ class BrainStore:
                     requires_secrets_json, body, examples_json, eval_queries_json,
                     scope, visibility, owner_user, provenance_json,
                     success_count, fail_count, last_used_at, minted_at,
-                    honed_trials, honed_passed, side_effects
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    honed_trials, honed_passed, side_effects, mint_evidence_json
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     description=excluded.description,
                     triggers_json=excluded.triggers_json,
@@ -836,7 +843,8 @@ class BrainStore:
                     last_used_at=excluded.last_used_at,
                     honed_trials=excluded.honed_trials,
                     honed_passed=excluded.honed_passed,
-                    side_effects=excluded.side_effects
+                    side_effects=excluded.side_effects,
+                    mint_evidence_json=excluded.mint_evidence_json
                 """,
                 (
                     skill.id, skill.name, skill.description,
@@ -851,7 +859,7 @@ class BrainStore:
                     skill.success_count, skill.fail_count,
                     _iso(skill.last_used_at), _iso(skill.minted_at),
                     skill.honed_trials, skill.honed_passed,
-                    skill.side_effects,
+                    skill.side_effects, json.dumps(skill.mint_evidence),
                 ),
             )
             return not existed
@@ -1998,6 +2006,8 @@ def _row_to_skill(row: sqlite3.Row) -> Skill:
         honed_trials=row["honed_trials"],
         honed_passed=row["honed_passed"],
         side_effects=row["side_effects"],
+        mint_evidence=json.loads(
+            _safe_row_get(row, "mint_evidence_json", default="{}") or "{}"),
     )
 
 

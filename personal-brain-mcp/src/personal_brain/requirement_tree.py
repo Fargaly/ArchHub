@@ -20,12 +20,15 @@ each piece pure + unit-testable in the same spirit as `diligence.py`
 ────────────────────────────────────────────────────────────────────────────
 SAFETY (load-bearing — see CLAUDE.md ONE-SYSTEM-PLAN / LIBRARY-FIRST):
 ────────────────────────────────────────────────────────────────────────────
-  * ADDITIVE ONLY. No new SQLite table, no schema migration. Every tree is
-    persisted under ONE `brain_meta` key (`requirement_tree_v1`) as a JSON doc
-    keyed by tree_id. `BrainStore.set_meta` is an
-    `INSERT … ON CONFLICT(key) DO UPDATE` (storage.py:1054) guarded by the
-    store's RLock — so the whole tree namespace is a single row and never
-    touches `fragments` / `skills` / `-wal` / `-shm`.
+  * ADDITIVE COMPATIBILITY PROJECTION. No new SQLite table, no schema
+    migration. The direct Python helpers still store every tree under ONE
+    `brain_meta` key (`requirement_tree_v1`) as a JSON doc keyed by tree_id.
+    Mutating MCP handlers must sync the actual tree to the Universal Cell
+    application route first, then update this Brain metadata projection.
+    `BrainStore.set_meta` is an `INSERT … ON CONFLICT(key) DO UPDATE`
+    (storage.py:1054) guarded by the store's RLock — so the compatibility
+    namespace is a single row and never touches `fragments` / `skills` /
+    `-wal` / `-shm`.
   * Pure-Python + Pydantic, mirroring `models.py` style. Defined LOCALLY here
     (not appended to models.py) so the stable MCP contract in models.py is
     untouched.
@@ -39,7 +42,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from pydantic import BaseModel, Field
 
@@ -298,6 +301,537 @@ def _tree_id_for(title: str, owner_user: str) -> str:
 # ─────────────────────────── API (the encode contract) ─────────────────
 
 
+def _claim_hash(value: Any) -> str:
+    raw = json.dumps(value, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def clone_tree(tree: RequirementTree) -> RequirementTree:
+    """Copy a tree for a Cell-first candidate mutation."""
+    return RequirementTree.model_validate(tree.model_dump(mode="json"))
+
+
+def build_root_tree(
+    *,
+    title: str,
+    owner_user: str = "founder",
+    tree_id: Optional[str] = None,
+    predicate: str = "",
+    gate_kind: str = "manual",
+    gate_spec: Optional[dict[str, Any]] = None,
+) -> RequirementTree:
+    """Build a root tree in memory without writing Brain metadata."""
+    tid = tree_id or _tree_id_for(title, owner_user)
+    rid = _node_id(tid, None, title)
+    root = ReqNode(
+        node_id=rid,
+        parent=None,
+        title=title,
+        predicate=predicate,
+        gate_kind=gate_kind,
+        gate_spec=gate_spec or {},
+        state=NodeState.OPEN,
+    )
+    return RequirementTree(
+        tree_id=tid,
+        root_id=rid,
+        nodes={rid: root},
+        owner_user=owner_user,
+        title=title,
+    )
+
+
+def _decompose_tree(
+    tree: RequirementTree,
+    *,
+    tree_id: str,
+    node_id: str,
+    children: list[dict],
+) -> RequirementTree:
+    if not children:
+        raise ValueError("decompose requires at least one child (SPLIT, never simplify)")
+    if tree.tree_id != tree_id:
+        raise ValueError(
+            f"tree id mismatch: candidate '{tree.tree_id}' cannot write '{tree_id}'"
+        )
+    parent = tree.nodes.get(node_id)
+    if parent is None:
+        raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
+    if parent.state == NodeState.GREEN:
+        raise ValueError(
+            f"refusing to decompose GREEN node '{node_id}' â€” verified-complete "
+            f"nodes are not re-opened (supersede via a new root instead)"
+        )
+
+    if parent.state == NodeState.RED:
+        for spec in children:
+            if not (spec.get("title") or "").strip():
+                continue
+            ck = spec.get("gate_kind") or "manual"
+            cs = spec.get("gate_spec") or {}
+            if ck == parent.gate_kind and cs == (parent.gate_spec or {}):
+                raise ValueError(
+                    f"cosmetic clone refused: child '{spec.get('title')}' of RED "
+                    f"node '{node_id}' repeats the parent's gate verbatim "
+                    f"(gate_kind='{ck}' + identical gate_spec). Decompose-on-red "
+                    f"must differ in gate_kind OR gate_spec â€” split, never re-skin."
+                )
+
+    now = datetime.now(timezone.utc)
+    for spec in children:
+        title = (spec.get("title") or "").strip()
+        if not title:
+            continue
+        cid = _node_id(tree_id, node_id, title)
+        if cid in tree.nodes:
+            if cid not in parent.children:
+                parent.children.append(cid)
+            continue
+        child = ReqNode(
+            node_id=cid,
+            parent=node_id,
+            title=title,
+            predicate=(spec.get("predicate") or ""),
+            gate_kind=(spec.get("gate_kind") or "manual"),
+            gate_spec=(spec.get("gate_spec") or {}),
+            state=NodeState.OPEN,
+            created_at=now,
+            updated_at=now,
+        )
+        tree.nodes[cid] = child
+        if cid not in parent.children:
+            parent.children.append(cid)
+
+    parent.claimed_by = None
+    parent.verdict = None
+    parent.evidence_ref = None
+    parent.state = NodeState.OPEN
+    parent.updated_at = now
+    return tree
+
+
+def _claim_leaf_in_tree(
+    tree: RequirementTree,
+    *,
+    tree_id: str,
+    node_id: str,
+    agent_id: str,
+) -> ReqNode:
+    if not (agent_id or "").strip():
+        raise ValueError("claim_leaf requires a non-empty agent_id (anti-self-certify anchor)")
+    if tree.tree_id != tree_id:
+        raise ValueError(
+            f"tree id mismatch: candidate '{tree.tree_id}' cannot write '{tree_id}'"
+        )
+    node = tree.nodes.get(node_id)
+    if node is None:
+        raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
+    if not node.is_leaf:
+        raise ValueError(f"cannot claim non-leaf '{node_id}' â€” only leaves are executable")
+    if node.state == NodeState.GREEN:
+        raise ValueError(f"leaf '{node_id}' is already GREEN â€” nothing to claim")
+    if node.claimed_by and normalize_agent(node.claimed_by) != normalize_agent(agent_id):
+        raise ValueError(
+            f"leaf '{node_id}' already claimed by '{node.claimed_by}' "
+            f"(requested by '{agent_id}')"
+        )
+    node.claimed_by = agent_id
+    if normalize_agent(agent_id) not in {
+        normalize_agent(p) for p in node.past_claimants
+    }:
+        node.past_claimants.append(agent_id)
+    node.state = NodeState.CLAIMED
+    node.updated_at = datetime.now(timezone.utc)
+    return node
+
+
+def _set_verdict_in_tree(
+    tree: RequirementTree,
+    *,
+    tree_id: str,
+    node_id: str,
+    verdict: str,
+    judged_by: str,
+    evidence_ref: Optional[str] = None,
+    is_root_authority: bool = False,
+    root_token: Optional[str] = None,
+) -> ReqNode:
+    v = (verdict or "").strip().lower()
+    if v not in ("green", "red", "needs_root"):
+        raise ValueError(f"verdict must be green|red|needs_root, got '{verdict}'")
+    if not (judged_by or "").strip():
+        raise ValueError("set_verdict requires a non-empty judged_by (the court identity)")
+    if is_root_authority and not root_token_ok(root_token):
+        raise PermissionError(
+            f"root override refused: is_root_authority=True requires env "
+            f"{ROOT_TOKEN_ENV} to be set AND a matching root_token argument "
+            f"(mismatch or absent). The unauthenticated god-mode bool is gone."
+        )
+    if tree.tree_id != tree_id:
+        raise ValueError(
+            f"tree id mismatch: candidate '{tree.tree_id}' cannot write '{tree_id}'"
+        )
+    judge_norm = normalize_agent(judged_by)
+    node = tree.nodes.get(node_id)
+    if node is None:
+        raise KeyError(f"node '{node_id}' not found in tree '{tree_id}'")
+
+    if v == "green" and not is_root_authority:
+        if node.is_leaf and not (node.claimed_by or "").strip():
+            raise PermissionError(
+                f"green refused: leaf '{node_id}' was never claimed â€” a "
+                f"verdict needs a claimed executor to judge against "
+                f"(claim the leaf first, or the founder decides via the "
+                f"authenticated root override)."
+            )
+        if node.claimed_by and judge_norm == normalize_agent(node.claimed_by):
+            raise PermissionError(
+                f"self-certification refused: judge '{judged_by}' is the same agent "
+                f"that claimed leaf '{node_id}' (identities compared normalized). "
+                f"The court must be an INDEPENDENT identity (executor never judges "
+                f"its own work). Founder override requires is_root_authority=True "
+                f"+ the root token."
+            )
+        past = {normalize_agent(p) for p in node.past_claimants}
+        if judge_norm in past:
+            raise PermissionError(
+                f"self-certification refused: judge '{judged_by}' previously "
+                f"CLAIMED leaf '{node_id}' (claim history: {node.past_claimants}). "
+                f"A red round-trip clears the claim but not the history â€” a past "
+                f"claimant cannot return as the judge."
+            )
+
+    now = datetime.now(timezone.utc)
+    node.judged_by = judged_by
+    node.evidence_ref = evidence_ref
+    node.updated_at = now
+    if v == "green":
+        node.state = NodeState.GREEN
+        node.verdict = "green"
+    elif v == "red":
+        node.state = NodeState.RED
+        node.verdict = "red"
+        node.attempts += 1
+        if node.claimed_by and normalize_agent(node.claimed_by) not in {
+            normalize_agent(p) for p in node.past_claimants
+        }:
+            node.past_claimants.append(node.claimed_by)
+        node.claimed_by = None
+    else:
+        node.state = NodeState.NEEDS_ROOT
+        node.verdict = None
+
+    _propagate_green(tree)
+    return node
+
+
+def sync_requirement_tree_cell_graph(
+    *,
+    operation: str,
+    tree: RequirementTree,
+) -> dict[str, Any]:
+    """Synchronize the exact tree to Universal Cell before Brain projection."""
+    if not (operation or "").strip():
+        raise ValueError("cell tree sync operation is required")
+    from .universal_runtime import UniversalRuntimeBridge
+
+    return UniversalRuntimeBridge().roma_tree_sync(
+        tree.model_dump(mode="json"),
+        source=operation,
+    )
+
+
+def cell_tree_unavailable_response(
+    operation: str,
+    ex: Exception,
+    **extra: Any,
+) -> dict[str, Any]:
+    out = cell_receipt_unavailable_response(operation, ex, **extra)
+    out["cell_tree_first"] = True
+    return out
+
+
+def attach_cell_tree_fields(
+    payload: dict[str, Any],
+    cell_tree: dict[str, Any],
+    *,
+    brain_written: bool = True,
+) -> dict[str, Any]:
+    payload["cell_first"] = True
+    payload["cell_tree_first"] = True
+    payload["brain_written"] = brain_written
+    payload["cell_tree"] = cell_tree
+    payload["cell_tree_root"] = str(cell_tree.get("tree_root", ""))
+    return payload
+
+
+def save_tree_projection_after_cell_sync(
+    store: "BrainStore",
+    *,
+    tree: RequirementTree,
+) -> RequirementTree:
+    """Persist the Brain metadata copy after the Cell graph accepts the tree."""
+    tree.updated_at = datetime.now(timezone.utc)
+
+    def _fn(doc: dict[str, dict]):
+        doc[tree.tree_id] = tree.model_dump(mode="json")
+        return tree
+
+    return TreeStore(store)._mutate(_fn)
+
+
+def _none_if_empty(value: object) -> Optional[str]:
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def tree_from_cell_projection(projection: Mapping[str, Any]) -> RequirementTree:
+    """Convert the Universal Cell ROMA projection to the MCP tree contract."""
+    raw_nodes = projection.get("nodes")
+    if not isinstance(raw_nodes, Mapping) or not raw_nodes:
+        raise ValueError("Cell ROMA projection has no nodes")
+    root_to_id: dict[str, str] = {}
+    for root, raw_node in raw_nodes.items():
+        if not isinstance(raw_node, Mapping):
+            raise ValueError("Cell ROMA projection node is invalid")
+        node_id = raw_node.get("node_id")
+        if type(root) is not str or type(node_id) is not str or not node_id:
+            raise ValueError("Cell ROMA projection node identity is invalid")
+        root_to_id[root] = node_id
+    root_node = projection.get("root_node")
+    if type(root_node) is not str or root_node not in root_to_id:
+        raise ValueError("Cell ROMA projection root node is invalid")
+    nodes: dict[str, dict[str, Any]] = {}
+    for root, raw_node in raw_nodes.items():
+        assert isinstance(raw_node, Mapping)
+        node_id = root_to_id[root]
+        children = []
+        for child_root in raw_node.get("children") or ():
+            if child_root not in root_to_id:
+                raise ValueError("Cell ROMA projection child is invalid")
+            children.append(root_to_id[child_root])
+        nodes[node_id] = {
+            "node_id": node_id,
+            "parent": _none_if_empty(raw_node.get("parent")),
+            "title": str(raw_node.get("title") or ""),
+            "predicate": str(raw_node.get("predicate") or ""),
+            "state": str(raw_node.get("state") or NodeState.OPEN.value),
+            "verdict": _none_if_empty(raw_node.get("verdict")),
+            "evidence_ref": _none_if_empty(raw_node.get("evidence_ref")),
+            "children": children,
+            "claimed_by": _none_if_empty(raw_node.get("claimed_by")),
+            "past_claimants": list(raw_node.get("past_claimants") or ()),
+            "gate_kind": str(raw_node.get("gate_kind") or "manual"),
+            "gate_spec": dict(raw_node.get("gate_spec") or {}),
+            "judged_by": _none_if_empty(raw_node.get("judged_by")),
+            "attempts": int(raw_node.get("attempts") or 0),
+            "created_at": raw_node.get("created_at"),
+            "updated_at": raw_node.get("updated_at"),
+        }
+    return RequirementTree.model_validate({
+        "tree_id": projection.get("tree_id"),
+        "root_id": root_to_id[root_node],
+        "owner_user": projection.get("owner") or "founder",
+        "title": projection.get("title") or "",
+        "created_at": projection.get("created_at"),
+        "updated_at": projection.get("updated_at"),
+        "nodes": nodes,
+    })
+
+
+def read_tree_authority_first(
+    store: "BrainStore",
+    *,
+    tree_id: str,
+    allow_legacy_fallback: bool = True,
+) -> tuple[Optional[RequirementTree], str, Optional[dict[str, Any]]]:
+    """Read a tree from the Cell route, with explicit legacy migration fallback."""
+    try:
+        from .universal_runtime import UniversalRuntimeBridge
+
+        projection = UniversalRuntimeBridge().roma_tree_get(tree_id=tree_id)
+        if projection.get("ok") is False:
+            raise RuntimeError(str(projection.get("error", "route returned ok=false")))
+        return tree_from_cell_projection(projection), "cell_route", dict(projection)
+    except Exception:
+        if not allow_legacy_fallback:
+            raise
+        tree = get_tree(store, tree_id=tree_id)
+        return tree, "brain_projection", None
+
+
+def list_trees_authority_first(
+    store: "BrainStore",
+    *,
+    allow_legacy_fallback: bool = True,
+) -> tuple[list[str], str, Optional[dict[str, Any]]]:
+    """List Cell-route trees, with explicit legacy migration fallback."""
+    try:
+        from .universal_runtime import UniversalRuntimeBridge
+
+        projection = UniversalRuntimeBridge().roma_tree_list()
+        if projection.get("ok") is False:
+            raise RuntimeError(str(projection.get("error", "route returned ok=false")))
+        tree_ids = projection.get("tree_ids") or ()
+        if not isinstance(tree_ids, (list, tuple)):
+            raise RuntimeError("route tree_ids is invalid")
+        return [str(tree_id) for tree_id in tree_ids], "cell_route", dict(projection)
+    except Exception:
+        if not allow_legacy_fallback:
+            raise
+        return list_trees(store), "brain_projection", None
+
+
+def backfill_requirement_trees_to_cell_graph(
+    store: "BrainStore",
+    *,
+    tree_ids: Optional[list[str]] = None,
+    limit: int = 100,
+    source: str = "brain.tree_backfill_cell",
+) -> dict[str, Any]:
+    """Sync existing Brain metadata trees to the Universal Cell route.
+
+    This is additive reconciliation only: it does not delete, move, or rewrite
+    the Brain metadata projection.
+    """
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+    available = set(list_trees(store))
+    selected = [str(tree_id) for tree_id in (tree_ids or sorted(available))]
+    if len(selected) > limit:
+        selected = selected[:limit]
+    results = []
+    synced = 0
+    failed = 0
+    missing = 0
+    for tree_id in selected:
+        if tree_id not in available:
+            missing += 1
+            failed += 1
+            results.append({
+                "tree_id": tree_id,
+                "ok": False,
+                "status": "missing",
+                "error": f"tree '{tree_id}' not found in Brain projection",
+            })
+            continue
+        tree = get_tree(store, tree_id=tree_id)
+        if tree is None:
+            missing += 1
+            failed += 1
+            results.append({
+                "tree_id": tree_id,
+                "ok": False,
+                "status": "missing",
+                "error": f"tree '{tree_id}' not found in Brain projection",
+            })
+            continue
+        try:
+            cell_tree = sync_requirement_tree_cell_graph(
+                operation=source,
+                tree=tree,
+            )
+        except Exception as ex:
+            failed += 1
+            results.append({
+                "tree_id": tree_id,
+                "ok": False,
+                "status": "cell_sync_failed",
+                "error": f"{type(ex).__name__}: {ex}",
+            })
+            continue
+        synced += 1
+        results.append({
+            "tree_id": tree_id,
+            "ok": True,
+            "status": "synced",
+            "tree_root": cell_tree.get("tree_root"),
+            "node_count": cell_tree.get("node_count"),
+            "edge_count": cell_tree.get("edge_count"),
+        })
+    return {
+        "ok": failed == 0,
+        "schema": "archhub-requirement-tree-cell-backfill/v1",
+        "source": source,
+        "requested_count": len(tree_ids or sorted(available)),
+        "processed_count": len(selected),
+        "synced_count": synced,
+        "failed_count": failed,
+        "missing_count": missing,
+        "limit": limit,
+        "truncated": len(tree_ids or sorted(available)) > len(selected),
+        "results": results,
+    }
+
+
+def create_requirement_tree_cell_receipt(
+    *,
+    operation: str,
+    scope: str,
+    claims: dict[str, Any],
+    provenance: str,
+) -> tuple[dict[str, Any], str]:
+    """Create a legacy Cell receipt for older migration call sites.
+
+    Mutating tree/ROMA MCP handlers use `sync_requirement_tree_cell_graph`
+    instead, so the actual tree graph reaches the Universal Cell route first.
+    """
+    safe_claims = dict(claims)
+    safe_claims["operation"] = operation
+    safe_claims["recorded_at"] = datetime.now(timezone.utc).isoformat()
+    basis = json.dumps(safe_claims, sort_keys=True, default=str)
+    source = "brain-control:%s:%s" % (
+        scope,
+        hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16],
+    )
+    from .universal_runtime import UniversalRuntimeBridge
+
+    runtime = UniversalRuntimeBridge()
+    record = runtime.assembly_create(
+        definition_key="knowledge-branch",
+        fields={
+            "source": source,
+            "scope": f"founder/brain-control/{scope}",
+            "claims": basis,
+            "provenance": provenance,
+        },
+        idempotency_field="source",
+    )
+    return record, source
+
+
+def cell_receipt_unavailable_response(
+    operation: str,
+    ex: Exception,
+    **extra: Any,
+) -> dict[str, Any]:
+    out = {
+        "ok": False,
+        "cell_first": True,
+        "brain_written": False,
+        "error": f"cell unavailable: {type(ex).__name__}: {ex}",
+    }
+    out.update(extra)
+    out.setdefault("operation", operation)
+    return out
+
+
+def attach_cell_receipt_fields(
+    payload: dict[str, Any],
+    cell_record: dict[str, Any],
+    cell_record_source: str,
+    *,
+    brain_written: bool = True,
+) -> dict[str, Any]:
+    payload["cell_first"] = True
+    payload["brain_written"] = brain_written
+    payload["cell_record"] = cell_record
+    payload["cell_record_root"] = str(cell_record["created_root"])
+    payload["cell_record_source"] = cell_record_source
+    return payload
+
+
 def create_root(
     store: "BrainStore",
     *,
@@ -317,22 +851,13 @@ def create_root(
     if existing is not None:
         return existing
 
-    rid = _node_id(tid, None, title)
-    root = ReqNode(
-        node_id=rid,
-        parent=None,
+    tree = build_root_tree(
         title=title,
+        owner_user=owner_user,
+        tree_id=tid,
         predicate=predicate,
         gate_kind=gate_kind,
         gate_spec=gate_spec or {},
-        state=NodeState.OPEN,
-    )
-    tree = RequirementTree(
-        tree_id=tid,
-        root_id=rid,
-        nodes={rid: root},
-        owner_user=owner_user,
-        title=title,
     )
     ts.save(tree)
     return tree
@@ -671,6 +1196,47 @@ def _propagate_green(tree: RequirementTree) -> None:
                 changed = True
 
 
+def frontier_for_tree(tree: RequirementTree) -> list[ReqNode]:
+    return [n for n in tree.leaves() if n.state != NodeState.GREEN]
+
+
+def open_leaves_for_tree(tree: RequirementTree) -> list[ReqNode]:
+    return [
+        n for n in frontier_for_tree(tree)
+        if n.state in (NodeState.OPEN, NodeState.RED)
+    ]
+
+
+def sweep_tree(tree: RequirementTree) -> dict[str, Any]:
+    counts = {s.value: 0 for s in NodeState}
+    for n in tree.nodes.values():
+        counts[n.state.value] += 1
+
+    leaves = tree.leaves()
+    green_leaves = [n for n in leaves if n.state == NodeState.GREEN]
+    actionable = [n for n in leaves if n.state != NodeState.GREEN]
+    needs_root = [
+        n.node_id for n in tree.nodes.values()
+        if n.state == NodeState.NEEDS_ROOT
+    ]
+    root = tree.nodes.get(tree.root_id)
+    root_green = bool(root and root.state == NodeState.GREEN)
+    dangling = tree.dangling_child_refs()
+
+    dry = (not actionable) and root_green and not needs_root and not dangling
+    return {
+        "tree_id": tree.tree_id,
+        "dry": dry,
+        "root_green": root_green,
+        "counts": counts,
+        "total_leaves": len(leaves),
+        "green_leaves": len(green_leaves),
+        "actionable_leaves": len(actionable),
+        "needs_root": needs_root,
+        "dangling_refs": [{"parent": p, "missing_child": c} for p, c in dangling],
+    }
+
+
 def frontier(store: "BrainStore", *, tree_id: str) -> list[ReqNode]:
     """The actionable leaves: every LEAF not yet GREEN (OPEN, CLAIMED, RED, or
     NEEDS_ROOT). This is what parallel executors pull from. Empty frontier of
@@ -679,16 +1245,17 @@ def frontier(store: "BrainStore", *, tree_id: str) -> list[ReqNode]:
     tree = ts.load(tree_id)
     if tree is None:
         raise KeyError(f"tree '{tree_id}' not found")
-    return [n for n in tree.leaves() if n.state != NodeState.GREEN]
+    return frontier_for_tree(tree)
 
 
 def open_leaves(store: "BrainStore", *, tree_id: str) -> list[ReqNode]:
     """Leaves an executor may CLAIM right now: OPEN or RED (RED == re-work),
     excluding CLAIMED (in-flight) and NEEDS_ROOT (escalated to the founder)."""
-    return [
-        n for n in frontier(store, tree_id=tree_id)
-        if n.state in (NodeState.OPEN, NodeState.RED)
-    ]
+    ts = TreeStore(store)
+    tree = ts.load(tree_id)
+    if tree is None:
+        raise KeyError(f"tree '{tree_id}' not found")
+    return open_leaves_for_tree(tree)
 
 
 def sweep(store: "BrainStore", *, tree_id: str) -> dict[str, Any]:
@@ -706,36 +1273,7 @@ def sweep(store: "BrainStore", *, tree_id: str) -> dict[str, Any]:
     tree = ts.load(tree_id)
     if tree is None:
         raise KeyError(f"tree '{tree_id}' not found")
-
-    counts = {s.value: 0 for s in NodeState}
-    for n in tree.nodes.values():
-        counts[n.state.value] += 1
-
-    leaves = tree.leaves()
-    green_leaves = [n for n in leaves if n.state == NodeState.GREEN]
-    actionable = [n for n in leaves if n.state != NodeState.GREEN]
-    needs_root = [n.node_id for n in tree.nodes.values() if n.state == NodeState.NEEDS_ROOT]
-    root = tree.nodes.get(tree.root_id)
-    root_green = bool(root and root.state == NodeState.GREEN)
-
-    # Fail-closed integrity gate: a dangling child ref (a declared child absent
-    # from `nodes` — a corrupted / partially-written persisted doc) means the
-    # tree is structurally incomplete and can NEVER be "done", whatever the node
-    # states say. The last line of defence against a silent false-green sweep.
-    dangling = tree.dangling_child_refs()
-
-    dry = (not actionable) and root_green and not needs_root and not dangling
-    return {
-        "tree_id": tree_id,
-        "dry": dry,
-        "root_green": root_green,
-        "counts": counts,
-        "total_leaves": len(leaves),
-        "green_leaves": len(green_leaves),
-        "actionable_leaves": len(actionable),
-        "needs_root": needs_root,
-        "dangling_refs": [{"parent": p, "missing_child": c} for p, c in dangling],
-    }
+    return sweep_tree(tree)
 
 
 def get_tree(store: "BrainStore", *, tree_id: str) -> Optional[RequirementTree]:
@@ -809,9 +1347,10 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         name="brain.tree_create",
         description=(
             "ROMA 'finish everything' method — START a requirement tree from a "
-            "VISION. The vision becomes the ROOT node (state=open). Persisted "
-            "ADDITIVELY in brain_meta (one JSON doc, key 'requirement_tree_v1') "
-            "— no table, no schema change, never touches fragments/skills. "
+            "VISION. The vision becomes the ROOT node (state=open). Mutating "
+            "MCP calls sync the full tree to the Universal Cell application "
+            "route first; brain_meta is only the compatibility projection. "
+            "No table, no schema change, never touches fragments/skills. "
             "Idempotent: re-creating the same title+owner returns the existing "
             "tree. Returns {ok, tree_id, root_id, root}. Then SPLIT it with "
             "brain.tree_decompose until every leaf is one machine-checkable "
@@ -825,23 +1364,41 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         gate_kind: str = "manual",
         gate_spec: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
+        owner = owner_user or _resolve_owner()
+        tid = _tree_id_for(title, owner)
+        existing = TreeStore(store).load(tid)
+        tree = existing or build_root_tree(
+            title=title,
+            owner_user=owner,
+            tree_id=tid,
+            predicate=predicate,
+            gate_kind=gate_kind,
+            gate_spec=gate_spec or {},
+        )
         try:
-            tree = create_root(
-                store,
-                title=title,
-                owner_user=owner_user or _resolve_owner(),
-                predicate=predicate,
-                gate_kind=gate_kind,
-                gate_spec=gate_spec or {},
+            cell_tree = sync_requirement_tree_cell_graph(
+                operation="brain.tree_create",
+                tree=tree,
             )
         except Exception as ex:
-            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
-        return {
+            return cell_tree_unavailable_response("brain.tree_create", ex)
+        try:
+            if existing is None:
+                save_tree_projection_after_cell_sync(store, tree=tree)
+        except Exception as ex:
+            return attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "tree_id": tree.tree_id,
+                "root_id": tree.root_id,
+            }, cell_tree, brain_written=False)
+        return attach_cell_tree_fields({
             "ok": True,
             "tree_id": tree.tree_id,
             "root_id": tree.root_id,
             "root": tree.nodes[tree.root_id].model_dump(mode="json"),
-        }
+            "projection_existed": existing is not None,
+        }, cell_tree, brain_written=existing is None)
 
     @mcp.tool(
         name="brain.tree_decompose",
@@ -862,19 +1419,43 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         node_id: str,
         children: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        current = get_tree(store, tree_id=tree_id)
+        if current is None:
+            return {"ok": False, "error": f"tree '{tree_id}' not found"}
         try:
-            tree = decompose(store, tree_id=tree_id, node_id=node_id, children=children)
+            tree = clone_tree(current)
+            _decompose_tree(
+                tree, tree_id=tree_id, node_id=node_id, children=children
+            )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+        try:
+            cell_tree = sync_requirement_tree_cell_graph(
+                operation="brain.tree_decompose",
+                tree=tree,
+            )
+        except Exception as ex:
+            return cell_tree_unavailable_response(
+                "brain.tree_decompose", ex, tree_id=tree_id, node_id=node_id,
+            )
+        try:
+            save_tree_projection_after_cell_sync(store, tree=tree)
+        except Exception as ex:
+            return attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "tree_id": tree_id,
+                "node_id": node_id,
+            }, cell_tree, brain_written=False)
         parent = tree.nodes[node_id]
-        return {
+        return attach_cell_tree_fields({
             "ok": True,
             "tree_id": tree_id,
             "node_id": node_id,
             "children": [tree.nodes[c].model_dump(mode="json")
                          for c in parent.children if c in tree.nodes],
-            "sweep": sweep(store, tree_id=tree_id),
-        }
+            "sweep": sweep_tree(tree),
+        }, cell_tree)
 
     @mcp.tool(
         name="brain.tree_claim",
@@ -891,11 +1472,38 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         node_id: str,
         agent_id: str,
     ) -> dict[str, Any]:
+        current = get_tree(store, tree_id=tree_id)
+        if current is None:
+            return {"ok": False, "error": f"tree '{tree_id}' not found"}
         try:
-            node = claim_leaf(store, tree_id=tree_id, node_id=node_id, agent_id=agent_id)
+            tree = clone_tree(current)
+            node = _claim_leaf_in_tree(
+                tree, tree_id=tree_id, node_id=node_id, agent_id=agent_id
+            )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
-        return {"ok": True, "node": node.model_dump(mode="json")}
+        try:
+            cell_tree = sync_requirement_tree_cell_graph(
+                operation="brain.tree_claim",
+                tree=tree,
+            )
+        except Exception as ex:
+            return cell_tree_unavailable_response(
+                "brain.tree_claim", ex, tree_id=tree_id, node_id=node_id,
+            )
+        try:
+            save_tree_projection_after_cell_sync(store, tree=tree)
+        except Exception as ex:
+            return attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "tree_id": tree_id,
+                "node_id": node_id,
+            }, cell_tree, brain_written=False)
+        return attach_cell_tree_fields({
+            "ok": True,
+            "node": node.model_dump(mode="json"),
+        }, cell_tree)
 
     @mcp.tool(
         name="brain.tree_court",
@@ -951,11 +1559,10 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
             )
         except Exception as ex:
             return {"ok": False, "error": f"court error: {type(ex).__name__}: {ex}"}
-        # Feed the jury verdict into set_verdict — which re-enforces
-        # anti-self-certify and derives the up-tree green sweep.
         try:
-            updated = set_verdict(
-                store,
+            candidate = clone_tree(tree)
+            updated = _set_verdict_in_tree(
+                candidate,
                 tree_id=tree_id,
                 node_id=node_id,
                 verdict=cv.verdict,
@@ -965,12 +1572,33 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}",
                     "court": cv.to_dict()}
-        return {
+        try:
+            cell_tree = sync_requirement_tree_cell_graph(
+                operation="brain.tree_court",
+                tree=candidate,
+            )
+        except Exception as ex:
+            return cell_tree_unavailable_response(
+                "brain.tree_court",
+                ex,
+                tree_id=tree_id,
+                node_id=node_id,
+                court=cv.to_dict(),
+            )
+        try:
+            save_tree_projection_after_cell_sync(store, tree=candidate)
+        except Exception as ex:
+            return attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "court": cv.to_dict(),
+            }, cell_tree, brain_written=False)
+        return attach_cell_tree_fields({
             "ok": True,
             "court": cv.to_dict(),
             "node": updated.model_dump(mode="json"),
-            "sweep": sweep(store, tree_id=tree_id),
-        }
+            "sweep": sweep_tree(candidate),
+        }, cell_tree)
 
     @mcp.tool(
         name="brain.tree_verdict",
@@ -996,9 +1624,13 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         is_root_authority: bool = False,
         root_token: Optional[str] = None,
     ) -> dict[str, Any]:
+        current = get_tree(store, tree_id=tree_id)
+        if current is None:
+            return {"ok": False, "error": f"tree '{tree_id}' not found"}
         try:
-            node = set_verdict(
-                store,
+            tree = clone_tree(current)
+            node = _set_verdict_in_tree(
+                tree,
                 tree_id=tree_id,
                 node_id=node_id,
                 verdict=verdict,
@@ -1009,8 +1641,38 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
             )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
-        return {"ok": True, "node": node.model_dump(mode="json"),
-                "sweep": sweep(store, tree_id=tree_id)}
+        try:
+            cell_tree = sync_requirement_tree_cell_graph(
+                operation="brain.tree_verdict",
+                tree=tree,
+            )
+        except Exception as ex:
+            return cell_tree_unavailable_response(
+                "brain.tree_verdict", ex, tree_id=tree_id, node_id=node_id,
+            )
+        try:
+            save_tree_projection_after_cell_sync(store, tree=tree)
+        except Exception as ex:
+            return attach_cell_tree_fields({
+                "ok": False,
+                "error": f"{type(ex).__name__}: {ex}",
+                "tree_id": tree_id,
+                "node_id": node_id,
+            }, cell_tree, brain_written=False)
+        if is_root_authority:
+            _append_root_override_log(store, {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "tree_id": tree_id,
+                "node_id": node_id,
+                "judged_by": judged_by,
+                "verdict": (verdict or "").strip().lower(),
+                "evidence_ref": evidence_ref,
+            })
+        return attach_cell_tree_fields({
+            "ok": True,
+            "node": node.model_dump(mode="json"),
+            "sweep": sweep_tree(tree),
+        }, cell_tree)
 
     @mcp.tool(
         name="brain.tree_sweep",
@@ -1026,7 +1688,19 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
     )
     def brain_tree_sweep(tree_id: str) -> dict[str, Any]:
         try:
-            return {"ok": True, **sweep(store, tree_id=tree_id)}
+            tree, authority_source, projection = read_tree_authority_first(
+                store, tree_id=tree_id
+            )
+            if tree is None:
+                return {"ok": False, "error": f"tree '{tree_id}' not found"}
+            out = {
+                "ok": True,
+                "authority_source": authority_source,
+                **sweep_tree(tree),
+            }
+            if projection is not None:
+                out["cell_tree"] = projection
+            return out
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 
@@ -1042,14 +1716,23 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
     )
     def brain_tree_frontier(tree_id: str) -> dict[str, Any]:
         try:
-            nodes = frontier(store, tree_id=tree_id)
+            tree, authority_source, projection = read_tree_authority_first(
+                store, tree_id=tree_id
+            )
+            if tree is None:
+                return {"ok": False, "error": f"tree '{tree_id}' not found"}
+            nodes = frontier_for_tree(tree)
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
-        return {
+        out = {
             "ok": True,
             "tree_id": tree_id,
+            "authority_source": authority_source,
             "frontier": [n.model_dump(mode="json") for n in nodes],
         }
+        if projection is not None:
+            out["cell_tree"] = projection
+        return out
 
     @mcp.tool(
         name="brain.tree_get",
@@ -1060,21 +1743,58 @@ def register_tree_tools(mcp: "Any", store: "BrainStore") -> "Any":
         ),
     )
     def brain_tree_get(tree_id: str) -> dict[str, Any]:
-        tree = get_tree(store, tree_id=tree_id)
+        tree, authority_source, projection = read_tree_authority_first(
+            store, tree_id=tree_id
+        )
         if tree is None:
             return {"ok": False, "error": f"tree '{tree_id}' not found"}
-        return {"ok": True, "tree": tree.model_dump(mode="json")}
+        out = {
+            "ok": True,
+            "authority_source": authority_source,
+            "tree": tree.model_dump(mode="json"),
+        }
+        if projection is not None:
+            out["cell_tree"] = projection
+        return out
 
     @mcp.tool(
         name="brain.tree_list",
         description=(
-            "READ-ONLY. List every requirement-tree id this brain holds (from "
-            "the additive brain_meta doc). Returns {ok, tree_ids}."
+            "READ-ONLY compatibility projection. List every requirement-tree "
+            "id this Brain metadata copy holds. Returns {ok, tree_ids}."
         ),
     )
     def brain_tree_list() -> dict[str, Any]:
         try:
-            return {"ok": True, "tree_ids": list_trees(store)}
+            tree_ids, authority_source, projection = list_trees_authority_first(store)
+            out = {
+                "ok": True,
+                "authority_source": authority_source,
+                "tree_ids": tree_ids,
+            }
+            if projection is not None:
+                out["cell_tree_index"] = projection
+            return out
+        except Exception as ex:
+            return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+
+    @mcp.tool(
+        name="brain.tree_backfill_cell",
+        description=(
+            "ADDITIVE RECONCILIATION. Sync existing requirement_tree_v1 Brain "
+            "metadata trees into the Universal Cell route. Deletes nothing and "
+            "does not rewrite Brain metadata. Optional tree_ids narrows scope; "
+            "limit bounds the run."
+        ),
+    )
+    def brain_tree_backfill_cell(
+        tree_ids: Optional[list[str]] = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        try:
+            return backfill_requirement_trees_to_cell_graph(
+                store, tree_ids=tree_ids, limit=int(limit)
+            )
         except Exception as ex:
             return {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
 

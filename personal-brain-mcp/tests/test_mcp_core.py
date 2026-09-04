@@ -227,6 +227,54 @@ def test_tools_call_dispatch_envelope_matches_contract(toy: InHouseMCP):
     assert set(result.keys()) == {"content", "structuredContent", "isError"}
 
 
+def test_transport_liveness_does_not_enter_the_workshop_observer():
+    """A supervisor probe must not depend on the graph it supervises."""
+    mcp = InHouseMCP("personal-brain-test")
+    observed: list[tuple[str, dict, dict]] = []
+
+    @mcp.tool(name="brain.liveness", description="Transport liveness.")
+    def brain_liveness():
+        return {"ok": True, "server_pid": 1234}
+
+    mcp.set_tool_observer(
+        lambda name, arguments, result: observed.append(
+            (name, arguments, result)
+        )
+    )
+
+    response = mcp.dispatch({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "brain.liveness", "arguments": {}},
+    })
+
+    assert response["result"]["structuredContent"]["server_pid"] == 1234
+    assert observed == []
+
+
+def test_normal_tool_enters_the_workshop_observer_exactly_once(toy: InHouseMCP):
+    observed: list[tuple[str, dict, dict]] = []
+    toy.set_tool_observer(
+        lambda name, arguments, result: observed.append(
+            (name, arguments, result)
+        )
+    )
+
+    response = toy.dispatch({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "toy.echo", "arguments": {"message": "audit"}},
+    })
+
+    assert response["result"]["structuredContent"]["echo"] == "audit"
+    assert len(observed) == 1
+    assert observed[0][0] == "toy.echo"
+    assert observed[0][1] == {"message": "audit"}
+    assert observed[0][2] == response["result"]
+
+
 def test_tools_call_scalar_payload_uses_content_fallback(toy: InHouseMCP):
     """A tool returning a bare string has NO structuredContent (it isn't an
     object); the client's documented fallback is content[0].text. Assert the

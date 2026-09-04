@@ -253,6 +253,148 @@ def test_delete_sessions_persists_no_return_on_reload(tmp_appdata,
     assert len(remaining) == 1
 
 
+def test_save_graph_persists_wire_layer_node_edge_and_param_values(
+    tmp_appdata, bridge_inst
+):
+    """A right-rail wire-layer edit saves a single graph snapshot.
+
+    The saved session must retain the relation wire node, visible layer
+    node, runtime edge fields, and both first-class parameter nodes with
+    the same value.
+    """
+    graph = {
+        "nodes": [
+            {
+                "id": "node:source",
+                "type": "data.constant",
+                "cat": "input",
+                "title": "Source",
+                "outs": [{"id": "out", "t": "string"}],
+                "ins": [],
+            },
+            {
+                "id": "node:target",
+                "type": "output.parameter",
+                "cat": "output",
+                "title": "Target",
+                "ins": [{"id": "in", "t": "string"}],
+                "outs": [],
+            },
+            {
+                "id": "wire:persist",
+                "type": "stem.node",
+                "kind": "wire",
+                "cat": "wire",
+                "title": "Relation wire",
+                "data": {
+                    "role": "wire",
+                    "wire_family": "workflow_wire",
+                    "behavior": "force-recook",
+                    "layer_nodes": {"behavior": "wire:persist:layer:behavior"},
+                },
+                "config": {"behavior": "force-recook"},
+                "params": [
+                    {
+                        "k": "behavior",
+                        "label": "behavior",
+                        "type": "select",
+                        "v": "force-recook",
+                    }
+                ],
+            },
+            {
+                "id": "wire:persist:layer:behavior",
+                "type": "stem.node",
+                "kind": "param",
+                "cat": "wire-layer",
+                "title": "Behavior layer",
+                "data": {
+                    "role": "wire_layer",
+                    "wire_family": "workflow_wire",
+                    "owner": "wire:persist",
+                    "value_key": "behavior",
+                    "value": "force-recook",
+                },
+                "config": {
+                    "owner": "wire:persist",
+                    "value_key": "behavior",
+                    "value": "force-recook",
+                },
+                "params": [
+                    {
+                        "k": "value",
+                        "label": "value",
+                        "type": "select",
+                        "v": "force-recook",
+                    }
+                ],
+            },
+            {
+                "id": "param:wire:persist:behavior",
+                "type": "stem.node",
+                "kind": "param",
+                "cat": "param",
+                "data": {
+                    "role": "parameter",
+                    "owner": "wire:persist",
+                    "key": "behavior",
+                    "value": "force-recook",
+                },
+            },
+            {
+                "id": "param:wire:persist:layer:behavior:value",
+                "type": "stem.node",
+                "kind": "param",
+                "cat": "param",
+                "data": {
+                    "role": "parameter",
+                    "owner": "wire:persist:layer:behavior",
+                    "key": "value",
+                    "value": "force-recook",
+                },
+            },
+        ],
+        "wires": [
+            {
+                "id": "edge:persist",
+                "from": ["node:source", "out"],
+                "to": ["node:target", "in"],
+                "behavior": "force-recook",
+                "data": {
+                    "relation_node": "wire:persist",
+                    "behavior": "force-recook",
+                },
+            }
+        ],
+    }
+
+    out = json.loads(bridge_inst.save_graph("wire-layer-persist", json.dumps(graph)))
+    assert out["ok"] is True
+    assert out["nodes"] == len(graph["nodes"])
+    assert out["wires"] == len(graph["wires"])
+
+    payload = json.loads(
+        (tmp_appdata["sessions"] / "wire-layer-persist.archhub-session.json")
+        .read_text(encoding="utf-8")
+    )
+    saved = payload["graph"]
+    nodes = {node["id"]: node for node in saved["nodes"]}
+    edge = saved["wires"][0]
+
+    assert edge["behavior"] == "force-recook"
+    assert edge["data"]["behavior"] == "force-recook"
+    assert edge["data"]["relation_node"] == "wire:persist"
+    assert nodes["wire:persist"]["data"]["behavior"] == "force-recook"
+    assert nodes["wire:persist"]["config"]["behavior"] == "force-recook"
+    assert nodes["wire:persist:layer:behavior"]["data"]["value"] == "force-recook"
+    assert nodes["wire:persist:layer:behavior"]["config"]["value"] == "force-recook"
+    assert nodes["param:wire:persist:behavior"]["data"]["value"] == "force-recook"
+    assert (
+        nodes["param:wire:persist:layer:behavior:value"]["data"]["value"]
+        == "force-recook"
+    )
+
+
 # ---------------------------------------------------------------------
 # set_theme / get_theme
 # ---------------------------------------------------------------------
@@ -464,7 +606,7 @@ def test_get_provider_stats_no_router_returns_zeros():
     "set_theme", "get_theme", "get_storage_stats", "export_all",
     "clear_model_cache", "forget_all_memory", "delete_all_sessions",
     "open_folder", "get_session_stats", "get_provider_stats",
-    "load_skill", "get_node_grammar",
+    "load_skill", "get_node_grammar", "save_graph",
 ])
 def test_new_slots_present_on_bridge(name):
     assert hasattr(_bridge_module.ArchHubBridge, name), (
@@ -603,6 +745,11 @@ def test_get_node_grammar_returns_the_canonical_grammar():
     payload = json.loads(b.get_node_grammar())
     assert isinstance(payload, list), payload
     assert payload, "grammar must not be empty"
+    for entry in payload:
+        assert entry["legacy_migration_only"] is True
+        assert entry["authority_status"] == "superseded_by_universal_cell"
+        assert entry["active_authority"] == "10.PRODUCT/13.NODE-LANGUAGE"
+        assert entry["promotion_allowed"] is False
     # SLICE H + I: typed-node split per category. Cap bumped further
     # for LOGIC / SHAPE / WATCH / TRIGGER typed nodes. AgDR-0016 added
     # SHARE (3) + ADAPTER (3). AgDR-0018 added 3 more ADAPTER nodes.
@@ -625,7 +772,9 @@ def test_get_node_grammar_returns_the_canonical_grammar():
     # +1 -> 83: stem-rebuild Phase-0 `sense` (visible PROPERTY-checker).
     # +2 -> 85: stem-rebuild Phase-0 NORMALIZATION INFRA cells coalesce +
     # ensure also surface in the hardcoded palette feed. Cap raised 83 -> 85.
-    assert len(hardcoded) <= 85, "a grammar, not a catalogue"
+    # +1 -> 86: SPEC §10 self-hosting primitive `ui.element`, a generic
+    # UI node stem cell for graph-owned presentation, not a product node.
+    assert len(hardcoded) <= 86, "a grammar, not a catalogue"
     kinds = {p["kind"] for p in payload}
     # Required families now represented by typed-node anchors:
     #   input  → number    · logic   → if      · output → result

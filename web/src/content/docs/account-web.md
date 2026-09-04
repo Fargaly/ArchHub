@@ -87,9 +87,9 @@ The website navigation also gives you the rest of the public site: **Home**,
 
 ## 4. Your license and plan
 
-ArchHub has three tiers — **Solo**, **Studio**, and **Firm** — plus a **free
-trial** tier for new accounts. Your tier governs how much you can do (for
-example, the caps on your usage and how your brain scales).
+ArchHub is **free in open beta**: one tier, every shipped feature, no credit
+card, no trial clock. Paid tiers (Solo, Studio, Firm) are planned and not
+active — nothing is billed today.
 
 There are two ways to run the AI behind ArchHub:
 
@@ -104,22 +104,18 @@ website.
 
 ### Buying and managing your plan
 
-- **Pricing** lives on the **[Pricing](https://archhub.io/pricing)** page.
-- Plans are billed through **Stripe** (with Polar as an optional alternative).
-  There is also a **message credit pack** — roughly **$10 for 1,000 messages** —
-  for topping up hosted-AI usage.
-- A **billing portal** is available to manage your subscription after you've
-  purchased.
+- **Pricing** lives on the **[Pricing](https://archhub.io/pricing)** page and
+  says the same thing: free in open beta.
+- No plan can be bought today; no credit pack is sold. When billing opens, this
+  page and the app will say so first.
 
-> **Heads-up on purchasing:** live checkout and the published prices are still
-> being finalized. Where a plan isn't ready to buy yet, you'll see a **"Coming
-> soon"** label instead of a checkout button. Treat live purchase as **coming
-> soon** rather than guaranteed today.
+> **Heads-up on purchasing:** there is no checkout. Any "Coming soon" label in
+> the app means exactly that.
 
 > **A note on free cloud AI:** a zero-setup free cloud model is **not** promised
 > yet. If you use hosted AI without a configured key or credits, a request may be
 > declined until billing or a key is in place. The reliable free path today is
-> the **trial messages** on a new account, or **bringing your own key**.
+> **bringing your own key**, or a local model.
 
 ---
 
@@ -152,10 +148,9 @@ web brain portal is coming soon.
 A clean path for a brand-new user:
 
 1. **Install the app (Windows, no terminal needed).** From
-   **[archhub.io](https://archhub.io)** click **Download**, or install via
-   `winget install Fargaly.ArchHub`. You can also download the
-   **ArchHub-Setup** installer from the project's GitHub releases and
-   double-click it. The installer adds a desktop icon and a Start-menu shortcut.
+   **[archhub.io](https://archhub.io)** click **Download**, which takes you to
+   the **ArchHub-Setup-0.exe** installer on the project's GitHub releases;
+   double-click it. (Package managers are not published yet.) The installer adds a desktop icon and a Start-menu shortcut.
    - *On first launch you may see a Windows SmartScreen warning* (until the app
      is code-signed) — this is expected; choose to run anyway.
 2. **First launch & sign-in.** The app opens and walks you through signing in to
@@ -181,8 +176,7 @@ A clean path for a brand-new user:
 | --- | --- |
 | Sign in / sign up | **Sign in** on archhub.io, or first-run in the app (magic link) |
 | Your email, plan, messages left | Account chip on **Home**, **Settings**, or **Account** on the web |
-| Buy / manage a plan | **Pricing** page + billing portal (some options "coming soon") |
-| Top up usage | $10 / 1,000-message credit pack |
+| Plans / billing | none in open beta — everything shipped is free |
 | Explore your memory | **Brain browser / folders** in the app |
 | Back up your brain | Cloud backup (write-only, secrets stripped) in the app |
 

@@ -1,0 +1,477 @@
+{
+  "schema": "archhub-runtime-source-drift-migration-work/v1",
+  "source_schema": "archhub-runtime-copy-source-drift/v1",
+  "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+  "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+  "candidate_count": 43,
+  "track_count": 7,
+  "unresolved_track_count": 7,
+  "evidence_covered_track_count": 7,
+  "all_candidates_classified": true,
+  "all_work_authority_scoped": true,
+  "all_non_promoting": true,
+  "all_bulk_copy_forbidden": true,
+  "all_non_interrupting": true,
+  "work_items": [
+    {
+      "work_id": "runtime-source-drift-track:runtime_transport_and_broker",
+      "title": "Resolve runtime transport and broker drift",
+      "migration_track": "runtime_transport_and_broker",
+      "priority": 9300,
+      "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+      "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cde_container": {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "resolution_state": "mixed_resolution_states",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement",
+        "pending_canonical_root_decision"
+      ],
+      "candidate_count": 11,
+      "candidate_ids": [
+        "runtime-source-drift:4ab445be955bee79",
+        "runtime-source-drift:6f3fc854f2cfddf7",
+        "runtime-source-drift:884c8e926b412d50",
+        "runtime-source-drift:90c92cad5723ab03",
+        "runtime-source-drift:90d2b62c5a5a3ab5",
+        "runtime-source-drift:9fca61215b884868",
+        "runtime-source-drift:b940423a09df0cea",
+        "runtime-source-drift:c6ab56d65a554979",
+        "runtime-source-drift:de53ccc191841a77",
+        "runtime-source-drift:e8fd27c992c32586",
+        "runtime-source-drift:f10ff227476b1956"
+      ],
+      "implementation_candidate_paths": [
+        "nodelang/application_server.py",
+        "nodelang/authority_bridge.py",
+        "nodelang/capabilities.py",
+        "nodelang/universal_cloud_gateway.py"
+      ],
+      "court_candidate_paths": [
+        "tests_replica/test_application_boundary_ports.py",
+        "tests_replica/test_application_machine_transport.py",
+        "tests_replica/test_application_server_governance.py",
+        "tests_replica/test_legacy_core_node_bridge.py",
+        "tests_replica/test_legacy_self_extension_bridge.py",
+        "tests_replica/test_universal_cell_capabilities.py",
+        "tests_replica/test_universal_cloud_gateway.py"
+      ],
+      "required_canonical_first_steps": [
+        "define graph-held broker/session/capability lifecycle courts before accepting transport behavior",
+        "prove host, document, and model effects as Universal Cell connector/model delegations before accepting bridge behavior",
+        "prove self-extension build/court/learn effects as Universal Cell connector delegations before accepting bridge behavior"
+      ],
+      "required_outcome": "runtime transport and broker behavior derive from graph-held session, capability, grant, outcome, and revocation roots",
+      "required_decisions": [
+        "reconstruct_in_canonical_authority",
+        "reject_as_experiment",
+        "preserve_as_migration_evidence"
+      ],
+      "completion_gate": {
+        "kind": "canonical_resolution_required",
+        "must_prove": [
+          "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+          "red courts exist before accepted behavior changes",
+          "rejected candidates have recorded rejection rationale",
+          "preserved candidates are marked migration evidence only",
+          "no copied-runtime file is bulk-copied as authority",
+          "runtime drain gate no longer reports this track as source drift"
+        ]
+      },
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "live_process_interruption_allowed": false,
+      "forbidden_actions": [
+        "bulk-copy ignored node_runtime source into authority",
+        "cite ignored runtime code as delivered product authority",
+        "interrupt, stop, or restart live holders from this work plan"
+      ]
+    },
+    {
+      "work_id": "runtime-source-drift-track:visual_workspace_interaction",
+      "title": "Resolve visual workspace interaction drift",
+      "migration_track": "visual_workspace_interaction",
+      "priority": 9200,
+      "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+      "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cde_container": {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "resolution_state": "mixed_resolution_states",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement",
+        "preserved_as_migration_evidence_pending_runtime_retirement"
+      ],
+      "candidate_count": 11,
+      "candidate_ids": [
+        "runtime-source-drift:2eb5a79da0c47dad",
+        "runtime-source-drift:34b091bba5042974",
+        "runtime-source-drift:63bb23c95981b83b",
+        "runtime-source-drift:859f552165e6407b",
+        "runtime-source-drift:8b11a65c97d6be87",
+        "runtime-source-drift:98d64f6a66cf5dad",
+        "runtime-source-drift:b487a58dda8d826c",
+        "runtime-source-drift:c63f90da35729480",
+        "runtime-source-drift:cdf848947bac8667",
+        "runtime-source-drift:e056ad99a6ec58b2",
+        "runtime-source-drift:f05f7888224538a1"
+      ],
+      "implementation_candidate_paths": [
+        "nodelang/cell_relations_view.py",
+        "nodelang/ui_runtime.py"
+      ],
+      "court_candidate_paths": [
+        "tests_replica/test_canvas_interaction_quality.py",
+        "tests_replica/test_canvas_visual_grammar.py",
+        "tests_replica/test_playable_interaction.py",
+        "tests_replica/test_relation_junction_visual_grammar.py",
+        "tests_replica/test_relation_security.py",
+        "tests_replica/test_relation_topology_editor.py",
+        "tests_replica/test_universal_ui_interactions.py",
+        "tests_replica/test_visual_graph_workspace.py",
+        "tests_replica/test_visual_node_authority.py"
+      ],
+      "required_canonical_first_steps": [
+        "rebuild the interaction or visual grammar as authority courts against the released graph protocols"
+      ],
+      "required_outcome": "visual interaction courts prove the graph workspace semantics in the canonical authority",
+      "required_decisions": [
+        "reconstruct_in_canonical_authority",
+        "reject_as_experiment",
+        "preserve_as_migration_evidence"
+      ],
+      "completion_gate": {
+        "kind": "canonical_resolution_required",
+        "must_prove": [
+          "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+          "red courts exist before accepted behavior changes",
+          "rejected candidates have recorded rejection rationale",
+          "preserved candidates are marked migration evidence only",
+          "no copied-runtime file is bulk-copied as authority",
+          "runtime drain gate no longer reports this track as source drift"
+        ]
+      },
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "live_process_interruption_allowed": false,
+      "forbidden_actions": [
+        "bulk-copy ignored node_runtime source into authority",
+        "cite ignored runtime code as delivered product authority",
+        "interrupt, stop, or restart live holders from this work plan"
+      ]
+    },
+    {
+      "work_id": "runtime-source-drift-track:application_graph_projection",
+      "title": "Resolve application graph projection drift",
+      "migration_track": "application_graph_projection",
+      "priority": 9100,
+      "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+      "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cde_container": {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
+      "candidate_count": 3,
+      "candidate_ids": [
+        "runtime-source-drift:284ac4ce029299d0",
+        "runtime-source-drift:62b6fa78c85cba41",
+        "runtime-source-drift:eab9b75ce810a640"
+      ],
+      "implementation_candidate_paths": [
+        "nodelang/universal_application.py"
+      ],
+      "court_candidate_paths": [
+        "tests_replica/test_projection_delta.py",
+        "tests_replica/test_universal_application.py"
+      ],
+      "required_canonical_first_steps": [
+        "prove projection changes as graph-derived deltas from released roots, not copied runtime state",
+        "prove the application lens consumes the canonical graph root and does not introduce duplicate product truth"
+      ],
+      "required_outcome": "application lenses consume canonical graph roots without duplicate truth or copied runtime state",
+      "required_decisions": [
+        "reconstruct_in_canonical_authority",
+        "reject_as_experiment",
+        "preserve_as_migration_evidence"
+      ],
+      "completion_gate": {
+        "kind": "canonical_resolution_required",
+        "must_prove": [
+          "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+          "red courts exist before accepted behavior changes",
+          "rejected candidates have recorded rejection rationale",
+          "preserved candidates are marked migration evidence only",
+          "no copied-runtime file is bulk-copied as authority",
+          "runtime drain gate no longer reports this track as source drift"
+        ]
+      },
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "live_process_interruption_allowed": false,
+      "forbidden_actions": [
+        "bulk-copy ignored node_runtime source into authority",
+        "cite ignored runtime code as delivered product authority",
+        "interrupt, stop, or restart live holders from this work plan"
+      ]
+    },
+    {
+      "work_id": "runtime-source-drift-track:baboom_context_and_cognition",
+      "title": "Resolve BABOOM context and cognition drift",
+      "migration_track": "baboom_context_and_cognition",
+      "priority": 9000,
+      "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+      "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cde_container": {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "resolution_state": "pending_canonical_root_decision",
+      "candidate_resolution_states": [
+        "pending_canonical_root_decision"
+      ],
+      "candidate_count": 14,
+      "candidate_ids": [
+        "runtime-source-drift:22d90da63bf141e0",
+        "runtime-source-drift:22ffad23ac7294ac",
+        "runtime-source-drift:259301140dd882f8",
+        "runtime-source-drift:5d4811c85e3d48cf",
+        "runtime-source-drift:6b2a3f614a15b40d",
+        "runtime-source-drift:82679268b082a5f2",
+        "runtime-source-drift:874189525f64df67",
+        "runtime-source-drift:a02922eb93d1df8d",
+        "runtime-source-drift:b862f73ff77f24e0",
+        "runtime-source-drift:c31e615aa63bff27",
+        "runtime-source-drift:c4bc74aa53e85bf9",
+        "runtime-source-drift:d2758203e8443fba",
+        "runtime-source-drift:ddd06159d892d016",
+        "runtime-source-drift:e45fdba8c8a114ef"
+      ],
+      "implementation_candidate_paths": [
+        "nodelang/cell_activity.py",
+        "nodelang/cell_baboom.py",
+        "nodelang/cell_baboom_activity.py",
+        "nodelang/cell_baboom_connector_execution.py",
+        "nodelang/cell_baboom_model_execution.py",
+        "nodelang/cell_baboom_steward.py"
+      ],
+      "court_candidate_paths": [
+        "tests_replica/test_cell_baboom.py",
+        "tests_replica/test_cell_baboom_activity.py",
+        "tests_replica/test_cell_baboom_commands.py",
+        "tests_replica/test_cell_baboom_connector_execution.py",
+        "tests_replica/test_cell_baboom_execution.py",
+        "tests_replica/test_cell_baboom_model_execution.py",
+        "tests_replica/test_cell_baboom_steward.py",
+        "tests_replica/test_universal_baboom_cognition_planner.py"
+      ],
+      "required_canonical_first_steps": [
+        "define/release BABOOM graph protocols and red courts in 13.NODE-LANGUAGE before implementation"
+      ],
+      "required_outcome": "BABOOM identity, context, presence, and cognition are released Cell protocols before behavior is accepted",
+      "required_decisions": [
+        "reconstruct_in_canonical_authority",
+        "reject_as_experiment",
+        "preserve_as_migration_evidence"
+      ],
+      "completion_gate": {
+        "kind": "canonical_resolution_required",
+        "must_prove": [
+          "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+          "red courts exist before accepted behavior changes",
+          "rejected candidates have recorded rejection rationale",
+          "preserved candidates are marked migration evidence only",
+          "no copied-runtime file is bulk-copied as authority",
+          "runtime drain gate no longer reports this track as source drift"
+        ]
+      },
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "live_process_interruption_allowed": false,
+      "forbidden_actions": [
+        "bulk-copy ignored node_runtime source into authority",
+        "cite ignored runtime code as delivered product authority",
+        "interrupt, stop, or restart live holders from this work plan"
+      ]
+    },
+    {
+      "work_id": "runtime-source-drift-track:governed_work_lifecycle",
+      "title": "Resolve governed work lifecycle drift",
+      "migration_track": "governed_work_lifecycle",
+      "priority": 8950,
+      "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+      "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cde_container": {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
+      "candidate_count": 1,
+      "candidate_ids": [
+        "runtime-source-drift:6a242f251cdc7811"
+      ],
+      "implementation_candidate_paths": [],
+      "court_candidate_paths": [
+        "tests_replica/test_universal_work_completion_court.py"
+      ],
+      "required_canonical_first_steps": [
+        "prove work completion as graph-held decision/outcome/revision state before accepting runtime behavior"
+      ],
+      "required_outcome": "work completion is graph-held decision/outcome/revision state",
+      "required_decisions": [
+        "reconstruct_in_canonical_authority",
+        "reject_as_experiment",
+        "preserve_as_migration_evidence"
+      ],
+      "completion_gate": {
+        "kind": "canonical_resolution_required",
+        "must_prove": [
+          "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+          "red courts exist before accepted behavior changes",
+          "rejected candidates have recorded rejection rationale",
+          "preserved candidates are marked migration evidence only",
+          "no copied-runtime file is bulk-copied as authority",
+          "runtime drain gate no longer reports this track as source drift"
+        ]
+      },
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "live_process_interruption_allowed": false,
+      "forbidden_actions": [
+        "bulk-copy ignored node_runtime source into authority",
+        "cite ignored runtime code as delivered product authority",
+        "interrupt, stop, or restart live holders from this work plan"
+      ]
+    },
+    {
+      "work_id": "runtime-source-drift-track:revision_integrity_court",
+      "title": "Resolve revision integrity court drift",
+      "migration_track": "revision_integrity_court",
+      "priority": 8800,
+      "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+      "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cde_container": {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
+      "candidate_count": 1,
+      "candidate_ids": [
+        "runtime-source-drift:997a1a9c1e81b9f1"
+      ],
+      "implementation_candidate_paths": [],
+      "court_candidate_paths": [
+        "tests_replica/test_store_concurrency.py"
+      ],
+      "required_canonical_first_steps": [
+        "rebuild as a canonical revision/commit court if it covers a real Cell-store invariant"
+      ],
+      "required_outcome": "any accepted concurrency invariant is proven against the canonical Cell revision/commit protocol",
+      "required_decisions": [
+        "reconstruct_in_canonical_authority",
+        "reject_as_experiment",
+        "preserve_as_migration_evidence"
+      ],
+      "completion_gate": {
+        "kind": "canonical_resolution_required",
+        "must_prove": [
+          "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+          "red courts exist before accepted behavior changes",
+          "rejected candidates have recorded rejection rationale",
+          "preserved candidates are marked migration evidence only",
+          "no copied-runtime file is bulk-copied as authority",
+          "runtime drain gate no longer reports this track as source drift"
+        ]
+      },
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "live_process_interruption_allowed": false,
+      "forbidden_actions": [
+        "bulk-copy ignored node_runtime source into authority",
+        "cite ignored runtime code as delivered product authority",
+        "interrupt, stop, or restart live holders from this work plan"
+      ]
+    },
+    {
+      "work_id": "runtime-source-drift-track:public_site_projection",
+      "title": "Resolve public site projection drift",
+      "migration_track": "public_site_projection",
+      "priority": 7600,
+      "authority": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\13.NODE-LANGUAGE",
+      "runtime_copy": "C:\\Users\\fargaly\\00.ARCHUB\\10.PRODUCT\\12.PRODUCTION\\node_runtime",
+      "cde_container": {
+        "container_id": "10.PRODUCT/13.NODE-LANGUAGE",
+        "authority": "10.PRODUCT/13.NODE-LANGUAGE",
+        "lifecycle": "WIP",
+        "privacy_tier": "T0 PUBLIC"
+      },
+      "resolution_state": "canonical_evidence_recorded_pending_runtime_retirement",
+      "candidate_resolution_states": [
+        "canonical_evidence_recorded_pending_runtime_retirement"
+      ],
+      "candidate_count": 2,
+      "candidate_ids": [
+        "runtime-source-drift:052d967789d28023",
+        "runtime-source-drift:9460f648e0242113"
+      ],
+      "implementation_candidate_paths": [
+        "public_site/README.md",
+        "public_site/build.mjs"
+      ],
+      "court_candidate_paths": [],
+      "required_canonical_first_steps": [
+        "derive the website projection from released application roots, not from copied runtime state"
+      ],
+      "required_outcome": "public site output is a projection of released application roots",
+      "required_decisions": [
+        "reconstruct_in_canonical_authority",
+        "reject_as_experiment",
+        "preserve_as_migration_evidence"
+      ],
+      "completion_gate": {
+        "kind": "canonical_resolution_required",
+        "must_prove": [
+          "every accepted behavior is rebuilt in 10.PRODUCT/13.NODE-LANGUAGE",
+          "red courts exist before accepted behavior changes",
+          "rejected candidates have recorded rejection rationale",
+          "preserved candidates are marked migration evidence only",
+          "no copied-runtime file is bulk-copied as authority",
+          "runtime drain gate no longer reports this track as source drift"
+        ]
+      },
+      "promotion_allowed": false,
+      "bulk_copy_allowed": false,
+      "live_process_interruption_allowed": false,
+      "forbidden_actions": [
+        "bulk-copy ignored node_runtime source into authority",
+        "cite ignored runtime code as delivered product authority",
+        "interrupt, stop, or restart live holders from this work plan"
+      ]
+    }
+  ],
+  "rule": "This is a migration-control plan. It does not accept copied runtime source as authority and does not authorize live process interruption."
+}

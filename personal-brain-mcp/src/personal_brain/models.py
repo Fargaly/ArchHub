@@ -12,6 +12,11 @@ Five scope tiers per AgDR-0044:
 """
 from __future__ import annotations
 
+LEGACY_MIGRATION_ONLY = True
+AUTHORITY_STATUS = "control_plane_projection_until_universal_cell_policy"
+ACTIVE_AUTHORITY = "10.PRODUCT/13.NODE-LANGUAGE"
+PROMOTION_ALLOWED = False
+
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
@@ -313,6 +318,10 @@ class Skill(BaseModel):
     honed_trials: int = Field(default=0, description="SkillWeaver sandbox trial count.")
     honed_passed: int = Field(default=0, description="How many trials passed.")
     side_effects: str = Field(default="pure")  # pure | host_write | network
+    mint_evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Visible R1/R2, source-trace and Reflexion evidence.",
+    )
 
 
 # ───────────────────────── Wiring + Secrets ────────────────────────────
@@ -389,6 +398,8 @@ class SkillMintResult(BaseModel):
     novelty_score: float = 0.0
     success_score: float = 0.0
     will_hone: bool = False
+    r1_gate: dict[str, Any] = Field(default_factory=dict)
+    r2_gate: dict[str, Any] = Field(default_factory=dict)
     reason: str = ""
 
 

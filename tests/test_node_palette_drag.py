@@ -85,6 +85,15 @@ def test_node_lib_item_dragstart_sets_payload():
     assert "e.dataTransfer.setData('application/x-lm-node'" in src
 
 
+def test_projected_ui_dragstart_honors_custom_drag_mime():
+    src = _src()
+    assert "drag_mime:d.drag_mime || 'application/x-lm-node'" in src
+    assert "const dragMime = dragArgs.drag_mime || 'application/x-lm-node';" in src
+    assert "e.dataTransfer.setData(dragMime, JSON.stringify(payload));" in src
+    assert "if (dragMime !== 'application/x-lm-node')" in src
+    assert "e.dataTransfer.setData('application/x-lm-node', JSON.stringify(payload));" in src
+
+
 def test_canvas_ondrop_reads_lm_node_payload():
     src = _src()
     assert "e.dataTransfer.getData('application/x-lm-node')" in src

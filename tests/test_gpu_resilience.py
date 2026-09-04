@@ -38,8 +38,29 @@ from pathlib import Path
 import pytest
 
 APP_ROOT = Path(__file__).resolve().parent.parent / "app"
-if str(APP_ROOT) not in sys.path:
+if str(APP_ROOT) in sys.path:
+    sys.path.remove(str(APP_ROOT))
+sys.path.insert(0, str(APP_ROOT))
+
+_loaded_main = sys.modules.get("main")
+if _loaded_main is not None:
+    _loaded_main_path = Path(getattr(_loaded_main, "__file__", "") or "")
+    if _loaded_main_path.resolve() != (APP_ROOT / "main.py").resolve():
+        sys.modules.pop("main", None)
+
+
+@pytest.fixture(autouse=True)
+def _prefer_desktop_app_main():
+    """This suite tests app/main.py; other suites may cache cloud_backend/main.py
+    as top-level `main` during the same pytest process."""
+    if str(APP_ROOT) in sys.path:
+        sys.path.remove(str(APP_ROOT))
     sys.path.insert(0, str(APP_ROOT))
+    loaded = sys.modules.get("main")
+    if loaded is not None:
+        loaded_path = Path(getattr(loaded, "__file__", "") or "")
+        if loaded_path.resolve() != (APP_ROOT / "main.py").resolve():
+            sys.modules.pop("main", None)
 
 
 # ──────────────────────────────────────────────────────────────────────────

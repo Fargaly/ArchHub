@@ -1,95 +1,142 @@
 #!/usr/bin/env bash
-# Pre-commit guard — blocks foreign edits to payload/sources/**/*.cs
-# (the Revit / AutoCAD / Max / shared MCP brokers) unless the committing
-# user explicitly opts in via ARCHHUB_ALLOW_CS_EDIT=1.
+# Pre-commit guard for ArchHub local safety gates.
 #
-# Why: 2026-05-25 — Antigravity IDE (Google) made undiscussed
-# destructive edits to AcadMCPApp.cs (broker port 48885→48887, breaks
-# Python connector), RevitMCPCore.cs (NopFP failure-preprocessor), and
-# ScriptCompiler.cs (NopFP user-code template inject). Source-controlled
-# guard catches every future agent that touches these without an
-# AgDR + founder sign-off.
-#
-# Opt-in path:
-#   ARCHHUB_ALLOW_CS_EDIT=1 git commit ...
-#
-# Bypass path (emergency):
-#   git commit --no-verify
-#   (use only if hook itself is broken)
+# This hook is intentionally local. CI/server-side protection still has to be
+# verified separately. Keep each gate narrow so normal commits are not blocked
+# by unrelated live runtime state.
 
 set -euo pipefail
 
-# When the env flag is set, hook is a no-op. The user has explicitly
-# approved the .cs edit (e.g. founder wrote it themselves or signed off
-# on an AgDR that touches the broker).
+resolve_python_bin() {
+    if [[ -n "${ARCHHUB_PYTHON:-}" ]]; then
+        printf '%s\n' "$ARCHHUB_PYTHON"
+        return 0
+    fi
+    if command -v python >/dev/null 2>&1; then
+        command -v python
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        command -v python3
+        return 0
+    fi
+    for candidate in \
+        "/mnt/c/Users/fargaly/AppData/Local/Python/bin/python.exe" \
+        "/c/Users/fargaly/AppData/Local/Python/bin/python.exe"
+    do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 if [[ "${ARCHHUB_ALLOW_CS_EDIT:-0}" == "1" ]]; then
     exit 0
 fi
 
-# Inspect the changes staged for this commit only — pre-commit runs
-# before the commit object exists, so we diff index vs HEAD.
+# Broker .cs guard: these files control host MCP brokers and require founder
+# sign-off before commit.
 STAGED_CS=$(git diff --cached --name-only --diff-filter=ACMR \
             -- ':(glob)payload/sources/**/*.cs' 2>/dev/null || true)
 
 if [[ -n "$STAGED_CS" ]]; then
     cat >&2 <<'EOF'
-═══════════════════════════════════════════════════════════════════════
-  COMMIT BLOCKED — payload/sources/**/*.cs edit detected
-═══════════════════════════════════════════════════════════════════════
+================================================================
+  COMMIT BLOCKED - payload/sources/**/*.cs edit detected
+================================================================
+Broker source files require an AgDR and founder sign-off.
+
+Staged broker source files:
 EOF
-    echo "" >&2
-    echo "Staged broker source files:" >&2
     echo "$STAGED_CS" | sed 's/^/  /' >&2
-    echo "" >&2
     cat >&2 <<'EOF'
-These files control the Revit / AutoCAD / 3ds Max MCP brokers and the
-shared script compiler. They were edited destructively by an agent on
-2026-05-25 — port numbers changed, transaction wrappers bypassed.
 
-Founder mandate (CLAUDE.md + AGENTS.md):
-  - Broker .cs files require an AgDR before any edit
-  - AgDR must record the port/protocol contract change + founder sign-off
-  - Rebuild + redeploy + CDP-verify is part of the same iteration
-
-If you are an autonomous agent: STOP. Open AGENTS.md at the repo root
-and follow the mandate set there. Do not edit .cs files in
-payload/sources/ unless you have written an AgDR and the founder has
-signed off in chat.
-
-If you are the founder (or have explicit sign-off):
+If you have explicit founder sign-off:
   ARCHHUB_ALLOW_CS_EDIT=1 git commit -m "..."
 
-To inspect what changed before deciding:
+To inspect:
   git diff --cached -- payload/sources/**/*.cs
-═══════════════════════════════════════════════════════════════════════
+================================================================
 EOF
     exit 1
 fi
 
-# ─────────────────────────────────────────────────────────────────────────
-# AgDR-0050 — no-brain-on-commit floor (ADDITIVE; runs AFTER the .cs guard).
-# Invokes tools/brain_commit_gate.py as a SECOND, independent check. The gate
-# warns by default (exit 0, never blocks) and only blocks when the committer
-# opts in with ARCHHUB_BRAIN_COMMIT_GATE=block. Default is WARN:
-# leave ARCHHUB_BRAIN_COMMIT_GATE unset (or =warn). =block is the opt-in.
-#
-# Fail-open is absolute here too: if python is missing, the gate file is
-# absent, or the invocation errors for any reason, the hook STILL allows the
-# commit. We capture the gate's exit code without letting `set -e` abort the
-# hook, and only ever propagate a genuine block (exit 1) from the gate itself.
-# (The gate already fails open internally when the brain daemon is down.)
-PYTHON_BIN="${ARCHHUB_PYTHON:-python}"
-if command -v "$PYTHON_BIN" >/dev/null 2>&1 \
-   && [ -f tools/brain_commit_gate.py ]; then
+
+# Client residue guard (T2): no BBC4 / client-project paths may be staged into
+# the public product repo. Names, sheet numbers and fixtures of a client job
+# are client data even when the files are one-line stubs.
+CLIENT_RESIDUE=$(git diff --cached --name-only --diff-filter=ACMR | grep -iE "(^|/)proof_bbc4/|bbc4" || true)
+if [ -n "$CLIENT_RESIDUE" ]; then
+    echo "COMMIT BLOCKED - client residue staged (T2):" >&2
+    echo "$CLIENT_RESIDUE" | sed "s/^/  /" >&2
+    exit 1
+fi
+
+# Public privacy ratchet. This blocks widening already-known private
+# client/project identifier debt in the T0 public product tree.
+PYTHON_BIN="$(resolve_python_bin || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "[public-privacy-ratchet] python unavailable; blocking commit." >&2
+    exit 1
+fi
+if [ ! -f tools/public_privacy_ratchet.py ]; then
+    echo "[public-privacy-ratchet] gate script missing; blocking commit." >&2
+    exit 1
+fi
+"$PYTHON_BIN" tools/public_privacy_ratchet.py
+
+# Universal Cell runtime-copy retirement gate.
+# Fires only when a commit stages changes under node_runtime/. A staged
+# archive/removal/edit of the copied runtime must prove the machine-readable
+# retirement gate is green.
+STAGED_NODE_RUNTIME=$(git diff --cached --name-only --diff-filter=ACMRD \
+            -- node_runtime 2>/dev/null || true)
+
+if [[ -n "$STAGED_NODE_RUNTIME" ]]; then
+    if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ ! -f "$PYTHON_BIN" ]; then
+        echo "[runtime-retirement-gate] python unavailable; blocking node_runtime retirement." >&2
+        exit 1
+    fi
+    if [ ! -f tools/legacy_runtime_drain.py ]; then
+        echo "[runtime-retirement-gate] tools/legacy_runtime_drain.py missing; blocking node_runtime retirement." >&2
+        exit 1
+    fi
+    GATE_RC=0
+    "$PYTHON_BIN" tools/legacy_runtime_drain.py --no-write --enforce-retirement-gate >/dev/null || GATE_RC=$?
+    if [ "$GATE_RC" != "0" ]; then
+        cat >&2 <<'EOF'
+================================================================
+  COMMIT BLOCKED - node_runtime retirement gate is red
+================================================================
+Staged changes touch node_runtime/. The copied runtime may only be
+archived or removed after:
+  - live holder count is zero,
+  - Universal Cell authority launch readiness is green,
+  - exact authority replacements are not blocked,
+  - the non-interrupting handoff schedule has been completed.
+
+Run:
+  python tools/legacy_runtime_drain.py --no-write --enforce-retirement-gate
+
+Then inspect the retirement_gate failures before trying this commit again.
+================================================================
+EOF
+        exit 1
+    fi
+fi
+
+# Brain commit gate. This remains warn/fail-open by default and only blocks
+# when the gate itself deliberately exits 1.
+if command -v "$PYTHON_BIN" >/dev/null 2>&1 && [ -f tools/brain_commit_gate.py ]; then
     GATE_RC=0
     "$PYTHON_BIN" tools/brain_commit_gate.py || GATE_RC=$?
-    # Only the gate's deliberate block (exit 1, opt-in via =block) stops the
-    # commit. Any other non-zero is an invocation failure → fail open.
     if [ "$GATE_RC" = "1" ]; then
         exit 1
     fi
 else
-    echo "[brain-commit-gate] python or gate script unavailable — fail-open, not blocking." >&2
+    echo "[brain-commit-gate] python or gate script unavailable; fail-open, not blocking." >&2
 fi
 
 exit 0

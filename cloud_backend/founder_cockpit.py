@@ -37,6 +37,8 @@ from fastapi import APIRouter, Body, Cookie, Form, Header, HTTPException, Reques
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
+from pathlib import Path
+
 import config
 import db
 
@@ -789,13 +791,92 @@ def api_purge_test_users(
     })
 
 
+_COCKPIT_ASSETS = Path(__file__).resolve().parent / "cockpit_assets"
+_ASSET_SUFFIXES = frozenset({"js", "jsx", "html", "css", "json", "png", "svg", "woff2", "map"})
+
+
+_MAP_STATE = Path(__file__).resolve().parent / "data" / "founder-map.json"
+
+
+@router.post("/map-state")
+async def cockpit_map_state(request: Request,
+                            _founder: dict = Depends(require_founder)):
+    """The founder's desktop publishes its live graph projection here.
+
+    The cockpit is the map and the map is the graph, so the cloud serves
+    what the founder's running application actually holds. When no push
+    has arrived the authored model remains the fallback -- the surface is
+    never blank and never invents state.
+    """
+    payload = await request.body()
+    if len(payload) > 4_000_000:
+        return JSONResponse({"ok": False, "error": "map state too large"},
+                            status_code=413)
+    try:
+        json.loads(payload.decode("utf-8"))
+    except Exception:
+        return JSONResponse({"ok": False, "error": "map state is not JSON"},
+                            status_code=400)
+    _MAP_STATE.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic: readers see the previous complete state or the new one, never
+    # a half-written file served as the cockpit map.
+    tmp = _MAP_STATE.with_suffix(_MAP_STATE.suffix + ".tmp")
+    tmp.write_bytes(payload)
+    os.replace(tmp, _MAP_STATE)
+    return {"ok": True, "bytes": len(payload)}
+
+
+@router.get("/map-assets/{asset:path}")
+def cockpit_asset(asset: str,
+                  _founder: dict = Depends(require_founder)) -> Response:
+    """One cockpit module, behind the founder gate like every other route."""
+    if asset == "map-data.js" and _MAP_STATE.is_file():
+        # The founder's LIVE graph, as pushed by his running application.
+        return Response(
+            b"window.ATLAS_MAP = " + _MAP_STATE.read_bytes()
+            + b"; window.ATLAS_LIVE = true;",
+            media_type="text/javascript; charset=utf-8",
+        )
+    # The asset name comes off the URL: normalise it, refuse anything that
+    # climbs out or names a drive, and only then touch the filesystem.
+    relative = os.path.normpath(asset).replace(chr(92), "/")
+    if (relative.startswith(("..", "/")) or os.path.isabs(relative) or ":" in relative
+            or relative.rsplit(".", 1)[-1].lower() not in _ASSET_SUFFIXES):
+        return Response(status_code=404)
+    base = os.path.realpath(str(_COCKPIT_ASSETS))
+    full = os.path.realpath(os.path.join(base, relative))
+    if not full.startswith(base + os.sep) or not os.path.isfile(full):
+        return Response(status_code=404)
+    target = Path(full)
+    kind = (
+        "text/javascript; charset=utf-8"
+        if target.suffix in (".js", ".jsx")
+        else "text/html; charset=utf-8" if target.suffix == ".html"
+        else "application/octet-stream"
+    )
+    return Response(target.read_bytes(), media_type=kind)
+
+
+@router.get("/admin", response_class=HTMLResponse)
+def cockpit_admin(_founder: dict = Depends(require_founder)) -> HTMLResponse:
+    """The users/subscriptions/errors dashboard, one click from the map."""
+    return HTMLResponse(_PAGE_HTML)
+
+
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 def cockpit_page(_founder: dict = Depends(require_founder)) -> HTMLResponse:
     """The single self-contained on-brand HTML dashboard. It hydrates from
     the /founder/api/* endpoints (which share this route's founder gate) and
     auto-refreshes every 30s. All styling is inline so the page has zero
-    external dependencies."""
+    external dependencies.
+
+    The cockpit IS the grand map -- brain, cockpit and graph are one
+    model, so /founder opens the atlas. The admin dashboard remains one
+    click away at /founder/admin."""
+    page = _COCKPIT_ASSETS / "map.html"
+    if page.is_file():
+        return HTMLResponse(page.read_text(encoding="utf-8"))
     return HTMLResponse(_PAGE_HTML)
 
 

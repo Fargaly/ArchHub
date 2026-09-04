@@ -41,6 +41,21 @@ personal-brain --db ~/brain/founder.db
 
 Default DB: `%APPDATA%/ArchHub/brain/brain.db` (Windows), `~/.local/share/archhub/brain/brain.db` (Linux/macOS).
 
+## Operating the local Brain
+
+The installed user service starts a supervisor at login. Inspect it without
+starting, stopping, or replacing the live daemon:
+
+```bash
+python -m personal_brain.service status --port 8473
+```
+
+`runtime.listener` reports whether the MCP listener is healthy, unresponsive
+while still holding its port, or offline. `runtime.supervisor_heartbeat` reports
+only the supervisor loop's freshness; it does not claim that the supervisor owns
+the current daemon. An `unresponsive` listener requires an explicit controlled
+handoff, never an automatic competing daemon.
+
 ## Wire to Claude Code
 
 Drop into `~/.claude/settings.json`:

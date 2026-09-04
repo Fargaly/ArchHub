@@ -35,6 +35,12 @@ ENV/
 *~
 .DS_Store
 Thumbs.db
+# Timestamped pre-edit backups written by tooling (e.g.
+# tools/brainwrap.py.<tag>-bak.<YYYYMMDD_HHMMSS>). They are a lane's local
+# rollback point for uncommitted work — keep them on disk, keep them out of the
+# tracked boundary. Untracked they land as `unclassified_noncoordinated` and
+# redden the AgDR-0061 WIP gate (AGENTS.md Hard Rule 3: regenerables are ignored).
+*-bak.[0-9]*
 
 # ==== Secrets ====
 *.env
@@ -80,6 +86,12 @@ payload/_generated/
 # User-saved skills/sessions are runtime artefacts, not source.
 app/skills/*.archhub-skill.json
 **/*.archhub-session.json
+
+# ==== Legacy runtime handoff state ====
+# Root node_runtime/ is a live copied runtime, not product source. It remains
+# audited by tools/live_runtime_holders.py and the retirement gate before any
+# archive or handoff.
+/node_runtime/
 
 # ==== Claude Code per-machine state ====
 # IDE settings + transcripts written by Claude Code; never commit.
@@ -135,7 +147,23 @@ scripts/stripe_login_pty.py
 *.archhub-session.json
 # ad-hoc screenshots / captures named with a leading underscore
 _*.png
+# root-level agent scratch folders copied from parallel runs; evidence belongs
+# in governed proofs/ or outside the public product tree, never as source.
+/_*/
+/.lagfix_harness/
+/tmppytest-*/
 # founder message scratch dump
 founder_msgs.txt
 # zipped exports / bundles — regenerable, never source
 *.zip
+
+# Private peer-bus location pointer (T2 path — never literal in public source)
+.peer_bus_dir
+
+# Client residue never enters the public product repo (T2). BBC4 stubs were
+# committed as a CI fixture in June 2026 and purged 2026-09-04; the pre-commit
+# hook refuses these paths too.
+proof_bbc4/
+**/proof_bbc4/
+**/*bbc4*
+**/*BBC4*

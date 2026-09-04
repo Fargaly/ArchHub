@@ -1,0 +1,59 @@
+{
+  "schema": "legacy_runtime_source_drift_visual_evidence_v1",
+  "recorded_at": "2026-07-20",
+  "authority_root": "10.PRODUCT/13.NODE-LANGUAGE",
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true,
+    "no_visible_windows_launched": true
+  },
+  "scope": "visual_workspace_interaction",
+  "claim": "Canvas interaction feel and limits are now graph-held Cell policy settings projected into the browser adapter, not hidden browser constants for the universal canvas path.",
+  "authority_files": {
+    "nodelang/cell_canvas_interaction_policy.py": "231ED311A01C1C509BB4BC13918559E8850056778CB5DE2AA72B83ABD26A9198",
+    "tests_replica/test_canvas_interaction_policy.py": "60AE5679E6A9A41BAC220124E3FE8912E550972DBFF0C84F635ABDD7AE0C9550",
+    "nodelang/universal_application.py": "047C4F7F50952FC3FCD180ED803F02820475C7830AB335439ABC00C01D72B403",
+    "nodelang/ui_runtime.py": "ABFC56A29B7855A637D1490341D7C2C7CBA10E32319B3473781208552A08A7CF"
+  },
+  "tests": [
+    {
+      "command": "python -m pytest tests_replica\\test_canvas_interaction_policy.py -q --timeout=180",
+      "result": "6 passed in 8.99s"
+    },
+    {
+      "command": "python -m pytest tests_replica\\test_universal_ui_interactions.py -q --timeout=180 -k \"fit_measures or shift_removes or marquee or toolbar or semantic_toolbar\"",
+      "result": "15 passed, 54 deselected in 44.63s"
+    },
+    {
+      "command": "python -m pytest tests_replica\\test_canvas_interaction_policy.py tests_replica\\test_universal_application_durability.py -q --timeout=180 -k \"interaction_policy or restore or durable or reopen\"",
+      "result": "14 passed in 125.17s"
+    }
+  ],
+  "research_sources": [
+    {
+      "name": "W3C Pointer Events",
+      "url": "https://www.w3.org/TR/pointerevents/",
+      "used_for": "pointer capture and unified pointer handling boundary"
+    },
+    {
+      "name": "W3C CSSOM View Module",
+      "url": "https://www.w3.org/TR/cssom-view-1/",
+      "used_for": "getBoundingClientRect viewport geometry boundary"
+    },
+    {
+      "name": "Konva zoom relative to pointer",
+      "url": "https://konvajs.org/docs/sandbox/Zooming_Relative_To_Pointer.html",
+      "used_for": "cursor-centered wheel zoom behavior"
+    },
+    {
+      "name": "Autodesk AutoCAD window/crossing selection convention",
+      "url": "https://forums.autodesk.com/t5/autocad-forum/selection-crossing-vs-inside-window/td-p/7395614",
+      "used_for": "left-to-right window vs right-to-left crossing selection"
+    }
+  ],
+  "known_limits": [
+    "This slice moves universal canvas interaction policy into Cells and projects it to the adapter; it does not redesign the visual card aesthetics.",
+    "The compatibility script keeps numeric fallbacks only for pre-policy legacy pages; the universal projection publishes the graph policy to the adapter handoff.",
+    "The full test_universal_application.py run exceeded the command timeout and is not counted as passing evidence."
+  ]
+}

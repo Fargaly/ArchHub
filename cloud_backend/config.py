@@ -285,7 +285,7 @@ RESEND_API_KEY = _req("RESEND_API_KEY", "")
 # WITHOUT requiring a custom domain to be purchased/configured first.
 # Override via `flyctl secrets set PUBLIC_URL=https://cloud.archhub.io`
 # once the user's own DNS is wired up.
-PUBLIC_URL     = _req("PUBLIC_URL", "https://archhub-cloud.fly.dev")
+PUBLIC_URL     = _req("PUBLIC_URL", "https://api.archhub.io")
 # FROM_EMAIL — Resend will reject sends from unverified domains. Fly's
 # *.fly.dev subdomain isn't verifiable on Resend, so we keep the
 # branded sender BUT require the user verify ownership of the parent
@@ -357,7 +357,7 @@ def _origin_set(env_name: str, default: tuple[str, ...]) -> frozenset[str]:
 
 WEBSITE_RETURN_ORIGINS: frozenset[str] = _origin_set(
     "WEBSITE_RETURN_ORIGINS",
-    ("https://archhub.io", "https://archhub-web.fly.dev"),
+    ("https://archhub.io", "https://www.archhub.io", "https://archhub-web.fly.dev"),
 )
 
 

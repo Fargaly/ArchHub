@@ -285,6 +285,12 @@ class ResolverRegistry:
             raise ValueError("alias must be a non-empty string")
         if not ref or not isinstance(ref, str):
             raise ValueError("ref must be a non-empty string")
+        if ref.startswith("inline:"):
+            # inline:<raw> IS the raw value; storing it as an alias writes
+            # a plaintext key to disk under a reference-shaped name.
+            raise ValueError(
+                "inline: carries the raw value and cannot be registered as an alias"
+            )
         if not any(ref.startswith(cls.prefix) for cls in self.DEFAULT_ORDER):
             raise ValueError(
                 f"ref {ref!r} does not match any known resolver prefix; "

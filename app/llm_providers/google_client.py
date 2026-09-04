@@ -28,7 +28,9 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 
-_API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+# The key travels as a header, never in the URL: URLs land in proxy logs,
+# browser history and error messages; headers do not.
+_API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
 def _encode_image_part(path: str) -> Optional[dict]:
@@ -102,11 +104,12 @@ class GoogleClient:
         if tools:
             body["tools"] = [{"function_declarations": _adapt_tools(tools)}]
 
-        url = _API.format(model=model, key=self.api_key)
+        url = _API.format(model=model)
         req = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json",
+                     "x-goog-api-key": self.api_key},
             method="POST",
         )
         try:

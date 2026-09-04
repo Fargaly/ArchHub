@@ -107,22 +107,16 @@ ArchHub watches its own health. A **Self-Heal Inspector** shows you self-heal ac
 
 ## Plans and tiers
 
-The brain — and ArchHub overall — is governed by your plan. There are three tiers:
+ArchHub is free in open beta: one tier, every shipped feature. Paid tiers (Solo, Studio, Firm) are planned, not active.
 
-| Tier | Who it's for |
-| --- | --- |
-| **Solo** | An individual architect or small practice. |
-| **Studio** | A studio / team. |
-| **Firm** | A larger firm or enterprise — per-seat volume, 10+ seats, SSO + audit. |
-
-Your plan sets the caps that govern how much the brain and the hosted assistant can do. You can see your current plan and how many messages you have remaining:
+Your tier is shown, never a placeholder; You can see your current plan and how many messages you have remaining:
 
 - **In the app:** the **account chip** on the Home screen shows your email, plan, and messages remaining — read live, never a placeholder.
 - **On the web:** sign in at archhub.io and the **Account** page shows the same — your email, plan, and remaining messages.
 
 ### A note on billing (coming soon where noted)
 
-ArchHub offers a free tier with a set number of trial messages — **no credit card to start**. Paid tiers and an add-on credit pack (a $10 / 1,000-message top-up) are built into the cloud backend. Where a live purchase isn't yet wired for your region, the app will honestly show **"Coming soon"** rather than pretend a checkout exists. See [Pricing](/pricing) for current details.
+Nothing is billed in open beta — **no credit card, no credit packs, no trial clock**. The billing machinery exists in the cloud backend but is switched off; the app shows **"Coming soon"** wherever a purchase would be, never a fake checkout. See [Pricing](/pricing) for current details.
 
 ---
 
@@ -139,7 +133,7 @@ The brain works regardless of which AI you use. ArchHub supports two modes:
 
 ## Quick start with the brain
 
-1. **Install and open ArchHub.** (Windows: `winget install Fargaly.ArchHub`, or download the installer from the [releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click.)
+1. **Install and open ArchHub.** (Windows: download `ArchHub-Setup-0.exe` from the [releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click.)
 2. **Sign in** through the first-run wizard (a magic link to your email — free tier, no card).
 3. **Work normally** — draft on the canvas, run a connector, talk to the composer. The brain learns as you go.
 4. **Open the Brain folders view** to browse what it has remembered.

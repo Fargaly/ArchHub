@@ -1,0 +1,56 @@
+{
+  "schema": "archhub-runtime-source-drift-authority-evidence/v1",
+  "generated_at": "2026-07-22T00:47:33+04:00",
+  "migration_track": "visual_workspace_interaction",
+  "slice": "graph_template_inspector_parity_boundary",
+  "authority": "10.PRODUCT/13.NODE-LANGUAGE/AUTHORITY.md + SPEC.md",
+  "runtime_copy": "10.PRODUCT/12.PRODUCTION/node_runtime",
+  "runtime_copy_promoted": false,
+  "bulk_copy_performed": false,
+  "live_process_interruption": false,
+  "non_interruption": {
+    "no_running_sessions_restarted": true,
+    "no_processes_terminated": true
+  },
+  "decision": {
+    "accepted_canonical_behavior": [
+      "The released inspector is rendered by graph templates whose controls, timelines, and bindings are derived from canonical projection data.",
+      "The safe descriptor constructor remains a bounded disposable-render primitive for the template interpreter; legacy named presenter dispatch is empty.",
+      "Canonical control and timeline courts prove exact parity for representative and live projections without granting arbitrary DOM or executable authority."
+    ],
+    "pending_not_ported": [
+      "Remaining legacy descriptor projectors are shrink-only parity evidence until the copied runtime is retired and the compatibility reference is removed under a separate court."
+    ],
+    "forbidden": [
+      "Treat the copied presenter functions as the active inspector authority or add a second presenter dispatch path.",
+      "Use this classification to interrupt a live runtime holder or promote copied visual source."
+    ]
+  },
+  "canonical_files": {
+    "nodelang/inspector_descriptor.py": "b0e8720df69670bd061c7cd3d9709e10994710485192e845a6eb93974468fbbb",
+    "tests_replica/test_cell_control_view.py": "aacd9aa89ea8803c8370abbdf5f8aab9009d11c55e0695273f7315838cbb9af4",
+    "tests_replica/test_cell_timeline_view.py": "3158b74063aa2b8b89bed0585e3cfccc022bb108603b08e0ecadb2fdb4ff2c75"
+  },
+  "runtime_candidate_decisions": [
+    {
+      "path": "nodelang/inspector_descriptor.py",
+      "decision": "preserve_as_migration_evidence",
+      "resolution_state": "preserved_as_migration_evidence_pending_runtime_retirement",
+      "rationale": "Canonical graph templates own inspector rendering; the remaining descriptor projectors are a bounded parity reference, while only the safe descriptor constructor is used by the template interpreter."
+    }
+  ],
+  "runtime_evidence_read_only": {
+    "nodelang/inspector_descriptor.py": "5f4d12b90f49faba322bcce66eec94d2254ae14a53f400423c406e73be00f3c9"
+  },
+  "commands": [
+    {
+      "cwd": "10.PRODUCT/13.NODE-LANGUAGE",
+      "command": "python -m pytest tests_replica\\test_cell_control_view.py tests_replica\\test_cell_timeline_view.py -q",
+      "result": "12 passed in 11.15s; before/after canonical SHA-256 values matched"
+    }
+  ],
+  "not_claimed": [
+    "The broad inspector-descriptor suite was allowed to finish after its wrapper timed out, but its result was not captured and is not claimed here.",
+    "This evidence does not activate the canonical visual host, retire the copied runtime, or complete a controlled handoff."
+  ]
+}

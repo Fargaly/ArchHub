@@ -239,6 +239,12 @@ def _publish_map_to_cloud():
     import json
     import urllib.request
 
+    # The website promises nothing leaves this machine. The upload runs
+    # only when this machine holds an explicit consent record; deleting
+    # that file closes the path again.
+    from nodelang.cloud_publish_consent import cloud_publish_allowed
+    if not cloud_publish_allowed(state_dir):
+        return "off (no consent recorded; nothing left this machine)"
     cloud = (
         Path(os.environ["APPDATA"]) / "ArchHub" / "brain" / "cloud.json"
     )

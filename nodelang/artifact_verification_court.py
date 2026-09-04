@@ -247,7 +247,7 @@ class ArtifactVerificationCourt:
                     timeout=float(timeout),
                     shell=False,
                     check=False,
-                )
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except subprocess.TimeoutExpired:
                 return False, "pytest-timeout"
             return result.returncode == 0, "pytest"

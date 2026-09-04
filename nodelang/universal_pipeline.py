@@ -579,14 +579,24 @@ def project_atlas_map(store, registry, *, authentication_context=None):
     domains = []
     nodes = []
     top = [n for n in projection.get("nodes", ()) if n.get("openable")]
+    # The authored cockpit seed names the grand-map domains by their short key
+    # ("ui", "brain"); the graph holds them as "gm:domain:ui". Emit the seed's
+    # key so the cockpit merges live and authored as ONE domain -- with two
+    # names the same domain was drawn twice in one grid cell (2026-09-04).
+    # Grand-map domains come first so they land on the seed's cells; every
+    # other openable scope follows in the free cells after them.
+    _GM = "gm:domain:"
+    top = sorted(top, key=lambda n: (0 if str(n["id"]).startswith(_GM) else 1))
     per_row = 4
     for index, item in enumerate(top):
         key = str(item["id"])
+        atlas_key = key[len(_GM):] if key.startswith(_GM) else key
         colour = _ATLAS_COLORS[index % len(_ATLAS_COLORS)]
         gx = 40 + (index % per_row) * 650
         gy = 40 + (index // per_row) * 560
         domains.append({
-            "key": key, "title": str(item.get("label") or key)[:24],
+            "key": atlas_key, "root": key,
+            "title": str(item.get("label") or atlas_key)[:24],
             "x": gx, "y": gy, "w": 560, "h": 480, "col": colour,
         })
         try:
@@ -608,7 +618,7 @@ def project_atlas_map(store, registry, *, authentication_context=None):
                 }
             ][:4]
             nodes.append({
-                "id": member, "dom": key,
+                "id": member, "dom": atlas_key,
                 "cat": "logic" if not data.get("engine") else "read",
                 "title": str(title)[:60],
                 "sub": str(data.get("engine") or data.get("status") or "")[:80],
@@ -644,6 +654,9 @@ def project_atlas_map(store, registry, *, authentication_context=None):
             pass
     return "window.ATLAS_MAP = %s; window.ATLAS_LIVE = true;" % _json.dumps({
         "domains": domains, "nodes": nodes, "wires": [],
+        # The seed's layout grid, so the cockpit snaps and resolves cells
+        # against the same lattice the push was laid out on.
+        "grid": {"x0": 40, "y0": 40, "px": 650, "py": 560, "dw": 560, "dh": 480},
     })
 
 

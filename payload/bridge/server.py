@@ -40,6 +40,30 @@ ENDPOINTS = {
 
 mcp = FastMCP("archhub")
 
+# The rest of the founder's hosts (Rhino, Blender, Max, Office, Outlook, Notion,
+# Dropbox) are driven by the kernel's broker module -- one implementation for
+# the app and for every agent. Find it in the worktree or the nested copy.
+import sys as _sys
+for _candidate in (Path(__file__).resolve().parents[2] / "node-language",
+                   Path(__file__).resolve().parents[3] / "13.NODE-LANGUAGE"):
+    if (_candidate / "nodelang" / "host_brokers.py").is_file() and str(_candidate) not in _sys.path:
+        _sys.path.insert(0, str(_candidate))
+try:
+    from nodelang import host_brokers as _brokers
+except Exception as _exc:  # noqa: BLE001
+    _brokers = None
+    _BROKERS_ERROR = str(_exc)
+
+
+def _broker(engine: str, **params) -> Dict[str, Any]:
+    if _brokers is None:
+        return {"status": "error", "error": "kernel brokers unavailable: " + _BROKERS_ERROR}
+    try:
+        out, label = _brokers.ENGINES[engine](params, {})
+        return {"status": "ok", "label": label, **out}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)}
+
 
 # ---------------------------------------------------------------------------
 def _load_active() -> set[str]:
@@ -193,3 +217,44 @@ def blender_execute_python(code: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     mcp.run()
+
+@mcp.tool()
+def hosts_state() -> Dict[str, Any]:
+    """Every host the founder works with and its real state right now."""
+    return _broker("connector.rows")
+
+
+@mcp.tool()
+def rhino_ping() -> Dict[str, Any]:
+    """Is the Rhino bridge (:9879) answering?"""
+    return _broker("rhino.exec", code="")
+
+
+@mcp.tool()
+def rhino_execute_python(code: str) -> Dict[str, Any]:
+    """Run RhinoPython in the open Rhino model through its bridge."""
+    return _broker("rhino.exec", code=code)
+
+
+@mcp.tool()
+def office_read(operation: str, name: str = "") -> Dict[str, Any]:
+    """Read what Excel/Word/PowerPoint hold open: excel.list_workbooks, excel.list_worksheets, word.list_documents, word.list_paragraphs, powerpoint.list_presentations, powerpoint.list_slides."""
+    return _broker("office.read", operation=operation, name=name)
+
+
+@mcp.tool()
+def outlook_inbox(count: int = 20) -> Dict[str, Any]:
+    """Newest inbox items from the open Outlook (subject, sender, received)."""
+    return _broker("outlook.inbox", count=count)
+
+
+@mcp.tool()
+def notion_search(query: str = "") -> Dict[str, Any]:
+    """Search the founder's Notion workspace (needs the integration token)."""
+    return _broker("notion.search", query=query)
+
+
+@mcp.tool()
+def dropbox_list(path: str = "") -> Dict[str, Any]:
+    """Files under the Dropbox folder (relative path optional)."""
+    return _broker("dropbox.list", path=path)

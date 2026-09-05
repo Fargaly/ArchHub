@@ -589,10 +589,14 @@ def project_atlas_map(store, registry, *, authentication_context=None):
     # other openable scope follows in the free cells after them.
     _GM = "gm:domain:"
     top = sorted(top, key=lambda n: (0 if str(n["id"]).startswith(_GM) else 1))
+
+    def atlas_key_of(root: str) -> str:
+        return root[len(_GM):] if root.startswith(_GM) else root
+
     per_row = 4
     for index, item in enumerate(top):
         key = str(item["id"])
-        atlas_key = key[len(_GM):] if key.startswith(_GM) else key
+        atlas_key = atlas_key_of(key)
         colour = _ATLAS_COLORS[index % len(_ATLAS_COLORS)]
         gx = 40 + (index % per_row) * 650
         gy = 40 + (index // per_row) * 560
@@ -676,6 +680,22 @@ def project_atlas_map(store, registry, *, authentication_context=None):
         except Exception:
             why = ""
         wires.append({"a": source, "b": target, "why": why or relation_root[:40], "dom": domain_key})
+    # The canvas the studio draws already resolves every top-level wire to its
+    # endpoints (a domain, or a node on the top level); those are the
+    # cross-domain links the cockpit bundles. Intra-domain wires appear above
+    # when a scoped relation's endpoints climb to nodes on the map.
+    atlas_of = {str(node["id"]): atlas_key_of(str(node["id"])) for node in top}
+    for wire in projection.get("wires", ()):
+        try:
+            a = atlas_of.get(str(wire.get("source")), str(wire.get("source")))
+            b = atlas_of.get(str(wire.get("target")), str(wire.get("target")))
+        except Exception:
+            continue
+        known = emitted | set(atlas_of.values())
+        if a not in known or b not in known or a == b or (a, b) in seen_wires:
+            continue
+        seen_wires.add((a, b))
+        wires.append({"a": a, "b": b, "why": str(wire.get("title") or wire.get("id") or "")[:60], "dom": atlas_of.get(str(wire.get("source")), "")})
     # The founder's brain facts live INSIDE the Brain & Memory domain --
     # brain, cockpit, grand map: one model. Daemon down = domain shown
     # without facts, honestly, never a crash.

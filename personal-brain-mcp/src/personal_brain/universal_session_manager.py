@@ -128,14 +128,30 @@ class UniversalRuntimeSessionManager:
                         )
                 except Exception as exc:
                     message = "%s: %s" % (type(exc).__name__, exc)
+                    # An EXPIRED capability cannot be renewed -- retrying it
+                    # every poll is a lie the log tells forever (the founder
+                    # watched three sessions repeat it, 2026-09-05). Drop the
+                    # lease: the binding stops being renewed, the failure is
+                    # kept as evidence, and the next enrollment re-arms it.
+                    dead = "expired" in str(exc).casefold()
                     with self._lock:
                         if self._bindings.get(key) is bridge:
                             self._renewal_failures[key] = message
-                    _LOG.warning(
-                        "Agent Session capability renewal failed for %s: %s",
-                        key,
-                        message,
-                    )
+                            if dead:
+                                self._binding_expiries.pop(key, None)
+                    if dead:
+                        _LOG.warning(
+                            "Agent Session capability expired for %s; "
+                            "renewal stopped until it is enrolled again: %s",
+                            key,
+                            message,
+                        )
+                    else:
+                        _LOG.warning(
+                            "Agent Session capability renewal failed for %s: %s",
+                            key,
+                            message,
+                        )
                     continue
                 with self._lock:
                     if self._bindings.get(key) is bridge:

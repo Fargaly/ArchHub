@@ -56,7 +56,7 @@ def test_the_hook_coverage_audit_writes_a_receipt():
     audit = src[start:src.index("\ndef repair(", start)]
     assert "payload=receipt," in audit and "report_sha256" in audit
     assert "payload=report_payload," not in audit, "the whole report must not reach the ledger again"
-    assert '"client_count"' in audit
+    assert "_slim_report(" in audit and "touchpoints" in src
     # the repair pair records digests, not the reports
     repair = src[src.index("def repair_cell_first"):]
     assert "before_sha256" in repair and "after_sha256" in repair

@@ -779,6 +779,7 @@ from .cell_lifecycle import (
     seed_composed_lifecycle_content,
     state_heads,
 )
+from .universal_cell import cells_with_link0 as _cells_with_link0, ids_with_prefix as _ids_with_prefix
 from .universal_cell import (
     NULL_CELL_ID,
     Cell,
@@ -5561,10 +5562,7 @@ def _ensure_properties_view_template_graph(
                 _LIBRARY_SHELL_VIEW_TEMPLATE,
                 _RELATION_COMPOSER_VIEW_TEMPLATE,
             )
-            if any(
-                root_id.startswith(prefix + ":")
-                for root_id in snapshot.cells
-            )
+            if any(True for _root_id in _ids_with_prefix(snapshot.cells, prefix + ":"))
         )
         if orphaned:
             raise InvalidCell("persisted view template is orphaned")
@@ -13143,14 +13141,11 @@ def _ensure_core_values_authority_current(
         if any(root_id not in snapshot.cells for root_id in relation_roots):
             raise InvalidCell("persisted Core Values canvas wiring is incomplete")
 
-    related_owners = {
-        root for root in snapshot.cells if root.startswith(root_id + ":")
-    } | {root_id, *relation_roots}
+    related_owners = set(_ids_with_prefix(snapshot.cells, root_id + ":")) | {root_id, *relation_roots}
     property_roots = []
-    for candidate in snapshot.cells:
+    for candidate in _ids_with_prefix(snapshot.cells, "app:property:"):
         if (
-            not candidate.startswith("app:property:")
-            or ":incidence:" in candidate
+            ":incidence:" in candidate
             or ":chain:" in candidate
         ):
             continue
@@ -15338,9 +15333,8 @@ def restore_universal_application(
     theme_prefix = "app:presentation:theme:"
     theme_roots = {
         root[len(theme_prefix):]: root
-        for root in snapshot.cells
-        if root.startswith(theme_prefix)
-        and ":" not in root[len(theme_prefix):]
+        for root in _ids_with_prefix(snapshot.cells, theme_prefix)
+        if ":" not in root[len(theme_prefix):]
     }
     if not theme_roots:
         raise InvalidCell("persisted application theme vocabulary is missing")
@@ -17541,7 +17535,9 @@ def _ensure_canvas_domain_interfaces(
     no longer being registered as current application interfaces.
     """
     snapshot = store.snapshot()
-    original_cell_ids = frozenset(snapshot.cells)
+    # The journal forbids deleting history by trigger; the check below keeps
+    # the invariant as a count, not a 3M-id set plus 3M point reads.
+    original_cell_count = len(snapshot.cells)
     support = {
         "source-presentation": (
             "app:canvas-interface:presentation:source", b"source"
@@ -17692,9 +17688,8 @@ def _ensure_canvas_domain_interfaces(
             b"replace generic domain dots with exact relation incidences",
         ))
         legacy_registration_incidences = tuple(sorted(
-            cell.id for cell in snapshot.cells.values()
-            if cell.link0 == protocol.role("interface")
-            and cell.link1 in legacy_roots
+            cell.id for cell in _cells_with_link0(snapshot.cells, protocol.role("interface"))
+            if cell.link1 in legacy_roots
         ))
         migration_members = [
             (roles["why"], _CANVAS_INTERFACE_MIGRATION_REASON_ROOT),
@@ -17862,7 +17857,7 @@ def _ensure_canvas_domain_interfaces(
             legacy_member.incidence_id,
             budget=100_000,
         )
-    if not original_cell_ids.issubset(store.snapshot().cells):
+    if len(store.snapshot().cells) < original_cell_count:
         raise InvalidCell("canvas interface migration deleted Cell history")
 
 
@@ -17890,7 +17885,7 @@ def _ensure_canvas_domain_public_interfaces(
 ) -> None:
     """Expose exact domain incidences through graph-owned public boundaries."""
     snapshot = store.snapshot()
-    original_cell_ids = frozenset(snapshot.cells)
+    original_cell_count = len(snapshot.cells)   # see _ensure_canvas_domain_interfaces
     domain_set = set(domain_roots)
     application_members = read_relation(
         snapshot, application_root, budget=100_000
@@ -18156,7 +18151,7 @@ def _ensure_canvas_domain_public_interfaces(
             budget=100_000,
         )
         store.commit(current.revision, replace=removal.replace)
-    if not original_cell_ids.issubset(store.snapshot().cells):
+    if len(store.snapshot().cells) < original_cell_count:
         raise InvalidCell("public canvas interface migration deleted Cell history")
 
 

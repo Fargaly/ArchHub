@@ -41,7 +41,7 @@ BRAIN = Path(__file__).resolve().parents[2] / "12.PRODUCTION" / "personal-brain-
 
 
 def test_a_payload_is_bounded_in_cells():
-    assert cell_deliberation._DELIBERATION_PAYLOAD_CELL_LIMIT == 400
+    assert cell_deliberation._DELIBERATION_PAYLOAD_CELL_LIMIT == 1_000  # 688-cell core-values report admitted, 2,180-cell dumps refused
     src = inspect.getsource(cell_deliberation.append_deliberation_value_entry)
     assert "len(prepared_value.create) > _DELIBERATION_PAYLOAD_CELL_LIMIT" in src
     assert "record a summary and a digest" in src

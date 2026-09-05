@@ -33,6 +33,8 @@ import time
 from collections import deque
 from typing import Optional
 
+from urllib.parse import quote as _urlquote
+
 from fastapi import APIRouter, Body, Cookie, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
@@ -1005,6 +1007,71 @@ def login_submit(token: str = Form(default="")) -> Response:
     return resp
 
 
+# The founder should never have to FIND a token. He asked, on 2026-09-05,
+# "where do I get the cockpit token from?" -- and the honest answer was: out of
+# a JSON file the desktop app writes, which is not a sign-in. These two routes
+# make the cockpit door the same door as the product's: type your email, click
+# the link in your inbox, you are in. The token field stays as a fallback.
+@router.post("/login/email")
+async def login_email(email: str = Form(default="")) -> Response:
+    """Mail the founder a one-time sign-in link for the cockpit.
+
+    The reply is IDENTICAL whether or not the address is the founder's, so
+    this page never tells a stranger which address owns the cockpit. Only the
+    founder's address actually gets mail; every other address is dropped in
+    silence. The link carries a short-lived one-time code (five minutes), not
+    a session -- the session is minted server-side in /founder/claim after the
+    code is spent."""
+    said = "If that address owns this cockpit, a sign-in link is on its way. It expires in five minutes."
+    address = (email or "").strip().lower()
+    if not address or address != founder_email():
+        return HTMLResponse(_login_html(notice=said))
+    try:
+        import auth as _auth  # local import: keeps founder_cockpit importable alone
+        import email_sender as _mail
+        user = db.get_or_create_user(address)
+        code = db.issue_code(user["id"], "")
+        link = "%s/founder/claim?code=%s" % (
+            config.PUBLIC_URL.rstrip("/"), _urlquote(code, safe=""))
+        sent = await _mail.send_magic_link(to=address, link=link)
+    except Exception:
+        sent = False
+    if not sent:
+        return HTMLResponse(
+            _login_html(error="The sign-in email could not be sent. Use the token field below."),
+            status_code=502)
+    return HTMLResponse(_login_html(notice=said))
+
+
+@router.get("/claim")
+def login_claim(code: str = "") -> Response:
+    """Finish the emailed sign-in: spend the code, set the cockpit cookie.
+
+    The cookie value is a server-minted token (db.issue_token via
+    auth.exchange_code), never anything the visitor typed. A code that is
+    expired, already spent, or belongs to any account other than the founder's
+    lands back on the login page with one generic message."""
+    import auth as _auth
+    payload = _auth.exchange_code(code=(code or "").strip(), code_verifier="")
+    token = (payload or {}).get("token") if isinstance(payload, dict) else None
+    user = _founder_user_for_token(str(token)) if token else None
+    if user is None:
+        return HTMLResponse(
+            _login_html(error="That sign-in link is expired or not for this cockpit."),
+            status_code=401)
+    resp = RedirectResponse(url="/founder", status_code=303)
+    resp.set_cookie(
+        key=FOUNDER_COOKIE,
+        value=str(token),
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/founder",
+        max_age=90 * 86400,
+    )
+    return resp
+
+
 @router.get("/logout")
 def logout() -> Response:
     """Clear the founder_session cookie and bounce to the login page."""
@@ -1512,10 +1579,17 @@ _LOGIN_HTML_TMPL = """<!doctype html>
   p.help{color:var(--ink-dim);font-size:13px;margin:0 0 22px}
   label{display:block;color:var(--ink-faint);font-size:11.5px;
     text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
-  input[type=password]{width:100%;background:#0f0f12;border:1px solid var(--line);
+  details{margin-top:20px;border-top:1px solid var(--line);padding-top:14px}
+  summary{color:var(--ink-faint);font-size:12px;cursor:pointer;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary:hover{color:var(--ink-dim)}
+  details label{margin-top:14px}
+  .ok{background:rgba(126,193,142,.10);border:1px solid #7ec18e;color:#7ec18e;
+    border-radius:10px;padding:12px 14px;font-size:13px;margin:0 0 16px;line-height:1.45}
+  input[type=email],input[type=password]{width:100%;background:#0f0f12;border:1px solid var(--line);
     border-radius:10px;color:var(--ink);font-family:inherit;font-size:14px;
     padding:11px 13px;outline:none}
-  input[type=password]:focus{border-color:var(--terracotta)}
+  input[type=email]:focus,input[type=password]:focus{border-color:var(--terracotta)}
   button{margin-top:16px;width:100%;background:var(--terracotta);color:#16110e;
     border:none;border-radius:10px;font-family:inherit;font-size:14px;
     font-weight:600;padding:11px 13px;cursor:pointer}
@@ -1526,23 +1600,39 @@ _LOGIN_HTML_TMPL = """<!doctype html>
 </style>
 </head>
 <body>
-  <form class="card" method="post" action="/founder/login" autocomplete="off">
+  <div class="card">
     <h1>Founder <span class="sub">Cockpit</span></h1>
-    <p class="help">Private business oversight. Sign in to continue.</p>
+    <p class="help">Private business oversight. Sign in with your email.</p>
     {error_block}
-    <label for="token">ArchHub token</label>
-    <input id="token" name="token" type="password" autofocus
-           autocomplete="off" spellcheck="false" />
-    <button type="submit">Sign in</button>
-    <div class="foot">Paste your ArchHub account token (Settings -&gt; Account).</div>
-  </form>
+    {notice_block}
+    <form method="post" action="/founder/login/email" autocomplete="on">
+      <label for="email">Your email</label>
+      <input id="email" name="email" type="email" autofocus required
+             autocomplete="email" spellcheck="false" placeholder="you@example.com" />
+      <button type="submit">Email me a sign-in link</button>
+    </form>
+    <div class="foot">The link lands in your inbox and expires in five minutes.</div>
+    <details>
+      <summary>Sign in with a token instead</summary>
+      <form method="post" action="/founder/login" autocomplete="off">
+        <label for="token">ArchHub token</label>
+        <input id="token" name="token" type="password"
+               autocomplete="off" spellcheck="false" />
+        <button type="submit">Sign in</button>
+      </form>
+    </details>
+  </div>
 </body>
 </html>
 """
 
 
-def _login_html(error: Optional[str] = None) -> str:
-    """Render the login page. `error`, if given, is HTML-escaped and shown in a
-    banner; the submitted token is never reflected back into the page."""
+def _login_html(error: Optional[str] = None, notice: Optional[str] = None) -> str:
+    """Render the login page. `error` / `notice`, if given, are HTML-escaped and
+    shown in a banner; neither the submitted token nor the submitted email is
+    ever reflected back into the page."""
     block = (f'<div class="err">{_html.escape(error)}</div>') if error else ""
-    return _LOGIN_HTML_TMPL.replace("{error_block}", block)
+    good = (f'<div class="ok">{_html.escape(notice)}</div>') if notice else ""
+    return (_LOGIN_HTML_TMPL
+            .replace("{error_block}", block)
+            .replace("{notice_block}", good))

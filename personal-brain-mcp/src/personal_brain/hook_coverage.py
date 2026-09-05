@@ -909,6 +909,7 @@ def audit_cell_first(
         receipt = {
             "event_type": report_payload["event_type"],
             "source": report_payload["source"],
+            "owner_user": owner_user,          # the history readers filter on it
             "audit_id": audit_id,
             "status": str(report.status),
             "last_audited_at": str(report_payload["last_audited_at"]),

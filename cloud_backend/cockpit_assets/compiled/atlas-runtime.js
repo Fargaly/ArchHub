@@ -25,40 +25,34 @@ var rtRuns = function rtRuns(n) {
   return n && n.rt && n.rt.runs || [];
 };
 
-// plausible result a node emits, by category — what a watcher would display
+// What a watcher shows. There is exactly one honest source: the last real run
+// recorded on the node. The founder found a canvas where every watcher read
+// like it had measured something ("18 rooms - 96 walls", "1,820 tok - $0.04")
+// while nothing had run at all; those strings were a per-category fixture.
+// A node that has not run says so, and says nothing else.
 function rtResult(node) {
-  var c = node.cat || 'logic';
-  var map = {
-    vision: '3 masses · 1,240 px → mesh',
-    compose: 'sheet set A.101–A.108 · 8 sheets',
-    output: '47 dimensions placed · 4.2s',
-    transform: '212 elements remapped',
-    extract: '18 rooms · 96 walls',
-    logic: 'ok · 12 rules passed',
-    skill: 'pipeline ✓ 6 stages',
-    connector: 'session live · 41ms p50',
-    host: 'handshake ✓ :48884',
-    ai: '1,820 tok · $0.04',
-    input: 'sketch.png · 1.2 MB',
-    trigger: 'fired · 1 event',
-    watch: '—',
-    preview: '—',
-    note: '—'
-  };
-  return map[c] || 'ok';
+  var runs = rtRuns(node);
+  var last = runs.length ? runs[runs.length - 1] : null;
+  var said = last && last.result;
+  return said === 0 || said ? String(said) : 'not run';
 }
 var RUN_SEQ = 1;
-function mkRun(node, variantOf) {
-  var ms = 200 + Math.floor(Math.random() * 1400);
-  return {
+// A run record is only ever made from what really happened: the caller passes
+// the answer and the elapsed milliseconds it measured. No duration is invented
+// and no outcome is rolled; a run with no measured duration carries none, and
+// the Runs list prints nothing where there is nothing to print.
+function mkRun(node, outcome) {
+  var said = outcome || {};
+  var record = {
     id: 'r' + RUN_SEQ++,
     n: rtRuns(node).length + 1,
     t: Date.now(),
-    ms: ms,
-    ok: Math.random() > 0.08,
-    result: rtResult(node),
-    variantOf: variantOf || null
+    ok: said.ok !== false,
+    result: said.result === 0 || said.result ? String(said.result) : '',
+    variantOf: said.variantOf || null
   };
+  if (typeof said.ms === 'number' && said.ms >= 0) record.ms = said.ms;
+  return record;
 }
 
 // downstream node ids reachable from id along out-wires (1 hop — direct dependents)

@@ -154,6 +154,17 @@ var STEM_KINDS = [{
 // a saved field, a workflow a saved canvas — every grouping collapses back into a node.
 // A group's name should describe its contents, not be a placeholder the founder must fix.
 // Prefer a word the members genuinely share; fall back to naming them.
+// Elapsed time in words from a real timestamp. Never called without one: an unknown time
+// prints as its own sentence, not as a zero.
+var agoText = function agoText(t) {
+  var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return s + 's ago';
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+};
 var AH_STOP = new Set(['the', 'and', 'a', 'of', 'system', 'systems', 'engine', 'layer']);
 function deriveGroupName(titles) {
   var list = titles.filter(Boolean);
@@ -428,8 +439,11 @@ function AtlasCockpit() {
       return setToast(null);
     }, 2000);
   };
-  React.useEffect(function () {
-    if (window.applyHBTheme) window.applyHBTheme('dark'); // cockpit is dark-only — single user
+
+  // Assembling the model happens more than once: at mount, and again whenever the app
+  // pushes a new projection (see ATLAS_RELOAD below). One place for the merge is what
+  // makes a refresh after a confirmed change show exactly what the first load showed.
+  var assembleModel = React.useCallback(function () {
     var saved = aLoad();
     // The cockpit IS the graph. When the founder's running application has pushed its
     // projection (the server marks it ATLAS_LIVE), that push is the content; the saved
@@ -699,6 +713,11 @@ function AtlasCockpit() {
         })
       });
     }
+    return data;
+  }, []);
+  React.useEffect(function () {
+    if (window.applyHBTheme) window.applyHBTheme('dark'); // cockpit is dark-only — single user
+    var data = assembleModel();
     setM(data);
     setVis({
       domains: new Set(data.domains.map(function (d) {
@@ -716,6 +735,104 @@ function AtlasCockpit() {
       assign: assign
     });
   }, [M, assign]);
+
+  // ── IS THIS MAP LIVE, AND IS THE APP ANSWERING? ────────────────────────────────
+  // The map is a projection the founder's running application PUSHES. Without a stamp
+  // beside it there is no way to tell a live push from yesterday's, so the cockpit
+  // records the moment it took delivery of the projection it is drawing, says whether
+  // that projection came from a push at all, and reports when the app last answered.
+  // Every value here is measured. Where there is no measurement it says so.
+  var _React$useState37 = React.useState(function () {
+      return {
+        live: !!window.ATLAS_LIVE,
+        at: Date.now()
+      };
+    }),
+    _React$useState38 = _slicedToArray(_React$useState37, 2),
+    mapMeta = _React$useState38[0],
+    setMapMeta = _React$useState38[1];
+  var _React$useState39 = React.useState({
+      loaded: false,
+      at: null,
+      queued: 0
+    }),
+    _React$useState40 = _slicedToArray(_React$useState39, 2),
+    appSeen = _React$useState40[0],
+    setAppSeen = _React$useState40[1];
+  // The real exchanges between the founder and his app: every instruction the cockpit
+  // queued and every answer the app posted back. The Sessions lens renders these rows.
+  var _React$useState41 = React.useState([]),
+    _React$useState42 = _slicedToArray(_React$useState41, 2),
+    agentTasks = _React$useState42[0],
+    setAgentTasks = _React$useState42[1];
+  var readTasksRef = React.useRef(null);
+  React.useEffect(function () {
+    var dead = false;
+    // The app's relay claims and finishes the cockpit's tasks. A finished or claimed row
+    // is proof the app was running at that instant -- the only honest presence signal the
+    // cloud holds. No row means we do not know, and the panel says exactly that.
+    var read = function read() {
+      return fetch('/founder/api/agent-tasks', {
+        headers: {
+          Accept: 'application/json'
+        }
+      }).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (d) {
+        if (dead || !d) return;
+        var rows = d.tasks || [];
+        var ts = rows.map(function (t) {
+          return Math.max(t.finished_at || 0, t.claimed_at || 0);
+        }).filter(Boolean);
+        setAgentTasks(rows);
+        setAppSeen({
+          loaded: true,
+          at: ts.length ? Math.max.apply(Math, _toConsumableArray(ts)) * 1000 : null,
+          queued: d.queued || 0
+        });
+      })["catch"](function () {});
+    };
+    read();
+    readTasksRef.current = read;
+    var t = setInterval(read, 30000);
+    return function () {
+      dead = true;
+      clearInterval(t);
+    };
+  }, []);
+  var reloadTasks = React.useCallback(function () {
+    if (readTasksRef.current) readTasksRef.current();
+  }, []);
+
+  // The ask bar calls this after the founder confirms a change, so the map shows the
+  // result instead of the state it was drawn from. It re-fetches the projection the
+  // server holds, re-runs the same merge the first load ran, and re-stamps the delivery
+  // time. Before this the ask bar called a hook that was never defined and nothing moved.
+  var reloadMap = React.useCallback(function () {
+    return fetch('/founder/map-assets/map-data.js?t=' + Date.now(), {
+      headers: {
+        Accept: 'text/javascript'
+      }
+    }).then(function (r) {
+      return r.ok ? r.text() : Promise.reject(new Error('map ' + r.status));
+    }).then(function (text) {
+      (0, eval)(text); // the same script tag map.html loads, re-run
+      setM(assembleModel());
+      setMapMeta({
+        live: !!window.ATLAS_LIVE,
+        at: Date.now()
+      });
+      flash('Map refreshed from your app');
+    })["catch"](function (e) {
+      flash('Could not refresh the map: ' + e.message);
+    });
+  }, [assembleModel]);
+  React.useEffect(function () {
+    window.ATLAS_RELOAD = reloadMap;
+    return function () {
+      if (window.ATLAS_RELOAD === reloadMap) delete window.ATLAS_RELOAD;
+    };
+  }, [reloadMap]);
 
   // ── attention layer: a NODE computes importance (its params are the weights) ──
   var attention = React.useMemo(function () {
@@ -836,76 +953,11 @@ function AtlasCockpit() {
     });
   }, [M, assign]);
 
-  // one tick advances every running node; completion marks dependents stale and lights wires
-  React.useEffect(function () {
-    if (!M) return; // runs before the loading guard, so M may not exist yet
-    var running = M.nodes.filter(function (n) {
-      return n.rt && n.rt.state === 'running';
-    });
-    if (!running.length) return;
-    var t = setInterval(function () {
-      var done = running.filter(function (n) {
-        return Date.now() - (n.rt.since || 0) > 1200;
-      });
-      if (!done.length) return;
-      var doneIds = new Set(done.map(function (n) {
-        return n.id;
-      }));
-      var deps = new Set();
-      done.forEach(function (n) {
-        return (window.RT ? window.RT.downstream(M, n.id) : []).forEach(function (id) {
-          return deps.add(id);
-        });
-      });
-      setM(function (m) {
-        return _objectSpread(_objectSpread({}, m), {}, {
-          nodes: m.nodes.map(function (n) {
-            if (doneIds.has(n.id)) {
-              var run = window.RT ? window.RT.mkRun(n) : {
-                ok: true,
-                t: Date.now()
-              };
-              var runs = [].concat(_toConsumableArray(n.rt && n.rt.runs || []), [run]);
-              // a failed run is a REAL outcome: the node goes blocked and Attention will rank it
-              return _objectSpread(_objectSpread({}, n), {}, {
-                status: run.ok ? n.status : 'blocked',
-                rt: _objectSpread(_objectSpread({}, n.rt), {}, {
-                  state: run.ok ? 'fresh' : 'error',
-                  runs: runs,
-                  last: run
-                })
-              });
-            }
-            // dependents of a completed node are stale until they re-run — the graph stays honest
-            if (deps.has(n.id) && !(n.rt && n.rt.state === 'running')) return _objectSpread(_objectSpread({}, n), {}, {
-              rt: _objectSpread(_objectSpread({}, n.rt || {}), {}, {
-                state: 'stale'
-              })
-            });
-            return n;
-          })
-        });
-      });
-      // light the wires the work travelled down
-      setActiveWires(function (w) {
-        var s = new Set(w);
-        M.wires.forEach(function (wr, i) {
-          if (doneIds.has(wr.a)) s.add(wr.a + '|' + wr.b);
-        });
-        return s;
-      });
-      setTimeout(function () {
-        return setActiveWires(new Set());
-      }, 1600);
-      var bad = done.filter(function (n) {
-        return n.rt && n.rt.state !== 'error';
-      }).length;
-      flash("".concat(done.length, " node").concat(done.length > 1 ? 's' : '', " ran \xB7 ").concat(deps.size, " dependent").concat(deps.size === 1 ? '' : 's', " stale"));
-    }, 350);
-    return function () {
-      return clearInterval(t);
-    };
-  }, [M]);
+  // There used to be a ticker here that, 1.2 s after any node went RUNNING, invented a
+  // result for it: a made-up duration and a one-in-twelve failure. A node's outcome now
+  // comes only from the app that actually ran it, so a run in flight stays RUNNING until
+  // the relay answers, and a node with no engine never enters that state at all.
+
   if (!M || !vis) return /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
@@ -1373,6 +1425,21 @@ function AtlasCockpit() {
       });
     });
   };
+  // A wire is a node, so its parameters live on the wire record and persist with the model.
+  var patchWire = function patchWire(members, patch) {
+    var keys = new Set((members || []).map(function (w) {
+      return w.a + '|' + w.b;
+    }));
+    setM(function (m) {
+      return _objectSpread(_objectSpread({}, m), {}, {
+        wires: m.wires.map(function (w) {
+          return keys.has(w.a + '|' + w.b) ? _objectSpread(_objectSpread({}, w), {}, {
+            params: _objectSpread(_objectSpread({}, w.params || {}), patch)
+          }) : w;
+        })
+      });
+    });
+  };
   // ── runtime: run a node, pulse its wires, mark dependents stale, record history ──
   var setRT = function setRT(id, rt) {
     return setM(function (m) {
@@ -1422,7 +1489,6 @@ function AtlasCockpit() {
     });
   };
   var runNode = function runNode(id) {
-    var RT = window.RT;
     var node = M.nodes.find(function (n) {
       return n.id === id;
     });
@@ -1431,111 +1497,84 @@ function AtlasCockpit() {
       flash('Frozen — unfreeze to run');
       return;
     }
+    // No engine means nothing on the founder's machine can run this node. The cockpit
+    // used to invent a duration here and roll a one-in-twelve failure, so a node that had
+    // never run showed a run history and sometimes a red result. Say what is true instead,
+    // and do not put the node into RUNNING for a run that is not going to happen.
+    if (!node.engine) {
+      flash(node.title + ' has no engine — nothing to run. Give it an engine or wire it to a host first.');
+      return;
+    }
+    // A live node from the founder's running application: Run runs it THERE, through the
+    // same relay the ask bar uses (confirm=true means act). Its state comes back from the
+    // app; nothing here decides whether it worked.
     setRT(id, {
       state: 'running'
     });
-    var outKeys = M.wires.filter(function (w) {
+    setActiveWires(new Set(M.wires.filter(function (w) {
       return w.a === id;
     }).map(function (w) {
       return w.a + '>' + w.b;
-    });
-    setActiveWires(new Set(outKeys));
-    if (node.engine) {
-      // A live node from the founder's running application: Run runs it THERE,
-      // through the same relay the ask bar uses (confirm=true = act). The twin
-      // animation below is for authored nodes that exist nowhere else.
-      flash("Running ".concat(node.title, " in ArchHub\u2026"));
-      fetch('/founder/api/command', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          command: 'run engine ' + node.engine,
-          confirm: true
-        })
-      }).then(function (r) {
-        return r.json();
-      }).then(function (d) {
-        var ok = !!d.ok && !d.pending_app;
-        var text = String(d.message || '').slice(0, 240);
-        setM(function (m) {
-          return _objectSpread(_objectSpread({}, m), {}, {
-            nodes: m.nodes.map(function (n) {
-              return n.id === id ? _objectSpread(_objectSpread({}, n), {}, {
-                rt: {
-                  state: ok ? 'fresh' : 'error',
-                  runs: [].concat(_toConsumableArray(n.rt && n.rt.runs || []), [{
-                    id: 'r_app_' + Date.now().toString(36),
-                    n: (n.rt && n.rt.runs || []).length + 1,
-                    t: Date.now(),
-                    ms: 0,
-                    ok: ok,
-                    result: text,
-                    app: true
-                  }]),
-                  lastRun: Date.now()
-                }
-              }) : n;
-            })
-          });
-        });
-        setActiveWires(new Set());
-        flash((ok ? '✓ ' : '✗ ') + node.title + ' → ' + text.slice(0, 120));
-      })["catch"](function (e) {
-        setRT(id, {
-          state: 'error'
-        });
-        setActiveWires(new Set());
-        flash('✗ ' + node.title + ' — ' + e);
-      });
-      return;
-    }
-    flash("Running ".concat(node.title, "\u2026"));
-    setTimeout(function () {
-      var run = RT.mkRun(node);
+    })));
+    flash('Running ' + node.title + ' in ArchHub…');
+    fetch('/founder/api/command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        command: 'run engine ' + node.engine,
+        confirm: true
+      })
+    }).then(function (r) {
+      return r.json();
+    }).then(function (d) {
+      var ok = !!d.ok && !d.pending_app;
+      var text = String(d.message || '').slice(0, 240);
       setM(function (m) {
-        var down = new Set(RT.downstream(m, id));
         return _objectSpread(_objectSpread({}, m), {}, {
           nodes: m.nodes.map(function (n) {
-            if (n.id === id) {
-              var runs = [].concat(_toConsumableArray(n.rt && n.rt.runs || []), [run]);
-              return _objectSpread(_objectSpread({}, n), {}, {
-                rt: {
-                  state: run.ok ? 'fresh' : 'error',
-                  runs: runs,
-                  lastRun: run.t
-                }
-              });
-            }
-            if (down.has(n.id) && (!n.rt || n.rt.state !== 'running')) return _objectSpread(_objectSpread({}, n), {}, {
-              rt: _objectSpread(_objectSpread({}, n.rt || {
-                runs: []
-              }), {}, {
-                state: 'stale'
-              })
-            });
-            return n;
+            return n.id === id ? _objectSpread(_objectSpread({}, n), {}, {
+              rt: {
+                state: ok ? 'fresh' : 'error',
+                runs: [].concat(_toConsumableArray(n.rt && n.rt.runs || []), [{
+                  id: 'r_app_' + Date.now().toString(36),
+                  n: (n.rt && n.rt.runs || []).length + 1,
+                  t: Date.now(),
+                  ok: ok,
+                  result: text,
+                  app: true
+                }]),
+                lastRun: Date.now()
+              }
+            }) : n;
           })
         });
       });
       setActiveWires(new Set());
-      flash(run.ok ? "\u2713 ".concat(node.title, " \u2192 ").concat(run.result) : "\u2717 ".concat(node.title, " failed"));
-    }, 1100);
+      flash((ok ? '✓ ' : '✗ ') + node.title + ' → ' + text.slice(0, 120));
+    })["catch"](function (e) {
+      setRT(id, {
+        state: 'error'
+      });
+      setActiveWires(new Set());
+      flash('✗ ' + node.title + ' — ' + e);
+    });
   };
+  // A variant is a re-run of a real run. Only an engine node can actually re-run, and it
+  // re-runs through the same relay; there is no local twin to fabricate a second result on.
   var runVariant = function runVariant(id, fromRun) {
-    var RT = window.RT;
     var node = M.nodes.find(function (n) {
       return n.id === id;
     });
     if (!node) return;
-    var run = RT.mkRun(node, fromRun.id);
-    setRT(id, {
-      runs: [].concat(_toConsumableArray(RT.rtRuns(node)), [run]),
-      state: run.ok ? 'fresh' : 'error'
-    });
-    flash("\u2325 variant of run #".concat(fromRun.n));
+    if (!node.engine) {
+      flash(node.title + ' has no engine — there is nothing to re-run.');
+      return;
+    }
+    flash('Re-running ' + node.title + ' in ArchHub (variant of run #' + fromRun.n + ')');
+    runNode(id);
   };
   var addWatcher = function addWatcher(id) {
     var node = M.nodes.find(function (n) {
@@ -2604,6 +2643,7 @@ function AtlasCockpit() {
   if (sel.wire) inspectPanel = /*#__PURE__*/React.createElement(WirePanel, {
     M: M,
     w: sel.wire,
+    patchWire: patchWire,
     onDelete: function onDelete() {
       return deleteWireBundle(sel.wire);
     },
@@ -2958,7 +2998,11 @@ function AtlasCockpit() {
     onGoto: gotoAttention,
     onTuneAttention: tuneAttention,
     setColl: setColl,
-    flash: flash
+    flash: flash,
+    control: M.control,
+    tasks: agentTasks,
+    onRelay: relayToApp,
+    onReloadTasks: reloadTasks
   }), leftTab === 'view' && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '12px 11px'
@@ -3458,6 +3502,59 @@ function AtlasCockpit() {
       whiteSpace: 'nowrap'
     }
   }, "\xB7 ", M.domains.length, " domains")), /*#__PURE__*/React.createElement("div", {
+    title: mapMeta.live ? 'Drawn from the projection your running ArchHub pushed to the cloud.' : 'Your app has not pushed a projection; this is the authored model that ships with the cockpit.',
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      padding: '6px 10px',
+      borderRadius: 8,
+      background: HB.card,
+      border: "1px solid ".concat(mapMeta.live ? HB.line : HB.amber),
+      flexShrink: 0,
+      pointerEvents: 'auto',
+      whiteSpace: 'nowrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 7,
+      height: 7,
+      borderRadius: '50%',
+      flexShrink: 0,
+      background: mapMeta.live ? HB.green : HB.amber
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: HB.ink
+    }
+  }, mapMeta.live ? 'LIVE PUSH' : 'AUTHORED MODEL'), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: HB.inkMute
+    }
+  }, '· taken ' + new Date(mapMeta.at).toLocaleTimeString()), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: appSeen.at ? HB.inkSoft : HB.inkMute
+    }
+  }, !appSeen.loaded ? '· checking the app…' : appSeen.at ? '· app answered ' + agoText(appSeen.at) : '· app has not answered yet'), /*#__PURE__*/React.createElement("button", {
+    onClick: reloadMap,
+    title: "Fetch the projection again from the cloud",
+    style: {
+      border: "1px solid ".concat(HB.line),
+      background: 'transparent',
+      color: HB.inkSoft,
+      borderRadius: 5,
+      padding: '2px 7px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 9.5
+    }
+  }, "refresh")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',

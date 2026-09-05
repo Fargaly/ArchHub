@@ -19,28 +19,27 @@ do not need to be a developer, and you do not need to touch a terminal.
 
 ## 1. Install ArchHub (Windows, click-only)
 
-Pick whichever of these you prefer. All three install the same app.
-
-**Option A — Direct download (simplest):**
+There is one supported way to install ArchHub today: the direct download.
 
 1. Go to **[github.com/Fargaly/ArchHub/releases/latest](https://github.com/Fargaly/ArchHub/releases/latest)**.
-2. Download the file named **`ArchHub-Setup-0.exe`** (the version label is `0`
-   while the product is in open beta).
+2. Download the file named **`ArchHub-Setup-0.exe`**.
 3. Double-click it and follow the installer.
+
+> **Two numbers, one product.** The release series is the version you see on
+> the [changelog](/changelog) — that is the app's version. The installer file
+> and its GitHub tag still carry the open-beta packaging label `0`, which is
+> why the download is called `ArchHub-Setup-0.exe` and sits under the `v0` tag.
+> They are the same build.
 
 > **Heads-up about the Windows warning.** Windows SmartScreen may show a blue
 > "Windows protected your PC" dialog the first time, because the app is not yet
 > code-signed. Click **More info → Run anyway** to continue. (Code signing is
 > on the roadmap.)
 
-**Option B — scoop** (if you already use it):
-
-```
-scoop install https://raw.githubusercontent.com/Fargaly/ArchHub/main/installer/scoop/archhub.json
-```
-
-winget and Chocolatey packages are **not published yet**; `winget install
-Fargaly.ArchHub` does not resolve today. Use Option A.
+**Package managers are not available yet.** scoop, winget and Chocolatey are
+all unpublished: `winget install Fargaly.ArchHub` does not resolve, and the
+scoop manifest in the repository does not match the published installer, so
+`scoop install` fails its hash check. Use the direct download above.
 
 The installer creates a **desktop icon** and a **Start-menu shortcut**, so after
 this you launch ArchHub like any normal Windows app.
@@ -65,9 +64,9 @@ a cloud account so it can give you a chat-capable AI to drive your graphs:
 3. You land back in the app, signed in on the **free open-beta tier**. No credit
    card, no trial clock.
 
-> **Note on sign-in options.** Email magic-link sign-in is the supported path
-> today. "Sign in with Google" is built but not yet switched on — it needs
-> final account configuration, so use email for now.
+> **Note on sign-in options.** Two paths work today: the email magic link, and
+> **Sign in with Google**. Pick whichever you prefer — both land you in the
+> same account.
 
 > **Note on the AI model.** A permanently free, zero-setup cloud model is still
 > being finalized, so you may be asked to add your own AI provider key. You can also point ArchHub at a **local
@@ -196,11 +195,11 @@ Once you're comfortable, these are the other surfaces worth exploring:
   (email, plan, messages remaining) open here too.
 - **Self-Heal Inspector** — shows when ArchHub has repaired its own wiring.
 
-> **What's still coming.** ArchHub is in open beta. A few things are built but
-> not yet switched on for everyone: a self-extension loop that lets the agent
-> build new connectors for you (today it only proposes; it never applies on its
-> own), the website's signed-in brain portal, Google sign-in, and a permanently
-> free cloud model. The features described above are live today.
+> **What's still coming.** ArchHub is in open beta. A couple of things are
+> built but not yet switched on for everyone: a self-extension loop that lets
+> the agent build new connectors for you (today it only proposes; it never
+> applies on its own), and a permanently free cloud model. The features
+> described above are live today, Google sign-in included.
 
 ---
 

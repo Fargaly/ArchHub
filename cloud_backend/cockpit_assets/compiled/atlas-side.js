@@ -64,109 +64,41 @@ function ago(t) {
   return Math.floor(h / 24) + 'd';
 }
 
-// deterministic seed sessions from the founder's agents
-function seedSessions(DB, M) {
-  var dn = function dn(k) {
-    return (M.domains.find(function (d) {
-      return d.key === k;
-    }) || {}).title || k;
-  };
-  var tmpl = [{
-    topic: 'Monetization gaps → first 3 to build',
-    dom: 'monetization',
-    msgs: [['founder', 'What unlocks revenue fastest?'], ['agent', 'Three vision nodes gate billing: Stripe Connect, Usage Meter, Plan Gating. I can scaffold Usage Meter first — it feeds the other two.'], ['founder', 'Do it. Wire it to the billing daemon.']]
-  }, {
-    topic: 'Brain recall latency regression',
-    dom: 'brain',
-    msgs: [['agent', 'Recall p50 rose 41ms→63ms after the embedding swap.'], ['founder', 'Roll back or fix?'], ['agent', 'Fixing — re-indexing the fact store now, ETA 4m. Will report.']]
-  }, {
-    topic: 'Connector fleet health sweep',
-    dom: 'connectors',
-    msgs: [['agent', 'Ran a sweep: Revit host dropped 2 handshakes overnight.'], ['founder', 'Quarantine it and notify me if it repeats.']]
-  }, {
-    topic: 'Self-extension proposal review',
-    dom: 'selfext',
-    msgs: [['agent', 'I drafted a new skill node: auto-dimension cleanup. Awaiting your approval to merge into the graph.'], ['founder', 'Show me its pipeline first.']]
-  }];
-  return tmpl.map(function (t, i) {
-    var ag = DB.agents[i % DB.agents.length];
-    return {
-      id: 's' + i,
-      topic: t.topic,
-      dom: t.dom,
-      domName: dn(t.dom),
-      agent: ag,
-      t: Date.now() - (i * 1000 * 60 * 37 + 1000 * 60 * 6),
-      open: i === 0,
-      msgs: t.msgs.map(function (m, j) {
-        return {
-          who: m[0],
-          name: m[0] === 'agent' ? ag.name : 'You',
-          text: m[1],
-          t: Date.now() - (t.msgs.length - j) * 1000 * 60 * 4
-        };
-      })
-    };
-  });
+// The Sessions lens used to render four hand-written conversations between the founder and
+// invented agents, complete with plausible replies. Nothing in them had ever happened. The
+// real record of the founder talking to his app is the agent-task queue: each row is an
+// instruction the cockpit sent and the answer the app posted back. That is what renders now.
+var TASK_TONE = {
+  done: 'ok',
+  failed: 'err',
+  running: 'accent',
+  claimed: 'accent',
+  queued: 'mute'
+};
+function taskStamp(row) {
+  var s = row.finished_at || row.claimed_at || row.created_at;
+  return s ? s * 1000 : null;
 }
-function SessionComposer(_ref) {
-  var agentName = _ref.agentName,
-    onSend = _ref.onSend;
-  var _React$useState = React.useState(''),
+function AgenticPanel(_ref) {
+  var M = _ref.M,
+    DB = _ref.DB,
+    assign = _ref.assign,
+    attention = _ref.attention,
+    onGoto = _ref.onGoto,
+    onTuneAttention = _ref.onTuneAttention,
+    attNode = _ref.attNode,
+    setColl = _ref.setColl,
+    flash = _ref.flash,
+    control = _ref.control,
+    tasks = _ref.tasks,
+    onRelay = _ref.onRelay,
+    onReloadTasks = _ref.onReloadTasks;
+  var _React$useState = React.useState('activity'),
     _React$useState2 = _slicedToArray(_React$useState, 2),
-    draft = _React$useState2[0],
-    setDraft = _React$useState2[1];
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      marginTop: 2
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: draft,
-    onChange: function onChange(e) {
-      return setDraft(e.target.value);
-    },
-    onKeyDown: function onKeyDown(e) {
-      if (e.key === 'Enter' && draft.trim()) {
-        onSend(draft.trim());
-        setDraft('');
-      }
-    },
-    placeholder: 'Message ' + agentName + '…',
-    style: {
-      flex: 1,
-      padding: '7px 10px',
-      borderRadius: 8,
-      border: "1px solid ".concat(HB.line),
-      background: HB.card,
-      color: HB.ink,
-      fontSize: 12,
-      outline: 'none',
-      fontFamily: HB.sans
-    }
-  }));
-}
-function AgenticPanel(_ref2) {
-  var M = _ref2.M,
-    DB = _ref2.DB,
-    assign = _ref2.assign,
-    attention = _ref2.attention,
-    onGoto = _ref2.onGoto,
-    onTuneAttention = _ref2.onTuneAttention,
-    attNode = _ref2.attNode,
-    setColl = _ref2.setColl,
-    flash = _ref2.flash;
-  var _React$useState3 = React.useState('activity'),
-    _React$useState4 = _slicedToArray(_React$useState3, 2),
-    tab = _React$useState4[0],
-    setTab = _React$useState4[1];
-  var _React$useState5 = React.useState(function () {
-      return seedSessions(DB, M);
-    }),
-    _React$useState6 = _slicedToArray(_React$useState5, 2),
-    sessions = _React$useState6[0],
-    setSessions = _React$useState6[1];
+    tab = _React$useState2[0],
+    setTab = _React$useState2[1];
+  var rows = tasks || [];
+  var ctl = control || null;
 
   // recent runs across the whole map → the notification stream
   var recent = [];
@@ -202,11 +134,11 @@ function AgenticPanel(_ref2) {
       flexShrink: 0,
       background: HB.card
     }
-  }, [['activity', 'Activity', 'bolt'], ['routing', 'Routing', 'sliders'], ['sessions', 'Sessions', 'agent'], ['history', 'History', 'pulse']].map(function (_ref3) {
-    var _ref4 = _slicedToArray(_ref3, 3),
-      k = _ref4[0],
-      l = _ref4[1],
-      ic = _ref4[2];
+  }, [['activity', 'Activity', 'bolt'], ['routing', 'Routing', 'sliders'], ['sessions', 'Sessions', 'agent'], ['history', 'History', 'pulse']].map(function (_ref2) {
+    var _ref3 = _slicedToArray(_ref2, 3),
+      k = _ref3[0],
+      l = _ref3[1],
+      ic = _ref3[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -448,7 +380,7 @@ function AgenticPanel(_ref2) {
         fontSize: 9.5,
         color: HB.inkMute
       }
-    }, r.result, " \xB7 ", r.ms, "ms \xB7 ", ago(r.t), " ago")));
+    }, r.result, r.ms ? ' · ' + r.ms + 'ms' : '', " \xB7 ", ago(r.t), " ago")));
   })))), tab === 'routing' && function () {
     var models = DB.models || [];
     var live = models.filter(function (m) {
@@ -458,16 +390,10 @@ function AgenticPanel(_ref2) {
     var classes = _toConsumableArray(new Set(['intent', 'vision', 'compose', 'critique', 'extract', 'fallback', 'offline'].concat(_toConsumableArray(models.flatMap(function (m) {
       return m.tasks || [];
     })))));
-    // rough monthly volume per class (calls, and tokens per call) — the basis of the estimate
-    var VOL = {
-      intent: [42000, 1.6],
-      vision: [8600, 4.2],
-      compose: [15400, 3.1],
-      critique: [3100, 5.4],
-      extract: [26000, 2.2],
-      fallback: [4200, 1.8],
-      offline: [1900, 1.4]
-    };
+    // There used to be a hardcoded monthly call volume per task class here, multiplied by
+    // each model's rate into a dollar figure the panel printed as SPEND. No call was ever
+    // counted. The cockpit does not meter model usage, so it now shows the routing it can
+    // prove and says plainly that no spend has been measured.
     var ownerOf = function ownerOf(cls) {
       return (live.find(function (m) {
         return (m.tasks || []).includes(cls);
@@ -493,35 +419,11 @@ function AgenticPanel(_ref2) {
       }) || {}).name || 'none';
       flash && flash(cls + ' → ' + nm);
     };
-    // spend follows the routing: each class's volume is billed at its owner's rate
-    var spendByVendor = {};
-    var total = 0;
-    classes.forEach(function (cls) {
-      var m = live.find(function (x) {
-        return (x.tasks || []).includes(cls);
-      });
-      if (!m) return;
-      var _ref5 = VOL[cls] || [4000, 2],
-        _ref6 = _slicedToArray(_ref5, 2),
-        calls = _ref6[0],
-        ktok = _ref6[1];
-      var usd = calls * ktok / 1000 * (m.inCost * 0.75 + m.outCost * 0.25);
-      spendByVendor[m.vendor] = (spendByVendor[m.vendor] || 0) + usd;
-      total += usd;
-    });
-    var vendors = Object.entries(spendByVendor).sort(function (a, b) {
-      return b[1] - a[1];
-    });
     var issues = DB.issues || [];
     var openIss = issues.filter(function (i) {
       return i.status !== 'resolved';
     });
     var agents = DB.agents || [];
-    var D = String.fromCharCode(36);
-    var money = function money(v) {
-      return v >= 1000 ? D + (v / 1000).toFixed(1) + 'k' : D + Math.round(v);
-    };
-    var PAL = [HB.accent, HB.blue, HB.purple, HB.green, HB.amber];
     return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
       style: sideSec
     }, /*#__PURE__*/React.createElement("div", {
@@ -587,89 +489,27 @@ function AgenticPanel(_ref2) {
         marginTop: 9,
         lineHeight: 1.5
       }
-    }, "Reassigning a class rewrites the fleet and re-prices the estimate below.")), /*#__PURE__*/React.createElement("div", {
+    }, "Reassigning a class rewrites the fleet. The change is saved with your model list.")), /*#__PURE__*/React.createElement("div", {
       style: sideSec
     }, /*#__PURE__*/React.createElement("div", {
-      style: _objectSpread(_objectSpread({}, sideLabel), {}, {
-        display: 'flex',
-        justifyContent: 'space-between'
-      })
-    }, /*#__PURE__*/React.createElement("span", null, "SPEND \xB7 EST / MONTH"), /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: HB.accent,
-        fontSize: 11
-      }
-    }, money(total))), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        height: 8,
-        borderRadius: 4,
-        overflow: 'hidden',
-        background: HB.paper,
-        marginBottom: 9
-      }
-    }, vendors.map(function (_ref7, k) {
-      var _ref8 = _slicedToArray(_ref7, 2),
-        v = _ref8[0],
-        usd = _ref8[1];
-      return /*#__PURE__*/React.createElement("div", {
-        key: v,
-        style: {
-          width: usd / (total || 1) * 100 + '%',
-          background: PAL[k % 5]
-        }
-      });
-    })), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4
-      }
-    }, vendors.map(function (_ref9, k) {
-      var _ref0 = _slicedToArray(_ref9, 2),
-        v = _ref0[0],
-        usd = _ref0[1];
-      return /*#__PURE__*/React.createElement("div", {
-        key: v,
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 7,
-          fontFamily: HB.mono,
-          fontSize: 10.5
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          width: 8,
-          height: 8,
-          borderRadius: 2,
-          background: PAL[k % 5],
-          flexShrink: 0
-        }
-      }), /*#__PURE__*/React.createElement("span", {
-        style: {
-          flex: 1,
-          color: HB.ink
-        }
-      }, v), /*#__PURE__*/React.createElement("span", {
-        style: {
-          color: HB.inkSoft
-        }
-      }, (usd / (total || 1) * 100).toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
-        style: {
-          color: HB.ink,
-          width: 48,
-          textAlign: 'right'
-        }
-      }, money(usd)));
-    }), !vendors.length && /*#__PURE__*/React.createElement("div", {
+      style: sideLabel
+    }, "SPEND"), /*#__PURE__*/React.createElement("div", {
       style: {
         fontFamily: HB.serif,
         fontStyle: 'italic',
         fontSize: 13,
-        color: HB.inkSoft
+        color: HB.inkSoft,
+        lineHeight: 1.5
       }
-    }, "Nothing routed \u2014 no spend."))), /*#__PURE__*/React.createElement("div", {
+    }, "Not measured. Nothing here counts model calls, so the cockpit has no spend figure to give you."), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: HB.inkMute,
+        marginTop: 7,
+        lineHeight: 1.5
+      }
+    }, "Rates you entered per model are shown with each model; a total needs real usage, and usage is not reported to the cloud.")), /*#__PURE__*/React.createElement("div", {
       style: _objectSpread(_objectSpread({}, sideSec), {}, {
         borderBottom: 'none'
       })
@@ -802,148 +642,146 @@ function AgenticPanel(_ref2) {
       borderBottom: "1px solid ".concat(HB.line)
     })
   }, /*#__PURE__*/React.createElement("div", {
-    style: sideLabel
-  }, "CONVERSATIONS WITH YOUR AGENTS"), /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, sideLabel), {}, {
+      display: 'flex',
+      justifyContent: 'space-between'
+    })
+  }, /*#__PURE__*/React.createElement("span", null, "WHAT YOU ASKED YOUR APP"), /*#__PURE__*/React.createElement("button", {
+    onClick: function onClick() {
+      return onReloadTasks && onReloadTasks();
+    },
+    style: {
+      border: "1px solid ".concat(HB.line),
+      background: 'transparent',
+      color: HB.inkSoft,
+      borderRadius: 5,
+      padding: '2px 7px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 9
+    }
+  }, "refresh")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9,
+      color: HB.inkMute,
+      marginBottom: 10,
+      lineHeight: 1.5
+    }
+  }, "Every instruction the cockpit queued for your ArchHub app, and the answer it posted back."), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.serif,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: HB.inkMute
+    }
+  }, "No instructions yet. Ask the cockpit something and the exchange lands here."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
       gap: 8
     }
-  }, sessions.map(function (s) {
-    var dcol = (M.domains.find(function (d) {
-      return d.key === s.dom;
-    }) || {}).col || HB.accent;
+  }, rows.slice(0, 24).map(function (r) {
+    var tone = {
+      ok: HB.green,
+      err: HB.red,
+      accent: HB.accent,
+      mute: HB.inkMute
+    }[TASK_TONE[r.status] || 'mute'];
+    var at = taskStamp(r);
     return /*#__PURE__*/React.createElement("div", {
-      key: s.id,
+      key: r.id,
       style: {
         border: "1px solid ".concat(HB.line),
+        borderLeft: "3px solid ".concat(tone),
         borderRadius: 10,
         overflow: 'hidden',
         background: HB.card
       }
-    }, /*#__PURE__*/React.createElement("button", {
-      onClick: function onClick() {
-        return setSessions(function (ss) {
-          return ss.map(function (x) {
-            return x.id === s.id ? _objectSpread(_objectSpread({}, x), {}, {
-              open: !x.open
-            }) : x;
-          });
-        });
-      },
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '9px 11px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: HB.ink,
+        lineHeight: 1.45
+      }
+    }, r.directive), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: HB.inkMute,
+        marginTop: 4
+      }
+    }, r.status, r.claimed_by ? ' · ' + r.claimed_by : '', at ? ' · ' + ago(at) + ' ago' : '')), r.result ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        borderTop: "1px solid ".concat(HB.lineSoft),
+        padding: '9px 11px',
+        background: HB.paper2,
+        fontSize: 12,
+        color: HB.ink,
+        lineHeight: 1.5,
+        whiteSpace: 'pre-wrap'
+      }
+    }, r.result) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        borderTop: "1px solid ".concat(HB.lineSoft),
+        padding: '7px 11px',
+        background: HB.paper2,
+        fontFamily: HB.serif,
+        fontStyle: 'italic',
+        fontSize: 12.5,
+        color: HB.inkMute
+      }
+    }, r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.'));
+  }))), ctl && (ctl.agents || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, sideSec), {}, {
+      borderBottom: 'none'
+    })
+  }, /*#__PURE__*/React.createElement("div", {
+    style: sideLabel
+  }, "AGENTS YOUR APP REPORTED"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 5
+    }
+  }, (ctl.agents || []).map(function (a, i) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: i,
       style: {
         display: 'flex',
         alignItems: 'center',
-        gap: 9,
-        width: '100%',
-        textAlign: 'left',
-        padding: '10px 11px',
-        border: 'none',
-        background: 'transparent',
-        cursor: 'pointer'
+        gap: 8,
+        padding: '7px 9px',
+        borderRadius: 7,
+        background: HB.paper2,
+        border: "1px solid ".concat(HB.lineSoft)
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
-        width: 26,
-        height: 26,
-        borderRadius: 7,
-        display: 'grid',
-        placeItems: 'center',
-        background: HB.accentSoft,
-        color: HB.accentHi,
-        flexShrink: 0
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        flexShrink: 0,
+        background: a.status === 'online' ? HB.green : HB.inkMute
       }
-    }, /*#__PURE__*/React.createElement(CKIcon, {
-      name: "agent",
-      size: 13
-    })), /*#__PURE__*/React.createElement("span", {
+    }), /*#__PURE__*/React.createElement("span", {
       style: {
         flex: 1,
-        minWidth: 0
+        minWidth: 0,
+        fontSize: 12,
+        color: HB.ink
       }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12.5,
-        fontWeight: 600,
-        color: HB.ink,
-        display: 'block',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, s.topic), /*#__PURE__*/React.createElement("span", {
+    }, a.provider || a.runtime || 'agent'), /*#__PURE__*/React.createElement("span", {
       style: {
         fontFamily: HB.mono,
         fontSize: 9.5,
         color: HB.inkMute
       }
-    }, s.agent.name, " \xB7 ", /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: dcol
-      }
-    }, s.domName), " \xB7 ", ago(s.t), " ago")), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontFamily: HB.mono,
-        fontSize: 15,
-        color: HB.inkMute,
-        width: 14,
-        textAlign: 'center'
-      }
-    }, s.open ? '▾' : '▸')), s.open && /*#__PURE__*/React.createElement("div", {
-      style: {
-        borderTop: "1px solid ".concat(HB.lineSoft),
-        padding: '10px 11px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 9,
-        background: HB.paper2
-      }
-    }, s.msgs.map(function (m, j) {
-      return /*#__PURE__*/React.createElement("div", {
-        key: j,
-        style: {
-          display: 'flex',
-          flexDirection: m.who === 'founder' ? 'row-reverse' : 'row',
-          gap: 8
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          maxWidth: '82%',
-          padding: '7px 10px',
-          borderRadius: 10,
-          fontSize: 12,
-          lineHeight: 1.45,
-          background: m.who === 'founder' ? HB.accent : HB.card,
-          color: m.who === 'founder' ? '#fff' : HB.ink,
-          border: m.who === 'founder' ? 'none' : "1px solid ".concat(HB.line)
-        }
-      }, m.text));
-    }), /*#__PURE__*/React.createElement(SessionComposer, {
-      agentName: s.agent.name,
-      onSend: function onSend(txt) {
-        return setSessions(function (ss) {
-          return ss.map(function (x) {
-            if (x.id !== s.id) return x;
-            var mine = {
-              who: 'founder',
-              name: 'You',
-              text: txt,
-              t: Date.now()
-            };
-            var reply = {
-              who: 'agent',
-              name: s.agent.name,
-              text: "On it \u2014 updating the relevant nodes; I will report back in Activity.",
-              t: Date.now() + 1
-            };
-            return _objectSpread(_objectSpread({}, x), {}, {
-              msgs: x.msgs.concat([mine, reply]),
-              t: Date.now()
-            });
-          });
-        });
-      }
-    })));
+    }, String(a.session || '').slice(0, 8)));
   })))), tab === 'history' && /*#__PURE__*/React.createElement("div", {
     style: sideSec
   }, /*#__PURE__*/React.createElement("div", {
@@ -1098,22 +936,22 @@ var LIB_GROUPS = [{
   label: 'WATCH · OUTPUT',
   items: [['Watcher', 'observe a value live'], ['Preview', 'render the data'], ['Publish', 'write back to host'], ['Notify', 'alert a person or channel']]
 }];
-function LibraryPanel(_ref1) {
-  var onCreateNode = _ref1.onCreateNode,
-    onAddDomain = _ref1.onAddDomain,
-    flash = _ref1.flash;
-  var _React$useState7 = React.useState(''),
-    _React$useState8 = _slicedToArray(_React$useState7, 2),
-    q = _React$useState8[0],
-    setQ = _React$useState8[1];
-  var _React$useState9 = React.useState(function () {
+function LibraryPanel(_ref4) {
+  var onCreateNode = _ref4.onCreateNode,
+    onAddDomain = _ref4.onAddDomain,
+    flash = _ref4.flash;
+  var _React$useState3 = React.useState(''),
+    _React$useState4 = _slicedToArray(_React$useState3, 2),
+    q = _React$useState4[0],
+    setQ = _React$useState4[1];
+  var _React$useState5 = React.useState(function () {
       return Object.fromEntries(LIB_GROUPS.map(function (g) {
         return [g.cat, true];
       }));
     }),
-    _React$useState0 = _slicedToArray(_React$useState9, 2),
-    open = _React$useState0[0],
-    setOpen = _React$useState0[1];
+    _React$useState6 = _slicedToArray(_React$useState5, 2),
+    open = _React$useState6[0],
+    setOpen = _React$useState6[1];
   var ql = q.trim().toLowerCase();
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1170,10 +1008,10 @@ function LibraryPanel(_ref1) {
       minHeight: 0
     }
   }, LIB_GROUPS.map(function (g) {
-    var items = ql ? g.items.filter(function (_ref10) {
-      var _ref11 = _slicedToArray(_ref10, 2),
-        t = _ref11[0],
-        s = _ref11[1];
+    var items = ql ? g.items.filter(function (_ref5) {
+      var _ref6 = _slicedToArray(_ref5, 2),
+        t = _ref6[0],
+        s = _ref6[1];
       return (t + ' ' + s).toLowerCase().includes(ql);
     }) : g.items;
     if (!items.length) return null;
@@ -1228,10 +1066,10 @@ function LibraryPanel(_ref1) {
         gap: 1,
         paddingLeft: 4
       }
-    }, items.map(function (_ref12) {
-      var _ref13 = _slicedToArray(_ref12, 2),
-        title = _ref13[0],
-        sub = _ref13[1];
+    }, items.map(function (_ref7) {
+      var _ref8 = _slicedToArray(_ref7, 2),
+        title = _ref8[0],
+        sub = _ref8[1];
       return /*#__PURE__*/React.createElement("div", {
         key: title,
         draggable: "true",

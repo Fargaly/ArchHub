@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
   "version": "0",
-  "description": "AI cockpit for architects — drives Revit, Blender, AutoCAD, 3ds Max and Speckle from one chat.",
+  "description": "AI cockpit for architects \u2014 drives Revit, Blender, AutoCAD, 3ds Max and Speckle from one chat.",
   "homepage": "https://github.com/Fargaly/ArchHub",
   "license": "MIT",
   "url": "https://github.com/Fargaly/ArchHub/releases/download/v0/ArchHub-Setup-0.exe",
@@ -21,5 +21,5 @@
   "autoupdate": {
     "url": "https://github.com/Fargaly/ArchHub/releases/download/v$version/ArchHub-Setup-$version.exe"
   },
-  "hash": "sha256:9f44228d3343f0b1c86ada329c86e67ca8d18c803080379534a129b2197fca90"
+  "hash": "sha256:9e19a12777735e5bf97b8d51d79ffd85d891057c4e678efd99d7f2ec74dfdc26"
 }

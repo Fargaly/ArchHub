@@ -143,7 +143,6 @@ ArchHub is built so connectors can be added and activated over time — that's h
 
 A few connector-adjacent capabilities are still in progress and are **not** presented as finished here:
 
-- **Sign in with Google** for the cloud side is built but needs final account configuration before it's switched on — magic-link sign-in works today.
 - A **free, zero-setup cloud AI model** out of the box is on the roadmap; for now, AI-backed operations (and the DashScope/ComfyUI connectors) use either a key you provide or your hosted-AI plan.
 
 Everything in the table above, and the read/act workflow, is live in the current release and runs against your real software.

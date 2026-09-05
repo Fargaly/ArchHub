@@ -30,5 +30,8 @@ RUN npm run build
 # http_service.internal_port matches it (see fly.toml).
 FROM lipanski/docker-static-website:2.1.0
 COPY --from=build /app/dist .
-# httpd.conf is optional; the base image serves ./ on 3000 by default.
+# Our own httpd.conf, so a missing URL gets the site's 404 page instead of
+# BusyBox's built-in "404 Not Found" body. httpd reads httpd.conf from the
+# directory it serves and refuses to serve that file itself.
+COPY httpd.conf ./httpd.conf
 CMD ["/busybox", "httpd", "-f", "-v", "-p", "3000"]

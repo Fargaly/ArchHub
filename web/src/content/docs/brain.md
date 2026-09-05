@@ -89,7 +89,7 @@ A few honest details about how this works:
 - **Secrets are stripped.** Sensitive values are removed before anything is sent — your API keys and credentials are not uploaded with your memory.
 - **You trigger it from the app.** There's a **brain backup** control inside the brain views; the cloud copy lands in your personal replica.
 
-> **Coming soon:** a web page at archhub.io for browsing your synced brain in a browser is in progress but not yet part of the live website on its main branch. For now, browse and search your brain **inside the desktop app**, which is the complete experience.
+> **On the web:** [archhub.io/brain](/brain) shows your synced brain in a browser once you are signed in. The desktop app is still the complete experience — the web view is read-only.
 
 ---
 
@@ -133,7 +133,7 @@ The brain works regardless of which AI you use. ArchHub supports two modes:
 
 ## Quick start with the brain
 
-1. **Install and open ArchHub.** (Windows: download `ArchHub-Setup-0.exe` from the [releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click.)
+1. **Install and open ArchHub.** (Windows: download `ArchHub-Setup-0.exe` from the [releases page](https://github.com/Fargaly/ArchHub/releases/latest) and double-click. The filename carries the open-beta packaging label; the app version is the newest entry on the [changelog](/changelog).)
 2. **Sign in** through the first-run wizard (a magic link to your email — free tier, no card).
 3. **Work normally** — draft on the canvas, run a connector, talk to the composer. The brain learns as you go.
 4. **Open the Brain folders view** to browse what it has remembered.

@@ -44,7 +44,7 @@ import Base from '../layouts/Base.astro';
           <div class="auth-or"><span>got the email?</span></div>
           <p class="auth-sub auth-sub-sm">Open the email and click the link to finish — or paste the link (or code) from it below.</p>
           <label class="auth-label" for="code">Sign-in link or code</label>
-          <input id="code" class="auth-input" type="text" autocomplete="one-time-code" placeholder="https://archhub-cloud.fly.dev/auth/return?code=… or the code" />
+          <input id="code" class="auth-input" type="text" autocomplete="one-time-code" placeholder="https://archhub.io/signin?code=… or the code" />
           <button id="codeBtn" class="btn btn-primary lg auth-btn" type="button">Finish sign-in</button>
         </div>
 
@@ -230,7 +230,7 @@ import Base from '../layouts/Base.astro';
           if (!res.ok) {
             googleBtn.disabled = false;
             if (res.detail === 'google_login_unconfigured') {
-              setMsg('info', 'Google sign-in is coming soon — use the magic-link above for now.');
+              setMsg('info', 'Google sign-in is temporarily unavailable — use the magic-link above for now.');
             } else {
               setMsg('err', 'Google sign-in failed: ' + res.detail);
             }

@@ -43,10 +43,9 @@ The **first time you launch the app**, a short first-run setup walks you through
 signing in to a cloud model using the same magic-link flow. Once you're signed
 in, the app remembers you.
 
-> **A note on "Sign in with Google":** the Google sign-in button may appear, but
-> Google sign-in is **not switched on yet** — it needs configuration on our side
-> first. For now, please use the **email magic link**, which works today. Google
-> sign-in is coming soon.
+> **A note on "Sign in with Google":** it works. The button on the sign-in page
+> takes you to Google's consent screen and brings you back signed in. The email
+> magic link works too — use whichever you prefer.
 
 ---
 
@@ -135,11 +134,10 @@ context back into the app so it gets more useful over time.
 
 ### The brain portal on the website
 
-The website is intended to give you a **brain portal** — a place to see your
-synced cloud brain after signing in. Today this portal is **still being built**
-(it is a work in progress and not yet a finished, shipped feature). For now,
-**the in-app brain browser is the reliable place** to explore your memory. The
-web brain portal is coming soon.
+The website has a **brain portal** at [archhub.io/brain](/brain) — sign in and
+it shows the facts your ArchHub has synced to the cloud, with search gated by
+your plan. It is read-only: **the in-app brain browser** is where you organise,
+edit and back up your memory.
 
 ---
 
@@ -150,7 +148,11 @@ A clean path for a brand-new user:
 1. **Install the app (Windows, no terminal needed).** From
    **[archhub.io](https://archhub.io)** click **Download**, which takes you to
    the **ArchHub-Setup-0.exe** installer on the project's GitHub releases;
-   double-click it. (Package managers are not published yet.) The installer adds a desktop icon and a Start-menu shortcut.
+   the filename carries the open-beta packaging label, while the app's version
+   is the newest entry on the [changelog](/changelog);
+   double-click it. (Package managers are not published — the scoop manifest in
+   the repository does not match the published installer, so `scoop install`
+   fails its hash check.) The installer adds a desktop icon and a Start-menu shortcut.
    - *On first launch you may see a Windows SmartScreen warning* (until the app
      is code-signed) — this is expected; choose to run anyway.
 2. **First launch & sign-in.** The app opens and walks you through signing in to
@@ -180,5 +182,5 @@ A clean path for a brand-new user:
 | Explore your memory | **Brain browser / folders** in the app |
 | Back up your brain | Cloud backup (write-only, secrets stripped) in the app |
 
-*Coming soon: Google sign-in, the website brain portal, finalized live checkout,
-a zero-config free cloud model, and automatic GPU fallback.*
+*Still to come: checkout on the website, a zero-config free cloud model, and
+automatic GPU fallback. Everything else in the table above is live today.*

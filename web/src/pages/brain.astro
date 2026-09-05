@@ -20,8 +20,10 @@ import Base from '../layouts/Base.astro';
 //
 // On-brand: Base.astro tokens (terracotta #d97757, Instrument Serif + Inter,
 // no emoji). Nav gets a /brain link (see Base.astro).
+// api.archhub.io is the published backend host; the raw Fly hostname is an
+// implementation detail that should never ship in the page source.
 const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
-  ?? 'https://archhub-cloud.fly.dev').replace(/\/$/, '');
+  ?? 'https://api.archhub.io').replace(/\/$/, '');
 ---
 <Base title="Brain" description="Your synced ArchHub knowledge — every fact your brain has learned, searchable, gated by your plan. Sign in to view your personal cloud brain.">
 

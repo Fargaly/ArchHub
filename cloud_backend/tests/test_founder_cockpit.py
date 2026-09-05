@@ -201,12 +201,14 @@ class TestCookieLogin:
         assert r.status_code == 200, r.text
         assert "text/html" in r.headers["content-type"]
         html = r.text
-        # On-brand + the single token field + helper text, no token echoed.
+        # On-brand; the email form leads and the token field stays as a
+        # fallback. The old "Settings -> Account" instruction is gone with the
+        # token-only door: the founder had no such place to read a token from.
         assert "#d97757" in html
         assert "Instrument Serif" in html and "Inter" in html
+        assert 'action="/founder/login/email"' in html and 'name="email"' in html
         assert 'type="password"' in html
         assert 'name="token"' in html
-        assert "Settings -&gt; Account" in html or "Settings -> Account" in html
 
     def test_founder_post_sets_cookie_and_redirects(self, client, monkeypatch):
         # (b) POST with a FOUNDER token -> 303 + Set-Cookie founder_session.

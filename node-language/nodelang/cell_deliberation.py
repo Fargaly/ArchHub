@@ -1159,8 +1159,10 @@ def append_deliberation_entry(
 
 
 # One ledger payload may hold this many cells. A structured receipt (status,
-# counts, ids, digests) is tens of cells; a serialised report is thousands.
-_DELIBERATION_PAYLOAD_CELL_LIMIT = 400
+# counts, ids, digests) is tens of cells; the Core Values authority report,
+# which its reader validates whole from the ledger, is 688; the hook-coverage
+# dump that grew the founder's graph to 4.29 GB was ~2,180 per audit.
+_DELIBERATION_PAYLOAD_CELL_LIMIT = 1_000
 
 
 @with_relation_projection_scope

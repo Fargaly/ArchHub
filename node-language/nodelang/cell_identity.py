@@ -1313,19 +1313,28 @@ def restore_relationship_authority_history(
     states contribute.  This catches an in-database replay of an older active
     relationship after a later signed revocation.
     """
-    revisions = store.revisions()
-    changed_by_revision = tuple(
-        (revision, store.revision_changes(revision))
-        for revision in revisions
-    )
     protocol_prefix = protocol.root_id + ":"
-    registry_revisions = tuple(
-        revision for revision, changed_roots in changed_by_revision
-        if any(
-            root == protocol.root_id or root.startswith(protocol_prefix)
-            for root in changed_roots
+    # Ask the journal which revisions touched the registry instead of reading
+    # every cell of every revision to find out. On the founder's graph that
+    # read 21,700 revisions and 3M cells on each boot (boot-profile.log,
+    # 2026-09-05: revision_cells + snapshot_at = a third of a 259s boot).
+    # A store without the scoped read (in-memory courts) keeps the old walk.
+    scoped = getattr(store, "revisions_touching", None)
+    if callable(scoped):
+        changed_by_revision = None
+        registry_revisions = tuple(scoped(protocol.root_id))
+    else:
+        changed_by_revision = tuple(
+            (revision, store.revision_changes(revision))
+            for revision in store.revisions()
         )
-    )
+        registry_revisions = tuple(
+            revision for revision, changed_roots in changed_by_revision
+            if any(
+                root == protocol.root_id or root.startswith(protocol_prefix)
+                for root in changed_roots
+            )
+        )
     historical_roots: set[str] = set()
     for revision in registry_revisions:
         snapshot = store.at(revision)
@@ -1370,20 +1379,35 @@ def restore_relationship_authority_history(
         for relationship_root in historical_roots
     }
     touched_by_revision: dict[int, set[str]] = {}
-    for revision, changed_roots in changed_by_revision:
-        touched_roots: set[str] = set()
-        for changed_root in changed_roots:
-            candidate = changed_root
-            while True:
-                if candidate in historical_lookup:
-                    touched_roots.add(candidate)
-                    break
-                parent, separator, _tail = candidate.rpartition(":")
-                if not separator:
-                    break
-                candidate = parent
-        if touched_roots:
-            touched_by_revision[revision] = touched_roots
+    if changed_by_revision is None:
+        # The same attribution as the walk below -- a change under a
+        # relationship root touches that root -- answered per root from the
+        # journal index. Where roots nest, only the deepest keeps the change,
+        # exactly as the walk stopped at the first ancestor it met.
+        for relationship_root in historical_roots:
+            for revision in scoped(relationship_root):
+                touched_by_revision.setdefault(revision, set()).add(relationship_root)
+        for revision, roots in touched_by_revision.items():
+            shallow = {
+                root for root in roots
+                if any(other != root and other.startswith(root + ":") for other in roots)
+            }
+            roots.difference_update(shallow)
+    else:
+        for revision, changed_roots in changed_by_revision:
+            touched_roots: set[str] = set()
+            for changed_root in changed_roots:
+                candidate = changed_root
+                while True:
+                    if candidate in historical_lookup:
+                        touched_roots.add(candidate)
+                        break
+                    parent, separator, _tail = candidate.rpartition(":")
+                    if not separator:
+                        break
+                    candidate = parent
+            if touched_roots:
+                touched_by_revision[revision] = touched_roots
 
     digests_by_root: dict[str, dict[int, set[str]]] = {
         relationship_root: {} for relationship_root in historical_roots

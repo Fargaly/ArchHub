@@ -639,15 +639,30 @@ def project_atlas_map(store, registry, *, authentication_context=None):
     # "wires": [] (founder 2026-09-04: "where are the wires?").
     emitted = {node["id"] for node in nodes}
     roles = registry.roles
+
+    def owner_on_map(participant: str) -> str | None:
+        # A wire ends on an interface or a property of a node, not on the node
+        # itself; the canvas resolves the endpoint the same way. Climb the id
+        # to the node that stands on the map.
+        candidate = str(participant or "")
+        while candidate:
+            if candidate in emitted:
+                return candidate
+            parent, separator, _tail = candidate.rpartition(":")
+            if not separator:
+                return None
+            candidate = parent
+        return None
+
     seen_wires: set[tuple[str, str]] = set()
     for relation_root, domain_key in relation_roots:
         try:
-            members = read_relation(snapshot, relation_root, budget=64)
-            source = _one_for_role(members, roles["source"])
-            target = _one_for_role(members, roles["target"])
+            members = read_relation(snapshot, relation_root, budget=256)
+            source = owner_on_map(_one_for_role(members, roles["source"]))
+            target = owner_on_map(_one_for_role(members, roles["target"]))
         except Exception:
             continue
-        if not source or not target or source not in emitted or target not in emitted:
+        if not source or not target or source == target:
             continue
         if (source, target) in seen_wires:
             continue

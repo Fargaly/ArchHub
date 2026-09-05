@@ -189,6 +189,8 @@ class CellHistoryReader(Protocol):
 
     def revision_cells(self, revision: int) -> tuple[Cell, ...]: ...
 
+    def revisions_touching(self, root: str) -> tuple[int, ...]: ...
+
     def snapshot_at(self, revision: int) -> Snapshot: ...
 
     def cells_at(
@@ -1524,6 +1526,22 @@ class _SqliteHistoryReader:
             _validate_cell(cell)
         return cells
 
+    def revisions_touching(self, root: str) -> tuple[int, ...]:
+        """Revisions in which `root` or any cell under `root:` changed.
+
+        One indexed range scan (cell_id, revision) instead of reading every
+        cell of every revision to ask the same question: the authority
+        restore did that for 21,700 revisions and 3M cells on each boot.
+        """
+        head = self.head_revision
+        rows = self._journal._connection.execute(
+            "SELECT DISTINCT revision FROM cell_versions "
+            "WHERE cell_id = ? OR (cell_id >= ? AND cell_id < ?) "
+            "ORDER BY revision",
+            (root, root + ":", root + ";"),
+        ).fetchall()
+        return tuple(int(r[0]) for r in rows if int(r[0]) <= head)
+
     def snapshot_at(self, revision: int) -> Snapshot:
         target = self._admit_revision(revision)
         rows = self._journal._connection.execute(
@@ -2731,6 +2749,20 @@ class CellStore:
                 return self._changes[revision]
             except KeyError as exc:
                 raise InvalidCell("unknown revision %r" % revision) from exc
+
+    def revisions_touching(self, root: str) -> tuple[int, ...]:
+        """Revisions in which `root` or a cell under `root:` changed, ascending."""
+        prefix = root + ":"
+        with self._lock:
+            if self._history_reader is not None:
+                return self._history_reader.revisions_touching(root)
+            return tuple(
+                revision for revision in sorted(self._changes)
+                if any(
+                    cell_id == root or cell_id.startswith(prefix)
+                    for cell_id in self._changes[revision]
+                )
+            )
 
     def cells_at(
         self, revision: int, cell_ids: Iterable[str]

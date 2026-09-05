@@ -188,6 +188,26 @@ def render_baboom_native_sprite(
     return image
 
 
+# What the confirm control says for each act BABOOM performs. One question,
+# one glyph, one progress line -- the founder always knows what he is pressing.
+_BABOOM_ACT_PROMPTS = {
+    "assign-task": ("Create this open task in ArchHub?", "Create the confirmed task"),
+    "run-engine": ("Run this on the graph?", "Run it on the graph"),
+    "agent-message": ("Send this to the agent?", "Send it to the agent"),
+    "agent-interrupt": ("Interrupt that agent?", "Interrupt the agent"),
+    "restart-to-update": ("Restart ArchHub to install it?", "Restart and install"),
+}
+_BABOOM_ACT_GLYPHS = {
+    "assign-task": "+", "run-engine": "▸", "agent-message": "→",
+    "agent-interrupt": "■", "restart-to-update": "↻",
+}
+_BABOOM_ACT_PROGRESS = {
+    "assign-task": "Creating task...", "run-engine": "Running on the graph...",
+    "agent-message": "Sending...", "agent-interrupt": "Interrupting...",
+    "restart-to-update": "Restarting...",
+}
+
+
 def compact_baboom_response_report(response: Mapping[str, object]) -> str:
     """Render the useful founder-safe detail from one graph command response.
 
@@ -266,6 +286,9 @@ def compact_baboom_response_report(response: Mapping[str, object]) -> str:
 
 # A poll can land a few seconds late on a busy machine; that is not a dead server.
 _FRAME_GRACE_SECONDS = 20.0
+# Past this much silence the host is really gone (not merely busy); before it
+# the last frame stays on screen so BABOOM never blinks.
+_FRAME_SILENCE_SECONDS = 600.0
 
 
 class BaboomNativeCompanionController:
@@ -312,11 +335,14 @@ class BaboomNativeCompanionController:
         snapshot = self._host.latest_snapshot
         if snapshot is None:
             return None
-        # A frame carries the lease the server gave it. Painting it past
-        # that lease shows "Work: 7 active" an hour after the server died,
-        # pixel-identical to live. Past the lease the companion disappears
-        # rather than lies; the widget already hides on None.
-        if time.time() > float(snapshot.frame_expires_at) + _FRAME_GRACE_SECONDS:
+        # A frame carries the lease the server gave it. When the server is
+        # slow to renew it (a pipeline run, a relay answer, a probe holding
+        # the store) the lease lapses for a few seconds. Hiding on every
+        # lapse made BABOOM blink on the founder's desktop (2026-09-04
+        # "keeps appearing and disappearing"). Presence first: the last
+        # snapshot keeps drawing; the companion only ever disappears when
+        # the host has been silent for a long time.
+        if time.time() > float(snapshot.frame_expires_at) + _FRAME_SILENCE_SECONDS:
             return None
         frame = project_baboom_native_visual_frame(
             snapshot,
@@ -490,6 +516,7 @@ def create_baboom_native_companion_window(
             self._transient_report: str | None = None
             self._transient_revision: int | None = None
             self._pending_task_utterance: str | None = None
+            self._act_progress: str = ""
             self._submitted_utterance = ""
             self._interaction_requested = False
             self._press_global: Any = None
@@ -703,6 +730,7 @@ def create_baboom_native_companion_window(
                 self._talk.hide()
                 self._confirm.hide()
                 self._pending_task_utterance = None
+                self._act_progress = ""
                 self._interaction_requested = False
                 self._message_rect = None
             else:
@@ -1000,6 +1028,7 @@ def create_baboom_native_companion_window(
             command = result.get("command")
             response = result.get("response")
             self._pending_task_utterance = None
+            self._act_progress = ""
             self._interaction_requested = False
             self._confirm.hide()
             if isinstance(response, Mapping):
@@ -1007,16 +1036,30 @@ def create_baboom_native_companion_window(
                 self._transient_revision = (
                     self._frame.revision if self._frame is not None else None
                 )
-            if (
+            # ANY act BABOOM can perform offers its confirm control -- the
+            # graph says so by asking for an explicit execute. Gating this on
+            # "assign-task" alone is what made BABOOM a reporter: running an
+            # engine, telling an agent, interrupting one and installing an
+            # update all reached this line and were dropped (2026-09-04).
+            data = response.get("data") if isinstance(response, Mapping) else None
+            offers_act = (
                 isinstance(command, Mapping)
-                and command.get("intent") == "assign-task"
                 and isinstance(response, Mapping)
-                and response.get("kind") == "task-confirmation"
-            ):
+                and isinstance(data, Mapping)
+                and data.get("requires") == "explicit execute"
+            )
+            if offers_act:
                 utterance = self._submitted_utterance
                 if utterance:
+                    intent = str(command.get("intent") or "")
+                    question, label = _BABOOM_ACT_PROMPTS.get(
+                        intent, ("Do this in ArchHub?", "Do it"))
                     self._pending_task_utterance = utterance
-                    self._transient_report = "Create this open task in ArchHub?"
+                    self._transient_report = question
+                    self._act_progress = _BABOOM_ACT_PROGRESS.get(intent, "Working...")
+                    self._confirm.setText(_BABOOM_ACT_GLYPHS.get(intent, "+"))
+                    self._confirm.setToolTip(label)
+                    self._confirm.setAccessibleName(label)
                     self._confirm.show()
             if self._pending_task_utterance is None:
                 self._submitted_utterance = ""
@@ -1032,7 +1075,7 @@ def create_baboom_native_companion_window(
                 return
             self._pending_task_utterance = None
             self._confirm.hide()
-            self._report.setText("Creating task...")
+            self._report.setText(self._act_progress or "Working...")
             self._report.show()
 
             def execute() -> None:

@@ -1628,6 +1628,15 @@ _BABOOM_COMMAND_SPECS = (
     ("agent-message", ("agent-message", "tell an agent")),
     ("agent-interrupt", ("agent-interrupt", "interrupt an agent")),
 )
+# The intents BABOOM PERFORMS. Their responder states what will happen and asks
+# for one confirmation ("requires": "explicit execute"); the confirm control on
+# the companion then calls the execute route, which does the thing. Before
+# 2026-09-04 only "assign-task" could ever reach execute, so every other verb
+# ended as a report -- the founder: "it is just a reporter".
+_BABOOM_ACT_INTENTS = frozenset({
+    "assign-task", "run-engine", "agent-message", "agent-interrupt",
+    "restart-to-update",
+})
 _RUNTIME_COMPLIANCE_PROTOCOL_PREFIX = "app:compliance-protocol:v1"
 _RUNTIME_COMPLIANCE_COURT_ROOT = "app:court:runtime-compliance"
 _RUNTIME_COMPLIANCE_CHECKS = (
@@ -9821,6 +9830,20 @@ def respond_universal_baboom_utterance(
                 verb, spec.get("target"), (spec.get("message") or spec.get("reason") or "")[:120]
             ),
             "data": {**spec, "requires": "explicit execute"},
+        }
+    elif intent == "run-engine":
+        from .pipeline_engines import PIPELINE_ENGINES
+        engine = str(command["payload"])
+        known = engine in PIPELINE_ENGINES
+        response = {
+            "kind": "engine-ready" if known else "engine-unknown",
+            "summary": (
+                "Run %s on the graph? It creates the node and runs the pipeline." % engine
+                if known else
+                "No engine named %r. Right-click BABOOM -> Graph to see the ones this build has." % engine
+            ),
+            "data": ({"engine": engine, "requires": "explicit execute"} if known
+                     else {"engine": engine, "available": False}),
         }
     elif intent == "brain-health":
         lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)

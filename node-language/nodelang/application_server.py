@@ -9080,7 +9080,8 @@ class ApplicationServer:
                     hosts=self._host_rows(),
                     staged_update=self._staged_update(),
                 )
-            if result.get("kind") == "update-ready" and (result.get("data") or {}).get("restart"):
+            _answer = result.get("response") if isinstance(result.get("response"), dict) else result
+            if _answer.get("kind") == "update-ready" and (_answer.get("data") or {}).get("restart"):
                 # The one runtime action BABOOM performs itself: hand over to a
                 # fresh launcher that installs the staged build before booting.
                 self._restart_to_update()

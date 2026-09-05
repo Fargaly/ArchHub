@@ -153,10 +153,46 @@ def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Op
     return result
 
 
+def routable_route(item: Mapping[str, object]) -> str:
+    """The string the router needs to send this row to its own provider.
+
+    A cloud model id and an OpenRouter id are the same shape ("anthropic/x"),
+    so a founder who picked the CLOUD row was answered by OpenRouter. The row
+    already knows which family it belongs to, and local rows already carry
+    their prefix, so the tag supplies the missing one.
+    """
+    route = str(item.get("route") or "").strip()
+    if str(item.get("tag") or "").upper() == "CLOUD" and not route.startswith("cloud/"):
+        return "cloud/" + route
+    return route
+
+
+def groups_with_routes(payload: Mapping[str, object]) -> dict:
+    """The picker's answer with a routable string on every row.
+
+    The rows themselves keep the ids their source published; `routed` is the
+    one extra field, and it is what the composer and the chat rail send.
+    """
+    groups = []
+    for group in payload.get("groups") or ():
+        if not isinstance(group, Mapping):
+            continue
+        groups.append({
+            **group,
+            "items": [
+                {**item, "routed": routable_route(item)}
+                for item in group.get("items") or ()
+                if isinstance(item, Mapping)
+            ],
+        })
+    return {**payload, "groups": groups}
+
+
 def reset_cache() -> None:
     with _lock:
         _cache["at"] = 0.0
         _cache["value"] = None
 
 
-__all__ = ["live_model_groups", "cloud_models", "openrouter_models", "local_models", "reset_cache"]
+__all__ = ["live_model_groups", "cloud_models", "openrouter_models", "local_models",
+           "routable_route", "groups_with_routes", "reset_cache"]

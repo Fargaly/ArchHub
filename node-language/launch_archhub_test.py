@@ -34,15 +34,29 @@ sys.stderr = _log
 # window that never opened and a colleague with nothing to send. The log
 # keeps the full traceback; the colleague gets its last line and where the
 # log is, in a box he can read.
+def _message_box(message):
+    """The only window a person without a console ever sees.
+
+    Every refusal on the boot path goes through here. A launch that ends
+    without one is a double-click that did nothing, and the colleague is left
+    with nothing to read and nothing to send.
+    """
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, message, 'ArchHub', 0x10)
+        return True
+    except Exception:
+        return False
+
+
 def _tell_the_person(kind, value, tb):
     traceback.print_exception(kind, value, tb)
     try:
-        import ctypes
         last = ''.join(traceback.format_exception_only(kind, value)).strip().splitlines()[-1]
         message = 'ArchHub could not open.' + chr(10) + chr(10) + last[:300]
         message += chr(10) + chr(10) + 'The full log is at:' + chr(10) + str(_log_path)
         message += chr(10) + chr(10) + 'Send that file to Ahmed.'
-        ctypes.windll.user32.MessageBoxW(0, message, 'ArchHub', 0x10)
+        _message_box(message)
     except Exception:
         pass
 sys.excepthook = _tell_the_person
@@ -55,6 +69,64 @@ state_dir = Path(
 )
 state_dir.mkdir(parents=True, exist_ok=True)
 state_path = state_dir / "archhub-test.universal.sqlite3"
+
+def _front_running_archhub():
+    """Bring an ArchHub window already on this desktop to the front.
+
+    Launching ArchHub while it lives in the tray must SHOW it (Chrome,
+    Claude Desktop): the founder double-clicked the icon and saw nothing
+    (2026-09-04, the studio window sat hidden behind close-to-tray).
+    True means a window of ours was found and raised.
+    """
+    try:
+        import ctypes as _ct
+        _u = _ct.windll.user32
+        _shown = []
+
+        def _each(handle, _lparam):
+            length = _u.GetWindowTextLengthW(handle)
+            title = _ct.create_unicode_buffer(length + 1)
+            _u.GetWindowTextW(handle, title, length + 1)
+            klass = _ct.create_unicode_buffer(256)
+            _u.GetClassNameW(handle, klass, 256)
+            if title.value == "ArchHub" and "QWindowIcon" in klass.value:
+                _u.ShowWindow(handle, 9)
+                _u.SetForegroundWindow(handle)
+                _shown.append(handle)
+            return True
+
+        _u.EnumWindows(_ct.WINFUNCTYPE(_ct.c_bool, _ct.c_void_p, _ct.c_void_p)(_each), 0)
+        return bool(_shown)
+    except Exception:
+        return False
+
+
+def _held_port_outcome(port, front_running_archhub, tell_the_person):
+    """Answer a held lock port with words, never with a silent exit.
+
+    A colleague double-clicked ArchHub on a machine where the port was
+    already taken -- a copy left running under another account, a stale
+    process, any program that happened to sit on it -- and got nothing at
+    all: no window, no message, every single time. Two different situations
+    hide behind one refusal to bind, and each needs its own answer.
+    """
+    if front_running_archhub():
+        return "another ArchHub is already running; brought its window to the front"
+    tell_the_person(
+        "ArchHub is already open, or port %d on this machine is being used by "
+        "another program." % port
+        + chr(10) + chr(10)
+        + "Nothing was found to bring to the front, so ArchHub stopped here "
+          "rather than fight the other copy for the same graph."
+        + chr(10) + chr(10)
+        + "If ArchHub is not already open, wait a few seconds and open it "
+          "again. If it still refuses, set the environment variable "
+          "ARCHHUB_TEST_LOCK_PORT to a free port number (%d, for example) "
+          "and open ArchHub again." % (port + 1)
+    )
+    return ("port %d is held and no ArchHub window answered; the person was told "
+            "about ARCHHUB_TEST_LOCK_PORT" % port)
+
 
 # ONE app. A second double-click fronts nothing and starts nothing --
 # the socket is the cheapest cross-process mutex Windows respects.
@@ -78,34 +150,13 @@ for _attempt in range(12):
         # than exiting silently and leaving the founder with no window.
         time.sleep(0.5)
 else:
-    # Say so in the log: a second launch that exits without a word
-    # leaves an orphan header and reads as a crash.
-    print("  another ArchHub is already running on this machine; this launch exits", flush=True)
-    # Launching ArchHub while it lives in the tray must SHOW it (Chrome,
-    # Claude Desktop): the founder double-clicked the icon and saw nothing
-    # (2026-09-04, the studio window sat hidden behind close-to-tray).
-    try:
-        import ctypes as _ct
-        import ctypes.wintypes as _wt
-        _u = _ct.windll.user32
-        _shown = []
-
-        def _each(handle, _lparam):
-            length = _u.GetWindowTextLengthW(handle)
-            title = _ct.create_unicode_buffer(length + 1)
-            _u.GetWindowTextW(handle, title, length + 1)
-            klass = _ct.create_unicode_buffer(256)
-            _u.GetClassNameW(handle, klass, 256)
-            if title.value == "ArchHub" and "QWindowIcon" in klass.value:
-                _u.ShowWindow(handle, 9)
-                _u.SetForegroundWindow(handle)
-                _shown.append(handle)
-            return True
-
-        _u.EnumWindows(_ct.WINFUNCTYPE(_ct.c_bool, _ct.c_void_p, _ct.c_void_p)(_each), 0)
-        print("  window     : %s" % ("brought the running ArchHub to the front" if _shown else "running ArchHub has no window yet"), flush=True)
-    except Exception as _show_error:
-        print("  window     : could not raise the running ArchHub (%s)" % _show_error, flush=True)
+    # Say so in the log AND on the screen: a launch that exits without a word
+    # leaves an orphan header, reads as a crash, and gives the person nothing
+    # to act on.
+    print("  lock       : port %d is already held" % _lock_port, flush=True)
+    print("  window     : %s"
+          % _held_port_outcome(_lock_port, _front_running_archhub, _message_box),
+          flush=True)
     sys.exit(0)
 
 # listdir membership: Path.exists() returns False on a Windows sharing
@@ -294,17 +345,57 @@ print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 # Every user gets their own brain. The daemon on :8473 is what BABOOM, the
 # memory panel and every agent speak to; on a machine that has none, the
 # shipped personal_brain package is started here, hidden, once.
+def _brain_answers(port=8473, timeout=1.5) -> bool:
+    """True only when the thing on this port is really our brain.
+
+    A bare TCP connect said yes to ANY listener. On a shared machine that
+    made ArchHub hand its memory to a stranger's service that happened to
+    sit on 8473. The brain speaks MCP over /mcp, so ask it in MCP and read
+    the answer; anything that cannot answer in MCP is not the brain.
+    Kept short because this runs on the boot path.
+    """
+    import json as _json
+    import urllib.error as _err
+    import urllib.request as _req
+
+    ask = _json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "archhub-launcher", "version": "1"},
+        },
+    }).encode("utf-8")
+    request = _req.Request(
+        "http://127.0.0.1:%d/mcp" % port, data=ask,
+        headers={"Content-Type": "application/json",
+                 "Accept": "application/json, text/event-stream"},
+        method="POST",
+    )
+    try:
+        with _req.urlopen(request, timeout=timeout) as answer:
+            body = answer.read(4096).decode("utf-8", "replace")
+    except _err.HTTPError as refusal:
+        # An MCP endpoint that refuses this call still refuses in MCP, and
+        # that refusal identifies it just as well as a success would.
+        try:
+            body = refusal.read(4096).decode("utf-8", "replace")
+        except Exception:
+            return False
+    except Exception:
+        return False
+    if "jsonrpc" not in body:
+        return False
+    return any(mark in body for mark in
+               ("protocolVersion", "serverInfo", "capabilities", '"error"'))
+
+
 def _ensure_brain() -> str:
     import subprocess as _sp
-    # The brain serves /mcp (a GET answers 405); any HTTP answer, or simply an
-    # open port, means a brain is there -- never start a second one on it.
+    # The brain serves /mcp. Only an answer in MCP counts as a brain being
+    # there -- never start a second one on it, and never talk to a stranger.
     def _alive() -> bool:
-        import socket as _sk
-        probe = _sk.socket(); probe.settimeout(1.0)
-        try:
-            return probe.connect_ex(("127.0.0.1", 8473)) == 0
-        finally:
-            probe.close()
+        return _brain_answers()
     if _alive():
         return "answering on :8473"
     app_dir = Path(__file__).resolve().parent
@@ -707,6 +798,53 @@ try:
     print("  BABOOM     : attached (signed agent session)", flush=True)
 except Exception as refusal:
     print("  BABOOM     : not attached -- %s" % refusal, flush=True)
+    # The cockpit relay used to live inside the BABOOM block, so a companion
+    # that failed to attach took the founder's whole cockpit with it: every
+    # control on the web read "waiting for the app push" and nothing said why
+    # (2026-09-06 00:27, "runtime device proof challenge is invalid"). They are
+    # separate failures now. Without BABOOM the relay answers from the server
+    # itself, so questions and engine runs still work; only the companion's own
+    # voice is missing.
+    try:
+        from nodelang.cloud_relay import start_cloud_relay as _start_relay_alone
+        from nodelang.universal_application import (
+            respond_universal_baboom_utterance as _respond_alone,
+        )
+        from nodelang.universal_pipeline import project_atlas_map as _atlas_alone
+
+        _context = server.universal_registry.authorization.session.context()
+
+        def _answer_without_baboom(utterance):
+            return _respond_alone(
+                server.universal_store, server.universal_registry,
+                utterance=utterance, authentication_context=_context,
+            )
+
+        def _refuse_without_baboom(utterance):
+            # Reads are safe from here; an ACT must go through the companion's
+            # signed session and the application's mutation lock, so the
+            # cockpit is told plainly rather than acting unsigned.
+            return {
+                "command": {"intent": "open-question", "payload": utterance},
+                "response": {
+                    "kind": "companion-absent",
+                    "summary": ("BABOOM did not attach on this launch, so the app can "
+                                "answer but cannot act. Reopen ArchHub to restore it."),
+                    "data": {},
+                },
+            }
+
+        cloud_relay = _start_relay_alone(
+            appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
+            respond=_answer_without_baboom, execute=_refuse_without_baboom,
+            map_script=lambda: _atlas_alone(server.universal_store, server.universal_registry),
+            hosts=lambda: server._host_rows(),
+        )
+        if cloud_relay is not None:
+            print("  cockpit    : relay on, answers only (BABOOM did not attach)",
+                  flush=True)
+    except Exception as relay_refusal:
+        print("  cockpit    : relay off -- %s" % relay_refusal, flush=True)
 
 # While the founder works, look once for a newer release and stage it for
 # the next launch. Never applied here; never blocks the window.

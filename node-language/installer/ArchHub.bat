@@ -6,7 +6,8 @@ rem ever sees setup, and it stays open on failure.
 setlocal
 cd /d "%~dp0"
 if exist ".archhub-ready" goto launch
-echo Preparing ArchHub for first use...
+echo Preparing ArchHub for first use. This runs once, and ArchHub opens
+echo by itself when it finishes - you do not have to click anything again.
 set "ARCHHUB_PY=%~1"
 if "%ARCHHUB_PY%"=="" (
   echo.

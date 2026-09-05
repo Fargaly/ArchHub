@@ -10,6 +10,7 @@ the result -- no agent required.
 """
 from __future__ import annotations
 
+from pathlib import Path as _Path
 from typing import Mapping
 
 from .universal_cell import InvalidCell
@@ -34,7 +35,29 @@ from .universal_application import (
 )
 from .universal_cell import NULL_CELL_ID, Cell
 
-_STRUCTURAL = {"engine", "status"}
+# Rows the graph keeps for its own bookkeeping: they name what a node IS
+# and what it last answered, never what its engine computes with, so they
+# are not handed to an engine as a parameter.
+_STRUCTURAL = {"engine", "status", "seed"}
+
+# The seed's own identity row. A human-readable title is not an identity:
+# the founder renames cards, and the grand map already publishes domains
+# whose titles collide with a card's ("Connectors"). This marker is what
+# a re-seed matches on.
+_SEED_MARKER = "seed"
+
+_SAMPLES = _Path(__file__).resolve().parent / "samples"
+
+
+def sample_input(name: str) -> str:
+    """The absolute path of one shipped sample input.
+
+    The flagship chain shipped with empty inputs, so every node of it
+    pended at every boot and the founder's first open showed nothing
+    working. These samples are read by the same engines a real file goes
+    through -- no special case, no fixture mode.
+    """
+    return str(_SAMPLES / name)
 
 
 def _owner_properties(snapshot, registry):
@@ -94,7 +117,47 @@ def _graph_engines(store, registry):
             ),
         )
 
-    return {"baboom.status": baboom_status}
+    def baboom_presence(params, feeds):
+        """Whether a signed BABOOM runtime is attached to THIS graph.
+
+        The presence leases are graph cells, so this answers from the same
+        truth the HTTP route reports and needs no server object -- which is
+        why the boot run can answer it. The route-local copy of this engine
+        (application_server.py, /api/universal/run-graph) is now redundant:
+        without one here the card read "engine baboom.presence is pending"
+        from every boot until the founder clicked Run.
+        """
+        import time as _time
+
+        from .cell_runtime_presence import list_active_runtime_presences
+
+        protocol = getattr(registry, "runtime_presence_protocol", None)
+        if protocol is None:
+            raise ValueError("this graph holds no runtime-presence protocol")
+        live = list_active_runtime_presences(
+            store.snapshot(), protocol, now=_time.time()
+        )
+        runtimes = sorted({presence.runtime for presence in live})
+        attached = "baboom" in runtimes
+        state = {
+            "active_runtime_sessions": len(live),
+            "baboom_connected": attached,
+            "baboom_action_capability_active": "baboom-execution" in runtimes,
+            "runtimes": runtimes,
+        }
+        return (
+            {"out": state},
+            "companion %s · %d signed runtime session(s)%s" % (
+                "ATTACHED" if attached else "not attached",
+                len(live),
+                "" if not runtimes else " (%s)" % ", ".join(runtimes),
+            ),
+        )
+
+    return {
+        "baboom.status": baboom_status,
+        "baboom.presence": baboom_presence,
+    }
 
 
 def run_universal_pipeline(
@@ -310,34 +373,59 @@ def _ensure_wire_parameters(store, registry, wire_root: str):
             return
 
 
+# The founder's first canvas. Every entry carries a "seed" marker: that,
+# not the title, is what a re-seed matches on, and the shipped sample
+# inputs are what make the flagship chain answer on first open.
 _SEED = (
     ("Sketch Lines", 240.0, 200.0, {
+        "seed": "sketch-lines",
         "engine": "vision.sketch_lines",
-        "image_path": "", "mm_per_pixel": "10",
+        "image_path": sample_input("sample-plan.png"),
+        "mm_per_pixel": "10",
         "threshold": "60", "min_length": "40",
     }),
     ("CAD Lines", 240.0, 380.0, {
-        "engine": "cad.read_lines", "file_path": "", "layer": "",
+        "seed": "cad-lines",
+        "engine": "cad.read_lines",
+        "file_path": sample_input("sample-plan.dxf"), "layer": "",
     }),
-    ("Line Watcher", 560.0, 290.0, {"engine": "lines.watch"}),
+    ("Line Watcher", 560.0, 290.0, {
+        "seed": "line-watcher", "engine": "lines.watch",
+    }),
     ("Revit Walls", 880.0, 290.0, {
+        "seed": "revit-walls",
         "engine": "revit.build_walls",
         "level": "", "height_mm": "3000", "session": "",
     }),
-    ("Revit Sessions", 880.0, 470.0, {"engine": "revit.sessions"}),
+    ("Revit Sessions", 880.0, 470.0, {
+        "seed": "revit-sessions", "engine": "revit.sessions",
+    }),
     ("Brain Recall", 240.0, 560.0, {
+        "seed": "brain-recall",
         "engine": "brain.recall", "prompt": "ArchHub product state",
     }),
-    ("Brain Facts", 560.0, 560.0, {"engine": "brain.facts"}),
-    ("BABOOM Status", 880.0, 560.0, {"engine": "baboom.status"}),
-    ("BABOOM Presence", 1200.0, 560.0, {"engine": "baboom.presence"}),
+    ("Brain Facts", 560.0, 560.0, {
+        "seed": "brain-facts", "engine": "brain.facts",
+    }),
+    ("BABOOM Status", 880.0, 560.0, {
+        "seed": "baboom-status", "engine": "baboom.status",
+    }),
+    ("BABOOM Presence", 1200.0, 560.0, {
+        "seed": "baboom-presence", "engine": "baboom.presence",
+    }),
     ("Skills Library", 240.0, 740.0, {
+        "seed": "skills-library",
         "engine": "skills.catalogue", "match": "",
     }),
     ("Thinking Chain", 560.0, 740.0, {
+        "seed": "thinking-chain",
         "engine": "skills.thinking_chain", "topic": "",
     }),
-    ("Connectors", 880.0, 740.0, {
+    # Named for what it does, not for the domain it reads: the grand map
+    # already publishes a domain titled "Connectors", and a title match
+    # against it is exactly how this card lost its engine.
+    ("Connector Status", 880.0, 740.0, {
+        "seed": "connector-status",
         "engine": "connector.status", "connector": "",
     }),
 )
@@ -435,14 +523,29 @@ def seed_wall_pipeline(
 
     The CAD Lines node is placed unwired next to the sketch source: swap
     the wire and the SAME downstream logic runs from a CAD file instead.
+    Both read a shipped sample, so the chain answers on first open on a
+    machine that has neither Revit nor AutoCAD.
+
+    Seeding is idempotent over the MARKER, never the title. A card is
+    adopted only when it carries this seed's marker (or, once, when it
+    carries both the title and the very engine this entry declares), and
+    an adopted card gets every property row it is missing. Matching on
+    the title alone silently cost the founder a card: the grand map
+    publishes a domain titled "Connectors", the seed adopted it, wrote no
+    engine row onto it, and skipped its own twelfth node.
     """
     projection = project_universal_canvas(
         store, registry, authentication_context=authentication_context
     )
-    existing = {
-        str(node.get("label") or ""): str(node["id"])
-        for node in projection.get("nodes", ())
-    }
+    owned = _owner_properties(store.snapshot(), registry)
+    by_marker: dict[str, str] = {}
+    by_title: dict[str, str] = {}
+    for node in projection.get("nodes", ()):
+        root = str(node["id"])
+        by_title.setdefault(str(node.get("label") or ""), root)
+        marker = (owned.get(root) or {}).get(_SEED_MARKER)
+        if marker is not None and marker[1].strip():
+            by_marker.setdefault(marker[1].strip(), root)
     if definition_root is None:
         catalogue = projection.get("catalog") or ()
         definition_root = next(
@@ -452,25 +555,77 @@ def seed_wall_pipeline(
         ) or (str(catalogue[0]["id"]) if catalogue else None)
     if definition_root is None:
         raise ValueError("no released definition is available to place")
-    placed: dict[str, str] = {
-        title: existing[title]
-        for title, _x, _y, _properties in _SEED
-        if title in existing
-    }
+    placed: dict[str, str] = {}
+    created: list[str] = []
+    adopted: list[str] = []
+    completed: list[str] = []
+    skipped: list[dict[str, str]] = []
     for title, x, y, properties in _SEED:
-        if title in existing:
-            continue
-        root, _revision = _persist(lambda: instantiate_universal_definition(
-            store, registry, definition_root, x=x, y=y,
-            title_override=title,
-            authentication_context=authentication_context,
-        ), store=store)
-        for label, value in properties.items():
-            _persist(lambda label=label, value=value: create_universal_property(
-                store, registry, root, label, value,
-                authentication_context=authentication_context,
-            ), store=store)
-        placed[title] = root
+        marker = str(properties[_SEED_MARKER])
+        root = by_marker.get(marker)
+        if root is None:
+            # One-time migration off the old title match: a card an earlier
+            # build of THIS seed placed carries the title and the engine but
+            # no marker. Requiring the engine to match too is what keeps a
+            # stranger of the same name (a grand-map domain) out.
+            candidate = by_title.get(title)
+            if candidate is not None and (
+                (owned.get(candidate) or {}).get("engine", ("", ""))[1].strip()
+                == str(properties["engine"])
+            ):
+                root = candidate
+        try:
+            if root is None:
+                root, _revision = _persist(
+                    lambda: instantiate_universal_definition(
+                        store, registry, definition_root, x=x, y=y,
+                        title_override=title,
+                        authentication_context=authentication_context,
+                    ),
+                    store=store,
+                )
+                held: dict[str, tuple[str, str]] = {}
+                created.append(title)
+            else:
+                held = dict(owned.get(root) or {})
+                adopted.append(title)
+            for label, value in properties.items():
+                value = str(value)
+                current = held.get(label)
+                # A row the founder filled in is his; only a missing row, or
+                # one still holding the blank this seed used to ship, is
+                # written. That is what makes an adopted card complete.
+                if current is not None and (
+                    current[1].strip() or not value.strip()
+                ):
+                    continue
+                if current is None:
+                    _persist(
+                        lambda label=label, value=value: (
+                            create_universal_property(
+                                store, registry, root, label, value,
+                                authentication_context=authentication_context,
+                            )
+                        ),
+                        store=store,
+                    )
+                else:
+                    _persist(
+                        lambda relation=current[0], value=value: (
+                            edit_universal_property(
+                                store, registry, relation, value,
+                                authentication_context=authentication_context,
+                            )
+                        ),
+                        store=store,
+                    )
+                completed.append("%s.%s" % (title, label))
+            placed[title] = root
+        except Exception as refusal:
+            # A card that cannot be seeded is named and counted. It used to
+            # be invisible: eleven cards where twelve were declared, and
+            # nothing anywhere said so.
+            skipped.append({"title": title, "why": str(refusal)})
     for root in placed.values():
         _persist(lambda root=root: _ensure_pipeline_node_interfaces(
             store, registry, root
@@ -525,7 +680,36 @@ def seed_wall_pipeline(
                 store, registry, held[0], image_path,
                 authentication_context=authentication_context,
             )
-    return {"placed": placed, "wired": wired, "revision": store.revision}
+    counts = {
+        "declared": len(_SEED),
+        "placed": len(created),
+        "adopted": len(adopted),
+        "completed": len(completed),
+        "skipped": len(skipped),
+    }
+    # Said out loud, into launcher.log, every boot. A seed that loses a card
+    # must never again be able to lose it quietly.
+    print(
+        "  seed       : %d declared · %d placed · %d adopted · "
+        "%d row(s) completed · %d skipped%s" % (
+            counts["declared"], counts["placed"], counts["adopted"],
+            counts["completed"], counts["skipped"],
+            "" if not skipped else " (%s)" % ", ".join(
+                entry["title"] for entry in skipped
+            ),
+        ),
+        flush=True,
+    )
+    return {
+        "placed": placed,
+        "created": created,
+        "adopted": adopted,
+        "completed": completed,
+        "skipped": skipped,
+        "counts": counts,
+        "wired": wired,
+        "revision": store.revision,
+    }
 
 
 
@@ -621,7 +805,7 @@ def project_atlas_map(store, registry, *, authentication_context=None):
                 for label, (rel, value) in held.items()
                 if label not in {
                     "title", "label", "status", "position_x", "position_y",
-                    "engine",
+                    "engine", _SEED_MARKER,
                 }
             ][:4]
             nodes.append({

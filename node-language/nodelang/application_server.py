@@ -4516,11 +4516,18 @@ class ApplicationServer:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
                     try:
-                        from .model_catalogue import live_model_groups
+                        from .model_catalogue import (
+                            groups_with_routes,
+                            live_model_groups,
+                        )
                         from .cloud_relay import load_cloud_session
                         appdata = os.environ.get('APPDATA', '')
                         session = load_cloud_session(Path(appdata)) if appdata else None
-                        self._json(200, live_model_groups(session))
+                        # Every row carries the string that actually reaches
+                        # its own provider: a cloud id and an OpenRouter id
+                        # are the same shape, and the picker sent both to
+                        # OpenRouter.
+                        self._json(200, groups_with_routes(live_model_groups(session)))
                     except Exception as exc:
                         self._json(200, {'ok': False, 'live': False, 'groups': [], 'count': 0,
                                          'error': str(exc)[:200]})
@@ -5740,16 +5747,34 @@ class ApplicationServer:
                                 )
                                 # Brain first, then the model: the composer used to hand the raw
                                 # prompt to the model with only the canvas as context.
-                                agent_result = run_agent_composer(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    brain_first_prompt(str(body.get('prompt', ''))),
-                                    model=str(body.get('model') or ''),
-                                    effect_engines=(
-                                        owner.pipeline_effect_engines
-                                    ),
-                                    authentication_context=binding.context,
+                                from .model_router import (
+                                    ModelRouteRefused,
                                 )
+                                try:
+                                    agent_result = run_agent_composer(
+                                        owner.universal_store,
+                                        owner.universal_registry,
+                                        brain_first_prompt(
+                                            str(body.get('prompt', ''))
+                                        ),
+                                        model=str(body.get('model') or ''),
+                                        effect_engines=(
+                                            owner.pipeline_effect_engines
+                                        ),
+                                        authentication_context=binding.context,
+                                    )
+                                except ModelRouteRefused as refused:
+                                    # Someone typed this into the composer.
+                                    # The reason has to come back as words
+                                    # they can read, not a stack trace and a
+                                    # blank box.
+                                    self._json(200, {
+                                        'ok': False,
+                                        'error': str(refused),
+                                        'answer': str(refused),
+                                        'applied': [],
+                                    })
+                                    return
                                 self._json(200, agent_result)
                                 return
                             elif self.path == '/api/universal/run-graph':
@@ -7056,15 +7081,26 @@ class ApplicationServer:
         now = time.time()
         with self._machine_agent_session_lock:
             challenge = self._machine_agent_challenges.get(challenge_id)
-            if (
-                challenge is None
-                or bool(challenge["used"])
-                or now >= float(challenge["expires_at"])
-                or challenge["catalog_entry"] != catalog_entry_root
-                or challenge["runtime"] != runtime
-                or challenge["runtime_id"] != runtime_id
-            ):
-                raise AuthorizationDenied("runtime device proof challenge is invalid")
+            # One message covered six distinct causes, so the founder's
+            # companion refused to attach and the log said nothing about why
+            # (2026-09-06). Each cause names itself; none of them is a secret.
+            why = ""
+            if challenge is None:
+                why = "no challenge with that id is held"
+            elif bool(challenge["used"]):
+                why = "that challenge was already spent"
+            elif now >= float(challenge["expires_at"]):
+                why = "it expired %.1fs ago" % (now - float(challenge["expires_at"]))
+            elif challenge["catalog_entry"] != catalog_entry_root:
+                why = "it was minted for another Agent Body entry"
+            elif challenge["runtime"] != runtime:
+                why = "it was minted for runtime %r, not %r" % (
+                    challenge["runtime"], runtime)
+            elif challenge["runtime_id"] != runtime_id:
+                why = "it was minted for another runtime instance"
+            if why:
+                raise AuthorizationDenied(
+                    "runtime device proof challenge is invalid: %s" % why)
         snapshot = self.universal_store.snapshot()
         entry = _agent_body_catalog_entry_for_runtime(
             snapshot, self.universal_registry, runtime

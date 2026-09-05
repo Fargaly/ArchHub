@@ -196,6 +196,13 @@ except Exception as _update_refusal:
 started = time.perf_counter()
 
 def _boot():
+    # The boot is sampled while it runs: boot-profile.log beside launcher.log
+    # says where the seconds went (the founder's boot reached 694s and nobody
+    # could name what it was doing).
+    from nodelang.boot_profile import profile_boot
+    return profile_boot(_boot_unsampled, state_dir=state_dir)
+
+def _boot_unsampled():
     return ApplicationServer(
         universal_state_path=state_path,
         pipeline_effect_engines=PIPELINE_ENGINES,

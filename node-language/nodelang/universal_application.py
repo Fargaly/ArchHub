@@ -1628,6 +1628,7 @@ _BABOOM_COMMAND_SPECS = (
     ("agents-online", ("agents", "list agents", "who is online", "which agents are online")),
     ("agent-message", ("agent-message", "tell an agent")),
     ("agent-interrupt", ("agent-interrupt", "interrupt an agent")),
+    ("open-host", ("open-host", "open a host")),
 )
 # The intents BABOOM PERFORMS. Their responder states what will happen and asks
 # for one confirmation ("requires": "explicit execute"); the confirm control on
@@ -1636,7 +1637,7 @@ _BABOOM_COMMAND_SPECS = (
 # ended as a report -- the founder: "it is just a reporter".
 _BABOOM_ACT_INTENTS = frozenset({
     "assign-task", "run-engine", "agent-message", "agent-interrupt",
-    "restart-to-update",
+    "restart-to-update", "open-host",
 })
 _RUNTIME_COMPLIANCE_PROTOCOL_PREFIX = "app:compliance-protocol:v1"
 _RUNTIME_COMPLIANCE_COURT_ROOT = "app:court:runtime-compliance"
@@ -3351,6 +3352,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/accounts", "inspect"),
     ("POST", "/api/universal/account-tier", "edit"),
     ("GET", "/api/universal/hosts", "read"),
+    ("GET", "/api/universal/models", "read"),
     ("POST", "/api/universal/pipeline-seed", "edit"),
     ("POST", "/api/universal/interaction", "edit"),
     ("POST", "/api/universal/instantiate", "create"),
@@ -9517,7 +9519,14 @@ def resolve_universal_baboom_utterance(
                 r"(?:interrupt|stop)\s+(?:agent\s+)?([a-z0-9_.\-]+(?::[a-z0-9_.\-]+)*)(?:(?:\s*[:,-])?\s+(.+))?",
                 spoken, re.IGNORECASE | re.DOTALL,
             )
-            if task:
+            open_host = re.fullmatch(
+                r"(?:open|launch|start|connect)\s+(excel|word|powerpoint|outlook|rhino|blender|max|3ds\s*max)(?:\s+(?:with|and)\s+.*)?",
+                spoken, re.IGNORECASE,
+            )
+            if open_host:
+                name = open_host.group(1).casefold().replace(" ", "")
+                intent, payload = "open-host", ("max" if name in ("max", "3dsmax") else name)
+            elif task:
                 intent, payload = "assign-task", task.group(1).strip()
             elif take_on:
                 intent, payload = "assign-and-claim", take_on.group(1).strip()
@@ -9580,6 +9589,17 @@ def execute_universal_baboom_utterance(
             "kind": kind,
             "summary": "%s %s (%s %s)." % (verb, root, target.get("provider"), target.get("runtime")),
             "data": {"target": target, "message": sent.get("message")},
+            "command": command,
+        }
+    if command["intent"] == "open-host":
+        from .host_brokers import open_host as _open_host
+        outcome = _open_host(str(command["payload"]))
+        if not outcome.get("ok"):
+            raise InvalidCell(str(outcome.get("error") or "could not open the host"))
+        return {
+            "kind": "host-opened",
+            "summary": "%s: %s." % (str(command["payload"]).capitalize(), outcome.get("action") or "opened"),
+            "data": {k: v for k, v in outcome.items() if k != "ok"},
             "command": command,
         }
     if command["intent"] == "run-engine":
@@ -9842,6 +9862,13 @@ def respond_universal_baboom_utterance(
             ),
             "data": ({"engine": engine, "requires": "explicit execute"} if known
                      else {"engine": engine, "available": False}),
+        }
+    elif intent == "open-host":
+        host = str(command["payload"])
+        response = {
+            "kind": "host-open-ready",
+            "summary": "Open %s from ArchHub? Office opens through COM; Rhino and Blender launch with the ArchHub bridge so they connect." % host,
+            "data": {"host": host, "requires": "explicit execute"},
         }
     elif intent == "brain-health":
         lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)

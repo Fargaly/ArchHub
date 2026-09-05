@@ -3246,6 +3246,17 @@ const SettingsHosts = ({ store, patch }) => (
 
 // ──────────────────────── MODEL PICKER ────────────────────────
 const ModelPicker = ({ setModel, onClose, model }) => {
+  // The list is read LIVE from the app (/api/universal/models: the founder's
+  // cloud, OpenRouter with real prices, LM Studio / Ollama on this machine);
+  // the rows below are only what shows until that answer arrives or when the
+  // machine is offline.
+  const [live, setLive] = React.useState(null);
+  const [q, setQ] = React.useState('');
+  React.useEffect(() => {
+    const s = window.__archhubSession || {};
+    fetch('/api/universal/models', { headers: { 'X-ArchHub-Session': s.token || '', 'X-ArchHub-CSRF': s.csrf || '' } })
+      .then(r => r.json()).then(d => { if (d && d.groups && d.groups.length) setLive(d); }).catch(() => {});
+  }, []);
   const groups = [
     { name:'CLOUD · subscription', items:[
       { name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$3 / $15 per M', latency:412 },
@@ -3268,19 +3279,20 @@ const ModelPicker = ({ setModel, onClose, model }) => {
       }}>
         <div style={{ padding:'12px 14px', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontSize:14 }}>⌕</span>
-          <input autoFocus placeholder="Search models or paste an OpenRouter id…" style={{
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search models or paste an OpenRouter id…" style={{
             flex:1, border:0, background:'transparent', color:LM.ink, fontSize:13.5, outline:'none', fontFamily:LM.sans,
           }}/>
+          <span style={{ fontFamily:LM.mono, fontSize:9, color: live ? LM.ok : LM.inkMuted, letterSpacing:'0.12em' }}>{live ? ('LIVE · ' + live.count) : 'OFFLINE LIST'}</span>
           <kbd style={kbd()}>esc</kbd>
         </div>
         <div className="ah-scroll" style={{ maxHeight:420, overflow:'auto', padding:'6px 8px 10px' }}>
-          {groups.map(g => (
+          {(live ? live.groups : groups).map(g => ({ ...g, items: g.items.filter(m => !q || (m.name + ' ' + m.route + ' ' + (m.vendor||'')).toLowerCase().includes(q.toLowerCase())).slice(0, q ? 60 : 40) })).filter(g => g.items.length).map(g => (
             <div key={g.name} style={{ marginTop:LM.sp.sm }}>
               <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', padding:'4px 10px' }}>{g.name}</div>
               {g.items.map(m => {
                 const sel = m.name === model.name;
                 return (
-                  <div key={m.name} onClick={() => { setModel(m); onClose(); }} style={{
+                  <div key={m.route || m.name} onClick={() => { setModel(m); onClose(); }} style={{
                     display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:LM.rad.md, cursor:'pointer',
                     background: sel ? LM.bgSoft : 'transparent',
                   }}
@@ -3291,7 +3303,7 @@ const ModelPicker = ({ setModel, onClose, model }) => {
                       <div style={{ fontSize:13 }}>{m.name}</div>
                       <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.vendor} · ctx {m.ctx} · {m.cost}</div>
                     </div>
-                    <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.ok }}>{m.latency}ms</span>
+                    {m.latency != null && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.ok }}>{m.latency}ms</span>}
                     <span style={{
                       fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.08em',
                       background: m.tag==='CLOUD'?LM.accentDim : m.tag==='LOCAL'?LM.ok+'22' : LM.cyan+'22',

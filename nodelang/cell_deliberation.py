@@ -1158,11 +1158,13 @@ def append_deliberation_entry(
     return read_deliberation_entry(store.snapshot(), protocol, prepared.root_id)
 
 
-# One ledger payload may hold this many cells. A structured receipt (status,
-# counts, ids, digests) is tens of cells; the Core Values authority report,
-# which its reader validates whole from the ledger, is 688; the hook-coverage
-# dump that grew the founder's graph to 4.29 GB was ~2,180 per audit.
-_DELIBERATION_PAYLOAD_CELL_LIMIT = 1_000
+# One ledger payload may hold this many cells. Measured on the real payloads
+# (2026-09-05): a structured receipt is tens of cells; the Core Values authority
+# report, validated whole from the ledger by its reader, is 688; a hook-coverage
+# report slimmed to one status per client and the one touchpoint the write gate
+# reads is ~1,230 (the cell encoding spends ~5 cells per scalar); the full
+# per-hook dump that grew the founder's graph to 4.29 GB was ~2,180 per audit.
+_DELIBERATION_PAYLOAD_CELL_LIMIT = 1_500
 
 
 @with_relation_projection_scope

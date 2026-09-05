@@ -897,6 +897,9 @@ def create_baboom_native_companion_window(
             a = menu.addMenu("Agents: %d working" % len(agents))
             for row in agents[:8]:
                 a.addAction("%s on: %s" % (row.get("agent"), row.get("title")), lambda: self._say("show governed work"))
+            a.addAction("Who is online", lambda: self._say("agents"))
+            a.addAction("Tell an agent...", lambda: self._prefill("tell codex: "))
+            a.addAction("Interrupt an agent...", lambda: self._prefill("interrupt codex"))
             a.addAction("Queue work for the agents...", lambda: self._prefill("Assign task: "))
             a.addAction("Send a task to a model...", lambda: self._prefill("assign task to claude: "))
             k = menu.addMenu("Know")

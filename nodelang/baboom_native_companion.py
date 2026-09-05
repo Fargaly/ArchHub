@@ -196,10 +196,11 @@ _BABOOM_ACT_PROMPTS = {
     "agent-message": ("Send this to the agent?", "Send it to the agent"),
     "agent-interrupt": ("Interrupt that agent?", "Interrupt the agent"),
     "restart-to-update": ("Restart ArchHub to install it?", "Restart and install"),
+    "open-host": ("Open it from ArchHub?", "Open the host"),
 }
 _BABOOM_ACT_GLYPHS = {
     "assign-task": "+", "run-engine": "▸", "agent-message": "→",
-    "agent-interrupt": "■", "restart-to-update": "↻",
+    "agent-interrupt": "■", "restart-to-update": "↻", "open-host": "△",
 }
 _BABOOM_ACT_PROGRESS = {
     "assign-task": "Creating task...", "run-engine": "Running on the graph...",
@@ -902,6 +903,10 @@ def create_baboom_native_companion_window(
             a.addAction("Interrupt an agent...", lambda: self._prefill("interrupt codex"))
             a.addAction("Queue work for the agents...", lambda: self._prefill("Assign task: "))
             a.addAction("Send a task to a model...", lambda: self._prefill("assign task to claude: "))
+            h = menu.addMenu("Hosts: open with ArchHub")
+            for label, host in (("Excel", "excel"), ("Word", "word"), ("PowerPoint", "powerpoint"), ("Outlook", "outlook"),
+                                ("Rhino (with bridge)", "rhino"), ("Blender (with add-on)", "blender")):
+                h.addAction(label, (lambda hh=host: self._say("open " + hh)))
             k = menu.addMenu("Know")
             for label, phrase in (("Status", "status"), ("Brief me on ArchHub", "brief me on archhub"), ("What matters now", "what matters now"),
                                   ("Workshop report", "workshop report"), ("Model council", "model council"), ("My meetings", "check my meetings"),

@@ -294,3 +294,83 @@ ENGINES = {
 }
 
 __all__ = ["ENGINES", "probe_host_rows", "probe_catalogue_rows"]
+
+
+# ---------------------------------------------------------------- open --
+
+_OFFICE_PROGIDS = {
+    "excel": "Excel.Application", "word": "Word.Application",
+    "powerpoint": "PowerPoint.Application", "outlook": "Outlook.Application",
+}
+_RHINO_EXES = (r"C:\Program Files\Rhino 8\System\Rhino.exe", r"C:\Program Files\Rhino 7\System\Rhino.exe")
+_BLENDER_ROOT = Path(r"C:\Program Files\Blender Foundation")
+
+
+def _bridges_dir() -> Path:
+    """The bridge scripts the installer ships beside the app (bridges/<host>)."""
+    return Path(__file__).resolve().parent.parent / "bridges"
+
+
+def _blender_exe() -> str | None:
+    if not _BLENDER_ROOT.is_dir():
+        return None
+    found = sorted(_BLENDER_ROOT.glob("Blender */blender.exe"))
+    return str(found[-1]) if found else None
+
+
+def open_host(host: str, *, popen=None, dispatch=None) -> dict:
+    """Bring one INSTALLED host to CONNECTED, the way the founder would by hand.
+
+    Office: open it through COM (the reads answer once it is open). Rhino:
+    launch it running the shipped ArchHub bridge script, which binds :9879.
+    Blender: launch it with the shipped add-on registered, which binds :9876.
+    3ds Max needs the MaxMCP plug-in, which this build does not ship -- said
+    plainly. Nothing here pretends: the state reported is the next probe's.
+    """
+    host = str(host or "").strip().casefold()
+    popen = popen or subprocess.Popen
+    if host in _OFFICE_PROGIDS:
+        try:
+            import pythoncom  # type: ignore
+            import win32com.client as client  # type: ignore
+            pythoncom.CoInitialize()
+            if dispatch is None:
+                dispatch = client.Dispatch
+            app = dispatch(_OFFICE_PROGIDS[host])
+            if host != "outlook":
+                try:
+                    app.Visible = True
+                except Exception:
+                    pass
+            return {"ok": True, "host": host, "action": "opened via COM", "state": "connected"}
+        except Exception as exc:
+            return {"ok": False, "host": host, "error": "%s: %s" % (type(exc).__name__, exc)}
+    if host == "rhino":
+        exe = next((p for p in _RHINO_EXES if Path(p).exists()), None)
+        script = _bridges_dir() / "rhino" / "archhub_mcp.py"
+        if exe is None:
+            return {"ok": False, "host": host, "error": "Rhino is not installed"}
+        if not script.is_file():
+            return {"ok": False, "host": host, "error": "the Rhino bridge script did not ship (%s)" % script}
+        if _running(("Rhino.exe",)):
+            return {"ok": False, "host": host, "state": "running",
+                    "error": 'Rhino is already open without the bridge; in Rhino run: _-RunPythonScript "%s"' % script}
+        popen([exe, "/nosplash", '/runscript=_-RunPythonScript "%s"' % script], close_fds=True,
+              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {"ok": True, "host": host, "action": "launched with the ArchHub bridge (:9879)", "state": "launching"}
+    if host == "blender":
+        exe = _blender_exe()
+        addon = _bridges_dir() / "blender" / "archhub_mcp" / "__init__.py"
+        if exe is None:
+            return {"ok": False, "host": host, "error": "Blender is not installed"}
+        if not addon.is_file():
+            return {"ok": False, "host": host, "error": "the Blender add-on did not ship (%s)" % addon}
+        if _running(("blender.exe",)):
+            return {"ok": False, "host": host, "state": "running",
+                    "error": "Blender is already open without the add-on; enable ArchHub MCP Bridge in Edit > Preferences > Add-ons (%s)" % addon.parent}
+        boot = "import sys; sys.path.insert(0, %r); import archhub_mcp; archhub_mcp.register()" % str(addon.parent.parent)
+        popen([exe, "--python-expr", boot], close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return {"ok": True, "host": host, "action": "launched with the ArchHub add-on (:9876)", "state": "launching"}
+    if host == "max":
+        return {"ok": False, "host": host, "error": "3ds Max connects through the MaxMCP plug-in on :48886, which this build does not ship"}
+    return {"ok": False, "host": host, "error": "no way to open %r from ArchHub" % host}

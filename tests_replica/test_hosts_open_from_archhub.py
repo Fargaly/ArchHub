@@ -35,19 +35,35 @@ def test_open_host_is_an_act_baboom_asks_before_and_then_performs():
     assert "_open_host(str(command[\"payload\"]))" in src
 
 
-def test_office_opens_through_com_and_becomes_visible():
-    seen = {}
+def test_office_opens_visible_kept_alive_and_registered(monkeypatch):
+    # Measured on the founder's machine: EXCEL.EXE launched as a process never
+    # registered in the running-object table (Excel registers only after it
+    # loses focus) and a bare COM Dispatch quit the moment the reference
+    # dropped. Visible + UserControl + one workbook registered in 1 s, was seen
+    # from a separate process and survived release. That recipe is the law here.
+    class Docs:
+        Count = 0
+        def Add(self):
+            self.Count += 1
     class App:
-        Visible = False
+        def __init__(self):
+            self.Workbooks = Docs(); self.Visible = False; self.UserControl = False
+    made = []
     def dispatch(progid):
-        seen["progid"] = progid
-        return App()
-    try:
-        import win32com.client  # noqa: F401
-    except Exception:
-        return  # pywin32 absent on this runner: the COM branch cannot be exercised
-    out = hb.open_host("excel", dispatch=dispatch)
-    assert out["ok"] and seen["progid"] == "Excel.Application" and out["state"] == "connected"
+        made.append(progid); made.append(App()); return made[-1]
+    alive = {"n": 0}
+    def com_alive(progid):
+        alive["n"] += 1
+        return alive["n"] > 2  # not before the open, not at once, then registered
+    out = hb.open_host("excel", dispatch=dispatch, com_alive=com_alive, wait_s=5)
+    app = made[1]
+    assert made[0] == "Excel.Application" and app.Visible is True and app.UserControl is True and app.Workbooks.Count == 1
+    assert out["ok"] and out["state"] == "connected"
+    again = hb.open_host("excel", dispatch=lambda p: made.append("no"), com_alive=lambda p: True)
+    assert again["action"] == "already open" and made[-1] is app
+    src = inspect.getsource(hb.open_host)
+    office = src.split("if host in _OFFICE_PROGIDS:")[1].split('if host == "rhino"')[0]
+    assert "popen(" not in office  # Office is never launched as a bare process (it would not register)
 
 
 def test_rhino_and_blender_launch_with_the_shipped_bridge(monkeypatch, tmp_path):

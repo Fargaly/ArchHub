@@ -382,12 +382,34 @@ def _brain_answers(port=8473, timeout=1.5) -> bool:
             body = refusal.read(4096).decode("utf-8", "replace")
         except Exception:
             return False
-    except Exception:
+    except Exception as unanswered:
+        # A BUSY brain is not an absent one. The daemon serves every agent on
+        # this machine and a heavy tool call holds it for tens of seconds; a
+        # short probe that timed out was read as "no brain" and the watchdog
+        # started another one, twice in a row (2026-09-06 launcher.log). When
+        # something still holds the port, leave it alone: only an unheld port,
+        # or a listener that answers and is not MCP, means start our own.
+        if isinstance(unanswered, (TimeoutError, OSError)) and _port_held(port):
+            return True
         return False
     if "jsonrpc" not in body:
         return False
     return any(mark in body for mark in
                ("protocolVersion", "serverInfo", "capabilities", '"error"'))
+
+
+def _port_held(port) -> bool:
+    """Whether anything at all is listening there, in a few milliseconds."""
+    import socket as _sk
+
+    probe = _sk.socket()
+    probe.settimeout(0.4)
+    try:
+        return probe.connect_ex(("127.0.0.1", int(port))) == 0
+    except Exception:
+        return False
+    finally:
+        probe.close()
 
 
 def _ensure_brain() -> str:

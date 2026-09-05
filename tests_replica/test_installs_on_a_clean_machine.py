@@ -199,13 +199,17 @@ def launcher_function(name: str):
     definition is lifted out of the source and executed on its own.
     """
     tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"), str(LAUNCHER))
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            namespace = {}
-            exec(compile(ast.Module(body=[node], type_ignores=[]),
-                         str(LAUNCHER), "exec"), namespace)
-            return namespace[name]
-    raise AssertionError("%s is no longer defined in %s" % (name, LAUNCHER.name))
+    # Every top-level def, not just the one asked for: these functions call
+    # each other (_brain_answers asks _port_held whether anything still holds
+    # the port), and lifting one alone gave a NameError at call time rather
+    # than a failure anyone could read.
+    defs = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    if not any(node.name == name for node in defs):
+        raise AssertionError("%s is no longer defined in %s" % (name, LAUNCHER.name))
+    namespace = {}
+    exec(compile(ast.Module(body=defs, type_ignores=[]),
+                 str(LAUNCHER), "exec"), namespace)
+    return namespace[name]
 
 
 def test_a_held_port_says_so_instead_of_exiting_in_silence():
@@ -343,3 +347,44 @@ def test_the_brain_check_accepts_an_answer_in_mcp():
 def test_the_brain_check_says_no_when_nothing_is_listening():
     answers = launcher_function("_brain_answers")
     assert answers(_free_port(), 1.0) is False
+
+
+def test_a_busy_brain_is_never_mistaken_for_an_absent_one():
+    """The watchdog started a second brain while the first was merely busy.
+
+    launcher.log, 2026-09-06: "brain : started, not answering yet on :8473
+    (watchdog)" twice in a row. The MCP probe is short by design, and a daemon
+    in the middle of a heavy tool call cannot answer inside it. This stands up
+    a real listener that accepts and never replies, which is exactly what a
+    busy daemon looks like from outside, and requires the probe to leave it be.
+    """
+    import ast as _ast
+    import socket
+
+    source = LAUNCHER.read_text(encoding="utf-8")
+    tree = _ast.parse(source, str(LAUNCHER))
+    wanted = {"_brain_answers", "_port_held"}
+    body = [node for node in tree.body
+            if isinstance(node, _ast.FunctionDef) and node.name in wanted]
+    assert {node.name for node in body} == wanted, sorted(n.name for n in body)
+    namespace = {}
+    exec(compile(_ast.Module(body=body, type_ignores=[]), str(LAUNCHER), "exec"),
+         namespace)
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    # A real daemon keeps accepting while it works. A backlog of one would
+    # make the probe's own abandoned connection look like a closed port, which
+    # is the test's artefact and not the behaviour under test.
+    listener.listen(16)
+    port = listener.getsockname()[1]
+    try:
+        assert namespace["_port_held"](port) is True
+        assert namespace["_brain_answers"](port=port, timeout=0.4) is True, (
+            "a listener that accepts and never answers is a BUSY brain")
+    finally:
+        listener.close()
+
+    assert namespace["_port_held"](port) is False
+    assert namespace["_brain_answers"](port=port, timeout=0.4) is False, (
+        "nothing holds the port: start our own brain")

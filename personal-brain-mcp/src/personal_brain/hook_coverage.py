@@ -866,6 +866,56 @@ def audit(
     return report
 
 
+# The touchpoints a reader consults from the LEDGER copy of a report (the
+# runtime write gate). Every other touchpoint's detail stays in the return
+# value: with all of them the slim report was still 1,659 cells.
+_LEDGER_TOUCHPOINTS = frozenset(('workshop_authority',))
+
+
+def _status_only(report) -> dict:
+    """The verdict of a report and one status per client -- for the `before`
+    side of a repair, which no reader validates back into the model."""
+    dumped = report.model_dump(mode="json") if hasattr(report, "model_dump") else dict(report or {})
+    return {
+        "status": str(dumped.get("status") or ""),
+        "clients": {
+            str(name): {"status": str((client or {}).get("status") or "")}
+            for name, client in (dumped.get("clients") or {}).items()
+            if isinstance(client, dict)
+        },
+    }
+
+
+def _slim_report(report) -> dict:
+    """A HookCoverageReport the ledger can hold: every verdict, none of the
+    per-hook detail. The readers validate the payload back into the model, so
+    the shape stays the model's; the heavy per-client collections (touchpoints,
+    config paths and hashes, schema evidence) are the ~2,000 cells an audit used
+    to append and they stay in the call's return value."""
+    dumped = report.model_dump(mode="json") if hasattr(report, "model_dump") else dict(report or {})
+    clients = {}
+    for name, client in (dumped.get("clients") or {}).items():
+        if not isinstance(client, dict):
+            continue
+        slim = dict(client)
+        # touchpoints stay (the runtime write gate reads
+        # touchpoints["workshop_authority"].installed from the ledger); only
+        # their evidence lists -- the bulk -- are dropped.
+        slim["touchpoints"] = {
+            str(name): {**dict(point), "evidence": []}
+            for name, point in (client.get("touchpoints") or {}).items()
+            if isinstance(point, dict) and str(name) in _LEDGER_TOUCHPOINTS
+        }
+        slim["config_paths"] = []
+        slim["config_hashes"] = {}
+        slim["schema_evidence"] = []
+        slim["issues"] = [str(item)[:160] for item in (client.get("issues") or [])[:8]]
+        clients[str(name)] = slim
+    dumped["clients"] = clients
+    dumped["issues"] = [str(item)[:160] for item in (dumped.get("issues") or [])[:16]]
+    return dumped
+
+
 def audit_cell_first(
     store: "BrainStore",
     *,
@@ -906,19 +956,17 @@ def audit_cell_first(
         # The graph records that the audit ran, its verdict and a digest that
         # ties back to the full report; the report itself is this call's return
         # value and lives in the brain, which is where it is read from.
-        receipt = {
+        receipt = _slim_report(report_payload)
+        receipt.update({
             "event_type": report_payload["event_type"],
             "source": report_payload["source"],
-            "owner_user": owner_user,          # the history readers filter on it
+            "owner_user": owner_user,
             "audit_id": audit_id,
-            "status": str(report.status),
-            "last_audited_at": str(report_payload["last_audited_at"]),
             "only": list(only or []),
-            "client_count": len(report_payload.get("clients") or {}),
             "report_sha256": hashlib.sha256(
                 json.dumps(report_payload, sort_keys=True, default=str).encode("utf-8")
             ).hexdigest(),
-        }
+        })
         created = runtime.deliberation_append(
             space=CELL_CONTROL_LEDGER_ROOT,
             category=CELL_COMPLIANCE_CATEGORY_ROOT,
@@ -1120,7 +1168,7 @@ def repair_cell_first(
                 "before_sha256": hashlib.sha256(
                     json.dumps(before.model_dump(mode="json"), sort_keys=True, default=str).encode("utf-8")
                 ).hexdigest(),
-                "before_status": str(before.status),
+                "before": _status_only(before),
             },
             idempotency_key="hook-coverage-repair-request:%s" % repair_id,
             created_at=requested_at,
@@ -1151,8 +1199,8 @@ def repair_cell_first(
                 # Digests, not the reports: the graph records that the repair
                 # ran and what it changed the verdict to; the reports are this
                 # call's return value.
-                "before_status": str(before.status),
-                "after_status": str(after.status),
+                "before": _status_only(before),
+                "after": _slim_report(after),
                 "before_sha256": hashlib.sha256(
                     json.dumps(before.model_dump(mode="json"), sort_keys=True, default=str).encode("utf-8")
                 ).hexdigest(),

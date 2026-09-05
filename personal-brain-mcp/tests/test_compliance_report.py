@@ -93,7 +93,7 @@ def test_compliance_report_combines_hook_work_cde_and_gate(
     audit = hc.audit_cell_first(
         store, only=["codex"], owner_user="founder", cell_bridge=bridge
     )
-    assert audit["ok"] is True
+    assert audit["ok"] is True, audit.get("error")
     aw.add_leaves(store, owner_user="founder", leaves=[{
         "title": "home topbar from nodes",
         "gate_kind": "cdp",

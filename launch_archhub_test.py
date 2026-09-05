@@ -311,6 +311,14 @@ def _ensure_brain() -> str:
     if not (app_dir / "personal_brain" / "__init__.py").is_file():
         return "no brain package shipped beside this launcher"
     env = dict(os.environ); env["PYTHONPATH"] = str(app_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    # The brain's Workshop tools need the governed workspace root. A machine
+    # that has one (the founder's 00.ARCHUB) gets it; a stranger's install
+    # has none and the brain keeps those tools fail-closed, as it should.
+    if not env.get("ARCHHUB_WORKSPACE_ROOT"):
+        for candidate in (Path.home() / "00.ARCHUB", Path(os.environ.get("USERPROFILE", "")) / "00.ARCHUB"):
+            if (candidate / "AGENTS.md").is_file():
+                env["ARCHHUB_WORKSPACE_ROOT"] = str(candidate)
+                break
     windowless = Path(sys.executable).with_name("pythonw.exe")
     exe = str(windowless if windowless.exists() else sys.executable)
     # The daemon's own words survive it: a crash leaves its last lines in

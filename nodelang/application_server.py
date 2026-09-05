@@ -4506,6 +4506,25 @@ class ApplicationServer:
                                      + str(exc),
                         })
                         return
+                if parsed.path == '/api/universal/models':
+                    # The model picker's list, read live: the founder's cloud,
+                    # OpenRouter's public catalogue with real prices, and the
+                    # local runtimes -- never a table typed in 2025.
+                    try:
+                        self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    try:
+                        from .model_catalogue import live_model_groups
+                        from .cloud_relay import load_cloud_session
+                        appdata = os.environ.get('APPDATA', '')
+                        session = load_cloud_session(Path(appdata)) if appdata else None
+                        self._json(200, live_model_groups(session))
+                    except Exception as exc:
+                        self._json(200, {'ok': False, 'live': False, 'groups': [], 'count': 0,
+                                         'error': str(exc)[:200]})
+                    return
                 if parsed.path == '/api/universal/hosts':
                     # The live machine, honestly: which hosts answer right
                     # now. A port scan of the published broker range, never
@@ -8523,6 +8542,7 @@ class ApplicationServer:
             ("GET", "/api/universal/devices"),
             ("GET", "/api/universal/runtime-handoff-readiness"),
             ("GET", "/api/universal/runtime-backend"),
+            ("GET", "/api/universal/models"),
             ("GET", "/api/universal/baboom-context"),
             ("GET", "/api/universal/baboom-presence"),
             ("GET", "/api/universal/baboom-native-frame"),

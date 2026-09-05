@@ -287,49 +287,49 @@ const LM_LIBRARY = [
     { id:'r_ppt_slides', title:'powerpoint slides', sub:'slides of the deck in front', engine:'office.read', params:{ operation:'powerpoint.list_slides' } },
   ]},
   { cat:'filter', items:[
-    { id:'f_type',  title:'where type',      sub:'by family/type' },
-    { id:'f_cat',   title:'where category',  sub:'by Revit category' },
-    { id:'f_level', title:'where level',     sub:'by level reference' },
-    { id:'f_param', title:'where parameter', sub:'predicate on a parameter' },
-    { id:'f_pred',  title:'where custom',    sub:'arbitrary JS predicate' },
+    { id:'f_type',  title:'where type',      sub:'by family/type' , engine:'library.filter_field'},
+    { id:'f_cat',   title:'where category',  sub:'by Revit category' , engine:'library.filter_field'},
+    { id:'f_level', title:'where level',     sub:'by level reference' , engine:'library.filter_field'},
+    { id:'f_param', title:'where parameter', sub:'predicate on a parameter' , engine:'library.filter_compare'},
+    { id:'f_pred',  title:'where custom',    sub:'arbitrary JS predicate' , engine:'library.filter_rule'},
   ]},
   { cat:'transform', items:[
-    { id:'t_setp',  title:'set parameter',   sub:'mutates parameter values' },
-    { id:'t_move',  title:'move',            sub:'translation' },
-    { id:'t_rot',   title:'rotate',          sub:'rotation' },
-    { id:'t_scale', title:'scale',           sub:'uniform / per-axis' },
-    { id:'t_group', title:'group by',        sub:'key → list' },
-    { id:'t_sort',  title:'sort by',         sub:'asc / desc on key' },
+    { id:'t_setp',  title:'set parameter',   sub:'mutates parameter values' , engine:'library.set_field'},
+    { id:'t_move',  title:'move',            sub:'translation' , engine:'library.move'},
+    { id:'t_rot',   title:'rotate',          sub:'rotation' , engine:'library.rotate'},
+    { id:'t_scale', title:'scale',           sub:'uniform / per-axis' , engine:'library.scale'},
+    { id:'t_group', title:'group by',        sub:'key → list' , engine:'library.group_by'},
+    { id:'t_sort',  title:'sort by',         sub:'asc / desc on key' , engine:'library.sort_by'},
   ]},
   { cat:'annotate', items:[
-    { id:'a_dims',  title:'create_dimensions', sub:'aligned, parallel, baseline' },
-    { id:'a_tags',  title:'place_tags',         sub:'tag per element + leader' },
-    { id:'a_text',  title:'add_text',           sub:'text note · positioned' },
-    { id:'a_rooms', title:'tag_rooms',          sub:'room boundaries + names' },
+    { id:'a_dims',  title:'create_dimensions', sub:'aligned, parallel, baseline' , engine:'library.dimensions'},
+    { id:'a_tags',  title:'place_tags',         sub:'tag per element + leader' , noEngine:true},
+    { id:'a_text',  title:'add_text',           sub:'text note · positioned' , engine:'library.add_text'},
+    { id:'a_rooms', title:'tag_rooms',          sub:'room boundaries + names' , noEngine:true},
   ]},
   { cat:'compose', items:[
-    { id:'c_sched', title:'build_schedule',  sub:'table from a stream' },
-    { id:'c_sheet', title:'place_on_sheet',  sub:'lay views onto a sheet' },
-    { id:'c_legend',title:'make_legend',     sub:'symbol legend block' },
+    { id:'c_sched', title:'build_schedule',  sub:'table from a stream' , engine:'library.build_schedule'},
+    { id:'c_sheet', title:'place_on_sheet',  sub:'lay views onto a sheet' , noEngine:true},
+    { id:'c_legend',title:'make_legend',     sub:'symbol legend block' , engine:'library.make_legend'},
   ]},
   { cat:'logic', items:[
-    { id:'l_if',     title:'if',     sub:'predicate → true / false branches' },
-    { id:'l_switch', title:'switch', sub:'multi-branch on a key' },
-    { id:'l_loop',   title:'loop',   sub:'iterate over a list' },
-    { id:'l_merge',  title:'merge',  sub:'concat / dedupe streams' },
+    { id:'l_if',     title:'if',     sub:'predicate → true / false branches' , engine:'library.if'},
+    { id:'l_switch', title:'switch', sub:'multi-branch on a key' , engine:'library.switch'},
+    { id:'l_loop',   title:'loop',   sub:'iterate over a list' , engine:'library.loop'},
+    { id:'l_merge',  title:'merge',  sub:'concat / dedupe streams' , engine:'library.merge'},
   ]},
   { cat:'ai', items:[
-    { id:'i_think', title:'think',  sub:'Claude reasoning · sonnet/opus/haiku' },
-    { id:'i_vis',   title:'vision', sub:'parse a sketch / screenshot' },
-    { id:'i_match', title:'match_skill', sub:'find best saved skill for intent' },
-    { id:'i_embed', title:'embed',  sub:'vectorize · similarity search' },
+    { id:'i_think', title:'think',  sub:'Claude reasoning · sonnet/opus/haiku' , noEngine:true},
+    { id:'i_vis',   title:'vision', sub:'parse a sketch / screenshot' , noEngine:true},
+    { id:'i_match', title:'match_skill', sub:'find best saved skill for intent' , noEngine:true},
+    { id:'i_embed', title:'embed',  sub:'vectorize · similarity search' , noEngine:true},
   ]},
   { cat:'output', items:[
-    { id:'o_skill', title:'save_skill',     sub:'template this run' },
-    { id:'o_pdf',   title:'publish_pdf',    sub:'sheets → PDF set' },
-    { id:'o_spk',   title:'push_speckle',   sub:'commit to a branch' },
-    { id:'o_email', title:'send_email',     sub:'draft + send via Outlook' },
-    { id:'o_notify',title:'notify',         sub:'desktop / Teams ping' },
+    { id:'o_skill', title:'save_skill',     sub:'template this run' , engine:'library.save_skill'},
+    { id:'o_pdf',   title:'publish_pdf',    sub:'sheets → PDF set' , noEngine:true},
+    { id:'o_spk',   title:'push_speckle',   sub:'commit to a branch' , noEngine:true},
+    { id:'o_email', title:'send_email',     sub:'draft + send via Outlook' , noEngine:true},
+    { id:'o_notify',title:'notify',         sub:'desktop / Teams ping' , noEngine:true},
   ]},
 ];
 
@@ -337,7 +337,7 @@ const LM_LIBRARY = [
 const StudioLM = () => {
   const [openId, setOpenId] = React.useState(LM_SESSIONS[0]?.id || null);
   const [openTabs, setOpenTabs] = React.useState(LM_SESSIONS.slice(0, 3).map(s => s.id));
-  const [model, setModel] = React.useState({ name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', latency:412 });
+  const [model, setModel] = React.useState({ name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', routed:'openrouter/anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'BYO', ctx:'200k', col:'#cc785c', latency:412 });
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [account, setAccount] = React.useState(() => acLoad());
@@ -391,6 +391,14 @@ const StudioLM = () => {
         .catch(e => window.alert('not created: ' + (e && e.message || e)));
       return;
     }
+    if (libItem.noEngine) {
+      // A card with no engine used to land in this component's memory only:
+      // invisible to Run, never written to the graph, gone on the next reload.
+      // Say so instead of pretending it was placed.
+      window.alert(libItem.title + ' has no engine in this build, so it cannot run yet. '
+        + 'It would vanish on reload, so it is not placed.');
+      return;
+    }
     setUserNodes(ns => [...ns, newNode]);
     setFocusId(id);
   };
@@ -438,6 +446,10 @@ const StudioLM = () => {
         : <Home onOpen={openSession} model={model} setPickerOpen={setPickerOpen}/>}
       <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs}/>
       {pickerOpen && <ModelPicker setModel={setModel} onClose={() => setPickerOpen(false)} model={model}/>}
+      {/* Every ask box in the app reads the current choice from here, so a
+          box that was not handed a model still asks the model the founder
+          picked instead of falling through to a server default. */}
+      <ModelInWindow model={model}/>
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} account={account} setAccount={setAccount} onSignOut={signOut}/>}
       {signUpOpen && <SignUp onDone={(rec) => { setAccount(rec); setSignUpOpen(false); }} onCancel={() => setSignUpOpen(false)} plan={account.plan}/>}
       {booting && <AppBoot account={account} onDone={() => setBooting(false)}/>}
@@ -1021,13 +1033,18 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
         </>
       ) : (
         <>
-          <NodeCanvas focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}/>
+          <NodeCanvas focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
           <NodeRail node={focusNode}/>
         </>
       )}
     </main>
   );
 };
+
+// The string the server's router reads. The picker's rows carry `routed`
+// (the cloud and OpenRouter ids are the same shape, so the row says which);
+// older rows only have `route`.
+const modelRoute = (m) => String((m && (m.routed || m.route)) || '');
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
 const ChatView = ({ session, model, setMode }) => {
@@ -1056,7 +1073,7 @@ const ChatView = ({ session, model, setMode }) => {
     setDraft('');
     setBusy(true);
     try {
-      const answer = await window.ARCHHUB_AGENT(text, model?.route);
+      const answer = await window.ARCHHUB_AGENT(text, modelRoute(model));
       setMessages(m => [...m, { me:false, time:stamp(), text:answer }]);
     } catch (error) {
       setMessages(m => [...m, { me:false, time:stamp(),
@@ -1418,7 +1435,7 @@ const SOCKET_R = 5;
 
 const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
 
-const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary }) => {
+const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model }) => {
   const allNodes = React.useMemo(() => [...LM_GRAPH.nodes, ...userNodes], [userNodes]);
 
   // Persistent positions per node — initialized from node.x/y, then mutable via drag.
@@ -1657,7 +1674,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           return Math.max(0.3, Math.min(2, next));
         });
       }} onFit={onResetView} setLibraryOpen={setLibraryOpen}/>
-      <FloatingComposer setLibraryOpen={setLibraryOpen}/>
+      <FloatingComposer setLibraryOpen={setLibraryOpen} model={model}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }} onFit={onResetView} onClose={() => setCtxMenu(null)}/>}
       <CanvasHint/>
@@ -1841,18 +1858,36 @@ const Socket = ({ side, i, t, label }) => {
 // ─── per-category body content ───
 // The inline reply is a real ask: it reaches the same agent the main
 // composer does, and reports its answer where it was typed.
-const InlineAsk = ({ placeholder }) => {
+// The model the header picked is the model that answers, wherever the ask
+// box is. Two of the three ask boxes passed no model at all, so they fell
+// through to whatever the server defaulted to: the founder picked a local
+// model and a cloud one answered. When no model is handed in, the picker's
+// current choice on the window is used rather than a silent default.
+const ModelInWindow = ({ model }) => {
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') window.ARCHHUB_PICKED_MODEL = model;
+  }, [model]);
+  return null;
+};
+
+const InlineAsk = ({ placeholder, model, onAnswer }) => {
+  const picked = model || (typeof window !== 'undefined' ? window.ARCHHUB_PICKED_MODEL : null);
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
+  // The composer renders the answer itself; the older inline replies have
+  // nowhere to put it, so they keep showing it in the field.
+  const report = (line) => { if (onAnswer) onAnswer(line); else setState(String(line).slice(0, 60)); };
   const ask = async () => {
     const said = text.trim();
     if (!said || !window.ARCHHUB_AGENT) return;
-    setState('asking…');
+    report('asking ' + ((picked && picked.name) || 'the agent') + '…');
     try {
-      setState(String(await window.ARCHHUB_AGENT(said)).slice(0, 60));
+      // The model picked in the header is the model that answers.
+      const answer = String(await window.ARCHHUB_AGENT(said, modelRoute(picked)));
+      report(answer);
       setText('');
     } catch (error) {
-      setState('refused: ' + (error?.message || error));
+      report('refused: ' + ((error && error.message) || error));
     }
   };
   return (
@@ -2317,22 +2352,39 @@ const toolBtn = () => ({
 });
 
 // ─── floating composer (BOTTOM CENTER — always-bottom anchor) ───
-const FloatingComposer = ({ setLibraryOpen }) => (
-  <div data-no-pan style={{
-    position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
-    width:620, maxWidth:'82%',
-    background:LM.bgPanel, border:`1px solid ${LM.accent}66`,
-    borderRadius:9, boxShadow:`0 14px 30px rgba(0,0,0,.5), 0 0 0 3px ${LM.accentDim}`,
-    padding:'10px 13px',
-  }}>
-    <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
-      <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
-      <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4 }}/>
-      <InlineAsk placeholder="Reply, or ask the agent to build…"/>
-      <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+// This box used to ignore the model picker and drop the answer on the floor:
+// you typed, something happened somewhere, and nothing came back. It now asks
+// the model selected in the header and prints the reply above the field.
+const FloatingComposer = ({ setLibraryOpen, model }) => {
+  const [answer, setAnswer] = React.useState('');
+  return (
+    <div data-no-pan style={{
+      position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
+      width:620, maxWidth:'82%',
+      background:LM.bgPanel, border:`1px solid ${LM.accent}66`,
+      borderRadius:9, boxShadow:`0 14px 30px rgba(0,0,0,.5), 0 0 0 3px ${LM.accentDim}`,
+      padding:'10px 13px',
+    }}>
+      {answer && (
+        <div style={{
+          marginBottom:9, padding:'9px 11px', background:LM.bg,
+          border:`1px solid ${LM.line}`, borderRadius:7,
+          fontFamily:LM.sans, fontSize:12.5, lineHeight:1.55, color:LM.inkSoft,
+          maxHeight:190, overflow:'auto', whiteSpace:'pre-wrap',
+        }}>{answer}</div>
+      )}
+      <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
+        <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
+        <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4 }}/>
+        <InlineAsk placeholder="Reply, or ask the agent to build…" model={model} onAnswer={setAnswer}/>
+        <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+      </div>
+      <div style={{ marginTop:6, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>
+        → {modelRoute(model) || 'no model picked'}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ─── mini-map (TOP-RIGHT) ───
 const MiniMap = ({ pan, zoom, positions, allNodes }) => {
@@ -3249,7 +3301,8 @@ const ModelPicker = ({ setModel, onClose, model }) => {
   // The list is read LIVE from the app (/api/universal/models: the founder's
   // cloud, OpenRouter with real prices, LM Studio / Ollama on this machine);
   // the rows below are only what shows until that answer arrives or when the
-  // machine is offline.
+  // machine is offline. `routed` is what the router reads: a CLOUD row must
+  // reach the cloud, and a cloud id and an OpenRouter id look identical.
   const [live, setLive] = React.useState(null);
   const [q, setQ] = React.useState('');
   React.useEffect(() => {
@@ -3259,9 +3312,9 @@ const ModelPicker = ({ setModel, onClose, model }) => {
   }, []);
   const groups = [
     { name:'CLOUD · subscription', items:[
-      { name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$3 / $15 per M', latency:412 },
-      { name:'Claude Opus 4.1',   route:'anthropic/claude-opus-4.1',   vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$15 / $75 per M', latency:820 },
-      { name:'GPT-4o',            route:'openai/gpt-4o',               vendor:'OpenAI',    tag:'CLOUD', ctx:'128k', col:'#10a37f', cost:'$5 / $20 per M', latency:530 },
+      { name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', routed:'cloud/anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$3 / $15 per M', latency:412 },
+      { name:'Claude Opus 4.1',   route:'anthropic/claude-opus-4.1',   routed:'cloud/anthropic/claude-opus-4.1', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$15 / $75 per M', latency:820 },
+      { name:'GPT-4o',            route:'openai/gpt-4o',               routed:'cloud/openai/gpt-4o', vendor:'OpenAI',    tag:'CLOUD', ctx:'128k', col:'#10a37f', cost:'$5 / $20 per M', latency:530 },
     ]},
     { name:'BYO · OpenRouter', items:[
       { name:'DeepSeek R1', route:'deepseek/deepseek-r1', vendor:'OpenRouter', tag:'BYO', ctx:'128k', col:'#3a6acc', cost:'$0.55 / $2.20', latency:1450 },

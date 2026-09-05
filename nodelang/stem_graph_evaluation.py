@@ -409,3 +409,38 @@ def _run_graph_expression(node, held, feeds, display, results, pending):
     value = evaluate(expression_root, {source_name: feeds[source_name]})
     display[node.root_id] = _display(value)
     return {output_name: value}
+
+
+def run_stem_operation(
+    engine: str,
+    parameters: Mapping[str, object],
+    feeds: Mapping[str, object],
+) -> tuple[dict, str]:
+    """One stem engine's answer in the effect shape: (outputs, display line).
+
+    The node library and a wired graph must not disagree about what an
+    operation means. A second Python copy of "sort by" or "where" would
+    drift from this one the first time either is fixed, so the library's
+    engines reach this instead of restating the rules.
+
+    Raises ValueError carrying the evaluator's own refusal when the engine
+    cannot answer, so the caller reports the same reason the canvas would.
+    """
+    root = "stem"
+    node = StemNode(root_id=root, engine=str(engine), parameters=dict(parameters))
+    display: dict[str, str] = {}
+    results: dict[str, object] = {}
+    pending: dict[str, str] = {}
+    produced = _run_engine(node, feeds, display, results, pending)
+    if produced is None:
+        raise ValueError(pending.get(root) or "engine %s produced nothing" % engine)
+    return dict(produced), display.get(root, "")
+
+
+# The library's engines read the graph's values with the evaluator's own
+# rules; these names are the supported way in, so the private helpers stay
+# free to change shape without a second module breaking.
+coerce_parameter = _coerce
+as_list = _as_list
+item_field = _field
+display_value = _display

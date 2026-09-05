@@ -1,9 +1,17 @@
-"""One-file setup for a colleague's machine.
+"""First-run setup for a colleague's machine.
 
-The founder's laws apply to the people he hands this to: the
-application must open, and anything it needs installs itself or says
-plainly what is missing. Copied from the firm share, the package
-carries no mark-of-the-web, so Windows raises no SmartScreen warning.
+Nobody runs this file by hand. The colleague runs ArchHub-Setup.exe from
+the firm share; it installs into LOCALAPPDATA/ArchHub and leaves a
+Start-menu entry and a Desktop icon, both opening ArchHub.vbs. The FIRST
+time that icon is opened, ArchHub.vbs finds no .archhub-ready marker and
+hands over to ArchHub.bat, which runs this file in a window the person can
+read. When it returns zero the marker is written and ArchHub opens by
+itself; every later open goes straight to the application.
+
+The founder's laws apply to the people he hands this to: the application
+must open, and anything it needs installs itself or says plainly what is
+missing. Run from the firm share, the package carries no mark-of-the-web,
+so Windows raises no SmartScreen warning.
 """
 from __future__ import annotations
 
@@ -81,7 +89,13 @@ def main():
     # The installer owns the shortcuts (Start menu + Desktop, both opening
     # ArchHub.vbs). Writing a second one here put two different ArchHub
     # entries on the Desktop.
-    print("  ready. Double-click ArchHub on your Desktop.")
+    #
+    # ArchHub.bat opens the application itself the moment this returns zero.
+    # Telling the person to go and double-click something sent colleagues
+    # hunting for an icon while the app was already coming up behind them.
+    print("  ready. ArchHub is opening now.")
+    print("  Next time, open it from the ArchHub icon on your Desktop"
+          " or in the Start menu.")
     return 0
 
 

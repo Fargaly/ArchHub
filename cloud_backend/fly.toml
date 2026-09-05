@@ -9,6 +9,7 @@ primary_region = 'ord'
 [build]
 
 [env]
+  ARCHHUB_VERSION = "0"
   # ENV not set here. config.py._req() raises on missing required keys
   # when ENV=production; we leave it unset so healthz returns 200 even
   # before STRIPE_/ANTHROPIC_API_KEY etc. are added. Promote later via

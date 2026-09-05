@@ -239,6 +239,16 @@ def _t_audit_recent(args: dict) -> dict:
     return {"actions": db.recent_founder_actions(limit)}
 
 
+def _t_app_command(args: dict) -> dict:
+    """Put one utterance to the founder's RUNNING application (BABOOM answers)."""
+    import app_relay
+    utterance = str(args.get("utterance") or "").strip()
+    if not utterance:
+        return {"ok": False, "error": "empty_utterance"}
+    return app_relay.relay(utterance, actor="cockpit-agent",
+                           execute=bool(args.get("execute")))
+
+
 # ---- GATED-WRITE preview + execute ----------------------------------------
 def _w_set_plan_preview(args: dict) -> dict:
     email = str(args.get("email") or args.get("user_id") or "").strip()
@@ -409,6 +419,27 @@ def _w_flags_set_execute(args: dict) -> dict:
 # kind "write" → preview() returns the card; execute() applies after confirm.
 TOOLS: dict[str, dict] = {
     # ---- READ (run immediately) ----
+    "app_command": {
+        "kind": "read", "run": _t_app_command,
+        "desc": ("Ask or instruct the founder's RUNNING ArchHub application on "
+                 "his machine: its graph/canvas, BABOOM, the agents online "
+                 "(Codex/Claude/Gemini/OpenCode), hosts and brokers (Revit, "
+                 "AutoCAD, Rhino, Max, Blender, Office...), the brain, engines, "
+                 "work focus/plan/claim, updates. Use it for anything about what "
+                 "the founder is working on, e.g. 'what is blocked?', 'agents', "
+                 "'tell codex: review the PR', 'run engine geometry.area', "
+                 "'check the brain'. Set execute=true only when he asked to act."),
+        "params": {
+            "type": "object",
+            "properties": {
+                "utterance": {"type": "string",
+                              "description": "the instruction, in the founder's words"},
+                "execute": {"type": "boolean",
+                            "description": "true to act (send/run), false to ask"},
+            },
+            "required": ["utterance"],
+        },
+    },
     "users_find": {
         "kind": "read", "run": _t_users_find,
         "desc": "Search users by email substring or exact id (read-only).",
@@ -608,7 +639,10 @@ SYSTEM_PROMPT = (
     "cannot perform them. Never claim to have done a withheld action.\n"
     "4. Never reveal secrets, tokens, API keys, or raw SQL. You have no tool "
     "for those.\n"
-    "5. Be concise. Prefer doing the work over describing it."
+    "5. Be concise. Prefer doing the work over describing it.\n"
+    "6. The founder's RUNNING application (graph, BABOOM, agents on his "
+    "machine, hosts/brokers, brain, engines, his current work) is reached ONLY "
+    "through app_command; relay his words and return the app's answer verbatim."
 )
 
 

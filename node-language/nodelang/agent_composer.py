@@ -9,19 +9,14 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-import urllib.error
-import urllib.request
-from pathlib import Path
 from typing import Mapping
 
+from .model_router import route_chat
 from .universal_cell import InvalidCell
 
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_MODEL = os.environ.get(
     "ARCHHUB_AGENT_MODEL", "anthropic/claude-sonnet-4.5"
 )
-_FALLBACK_MODEL = "openai/gpt-4o"
 
 _SYSTEM = """You operate the ArchHub node canvas. Reply with ONE JSON object:
 {"actions":[...], "answer":"<one short sentence to the founder>"}
@@ -39,48 +34,24 @@ the founder's language. If the request needs no canvas change, return
 {"actions":[],"answer":"..."}."""
 
 
-def _load_openrouter_key() -> str:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    if key:
-        return key
-    # No machine-bound literal path: the production sibling is discovered
-    # relative to this repository, overridable by environment.
-    configured = os.environ.get("ARCHHUB_PRODUCTION_ROOT")
-    production = (
-        Path(configured)
-        if configured
-        else Path(__file__).resolve().parents[2] / "12.PRODUCTION"
-    )
-    if str(production) not in sys.path:
-        sys.path.insert(0, str(production))
-    from app import secrets_store  # noqa: PLC0415
-    key = secrets_store.load_api_key("openrouter") or ""
-    if len(key) < 20:
-        raise InvalidCell("no usable OpenRouter key for the agent composer")
-    return key
-
-
 def _chat(prompt: str, context_block: str, model: str) -> str:
-    body = json.dumps({
-        "model": model,
-        "max_tokens": 900,
-        "temperature": 0,
-        "messages": [
+    """The chosen route decides the endpoint, the payload and the key.
+
+    This used to be one hardcoded OpenRouter URL, so a local or cloud model
+    was answered by OpenRouter under another name. The router refuses instead
+    of substituting, and its refusal is one sentence fit to show a person.
+    """
+    answer = route_chat(
+        model,
+        [
             {"role": "system", "content": _SYSTEM},
             {"role": "user",
              "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
         ],
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        _OPENROUTER_URL, data=body, method="POST",
-        headers={
-            "Authorization": "Bearer " + _load_openrouter_key(),
-            "Content-Type": "application/json",
-        },
+        max_tokens=900,
+        temperature=0,
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        payload = json.loads(response.read())
-    return payload["choices"][0]["message"]["content"]
+    return str(answer["text"])
 
 
 def _canvas_context(projection: Mapping[str, object]) -> str:
@@ -136,13 +107,12 @@ def run_agent_composer(
         store, registry, authentication_context=authentication_context
     )
     context_block = _canvas_context(projection)
-    try:
-        # The picker is a ROUTER: the model the founder chose is the model
-        # that answers. Only its absence falls back to the default.
-        chosen = (model or "").strip() or _DEFAULT_MODEL
-        raw = _chat(prompt.strip(), context_block, chosen)
-    except urllib.error.HTTPError:
-        raw = _chat(prompt.strip(), context_block, _FALLBACK_MODEL)
+    # The picker is a ROUTER: the model the founder chose is the model that
+    # answers, at that model's own endpoint. Only its absence falls back to
+    # the default, and a provider that cannot be reached says so rather than
+    # being quietly replaced by another one.
+    chosen = (model or "").strip() or _DEFAULT_MODEL
+    raw = _chat(prompt.strip(), context_block, chosen)
     text = raw.strip()
     if text.startswith("```"):
         text = text[text.index("{"):text.rindex("}") + 1]

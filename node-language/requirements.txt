@@ -20,3 +20,20 @@ markdown-it-py>=4,<5
 pydantic>=2.0,<3
 anyio>=4.0,<5
 mcp>=1.27.2,<2
+
+# The desktop window itself. The launcher imports PyQt6.QtWidgets and
+# PyQt6.QtWebEngineWidgets before it can show anything, and QtWebEngine is a
+# SEPARATE distribution from PyQt6 -- listing only PyQt6 left a clean machine
+# with a setup that finished and an app that died on the WebEngine import,
+# no window and no message.
+PyQt6>=6.11,<7
+PyQt6-WebEngine>=6.11,<7
+# The ASGI server the universal cloud listener imports at module scope, so it
+# is reached on every boot, not only when a cloud route is used.
+uvicorn>=0.46,<1
+# Pipeline effect engines: DXF drafting and image work. Their imports are
+# guarded, so a machine without them still boots and reports the engines as
+# absent; they are listed because the setup installs from this file alone.
+ezdxf>=1.4,<2
+numpy>=2.4,<3
+opencv-python-headless>=4.13,<5

@@ -1,7 +1,12 @@
 ; ArchHub installer -- one double-click for a colleague.
 ;
-; It carries the application, checks for a usable Python, installs the
-; packages that are missing, and leaves a Start-menu and Desktop entry.
+; It carries the application, refuses plainly on a machine with no usable
+; Python, and leaves a Start-menu and Desktop entry. It does NOT install the
+; Python packages: the FIRST open of either shortcut runs ArchHub.bat, which
+; runs colleague_setup.py against requirements.txt in a window the person can
+; read, and only then opens the application. Saying the installer installed
+; them sent colleagues looking for a broken install when the real work had
+; simply not run yet.
 ; Not signed (code-signing is geo-blocked for the founder's region);
 ; distributed on the firm share. The setup never runs a bare-named program.
 
@@ -76,7 +81,9 @@ Name: "{group}\Uninstall ArchHub"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now"; Flags: postinstall nowait skipifsilent
+; The first open prepares the machine before any window appears; a plain
+; "Open ArchHub now" left people staring at a setup window they did not expect.
+Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open installs what it needs, in a window you can read)"; Flags: postinstall nowait skipifsilent
 
 [Code]
 function FindPython(): String;

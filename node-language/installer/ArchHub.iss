@@ -53,6 +53,8 @@ Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Flags: recursesubdirs ignore
 Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
 ; The personal brain daemon (:8473) every user gets; the launcher starts it when none answers.
 Source: "..\..\12.PRODUCTION\personal-brain-mcp\src\personal_brain\*"; DestDir: "{app}\personal_brain"; Flags: recursesubdirs ignoreversion
+Source: "..\..\12.PRODUCTION\payload\rhino\archhub_mcp.py"; DestDir: "{app}\bridges\rhino"; Flags: ignoreversion
+Source: "..\..\12.PRODUCTION\payload\blender\archhub_mcp\*"; DestDir: "{app}\bridges\blender\archhub_mcp"; Flags: recursesubdirs ignoreversion
 Source: "..\colleague_setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion

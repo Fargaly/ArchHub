@@ -311,10 +311,23 @@ def _ensure_brain() -> str:
     if not (app_dir / "personal_brain" / "__init__.py").is_file():
         return "no brain package shipped beside this launcher"
     env = dict(os.environ); env["PYTHONPATH"] = str(app_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    # The brain's Workshop tools need the governed workspace root. A machine
+    # that has one (the founder's 00.ARCHUB) gets it; a stranger's install
+    # has none and the brain keeps those tools fail-closed, as it should.
+    if not env.get("ARCHHUB_WORKSPACE_ROOT"):
+        for candidate in (Path.home() / "00.ARCHUB", Path(os.environ.get("USERPROFILE", "")) / "00.ARCHUB"):
+            if (candidate / "AGENTS.md").is_file():
+                env["ARCHHUB_WORKSPACE_ROOT"] = str(candidate)
+                break
     windowless = Path(sys.executable).with_name("pythonw.exe")
     exe = str(windowless if windowless.exists() else sys.executable)
+    # The daemon's own words survive it: a crash leaves its last lines in
+    # state_dir/brain.log instead of vanishing with a windowless process
+    # (2026-09-05: the brain went silent with nothing to read).
+    brain_log = open(state_dir / "brain.log", "ab")
     _sp.Popen([exe, "-m", "personal_brain.server", "--http", "8473"], env=env, cwd=str(app_dir), close_fds=True,
-              creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0))
+              stdin=_sp.DEVNULL, stdout=brain_log, stderr=brain_log,
+              creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(_sp, "CREATE_NO_WINDOW", 0))
     for _ in range(20):
         time.sleep(0.5)
         if _alive():
@@ -325,6 +338,32 @@ try:
     print("  brain      : %s" % _ensure_brain(), flush=True)
 except Exception as _brain_refusal:
     print("  brain      : not started -- %s" % _brain_refusal, flush=True)
+
+
+def _watch_brain() -> None:
+    """Keep the brain online for as long as ArchHub runs.
+
+    Starting it once at boot left the founder with a dead :8473 the moment
+    the daemon fell over (2026-09-05, 16:20). Every 20 s: if nothing answers
+    on the port, start it again and say so in the launch log.
+    """
+    import threading as _t
+    import time as _time
+
+    def loop() -> None:
+        while True:
+            _time.sleep(20)
+            try:
+                outcome = str(_ensure_brain())
+            except Exception as exc:
+                outcome = "watch failed (%s)" % str(exc)[:80]
+            if not outcome.startswith("answering"):
+                print("  brain      : %s (watchdog)" % outcome, flush=True)
+
+    _t.Thread(target=loop, name="archhub-brain-watch", daemon=True).start()
+
+
+_watch_brain()
 print("  URL:", server.bootstrap_url, flush=True)
 
 

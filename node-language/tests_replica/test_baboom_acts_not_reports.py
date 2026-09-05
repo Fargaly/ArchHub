@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_every_act_intent_is_declared_once():
     assert ua._BABOOM_ACT_INTENTS == {
         "assign-task", "run-engine", "agent-message", "agent-interrupt",
-        "restart-to-update",
+        "restart-to-update", "open-host",
     }
     catalogued = {intent for intent, _aliases in ua._BABOOM_COMMAND_SPECS}
     assert ua._BABOOM_ACT_INTENTS - {"assign-task"} <= catalogued

@@ -13,6 +13,7 @@ import json
 import os
 import socket
 import subprocess
+import time
 
 # The app is windowless (pythonw): a child console would POP UP on the founder's desktop
 # at every probe. Every spawn in this module carries this flag; a court asserts it.
@@ -302,6 +303,16 @@ _OFFICE_PROGIDS = {
     "excel": "Excel.Application", "word": "Word.Application",
     "powerpoint": "PowerPoint.Application", "outlook": "Outlook.Application",
 }
+# What keeps an automation-started Office instance alive after the reference
+# drops, and registered in the running-object table so the probe and the
+# reads can find it. Measured on the founder's machine: EXCEL.EXE launched as a
+# process never registered (Excel registers only after it loses focus); a
+# Dispatch made Visible with UserControl and one workbook registered in 1 s,
+# was seen from a separate process, and survived release.
+_OFFICE_KEEPALIVE = {
+    "excel": ("Workbooks", "UserControl"), "word": ("Documents", None),
+    "powerpoint": ("Presentations", None), "outlook": (None, None),
+}
 _RHINO_EXES = (r"C:\Program Files\Rhino 8\System\Rhino.exe", r"C:\Program Files\Rhino 7\System\Rhino.exe")
 _BLENDER_ROOT = Path(r"C:\Program Files\Blender Foundation")
 
@@ -318,10 +329,11 @@ def _blender_exe() -> str | None:
     return str(found[-1]) if found else None
 
 
-def open_host(host: str, *, popen=None, dispatch=None) -> dict:
+def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: float = 8.0) -> dict:
     """Bring one INSTALLED host to CONNECTED, the way the founder would by hand.
 
-    Office: open it through COM (the reads answer once it is open). Rhino:
+    Office: open it through COM, visible and kept alive, and wait for it to
+    register (the reads answer once it is open). Rhino:
     launch it running the shipped ArchHub bridge script, which binds :9879.
     Blender: launch it with the shipped add-on registered, which binds :9876.
     3ds Max needs the MaxMCP plug-in, which this build does not ship -- said
@@ -329,22 +341,37 @@ def open_host(host: str, *, popen=None, dispatch=None) -> dict:
     """
     host = str(host or "").strip().casefold()
     popen = popen or subprocess.Popen
+    com_alive = com_alive or _com_alive
     if host in _OFFICE_PROGIDS:
+        progid = _OFFICE_PROGIDS[host]
+        if com_alive(progid):
+            return {"ok": True, "host": host, "action": "already open", "state": "connected"}
         try:
-            import pythoncom  # type: ignore
-            import win32com.client as client  # type: ignore
-            pythoncom.CoInitialize()
             if dispatch is None:
+                import pythoncom  # type: ignore
+                import win32com.client as client  # type: ignore
+                pythoncom.CoInitialize()
                 dispatch = client.Dispatch
-            app = dispatch(_OFFICE_PROGIDS[host])
-            if host != "outlook":
-                try:
-                    app.Visible = True
-                except Exception:
-                    pass
-            return {"ok": True, "host": host, "action": "opened via COM", "state": "connected"}
+            app = dispatch(progid)
+            collection, keep = _OFFICE_KEEPALIVE[host]
+            if host == "outlook":
+                app.Session.GetDefaultFolder(6).Display()  # the inbox window keeps Outlook running
+            else:
+                app.Visible = True
+                if keep:
+                    setattr(app, keep, True)
+                docs = getattr(app, collection)
+                if docs.Count == 0:
+                    docs.Add()
+            del app
         except Exception as exc:
             return {"ok": False, "host": host, "error": "%s: %s" % (type(exc).__name__, exc)}
+        deadline = time.monotonic() + float(wait_s)
+        while time.monotonic() < deadline:
+            if com_alive(progid):
+                return {"ok": True, "host": host, "action": "opened, visible, kept alive", "state": "connected"}
+            time.sleep(0.5)
+        return {"ok": True, "host": host, "action": "opened, visible, kept alive", "state": "launching"}
     if host == "rhino":
         exe = next((p for p in _RHINO_EXES if Path(p).exists()), None)
         script = _bridges_dir() / "rhino" / "archhub_mcp.py"

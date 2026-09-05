@@ -4683,6 +4683,41 @@ def _start_http_runtime_services_after_bind(
     return thread
 
 
+def _hide_own_console() -> None:
+    """As a daemon, own no visible window -- whoever started us.
+
+    The daemon is spawned from several places (the launcher, the supervisor, a
+    scheduled task, a shell), and only some of them pass CREATE_NO_WINDOW. The
+    founder was interrupted mid-work by a console full of sync lines
+    (2026-09-05), so the fix lives where it cannot be forgotten: if this
+    process owns a console window, hide it. A console SHARED with a terminal
+    the person is using is left alone -- hiding that would take their shell
+    with it -- and ARCHHUB_BRAIN_CONSOLE=1 keeps the window for debugging.
+    """
+    import os
+    import sys
+
+    if sys.platform != "win32" or os.environ.get("ARCHHUB_BRAIN_CONSOLE") == "1":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        window = kernel32.GetConsoleWindow()
+        if not window:
+            return  # already windowless: nothing to hide
+        pid = ctypes.c_uint()
+        # A console hosting other processes belongs to a person, not to us.
+        owners = kernel32.GetConsoleProcessList((ctypes.c_uint * 8)(), 8)
+        if owners > 1:
+            return
+        ctypes.WinDLL("user32", use_last_error=True).GetWindowThreadProcessId(
+            window, ctypes.byref(pid))
+        ctypes.WinDLL("user32", use_last_error=True).ShowWindow(window, 0)  # SW_HIDE
+    except Exception:
+        pass  # a daemon never fails to start over a cosmetic window
+
+
 def main(argv: Optional[list[str]] = None) -> None:
     """Default CLI: stdio transport (matches Claude Code / Codex / Cursor)."""
     parser = argparse.ArgumentParser(
@@ -4715,6 +4750,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     args = parser.parse_args(argv)
     if args.http is not None and args.local_stdio:
         parser.error("--local-stdio cannot be combined with --http")
+
+    if args.http is not None:
+        _hide_own_console()
 
     if args.http is None and not args.local_stdio:
         # No-arg stdio is the cached-client compatibility path. It must never

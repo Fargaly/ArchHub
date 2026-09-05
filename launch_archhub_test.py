@@ -313,8 +313,13 @@ def _ensure_brain() -> str:
     env = dict(os.environ); env["PYTHONPATH"] = str(app_dir) + os.pathsep + env.get("PYTHONPATH", "")
     windowless = Path(sys.executable).with_name("pythonw.exe")
     exe = str(windowless if windowless.exists() else sys.executable)
+    # The daemon's own words survive it: a crash leaves its last lines in
+    # state_dir/brain.log instead of vanishing with a windowless process
+    # (2026-09-05: the brain went silent with nothing to read).
+    brain_log = open(state_dir / "brain.log", "ab")
     _sp.Popen([exe, "-m", "personal_brain.server", "--http", "8473"], env=env, cwd=str(app_dir), close_fds=True,
-              creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0))
+              stdin=_sp.DEVNULL, stdout=brain_log, stderr=brain_log,
+              creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(_sp, "CREATE_NO_WINDOW", 0))
     for _ in range(20):
         time.sleep(0.5)
         if _alive():
@@ -325,6 +330,32 @@ try:
     print("  brain      : %s" % _ensure_brain(), flush=True)
 except Exception as _brain_refusal:
     print("  brain      : not started -- %s" % _brain_refusal, flush=True)
+
+
+def _watch_brain() -> None:
+    """Keep the brain online for as long as ArchHub runs.
+
+    Starting it once at boot left the founder with a dead :8473 the moment
+    the daemon fell over (2026-09-05, 16:20). Every 20 s: if nothing answers
+    on the port, start it again and say so in the launch log.
+    """
+    import threading as _t
+    import time as _time
+
+    def loop() -> None:
+        while True:
+            _time.sleep(20)
+            try:
+                outcome = str(_ensure_brain())
+            except Exception as exc:
+                outcome = "watch failed (%s)" % str(exc)[:80]
+            if not outcome.startswith("answering"):
+                print("  brain      : %s (watchdog)" % outcome, flush=True)
+
+    _t.Thread(target=loop, name="archhub-brain-watch", daemon=True).start()
+
+
+_watch_brain()
 print("  URL:", server.bootstrap_url, flush=True)
 
 

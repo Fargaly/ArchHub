@@ -114,3 +114,13 @@ def test_the_app_lives_in_the_tray_and_closing_hides_it():
         assert label in src, label
     assert 'window.setWindowTitle("ArchHub")' in src
     assert "app.setQuitOnLastWindowClosed(False)" in src
+
+
+def test_the_launcher_keeps_the_brain_online_and_keeps_its_words():
+    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
+    # 2026-09-05 16:20 the daemon fell over and :8473 stayed dead until the next
+    # app boot; and it died with nothing to read.
+    assert "def _watch_brain()" in src and "\n_watch_brain()\n" in src
+    assert 'brain_log = open(state_dir / "brain.log", "ab")' in src
+    assert "stdout=brain_log, stderr=brain_log" in src
+    assert src.index("_watch_brain()\n") > src.index("def _ensure_brain()")

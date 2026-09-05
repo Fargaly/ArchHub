@@ -1404,6 +1404,23 @@ function AtlasCockpit() {
       });
     });
   };
+  // Every domain control relays through the same door the ask bar uses; the
+  // founder's running application answers (confirm=true = act).
+  var relayToApp = function relayToApp(command, execute) {
+    return fetch('/founder/api/command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        command: command,
+        confirm: !!execute
+      })
+    }).then(function (r) {
+      return r.json();
+    });
+  };
   var runNode = function runNode(id) {
     var RT = window.RT;
     var node = M.nodes.find(function (n) {
@@ -2664,6 +2681,7 @@ function AtlasCockpit() {
       onWatch: addWatcher
     });
   } else if (sel.domain) inspectPanel = /*#__PURE__*/React.createElement(DomainPanel, {
+    onRelay: relayToApp,
     M: M,
     domKey: sel.domain,
     DB: DB,

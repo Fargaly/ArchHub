@@ -1,8 +1,13 @@
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
+function _createForOfIteratorHelper(r, e) { var t = "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (!t) { if (Array.isArray(r) || (t = _unsupportedIterableToArray(r)) || e && r && "number" == typeof r.length) { t && (r = t); var _n = 0, F = function F() {}; return { s: F, n: function n() { return _n >= r.length ? { done: !0 } : { done: !1, value: r[_n++] }; }, e: function e(r) { throw r; }, f: F }; } throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); } var o, a = !0, u = !1; return { s: function s() { t = t.call(r); }, n: function n() { var r = t.next(); return a = r.done, r; }, e: function e(r) { u = !0, o = r; }, f: function f() { try { a || null == t["return"] || t["return"](); } finally { if (u) throw o; } } }; }
+function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
+function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
 function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
 function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
 function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
 function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
 function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
 function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
 function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
@@ -259,27 +264,352 @@ function SystemPanel(_ref) {
 }
 
 /* ════ DOMAIN — a domain selected (macro) or open (micro) ════ */
-function DomainPanel(_ref2) {
+// ─── LIVE DOMAIN CONTROL — drives the founder's RUNNING application ─────────────
+// Renders what the app pushed (M.control: agents on his machine, governed work, host
+// states); every button relays through /founder/api/command to the app itself.
+function LiveDomainControl(_ref2) {
   var M = _ref2.M,
-    domKey = _ref2.domKey,
-    DB = _ref2.DB,
-    counts = _ref2.counts,
-    STATUS = _ref2.STATUS,
-    CATS = _ref2.CATS,
-    macro = _ref2.macro,
-    patchDomain = _ref2.patchDomain,
-    assign = _ref2.assign,
-    toggleAgent = _ref2.toggleAgent,
-    onEnter = _ref2.onEnter,
-    onAddNode = _ref2.onAddNode,
-    onUngroup = _ref2.onUngroup,
-    openRoom = _ref2.openRoom,
-    selectBy = _ref2.selectBy,
-    onClose = _ref2.onClose;
-  var _React$useState = React.useState('control'),
+    d = _ref2.d,
+    members = _ref2.members,
+    onRelay = _ref2.onRelay;
+  var ctl = M.control || null;
+  var _React$useState = React.useState(''),
     _React$useState2 = _slicedToArray(_React$useState, 2),
-    tab = _React$useState2[0],
-    setTab = _React$useState2[1];
+    ask = _React$useState2[0],
+    setAsk = _React$useState2[1];
+  var _React$useState3 = React.useState([]),
+    _React$useState4 = _slicedToArray(_React$useState3, 2),
+    log = _React$useState4[0],
+    setLog = _React$useState4[1];
+  var _React$useState5 = React.useState(false),
+    _React$useState6 = _slicedToArray(_React$useState5, 2),
+    busy = _React$useState6[0],
+    setBusy = _React$useState6[1];
+  var engines = members.filter(function (n) {
+    return n.engine;
+  });
+  var title = String(d.title || d.key || '');
+  var low = title.toLowerCase();
+  var isHosts = /host|connector/.test(String(d.key || '') + ' ' + low) || members.some(function (n) {
+    return n.cat === 'host' || /host|connector/i.test(String(n.sub || ''));
+  });
+  var agents = ctl ? ctl.agents || [] : [];
+  var items = ctl ? ctl.work_items || [] : [];
+  var hosts = ctl ? ctl.hosts || [] : [];
+  var say = /*#__PURE__*/function () {
+    var _ref3 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(command, execute) {
+      var r, _t;
+      return _regenerator().w(function (_context) {
+        while (1) switch (_context.p = _context.n) {
+          case 0:
+            if (!(!onRelay || busy)) {
+              _context.n = 1;
+              break;
+            }
+            return _context.a(2);
+          case 1:
+            setBusy(true);
+            _context.p = 2;
+            _context.n = 3;
+            return onRelay(command, execute);
+          case 3:
+            r = _context.v;
+            setLog(function (l) {
+              return [{
+                t: Date.now(),
+                ok: !!r.ok && !r.pending_app,
+                text: String(r.message || '').slice(0, 400)
+              }].concat(_toConsumableArray(l)).slice(0, 6);
+            });
+            _context.n = 5;
+            break;
+          case 4:
+            _context.p = 4;
+            _t = _context.v;
+            setLog(function (l) {
+              return [{
+                t: Date.now(),
+                ok: false,
+                text: String(_t)
+              }].concat(_toConsumableArray(l)).slice(0, 6);
+            });
+          case 5:
+            _context.p = 5;
+            setBusy(false);
+            return _context.f(5);
+          case 6:
+            return _context.a(2);
+        }
+      }, _callee, null, [[2, 4, 5, 6]]);
+    }));
+    return function say(_x, _x2) {
+      return _ref3.apply(this, arguments);
+    };
+  }();
+  var runAll = /*#__PURE__*/function () {
+    var _ref4 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2() {
+      var _iterator, _step, n, _t2;
+      return _regenerator().w(function (_context2) {
+        while (1) switch (_context2.p = _context2.n) {
+          case 0:
+            _iterator = _createForOfIteratorHelper(engines);
+            _context2.p = 1;
+            _iterator.s();
+          case 2:
+            if ((_step = _iterator.n()).done) {
+              _context2.n = 4;
+              break;
+            }
+            n = _step.value;
+            _context2.n = 3;
+            return say('run engine ' + n.engine, true);
+          case 3:
+            _context2.n = 2;
+            break;
+          case 4:
+            _context2.n = 6;
+            break;
+          case 5:
+            _context2.p = 5;
+            _t2 = _context2.v;
+            _iterator.e(_t2);
+          case 6:
+            _context2.p = 6;
+            _iterator.f();
+            return _context2.f(6);
+          case 7:
+            return _context2.a(2);
+        }
+      }, _callee2, null, [[1, 5, 6, 7]]);
+    }));
+    return function runAll() {
+      return _ref4.apply(this, arguments);
+    };
+  }();
+  var pill = function pill(state) {
+    var c = state === 'connected' ? HB.green : state === 'running' ? HB.blue : state === 'installed' ? HB.amber : HB.inkMute;
+    return /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 8.5,
+        letterSpacing: '0.12em',
+        color: c,
+        border: "1px solid ".concat(c, "55"),
+        borderRadius: 999,
+        padding: '2px 7px'
+      }
+    }, String(state || '').toUpperCase());
+  };
+  var row = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '6px 0',
+    borderBottom: "1px solid ".concat(HB.line)
+  };
+  var small = {
+    fontFamily: HB.mono,
+    fontSize: 9.5,
+    color: HB.inkMute
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: secStyle
+  }, /*#__PURE__*/React.createElement("div", {
+    style: insLabel
+  }, "IN YOUR APP \xB7 LIVE ", ctl ? '' : '· waiting for the app push'), !ctl && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.serif,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: HB.inkMute
+    }
+  }, "Your ArchHub app has not pushed its control state yet. Open ArchHub on your machine; the push follows within a minute."), engines.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, small), {}, {
+      marginBottom: 4
+    })
+  }, "ENGINES \xB7 ", engines.length), engines.slice(0, 12).map(function (n) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: n.id,
+      style: row
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 12.5,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, n.title, " ", /*#__PURE__*/React.createElement("span", {
+      style: small
+    }, n.engine)), /*#__PURE__*/React.createElement(HBtn, {
+      onClick: function onClick() {
+        return say('run engine ' + n.engine, true);
+      },
+      disabled: busy
+    }, "\u25B8 Run"));
+  }), engines.length > 1 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement(HBtn, {
+    primary: true,
+    onClick: runAll,
+    disabled: busy
+  }, "\u25B8 Run all ", engines.length, " in ArchHub"))), ctl && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, small), {}, {
+      marginBottom: 4
+    })
+  }, "AGENTS ON YOUR MACHINE \xB7 ", agents.length), agents.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: small
+  }, "none registered"), agents.slice(0, 8).map(function (a, i) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: row
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        background: a.status === 'online' ? HB.green : HB.inkMute
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        fontSize: 12
+      }
+    }, a.provider || a.runtime || 'agent', " ", /*#__PURE__*/React.createElement("span", {
+      style: small
+    }, a.runtime && a.runtime !== a.provider ? a.runtime : '')), /*#__PURE__*/React.createElement("span", {
+      style: small
+    }, String(a.session || '').slice(0, 8)), /*#__PURE__*/React.createElement(HBtn, {
+      onClick: function onClick() {
+        var what = ask || 'review the ' + title + ' domain';
+        say('tell ' + (a.provider || a.runtime) + ': ' + what, true);
+      },
+      disabled: busy
+    }, "\u2192 Tell"));
+  })), ctl && (ctl.work_summary || items.length > 0) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, small), {}, {
+      marginBottom: 4
+    })
+  }, "GOVERNED WORK"), ctl.work_summary && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: HB.ink,
+      marginBottom: 4
+    }
+  }, ctl.work_summary), items.slice(0, 8).map(function (w, i) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: row
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        fontSize: 12
+      }
+    }, w.title), /*#__PURE__*/React.createElement("span", {
+      style: small
+    }, w.state, w.agent ? ' · ' + w.agent : ''));
+  })), ctl && isHosts && hosts.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, small), {}, {
+      marginBottom: 4
+    })
+  }, "HOSTS \xB7 ", hosts.filter(function (h) {
+    return h.state === 'connected';
+  }).length, " connected of ", hosts.length), hosts.map(function (h) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: h.id,
+      style: row
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        fontSize: 12
+      }
+    }, h.name), pill(h.state));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, small), {}, {
+      marginBottom: 4
+    })
+  }, "ASK OR INSTRUCT YOUR APP \xB7 about ", title), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: ask,
+    onChange: function onChange(e) {
+      return setAsk(e.target.value);
+    },
+    onKeyDown: function onKeyDown(e) {
+      if (e.key === 'Enter') say(ask + ' (about ' + title + ')', false);
+    },
+    placeholder: 'e.g. what is blocked in ' + title + '?',
+    style: _objectSpread(_objectSpread({}, insInput(true)), {}, {
+      flex: 1
+    })
+  }), /*#__PURE__*/React.createElement(HBtn, {
+    onClick: function onClick() {
+      return say(ask + ' (about ' + title + ')', false);
+    },
+    disabled: busy || !ask
+  }, "Ask")), log.map(function (l) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: l.t,
+      style: {
+        marginTop: 6,
+        padding: '6px 8px',
+        borderRadius: 6,
+        background: HB.paper,
+        borderLeft: "2px solid ".concat(l.ok ? HB.green : HB.amber),
+        fontSize: 11.5,
+        whiteSpace: 'pre-wrap'
+      }
+    }, l.text);
+  })));
+}
+function DomainPanel(_ref5) {
+  var M = _ref5.M,
+    domKey = _ref5.domKey,
+    DB = _ref5.DB,
+    counts = _ref5.counts,
+    STATUS = _ref5.STATUS,
+    CATS = _ref5.CATS,
+    macro = _ref5.macro,
+    patchDomain = _ref5.patchDomain,
+    assign = _ref5.assign,
+    toggleAgent = _ref5.toggleAgent,
+    onEnter = _ref5.onEnter,
+    onAddNode = _ref5.onAddNode,
+    onUngroup = _ref5.onUngroup,
+    openRoom = _ref5.openRoom,
+    selectBy = _ref5.selectBy,
+    onClose = _ref5.onClose,
+    onRelay = _ref5.onRelay;
+  var _React$useState7 = React.useState('control'),
+    _React$useState8 = _slicedToArray(_React$useState7, 2),
+    tab = _React$useState8[0],
+    setTab = _React$useState8[1];
   var d = M.domains.find(function (x) {
     return x.key === domKey;
   }) || {};
@@ -448,10 +778,10 @@ function DomainPanel(_ref2) {
       gap: 4,
       marginTop: 11
     }
-  }, [['control', 'Control'], ['params', "Params ".concat(params.length)], ['links', "Interface ".concat(ifaceCount)]].map(function (_ref3) {
-    var _ref4 = _slicedToArray(_ref3, 2),
-      k = _ref4[0],
-      l = _ref4[1];
+  }, [['control', 'Control'], ['params', "Params ".concat(params.length)], ['links', "Interface ".concat(ifaceCount)]].map(function (_ref6) {
+    var _ref7 = _slicedToArray(_ref6, 2),
+      k = _ref7[0],
+      l = _ref7[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -473,7 +803,12 @@ function DomainPanel(_ref2) {
     style: {
       padding: 0
     }
-  }, tab === 'control' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, tab === 'control' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(LiveDomainControl, {
+    M: M,
+    d: d,
+    members: members,
+    onRelay: onRelay
+  }), /*#__PURE__*/React.createElement("div", {
     style: secStyle
   }, /*#__PURE__*/React.createElement("div", {
     style: insLabel
@@ -772,10 +1107,10 @@ function DomainPanel(_ref2) {
     }
   }, Object.entries(inbound).sort(function (a, b) {
     return b[1] - a[1];
-  }).map(function (_ref5) {
-    var _ref6 = _slicedToArray(_ref5, 2),
-      k = _ref6[0],
-      ct = _ref6[1];
+  }).map(function (_ref8) {
+    var _ref9 = _slicedToArray(_ref8, 2),
+      k = _ref9[0],
+      ct = _ref9[1];
     var dd = M.domains.find(function (x) {
       return x.key === k;
     });
@@ -822,10 +1157,10 @@ function DomainPanel(_ref2) {
     }
   }, Object.entries(outbound).sort(function (a, b) {
     return b[1] - a[1];
-  }).map(function (_ref7) {
-    var _ref8 = _slicedToArray(_ref7, 2),
-      k = _ref8[0],
-      ct = _ref8[1];
+  }).map(function (_ref0) {
+    var _ref1 = _slicedToArray(_ref0, 2),
+      k = _ref1[0],
+      ct = _ref1[1];
     var dd = M.domains.find(function (x) {
       return x.key === k;
     });
@@ -872,19 +1207,19 @@ function DomainPanel(_ref2) {
 }
 
 /* ════ BULK — multiple selected ════ */
-function BulkPanel(_ref9) {
-  var sel = _ref9.sel,
-    selNodes = _ref9.selNodes,
-    M = _ref9.M,
-    DB = _ref9.DB,
-    STATUS = _ref9.STATUS,
-    bulkStatus = _ref9.bulkStatus,
-    bulkDomain = _ref9.bulkDomain,
-    bulkAgent = _ref9.bulkAgent,
-    onGroup = _ref9.onGroup,
-    onDelete = _ref9.onDelete,
-    clearSel = _ref9.clearSel,
-    domName = _ref9.domName;
+function BulkPanel(_ref10) {
+  var sel = _ref10.sel,
+    selNodes = _ref10.selNodes,
+    M = _ref10.M,
+    DB = _ref10.DB,
+    STATUS = _ref10.STATUS,
+    bulkStatus = _ref10.bulkStatus,
+    bulkDomain = _ref10.bulkDomain,
+    bulkAgent = _ref10.bulkAgent,
+    onGroup = _ref10.onGroup,
+    onDelete = _ref10.onDelete,
+    clearSel = _ref10.clearSel,
+    domName = _ref10.domName;
   var byDom = {};
   selNodes.forEach(function (n) {
     return byDom[n.dom] = (byDom[n.dom] || 0) + 1;
@@ -1022,10 +1357,10 @@ function BulkPanel(_ref9) {
     style: secStyle
   }, /*#__PURE__*/React.createElement("div", {
     style: insLabel
-  }, "SELECTION SPANS"), Object.entries(byDom).map(function (_ref0) {
-    var _ref1 = _slicedToArray(_ref0, 2),
-      d = _ref1[0],
-      n = _ref1[1];
+  }, "SELECTION SPANS"), Object.entries(byDom).map(function (_ref11) {
+    var _ref12 = _slicedToArray(_ref11, 2),
+      d = _ref12[0],
+      n = _ref12[1];
     return /*#__PURE__*/React.createElement("div", {
       key: d,
       style: {
@@ -1083,9 +1418,9 @@ var PARAM_WIRE = {
 var ptypeCol = function ptypeCol(t) {
   return window.typeColOf ? window.typeColOf(PARAM_WIRE[t] || 'any') : HB.inkMute;
 };
-function StemParams(_ref10) {
-  var node = _ref10.node,
-    patchNode = _ref10.patchNode;
+function StemParams(_ref13) {
+  var node = _ref13.node,
+    patchNode = _ref13.patchNode;
   var params = node.params || [];
   var ports = node.ports || {
     ins: [],
@@ -1436,10 +1771,10 @@ function StemParams(_ref10) {
       gap: 6,
       marginTop: 2
     }
-  }, [['field', '＋ Field'], ['number', '＋ Number'], ['boolean', '＋ Toggle'], ['color', '＋ Color'], ['trigger', '＋ Trigger']].map(function (_ref11) {
-    var _ref12 = _slicedToArray(_ref11, 2),
-      t = _ref12[0],
-      l = _ref12[1];
+  }, [['field', '＋ Field'], ['number', '＋ Number'], ['boolean', '＋ Toggle'], ['color', '＋ Color'], ['trigger', '＋ Trigger']].map(function (_ref14) {
+    var _ref15 = _slicedToArray(_ref14, 2),
+      t = _ref15[0],
+      l = _ref15[1];
     return /*#__PURE__*/React.createElement("button", {
       key: t,
       onClick: function onClick() {
@@ -1462,27 +1797,27 @@ function StemParams(_ref10) {
 }
 
 /* ════ MICRO — single node inspector ════ */
-function NodeInspector(_ref13) {
-  var M = _ref13.M,
-    node = _ref13.node,
-    DB = _ref13.DB,
-    assign = _ref13.assign,
-    STATUS = _ref13.STATUS,
-    CATS = _ref13.CATS,
-    patchNode = _ref13.patchNode,
-    delNode = _ref13.delNode,
-    toggleAgent = _ref13.toggleAgent,
-    onClose = _ref13.onClose,
-    openRoom = _ref13.openRoom,
-    focusNode = _ref13.focusNode,
-    domName = _ref13.domName,
-    _onRun = _ref13.onRun,
-    _onVariant = _ref13.onVariant,
-    onWatch = _ref13.onWatch;
-  var _React$useState3 = React.useState('control'),
-    _React$useState4 = _slicedToArray(_React$useState3, 2),
-    tab = _React$useState4[0],
-    setTab = _React$useState4[1];
+function NodeInspector(_ref16) {
+  var M = _ref16.M,
+    node = _ref16.node,
+    DB = _ref16.DB,
+    assign = _ref16.assign,
+    STATUS = _ref16.STATUS,
+    CATS = _ref16.CATS,
+    patchNode = _ref16.patchNode,
+    delNode = _ref16.delNode,
+    toggleAgent = _ref16.toggleAgent,
+    onClose = _ref16.onClose,
+    openRoom = _ref16.openRoom,
+    focusNode = _ref16.focusNode,
+    domName = _ref16.domName,
+    _onRun = _ref16.onRun,
+    _onVariant = _ref16.onVariant,
+    onWatch = _ref16.onWatch;
+  var _React$useState9 = React.useState('control'),
+    _React$useState0 = _slicedToArray(_React$useState9, 2),
+    tab = _React$useState0[0],
+    setTab = _React$useState0[1];
   var RT = window.RT;
   var outs = M.wires.filter(function (w) {
     return w.a === node.id;
@@ -1636,10 +1971,10 @@ function NodeInspector(_ref13) {
       gap: 4,
       marginTop: 11
     }
-  }, [['control', 'Control'], ['pipeline', "Pipeline ".concat(pipe.length)], ['runs', "Runs ".concat(RT ? RT.rtRuns(node).length : 0)], ['wires', "Ports ".concat(outs.length + ins.length)]].map(function (_ref14) {
-    var _ref15 = _slicedToArray(_ref14, 2),
-      k = _ref15[0],
-      l = _ref15[1];
+  }, [['control', 'Control'], ['pipeline', "Pipeline ".concat(pipe.length)], ['runs', "Runs ".concat(RT ? RT.rtRuns(node).length : 0)], ['wires', "Ports ".concat(outs.length + ins.length)]].map(function (_ref17) {
+    var _ref18 = _slicedToArray(_ref17, 2),
+      k = _ref18[0],
+      l = _ref18[1];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -2108,13 +2443,13 @@ function NodeInspector(_ref13) {
     }, p.v));
   }))))));
 }
-var WireRow = function WireRow(_ref16) {
-  var dir = _ref16.dir,
-    node = _ref16.node,
-    why = _ref16.why,
-    sig = _ref16.sig,
-    sigCol = _ref16.sigCol,
-    onClick = _ref16.onClick;
+var WireRow = function WireRow(_ref19) {
+  var dir = _ref19.dir,
+    node = _ref19.node,
+    why = _ref19.why,
+    sig = _ref19.sig,
+    sigCol = _ref19.sigCol,
+    onClick = _ref19.onClick;
   return /*#__PURE__*/React.createElement("div", {
     className: "hb-rowh",
     onClick: onClick,
@@ -2172,9 +2507,9 @@ var WireRow = function WireRow(_ref16) {
     k: node.status
   }, node.status));
 };
-var Stat = function Stat(_ref17) {
-  var label = _ref17.label,
-    value = _ref17.value;
+var Stat = function Stat(_ref20) {
+  var label = _ref20.label,
+    value = _ref20.value;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '8px 10px',
@@ -2199,8 +2534,8 @@ var Stat = function Stat(_ref17) {
     }
   }, value));
 };
-var Empty = function Empty(_ref18) {
-  var children = _ref18.children;
+var Empty = function Empty(_ref21) {
+  var children = _ref21.children;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: HB.serif,
@@ -2243,20 +2578,20 @@ var miniAct = function miniAct(col, fill) {
 };
 
 /* ════ name modal (group / domain) ════ */
-function NameModal(_ref19) {
-  var title = _ref19.title,
-    placeholder = _ref19.placeholder,
-    colors = _ref19.colors,
-    onSave = _ref19.onSave,
-    onClose = _ref19.onClose;
-  var _React$useState5 = React.useState(''),
-    _React$useState6 = _slicedToArray(_React$useState5, 2),
-    name = _React$useState6[0],
-    setName = _React$useState6[1];
-  var _React$useState7 = React.useState(colors ? colors[0] : null),
-    _React$useState8 = _slicedToArray(_React$useState7, 2),
-    col = _React$useState8[0],
-    setCol = _React$useState8[1];
+function NameModal(_ref22) {
+  var title = _ref22.title,
+    placeholder = _ref22.placeholder,
+    colors = _ref22.colors,
+    onSave = _ref22.onSave,
+    onClose = _ref22.onClose;
+  var _React$useState1 = React.useState(''),
+    _React$useState10 = _slicedToArray(_React$useState1, 2),
+    name = _React$useState10[0],
+    setName = _React$useState10[1];
+  var _React$useState11 = React.useState(colors ? colors[0] : null),
+    _React$useState12 = _slicedToArray(_React$useState11, 2),
+    col = _React$useState12[0],
+    setCol = _React$useState12[1];
   var ref = React.useRef(null);
   React.useEffect(function () {
     ref.current && ref.current.focus();
@@ -2348,13 +2683,13 @@ function NameModal(_ref19) {
 }
 
 /* ════ FIELD — a super grand node: a group of domains ════ */
-function FieldPanel(_ref20) {
-  var M = _ref20.M,
-    fieldId = _ref20.fieldId,
-    patchField = _ref20.patchField,
-    onUngroup = _ref20.onUngroup,
-    onEnterDomain = _ref20.onEnterDomain,
-    onClose = _ref20.onClose;
+function FieldPanel(_ref23) {
+  var M = _ref23.M,
+    fieldId = _ref23.fieldId,
+    patchField = _ref23.patchField,
+    onUngroup = _ref23.onUngroup,
+    onEnterDomain = _ref23.onEnterDomain,
+    onClose = _ref23.onClose;
   var f = (M.fields || []).find(function (x) {
     return x.id === fieldId;
   }) || {};
@@ -2502,12 +2837,12 @@ function FieldPanel(_ref20) {
 }
 
 /* ════ MULTI — a mixed selection of domains (and loose nodes), ready to group up ════ */
-function MultiPanel(_ref21) {
-  var selDomains = _ref21.selDomains,
-    selNodes = _ref21.selNodes,
-    M = _ref21.M,
-    onGroupField = _ref21.onGroupField,
-    clearSel = _ref21.clearSel;
+function MultiPanel(_ref24) {
+  var selDomains = _ref24.selDomains,
+    selNodes = _ref24.selNodes,
+    M = _ref24.M,
+    onGroupField = _ref24.onGroupField,
+    clearSel = _ref24.clearSel;
   var doms = M.domains.filter(function (d) {
     return selDomains.includes(d.key);
   });
@@ -2617,11 +2952,11 @@ function MultiPanel(_ref21) {
 
 // MULTI-FIELD — 2+ fields selected. This is the rung that makes grouping unbounded: fields
 // group into a bigger field, and that field can be grouped again, with no cap.
-function MultiFieldPanel(_ref22) {
-  var M = _ref22.M,
-    ids = _ref22.ids,
-    onGroup = _ref22.onGroup,
-    clearSel = _ref22.clearSel;
+function MultiFieldPanel(_ref25) {
+  var M = _ref25.M,
+    ids = _ref25.ids,
+    onGroup = _ref25.onGroup,
+    clearSel = _ref25.clearSel;
   var all = M.fields || [];
   var byId = {};
   all.forEach(function (f) {
@@ -2727,12 +3062,12 @@ function MultiFieldPanel(_ref22) {
     }
   }, "Clear")));
 }
-function WirePanel(_ref23) {
-  var M = _ref23.M,
-    w = _ref23.w,
-    onDelete = _ref23.onDelete,
-    onGoto = _ref23.onGoto,
-    onClose = _ref23.onClose;
+function WirePanel(_ref26) {
+  var M = _ref26.M,
+    w = _ref26.w,
+    onDelete = _ref26.onDelete,
+    onGoto = _ref26.onGoto,
+    onClose = _ref26.onClose;
   var nodeById = {};
   M.nodes.forEach(function (n) {
     return nodeById[n.id] = n;

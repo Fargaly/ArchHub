@@ -56,7 +56,73 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
 }
 
 /* ════ DOMAIN — a domain selected (macro) or open (micro) ════ */
-function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, assign, toggleAgent, onEnter, onAddNode, onUngroup, openRoom, selectBy, onClose }) {
+// ─── LIVE DOMAIN CONTROL — drives the founder's RUNNING application ─────────────
+// Renders what the app pushed (M.control: agents on his machine, governed work, host
+// states); every button relays through /founder/api/command to the app itself.
+function LiveDomainControl({ M, d, members, onRelay }) {
+  const ctl = M.control || null;
+  const [ask, setAsk] = React.useState('');
+  const [log, setLog] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+  const engines = members.filter(n => n.engine);
+  const title = String(d.title || d.key || '');
+  const low = title.toLowerCase();
+  const isHosts = /host|connector/.test(String(d.key || '') + ' ' + low) || members.some(n => n.cat === 'host' || /host|connector/i.test(String(n.sub || '')));
+  const agents = ctl ? (ctl.agents || []) : [];
+  const items = ctl ? (ctl.work_items || []) : [];
+  const hosts = ctl ? (ctl.hosts || []) : [];
+  const say = async (command, execute) => {
+    if (!onRelay || busy) return;
+    setBusy(true);
+    try { const r = await onRelay(command, execute); setLog(l => [{ t: Date.now(), ok: !!r.ok && !r.pending_app, text: String(r.message || '').slice(0, 400) }, ...l].slice(0, 6)); }
+    catch (e) { setLog(l => [{ t: Date.now(), ok: false, text: String(e) }, ...l].slice(0, 6)); }
+    finally { setBusy(false); }
+  };
+  const runAll = async () => { for (const n of engines) { await say('run engine ' + n.engine, true); } };
+  const pill = (state) => { const c = state === 'connected' ? HB.green : state === 'running' ? HB.blue : state === 'installed' ? HB.amber : HB.inkMute;
+    return <span style={{ fontFamily: HB.mono, fontSize: 8.5, letterSpacing: '0.12em', color: c, border: `1px solid ${c}55`, borderRadius: 999, padding: '2px 7px' }}>{String(state || '').toUpperCase()}</span>; };
+  const row = { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${HB.line}` };
+  const small = { fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute };
+  return (
+    <div style={secStyle}>
+      <div style={insLabel}>IN YOUR APP · LIVE {ctl ? '' : '· waiting for the app push'}</div>
+      {!ctl && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>Your ArchHub app has not pushed its control state yet. Open ArchHub on your machine; the push follows within a minute.</div>}
+      {engines.length > 0 && <div style={{ marginTop: 8 }}>
+        <div style={{ ...small, marginBottom: 4 }}>ENGINES · {engines.length}</div>
+        {engines.slice(0, 12).map(n => <div key={n.id} style={row}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.title} <span style={small}>{n.engine}</span></span>
+          <HBtn onClick={() => say('run engine ' + n.engine, true)} disabled={busy}>▸ Run</HBtn>
+        </div>)}
+        {engines.length > 1 && <div style={{ marginTop: 6 }}><HBtn primary onClick={runAll} disabled={busy}>▸ Run all {engines.length} in ArchHub</HBtn></div>}
+      </div>}
+      {ctl && <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>AGENTS ON YOUR MACHINE · {agents.length}</div>
+        {agents.length === 0 && <div style={small}>none registered</div>}
+        {agents.slice(0, 8).map((a, i) => <div key={i} style={row}><span style={{ width: 7, height: 7, borderRadius: '50%', background: a.status === 'online' ? HB.green : HB.inkMute }}/><span style={{ flex: 1, fontSize: 12 }}>{a.provider || a.runtime || 'agent'} <span style={small}>{a.runtime && a.runtime !== a.provider ? a.runtime : ''}</span></span><span style={small}>{String(a.session || '').slice(0, 8)}</span>
+          <HBtn onClick={() => { const what = ask || ('review the ' + title + ' domain'); say('tell ' + (a.provider || a.runtime) + ': ' + what, true); }} disabled={busy}>→ Tell</HBtn></div>)}
+      </div>}
+      {ctl && (ctl.work_summary || items.length > 0) && <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>GOVERNED WORK</div>
+        {ctl.work_summary && <div style={{ fontSize: 12, color: HB.ink, marginBottom: 4 }}>{ctl.work_summary}</div>}
+        {items.slice(0, 8).map((w, i) => <div key={i} style={row}><span style={{ flex: 1, fontSize: 12 }}>{w.title}</span><span style={small}>{w.state}{w.agent ? ' · ' + w.agent : ''}</span></div>)}
+      </div>}
+      {ctl && isHosts && hosts.length > 0 && <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>HOSTS · {hosts.filter(h => h.state === 'connected').length} connected of {hosts.length}</div>
+        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, fontSize: 12 }}>{h.name}</span>{pill(h.state)}</div>)}
+      </div>}
+      <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>ASK OR INSTRUCT YOUR APP · about {title}</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') say(ask + ' (about ' + title + ')', false); }} placeholder={'e.g. what is blocked in ' + title + '?'} style={{ ...insInput(true), flex: 1 }}/>
+          <HBtn onClick={() => say(ask + ' (about ' + title + ')', false)} disabled={busy || !ask}>Ask</HBtn>
+        </div>
+        {log.map(l => <div key={l.t} style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: HB.paper, borderLeft: `2px solid ${l.ok ? HB.green : HB.amber}`, fontSize: 11.5, whiteSpace: 'pre-wrap' }}>{l.text}</div>)}
+      </div>
+    </div>
+  );
+}
+
+function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, assign, toggleAgent, onEnter, onAddNode, onUngroup, openRoom, selectBy, onClose, onRelay }) {
   const [tab, setTab] = React.useState('control');
   const d = M.domains.find(x => x.key === domKey) || {};
   const members = M.nodes.filter(n => n.dom === domKey);
@@ -100,6 +166,7 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
       <div style={{ padding: 0 }}>
         {tab === 'control' && (
           <div>
+            <LiveDomainControl M={M} d={d} members={members} onRelay={onRelay}/>
             <div style={secStyle}>
               <div style={insLabel}>INTENT</div>
               <textarea value={d.sub || ''} onChange={e => patchDomain(domKey, { sub: e.target.value })} rows={2} placeholder="What this domain owns…" style={insInput()}/>

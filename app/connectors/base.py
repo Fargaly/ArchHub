@@ -391,6 +391,7 @@ def load_all_connectors() -> int:
         "connectors.notion_connector",
         "connectors.procore_connector",
         "connectors.dropbox_connector",
+        "connectors.gdrive_connector",
         "connectors.teams_connector",
         "connectors.blender_connector",
         "connectors.rhino_connector",

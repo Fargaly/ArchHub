@@ -97,7 +97,11 @@ def test_the_server_hands_over_to_a_fresh_launcher_on_restart():
     src = inspect.getsource(srv)
     assert "def _staged_update(self)" in src and "def _restart_to_update(self)" in src
     assert src.count("staged_update=self._staged_update()") >= 5
-    assert 'result.get("kind") == "update-ready"' in src
+    # The route reads the RESPONSE, not the envelope: respond returns
+    # {"command": ..., "response": ...}, so the old result["kind"] check never
+    # matched and Restart-now could not fire (2026-09-04).
+    assert '_answer.get("kind") == "update-ready"' in src
+    assert '_answer = result.get("response")' in src
 
 
 def test_the_app_lives_in_the_tray_and_closing_hides_it():

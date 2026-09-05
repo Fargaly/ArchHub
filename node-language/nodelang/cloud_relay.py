@@ -89,6 +89,7 @@ class CloudRelay:
         opener: Optional[Callable[..., object]] = None,
         timeout: float = 20.0,
         map_script: Optional[Callable[[], str]] = None,
+        hosts: Optional[Callable[[], object]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.token = str(token)
@@ -98,6 +99,7 @@ class CloudRelay:
         self.opener = opener or urllib.request.urlopen
         self.timeout = float(timeout)
         self.map_script = map_script
+        self.hosts = hosts
         self.last_error: str = ""
         self.answered = 0
         self._map_digest = ""
@@ -147,6 +149,7 @@ class CloudRelay:
             return None
         script = self.map_script()
         body = script.split("window.ATLAS_MAP = ", 1)[1].rsplit("; window.ATLAS_LIVE", 1)[0]
+        body = self._with_control(body)
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         self._map_pushed_at = now
         if not force and digest == self._map_digest:
@@ -154,6 +157,56 @@ class CloudRelay:
         answer = self._request(MAP_PATH, body.encode("utf-8"))
         self._map_digest = digest
         return answer
+
+    def _with_control(self, body: str) -> str:
+        """Add the CONTROL block the cockpit's domain panel drives from.
+
+        The cockpit is the map and the map is the graph -- and the founder
+        controls the graph through BABOOM. So the control block IS BABOOM's
+        own answers, read the same way he would: the agents on this machine,
+        the governed work, the hosts and their states. Best effort: a silent
+        brain or coordination host leaves the field empty, never breaks the push.
+        """
+        try:
+            model = json.loads(body)
+        except ValueError:
+            return body
+        control: dict[str, object] = {"agents": [], "work_summary": "", "work_items": [], "hosts": []}
+        try:
+            agents = self.respond("agents")
+            answer = agents.get("response") if isinstance(agents.get("response"), Mapping) else agents
+            control["agents"] = list(((answer.get("data") or {}).get("agents") or []))[:24]
+        except Exception:
+            pass
+        try:
+            work = self.respond("show governed work")
+            answer = work.get("response") if isinstance(work.get("response"), Mapping) else work
+            control["work_summary"] = str(answer.get("summary") or "")[:400]
+            data = answer.get("data") if isinstance(answer.get("data"), Mapping) else {}
+            items = data.get("items") or data.get("work") or []
+            if isinstance(items, list):
+                control["work_items"] = [
+                    {
+                        "title": str((it.get("title") if isinstance(it, Mapping) else it) or "")[:80],
+                        "state": str((it.get("state") or it.get("status")) if isinstance(it, Mapping) else "")[:24],
+                        "agent": str(it.get("agent") or "")[:40] if isinstance(it, Mapping) else "",
+                    }
+                    for it in items[:12]
+                ]
+        except Exception:
+            pass
+        try:
+            rows = self.hosts() if callable(self.hosts) else []
+            control["hosts"] = [
+                {"id": str(r.get("id") or ""), "name": str(r.get("name") or ""), "state": str(r.get("state") or ""), "detail": str(r.get("detail") or "")[:120]}
+                for r in (rows or []) if isinstance(r, Mapping)
+            ][:40]
+        except Exception:
+            pass
+        if isinstance(model, dict):
+            model["control"] = control
+            return json.dumps(model, separators=(",", ":"))
+        return body
 
     def run_forever(self, *, interval: float = 4.0, stop: Optional[threading.Event] = None) -> None:
         stop = stop or threading.Event()
@@ -176,6 +229,7 @@ def start_cloud_relay(
     respond: Callable[[str], Mapping[str, object]],
     execute: Callable[[str], Mapping[str, object]],
     map_script: Optional[Callable[[], str]] = None,
+    hosts: Optional[Callable[[], object]] = None,
 ) -> Optional[CloudRelay]:
     """Start the relay thread when the founder's session and consent exist."""
     from .cloud_publish_consent import cloud_publish_allowed
@@ -187,7 +241,7 @@ def start_cloud_relay(
         return None
     relay = CloudRelay(
         base_url=session["base_url"], token=session["token"],
-        respond=respond, execute=execute, map_script=map_script,
+        respond=respond, execute=execute, map_script=map_script, hosts=hosts,
     )
     threading.Thread(target=relay.run_forever, name="archhub-cloud-relay", daemon=True).start()
     return relay

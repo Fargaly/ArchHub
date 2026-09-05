@@ -578,6 +578,8 @@ def project_atlas_map(store, registry, *, authentication_context=None):
 
     domains = []
     nodes = []
+    wires = []
+    relation_roots: list[tuple[str, str]] = []   # (relation root, atlas domain key)
     top = [n for n in projection.get("nodes", ()) if n.get("openable")]
     # The authored cockpit seed names the grand-map domains by their short key
     # ("ui", "brain"); the graph holds them as "gm:domain:ui". Emit the seed's
@@ -587,10 +589,14 @@ def project_atlas_map(store, registry, *, authentication_context=None):
     # other openable scope follows in the free cells after them.
     _GM = "gm:domain:"
     top = sorted(top, key=lambda n: (0 if str(n["id"]).startswith(_GM) else 1))
+
+    def atlas_key_of(root: str) -> str:
+        return root[len(_GM):] if root.startswith(_GM) else root
+
     per_row = 4
     for index, item in enumerate(top):
         key = str(item["id"])
-        atlas_key = key[len(_GM):] if key.startswith(_GM) else key
+        atlas_key = atlas_key_of(key)
         colour = _ATLAS_COLORS[index % len(_ATLAS_COLORS)]
         gx = 40 + (index % per_row) * 650
         gy = 40 + (index // per_row) * 560
@@ -600,11 +606,12 @@ def project_atlas_map(store, registry, *, authentication_context=None):
             "x": gx, "y": gy, "w": 560, "h": 480, "col": colour,
         })
         try:
-            member_roots, _rels, _props = _nested_canvas_scope(
+            member_roots, scoped_relations, _props = _nested_canvas_scope(
                 snapshot, registry, key
             )
         except Exception:
-            member_roots = ()
+            member_roots, scoped_relations = (), ()
+        relation_roots.extend((rel, atlas_key) for rel in scoped_relations)
         for spot, member in enumerate(tuple(member_roots)[:24]):
             held = rows_of(member)
             data = {label: value for label, (_r, value) in held.items()}
@@ -619,6 +626,9 @@ def project_atlas_map(store, registry, *, authentication_context=None):
             ][:4]
             nodes.append({
                 "id": member, "dom": atlas_key,
+                # The engine this node runs, so the cockpit's Run button can
+                # run THIS node in the founder's app instead of animating.
+                "engine": str(data.get("engine") or "") or None,
                 "cat": "logic" if not data.get("engine") else "read",
                 "title": str(title)[:60],
                 "sub": str(data.get("engine") or data.get("status") or "")[:80],
@@ -627,6 +637,65 @@ def project_atlas_map(store, registry, *, authentication_context=None):
                 "x": gx + 40 + (spot % 2) * 260,
                 "y": gy + 60 + (spot // 2) * 120,
             })
+    # The wires ARE the graph's relations: every scoped relation whose source
+    # and target both stand on the map becomes a wire, cross-domain included.
+    # The cockpit drew nothing inside a domain because the push carried
+    # "wires": [] (founder 2026-09-04: "where are the wires?").
+    emitted = {node["id"] for node in nodes}
+    roles = registry.roles
+
+    def owner_on_map(participant: str) -> str | None:
+        # A wire ends on an interface or a property of a node, not on the node
+        # itself; the canvas resolves the endpoint the same way. Climb the id
+        # to the node that stands on the map.
+        candidate = str(participant or "")
+        while candidate:
+            if candidate in emitted:
+                return candidate
+            parent, separator, _tail = candidate.rpartition(":")
+            if not separator:
+                return None
+            candidate = parent
+        return None
+
+    seen_wires: set[tuple[str, str]] = set()
+    for relation_root, domain_key in relation_roots:
+        try:
+            members = read_relation(snapshot, relation_root, budget=256)
+            source = owner_on_map(_one_for_role(members, roles["source"]))
+            target = owner_on_map(_one_for_role(members, roles["target"]))
+        except Exception:
+            continue
+        if not source or not target or source == target:
+            continue
+        if (source, target) in seen_wires:
+            continue
+        seen_wires.add((source, target))
+        why = ""
+        try:
+            why_root = _one_for_role(members, roles["why"])
+            if why_root:
+                held = rows_of(why_root)
+                why = str((held.get("title") or held.get("label") or ("", ""))[1] or "")[:80]
+        except Exception:
+            why = ""
+        wires.append({"a": source, "b": target, "why": why or relation_root[:40], "dom": domain_key})
+    # The canvas the studio draws already resolves every top-level wire to its
+    # endpoints (a domain, or a node on the top level); those are the
+    # cross-domain links the cockpit bundles. Intra-domain wires appear above
+    # when a scoped relation's endpoints climb to nodes on the map.
+    atlas_of = {str(node["id"]): atlas_key_of(str(node["id"])) for node in top}
+    for wire in projection.get("wires", ()):
+        try:
+            a = atlas_of.get(str(wire.get("source")), str(wire.get("source")))
+            b = atlas_of.get(str(wire.get("target")), str(wire.get("target")))
+        except Exception:
+            continue
+        known = emitted | set(atlas_of.values())
+        if a not in known or b not in known or a == b or (a, b) in seen_wires:
+            continue
+        seen_wires.add((a, b))
+        wires.append({"a": a, "b": b, "why": str(wire.get("title") or wire.get("id") or "")[:60], "dom": atlas_of.get(str(wire.get("source")), "")})
     # The founder's brain facts live INSIDE the Brain & Memory domain --
     # brain, cockpit, grand map: one model. Daemon down = domain shown
     # without facts, honestly, never a crash.
@@ -653,7 +722,7 @@ def project_atlas_map(store, registry, *, authentication_context=None):
         except Exception:
             pass
     return "window.ATLAS_MAP = %s; window.ATLAS_LIVE = true;" % _json.dumps({
-        "domains": domains, "nodes": nodes, "wires": [],
+        "domains": domains, "nodes": nodes, "wires": wires,
         # The seed's layout grid, so the cockpit snaps and resolves cells
         # against the same lattice the push was laid out on.
         "grid": {"x0": 40, "y0": 40, "px": 650, "py": 560, "dw": 560, "dh": 480},

@@ -81,6 +81,31 @@ else:
     # Say so in the log: a second launch that exits without a word
     # leaves an orphan header and reads as a crash.
     print("  another ArchHub is already running on this machine; this launch exits", flush=True)
+    # Launching ArchHub while it lives in the tray must SHOW it (Chrome,
+    # Claude Desktop): the founder double-clicked the icon and saw nothing
+    # (2026-09-04, the studio window sat hidden behind close-to-tray).
+    try:
+        import ctypes as _ct
+        import ctypes.wintypes as _wt
+        _u = _ct.windll.user32
+        _shown = []
+
+        def _each(handle, _lparam):
+            length = _u.GetWindowTextLengthW(handle)
+            title = _ct.create_unicode_buffer(length + 1)
+            _u.GetWindowTextW(handle, title, length + 1)
+            klass = _ct.create_unicode_buffer(256)
+            _u.GetClassNameW(handle, klass, 256)
+            if title.value == "ArchHub" and "QWindowIcon" in klass.value:
+                _u.ShowWindow(handle, 9)
+                _u.SetForegroundWindow(handle)
+                _shown.append(handle)
+            return True
+
+        _u.EnumWindows(_ct.WINFUNCTYPE(_ct.c_bool, _ct.c_void_p, _ct.c_void_p)(_each), 0)
+        print("  window     : %s" % ("brought the running ArchHub to the front" if _shown else "running ArchHub has no window yet"), flush=True)
+    except Exception as _show_error:
+        print("  window     : could not raise the running ArchHub (%s)" % _show_error, flush=True)
     sys.exit(0)
 
 # listdir membership: Path.exists() returns False on a Windows sharing
@@ -171,6 +196,13 @@ except Exception as _update_refusal:
 started = time.perf_counter()
 
 def _boot():
+    # The boot is sampled while it runs: boot-profile.log beside launcher.log
+    # says where the seconds went (the founder's boot reached 694s and nobody
+    # could name what it was doing).
+    from nodelang.boot_profile import profile_boot
+    return profile_boot(_boot_unsampled, state_dir=state_dir)
+
+def _boot_unsampled():
     return ApplicationServer(
         universal_state_path=state_path,
         pipeline_effect_engines=PIPELINE_ENGINES,
@@ -611,6 +643,7 @@ try:
             appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
             respond=_respond, execute=_execute,
             map_script=lambda: _atlas(server.universal_store, server.universal_registry),
+            hosts=lambda: server._host_rows(),
         )
         print("  cockpit    :", "relay on (%s)" % cloud_relay.base_url if cloud_relay else "relay off (no cloud session or consent)", flush=True)
     except Exception as _relay_error:

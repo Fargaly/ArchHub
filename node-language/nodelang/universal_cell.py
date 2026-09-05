@@ -189,6 +189,8 @@ class CellHistoryReader(Protocol):
 
     def revision_cells(self, revision: int) -> tuple[Cell, ...]: ...
 
+    def revisions_touching(self, root: str) -> tuple[int, ...]: ...
+
     def snapshot_at(self, revision: int) -> Snapshot: ...
 
     def cells_at(
@@ -390,6 +392,28 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
             if key not in seen and key not in self._removed:
                 yield key
 
+    def ids_with_prefix(self, prefix: str) -> Iterator[str]:
+        """Ids starting with `prefix` without streaming the whole head."""
+        seen = set()
+        for key in self._overlay:
+            if key.startswith(prefix):
+                seen.add(key)
+                yield key
+        for key in self._reader.stream_ids_with_prefix(prefix):
+            if key not in seen and key not in self._removed:
+                yield key
+
+    def cells_with_link0(self, link0: str) -> Iterator[Cell]:
+        """Cells whose link0 is `link0` without constructing the whole head."""
+        seen = set()
+        for key, cell in self._overlay.items():
+            if cell.link0 == link0:
+                seen.add(key)
+                yield cell
+        for cell in self._reader.stream_cells_with_link0(link0):
+            if cell.id not in seen and cell.id not in self._removed and cell.id not in self._overlay:
+                yield cell
+
     def __len__(self) -> int:
         # ponytail: counting five million rows is an audit's cost, not
         # every open's. Charged on the first ask and shared after.
@@ -583,10 +607,57 @@ class _HeadRowReader:
         ):
             yield str(cell_id)
 
+    def stream_ids_with_prefix(self, prefix: str) -> Iterator[str]:
+        """Head ids that start with `prefix`: one range on the primary key."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT cell_id FROM current_cells WHERE cell_id >= ? AND cell_id < ? ORDER BY cell_id",
+                (prefix, prefix[:-1] + chr(ord(prefix[-1]) + 1) if prefix else "￿"),
+            ).fetchall()
+        for (cell_id,) in rows:
+            yield str(cell_id)
+
+    def stream_cells_with_link0(self, link0: str) -> Iterator["Cell"]:
+        """Head cells whose link0 is `link0`: one scan in sqlite, not in Python."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT cell_id, link0, link1, atom FROM current_cells WHERE link0 = ?",
+                (link0,),
+            ).fetchall()
+        for cell_id, l0, l1, atom in rows:
+            cell = Cell(str(cell_id), str(l0), str(l1), bytes(atom))
+            self._cache[cell.id] = cell
+            yield cell
+
     def count(self) -> int:
         return int(self._connection.execute(
             "SELECT COUNT(*) FROM current_cells"
         ).fetchone()[0])
+
+
+def ids_with_prefix(cells: Mapping[str, Cell], prefix: str) -> Iterator[str]:
+    """Ids of `cells` that start with `prefix`.
+
+    A lazy head answers from the journal's primary key; any other mapping is
+    filtered in Python. Boot used to stream all three million ids for every one
+    of these questions (boot-profile.log, 2026-09-05).
+    """
+    inner = getattr(cells, "_head", None)
+    target = inner if isinstance(inner, _LazyHeadCellMap) else cells
+    scoped = getattr(target, "ids_with_prefix", None)
+    if callable(scoped):
+        return scoped(prefix)
+    return (key for key in cells if key.startswith(prefix))
+
+
+def cells_with_link0(cells: Mapping[str, Cell], link0: str) -> Iterator[Cell]:
+    """Cells of `cells` whose link0 is `link0`, without building every Cell."""
+    inner = getattr(cells, "_head", None)
+    target = inner if isinstance(inner, _LazyHeadCellMap) else cells
+    scoped = getattr(target, "cells_with_link0", None)
+    if callable(scoped):
+        return scoped(link0)
+    return (cell for cell in cells.values() if cell.link0 == link0)
 
 
 class _BoundedCandidateCellMap(Mapping[str, Cell]):
@@ -1457,6 +1528,74 @@ class _SqliteJournal:
         return release
 
 
+class _LazyRevisionCellMap(Mapping[str, Cell]):
+    """The graph as it stood at one past revision, read cell by cell.
+
+    Building a past snapshot aggregates every version row in the store (a
+    3M-row join per revision on the founder's graph; 136 revisions at boot).
+    A reader that asks about a handful of cells -- the authority restore reads
+    one relation per revision -- gets each cell's newest version at or below
+    the revision from the (cell_id, revision) index instead.
+    """
+
+    __slots__ = ("_connection", "_lock", "_revision", "_cache", "_missing")
+
+    def __init__(self, connection, lock, revision: int) -> None:
+        self._connection = connection
+        self._lock = lock
+        self._revision = int(revision)
+        self._cache: dict[str, Cell] = {}
+        self._missing: set[str] = set()
+
+    def _read(self, key: str) -> "Cell | None":
+        held = self._cache.get(key)
+        if held is not None:
+            return held
+        if key in self._missing:
+            return None
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT link0, link1, atom FROM cell_versions "
+                "WHERE cell_id = ? AND revision <= ? ORDER BY revision DESC LIMIT 1",
+                (key, self._revision),
+            ).fetchone()
+        if row is None:
+            self._missing.add(key)
+            return None
+        cell = Cell(key, str(row[0]), str(row[1]), bytes(row[2]))
+        self._cache[key] = cell
+        return cell
+
+    def __getitem__(self, key: str) -> Cell:
+        cell = self._read(str(key))
+        if cell is None:
+            raise KeyError(key)
+        return cell
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and self._read(key) is not None
+
+    def get(self, key, default=None):
+        cell = self._read(str(key))
+        return default if cell is None else cell
+
+    def __iter__(self) -> Iterator[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT DISTINCT cell_id FROM cell_versions WHERE revision <= ?",
+                (self._revision,),
+            ).fetchall()
+        for (cell_id,) in rows:
+            yield str(cell_id)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return int(self._connection.execute(
+                "SELECT COUNT(DISTINCT cell_id) FROM cell_versions WHERE revision <= ?",
+                (self._revision,),
+            ).fetchone()[0])
+
+
 class _SqliteHistoryReader:
     """Exact SQLite history queries capped at one accepted Store head."""
 
@@ -1523,6 +1662,29 @@ class _SqliteHistoryReader:
         for cell in cells:
             _validate_cell(cell)
         return cells
+
+    def lazy_snapshot_at(self, revision: int) -> Snapshot:
+        """A past revision read cell by cell; see _LazyRevisionCellMap."""
+        target = self._admit_revision(revision)
+        return Snapshot(target, _LazyRevisionCellMap(
+            self._journal._connection, self._journal._io_lock, target
+        ))
+
+    def revisions_touching(self, root: str) -> tuple[int, ...]:
+        """Revisions in which `root` or any cell under `root:` changed.
+
+        One indexed range scan (cell_id, revision) instead of reading every
+        cell of every revision to ask the same question: the authority
+        restore did that for 21,700 revisions and 3M cells on each boot.
+        """
+        head = self.head_revision
+        rows = self._journal._connection.execute(
+            "SELECT DISTINCT revision FROM cell_versions "
+            "WHERE cell_id = ? OR (cell_id >= ? AND cell_id < ?) "
+            "ORDER BY revision",
+            (root, root + ":", root + ";"),
+        ).fetchall()
+        return tuple(int(r[0]) for r in rows if int(r[0]) <= head)
 
     def snapshot_at(self, revision: int) -> Snapshot:
         target = self._admit_revision(revision)
@@ -2640,7 +2802,10 @@ class CellStore:
                 step_back = getattr(
                     self._history_reader, "snapshot_stepped_back", None
                 )
-                if above is not None and step_back is not None:
+                if above is not None and isinstance(above.cells, _LazyRevisionCellMap):
+                    # A lazy neighbour cannot be stepped from; read this one lazily too.
+                    snapshot = self._history_reader.lazy_snapshot_at(revision)
+                elif above is not None and step_back is not None:
                     snapshot = step_back(above)
                 elif (
                     step_back is not None
@@ -2659,7 +2824,11 @@ class CellStore:
                         self._historical_snapshots.move_to_end(target)
                     snapshot = cursor
                 else:
-                    snapshot = self._history_reader.snapshot_at(revision)
+                    # Far from the head with no neighbour in hand: a full
+                    # aggregate per revision is what the authority restore paid
+                    # 136 times at boot. Read the revision cell by cell instead.
+                    lazy = getattr(self._history_reader, "lazy_snapshot_at", None)
+                    snapshot = lazy(revision) if callable(lazy) else self._history_reader.snapshot_at(revision)
                 self._historical_snapshots[revision] = snapshot
                 while (
                     len(self._historical_snapshots)
@@ -2731,6 +2900,20 @@ class CellStore:
                 return self._changes[revision]
             except KeyError as exc:
                 raise InvalidCell("unknown revision %r" % revision) from exc
+
+    def revisions_touching(self, root: str) -> tuple[int, ...]:
+        """Revisions in which `root` or a cell under `root:` changed, ascending."""
+        prefix = root + ":"
+        with self._lock:
+            if self._history_reader is not None:
+                return self._history_reader.revisions_touching(root)
+            return tuple(
+                revision for revision in sorted(self._changes)
+                if any(
+                    cell_id == root or cell_id.startswith(prefix)
+                    for cell_id in self._changes[revision]
+                )
+            )
 
     def cells_at(
         self, revision: int, cell_ids: Iterable[str]

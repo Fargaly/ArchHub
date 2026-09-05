@@ -1158,6 +1158,15 @@ def append_deliberation_entry(
     return read_deliberation_entry(store.snapshot(), protocol, prepared.root_id)
 
 
+# One ledger payload may hold this many cells. Measured on the real payloads
+# (2026-09-05): a structured receipt is tens of cells; the Core Values authority
+# report, validated whole from the ledger by its reader, is 688; a hook-coverage
+# report slimmed to one status per client and the one touchpoint the write gate
+# reads is ~1,230 (the cell encoding spends ~5 cells per scalar); the full
+# per-hook dump that grew the founder's graph to 4.29 GB was ~2,180 per audit.
+_DELIBERATION_PAYLOAD_CELL_LIMIT = 1_500
+
+
 @with_relation_projection_scope
 def append_deliberation_value_entry(
     store: CellStore,
@@ -1207,6 +1216,18 @@ def append_deliberation_value_entry(
     prepared_value = prepare_value_graph(
         snapshot, value_protocol, payload, root_id=payload_root
     )
+    # A ledger entry records a DECISION; its payload is the evidence for that
+    # decision, not a report dump. The brain's hook-coverage audit appended its
+    # whole per-client report here on every run: ~2,180 cells an audit, 1,056
+    # audits, and the founder's graph went 534 MB -> 4.29 GB with boot at 694s
+    # (2026-09-05). Callers write a summary and a digest; the report itself
+    # lives where it is read from. The bound makes that structural.
+    if len(prepared_value.create) > _DELIBERATION_PAYLOAD_CELL_LIMIT:
+        raise InvalidCell(
+            "deliberation payload expands to %d cells, over the %d-cell bound; "
+            "record a summary and a digest instead of the whole report"
+            % (len(prepared_value.create), _DELIBERATION_PAYLOAD_CELL_LIMIT)
+        )
     create = (*prepared_value.create, *prepared_entry.create)
     if len({cell.id for cell in create}) != len(create):
         raise InvalidCell("atomic deliberation payload identities collide")

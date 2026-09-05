@@ -59,6 +59,10 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
 // ─── LIVE DOMAIN CONTROL — drives the founder's RUNNING application ─────────────
 // Renders what the app pushed (M.control: agents on his machine, governed work, host
 // states); every button relays through /founder/api/command to the app itself.
+// Hosts the app can bring to CONNECTED itself: Office through COM, Rhino and
+// Blender launched with the shipped ArchHub bridge. Max needs MaxMCP (said so).
+const OPENABLE = ['excel', 'word', 'powerpoint', 'outlook', 'rhino', 'blender'];
+
 function LiveDomainControl({ M, d, members, onRelay }) {
   const ctl = M.control || null;
   const [ask, setAsk] = React.useState('');
@@ -69,7 +73,13 @@ function LiveDomainControl({ M, d, members, onRelay }) {
   const low = title.toLowerCase();
   const isHosts = /host|connector/.test(String(d.key || '') + ' ' + low) || members.some(n => n.cat === 'host' || /host|connector/i.test(String(n.sub || '')));
   const agents = ctl ? (ctl.agents || []) : [];
-  const items = ctl ? (ctl.work_items || []) : [];
+  // Work is scoped to THIS domain when its title names the domain (or a word of
+  // it); when nothing matches, the whole list is shown and labelled as such.
+  const allItems = ctl ? (ctl.work_items || []) : [];
+  const words = [low, String(d.key || '').toLowerCase(), ...low.split(/[^a-z0-9]+/).filter(w => w.length > 3)];
+  const scoped = allItems.filter(w => { const t = String(w.title || '').toLowerCase(); return words.some(x => x && t.includes(x)); });
+  const items = scoped.length ? scoped : allItems;
+  const itemsLabel = scoped.length ? 'GOVERNED WORK · THIS DOMAIN' : 'GOVERNED WORK · ALL';
   const hosts = ctl ? (ctl.hosts || []) : [];
   const say = async (command, execute) => {
     if (!onRelay || busy) return;
@@ -102,13 +112,14 @@ function LiveDomainControl({ M, d, members, onRelay }) {
           <HBtn onClick={() => { const what = ask || ('review the ' + title + ' domain'); say('tell ' + (a.provider || a.runtime) + ': ' + what, true); }} disabled={busy}>→ Tell</HBtn></div>)}
       </div>}
       {ctl && (ctl.work_summary || items.length > 0) && <div style={{ marginTop: 10 }}>
-        <div style={{ ...small, marginBottom: 4 }}>GOVERNED WORK</div>
+        <div style={{ ...small, marginBottom: 4 }}>{itemsLabel}</div>
         {ctl.work_summary && <div style={{ fontSize: 12, color: HB.ink, marginBottom: 4 }}>{ctl.work_summary}</div>}
         {items.slice(0, 8).map((w, i) => <div key={i} style={row}><span style={{ flex: 1, fontSize: 12 }}>{w.title}</span><span style={small}>{w.state}{w.agent ? ' · ' + w.agent : ''}</span></div>)}
       </div>}
       {ctl && isHosts && hosts.length > 0 && <div style={{ marginTop: 10 }}>
         <div style={{ ...small, marginBottom: 4 }}>HOSTS · {hosts.filter(h => h.state === 'connected').length} connected of {hosts.length}</div>
-        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, fontSize: 12 }}>{h.name}</span>{pill(h.state)}</div>)}
+        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name} <span style={small}>{h.state === 'connected' ? '' : (h.detail || '')}</span></span>{pill(h.state)}
+          {OPENABLE.includes(h.id) && h.state !== 'connected' && <HBtn onClick={() => say('open ' + h.id, true)} disabled={busy}>▸ Open</HBtn>}</div>)}
       </div>}
       <div style={{ marginTop: 10 }}>
         <div style={{ ...small, marginBottom: 4 }}>ASK OR INSTRUCT YOUR APP · about {title}</div>

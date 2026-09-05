@@ -118,6 +118,18 @@ def require_founder(
     token = _bearer(authorization) or (founder_session or "").strip() or None
     user = _founder_user_for_token(token)
     if user is None:
+        # A browser that navigated here without a session is sent to sign in;
+        # an API client keeps the exact 403. The founder opened
+        # api.archhub.io/founder in a fresh browser and read {"detail":
+        # "founder_only"} (2026-09-05) -- that is a door, not a wall.
+        accept = str(request.headers.get("accept") or "")
+        if "text/html" in accept and authorization is None and request.method == "GET":
+            from urllib.parse import quote
+            raise HTTPException(
+                status_code=307,
+                headers={"Location": "/founder/login?next=" + quote(str(request.url.path))},
+                detail="sign in",
+            )
         raise HTTPException(status_code=403, detail="founder_only")
     return user
 
@@ -380,7 +392,8 @@ _INTENTS = [
     # answered by that application through the relay, never by the cloud.
     ("app",              [r"^\s*(app|baboom)\b",
                           r"\b(agents?|baboom|graph|engines?|hosts?|brokers?|brain|blocked|focus|meetings?|map|update|restart|canvas|nodes?|wires?|work)\b",
-                          r"^\s*(tell|interrupt|run|check|show|what|who|which|where|is|are|how|claim|plan|draft)\b"]),
+                          r"^\s*(tell|interrupt|run|check|show|what|who|which|where|is|are|how|claim|plan|draft)\b",
+                          r"^\s*(open|launch|start|connect)\s+(excel|word|powerpoint|outlook|rhino|blender|max|3ds\s*max)\b"]),
     ("direct_agent",     [r"\b(build|extend|create|implement|make|add)\b",
                           r"\bself[\s_-]?extend\b", r"\bagent\b", r"\bbuild me\b"]),
 ]

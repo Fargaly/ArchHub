@@ -330,6 +330,15 @@ def _website_return_origin(redirect: str) -> str:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@app.get("/", include_in_schema=False)
+def root_door():
+    """api.archhub.io/ is the cockpit's door, not a 404: browsers go to the
+    founder surface (which sends the unsigned to /founder/login); the API
+    itself lives under /v1."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/founder", status_code=307)
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True, "ts": int(time.time())}

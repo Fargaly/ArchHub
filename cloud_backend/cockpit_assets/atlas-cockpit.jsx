@@ -400,6 +400,10 @@ function AtlasCockpit() {
   // ── runtime: run a node, pulse its wires, mark dependents stale, record history ──
   const setRT = (id, rt) => setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === id ? { ...n, rt: { ...(n.rt || { runs: [] }), ...rt } } : n) }));
   const markStaleDownstream = (id) => setM(m => { const RT = window.RT; const down = new Set(RT.downstream(m, id)); return { ...m, nodes: m.nodes.map(n => down.has(n.id) && (!n.rt || n.rt.state !== 'running') ? { ...n, rt: { ...(n.rt || { runs: [] }), state: 'stale' } } : n) }; });
+  // Every domain control relays through the same door the ask bar uses; the
+  // founder's running application answers (confirm=true = act).
+  const relayToApp = (command, execute) => fetch('/founder/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ command, confirm: !!execute }) }).then(r => r.json());
   const runNode = (id) => {
     const RT = window.RT; const node = M.nodes.find(n => n.id === id); if (!node) return;
     if (node.frozen) { flash('Frozen — unfreeze to run'); return; }
@@ -739,7 +743,7 @@ function AtlasCockpit() {
   else if (multiDom) inspectPanel = <MultiPanel selDomains={[...(sel.domains || new Set())]} selNodes={sel.nodes} M={M} onGroupField={groupIntoField} clearSel={clearSel}/>;
   else if (sel.nodes.size > 1) inspectPanel = <BulkPanel sel={sel.nodes} selNodes={selNodes} M={M} DB={DB} STATUS={STATUS_ORDER} bulkStatus={bulkStatus} bulkDomain={bulkDomain} bulkAgent={bulkAgent} onGroup={groupSelection} onDelete={() => delNodes([...sel.nodes])} clearSel={clearSel} domName={domName}/>;
   else if (sel.nodes.size === 1) { const node = M.nodes.find(n => n.id === [...sel.nodes][0]); inspectPanel = <NodeInspector key={node.id} M={M} node={node} DB={DB} assign={assign} STATUS={STATUS_ORDER} CATS={CAT_LIST} patchNode={patchNode} delNode={(id) => delNodes([id])} toggleAgent={toggleAgent} onClose={clearSel} openRoom={openRoom} focusNode={(id) => inspectNode(id)} domName={domName} onRun={runNode} onVariant={runVariant} onWatch={addWatcher}/>; }
-  else if (sel.domain) inspectPanel = <DomainPanel M={M} domKey={sel.domain} DB={DB} counts={counts} STATUS={STATUS_ORDER} CATS={CAT_LIST} patchDomain={patchDomain} assign={assign} toggleAgent={toggleAgent} onEnter={() => focusDomain(sel.domain)} onAddNode={() => addNode(sel.domain)} onUngroup={ungroupDomain} openRoom={openRoom} selectBy={selectBy} onClose={clearSel}/>;
+  else if (sel.domain) inspectPanel = <DomainPanel onRelay={relayToApp} M={M} domKey={sel.domain} DB={DB} counts={counts} STATUS={STATUS_ORDER} CATS={CAT_LIST} patchDomain={patchDomain} assign={assign} toggleAgent={toggleAgent} onEnter={() => focusDomain(sel.domain)} onAddNode={() => addNode(sel.domain)} onUngroup={ungroupDomain} openRoom={openRoom} selectBy={selectBy} onClose={clearSel}/>;
   else inspectPanel = <SystemPanel M={M} counts={counts} total={total} STATUS={STATUS_ORDER} attention={[]} onGoto={gotoAttention} onAddDomain={() => setDomModal(true)} onEnter={(k) => { focusDomain(k); pickDomain(k); }} openRoom={openRoom}/>;
 
   const railW = 316, rightW = 316;  // equal rails — the map sits centred between them

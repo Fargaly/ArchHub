@@ -145,11 +145,21 @@ def call_tool(name: str, arguments: dict[str, Any],
         headers={"Content-Type": "application/json",
                  "Accept": "application/json, text/event-stream"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout or _TIMEOUT) as r:
-            return _parse_sse(r.read())
-    except Exception:
-        return None
+    # A busy brain is not a missing authority. The daemon serves every agent
+    # on this machine and a heavy tool call can hold it for tens of seconds;
+    # a single 6 s attempt then made the stop gate report "Universal work
+    # authority is unavailable" and refuse the founder's session (2026-09-06).
+    # Two tries, the second patient, before anything is called unavailable.
+    budget = timeout or _TIMEOUT
+    for attempt, wait in enumerate((budget, max(budget * 3, 20.0))):
+        try:
+            with urllib.request.urlopen(req, timeout=wait) as r:
+                return _parse_sse(r.read())
+        except Exception:
+            if attempt:
+                return None
+            time.sleep(0.5)
+    return None
 
 
 # ───────────────────────── context (pre-prompt) ─────────────────────────

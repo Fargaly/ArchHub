@@ -1861,15 +1861,33 @@ class UniversalRuntimeClient:
         result = self.request("POST", "/api/universal/baboom-command-execute", {
             "utterance": utterance,
         })
+        # Assigning Work has its own exact shape and keeps its exact check.
+        if result.get("intent") == "assign-task":
+            if (
+                set(result) != {"catalog", "intent", "work", "external_key", "created", "state", "revision"}
+                or result.get("catalog") != "app:baboom-command-catalog:v1"
+                or type(result.get("work")) is not str
+                or type(result.get("external_key")) is not str
+                or type(result.get("created")) is not bool
+                or result.get("state") != "open"
+                or type(result.get("revision")) is not int
+            ):
+                raise MachineTransportError("BABOOM command execution is invalid")
+            return result
+        # Every OTHER act BABOOM performs -- run an engine on the graph, send or
+        # interrupt an agent -- reports what it did: kind, one sentence, data.
+        # Before 2026-09-04 this validator admitted assign-task alone, so those
+        # acts could not cross the transport at all.
+        command = result.get("command")
         if (
-            set(result) != {"catalog", "intent", "work", "external_key", "created", "state", "revision"}
-            or result.get("catalog") != "app:baboom-command-catalog:v1"
-            or result.get("intent") != "assign-task"
-            or type(result.get("work")) is not str
-            or type(result.get("external_key")) is not str
-            or type(result.get("created")) is not bool
-            or result.get("state") != "open"
-            or type(result.get("revision")) is not int
+            not isinstance(command, Mapping)
+            or command.get("catalog") != "app:baboom-command-catalog:v1"
+            or type(result.get("kind")) is not str
+            or not result["kind"]
+            or type(result.get("summary")) is not str
+            or not result["summary"]
+            or not isinstance(result.get("data"), Mapping)
+            or set(result) - {"kind", "summary", "data", "command"}
         ):
             raise MachineTransportError("BABOOM command execution is invalid")
         return result

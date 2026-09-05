@@ -305,11 +305,12 @@ class BaboomNativeHost:
         return MappingProxyType(dict(result))
 
     def execute_input(self, utterance: str) -> Mapping[str, object]:
-        """Create only the exact founder task confirmed by the native surface.
+        """Perform the one act the founder confirmed on the native surface.
 
-        The transport route accepts only the graph-held ``assign-task`` command.
-        It creates idempotent, open Work and cannot claim Work, invoke a model,
-        operate a connector, or control the desktop.
+        The graph decides what the utterance means and what an act may touch.
+        ``assign-task`` creates idempotent, open Work; the other acts run an
+        engine on the graph or speak to an agent through the coordination host.
+        Nothing runs without the founder pressing the confirm control first.
         """
         if type(utterance) is not str or not utterance.strip() or len(utterance) > 4_000:
             raise ValueError("BABOOM native input is invalid")
@@ -317,16 +318,27 @@ class BaboomNativeHost:
             if not self._connected:
                 raise RuntimeError("BABOOM native host is not explicitly connected")
         result = self._transport.execute_baboom_command(utterance=utterance)
+        if result.get("intent") == "assign-task":
+            if (
+                result.get("catalog") != "app:baboom-command-catalog:v1"
+                or type(result.get("work")) is not str
+                or type(result.get("external_key")) is not str
+                or type(result.get("created")) is not bool
+                or result.get("state") != "open"
+                or type(result.get("revision")) is not int
+            ):
+                raise RuntimeError("BABOOM native task execution is invalid")
+            return MappingProxyType(dict(result))
+        command = result.get("command")
         if (
-            result.get("catalog") != "app:baboom-command-catalog:v1"
-            or result.get("intent") != "assign-task"
-            or type(result.get("work")) is not str
-            or type(result.get("external_key")) is not str
-            or type(result.get("created")) is not bool
-            or result.get("state") != "open"
-            or type(result.get("revision")) is not int
+            not isinstance(command, Mapping)
+            or command.get("catalog") != "app:baboom-command-catalog:v1"
+            or type(result.get("kind")) is not str
+            or not result["kind"]
+            or type(result.get("summary")) is not str
+            or not result["summary"]
         ):
-            raise RuntimeError("BABOOM native task execution is invalid")
+            raise RuntimeError("BABOOM native act execution is invalid")
         return MappingProxyType(dict(result))
 
     def _run(self) -> None:

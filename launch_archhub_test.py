@@ -643,6 +643,7 @@ try:
             appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
             respond=_respond, execute=_execute,
             map_script=lambda: _atlas(server.universal_store, server.universal_registry),
+            hosts=lambda: server._host_rows(),
         )
         print("  cockpit    :", "relay on (%s)" % cloud_relay.base_url if cloud_relay else "relay off (no cloud session or consent)", flush=True)
     except Exception as _relay_error:

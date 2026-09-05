@@ -108,7 +108,9 @@ def test_the_live_map_is_republished_only_when_it_changes():
         assert relay.push_map() is None                       # inside the interval -> wait
     finally:
         server.shutdown()
-    assert [json.loads(m) for m in _FakeCloud.maps] == [{"domains": [1]}, {"domains": [1, 2]}]
+    # the relay adds its control block to every push; the map itself is untouched
+    assert [json.loads(m)["domains"] for m in _FakeCloud.maps] == [[1], [1, 2]]
+    assert all("control" in json.loads(m) for m in _FakeCloud.maps)
 
 
 def test_render_answer_reads_both_response_and_execution_shapes():
@@ -170,3 +172,25 @@ def test_the_agent_link_is_one_signed_identity_per_install(tmp_path):
     first = link.session_id(tmp_path)
     assert first == link.session_id(tmp_path) and len(first) == 32
     assert link.VENDOR == "archhub" and link.MODEL == "baboom"
+
+
+def test_the_push_carries_a_control_block_from_baboom_answers():
+    from nodelang.cloud_relay import CloudRelay
+    server, base = _serve(_FakeCloud)
+    _FakeCloud.maps[:] = []
+    def respond(u):
+        if u == "agents":
+            return {"response": {"kind": "agents-online", "summary": "2", "data": {"agents": [{"session": "s1", "provider": "codex", "status": "online"}]}}}
+        return {"response": {"kind": "governed-work-report", "summary": "Work: 3 active.", "data": {"items": [{"title": "wire the cockpit", "state": "claimed", "agent": "codex"}]}}}
+    relay = CloudRelay(base_url=base, token="t", respond=respond, execute=lambda u: {},
+                       map_script=lambda: "window.ATLAS_MAP = {\"domains\": [], \"nodes\": [], \"wires\": []}; window.ATLAS_LIVE = true;",
+                       hosts=lambda: [{"id": "revit", "name": "Revit", "state": "connected", "detail": "live"}])
+    try:
+        assert relay.push_map(force=True)["ok"] is True
+    finally:
+        server.shutdown()
+    pushed = json.loads(_FakeCloud.maps[-1])
+    assert pushed["control"]["agents"][0]["provider"] == "codex"
+    assert pushed["control"]["work_summary"] == "Work: 3 active."
+    assert pushed["control"]["work_items"][0] == {"title": "wire the cockpit", "state": "claimed", "agent": "codex"}
+    assert pushed["control"]["hosts"][0]["state"] == "connected"

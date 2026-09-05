@@ -392,7 +392,8 @@ _INTENTS = [
     # answered by that application through the relay, never by the cloud.
     ("app",              [r"^\s*(app|baboom)\b",
                           r"\b(agents?|baboom|graph|engines?|hosts?|brokers?|brain|blocked|focus|meetings?|map|update|restart|canvas|nodes?|wires?|work)\b",
-                          r"^\s*(tell|interrupt|run|check|show|what|who|which|where|is|are|how|claim|plan|draft)\b"]),
+                          r"^\s*(tell|interrupt|run|check|show|what|who|which|where|is|are|how|claim|plan|draft)\b",
+                          r"^\s*(open|launch|start|connect)\s+(excel|word|powerpoint|outlook|rhino|blender|max|3ds\s*max)\b"]),
     ("direct_agent",     [r"\b(build|extend|create|implement|make|add)\b",
                           r"\bself[\s_-]?extend\b", r"\bagent\b", r"\bbuild me\b"]),
 ]

@@ -267,6 +267,9 @@ function SystemPanel(_ref) {
 // ─── LIVE DOMAIN CONTROL — drives the founder's RUNNING application ─────────────
 // Renders what the app pushed (M.control: agents on his machine, governed work, host
 // states); every button relays through /founder/api/command to the app itself.
+// Hosts the app can bring to CONNECTED itself: Office through COM, Rhino and
+// Blender launched with the shipped ArchHub bridge. Max needs MaxMCP (said so).
+var OPENABLE = ['excel', 'word', 'powerpoint', 'outlook', 'rhino', 'blender'];
 function LiveDomainControl(_ref2) {
   var M = _ref2.M,
     d = _ref2.d,
@@ -553,9 +556,20 @@ function LiveDomainControl(_ref2) {
     }, /*#__PURE__*/React.createElement("span", {
       style: {
         flex: 1,
-        fontSize: 12
+        minWidth: 0,
+        fontSize: 12,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
       }
-    }, h.name), pill(h.state));
+    }, h.name, " ", /*#__PURE__*/React.createElement("span", {
+      style: small
+    }, h.state === 'connected' ? '' : h.detail || '')), pill(h.state), OPENABLE.includes(h.id) && h.state !== 'connected' && /*#__PURE__*/React.createElement(HBtn, {
+      onClick: function onClick() {
+        return say('open ' + h.id, true);
+      },
+      disabled: busy
+    }, "\u25B8 Open"));
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10

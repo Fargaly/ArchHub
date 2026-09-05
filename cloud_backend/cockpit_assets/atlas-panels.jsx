@@ -59,6 +59,10 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
 // ─── LIVE DOMAIN CONTROL — drives the founder's RUNNING application ─────────────
 // Renders what the app pushed (M.control: agents on his machine, governed work, host
 // states); every button relays through /founder/api/command to the app itself.
+// Hosts the app can bring to CONNECTED itself: Office through COM, Rhino and
+// Blender launched with the shipped ArchHub bridge. Max needs MaxMCP (said so).
+const OPENABLE = ['excel', 'word', 'powerpoint', 'outlook', 'rhino', 'blender'];
+
 function LiveDomainControl({ M, d, members, onRelay }) {
   const ctl = M.control || null;
   const [ask, setAsk] = React.useState('');
@@ -114,7 +118,8 @@ function LiveDomainControl({ M, d, members, onRelay }) {
       </div>}
       {ctl && isHosts && hosts.length > 0 && <div style={{ marginTop: 10 }}>
         <div style={{ ...small, marginBottom: 4 }}>HOSTS · {hosts.filter(h => h.state === 'connected').length} connected of {hosts.length}</div>
-        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, fontSize: 12 }}>{h.name}</span>{pill(h.state)}</div>)}
+        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name} <span style={small}>{h.state === 'connected' ? '' : (h.detail || '')}</span></span>{pill(h.state)}
+          {OPENABLE.includes(h.id) && h.state !== 'connected' && <HBtn onClick={() => say('open ' + h.id, true)} disabled={busy}>▸ Open</HBtn>}</div>)}
       </div>}
       <div style={{ marginTop: 10 }}>
         <div style={{ ...small, marginBottom: 4 }}>ASK OR INSTRUCT YOUR APP · about {title}</div>

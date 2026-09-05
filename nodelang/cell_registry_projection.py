@@ -58,7 +58,11 @@ def _roots(prefix: str, segment: str, names) -> MappingProxyType:
 
 
 def _require(snapshot: Snapshot, roots, label: str) -> None:
-    missing = set(roots) - set(snapshot.cells)
+    # Point reads, never set(snapshot.cells): the head map is lazy over a
+    # journal of millions of rows, and materialising every id here ran on
+    # each of the dozens of protocol projections a boot performs. That one
+    # line was half of a 259s boot (boot-profile.log, 2026-09-05).
+    missing = {root for root in roots if root not in snapshot.cells}
     if missing:
         raise InvalidCell(
             "%s projection is incomplete: %s" % (label, sorted(missing)[0])

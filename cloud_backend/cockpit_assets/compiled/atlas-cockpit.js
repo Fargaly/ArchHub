@@ -1423,6 +1423,58 @@ function AtlasCockpit() {
       return w.a + '>' + w.b;
     });
     setActiveWires(new Set(outKeys));
+    if (node.engine) {
+      // A live node from the founder's running application: Run runs it THERE,
+      // through the same relay the ask bar uses (confirm=true = act). The twin
+      // animation below is for authored nodes that exist nowhere else.
+      flash("Running ".concat(node.title, " in ArchHub\u2026"));
+      fetch('/founder/api/command', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          command: 'run engine ' + node.engine,
+          confirm: true
+        })
+      }).then(function (r) {
+        return r.json();
+      }).then(function (d) {
+        var ok = !!d.ok && !d.pending_app;
+        var text = String(d.message || '').slice(0, 240);
+        setM(function (m) {
+          return _objectSpread(_objectSpread({}, m), {}, {
+            nodes: m.nodes.map(function (n) {
+              return n.id === id ? _objectSpread(_objectSpread({}, n), {}, {
+                rt: {
+                  state: ok ? 'fresh' : 'error',
+                  runs: [].concat(_toConsumableArray(n.rt && n.rt.runs || []), [{
+                    id: 'r_app_' + Date.now().toString(36),
+                    n: (n.rt && n.rt.runs || []).length + 1,
+                    t: Date.now(),
+                    ms: 0,
+                    ok: ok,
+                    result: text,
+                    app: true
+                  }]),
+                  lastRun: Date.now()
+                }
+              }) : n;
+            })
+          });
+        });
+        setActiveWires(new Set());
+        flash((ok ? '✓ ' : '✗ ') + node.title + ' → ' + text.slice(0, 120));
+      })["catch"](function (e) {
+        setRT(id, {
+          state: 'error'
+        });
+        setActiveWires(new Set());
+        flash('✗ ' + node.title + ' — ' + e);
+      });
+      return;
+    }
     flash("Running ".concat(node.title, "\u2026"));
     setTimeout(function () {
       var run = RT.mkRun(node);

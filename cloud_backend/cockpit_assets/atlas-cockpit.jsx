@@ -406,6 +406,26 @@ function AtlasCockpit() {
     setRT(id, { state: 'running' });
     const outKeys = M.wires.filter(w => w.a === id).map(w => w.a + '>' + w.b);
     setActiveWires(new Set(outKeys));
+    if (node.engine) {
+      // A live node from the founder's running application: Run runs it THERE,
+      // through the same relay the ask bar uses (confirm=true = act). The twin
+      // animation below is for authored nodes that exist nowhere else.
+      flash(`Running ${node.title} in ArchHub…`);
+      fetch('/founder/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ command: 'run engine ' + node.engine, confirm: true }) })
+        .then(r => r.json())
+        .then(d => {
+          const ok = !!d.ok && !d.pending_app;
+          const text = String(d.message || '').slice(0, 240);
+          setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === id
+            ? { ...n, rt: { state: ok ? 'fresh' : 'error', runs: [...((n.rt && n.rt.runs) || []), { id: 'r_app_' + Date.now().toString(36), n: ((n.rt && n.rt.runs) || []).length + 1, t: Date.now(), ms: 0, ok, result: text, app: true }], lastRun: Date.now() } }
+            : n) }));
+          setActiveWires(new Set());
+          flash((ok ? '✓ ' : '✗ ') + node.title + ' → ' + text.slice(0, 120));
+        })
+        .catch(e => { setRT(id, { state: 'error' }); setActiveWires(new Set()); flash('✗ ' + node.title + ' — ' + e); });
+      return;
+    }
     flash(`Running ${node.title}…`);
     setTimeout(() => {
       const run = RT.mkRun(node);

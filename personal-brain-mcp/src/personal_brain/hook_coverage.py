@@ -900,11 +900,30 @@ def audit_cell_first(
             from .universal_runtime import UniversalRuntimeBridge
 
             runtime = UniversalRuntimeBridge()
+        # A RECEIPT, not the report. The full per-client report expanded into
+        # roughly 2,180 cells per audit; 1,056 audits grew the founder's graph
+        # from 534 MB to 4.29 GB and pushed boot from 45s to 694s (2026-09-05).
+        # The graph records that the audit ran, its verdict and a digest that
+        # ties back to the full report; the report itself is this call's return
+        # value and lives in the brain, which is where it is read from.
+        receipt = {
+            "event_type": report_payload["event_type"],
+            "source": report_payload["source"],
+            "owner_user": owner_user,          # the history readers filter on it
+            "audit_id": audit_id,
+            "status": str(report.status),
+            "last_audited_at": str(report_payload["last_audited_at"]),
+            "only": list(only or []),
+            "client_count": len(report_payload.get("clients") or {}),
+            "report_sha256": hashlib.sha256(
+                json.dumps(report_payload, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest(),
+        }
         created = runtime.deliberation_append(
             space=CELL_CONTROL_LEDGER_ROOT,
             category=CELL_COMPLIANCE_CATEGORY_ROOT,
             summary="Hook coverage audit: %s" % report.status,
-            payload=report_payload,
+            payload=receipt,
             idempotency_key="hook-coverage-audit:%s" % audit_id,
             created_at=str(report_payload["last_audited_at"]),
         )
@@ -1096,7 +1115,12 @@ def repair_cell_first(
                 "only": list(only or []),
                 "dry_run": dry_run,
                 "requested_at": requested_at,
-                "before": before.model_dump(mode="json"),
+                # A digest of the before-state, not the state: the full report
+                # expands to thousands of cells (see audit_cell_first above).
+                "before_sha256": hashlib.sha256(
+                    json.dumps(before.model_dump(mode="json"), sort_keys=True, default=str).encode("utf-8")
+                ).hexdigest(),
+                "before_status": str(before.status),
             },
             idempotency_key="hook-coverage-repair-request:%s" % repair_id,
             created_at=requested_at,
@@ -1124,8 +1148,17 @@ def repair_cell_first(
                 "repair_id": repair_id,
                 "request_cell_entry_root": str(request_record["root"]),
                 "dry_run": dry_run,
-                "before": before.model_dump(mode="json"),
-                "after": after.model_dump(mode="json"),
+                # Digests, not the reports: the graph records that the repair
+                # ran and what it changed the verdict to; the reports are this
+                # call's return value.
+                "before_status": str(before.status),
+                "after_status": str(after.status),
+                "before_sha256": hashlib.sha256(
+                    json.dumps(before.model_dump(mode="json"), sort_keys=True, default=str).encode("utf-8")
+                ).hexdigest(),
+                "after_sha256": hashlib.sha256(
+                    json.dumps(after.model_dump(mode="json"), sort_keys=True, default=str).encode("utf-8")
+                ).hexdigest(),
                 "install_results": _jsonable(install_results),
             },
             idempotency_key="hook-coverage-repair-outcome:%s" % repair_id,

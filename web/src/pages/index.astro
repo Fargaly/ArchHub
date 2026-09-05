@@ -9,8 +9,10 @@ import Base from '../layouts/Base.astro';
 // the self-healing-connectors block (the app's strongest differentiator),
 // the auditable-graph split, the skills-are-JSON split, and security.
 import buildInfo from '../data/build-info.json';
+import { releaseInfo } from '../lib/release.js';
 const connectors = buildInfo.connectors ?? 0;
 const operations = buildInfo.operations ?? 0;
+const release = releaseInfo();
 ---
 <Base title="ArchHub — AI workspace for architects & AEC teams" description="The graph-first AI workspace for architects, engineers, and contractors. One canvas wires every tool you already use — Revit, Rhino, Speckle, Excel. Local-first. MIT.">
 
@@ -26,13 +28,14 @@ const operations = buildInfo.operations ?? 0;
           <a class="btn lg" href="/features">See what it does →</a>
         </div>
         <div class="fineprint">Free in open beta · MIT · bring your own key · no credit card · Windows 10/11 (the desktop app is Windows-only)</div>
+        <div class="fineprint">{release.sentence}</div>
       </div>
 
       <!-- node canvas preview -->
       <div class="canvas-card">
         <div class="canvas-head">
           <span class="cdot"></span><span class="cdot"></span><span class="cdot"></span>
-          <span class="path">canvas · Tower-A_central.rvt · /studio</span>
+          <span class="path">canvas · Tower-A_central.rvt · /studio · illustration</span>
         </div>
         <div class="canvas-body">
           <svg style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;">
@@ -131,16 +134,23 @@ const operations = buildInfo.operations ?? 0;
           <div class="eyebrow">Self-healing connectors</div>
           <h2 class="serif heal-h">Your CAD <span class="ital">tells us</span> when it breaks. We listen.</h2>
           <p class="heal-lede">No restarts. No "please relaunch Revit." The connector watches the host, reconnects on its own, and tells you what it did.</p>
+          <!-- These three tiles used to quote a restart count, a session
+               count and a millisecond figure over a seven-day window, as if
+               measured across a fleet. Nothing measured them. These three
+               are counted from the shipped connector source by
+               scripts/build-info.js, so a reader can check them. -->
           <div class="heal-stats">
-            <div><div class="k">0</div><div class="v">manual restarts</div><div class="vs">LAST 7 DAYS</div></div>
-            <div><div class="k">47</div><div class="v">recovered sessions</div><div class="vs">LAST 7 DAYS</div></div>
-            <div><div class="k">340<span style="font-size:22px;">ms</span></div><div class="v">median recovery</div><div class="vs">P50 · ALL HOSTS</div></div>
+            <div><div class="k">{connectors}</div><div class="v">connectors watched</div><div class="vs">COUNTED FROM SOURCE</div></div>
+            <div><div class="k">{operations}</div><div class="v">operations covered</div><div class="vs">COUNTED FROM SOURCE</div></div>
+            <div><div class="k">0</div><div class="v">restarts you perform</div><div class="vs">RECONNECT IS AUTOMATIC</div></div>
           </div>
         </div>
         <div class="heal-right">
           <div class="heal-rhead">
             <span class="eyebrow" style="color:var(--warn);">Recovery in progress · Revit 2025</span>
-            <span class="mono" style="font-size:10px; color:var(--ink-muted);">session #2841</span>
+            <!-- Labelled because the timestamps, the session id and the
+                 millisecond figures below are drawn, not captured. -->
+            <span class="mono" style="font-size:10px; color:var(--ink-muted);">ILLUSTRATION · NOT A CAPTURED SESSION</span>
           </div>
           <div class="diff">
             <div class="box">
@@ -166,6 +176,7 @@ const operations = buildInfo.operations ?? 0;
             <div class="logline"><span class="lt">14:23:11</span><span class="lw" style="color:var(--ink-soft);">USER</span><span class="lm">no notification shown · recovery silent</span></div>
           </div>
           <div class="heal-foot"><span class="serif ital" style="font-size:16px; color:var(--ink-soft);">You didn't notice. That's the point.</span></div>
+          <div class="mono heal-note">Illustration of the recovery sequence. We do not collect telemetry from your machine, so there is no fleet average to quote.</div>
         </div>
       </div>
     </div>
@@ -233,7 +244,11 @@ const operations = buildInfo.operations ?? 0;
           <li><span class="fi">⌥</span><span class="ft"><b>Persistent across projects</b><span>The Brain remembers your standards — sheet naming, dim styles, detail libraries — and reuses them on the next tower.</span></span></li>
           <li><span class="fi">↗</span><span class="ft"><b>No marketplace lock-in</b><span>Nothing lives behind our login. Delete ArchHub tomorrow and your skills are still plain files on disk.</span></span></li>
         </ul>
-        <p style="margin-top:6px;"><a class="ilink" href="/features">Browse the live skill library →</a></p>
+        <!-- This link used to promise a skill library and point at
+             /features, which has no library on it. The published, browsable
+             packs live on /gallery; the searchable node and skill catalogue
+             is inside the desktop app. -->
+        <p style="margin-top:6px;"><a class="ilink" href="/gallery">See what the community has published →</a></p>
       </div>
     </div>
   </section>
@@ -357,6 +372,7 @@ const operations = buildInfo.operations ?? 0;
     .logline .lw { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; }
     .logline .lm { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); line-height: 1.4; }
     .heal-foot { text-align: right; margin-top: 12px; }
+    .heal-note { font-size: 10px; line-height: 1.5; color: var(--ink-muted); letter-spacing: 0.04em; margin-top: 10px; }
 
     /* feature split */
     .split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4xl); align-items: center; }

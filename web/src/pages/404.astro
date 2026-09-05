@@ -1,0 +1,76 @@
+---
+import Base from '../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+
+// A missing page used to hand the visitor BusyBox httpd's own default body —
+// black-on-white "404 Not Found", no nav, no way back, nothing that looked
+// like ArchHub. This is the site's own 404, and web/httpd.conf tells httpd to
+// serve it (E404:404.html).
+//
+// The doc links are read from the real collection, so the suggestions cannot
+// rot into dead links.
+const docs = (await getCollection('docs')).sort((a, b) => {
+  const ao = a.data.order ?? 999;
+  const bo = b.data.order ?? 999;
+  if (ao !== bo) return ao - bo;
+  return a.data.title.localeCompare(b.data.title);
+}).slice(0, 4);
+---
+<Base title="Page not found" description="That page is not on archhub.io. Here is the way back to the canvas, the docs, and the download.">
+  <section class="nf">
+    <div class="wrap">
+      <div class="eyebrow">● 404 · not on the drawing</div>
+      <h1 class="title serif">This sheet<br/><span class="ital">isn't in the set.</span></h1>
+      <p class="lede">The page you asked for is not on archhub.io. It may have moved, or the link may have been mistyped. Everything below is one click away.</p>
+
+      <div class="cta-row">
+        <a class="btn btn-primary lg" href="/">Back to the home page</a>
+        <a class="btn lg" href="/docs">Read the docs →</a>
+      </div>
+
+      <div class="nf-grid">
+        <div class="nf-col">
+          <h5>THE PRODUCT</h5>
+          <a href="/features">Features</a>
+          <a href="/pricing">Pricing</a>
+          <a href="/gallery">Community gallery</a>
+          <a href="/changelog">Changelog</a>
+        </div>
+        <div class="nf-col">
+          <h5>DOCS</h5>
+          {docs.map((doc) => (
+            <a href={`/docs/${doc.id}/`}>{doc.data.title}</a>
+          ))}
+        </div>
+        <div class="nf-col">
+          <h5>ACCOUNT</h5>
+          <a href="/signin">Sign in</a>
+          <a href="/security">Security</a>
+          <a href="https://github.com/Fargaly/ArchHub" rel="noopener">Source on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <style>
+    .nf { padding: var(--sp-7xl) 0 var(--sp-7xl); min-height: 60vh;
+      background-image: radial-gradient(var(--line-soft) 1px, transparent 1px); background-size: 22px 22px; }
+    h1.title { font-size: var(--fs-d1); line-height: 0.9; letter-spacing: -0.04em; margin: 14px 0 0; }
+    .lede { font-family: var(--serif); font-size: var(--fs-h2); font-style: italic; color: var(--ink-soft);
+      letter-spacing: -0.01em; line-height: 1.38; margin-top: var(--sp-xl); max-width: 560px; }
+    .cta-row { display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; }
+    .btn.lg { padding: 11px 20px; font-size: 14.5px; }
+
+    .nf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-top: var(--sp-6xl);
+      padding-top: var(--sp-xl); border-top: 1px solid var(--line); max-width: 900px; }
+    .nf-col h5 { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-muted);
+      margin: 0 0 12px; font-weight: 400; }
+    .nf-col a { display: block; font-size: 13.5px; color: var(--ink-soft); padding: 4px 0; transition: color .15s; }
+    .nf-col a:hover { color: var(--ink); }
+
+    @media (max-width: 820px) {
+      h1.title { font-size: 54px; }
+      .nf-grid { grid-template-columns: 1fr; gap: 20px; }
+    }
+  </style>
+</Base>

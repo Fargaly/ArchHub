@@ -1,0 +1,11 @@
+# archhub.io — the site had no robots.txt at all, so crawlers had no sitemap
+# to find and no statement about the signed-in pages.
+User-agent: *
+Allow: /
+
+# Signed-in surfaces. They render nothing useful without a session token, so
+# there is no point indexing them.
+Disallow: /account
+Disallow: /brain
+
+Sitemap: https://archhub.io/sitemap.xml

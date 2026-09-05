@@ -68,6 +68,11 @@ import Base from '../layouts/Base.astro';
       <div id="galGrid" class="gal-grid" aria-live="polite">
         <div class="gal-loading">Loading the gallery…</div>
       </div>
+      <noscript>
+        <p class="gal-empty">The gallery reads published packs from ArchHub's
+        cloud as the page loads, so it needs JavaScript. With it switched off
+        there is nothing to show here.</p>
+      </noscript>
     </div>
   </section>
 
@@ -151,7 +156,7 @@ import Base from '../layouts/Base.astro';
   <script is:inline>
     (function () {
       var A = window.ArchHubAuth;
-      var API = (A && A.API) || 'https://archhub-cloud.fly.dev';
+      var API = (A && A.API) || 'https://api.archhub.io';
       var grid = document.getElementById('galGrid');
       var modal = document.getElementById('galModal');
       var state = { source: 'all', type: '', sort: 'top', isAdmin: false };
@@ -207,8 +212,11 @@ import Base from '../layouts/Base.astro';
 
       function render(packs) {
         if (!packs || !packs.length) {
-          grid.innerHTML = '<div class="gal-empty"><strong>Nothing here yet.</strong> ' +
-            'Be the first to publish a pack from the desktop app — it shows up here once approved.</div>';
+          // Say the empty state plainly. Nobody has published yet, and a
+          // gallery that looks broken is worse than one that admits it.
+          grid.innerHTML = '<div class="gal-empty"><strong>No packs published yet.</strong> ' +
+            'The gallery is open and empty — nothing has been published to it so far. ' +
+            'Publish one from the desktop app and it appears here once approved.</div>';
           return;
         }
         grid.innerHTML = packs.map(cardHTML).join('');

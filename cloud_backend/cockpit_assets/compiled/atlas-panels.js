@@ -59,6 +59,167 @@ var secStyle = {
   borderBottom: "1px solid ".concat(HB.lineSoft)
 };
 
+// ─── THE PARAMETER TYPE REGISTRY — one vocabulary for both graphs ───────────────
+// The cockpit's map and the app's session canvas each grew their own idea of what a
+// parameter type is (cockpit: string/number/boolean/color/trigger — app: number/toggle/
+// text/menu/colour/elements/view/…). Two names for one concept is the drift this project
+// keeps paying for, so the registry is published ONCE on window and every panel reads it.
+// COLOUR encodes the data type. SHAPE encodes cardinality: round = one value, diamond = a
+// list. Adding a type here adds it everywhere.
+// If a page ever loads param-types.jsx before this file, that copy wins and this is skipped.
+if (!window.PM_TYPES) {
+  var T = window.AH;
+  window.PM_TYPES = {
+    number: {
+      label: 'Number',
+      glyph: '#',
+      col: T.warn,
+      wire: false,
+      def: 0
+    },
+    toggle: {
+      label: 'Toggle',
+      glyph: '◐',
+      col: T.purple,
+      wire: false,
+      def: false
+    },
+    text: {
+      label: 'Text',
+      glyph: 'T',
+      col: T.inkSoft,
+      wire: false,
+      def: ''
+    },
+    menu: {
+      label: 'Menu',
+      glyph: '≡',
+      col: T.blue,
+      wire: false,
+      def: ''
+    },
+    colour: {
+      label: 'Colour',
+      glyph: '◉',
+      col: T.ok,
+      wire: false,
+      def: '#d97757'
+    },
+    elements: {
+      label: 'Elements',
+      glyph: '▭',
+      col: T.accent,
+      wire: true
+    },
+    view: {
+      label: 'View',
+      glyph: '◱',
+      col: T.cyan,
+      wire: true
+    },
+    dims: {
+      label: 'Annotation',
+      glyph: '↔',
+      col: T.ok,
+      wire: true
+    },
+    file: {
+      label: 'File',
+      glyph: '⎘',
+      col: T.ok,
+      wire: true
+    },
+    any: {
+      label: 'Any',
+      glyph: '✳',
+      col: T.inkMuted,
+      wire: true
+    }
+  };
+  // canvas wire-type names → the registry, so a wire on the map and a socket in a panel agree
+  window.PM_WIRE = {
+    view: T.cyan,
+    selection: T.cyan,
+    walls: T.accent,
+    doors: T.accent,
+    sheets: T.accent,
+    intent: T.purple,
+    prediction: T.purple,
+    trace: T.inkSoft,
+    dims: T.ok,
+    file: T.ok,
+    any: T.inkSoft,
+    number: T.warn,
+    text: T.inkSoft,
+    string: T.inkSoft,
+    "boolean": T.purple,
+    exec: T.accent
+  };
+  // the cockpit's older type names → registry names
+  window.PM_ALIAS = {
+    string: 'text',
+    "boolean": 'toggle',
+    color: 'colour',
+    trigger: 'any'
+  };
+  window.pmType = function (t) {
+    return window.PM_TYPES[t] || window.PM_TYPES[window.PM_ALIAS[t]] || window.PM_TYPES.any;
+  };
+  // The parameters a real graph engine gives a CONNECTION. A wire is a node, so it is
+  // governed like one, and it must mean the same thing here as in the app: defined once.
+  //   lacing   — Dynamo list lacing: how two lists of different length are paired.
+  //   tree     — Grasshopper data-tree ops.
+  //   condition/on_fail — the rule, and what downstream gets when the rule stops it.
+  //   throttle — rate limit for a wire fed by a live host.
+  window.WIRE_PARAMS = [{
+    k: 'enabled',
+    label: 'Enabled',
+    type: 'toggle',
+    def: true,
+    help: 'Mute the connection without deleting it. Downstream sees nothing.'
+  }, {
+    k: 'lacing',
+    label: 'Lacing',
+    type: 'menu',
+    def: 'shortest',
+    opts: ['shortest', 'longest', 'cross product'],
+    help: 'How two lists of different length are paired.'
+  }, {
+    k: 'tree',
+    label: 'Data tree',
+    type: 'menu',
+    def: 'none',
+    opts: ['none', 'flatten', 'graft', 'simplify'],
+    help: 'Restructure on the way through: flatten, graft, or simplify.'
+  }, {
+    k: 'condition',
+    label: 'Condition',
+    type: 'text',
+    def: '',
+    page: 'Rules',
+    help: 'The wire only carries when this holds. Empty means always.'
+  }, {
+    k: 'on_fail',
+    label: 'On block',
+    type: 'menu',
+    def: 'block',
+    opts: ['block', 'pass last', 'pass empty'],
+    page: 'Rules',
+    help: 'What downstream receives when the condition blocks or the source errors.'
+  }, {
+    k: 'throttle_ms',
+    label: 'Throttle',
+    type: 'number',
+    def: 0,
+    unit: 'ms',
+    min: 0,
+    max: 2000,
+    step: 50,
+    page: 'Rules',
+    help: 'Minimum gap between deliveries, for a wire fed by a live host.'
+  }];
+}
+
 /* ════ SYSTEM — macro, nothing selected: whole-system overview ════ */
 function SystemPanel(_ref) {
   var M = _ref.M,
@@ -1442,8 +1603,37 @@ var PARAM_WIRE = {
   color: 'string',
   trigger: 'exec'
 };
+// cockpit type name -> the shared registry's name, so a parameter is the same colour here
+// as the same parameter in the app's inspector.
+var PARAM_SHARED = {
+  string: 'text',
+  number: 'number',
+  "boolean": 'toggle',
+  color: 'colour',
+  trigger: 'any'
+};
 var ptypeCol = function ptypeCol(t) {
+  var R = window.PM_TYPES;
+  if (R) {
+    var d = R[PARAM_SHARED[t] || t];
+    if (d) return d.col;
+  }
   return window.typeColOf ? window.typeColOf(PARAM_WIRE[t] || 'any') : HB.inkMute;
+};
+// The same socket the app's inspector draws: colour = type, shape = cardinality.
+var ptypeSocket = function ptypeSocket(t, filled, size) {
+  var c = ptypeCol(t);
+  return /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: size || 9,
+      height: size || 9,
+      flexShrink: 0,
+      display: 'inline-block',
+      background: filled ? c : 'transparent',
+      border: "1.5px solid ".concat(c),
+      borderRadius: '50%'
+    }
+  });
 };
 function StemParams(_ref13) {
   var node = _ref13.node,
@@ -1533,17 +1723,19 @@ function StemParams(_ref13) {
   var wrap = {
     display: 'flex',
     flexDirection: 'column',
-    gap: 7
+    borderTop: "1px solid ".concat(HB.lineSoft)
   };
+  // One flat 34px line per parameter, control inline, left edge carrying the state.
+  // The same row the app's inspector draws, so a parameter reads identically in both.
   var card = function card(on) {
     return {
-      border: "1px solid ".concat(on ? HB.accent : HB.line),
-      borderRadius: 8,
-      padding: '8px 9px',
-      background: on ? HB.accentSoft : HB.paper2,
       display: 'flex',
-      flexDirection: 'column',
-      gap: 7
+      alignItems: 'center',
+      gap: 8,
+      minHeight: 34,
+      paddingLeft: 8,
+      borderLeft: "2px solid ".concat(on ? HB.accent : 'transparent'),
+      borderBottom: "1px solid ".concat(HB.lineSoft)
     };
   };
   var keyInput = {
@@ -1552,20 +1744,22 @@ function StemParams(_ref13) {
     border: 'none',
     background: 'transparent',
     color: HB.ink,
-    fontFamily: HB.mono,
-    fontSize: 11.5,
+    fontFamily: HB.sans,
+    fontSize: 12.5,
     outline: 'none',
     padding: 0
   };
   var fieldStyle = {
-    flex: 1,
-    padding: '5px 8px',
-    background: HB.card,
+    width: 104,
+    boxSizing: 'border-box',
+    flexShrink: 0,
+    padding: '4px 7px',
+    background: HB.paper,
     border: "1px solid ".concat(HB.line),
-    borderRadius: 6,
+    borderRadius: 4,
     color: HB.ink,
     fontFamily: HB.mono,
-    fontSize: 11.5,
+    fontSize: 11,
     outline: 'none'
   };
   var tag = function tag(t) {
@@ -1619,42 +1813,40 @@ function StemParams(_ref13) {
             v: !on
           });
         },
+        role: "switch",
+        "aria-checked": on,
+        title: p.k + ' — ' + (on ? 'on' : 'off'),
         style: {
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
           background: 'none',
           border: 0,
           cursor: 'pointer',
-          padding: 0
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          width: 30,
-          height: 17,
-          borderRadius: 99,
-          background: on ? HB.accent : HB.line,
-          position: 'relative',
+          padding: 0,
           flexShrink: 0
         }
       }, /*#__PURE__*/React.createElement("span", {
         style: {
+          width: 30,
+          height: 16,
+          borderRadius: 99,
+          background: on ? HB.accent : HB.lineSoft,
+          position: 'relative',
+          flexShrink: 0,
+          transition: 'background .15s'
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
           position: 'absolute',
-          top: 2,
-          left: on ? 15 : 2,
-          width: 13,
-          height: 13,
+          top: 1,
+          left: on ? 15 : 1,
+          width: 14,
+          height: 14,
           borderRadius: '50%',
-          background: '#fff',
+          background: HB.ink,
           transition: 'left .15s'
         }
-      })), /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontFamily: HB.mono,
-          fontSize: 11,
-          color: HB.ink
-        }
-      }, String(on)));
+      })));
     }
     if (t === 'number') return /*#__PURE__*/React.createElement("input", {
       type: "number",
@@ -1666,14 +1858,9 @@ function StemParams(_ref13) {
       },
       style: fieldStyle
     });
-    if (t === 'color') return /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8
-      }
-    }, /*#__PURE__*/React.createElement("input", {
+    if (t === 'color') return /*#__PURE__*/React.createElement("input", {
       type: "color",
+      title: String(p.v),
       value: /^#[0-9a-fA-F]{6}$/.test(String(p.v)) ? p.v : '#d97757',
       onChange: function onChange(e) {
         return setParam(i, {
@@ -1681,36 +1868,17 @@ function StemParams(_ref13) {
         });
       },
       style: {
-        width: 22,
-        height: 22,
-        border: 0,
+        width: 104,
+        height: 24,
+        flexShrink: 0,
+        border: "1px solid ".concat(HB.line),
         background: 'none',
         padding: 0,
         cursor: 'pointer',
-        borderRadius: 5
+        borderRadius: 4
       }
-    }), /*#__PURE__*/React.createElement("input", {
-      value: p.v,
-      onChange: function onChange(e) {
-        return setParam(i, {
-          v: e.target.value
-        });
-      },
-      style: fieldStyle
-    }));
-    if (t === 'trigger') return /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 7
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontFamily: HB.mono,
-        fontSize: 10,
-        color: HB.amber
-      }
-    }, "\u25B7 fires"), /*#__PURE__*/React.createElement("input", {
+    });
+    if (t === 'trigger') return /*#__PURE__*/React.createElement("input", {
       value: p.v,
       onChange: function onChange(e) {
         return setParam(i, {
@@ -1718,8 +1886,9 @@ function StemParams(_ref13) {
         });
       },
       style: fieldStyle,
-      placeholder: "on save \xB7 cron \xB7 webhook\u2026"
-    }));
+      title: "\u25B7 fires on\u2026",
+      placeholder: "on save \xB7 cron\u2026"
+    });
     return /*#__PURE__*/React.createElement("input", {
       value: p.v,
       onChange: function onChange(e) {
@@ -1745,20 +1914,22 @@ function StemParams(_ref13) {
     var on = promoted.has(p.k);
     return /*#__PURE__*/React.createElement("div", {
       key: i,
-      style: card(on)
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 7
-      }
+      style: card(on),
+      title: p.k + ' · ' + t + (on ? ' · exposed as an input port, wireable on the map' : '')
     }, /*#__PURE__*/React.createElement("button", {
       onClick: function onClick() {
         return promote(p);
       },
-      title: on ? 'demote to dial' : 'promote to wireable input port',
-      style: promoteBtn(on)
-    }, "\u25C7"), /*#__PURE__*/React.createElement("input", {
+      title: on ? 'Demote to a local dial' : 'Expose as a wireable input port',
+      style: {
+        border: 0,
+        background: 'transparent',
+        padding: 0,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center'
+      }
+    }, ptypeSocket(t, on)), /*#__PURE__*/React.createElement("input", {
       value: p.k,
       onChange: function onChange(e) {
         return setParam(i, {
@@ -1766,37 +1937,31 @@ function StemParams(_ref13) {
         });
       },
       style: keyInput
-    }), /*#__PURE__*/React.createElement("span", {
-      style: tag(t)
-    }, t), /*#__PURE__*/React.createElement("button", {
+    }), widget(p, i, t), /*#__PURE__*/React.createElement("button", {
       onClick: function onClick() {
         return delParam(i);
       },
+      title: 'Remove ' + p.k,
       style: {
         border: 'none',
         background: 'transparent',
-        color: HB.inkMute,
+        color: HB.inkSoft,
         cursor: 'pointer',
         padding: 0,
+        flexShrink: 0,
         display: 'grid',
         placeItems: 'center'
       }
     }, /*#__PURE__*/React.createElement(CKIcon, {
       name: "x",
       size: 12
-    }))), widget(p, i, t), on && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: HB.mono,
-        fontSize: 9,
-        color: HB.accent
-      }
-    }, "\u25B6 exposed as input port \xB7 wireable on the map"));
+    })));
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexWrap: 'wrap',
       gap: 6,
-      marginTop: 2
+      marginTop: 8
     }
   }, [['field', '＋ Field'], ['number', '＋ Number'], ['boolean', '＋ Toggle'], ['color', '＋ Color'], ['trigger', '＋ Trigger']].map(function (_ref14) {
     var _ref15 = _slicedToArray(_ref14, 2),
@@ -2315,7 +2480,7 @@ function NodeInspector(_ref16) {
   }, /*#__PURE__*/React.createElement(CKIcon, {
     name: "plus",
     size: 12
-  }), "Add stage")), tab === 'runs' && RT && /*#__PURE__*/React.createElement(RT.RunsBody, {
+  }), "Add stage")), tab === 'runs' && /*#__PURE__*/React.createElement(RunsList, {
     node: node,
     onRun: function onRun() {
       return _onRun && _onRun(node.id);
@@ -2534,9 +2699,169 @@ var WireRow = function WireRow(_ref19) {
     k: node.status
   }, node.status));
 };
-var Stat = function Stat(_ref20) {
-  var label = _ref20.label,
-    value = _ref20.value;
+// The run history, drawn here rather than delegated, so an unmeasured field is simply not
+// printed. A run relayed to the app comes back with an outcome and the text the app gave;
+// it carries no duration, and a "0ms" beside it would be a number nobody measured.
+var RunsList = function RunsList(_ref20) {
+  var node = _ref20.node,
+    onRun = _ref20.onRun,
+    onVariant = _ref20.onVariant;
+  var RT = window.RT;
+  var runs = (node.rt && node.rt.runs || []).slice().reverse();
+  var state = node.rt && node.rt.state || 'idle';
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8
+    }
+  }, RT && /*#__PURE__*/React.createElement(RT.RTChip, {
+    state: state
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: HB.inkMute
+    }
+  }, runs.length, " run", runs.length === 1 ? '' : 's'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: onRun,
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '6px 12px',
+      borderRadius: 7,
+      border: 'none',
+      background: HB.accent,
+      color: window.AH && window.AH.onFill || '#180f08',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 11,
+      fontWeight: 600
+    }
+  }, "\u25B8 Run")), !node.engine && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      color: HB.inkSoft,
+      lineHeight: 1.5
+    }
+  }, "This node has no engine, so there is nothing here to run."), runs.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.serif,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: HB.inkMute
+    }
+  }, "No runs yet."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column'
+    }
+  }, runs.map(function (r, i) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: r.id,
+      style: {
+        display: 'flex',
+        gap: 10,
+        paddingLeft: r.variantOf ? 18 : 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 10,
+        height: 10,
+        borderRadius: '50%',
+        background: r.ok ? HB.green : HB.red,
+        marginTop: 6
+      }
+    }), i < runs.length - 1 && /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        width: 1.5,
+        background: HB.line
+      }
+    })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        paddingBottom: 12,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 7
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 11.5,
+        color: HB.ink
+      }
+    }, "run #", r.n), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: r.ok ? HB.green : HB.red
+      }
+    }, r.ok ? '✓' : '✗ failed'), r.ms ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: HB.inkMute
+      }
+    }, r.ms, "ms") : null, r.app && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9,
+        color: HB.inkMute
+      }
+    }, "in your app"), /*#__PURE__*/React.createElement("button", {
+      onClick: function onClick() {
+        return onVariant(r);
+      },
+      title: "Run it again",
+      style: {
+        marginLeft: 'auto',
+        border: "1px solid ".concat(HB.line),
+        background: HB.paper2,
+        color: HB.inkSoft,
+        borderRadius: 6,
+        padding: '2px 7px',
+        cursor: 'pointer',
+        fontFamily: HB.mono,
+        fontSize: 9
+      }
+    }, "run again")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 11,
+        color: HB.inkSoft,
+        marginTop: 3,
+        whiteSpace: 'pre-wrap'
+      }
+    }, r.result)));
+  })));
+};
+var Stat = function Stat(_ref21) {
+  var label = _ref21.label,
+    value = _ref21.value;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '8px 10px',
@@ -2561,8 +2886,8 @@ var Stat = function Stat(_ref20) {
     }
   }, value));
 };
-var Empty = function Empty(_ref21) {
-  var children = _ref21.children;
+var Empty = function Empty(_ref22) {
+  var children = _ref22.children;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: HB.serif,
@@ -2605,12 +2930,12 @@ var miniAct = function miniAct(col, fill) {
 };
 
 /* ════ name modal (group / domain) ════ */
-function NameModal(_ref22) {
-  var title = _ref22.title,
-    placeholder = _ref22.placeholder,
-    colors = _ref22.colors,
-    onSave = _ref22.onSave,
-    onClose = _ref22.onClose;
+function NameModal(_ref23) {
+  var title = _ref23.title,
+    placeholder = _ref23.placeholder,
+    colors = _ref23.colors,
+    onSave = _ref23.onSave,
+    onClose = _ref23.onClose;
   var _React$useState1 = React.useState(''),
     _React$useState10 = _slicedToArray(_React$useState1, 2),
     name = _React$useState10[0],
@@ -2710,13 +3035,13 @@ function NameModal(_ref22) {
 }
 
 /* ════ FIELD — a super grand node: a group of domains ════ */
-function FieldPanel(_ref23) {
-  var M = _ref23.M,
-    fieldId = _ref23.fieldId,
-    patchField = _ref23.patchField,
-    onUngroup = _ref23.onUngroup,
-    onEnterDomain = _ref23.onEnterDomain,
-    onClose = _ref23.onClose;
+function FieldPanel(_ref24) {
+  var M = _ref24.M,
+    fieldId = _ref24.fieldId,
+    patchField = _ref24.patchField,
+    onUngroup = _ref24.onUngroup,
+    onEnterDomain = _ref24.onEnterDomain,
+    onClose = _ref24.onClose;
   var f = (M.fields || []).find(function (x) {
     return x.id === fieldId;
   }) || {};
@@ -2864,12 +3189,12 @@ function FieldPanel(_ref23) {
 }
 
 /* ════ MULTI — a mixed selection of domains (and loose nodes), ready to group up ════ */
-function MultiPanel(_ref24) {
-  var selDomains = _ref24.selDomains,
-    selNodes = _ref24.selNodes,
-    M = _ref24.M,
-    onGroupField = _ref24.onGroupField,
-    clearSel = _ref24.clearSel;
+function MultiPanel(_ref25) {
+  var selDomains = _ref25.selDomains,
+    selNodes = _ref25.selNodes,
+    M = _ref25.M,
+    onGroupField = _ref25.onGroupField,
+    clearSel = _ref25.clearSel;
   var doms = M.domains.filter(function (d) {
     return selDomains.includes(d.key);
   });
@@ -2979,11 +3304,11 @@ function MultiPanel(_ref24) {
 
 // MULTI-FIELD — 2+ fields selected. This is the rung that makes grouping unbounded: fields
 // group into a bigger field, and that field can be grouped again, with no cap.
-function MultiFieldPanel(_ref25) {
-  var M = _ref25.M,
-    ids = _ref25.ids,
-    onGroup = _ref25.onGroup,
-    clearSel = _ref25.clearSel;
+function MultiFieldPanel(_ref26) {
+  var M = _ref26.M,
+    ids = _ref26.ids,
+    onGroup = _ref26.onGroup,
+    clearSel = _ref26.clearSel;
   var all = M.fields || [];
   var byId = {};
   all.forEach(function (f) {
@@ -3089,12 +3414,28 @@ function MultiFieldPanel(_ref25) {
     }
   }, "Clear")));
 }
-function WirePanel(_ref26) {
-  var M = _ref26.M,
-    w = _ref26.w,
-    onDelete = _ref26.onDelete,
-    onGoto = _ref26.onGoto,
-    onClose = _ref26.onClose;
+
+// Wire parameters come from the shared type registry (window.WIRE_PARAMS) — the SAME
+// definition the app's inspector uses, so a connection means one thing in both graphs.
+var WIRE_PARAM_DEFS = function WIRE_PARAM_DEFS() {
+  return (window.WIRE_PARAMS || []).map(function (p) {
+    return {
+      k: p.k,
+      v: p.def,
+      t: p.type === 'toggle' ? 'boolean' : p.type === 'number' ? 'number' : 'string',
+      opts: p.opts,
+      help: p.help,
+      label: p.label
+    };
+  });
+};
+function WirePanel(_ref27) {
+  var M = _ref27.M,
+    w = _ref27.w,
+    onDelete = _ref27.onDelete,
+    onGoto = _ref27.onGoto,
+    onClose = _ref27.onClose,
+    patchWire = _ref27.patchWire;
   var nodeById = {};
   M.nodes.forEach(function (n) {
     return nodeById[n.id] = n;
@@ -3115,6 +3456,11 @@ function WirePanel(_ref26) {
   });
   var A = domById[w.da],
     B = domById[w.db];
+  // Wire parameters live on the wire records themselves, so they persist with the model.
+  var wp = members[0] && members[0].params || {};
+  var setWP = function setWP(k, v) {
+    return patchWire && patchWire(members, _defineProperty({}, k, v));
+  };
   var sig = function sig(id) {
     var n = nodeById[id];
     return n ? window.sigOf ? window.sigOf(n) : n.cat : '—';
@@ -3142,6 +3488,149 @@ function WirePanel(_ref26) {
       marginTop: 6
     }
   }, members.length, " underlying wire", members.length === 1 ? '' : 's', w.cross ? ' · rolled up into one line' : '')), /*#__PURE__*/React.createElement("div", {
+    style: secStyle
+  }, /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, insLabel), {}, {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6
+    })
+  }, "WIRE PARAMETERS", /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 8,
+      color: HB.accent,
+      letterSpacing: '0.1em'
+    }
+  }, "A WIRE IS A NODE")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      color: HB.inkSoft,
+      lineHeight: 1.55,
+      marginBottom: 9
+    }
+  }, "Applies to all ", members.length, " underlying wire", members.length === 1 ? '' : 's', "."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      borderTop: "1px solid ".concat(HB.lineSoft)
+    }
+  }, WIRE_PARAM_DEFS().map(function (p) {
+    var val = wp[p.k] === undefined ? p.v : wp[p.k];
+    var changed = String(val) !== String(p.v);
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.k,
+      title: p.k + (p.help ? ' — ' + p.help : ''),
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        minHeight: 34,
+        paddingLeft: 8,
+        borderLeft: "2px solid ".concat(changed ? HB.accent : 'transparent'),
+        borderBottom: "1px solid ".concat(HB.lineSoft)
+      }
+    }, ptypeSocket(p.t, false), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        minWidth: 0,
+        fontFamily: HB.sans,
+        fontSize: 12.5,
+        color: HB.ink,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, p.label || p.k), changed && /*#__PURE__*/React.createElement("button", {
+      onClick: function onClick() {
+        return setWP(p.k, p.v);
+      },
+      title: 'Revert to ' + p.v,
+      style: {
+        border: 0,
+        background: 'transparent',
+        color: HB.accent,
+        cursor: 'pointer',
+        fontFamily: HB.mono,
+        fontSize: 12,
+        padding: 0
+      }
+    }, "\u21BA"), p.t === 'boolean' ? /*#__PURE__*/React.createElement("button", {
+      onClick: function onClick() {
+        return setWP(p.k, !val);
+      },
+      role: "switch",
+      "aria-checked": !!val,
+      style: {
+        background: 'transparent',
+        border: 0,
+        padding: 0,
+        cursor: 'pointer',
+        display: 'flex'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 30,
+        height: 16,
+        borderRadius: 999,
+        position: 'relative',
+        background: val ? HB.accent : HB.lineSoft,
+        transition: 'background .15s'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        position: 'absolute',
+        top: 1,
+        left: val ? 15 : 1,
+        width: 14,
+        height: 14,
+        borderRadius: '50%',
+        background: HB.ink,
+        transition: 'left .15s'
+      }
+    }))) : p.opts ? /*#__PURE__*/React.createElement("select", {
+      value: val,
+      onChange: function onChange(e) {
+        return setWP(p.k, e.target.value);
+      },
+      style: {
+        width: 104,
+        padding: '4px 6px',
+        borderRadius: 4,
+        border: "1px solid ".concat(HB.line),
+        background: HB.paper,
+        color: HB.ink,
+        fontFamily: HB.mono,
+        fontSize: 11,
+        outline: 'none'
+      }
+    }, p.opts.map(function (o) {
+      return /*#__PURE__*/React.createElement("option", {
+        key: o,
+        value: o
+      }, o);
+    })) : /*#__PURE__*/React.createElement("input", {
+      value: val,
+      onChange: function onChange(e) {
+        return setWP(p.k, p.t === 'number' ? +e.target.value || 0 : e.target.value);
+      },
+      type: p.t === 'number' ? 'number' : 'text',
+      placeholder: p.k === 'condition' ? 'always' : 'value…',
+      style: {
+        width: 104,
+        boxSizing: 'border-box',
+        padding: '4px 7px',
+        borderRadius: 4,
+        border: "1px solid ".concat(HB.line),
+        background: HB.paper,
+        color: HB.ink,
+        fontFamily: HB.mono,
+        fontSize: 11,
+        outline: 'none'
+      }
+    }));
+  }))), /*#__PURE__*/React.createElement("div", {
     style: secStyle
   }, /*#__PURE__*/React.createElement("div", {
     style: insLabel

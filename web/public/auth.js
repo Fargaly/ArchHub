@@ -18,9 +18,12 @@
 (function (global) {
   'use strict';
 
-  // Live cloud backend (archhub-cloud.fly.dev). Allow an override for local
-  // dev via window.ARCHHUB_API before this script loads.
-  var API = (global.ARCHHUB_API || 'https://archhub-cloud.fly.dev').replace(/\/+$/, '');
+  // Live cloud backend. api.archhub.io is the published host — the site used
+  // to call the raw Fly hostname, which leaked the hosting provider into every
+  // request and would break the moment the app moved. Both answer today and
+  // CORS for https://archhub.io is whitelisted on the published host. Allow an
+  // override for local dev via window.ARCHHUB_API before this script loads.
+  var API = (global.ARCHHUB_API || 'https://api.archhub.io').replace(/\/+$/, '');
   var TOKEN_KEY = 'archhub_session_token';
   var APP_URL = 'https://github.com/Fargaly/ArchHub/releases/latest';
 

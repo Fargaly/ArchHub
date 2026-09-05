@@ -35,6 +35,12 @@ const STEM_KINDS = [
 // a saved field, a workflow a saved canvas — every grouping collapses back into a node.
 // A group's name should describe its contents, not be a placeholder the founder must fix.
 // Prefer a word the members genuinely share; fall back to naming them.
+// Elapsed time in words from a real timestamp. Never called without one: an unknown time
+// prints as its own sentence, not as a zero.
+const agoText = (t) => { const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return s + 's ago'; const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60); if (h < 24) return h + 'h ago'; return Math.floor(h / 24) + 'd ago'; };
+
 const AH_STOP = new Set(['the', 'and', 'a', 'of', 'system', 'systems', 'engine', 'layer']);
 function deriveGroupName(titles) {
   const list = titles.filter(Boolean);
@@ -142,8 +148,10 @@ function AtlasCockpit() {
   const setColl = (coll, fn) => setCdb(d => ({ ...d, [coll]: fn(d[coll]) }));
   const flash = (m) => { setToast(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setToast(null), 2000); };
 
-  React.useEffect(() => {
-    if (window.applyHBTheme) window.applyHBTheme('dark');   // cockpit is dark-only — single user
+  // Assembling the model happens more than once: at mount, and again whenever the app
+  // pushes a new projection (see ATLAS_RELOAD below). One place for the merge is what
+  // makes a refresh after a confirmed change show exactly what the first load showed.
+  const assembleModel = React.useCallback(() => {
     const saved = aLoad();
     // The cockpit IS the graph. When the founder's running application has pushed its
     // projection (the server marks it ATLAS_LIVE), that push is the content; the saved
@@ -233,10 +241,64 @@ function AtlasCockpit() {
       });
       if (Object.keys(shifted).length) data = { ...data, domains, nodes: data.nodes.map(n => shifted[n.dom] ? { ...n, x: n.x + shifted[n.dom].dx, y: n.y + shifted[n.dom].dy } : n) };
     }
+    return data;
+  }, []);
+
+  React.useEffect(() => {
+    if (window.applyHBTheme) window.applyHBTheme('dark');   // cockpit is dark-only — single user
+    const data = assembleModel();
     setM(data);
     setVis({ domains: new Set(data.domains.map(d => d.key)), status: new Set(STATUS_ORDER), wires: true, params: true, labels: true });
   }, []);
   React.useEffect(() => { if (M) aSave({ M, assign }); }, [M, assign]);
+
+  // ── IS THIS MAP LIVE, AND IS THE APP ANSWERING? ────────────────────────────────
+  // The map is a projection the founder's running application PUSHES. Without a stamp
+  // beside it there is no way to tell a live push from yesterday's, so the cockpit
+  // records the moment it took delivery of the projection it is drawing, says whether
+  // that projection came from a push at all, and reports when the app last answered.
+  // Every value here is measured. Where there is no measurement it says so.
+  const [mapMeta, setMapMeta] = React.useState(() => ({ live: !!window.ATLAS_LIVE, at: Date.now() }));
+  const [appSeen, setAppSeen] = React.useState({ loaded: false, at: null, queued: 0 });
+  // The real exchanges between the founder and his app: every instruction the cockpit
+  // queued and every answer the app posted back. The Sessions lens renders these rows.
+  const [agentTasks, setAgentTasks] = React.useState([]);
+  const readTasksRef = React.useRef(null);
+  React.useEffect(() => {
+    let dead = false;
+    // The app's relay claims and finishes the cockpit's tasks. A finished or claimed row
+    // is proof the app was running at that instant -- the only honest presence signal the
+    // cloud holds. No row means we do not know, and the panel says exactly that.
+    const read = () => fetch('/founder/api/agent-tasks', { headers: { Accept: 'application/json' } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (dead || !d) return;
+        const rows = d.tasks || [];
+        const ts = rows.map(t => Math.max(t.finished_at || 0, t.claimed_at || 0)).filter(Boolean);
+        setAgentTasks(rows);
+        setAppSeen({ loaded: true, at: ts.length ? Math.max(...ts) * 1000 : null, queued: d.queued || 0 });
+      })
+      .catch(() => {});
+    read();
+    readTasksRef.current = read;
+    const t = setInterval(read, 30000);
+    return () => { dead = true; clearInterval(t); };
+  }, []);
+  const reloadTasks = React.useCallback(() => { if (readTasksRef.current) readTasksRef.current(); }, []);
+
+  // The ask bar calls this after the founder confirms a change, so the map shows the
+  // result instead of the state it was drawn from. It re-fetches the projection the
+  // server holds, re-runs the same merge the first load ran, and re-stamps the delivery
+  // time. Before this the ask bar called a hook that was never defined and nothing moved.
+  const reloadMap = React.useCallback(() => fetch('/founder/map-assets/map-data.js?t=' + Date.now(), { headers: { Accept: 'text/javascript' } })
+    .then(r => r.ok ? r.text() : Promise.reject(new Error('map ' + r.status)))
+    .then(text => {
+      (0, eval)(text);                       // the same script tag map.html loads, re-run
+      setM(assembleModel());
+      setMapMeta({ live: !!window.ATLAS_LIVE, at: Date.now() });
+      flash('Map refreshed from your app');
+    })
+    .catch(e => { flash('Could not refresh the map: ' + e.message); }), [assembleModel]);
+  React.useEffect(() => { window.ATLAS_RELOAD = reloadMap; return () => { if (window.ATLAS_RELOAD === reloadMap) delete window.ATLAS_RELOAD; }; }, [reloadMap]);
 
 
   // ── attention layer: a NODE computes importance (its params are the weights) ──
@@ -272,37 +334,10 @@ function AtlasCockpit() {
     return items.sort((a, b) => b.score - a.score);
   }, [M, assign]);
 
-  // one tick advances every running node; completion marks dependents stale and lights wires
-  React.useEffect(() => {
-    if (!M) return;   // runs before the loading guard, so M may not exist yet
-    const running = M.nodes.filter(n => n.rt && n.rt.state === 'running');
-    if (!running.length) return;
-    const t = setInterval(() => {
-      const done = running.filter(n => Date.now() - (n.rt.since || 0) > 1200);
-      if (!done.length) return;
-      const doneIds = new Set(done.map(n => n.id));
-      const deps = new Set();
-      done.forEach(n => (window.RT ? window.RT.downstream(M, n.id) : []).forEach(id => deps.add(id)));
-      setM(m => ({ ...m, nodes: m.nodes.map(n => {
-        if (doneIds.has(n.id)) {
-          const run = window.RT ? window.RT.mkRun(n) : { ok: true, t: Date.now() };
-          const runs = [...((n.rt && n.rt.runs) || []), run];
-          // a failed run is a REAL outcome: the node goes blocked and Attention will rank it
-          return { ...n, status: run.ok ? n.status : 'blocked',
-            rt: { ...n.rt, state: run.ok ? 'fresh' : 'error', runs, last: run } };
-        }
-        // dependents of a completed node are stale until they re-run — the graph stays honest
-        if (deps.has(n.id) && !(n.rt && n.rt.state === 'running')) return { ...n, rt: { ...(n.rt || {}), state: 'stale' } };
-        return n;
-      }) }));
-      // light the wires the work travelled down
-      setActiveWires(w => { const s = new Set(w); M.wires.forEach((wr, i) => { if (doneIds.has(wr.a)) s.add(wr.a + '|' + wr.b); }); return s; });
-      setTimeout(() => setActiveWires(new Set()), 1600);
-      const bad = done.filter(n => n.rt && n.rt.state !== 'error').length;
-      flash(`${done.length} node${done.length > 1 ? 's' : ''} ran · ${deps.size} dependent${deps.size === 1 ? '' : 's'} stale`);
-    }, 350);
-    return () => clearInterval(t);
-  }, [M]);
+  // There used to be a ticker here that, 1.2 s after any node went RUNNING, invented a
+  // result for it: a made-up duration and a one-in-twelve failure. A node's outcome now
+  // comes only from the app that actually ran it, so a run in flight stays RUNNING until
+  // the relay answers, and a node with no engine never enters that state at all.
 
   if (!M || !vis) return <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', color: '#9b938a', fontFamily: 'monospace', fontSize: 13 }}>loading the grand map…</div>;
 
@@ -397,6 +432,9 @@ function AtlasCockpit() {
 
   // ── mutations ──
   const patchNode = (id, patch) => setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }));
+  // A wire is a node, so its parameters live on the wire record and persist with the model.
+  const patchWire = (members, patch) => { const keys = new Set((members || []).map(w => w.a + '|' + w.b));
+    setM(m => ({ ...m, wires: m.wires.map(w => keys.has(w.a + '|' + w.b) ? { ...w, params: { ...(w.params || {}), ...patch } } : w) })); };
   // ── runtime: run a node, pulse its wires, mark dependents stale, record history ──
   const setRT = (id, rt) => setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === id ? { ...n, rt: { ...(n.rt || { runs: [] }), ...rt } } : n) }));
   const markStaleDownstream = (id) => setM(m => { const RT = window.RT; const down = new Set(RT.downstream(m, id)); return { ...m, nodes: m.nodes.map(n => down.has(n.id) && (!n.rt || n.rt.state !== 'running') ? { ...n, rt: { ...(n.rt || { runs: [] }), state: 'stale' } } : n) }; });
@@ -405,44 +443,39 @@ function AtlasCockpit() {
   const relayToApp = (command, execute) => fetch('/founder/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({ command, confirm: !!execute }) }).then(r => r.json());
   const runNode = (id) => {
-    const RT = window.RT; const node = M.nodes.find(n => n.id === id); if (!node) return;
+    const node = M.nodes.find(n => n.id === id); if (!node) return;
     if (node.frozen) { flash('Frozen — unfreeze to run'); return; }
+    // No engine means nothing on the founder's machine can run this node. The cockpit
+    // used to invent a duration here and roll a one-in-twelve failure, so a node that had
+    // never run showed a run history and sometimes a red result. Say what is true instead,
+    // and do not put the node into RUNNING for a run that is not going to happen.
+    if (!node.engine) { flash(node.title + ' has no engine — nothing to run. Give it an engine or wire it to a host first.'); return; }
+    // A live node from the founder's running application: Run runs it THERE, through the
+    // same relay the ask bar uses (confirm=true means act). Its state comes back from the
+    // app; nothing here decides whether it worked.
     setRT(id, { state: 'running' });
-    const outKeys = M.wires.filter(w => w.a === id).map(w => w.a + '>' + w.b);
-    setActiveWires(new Set(outKeys));
-    if (node.engine) {
-      // A live node from the founder's running application: Run runs it THERE,
-      // through the same relay the ask bar uses (confirm=true = act). The twin
-      // animation below is for authored nodes that exist nowhere else.
-      flash(`Running ${node.title} in ArchHub…`);
-      fetch('/founder/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ command: 'run engine ' + node.engine, confirm: true }) })
-        .then(r => r.json())
-        .then(d => {
-          const ok = !!d.ok && !d.pending_app;
-          const text = String(d.message || '').slice(0, 240);
-          setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === id
-            ? { ...n, rt: { state: ok ? 'fresh' : 'error', runs: [...((n.rt && n.rt.runs) || []), { id: 'r_app_' + Date.now().toString(36), n: ((n.rt && n.rt.runs) || []).length + 1, t: Date.now(), ms: 0, ok, result: text, app: true }], lastRun: Date.now() } }
-            : n) }));
-          setActiveWires(new Set());
-          flash((ok ? '✓ ' : '✗ ') + node.title + ' → ' + text.slice(0, 120));
-        })
-        .catch(e => { setRT(id, { state: 'error' }); setActiveWires(new Set()); flash('✗ ' + node.title + ' — ' + e); });
-      return;
-    }
-    flash(`Running ${node.title}…`);
-    setTimeout(() => {
-      const run = RT.mkRun(node);
-      setM(m => { const down = new Set(RT.downstream(m, id)); return { ...m, nodes: m.nodes.map(n => {
-        if (n.id === id) { const runs = [...((n.rt && n.rt.runs) || []), run]; return { ...n, rt: { state: run.ok ? 'fresh' : 'error', runs, lastRun: run.t } }; }
-        if (down.has(n.id) && (!n.rt || n.rt.state !== 'running')) return { ...n, rt: { ...(n.rt || { runs: [] }), state: 'stale' } };
-        return n;
-      }) }; });
-      setActiveWires(new Set());
-      flash(run.ok ? `✓ ${node.title} → ${run.result}` : `✗ ${node.title} failed`);
-    }, 1100);
+    setActiveWires(new Set(M.wires.filter(w => w.a === id).map(w => w.a + '>' + w.b)));
+    flash('Running ' + node.title + ' in ArchHub…');
+    fetch('/founder/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ command: 'run engine ' + node.engine, confirm: true }) })
+      .then(r => r.json())
+      .then(d => {
+        const ok = !!d.ok && !d.pending_app;
+        const text = String(d.message || '').slice(0, 240);
+        setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === id
+          ? { ...n, rt: { state: ok ? 'fresh' : 'error', runs: [...((n.rt && n.rt.runs) || []), { id: 'r_app_' + Date.now().toString(36), n: ((n.rt && n.rt.runs) || []).length + 1, t: Date.now(), ok, result: text, app: true }], lastRun: Date.now() } }
+          : n) }));
+        setActiveWires(new Set());
+        flash((ok ? '✓ ' : '✗ ') + node.title + ' → ' + text.slice(0, 120));
+      })
+      .catch(e => { setRT(id, { state: 'error' }); setActiveWires(new Set()); flash('✗ ' + node.title + ' — ' + e); });
   };
-  const runVariant = (id, fromRun) => { const RT = window.RT; const node = M.nodes.find(n => n.id === id); if (!node) return; const run = RT.mkRun(node, fromRun.id); setRT(id, { runs: [...RT.rtRuns(node), run], state: run.ok ? 'fresh' : 'error' }); flash(`⌥ variant of run #${fromRun.n}`); };
+  // A variant is a re-run of a real run. Only an engine node can actually re-run, and it
+  // re-runs through the same relay; there is no local twin to fabricate a second result on.
+  const runVariant = (id, fromRun) => { const node = M.nodes.find(n => n.id === id); if (!node) return;
+    if (!node.engine) { flash(node.title + ' has no engine — there is nothing to re-run.'); return; }
+    flash('Re-running ' + node.title + ' in ArchHub (variant of run #' + fromRun.n + ')');
+    runNode(id); };
   const addWatcher = (id) => {
     const node = M.nodes.find(n => n.id === id); if (!node) return;
     const wid = 'watch_' + Date.now().toString(36);
@@ -737,7 +770,7 @@ function AtlasCockpit() {
   let inspectPanel;
   const multiDom = (sel.domains || new Set()).size > 1 || ((sel.domains || new Set()).size >= 1 && sel.nodes.size >= 1);
   const selFieldSet = sel.fields || new Set();
-  if (sel.wire) inspectPanel = <WirePanel M={M} w={sel.wire} onDelete={() => deleteWireBundle(sel.wire)} onGoto={(id) => { const n = M.nodes.find(x => x.id === id); if (n) { focusDomain(n.dom); pickNode(id, false); } }} onClose={clearSel}/>;
+  if (sel.wire) inspectPanel = <WirePanel M={M} w={sel.wire} patchWire={patchWire} onDelete={() => deleteWireBundle(sel.wire)} onGoto={(id) => { const n = M.nodes.find(x => x.id === id); if (n) { focusDomain(n.dom); pickNode(id, false); } }} onClose={clearSel}/>;
   else if (selFieldSet.size > 1) inspectPanel = <MultiFieldPanel M={M} ids={[...selFieldSet]} onGroup={groupIntoField} clearSel={clearSel}/>;
   else if (sel.field) inspectPanel = <FieldPanel M={M} fieldId={sel.field} patchField={patchField} onUngroup={ungroupField} onEnterDomain={(k) => { focusDomain(k); pickDomain(k); }} onClose={clearSel}/>;
   else if (multiDom) inspectPanel = <MultiPanel selDomains={[...(sel.domains || new Set())]} selNodes={sel.nodes} M={M} onGroupField={groupIntoField} clearSel={clearSel}/>;
@@ -786,7 +819,7 @@ function AtlasCockpit() {
             </div>
           <div className="hb-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
             {leftTab === 'library' && <LibraryPanel onCreateNode={createFromLibrary} onAddDomain={() => setDomModal(true)} flash={flash}/>}
-            {leftTab === 'agents' && <AgenticPanel M={M} DB={DB} assign={assign} attention={attention} onGoto={gotoAttention} onTuneAttention={tuneAttention} setColl={setColl} flash={flash}/>}
+            {leftTab === 'agents' && <AgenticPanel M={M} DB={DB} assign={assign} attention={attention} onGoto={gotoAttention} onTuneAttention={tuneAttention} setColl={setColl} flash={flash} control={M.control} tasks={agentTasks} onRelay={relayToApp} onReloadTasks={reloadTasks}/>}
             {leftTab === 'view' && <div style={{ padding: '12px 11px' }}>
           <PanelLabel>DETAIL</PanelLabel>
           <div style={{ display: 'flex', background: HB.paper2, borderRadius: 8, padding: 3, gap: 3 }}>
@@ -889,6 +922,26 @@ function AtlasCockpit() {
               <CKIcon name="map" size={13} color={HB.accent}/>
               <span style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink, whiteSpace: 'nowrap', flexShrink: 0 }}>Federated model</span>
               <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute, whiteSpace: 'nowrap' }}>· {M.domains.length} domains</span>
+            </div>
+            {/* WHERE THIS MAP CAME FROM AND WHEN. A pushed projection with no stamp beside it
+                is indistinguishable from a stale one, so state the source, the moment this
+                page took delivery of it, and when the app was last seen answering. */}
+            <div title={mapMeta.live
+                  ? 'Drawn from the projection your running ArchHub pushed to the cloud.'
+                  : 'Your app has not pushed a projection; this is the authored model that ships with the cockpit.'}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${mapMeta.live ? HB.line : HB.amber}`, flexShrink: 0, pointerEvents: 'auto', whiteSpace: 'nowrap' }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: mapMeta.live ? HB.green : HB.amber }}/>
+              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink }}>{mapMeta.live ? 'LIVE PUSH' : 'AUTHORED MODEL'}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>
+                {'· taken ' + new Date(mapMeta.at).toLocaleTimeString()}
+              </span>
+              <span style={{ fontFamily: HB.mono, fontSize: 10, color: appSeen.at ? HB.inkSoft : HB.inkMute }}>
+                {!appSeen.loaded ? '· checking the app…'
+                  : appSeen.at ? '· app answered ' + agoText(appSeen.at)
+                  : '· app has not answered yet'}
+              </span>
+              <button onClick={reloadMap} title="Fetch the projection again from the cloud"
+                style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5 }}>refresh</button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flex: '0 1 160px', minWidth: 92, boxSizing: 'border-box', pointerEvents: 'auto' }}>
               <CKIcon name="search" size={12} color={HB.inkMute} style={{ flexShrink: 0 }}/>

@@ -1,18 +1,31 @@
 ---
 import Base from '../layouts/Base.astro';
 import buildInfo from '../data/build-info.json';
+import pricing from '../data/pricing.json';
+import { releaseInfo } from '../lib/release.js';
 const connectors = buildInfo.connectors ?? 0;
+const release = releaseInfo();
 
-// PRICING-STATUS (docs/PRICING_STATUS.md, README.md): ArchHub is in OPEN BETA
-// and every shipped feature is free — no credit card, no paywall. Paid tiers
-// (Pro / Studio / Enterprise) are PLANNED, not active billing plans. There is
-// no working checkout, so this page states the honest current state and points
-// at the real installer instead of selling tiers that can't be purchased.
-const planned = [
-  { name: 'Pro', who: 'individual architect' },
-  { name: 'Studio', who: 'a practice / project team' },
-  { name: 'Enterprise', who: 'large firm · roles, SSO, audit' },
-];
+// This page used to invent its own tier names — Pro / Studio / Enterprise —
+// which matched neither the billing service nor the repo's own pricing data.
+// A reader comparing the site to the app saw three different products. The
+// tiers below come from src/data/pricing.json, extracted by
+// scripts/extract_pricing.py from cloud_backend/config.py :: public_pricing()
+// — the same snapshot the backend serves at GET /v1/billing/plans and the
+// desktop pricing dialog reads. Change a price in config.py, re-extract, and
+// this page follows; it cannot drift on its own.
+const tiers = pricing.tiers ?? [];
+const annualPct = Math.round((pricing.annual_discount ?? 0) * 100);
+const creditPack = pricing.credit_pack ?? null;
+const currency = (pricing.currency ?? 'usd').toUpperCase();
+
+// Seat wording straight from the tier's own min/max, so it can never
+// contradict the numbers the backend enforces at checkout.
+function seats(t) {
+  if (t.max_seats === 1) return 'Single seat';
+  if (t.min_seats > 1) return `${t.min_seats} seats minimum`;
+  return 'Seats à la carte';
+}
 ---
 <Base title="Pricing" description="ArchHub is free in open beta — every shipped feature, no credit card, no paywall. Download the Windows installer and start wiring hosts.">
 
@@ -27,6 +40,7 @@ const planned = [
         <a class="btn lg" href="/features">See what it does →</a>
       </div>
       <div class="fineprint">MIT · bring your own key · no credit card · Windows 10/11 · installer not yet code-signed (SmartScreen: More info → Run anyway)</div>
+      <div class="fineprint">{release.sentence}</div>
     </div>
   </section>
 
@@ -44,24 +58,30 @@ const planned = [
     </ul>
   </section>
 
-  <div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">ON THE ROADMAP</span><span class="rule"></span><span class="tick"></span></div></div>
+  <div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">THE PLANS</span><span class="rule"></span><span class="tick"></span></div></div>
 
-  <!-- ════════ PLANNED TIERS (honest, not for sale yet) ════════ -->
+  <!-- ════════ THE REAL TIERS (from the backend's own catalog) ════════ -->
   <section class="sec wrap">
-    <div class="eyebrow" style="margin-bottom:10px;">Later</div>
-    <h2 class="serif" style="font-size:42px; line-height:1; margin:0 0 8px;">Paid tiers are <span class="ital">planned</span>, not live.</h2>
-    <p class="lede2">When billing turns on after beta, paid plans will add team governance and hosted convenience on top of a free base. They are not purchasable today — and the local-first, BYO-key path stays free.</p>
+    <div class="eyebrow" style="margin-bottom:10px;">After the beta</div>
+    <h2 class="serif" style="font-size:42px; line-height:1; margin:0 0 8px;">Three plans, <span class="ital">per seat.</span></h2>
+    <p class="lede2">These are the plans ArchHub's billing service publishes. You do not need one to use the app during open beta — everything shipped is free — and the local-first, bring-your-own-key path stays free after it.</p>
     <div class="tiers">
-      {planned.map((t) => (
+      {tiers.map((t) => (
         <div class="tier">
           <div class="nm">{t.name}</div>
-          <div class="pr">Planned</div>
-          <div class="who">{t.who}</div>
-          <div class="soon">Not active yet — free in beta</div>
+          <div class="pr">${t.price_per_seat} <span class="per">/ seat / month</span></div>
+          <div class="ann">${t.price_per_seat_annual} / seat / month billed yearly (−{annualPct}%)</div>
+          <div class="who">{t.blurb}</div>
+          <div class="soon">{seats(t)}{t.sso ? ' · SSO and audit' : ''}</div>
         </div>
       ))}
     </div>
-    <p class="note mono">Canonical source: docs/PRICING_STATUS.md · plan details subject to change until billing is enabled.</p>
+    <p class="note mono">
+      {currency} · AI modes: bring your own key (default) or hosted{creditPack
+        ? ` · hosted credit pack $${creditPack.price_usd} for ${creditPack.messages} messages, ${creditPack.rollover_days}-day rollover`
+        : ''}.
+    </p>
+    <p class="note mono">Source: cloud_backend/config.py :: public_pricing(), served at /v1/billing/plans — the same catalog the desktop app reads.</p>
   </section>
 
   <!-- ════════ CLOSING ════════ -->
@@ -98,7 +118,9 @@ const planned = [
     .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 6px 0 0; }
     .tier { background: var(--bg-panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
     .tier .nm { font-family: var(--serif); font-size: 26px; font-weight: 400; letter-spacing: -0.02em; }
-    .tier .pr { font-family: var(--mono); font-size: 12px; color: var(--accent); letter-spacing: 0.08em; margin-top: 6px; text-transform: uppercase; }
+    .tier .pr { font-family: var(--serif); font-size: 34px; color: var(--accent); letter-spacing: -0.02em; margin-top: 8px; line-height: 1; }
+    .tier .pr .per { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--ink-muted); text-transform: uppercase; }
+    .tier .ann { font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); letter-spacing: 0.04em; margin-top: 8px; }
     .tier .who { font-size: 13.5px; color: var(--ink-soft); margin-top: 8px; }
     .tier .soon { font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); letter-spacing: 0.04em; }
     .note { font-size: 10.5px; color: var(--ink-muted); letter-spacing: 0.04em; margin-top: 22px; }

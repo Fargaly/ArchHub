@@ -7,21 +7,30 @@
 // CSS can't import the JS tokens, so this is the one hand-synced copy. To
 // change a value, change tokens.jsx, then mirror it here.
 //
-// The freshness footer is stamped at BUILD TIME from the committed
-// src/data/build-info.json (git sha + date) — regenerate with
-// `npm run refresh-content`.
+// The freshness footer is stamped at BUILD TIME. The DATE comes from the
+// build itself, never from committed JSON: the site once shipped a footer
+// reading 2026-06-20 for months because it echoed build-info.json's git_date,
+// so a visitor could not tell how old the deployed site was. The commit sha
+// still comes from the committed build-info.json (or a GIT_SHA build arg when
+// the image is built outside a git checkout).
 import buildInfo from '../data/build-info.json';
+import { releaseInfo } from '../lib/release.js';
 const { title, description } = Astro.props;
 // SEO: avoid the "X — ArchHub — ArchHub" double when a page title already
 // carries the brand (the home title does); canonical + OG/Twitter cards.
 const fullTitle = (title && title.includes('ArchHub')) ? title : `${title} — ArchHub`;
 const desc = description ?? "The graph-first AI workspace for architects, engineers, and contractors. One canvas, every host you already use, wired together. Local-first.";
 const canonical = new URL(Astro.url.pathname, 'https://archhub.io').href;
-const ogImage = 'https://archhub.io/og.svg';
-const sha = buildInfo.git_sha ?? 'unknown';
-const builtDate = (buildInfo.git_date ?? '').slice(0, 10) || 'unknown';
+// Social crawlers (Facebook, LinkedIn, Slack, X) do not rasterise SVG, so the
+// old /og.svg card came through blank. This is a real 1200x630 PNG, the size
+// the Open Graph protocol (ogp.me) documents — regenerate it with
+// `python scripts/make_og_image.py`.
+const ogImage = 'https://archhub.io/og.png';
+const sha = (typeof process !== 'undefined' && process.env && process.env.GIT_SHA) || buildInfo.git_sha || 'unknown';
+const builtDate = new Date().toISOString().slice(0, 10);
 const connectors = buildInfo.connectors ?? 0;
 const operations = buildInfo.operations ?? 0;
+const release = releaseInfo();
 const path = Astro.url.pathname;
 const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
 ---
@@ -44,13 +53,16 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
     <meta property="og:description" content={desc} />
     <meta property="og:url" content={canonical} />
     <meta property="og:image" content={ogImage} />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="ArchHub — the graph-first AI workspace for architects and AEC teams" />
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={desc} />
     <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content="ArchHub — the graph-first AI workspace for architects and AEC teams" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Architects+Daughter&display=swap" rel="stylesheet" />
@@ -235,12 +247,15 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
           <div class="col">
             <h5>OPEN</h5>
             <a href="https://github.com/Fargaly/ArchHub" rel="noopener">Source · MIT</a>
-            <a href="/community">Discord</a>
-            <a href="/changelog">Roadmap</a>
+            <!-- There is no Discord server. The footer used to link one to
+                 /community, which has no chat on it. Issues is where people
+                 actually reach the project, and Roadmap is the real file. -->
+            <a href="https://github.com/Fargaly/ArchHub/issues" rel="noopener">Issues</a>
+            <a href="https://github.com/Fargaly/ArchHub/blob/main/ROADMAP.md" rel="noopener">Roadmap</a>
           </div>
         </div>
         <div class="foot-base">
-          <span>© 2026 ARCHHUB · MIT LICENSE · {connectors} connectors · {operations} operations</span>
+          <span>© 2026 ARCHHUB{release.appVersion ? ` · v${release.appVersion}` : ''} · MIT LICENSE · {connectors} connectors · {operations} operations</span>
           <span>BUILT FROM COMMIT <code>{sha}</code> · {builtDate}</span>
           <span>DRAFTED, NOT GENERATED ★</span>
         </div>

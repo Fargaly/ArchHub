@@ -7081,15 +7081,26 @@ class ApplicationServer:
         now = time.time()
         with self._machine_agent_session_lock:
             challenge = self._machine_agent_challenges.get(challenge_id)
-            if (
-                challenge is None
-                or bool(challenge["used"])
-                or now >= float(challenge["expires_at"])
-                or challenge["catalog_entry"] != catalog_entry_root
-                or challenge["runtime"] != runtime
-                or challenge["runtime_id"] != runtime_id
-            ):
-                raise AuthorizationDenied("runtime device proof challenge is invalid")
+            # One message covered six distinct causes, so the founder's
+            # companion refused to attach and the log said nothing about why
+            # (2026-09-06). Each cause names itself; none of them is a secret.
+            why = ""
+            if challenge is None:
+                why = "no challenge with that id is held"
+            elif bool(challenge["used"]):
+                why = "that challenge was already spent"
+            elif now >= float(challenge["expires_at"]):
+                why = "it expired %.1fs ago" % (now - float(challenge["expires_at"]))
+            elif challenge["catalog_entry"] != catalog_entry_root:
+                why = "it was minted for another Agent Body entry"
+            elif challenge["runtime"] != runtime:
+                why = "it was minted for runtime %r, not %r" % (
+                    challenge["runtime"], runtime)
+            elif challenge["runtime_id"] != runtime_id:
+                why = "it was minted for another runtime instance"
+            if why:
+                raise AuthorizationDenied(
+                    "runtime device proof challenge is invalid: %s" % why)
         snapshot = self.universal_store.snapshot()
         entry = _agent_body_catalog_entry_for_runtime(
             snapshot, self.universal_registry, runtime

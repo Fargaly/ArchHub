@@ -798,6 +798,53 @@ try:
     print("  BABOOM     : attached (signed agent session)", flush=True)
 except Exception as refusal:
     print("  BABOOM     : not attached -- %s" % refusal, flush=True)
+    # The cockpit relay used to live inside the BABOOM block, so a companion
+    # that failed to attach took the founder's whole cockpit with it: every
+    # control on the web read "waiting for the app push" and nothing said why
+    # (2026-09-06 00:27, "runtime device proof challenge is invalid"). They are
+    # separate failures now. Without BABOOM the relay answers from the server
+    # itself, so questions and engine runs still work; only the companion's own
+    # voice is missing.
+    try:
+        from nodelang.cloud_relay import start_cloud_relay as _start_relay_alone
+        from nodelang.universal_application import (
+            respond_universal_baboom_utterance as _respond_alone,
+        )
+        from nodelang.universal_pipeline import project_atlas_map as _atlas_alone
+
+        _context = server.universal_registry.authorization.session.context()
+
+        def _answer_without_baboom(utterance):
+            return _respond_alone(
+                server.universal_store, server.universal_registry,
+                utterance=utterance, authentication_context=_context,
+            )
+
+        def _refuse_without_baboom(utterance):
+            # Reads are safe from here; an ACT must go through the companion's
+            # signed session and the application's mutation lock, so the
+            # cockpit is told plainly rather than acting unsigned.
+            return {
+                "command": {"intent": "open-question", "payload": utterance},
+                "response": {
+                    "kind": "companion-absent",
+                    "summary": ("BABOOM did not attach on this launch, so the app can "
+                                "answer but cannot act. Reopen ArchHub to restore it."),
+                    "data": {},
+                },
+            }
+
+        cloud_relay = _start_relay_alone(
+            appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
+            respond=_answer_without_baboom, execute=_refuse_without_baboom,
+            map_script=lambda: _atlas_alone(server.universal_store, server.universal_registry),
+            hosts=lambda: server._host_rows(),
+        )
+        if cloud_relay is not None:
+            print("  cockpit    : relay on, answers only (BABOOM did not attach)",
+                  flush=True)
+    except Exception as relay_refusal:
+        print("  cockpit    : relay off -- %s" % relay_refusal, flush=True)
 
 # While the founder works, look once for a newer release and stage it for
 # the next launch. Never applied here; never blocks the window.

@@ -117,3 +117,21 @@ def test_a_show_marker_brings_the_window_up_on_the_qt_thread():
     inside = watcher[look:]
     assert "shower.is_file()" in inside and "_tray_open()" in inside
     assert inside.index("_tray_open()") < inside.index("_tray_quit()"), "show is read before quit"
+
+
+def test_the_tray_open_settles_after_qt_and_writes_a_receipt():
+    """The foreground dance runs after Qt has applied the shown state, not
+    the same instant as showNormal(); it restores once more if something
+    minimized the window meanwhile and prints where the window ended up,
+    so the launcher log answers "did it open" instead of a guess
+    (2026-09-06: a screen-capture tool that minimizes every window it is
+    not allowed to see made the window look minimized by us)."""
+    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    body = launcher[launcher.index("def _tray_open()"):]
+    body = body[:body.index("def _tray_check_updates()")]
+    assert "window.showNormal()" in body
+    assert "_QT.singleShot(" in body, "the dance is deferred past the show"
+    assert body.index("def _settle()") < body.index("_QT.singleShot("), "deferred, not skipped"
+    assert "_force_foreground(window.winId())" in body[body.index("def _settle()"):]
+    assert "if user32.IsIconic(handle):" in body and "ShowWindow(handle, 9)" in body
+    assert 'print("  show       : window %dx%d at %d,%d iconic=%s"' in body

@@ -608,8 +608,180 @@ LIBRARY_ITEMS_WITHOUT_ENGINE = {
     "o_notify": "needs a desktop notification surface this build does not carry",
 }
 
+
+# ------------------------------------------------------------ five more --
+# Five cards that had no engine get one from what this build already has:
+# the model route (think), the skills catalogue (match_skill), the brain
+# recall (embed), the open Outlook (draft_email) and the tray (notify).
+
+_NOTIFY_SURFACE: list = []
+
+
+def set_notify_surface(surface) -> None:
+    """The desktop surface a notification lands on; the launcher registers its tray."""
+    _NOTIFY_SURFACE[:] = [surface]
+
+
+def _wired_text(feeds: Mapping[str, object]) -> str:
+    import json
+    held = _wired(feeds, "in", "text", "value")
+    if held is None:
+        return ""
+    if isinstance(held, str):
+        return held
+    return json.dumps(held, default=str)[:12000]
+
+
+def think(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Reason with the picked model over the wired stream; never a hidden default."""
+    import os
+    from . import model_router
+    from .agent_composer import NO_MODEL_CHOSEN
+    route = _text(params, "model") or os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+    if not route:
+        return {"out": []}, NO_MODEL_CHOSEN
+    prompt = _text(params, "prompt")
+    context = _wired_text(feeds)
+    if not prompt and not context:
+        return {"out": []}, "nothing to think about: no prompt, nothing wired in"
+    messages = [
+        {"role": "system", "content": "You are ArchHub. Be terse and technical. Units: millimetres."},
+        {"role": "user", "content": (prompt + chr(10) + chr(10) + context).strip()},
+    ]
+    try:
+        answer = model_router.route_chat(route, messages, max_tokens=int(_number(params, "max_tokens", 600)))
+    except Exception as refused:
+        return {"out": []}, "%s refused: %s" % (route, str(refused)[:160])
+    text = str(answer.get("text") or "") if isinstance(answer, Mapping) else str(answer)
+    return {"out": text}, "%s answered (%d chars)" % (route, len(text))
+
+
+def match_skill(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """The saved skills whose name or description share words with the intent."""
+    import re
+    from .pipeline_engines import skills_catalogue
+    intent = _text(params, "intent") or _wired_text(feeds)
+    if not intent:
+        return {"out": []}, "no intent given, nothing wired in"
+    outputs, _said = skills_catalogue({}, {})
+    words = set(re.findall(r"[a-z0-9]+", intent.casefold())) - {"a", "an", "the", "in", "of", "to", "for"}
+    scored = []
+    for row in as_list(outputs.get("out")):
+        hay = ("%s %s" % (item_field(row, "name"), item_field(row, "description"))).casefold()
+        hits = sum(1 for word in words if word in hay)
+        if hits:
+            scored.append((hits, str(item_field(row, "name")), row))
+    scored.sort(key=lambda entry: (-entry[0], entry[1]))
+    count = max(1, int(_number(params, "count", 3)))
+    top = [dict(row, score=hits) for hits, _name, row in scored[:count]]
+    if not top:
+        return {"out": []}, "no saved skill shares a word with that intent"
+    return {"out": top}, "%d skill(s) by word overlap, not a model: %s" % (
+        len(top), ", ".join(str(row["name"]) for row in top))
+
+
+def embed(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """What the brain recalls for a query: its own similarity search, not ours."""
+    import json
+    from .pipeline_engines import BrainSilent, _brain_call
+    query = _text(params, "query") or _wired_text(feeds)
+    if not query:
+        return {"out": []}, "no query, nothing wired in"
+    try:
+        answer = str(_brain_call("brain.context", {"prompt": query}))
+    except BrainSilent as silence:
+        return {"out": []}, "no recall: %s" % silence
+    try:
+        parsed = json.loads(answer)
+    except ValueError:
+        parsed = None
+    rows = []
+    if isinstance(parsed, Mapping):
+        for key in ("facts", "results", "hits", "context", "items"):
+            if isinstance(parsed.get(key), list):
+                rows = parsed[key]
+                break
+    elif isinstance(parsed, list):
+        rows = parsed
+    if rows:
+        return {"out": rows}, "%d recalled fact(s) for %r" % (len(rows), query[:40])
+    return {"out": answer}, "the brain answered in prose, not rows"
+
+
+def notify(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """A desktop notification through the surface the app registered (its tray)."""
+    title = _text(params, "title", "ArchHub")
+    message = _text(params, "message") or _wired_text(feeds)
+    if not message:
+        return {"out": []}, "nothing to say: no message, nothing wired in"
+    if not _NOTIFY_SURFACE:
+        return {"out": message}, "no desktop surface registered; the app registers its tray at boot"
+    try:
+        _NOTIFY_SURFACE[0](title, message)
+    except Exception as failed:
+        return {"out": message}, "the desktop refused: %s" % failed
+    return {"out": message}, "shown on the desktop: %s" % message[:60]
+
+
+def _open_outlook():
+    """The OPEN Outlook, or None; this never launches it."""
+    from .host_brokers import _com_alive
+    if not _com_alive("Outlook.Application"):
+        return None
+    import win32com.client as client  # type: ignore
+    return client.GetActiveObject("Outlook.Application")
+
+
+_OUTLOOK = [_open_outlook]
+
+
+def draft_email(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """A draft on screen in the open Outlook; sending stays the founder's click."""
+    to = _text(params, "to")
+    subject = _text(params, "subject") or "From ArchHub"
+    body = _text(params, "body") or _wired_text(feeds)
+    if not body:
+        return {"out": []}, "nothing to write: no body, nothing wired in"
+    app = _OUTLOOK[0]()
+    if app is None:
+        return {"out": []}, "Outlook is not open; the draft needs it open"
+    try:
+        mail = app.CreateItem(0)
+        mail.To = to
+        mail.Subject = subject
+        mail.Body = body
+        mail.Display()
+    except Exception as failed:
+        return {"out": []}, "Outlook refused the draft: %s" % failed
+    return {"out": {"to": to, "subject": subject, "chars": len(body)}}, (
+        "draft open in Outlook (%s) - you send it" % (to or "no recipient yet"))
+
+
+LIBRARY_ENGINES.update({
+    "library.think": think,
+    "library.match_skill": match_skill,
+    "library.embed": embed,
+    "library.notify": notify,
+    "library.draft_email": draft_email,
+})
+
+LIBRARY_ITEM_ENGINES.update({
+    "i_think": {"engine": "library.think",
+                "params": {"prompt": "", "model": "", "max_tokens": "600"}},
+    "i_match": {"engine": "library.match_skill",
+                "params": {"intent": "", "count": "3"}},
+    "i_embed": {"engine": "library.embed", "params": {"query": ""}},
+    "o_email": {"engine": "library.draft_email",
+                "params": {"to": "", "subject": "", "body": ""}},
+    "o_notify": {"engine": "library.notify",
+                 "params": {"title": "ArchHub", "message": ""}},
+})
+for _wired_now in ("i_think", "i_match", "i_embed", "o_email", "o_notify"):
+    LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
+
 __all__ = [
     "LIBRARY_ENGINES",
+    "set_notify_surface",
     "LIBRARY_ITEM_ENGINES",
     "LIBRARY_ITEMS_WITHOUT_ENGINE",
 ]

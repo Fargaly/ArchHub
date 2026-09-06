@@ -59,6 +59,13 @@ _PLACEMENTS = {
     "library.build_schedule": ({"columns": "name,type"}, _ROWS),
     "library.make_legend": ({"by": "type"}, _ROWS),
     "library.save_skill": ({"path": ""}, "a saved run"),
+    # The five that came later: placed so the shape court runs them without
+    # a model key, a brain, Outlook or a desktop - each answers honestly.
+    "library.think": ({"prompt": "total wall length"}, _ROWS),
+    "library.match_skill": ({"intent": "tag rooms"}, {}),
+    "library.embed": ({}, {}),
+    "library.notify": ({"message": "sheet set published"}, {}),
+    "library.draft_email": ({"to": "eng@firm.com"}, {}),
 }
 
 # Engines whose input is a stream: with nothing wired they must answer an
@@ -67,7 +74,12 @@ _PLACEMENTS = {
 _STREAM_ENGINES = [
     name for name in _PLACEMENTS
     if name not in ("library.if", "library.switch", "library.save_skill",
-                    "library.add_text")
+                    "library.add_text",
+                    # These five act on a prompt, an intent, a query, a
+                    # message or a draft, not on a wired stream; their
+                    # empty answers are courted in test_five_more_cards_run.
+                    "library.think", "library.match_skill", "library.embed",
+                    "library.notify", "library.draft_email")
 ]
 
 
@@ -147,14 +159,16 @@ def test_every_library_card_either_runs_or_says_it_cannot():
 
     Dropping a card with no engine put it in the browser's memory only:
     invisible to Run, never written to the graph, gone on the next reload.
-    Twenty of those now have real engines and are wired into the library
-    itself; the eleven that remain are marked so the drop refuses out loud
-    instead of pretending. This court holds the LANDED state, not the plan.
+    Twenty of those got real engines first; five more followed (think,
+    match_skill, embed, draft_email, notify) once the model route, the
+    brain, Outlook and the tray gave them something real to do. The six
+    that remain are marked so the drop refuses out loud instead of
+    pretending. This court holds the LANDED state, not the plan.
     """
     items = _library_items()
     assert len(items) == 53, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 42, sorted(wired)
+    assert len(wired) == 47, sorted(wired)
 
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         assert items.get(item) == wiring["engine"], (

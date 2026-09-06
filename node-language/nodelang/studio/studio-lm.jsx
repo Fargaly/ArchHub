@@ -319,17 +319,17 @@ const LM_LIBRARY = [
     { id:'l_merge',  title:'merge',  sub:'concat / dedupe streams' , engine:'library.merge'},
   ]},
   { cat:'ai', items:[
-    { id:'i_think', title:'think',  sub:'Claude reasoning · sonnet/opus/haiku' , noEngine:true},
+    { id:'i_think', title:'think',  sub:'reason with the picked model' , engine:'library.think'},
     { id:'i_vis',   title:'vision', sub:'parse a sketch / screenshot' , noEngine:true},
-    { id:'i_match', title:'match_skill', sub:'find best saved skill for intent' , noEngine:true},
-    { id:'i_embed', title:'embed',  sub:'vectorize · similarity search' , noEngine:true},
+    { id:'i_match', title:'match_skill', sub:'best saved skill for an intent' , engine:'library.match_skill'},
+    { id:'i_embed', title:'embed',  sub:'similar facts from the brain' , engine:'library.embed'},
   ]},
   { cat:'output', items:[
     { id:'o_skill', title:'save_skill',     sub:'template this run' , engine:'library.save_skill'},
     { id:'o_pdf',   title:'publish_pdf',    sub:'sheets → PDF set' , noEngine:true},
     { id:'o_spk',   title:'push_speckle',   sub:'commit to a branch' , noEngine:true},
-    { id:'o_email', title:'send_email',     sub:'draft + send via Outlook' , noEngine:true},
-    { id:'o_notify',title:'notify',         sub:'desktop / Teams ping' , noEngine:true},
+    { id:'o_email', title:'draft_email',    sub:'draft in Outlook · you send' , engine:'library.draft_email'},
+    { id:'o_notify',title:'notify',         sub:'desktop notification' , engine:'library.notify'},
   ]},
 ];
 

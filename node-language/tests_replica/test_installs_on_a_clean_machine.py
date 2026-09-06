@@ -17,6 +17,7 @@ service.
 """
 from __future__ import annotations
 
+import re
 import ast
 import importlib.metadata as metadata
 import importlib.util
@@ -513,3 +514,21 @@ def test_the_tray_click_uses_the_windows_foreground_dance():
         n for n in tree.body
         if isinstance(n, _ast.FunctionDef) and n.name == "_front_running_archhub"))
     assert "_force_foreground(handle)" in raiser
+
+
+
+def test_a_machine_without_python_is_given_python_not_a_lecture():
+    """The installer used to refuse a colleague with no Python and tell them to
+    go to python.org themselves. Now it fetches the python.org installer over
+    HTTPS, pinned by SHA-256, runs it quietly for this user only (no PATH
+    change, no py launcher), and only then copies ArchHub. The old refusal
+    stays as the honest fallback when the fetch itself fails."""
+    iss = (ROOT / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
+    assert "https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe" in iss
+    assert re.search(r"PythonSha256 = '[0-9a-f]{64}'", iss), "the download is pinned"
+    assert "CreateDownloadPage(" in iss and "PythonPage.Download" in iss
+    assert "/quiet InstallAllUsers=0 PrependPath=0 Include_launcher=0" in iss
+    assert "PythonWanted := not PythonPresent()" in iss
+    assert "Result := InstallPython()" in iss
+    assert "tick \"Add python.exe to PATH\"" not in iss, "no lecture as the only path"
+    assert "then run this setup again" in iss, "the fetch failing is still said plainly"

@@ -885,6 +885,13 @@ def create_baboom_native_companion_window(
             # the branch was never taken and nothing repaired it for the rest
             # of the session. setGeometry on an unchanged window costs nothing.
             drifted = self._native_rect_differs(window_rect)
+            # A MINIMIZED window ignores setGeometry entirely, so the
+            # unconditional placement below never took: Windows had the
+            # companion iconic, shown as its 160x28 minimized caption at the
+            # bottom of the screen (SM_CXMINIMIZED x SM_CYMINIMIZED), with the
+            # face painted into that stub. Un-minimize first, without
+            # stealing focus, then place.
+            self._unminimize()
             self.setGeometry(window_rect)
             if drifted or self.geometry() != window_rect:
                 # One line per change, so the next "it is not there" can be
@@ -911,8 +918,17 @@ def create_baboom_native_companion_window(
                             native = "%dx%d+%d+%d" % (box.r - box.l, box.b - box.t, box.l, box.t)
                         except Exception:
                             native = "unreadable"
-                        receipt(
-                            "sprite=%dx%d+%d+%d message=%s asked=%dx%d+%d+%d qt=%dx%d+%d+%d win=%s visible=%s sprite_img=%s" % (
+                        owner = ""
+                        try:
+                            import ctypes as _ct2
+                            GW_OWNER = 4
+                            owner = str(int(_ct2.windll.user32.GetWindow(int(self.winId()), GW_OWNER)))
+                            iconic = bool(_ct2.windll.user32.IsIconic(int(self.winId())))
+                            owner += " iconic=%s" % iconic
+                        except Exception:
+                            owner = "unreadable"
+                        receipt((
+                            "sprite=%dx%d+%d+%d message=%s asked=%dx%d+%d+%d qt=%dx%d+%d+%d win=%s visible=%s sprite_img=%s owner=" + owner) % (
                                 bounds.width, bounds.height, bounds.x, bounds.y,
                                 ("%dx%d+%d+%d" % (layout.message.width, layout.message.height, layout.message.x, layout.message.y)) if layout.message else "none",
                                 window_rect.width(), window_rect.height(), window_rect.x(), window_rect.y(),
@@ -981,6 +997,22 @@ def create_baboom_native_companion_window(
                 )
             except Exception:
                 return False
+
+        def _unminimize(self) -> None:
+            """Restore an iconic window in place, never taking focus."""
+            try:
+                import ctypes as _ct
+
+                user32 = _ct.windll.user32
+                handle = int(self.winId())
+                if user32.IsIconic(handle):
+                    SW_SHOWNOACTIVATE = 4
+                    user32.ShowWindow(handle, SW_SHOWNOACTIVATE)
+                    # Being minimized is how an owner drags us; make sure the
+                    # owner is gone again before the next tick can repeat it.
+                    self._disown()
+            except Exception:
+                pass
 
         def _disown(self) -> None:
             """Stop any window from owning this one.

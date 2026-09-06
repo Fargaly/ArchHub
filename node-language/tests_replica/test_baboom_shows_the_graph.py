@@ -196,3 +196,21 @@ def test_the_companion_is_owned_by_nothing():
     assert "GWLP_HWNDPARENT = -8" in window
     show = window[window.index("def showEvent"):window.index("def _open_interaction")]
     assert "self._disown()" in show, "disown on every show, once the handle exists"
+
+
+def test_a_minimized_companion_is_restored_before_it_is_placed():
+    """The receipt on the founder's desktop: asked=280x245+1582+729,
+    qt=280x245+1582+729, win=160x28+1120+1004, three ticks a second. 160x28 is
+    SM_CXMINIMIZED x SM_CYMINIMIZED: the companion was MINIMIZED, and
+    setGeometry on an iconic window is ignored, so unconditional placement
+    changed nothing. It is un-minimized, without taking focus, first."""
+    src = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    assert "def _unminimize(self)" in window
+    un = window[window.index("def _unminimize"):window.index("def _disown")]
+    assert "IsIconic" in un and "SW_SHOWNOACTIVATE = 4" in un and "self._disown()" in un
+    refresh = window[window.index("def refresh(self)"):window.index("def paintEvent")]
+    assert refresh.index("self._unminimize()") < refresh.index("self.setGeometry(window_rect)"), (
+        "restore before placing, or the placement is a no-op")
+    # and the receipt now says who owns the window and whether it is iconic
+    assert "GW_OWNER = 4" in refresh and 'owner += " iconic=%s"' in refresh

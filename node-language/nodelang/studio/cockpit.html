@@ -46,6 +46,8 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
 <script src="/studio/vendor/react-dom.js"></script>
 <script src="/studio/vendor/babel.js"></script>
 <script type="text/babel" data-presets="env,react" src="/studio/tokens.jsx"></script>
+<!-- the shared parameter-type registry: the wire inspector reads window.WIRE_PARAMS from it, and this page never loaded it, so the WIRE PARAMETERS header sat over zero rows -->
+<script type="text/babel" data-presets="env,react" src="/studio/param-types.jsx"></script>
 <script type="text/babel" data-presets="env,react" src="/studio/cockpit-core.jsx"></script>
 <script type="text/babel" data-presets="env,react" src="/studio/hub-kit.jsx"></script>
 <script src="/studio/map-data.js"></script>

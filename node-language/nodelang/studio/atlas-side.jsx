@@ -14,34 +14,21 @@ const sideLabel = { fontFamily: HB.mono, fontSize: 8.5, color: HB.inkMute, lette
 
 function ago(t) { const s = Math.floor((Date.now() - t) / 1000); if (s < 60) return s + 's'; const m = Math.floor(s / 60); if (m < 60) return m + 'm'; const h = Math.floor(m / 60); if (h < 24) return h + 'h'; return Math.floor(h / 24) + 'd'; }
 
-// deterministic seed sessions from the founder's agents
-function seedSessions(DB, M) {
-  const dn = (k) => (M.domains.find(d => d.key === k) || {}).title || k;
-  const tmpl = [
-    { topic: 'Monetization gaps → first 3 to build', dom: 'monetization', msgs: [['founder', 'What unlocks revenue fastest?'], ['agent', 'Three vision nodes gate billing: Stripe Connect, Usage Meter, Plan Gating. I can scaffold Usage Meter first — it feeds the other two.'], ['founder', 'Do it. Wire it to the billing daemon.']] },
-    { topic: 'Brain recall latency regression', dom: 'brain', msgs: [['agent', 'Recall p50 rose 41ms→63ms after the embedding swap.'], ['founder', 'Roll back or fix?'], ['agent', 'Fixing — re-indexing the fact store now, ETA 4m. Will report.']] },
-    { topic: 'Connector fleet health sweep', dom: 'connectors', msgs: [['agent', 'Ran a sweep: Revit host dropped 2 handshakes overnight.'], ['founder', 'Quarantine it and notify me if it repeats.']] },
-    { topic: 'Self-extension proposal review', dom: 'selfext', msgs: [['agent', 'I drafted a new skill node: auto-dimension cleanup. Awaiting your approval to merge into the graph.'], ['founder', 'Show me its pipeline first.']] },
-  ];
-  return tmpl.map((t, i) => {
-    const ag = DB.agents[i % DB.agents.length];
-    return { id: 's' + i, topic: t.topic, dom: t.dom, domName: dn(t.dom), agent: ag, t: Date.now() - (i * 1000 * 60 * 37 + 1000 * 60 * 6), open: i === 0,
-      msgs: t.msgs.map((m, j) => ({ who: m[0], name: m[0] === 'agent' ? ag.name : 'You', text: m[1], t: Date.now() - ((t.msgs.length - j) * 1000 * 60 * 4) })) };
-  });
+// The Sessions lens used to render four hand-written conversations between the founder and
+// invented agents, complete with plausible replies. Nothing in them had ever happened. The
+// real record of the founder talking to his app is the agent-task queue: each row is an
+// instruction the cockpit sent and the answer the app posted back. That is what renders now.
+const TASK_TONE = { done: 'ok', failed: 'err', running: 'accent', claimed: 'accent', queued: 'mute' };
+
+function taskStamp(row) {
+  const s = row.finished_at || row.claimed_at || row.created_at;
+  return s ? s * 1000 : null;
 }
 
-function SessionComposer({ agentName, onSend }) {
-  const [draft, setDraft] = React.useState('');
-  return (
-    <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-      <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && draft.trim()) { onSend(draft.trim()); setDraft(''); } }} placeholder={'Message ' + agentName + '…'} style={{ flex: 1, padding: '7px 10px', borderRadius: 8, border: `1px solid ${HB.line}`, background: HB.card, color: HB.ink, fontSize: 12, outline: 'none', fontFamily: HB.sans }}/>
-    </div>
-  );
-}
-
-function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNode, setColl, flash }) {
+function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNode, setColl, flash, control, tasks, onRelay, onReloadTasks }) {
   const [tab, setTab] = React.useState('activity');
-  const [sessions, setSessions] = React.useState(() => seedSessions(DB, M));
+  const rows = tasks || [];
+  const ctl = control || null;
 
   // recent runs across the whole map → the notification stream
   const recent = [];
@@ -95,7 +82,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                     <span style={{ width: 18, height: 18, borderRadius: 5, marginTop: 1, display: 'grid', placeItems: 'center', background: (r.ok ? HB.green : HB.red) + '1e', color: r.ok ? HB.green : HB.red, flexShrink: 0, fontSize: 10 }}>{r.ok ? '✓' : '✗'}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 12, color: HB.ink, display: 'block' }}><b style={{ fontWeight: 600 }}>{ags[0] ? ags[0].name : 'System'}</b> ran <span style={{ color: HB.inkSoft }}>{r.node.title}</span></span>
-                      <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.result} · {r.ms}ms · {ago(r.t)} ago</span>
+                      <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.result}{r.ms ? ' · ' + r.ms + 'ms' : ''} · {ago(r.t)} ago</span>
                     </span>
                   </button>
                 ); })}
@@ -110,9 +97,10 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
           // task classes present anywhere in the fleet, plus the ones the app always needs
           const classes = [...new Set(['intent', 'vision', 'compose', 'critique', 'extract', 'fallback', 'offline',
             ...models.flatMap(m => m.tasks || [])])];
-          // rough monthly volume per class (calls, and tokens per call) — the basis of the estimate
-          const VOL = { intent: [42000, 1.6], vision: [8600, 4.2], compose: [15400, 3.1], critique: [3100, 5.4],
-            extract: [26000, 2.2], fallback: [4200, 1.8], offline: [1900, 1.4] };
+          // There used to be a hardcoded monthly call volume per task class here, multiplied by
+          // each model's rate into a dollar figure the panel printed as SPEND. No call was ever
+          // counted. The cockpit does not meter model usage, so it now shows the routing it can
+          // prove and says plainly that no spend has been measured.
           const ownerOf = (cls) => (live.find(m => (m.tasks || []).includes(cls)) || {}).id || '';
           const route = (cls, id) => {
             setColl && setColl('models', ms => ms.map(m => {
@@ -124,23 +112,9 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
             const nm = (models.find(m => m.id === id) || {}).name || 'none';
             flash && flash(cls + ' → ' + nm);
           };
-          // spend follows the routing: each class's volume is billed at its owner's rate
-          const spendByVendor = {};
-          let total = 0;
-          classes.forEach(cls => {
-            const m = live.find(x => (x.tasks || []).includes(cls)); if (!m) return;
-            const [calls, ktok] = VOL[cls] || [4000, 2];
-            const usd = calls * ktok / 1000 * (m.inCost * 0.75 + m.outCost * 0.25);
-            spendByVendor[m.vendor] = (spendByVendor[m.vendor] || 0) + usd;
-            total += usd;
-          });
-          const vendors = Object.entries(spendByVendor).sort((a, b) => b[1] - a[1]);
           const issues = (DB.issues || []);
           const openIss = issues.filter(i => i.status !== 'resolved');
           const agents = DB.agents || [];
-          var D = String.fromCharCode(36);
-          var money = function (v) { return v >= 1000 ? D + (v / 1000).toFixed(1) + 'k' : D + Math.round(v); };
-          var PAL = [HB.accent, HB.blue, HB.purple, HB.green, HB.amber];
           return (
             <div>
               <div style={sideSec}>
@@ -160,27 +134,17 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                   ))}
                 </div>
                 <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft, marginTop: 9, lineHeight: 1.5 }}>
-                  Reassigning a class rewrites the fleet and re-prices the estimate below.
+                  Reassigning a class rewrites the fleet. The change is saved with your model list.
                 </div>
               </div>
 
               <div style={sideSec}>
-                <div style={{ ...sideLabel, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>SPEND · EST / MONTH</span><span style={{ color: HB.accent, fontSize: 11 }}>{money(total)}</span>
+                <div style={sideLabel}>SPEND</div>
+                <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkSoft, lineHeight: 1.5 }}>
+                  Not measured. Nothing here counts model calls, so the cockpit has no spend figure to give you.
                 </div>
-                <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: HB.paper, marginBottom: 9 }}>
-                  {vendors.map(([v, usd], k) => <div key={v} style={{ width: (usd / (total || 1) * 100) + '%', background: PAL[k % 5] }}/>)}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {vendors.map(([v, usd], k) => (
-                    <div key={v} style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: HB.mono, fontSize: 10.5 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: PAL[k % 5], flexShrink: 0 }}/>
-                      <span style={{ flex: 1, color: HB.ink }}>{v}</span>
-                      <span style={{ color: HB.inkSoft }}>{(usd / (total || 1) * 100).toFixed(0)}%</span>
-                      <span style={{ color: HB.ink, width: 48, textAlign: 'right' }}>{money(usd)}</span>
-                    </div>
-                  ))}
-                  {!vendors.length && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkSoft }}>Nothing routed — no spend.</div>}
+                <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 7, lineHeight: 1.5 }}>
+                  Rates you entered per model are shown with each model; a total needs real usage, and usage is not reported to the cloud.
                 </div>
               </div>
 
@@ -217,37 +181,52 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
         {tab === 'sessions' && (
           <div>
             <div style={{ ...sideSec, borderBottom: `1px solid ${HB.line}` }}>
-              <div style={sideLabel}>CONVERSATIONS WITH YOUR AGENTS</div>
+              <div style={{ ...sideLabel, display: 'flex', justifyContent: 'space-between' }}>
+                <span>WHAT YOU ASKED YOUR APP</span>
+                <button onClick={() => onReloadTasks && onReloadTasks()} style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9 }}>refresh</button>
+              </div>
+              <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, marginBottom: 10, lineHeight: 1.5 }}>
+                Every instruction the cockpit queued for your ArchHub app, and the answer it posted back.
+              </div>
+              {rows.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>No instructions yet. Ask the cockpit something and the exchange lands here.</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {sessions.map(s => { const dcol = (M.domains.find(d => d.key === s.dom) || {}).col || HB.accent; return (
-                  <div key={s.id} style={{ border: `1px solid ${HB.line}`, borderRadius: 10, overflow: 'hidden', background: HB.card }}>
-                    <button onClick={() => setSessions(ss => ss.map(x => x.id === s.id ? { ...x, open: !x.open } : x))} style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left', padding: '10px 11px', border: 'none', background: 'transparent', cursor: 'pointer' }}>
-                      <span style={{ width: 26, height: 26, borderRadius: 7, display: 'grid', placeItems: 'center', background: HB.accentSoft, color: HB.accentHi, flexShrink: 0 }}><CKIcon name="agent" size={13}/></span>
-                      <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 600, color: HB.ink, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.topic}</span>
-                        <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{s.agent.name} · <span style={{ color: dcol }}>{s.domName}</span> · {ago(s.t)} ago</span>
-                      </span>
-                      <span style={{ fontFamily: HB.mono, fontSize: 15, color: HB.inkMute, width: 14, textAlign: 'center' }}>{s.open ? '▾' : '▸'}</span>
-                    </button>
-                    {s.open && (
-                      <div style={{ borderTop: `1px solid ${HB.lineSoft}`, padding: '10px 11px', display: 'flex', flexDirection: 'column', gap: 9, background: HB.paper2 }}>
-                        {s.msgs.map((m, j) => (
-                          <div key={j} style={{ display: 'flex', flexDirection: m.who === 'founder' ? 'row-reverse' : 'row', gap: 8 }}>
-                            <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.45, background: m.who === 'founder' ? HB.accent : HB.card, color: m.who === 'founder' ? '#fff' : HB.ink, border: m.who === 'founder' ? 'none' : `1px solid ${HB.line}` }}>{m.text}</span>
-                          </div>
-                        ))}
-                        <SessionComposer agentName={s.agent.name} onSend={(txt) => setSessions(ss => ss.map(x => {
-                          if (x.id !== s.id) return x;
-                          const mine = { who: 'founder', name: 'You', text: txt, t: Date.now() };
-                          const reply = { who: 'agent', name: s.agent.name, text: 'On it \u2014 updating the relevant nodes; I will report back in Activity.', t: Date.now() + 1 };
-                          return { ...x, msgs: x.msgs.concat([mine, reply]), t: Date.now() };
-                        }))}/>
+                {rows.slice(0, 24).map(r => {
+                  const tone = { ok: HB.green, err: HB.red, accent: HB.accent, mute: HB.inkMute }[TASK_TONE[r.status] || 'mute'];
+                  const at = taskStamp(r);
+                  return (
+                    <div key={r.id} style={{ border: `1px solid ${HB.line}`, borderLeft: `3px solid ${tone}`, borderRadius: 10, overflow: 'hidden', background: HB.card }}>
+                      <div style={{ padding: '9px 11px' }}>
+                        <div style={{ fontSize: 12.5, color: HB.ink, lineHeight: 1.45 }}>{r.directive}</div>
+                        <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 4 }}>
+                          {r.status}{r.claimed_by ? ' · ' + r.claimed_by : ''}{at ? ' · ' + ago(at) + ' ago' : ''}
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ); })}
+                      {r.result ? (
+                        <div style={{ borderTop: `1px solid ${HB.lineSoft}`, padding: '9px 11px', background: HB.paper2, fontSize: 12, color: HB.ink, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{r.result}</div>
+                      ) : (
+                        <div style={{ borderTop: `1px solid ${HB.lineSoft}`, padding: '7px 11px', background: HB.paper2, fontFamily: HB.serif, fontStyle: 'italic', fontSize: 12.5, color: HB.inkMute }}>
+                          {r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.'}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
+            {ctl && (ctl.agents || []).length > 0 && (
+              <div style={{ ...sideSec, borderBottom: 'none' }}>
+                <div style={sideLabel}>AGENTS YOUR APP REPORTED</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {(ctl.agents || []).map((a, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', borderRadius: 7, background: HB.paper2, border: `1px solid ${HB.lineSoft}` }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: a.status === 'online' ? HB.green : HB.inkMute }}/>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: HB.ink }}>{a.provider || a.runtime || 'agent'}</span>
+                      <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{String(a.session || '').slice(0, 8)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

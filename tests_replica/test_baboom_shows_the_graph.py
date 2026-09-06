@@ -177,8 +177,13 @@ def test_the_window_repairs_itself_from_what_windows_reports():
     assert "def _native_rect_differs(self, target)" in window
     assert "GetWindowRect" in window
     refresh = window[window.index("def refresh(self)"):window.index("def paintEvent")]
-    assert "self._native_rect_differs(window_rect) or self.geometry() != window_rect" in refresh, (
-        "the system's answer must be asked, not Qt's cache alone")
+    assert "drifted = self._native_rect_differs(window_rect)" in refresh
+    # Unconditional placement. Comparing first is what let the window stay
+    # lost: Qt's cache matched the target while Windows had the companion
+    # shrunk to 160x28 in another corner, so nothing ever repaired it.
+    place = refresh.index("self.setGeometry(window_rect)")
+    guard = refresh.index("if drifted or")
+    assert place < guard, "setGeometry must run before any conditional"
 
 
 def test_the_companion_is_owned_by_nothing():

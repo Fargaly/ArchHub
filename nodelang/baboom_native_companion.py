@@ -879,8 +879,14 @@ def create_baboom_native_companion_window(
             # 280x245+1582+729 while Windows had 160x28+1120+1004 -- and
             # because Qt's cache matched the target, nothing ever corrected it
             # and BABOOM sat shrunk in the wrong corner. Ask the system.
-            if self._native_rect_differs(window_rect) or self.geometry() != window_rect:
-                self.setGeometry(window_rect)
+            # Place on EVERY tick, unconditionally. Comparing first is what
+            # let the window stay lost: Qt's cache matched the target while
+            # Windows had the companion shrunk to 160x28 in another corner, so
+            # the branch was never taken and nothing repaired it for the rest
+            # of the session. setGeometry on an unchanged window costs nothing.
+            drifted = self._native_rect_differs(window_rect)
+            self.setGeometry(window_rect)
+            if drifted or self.geometry() != window_rect:
                 # One line per change, so the next "it is not there" can be
                 # read off a file instead of guessed at from a screenshot.
                 try:

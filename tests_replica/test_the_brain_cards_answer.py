@@ -291,3 +291,21 @@ def test_the_live_daemon_gets_an_answer_out_of_the_card():
     assert time.monotonic() - started < pipeline_engines.BRAIN_BUDGET_SECONDS + 1.0
     assert "did not answer" not in said and "unreachable" not in said, said
     assert str(recalled.get("out") or "").strip(), "recall came back empty: %s" % said
+
+
+def test_no_caller_in_the_app_asks_the_brain_for_every_fact_without_saying_so():
+    """A thread dump of the founder's brain caught four brain.list_facts calls
+    in flight at once, each scanning 54,076 rows, and every one came from this
+    app asking with no limit. A listing is a page; the one caller that really
+    wants everything, the export, says so."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "nodelang"
+    bare = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in re.finditer(r"""brain\.list_facts['"]\s*,\s*(\{[^}]*\})""", text):
+            if "limit" not in match.group(1):
+                bare.append("%s: %s" % (path.name, match.group(0)))
+    assert not bare, chr(10).join(bare)

@@ -910,7 +910,11 @@ def project_atlas_map(store, registry, *, authentication_context=None):
     if brain_domain is not None:
         try:
             from .pipeline_engines import _brain_call
-            listing = str(_brain_call("brain.list_facts", {}))
+            # Twelve cards want twelve facts. Asking with no limit fetched
+            # the whole store (54,076 rows, 88 s on the founder's brain) on
+            # every map projection, and four such calls at once left
+            # brain.health waiting behind them.
+            listing = str(_brain_call("brain.list_facts", {"limit": 12}))
             facts = [
                 line.strip() for line in listing.splitlines() if line.strip()
             ][:12]

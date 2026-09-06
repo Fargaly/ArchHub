@@ -398,8 +398,25 @@ def join_community(
 # ─────────────────────── read / leave ──────────────────────────────────
 
 
-def current_community(store: BrainStore) -> Optional[Community]:
-    raw = store.get_meta(_META_KEY_MEMBERSHIP)
+def current_community(store: BrainStore, *, wait: bool = True) -> Optional[Community]:
+    """The community this brain belongs to, or None.
+
+    `wait=False` is for STATUS callers. A thread dump of the founder's wedged
+    daemon found brain.health here, inside get_meta, behind a tool reading the
+    whole fact store; this was the third read on that one status path to block
+    on the shared connection. A status answer is not worth a caller's whole
+    budget, so a busy store reads as "no community", which is what a caller
+    that cannot see one already does.
+    """
+    from .storage import BUSY
+
+    if wait:
+        raw = store.get_meta(_META_KEY_MEMBERSHIP)
+    else:
+        peek = getattr(store, "peek_meta", None)
+        raw = peek(_META_KEY_MEMBERSHIP) if peek else store.get_meta(_META_KEY_MEMBERSHIP)
+        if raw is BUSY:
+            return None
     if not raw:
         return None
     try:
@@ -420,8 +437,8 @@ def current_community(store: BrainStore) -> Optional[Community]:
     )
 
 
-def current_community_id(store: BrainStore) -> Optional[str]:
-    c = current_community(store)
+def current_community_id(store: BrainStore, *, wait: bool = True) -> Optional[str]:
+    c = current_community(store, wait=wait)
     return c.community_id if c else None
 
 

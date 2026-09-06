@@ -145,3 +145,51 @@ def test_a_busy_store_still_reports_a_cursor():
     holder.store = _AlwaysBusy()
     assert holder._peek_cursor() == "2026-09-06T05:00:00Z", (
         "a busy store reports the cursor it last saw")
+
+
+def test_the_worker_scope_resolver_never_waits_either():
+    """The third read on the same status path, found by the third dump.
+
+    workers.status -> sync_worker.status -> _active_scopes -> _resolve_scopes
+    -> current_community_id -> current_community -> get_meta, blocked behind a
+    tool reading the whole fact store.
+    """
+    import inspect
+
+    from personal_brain import community_groups, workers
+
+    resolver = inspect.getsource(workers)
+    assert "current_community_id(store, wait=False)" in resolver
+
+    reader = inspect.getsource(community_groups.current_community)
+    assert "wait: bool = True" in reader and "peek_meta" in reader and "BUSY" in reader
+
+
+def test_a_busy_store_reads_as_no_community():
+    from personal_brain import community_groups
+
+    class _AlwaysBusy:
+        def peek_meta(self, _key, **_kw):
+            return storage.BUSY
+        def get_meta(self, _key):
+            raise AssertionError("a status read must not block")
+
+    assert community_groups.current_community(_AlwaysBusy(), wait=False) is None
+    assert community_groups.current_community_id(_AlwaysBusy(), wait=False) is None
+
+
+def test_a_waiting_caller_still_gets_the_blocking_read():
+    """Only status stopped waiting. Everything else keeps the old behaviour."""
+    from personal_brain import community_groups
+
+    calls = []
+
+    class _Store:
+        def peek_meta(self, _key, **_kw):
+            raise AssertionError("a waiting caller must take the blocking read")
+        def get_meta(self, key):
+            calls.append(key)
+            return ""
+
+    assert community_groups.current_community(_Store()) is None
+    assert calls, "the blocking read really was used"

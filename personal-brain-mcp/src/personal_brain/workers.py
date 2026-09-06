@@ -285,7 +285,9 @@ class WorkerSupervisor:
             scopes = [Scope.FIRM, Scope.PROJECT]
             try:
                 from .community_groups import current_community_id
-                if current_community_id(store):
+                # This runs inside the worker STATUS answer, which brain.health
+                # waits on. It must never queue behind a bulk read.
+                if current_community_id(store, wait=False):
                     scopes.append(Scope.COMMUNITY)
             except Exception:
                 pass

@@ -1313,7 +1313,8 @@ def build_server(
     @mcp.tool(
         name="brain.list_facts",
         description=(
-            "READ-ONLY. Enumerate every brain fact grouped into top-level "
+            "READ-ONLY. One PAGE of brain facts (newest first; limit 500 by "
+            "default, offset 0), grouped into top-level "
             "FOLDERS by type (User / Feedback / Projects / Reference, then "
             "Decisions / Capability / Skills / Traces) for the explorable "
             "folder browser. Each fact carries id, name, short desc, full "
@@ -1325,11 +1326,14 @@ def build_server(
     def brain_list_facts_tool(
         owner_user: Optional[str] = None,
         include_archived: bool = False,
+        limit: int = 500,
+        offset: int = 0,
     ) -> dict[str, Any]:
         from .brain_facts import list_facts
         owner = owner_user or resolve_default_owner()
         return list_facts(store, owner_user=owner,
-                          include_archived=include_archived)
+                          include_archived=include_archived,
+                          limit=limit, offset=offset)
 
     @mcp.tool(
         name="brain.edit_fact",

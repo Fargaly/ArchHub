@@ -824,6 +824,60 @@ LIBRARY_ITEM_ENGINES["i_vis"] = {"engine": "library.vision",
                                  "params": {"image_path": "", "prompt": "", "model": "", "max_tokens": "600"}}
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("i_vis", None)
 
+
+_EXPORT_PDF = """
+var folder = %s;
+var wanted = new List<string>{%s};
+var sheets = new List<ElementId>();
+foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) {
+    if (vs.IsPlaceholder) continue;
+    if (wanted.Count > 0 && !wanted.Contains(vs.SheetNumber)) continue;
+    sheets.Add(vs.Id);
+}
+if (sheets.Count == 0) throw new Exception("no sheet to publish");
+System.IO.Directory.CreateDirectory(folder);
+var options = new PDFExportOptions();
+options.Combine = false;
+if (!Doc.Export(folder, sheets, options)) throw new Exception("Revit declined the PDF export");
+var written = new List<string>();
+foreach (var f in System.IO.Directory.GetFiles(folder, "*.pdf")) written.Add(f);
+result = new Dictionary<string, object>{ {"sheets", sheets.Count}, {"folder", folder}, {"files", written} };
+"""
+
+
+def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """The sheets of the open model as PDF files, exported by the live Revit; files, never a claim."""
+    import json
+    import os
+    import time
+    from .clean_revit_adapter import _call, live_sessions
+    sessions = [s for s in live_sessions() if s.get("revit_version")]
+    if not sessions:
+        return {"out": []}, "no Revit session is listening"
+    session = sessions[-1]
+    held = _wired(feeds, "in", "sheets")
+    wanted = [str(item_field(row, "number") or row) for row in as_list(held)] if held is not None else [
+        piece.strip() for piece in _text(params, "sheets").split(",") if piece.strip()]
+    folder = _text(params, "folder") or os.path.join(
+        os.path.expanduser("~"), "Documents", "ArchHub", "pdf", time.strftime("%Y%m%d-%H%M%S"))
+    script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in wanted))
+    try:
+        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": "ArchHub publish pdf"})
+    except Exception as failed:
+        return {"out": []}, "Revit did not answer: %s" % str(failed)[:160]
+    if not isinstance(answer, Mapping) or answer.get("status") != "ok":
+        return {"out": []}, "Revit refused: %s" % ((answer or {}).get("error") if isinstance(answer, Mapping) else answer)
+    result = answer.get("result") if isinstance(answer.get("result"), Mapping) else {}
+    files = [str(name) for name in as_list(result.get("files"))]
+    return {"out": files, "folder": folder}, "%d PDF(s) in %s from %s" % (
+        len(files), folder, session.get("document") or session["port"])
+
+
+LIBRARY_ENGINES["library.publish_pdf"] = publish_pdf
+LIBRARY_ITEM_ENGINES["o_pdf"] = {"engine": "library.publish_pdf",
+                                 "params": {"sheets": "", "folder": ""}}
+LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
+
 __all__ = [
     "LIBRARY_ENGINES",
     "set_notify_surface",

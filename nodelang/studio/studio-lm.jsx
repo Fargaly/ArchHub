@@ -326,7 +326,7 @@ const LM_LIBRARY = [
   ]},
   { cat:'output', items:[
     { id:'o_skill', title:'save_skill',     sub:'template this run' , engine:'library.save_skill'},
-    { id:'o_pdf',   title:'publish_pdf',    sub:'sheets → PDF set' , noEngine:true},
+    { id:'o_pdf',   title:'publish_pdf',    sub:'sheets → PDF files via the live Revit' , engine:'library.publish_pdf'},
     { id:'o_spk',   title:'push_speckle',   sub:'commit to a branch' , noEngine:true},
     { id:'o_email', title:'draft_email',    sub:'draft in Outlook · you send' , engine:'library.draft_email'},
     { id:'o_notify',title:'notify',         sub:'desktop notification' , engine:'library.notify'},

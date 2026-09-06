@@ -125,8 +125,8 @@ def test_the_launcher_registers_its_tray_as_the_notify_surface():
     assert "_notifier.asked.emit(" in block, "a queued signal, not a cross-thread widget call"
 
 
-def test_the_five_that_remain_say_why():
-    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"a_tags", "a_rooms", "c_sheet", "o_pdf", "o_spk"}
+def test_the_four_that_remain_say_why():
+    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"a_tags", "a_rooms", "c_sheet", "o_spk"}
     for item, reason in L.LIBRARY_ITEMS_WITHOUT_ENGINE.items():
         assert reason, item
 
@@ -162,3 +162,33 @@ def test_vision_is_honest_about_a_missing_or_unreadable_file(tmp_path, monkeypat
     assert out["out"] == [] and "not an image" in said
     out, said = L.vision({"model": "openrouter/x/vision"}, {})
     assert out["out"] == [] and "no image_path" in said
+
+
+def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_path):
+    from nodelang import clean_revit_adapter as adapter
+    sent = {}
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [
+        {"port": 48885, "revit_version": "2025", "document": "P-664.rvt"}])
+
+    def call(port, route, body=None, timeout=None):
+        sent["port"], sent["route"], sent["body"] = port, route, dict(body or {})
+        return {"status": "ok", "result": {"sheets": 2, "folder": str(tmp_path),
+                                           "files": [str(tmp_path / "A101.pdf"), str(tmp_path / "A102.pdf")]}}
+
+    monkeypatch.setattr(adapter, "_call", call)
+    out, said = L.publish_pdf({"sheets": "A101, A102", "folder": str(tmp_path)}, {})
+    assert sent["port"] == 48885 and sent["route"] == "/exec"
+    code = sent["body"]["code"]
+    assert "PDFExportOptions" in code and "Doc.Export(folder, sheets, options)" in code
+    assert 'new List<string>{"A101", "A102"}' in code
+    assert code.lstrip().startswith("var folder = " + __import__("json").dumps(str(tmp_path)))
+    assert out["out"] == [str(tmp_path / "A101.pdf"), str(tmp_path / "A102.pdf")]
+    assert said.startswith("2 PDF(s) in") and "P-664.rvt" in said
+
+    monkeypatch.setattr(adapter, "_call", lambda *a, **k: {"status": "error", "error": "no sheet to publish"})
+    out, said = L.publish_pdf({}, {})
+    assert out["out"] == [] and said == "Revit refused: no sheet to publish"
+
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [])
+    out, said = L.publish_pdf({}, {})
+    assert out["out"] == [] and said == "no Revit session is listening"

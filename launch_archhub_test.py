@@ -824,9 +824,33 @@ window.show()
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
 def _tray_open():
+    from PyQt6.QtCore import QTimer as _QT
     window.showNormal(); window.raise_(); window.activateWindow()
-    # Qt alone leaves the window behind everything else on Windows.
-    _force_foreground(window.winId())
+
+    def _settle():
+        # Qt alone leaves the window behind everything else on Windows. The
+        # foreground dance runs after Qt has applied the state rather than
+        # the same instant as showNormal(), restores once more if something
+        # minimized the window meanwhile, and says where the window ended up
+        # so the launcher log is the receipt (2026-09-06: a screen-capture
+        # tool minimizing every window it was not allowed to see made the
+        # window look minimized by us; the receipt settles that question).
+        _force_foreground(window.winId())
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            handle = int(window.winId())
+            if user32.IsIconic(handle):
+                user32.ShowWindow(handle, 9)
+            rect = (ctypes.c_long * 4)()
+            user32.GetWindowRect(handle, ctypes.byref(rect))
+            print("  show       : window %dx%d at %d,%d iconic=%s" % (
+                rect[2] - rect[0], rect[3] - rect[1], rect[0], rect[1],
+                bool(user32.IsIconic(handle))), flush=True)
+        except Exception as failed:
+            print("  show       : receipt unavailable: %s" % failed, flush=True)
+
+    _QT.singleShot(150, _settle)
 
 def _tray_check_updates():
     import threading as _t

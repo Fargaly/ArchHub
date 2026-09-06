@@ -3353,6 +3353,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/account-tier", "edit"),
     ("GET", "/api/universal/hosts", "read"),
     ("GET", "/api/universal/models", "read"),
+    ("GET", "/api/universal/providers", "read"),
     ("POST", "/api/universal/pipeline-seed", "edit"),
     ("POST", "/api/universal/interaction", "edit"),
     ("POST", "/api/universal/instantiate", "create"),

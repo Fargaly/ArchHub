@@ -2740,7 +2740,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
     ['profile',     'Profile',     'Architect'],
     ['permissions', 'Permissions', (() => { const v = LM_PERMISSIONS.map(p => permMode(store, p)); return `${v.filter(x => x === 'auto').length} auto · ${v.filter(x => x === 'ask').length} ask`; })()],
     ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(store, h) !== 'off').length} live`],
-    ['providers',   'Providers',   '3 keys'],
+    ['providers',   'Providers',   'keys on this machine'],
     ['models',      'Models',      'Sonnet 4.5'],
     ['theme',       'Theme',       store.theme],
     ['shortcuts',   'Shortcuts',   null],
@@ -3040,48 +3040,52 @@ const SettingsPermissions = ({ store, patch }) => (
 );
 
 // ── Providers
-const LM_PROVIDERS = [
-  { id:'anthropic', name:'Anthropic',  state:'connected', key:'ant-•••••••••e2af', usage:'$23.84 this month', col:'#cc785c' },
-  { id:'openai',    name:'OpenAI',     state:'connected', key:'sk-••••••••••8e1b', usage:'$0.00 (subscription)', col:'#10a37f' },
-  { id:'openrouter',name:'OpenRouter', state:'connected', key:'or-••••••••••9c4d', usage:'$2.14 this month', col:'#3a6acc' },
-  { id:'ollama',    name:'Ollama',     state:'local',     key:'localhost:11434',  usage:'free · local',     col:'#1a8a4a' },
-  { id:'google',    name:'Google AI',  state:'off',       key:'—',                usage:'—',                col:'#4285f4' },
-];
-const SettingsProviders = ({ store, patch }) => (
-  <div>
-    <SHead title="Providers" sub="BYO keys. Local models live in Ollama. Spend rolls up into Storage."/>
-    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      {LM_PROVIDERS.map((p, i) => (
-        <div key={p.id} style={{
-          padding:'12px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
-          borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}`,
-        }}>
-          <span style={{ width:24, height:24, borderRadius:LM.rad.sm, background:p.col, color: (window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:12, fontWeight:700 }}>{p.name[0]}</span>
-          <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
-            <div style={{ fontSize:13, fontWeight:500, color: p.state==='off' ? LM.inkMuted : LM.ink }}>{p.name}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
-              <button title={(store.revealed || {})[p.id] ? 'Hide key' : 'Reveal key'}
-                onClick={() => patch({ revealed: Object.assign({}, store.revealed, { [p.id]: !(store.revealed || {})[p.id] }) })}
-                style={{ background:'none', border:0, padding:0, cursor:'pointer', color:LM.inkSoft, fontFamily:LM.mono, fontSize:10, textDecoration:'underline dotted' }}>
-                {(store.revealed || {})[p.id] ? p.key.replace(/\u2022+/g, 'k7Fq2xBn91LmZ0aTvR') : p.key}
-              </button> · {p.usage}
+// Settings > Providers used to be a fixture: masked keys and monthly dollar
+// figures typed in 2025 and shown to the founder as his account. It reads the app now (/api/universal/providers):
+// keyed or not, with the place the key came from; running or not, for the
+// local runtimes. There is no spend figure because nothing here measures one.
+const SettingsProviders = ({ store, patch }) => {
+  const [rows, setRows] = React.useState(null);
+  const [err, setErr] = React.useState('');
+  React.useEffect(() => {
+    const s = window.__archhubSession || {};
+    fetch('/api/universal/providers', { headers: { 'X-ArchHub-Session': s.token || '', 'X-ArchHub-CSRF': s.csrf || '' } })
+      .then(r => r.json())
+      .then(d => { if (d && d.ok) setRows(d.providers || []); else setErr((d && d.error) || 'the app did not answer'); })
+      .catch(e => setErr(String(e && e.message || e)));
+  }, []);
+  const tone = (state) => state === 'keyed' || state === 'running' ? LM.ok : LM.inkMuted;
+  const keyed = (rows || []).filter(r => r.state === 'keyed').length;
+  const running = (rows || []).filter(r => r.state === 'running').length;
+  return (
+    <div>
+      <SHead title="Providers" sub={rows ? (keyed + ' keyed · ' + running + ' local runtime' + (running === 1 ? '' : 's') + ' running') : (err ? 'not read: ' + err : 'reading this machine…')}/>
+      <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
+        {(rows || []).map((p, i) => (
+          <div key={p.id} style={{
+            padding:'12px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
+            borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}`,
+          }}>
+            <span style={{ width:24, height:24, borderRadius:LM.rad.sm, background:tone(p.state), color:(window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:12, fontWeight:700 }}>{p.name[0]}</span>
+            <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
+              <div style={{ fontSize:13, fontWeight:500, color: p.state==='no key' || p.state==='not running' ? LM.inkMuted : LM.ink }}>{p.name}</div>
+              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>
+                {p.state === 'keyed' ? 'key from the ' + p.source
+                 : p.state === 'no key' ? 'no key · set ' + p.sets + ' or save it in the ArchHub secrets store'
+                 : p.source}
+              </div>
             </div>
+            <span style={{
+              fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.1em', textTransform:'uppercase',
+              background: tone(p.state) + '14', color: tone(p.state),
+            }}>{p.state}</span>
           </div>
-          <span style={{
-            fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.1em', textTransform:'uppercase',
-            background: p.state==='connected'?LM.ok+'14' : p.state==='local'?LM.cyan+'14' : LM.bgSoft,
-            color:       p.state==='connected'?LM.ok      : p.state==='local'?LM.cyan      : LM.inkMuted,
-          }}>{p.state}</span>
-          <button onClick={() => window.ARCHHUB_REVEAL?.('brain')}
-            title="Provider keys live in the OS keychain, beside the brain"
-            style={{ ...smallBtn(), padding:'3px 8px' }}>{p.state==='off' ? 'connect' : 'manage'}</button>
-        </div>
-      ))}
+        ))}
+        {rows && rows.length === 0 && <div style={{ padding:'12px 14px', fontSize:12, color:LM.inkMuted }}>nothing to show</div>}
+      </div>
     </div>
-  </div>
-);
-
-// ── Models: per-task routing
+  );
+};
 const SettingsModels = () => (
   <div>
     <SHead title="Model routing" sub="Different jobs deserve different models. We pick by default, you can override."/>

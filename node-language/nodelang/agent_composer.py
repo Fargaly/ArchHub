@@ -14,8 +14,15 @@ from typing import Mapping
 from .model_router import route_chat
 from .universal_cell import InvalidCell
 
-_DEFAULT_MODEL = os.environ.get(
-    "ARCHHUB_AGENT_MODEL", "anthropic/claude-sonnet-4.5"
+# There is no built-in default model. One was hidden here for months
+# ("anthropic/claude-sonnet-4.5"), so a question with no picked model was
+# answered by a model nobody chose, on OpenRouter, for money. A default is
+# DECLARED (ARCHHUB_AGENT_MODEL) or it does not exist; without one and without
+# a pick, the composer says what to pick instead of guessing.
+_DEFAULT_MODEL = os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+NO_MODEL_CHOSEN = (
+    "No model chosen. Pick one in the studio header (the picker), or set "
+    "ARCHHUB_AGENT_MODEL to a route such as openrouter/anthropic/claude-sonnet-4.5."
 )
 
 _SYSTEM = """You operate the ArchHub node canvas. Reply with ONE JSON object:
@@ -112,6 +119,8 @@ def run_agent_composer(
     # the default, and a provider that cannot be reached says so rather than
     # being quietly replaced by another one.
     chosen = (model or "").strip() or _DEFAULT_MODEL
+    if not chosen:
+        raise InvalidCell(NO_MODEL_CHOSEN)
     raw = _chat(prompt.strip(), context_block, chosen)
     text = raw.strip()
     if text.startswith("```"):

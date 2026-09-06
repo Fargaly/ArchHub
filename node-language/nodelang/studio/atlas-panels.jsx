@@ -7,6 +7,54 @@ const insLabel = { fontFamily: HB.mono, fontSize: 8.5, color: HB.accent, fontWei
 const insInput = (mono) => ({ width: '100%', background: HB.paper2, border: `1px solid ${HB.line}`, color: HB.ink, borderRadius: 7, padding: '8px 10px', fontSize: 12.5, fontFamily: mono ? HB.mono : HB.sans, outline: 'none', resize: 'vertical' });
 const secStyle = { padding: '15px 16px', borderBottom: `1px solid ${HB.lineSoft}` };
 
+// ─── THE PARAMETER TYPE REGISTRY — one vocabulary for both graphs ───────────────
+// The cockpit's map and the app's session canvas each grew their own idea of what a
+// parameter type is (cockpit: string/number/boolean/color/trigger — app: number/toggle/
+// text/menu/colour/elements/view/…). Two names for one concept is the drift this project
+// keeps paying for, so the registry is published ONCE on window and every panel reads it.
+// COLOUR encodes the data type. SHAPE encodes cardinality: round = one value, diamond = a
+// list. Adding a type here adds it everywhere.
+// If a page ever loads param-types.jsx before this file, that copy wins and this is skipped.
+if (!window.PM_TYPES) {
+  const T = window.AH;
+  window.PM_TYPES = {
+    number:   { label: 'Number',     glyph: '#',  col: T.warn,     wire: false, def: 0 },
+    toggle:   { label: 'Toggle',     glyph: '◐',  col: T.purple,   wire: false, def: false },
+    text:     { label: 'Text',       glyph: 'T',  col: T.inkSoft,  wire: false, def: '' },
+    menu:     { label: 'Menu',       glyph: '≡',  col: T.blue,     wire: false, def: '' },
+    colour:   { label: 'Colour',     glyph: '◉',  col: T.ok,       wire: false, def: '#d97757' },
+    elements: { label: 'Elements',   glyph: '▭',  col: T.accent,   wire: true },
+    view:     { label: 'View',       glyph: '◱',  col: T.cyan,     wire: true },
+    dims:     { label: 'Annotation', glyph: '↔',  col: T.ok,       wire: true },
+    file:     { label: 'File',       glyph: '⎘',  col: T.ok,       wire: true },
+    any:      { label: 'Any',        glyph: '✳',  col: T.inkMuted, wire: true },
+  };
+  // canvas wire-type names → the registry, so a wire on the map and a socket in a panel agree
+  window.PM_WIRE = {
+    view: T.cyan, selection: T.cyan, walls: T.accent, doors: T.accent, sheets: T.accent,
+    intent: T.purple, prediction: T.purple, trace: T.inkSoft, dims: T.ok, file: T.ok,
+    any: T.inkSoft, number: T.warn, text: T.inkSoft, string: T.inkSoft,
+    boolean: T.purple, exec: T.accent,
+  };
+  // the cockpit's older type names → registry names
+  window.PM_ALIAS = { string: 'text', boolean: 'toggle', color: 'colour', trigger: 'any' };
+  window.pmType = (t) => window.PM_TYPES[t] || window.PM_TYPES[window.PM_ALIAS[t]] || window.PM_TYPES.any;
+  // The parameters a real graph engine gives a CONNECTION. A wire is a node, so it is
+  // governed like one, and it must mean the same thing here as in the app: defined once.
+  //   lacing   — Dynamo list lacing: how two lists of different length are paired.
+  //   tree     — Grasshopper data-tree ops.
+  //   condition/on_fail — the rule, and what downstream gets when the rule stops it.
+  //   throttle — rate limit for a wire fed by a live host.
+  window.WIRE_PARAMS = [
+    { k: 'enabled',     label: 'Enabled',   type: 'toggle', def: true,       help: 'Mute the connection without deleting it. Downstream sees nothing.' },
+    { k: 'lacing',      label: 'Lacing',    type: 'menu',   def: 'shortest', opts: ['shortest', 'longest', 'cross product'], help: 'How two lists of different length are paired.' },
+    { k: 'tree',        label: 'Data tree', type: 'menu',   def: 'none',     opts: ['none', 'flatten', 'graft', 'simplify'], help: 'Restructure on the way through: flatten, graft, or simplify.' },
+    { k: 'condition',   label: 'Condition', type: 'text',   def: '',         page: 'Rules', help: 'The wire only carries when this holds. Empty means always.' },
+    { k: 'on_fail',     label: 'On block',  type: 'menu',   def: 'block',    opts: ['block', 'pass last', 'pass empty'], page: 'Rules', help: 'What downstream receives when the condition blocks or the source errors.' },
+    { k: 'throttle_ms', label: 'Throttle',  type: 'number', def: 0,          unit: 'ms', min: 0, max: 2000, step: 50, page: 'Rules', help: 'Minimum gap between deliveries, for a wire fed by a live host.' },
+  ];
+}
+
 /* ════ SYSTEM — macro, nothing selected: whole-system overview ════ */
 function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain, onEnter, openRoom }) {
   const domOf = {}; M.nodes.forEach(n => domOf[n.id] = n.dom);
@@ -56,7 +104,84 @@ function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain,
 }
 
 /* ════ DOMAIN — a domain selected (macro) or open (micro) ════ */
-function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, assign, toggleAgent, onEnter, onAddNode, onUngroup, openRoom, selectBy, onClose }) {
+// ─── LIVE DOMAIN CONTROL — drives the founder's RUNNING application ─────────────
+// Renders what the app pushed (M.control: agents on his machine, governed work, host
+// states); every button relays through /founder/api/command to the app itself.
+// Hosts the app can bring to CONNECTED itself: Office through COM, Rhino and
+// Blender launched with the shipped ArchHub bridge. Max needs MaxMCP (said so).
+const OPENABLE = ['excel', 'word', 'powerpoint', 'outlook', 'rhino', 'blender'];
+
+function LiveDomainControl({ M, d, members, onRelay }) {
+  const ctl = M.control || null;
+  const [ask, setAsk] = React.useState('');
+  const [log, setLog] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+  const engines = members.filter(n => n.engine);
+  const title = String(d.title || d.key || '');
+  const low = title.toLowerCase();
+  const isHosts = /host|connector/.test(String(d.key || '') + ' ' + low) || members.some(n => n.cat === 'host' || /host|connector/i.test(String(n.sub || '')));
+  const agents = ctl ? (ctl.agents || []) : [];
+  // Work is scoped to THIS domain when its title names the domain (or a word of
+  // it); when nothing matches, the whole list is shown and labelled as such.
+  const allItems = ctl ? (ctl.work_items || []) : [];
+  const words = [low, String(d.key || '').toLowerCase(), ...low.split(/[^a-z0-9]+/).filter(w => w.length > 3)];
+  const scoped = allItems.filter(w => { const t = String(w.title || '').toLowerCase(); return words.some(x => x && t.includes(x)); });
+  const items = scoped.length ? scoped : allItems;
+  const itemsLabel = scoped.length ? 'GOVERNED WORK · THIS DOMAIN' : 'GOVERNED WORK · ALL';
+  const hosts = ctl ? (ctl.hosts || []) : [];
+  const say = async (command, execute) => {
+    if (!onRelay || busy) return;
+    setBusy(true);
+    try { const r = await onRelay(command, execute); setLog(l => [{ t: Date.now(), ok: !!r.ok && !r.pending_app, text: String(r.message || '').slice(0, 400) }, ...l].slice(0, 6)); }
+    catch (e) { setLog(l => [{ t: Date.now(), ok: false, text: String(e) }, ...l].slice(0, 6)); }
+    finally { setBusy(false); }
+  };
+  const runAll = async () => { for (const n of engines) { await say('run engine ' + n.engine, true); } };
+  const pill = (state) => { const c = state === 'connected' ? HB.green : state === 'running' ? HB.blue : state === 'installed' ? HB.amber : HB.inkMute;
+    return <span style={{ fontFamily: HB.mono, fontSize: 8.5, letterSpacing: '0.12em', color: c, border: `1px solid ${c}55`, borderRadius: 999, padding: '2px 7px' }}>{String(state || '').toUpperCase()}</span>; };
+  const row = { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${HB.line}` };
+  const small = { fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute };
+  return (
+    <div style={secStyle}>
+      <div style={insLabel}>IN YOUR APP · LIVE {ctl ? '' : '· waiting for the app push'}</div>
+      {!ctl && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>Your ArchHub app has not pushed its control state yet. Open ArchHub on your machine; the push follows within a minute.</div>}
+      {engines.length > 0 && <div style={{ marginTop: 8 }}>
+        <div style={{ ...small, marginBottom: 4 }}>ENGINES · {engines.length}</div>
+        {engines.slice(0, 12).map(n => <div key={n.id} style={row}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.title} <span style={small}>{n.engine}</span></span>
+          <HBtn onClick={() => say('run engine ' + n.engine, true)} disabled={busy}>▸ Run</HBtn>
+        </div>)}
+        {engines.length > 1 && <div style={{ marginTop: 6 }}><HBtn primary onClick={runAll} disabled={busy}>▸ Run all {engines.length} in ArchHub</HBtn></div>}
+      </div>}
+      {ctl && <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>AGENTS ON YOUR MACHINE · {agents.length}</div>
+        {agents.length === 0 && <div style={small}>none registered</div>}
+        {agents.slice(0, 8).map((a, i) => <div key={i} style={row}><span style={{ width: 7, height: 7, borderRadius: '50%', background: a.status === 'online' ? HB.green : HB.inkMute }}/><span style={{ flex: 1, fontSize: 12 }}>{a.provider || a.runtime || 'agent'} <span style={small}>{a.runtime && a.runtime !== a.provider ? a.runtime : ''}</span></span><span style={small}>{String(a.session || '').slice(0, 8)}</span>
+          <HBtn onClick={() => { const what = ask || ('review the ' + title + ' domain'); say('tell ' + (a.provider || a.runtime) + ': ' + what, true); }} disabled={busy}>→ Tell</HBtn></div>)}
+      </div>}
+      {ctl && (ctl.work_summary || items.length > 0) && <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>{itemsLabel}</div>
+        {ctl.work_summary && <div style={{ fontSize: 12, color: HB.ink, marginBottom: 4 }}>{ctl.work_summary}</div>}
+        {items.slice(0, 8).map((w, i) => <div key={i} style={row}><span style={{ flex: 1, fontSize: 12 }}>{w.title}</span><span style={small}>{w.state}{w.agent ? ' · ' + w.agent : ''}</span></div>)}
+      </div>}
+      {ctl && isHosts && hosts.length > 0 && <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>HOSTS · {hosts.filter(h => h.state === 'connected').length} connected of {hosts.length}</div>
+        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name} <span style={small}>{h.state === 'connected' ? '' : (h.detail || '')}</span></span>{pill(h.state)}
+          {OPENABLE.includes(h.id) && h.state !== 'connected' && <HBtn onClick={() => say('open ' + h.id, true)} disabled={busy}>▸ Open</HBtn>}</div>)}
+      </div>}
+      <div style={{ marginTop: 10 }}>
+        <div style={{ ...small, marginBottom: 4 }}>ASK OR INSTRUCT YOUR APP · about {title}</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') say(ask + ' (about ' + title + ')', false); }} placeholder={'e.g. what is blocked in ' + title + '?'} style={{ ...insInput(true), flex: 1 }}/>
+          <HBtn onClick={() => say(ask + ' (about ' + title + ')', false)} disabled={busy || !ask}>Ask</HBtn>
+        </div>
+        {log.map(l => <div key={l.t} style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: HB.paper, borderLeft: `2px solid ${l.ok ? HB.green : HB.amber}`, fontSize: 11.5, whiteSpace: 'pre-wrap' }}>{l.text}</div>)}
+      </div>
+    </div>
+  );
+}
+
+function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, assign, toggleAgent, onEnter, onAddNode, onUngroup, openRoom, selectBy, onClose, onRelay }) {
   const [tab, setTab] = React.useState('control');
   const d = M.domains.find(x => x.key === domKey) || {};
   const members = M.nodes.filter(n => n.dom === domKey);
@@ -100,6 +225,7 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
       <div style={{ padding: 0 }}>
         {tab === 'control' && (
           <div>
+            <LiveDomainControl M={M} d={d} members={members} onRelay={onRelay}/>
             <div style={secStyle}>
               <div style={insLabel}>INTENT</div>
               <textarea value={d.sub || ''} onChange={e => patchDomain(domKey, { sub: e.target.value })} rows={2} placeholder="What this domain owns…" style={insInput()}/>
@@ -243,14 +369,15 @@ function BulkPanel({ sel, selNodes, M, DB, STATUS, bulkStatus, bulkDomain, bulkA
    triggers are added in place. Mirrors stem-sandbox.jsx NodeBody. */
 const ptypeOf = (p) => p.t || ((p.v === true || p.v === false || p.v === 'true' || p.v === 'false') ? 'boolean' : (String(p.v).trim() !== '' && !isNaN(parseFloat(p.v)) && isFinite(+p.v) ? 'number' : (/^#[0-9a-fA-F]{3,8}$/.test(String(p.v)) ? 'color' : 'string')));
 const PARAM_WIRE = { string: 'string', number: 'number', boolean: 'boolean', color: 'string', trigger: 'exec' };
-// cockpit type name → the shared registry's name (studio-params.jsx PM_TYPES)
+// cockpit type name -> the shared registry's name, so a parameter is the same colour here
+// as the same parameter in the app's inspector.
 const PARAM_SHARED = { string: 'text', number: 'number', boolean: 'toggle', color: 'colour', trigger: 'any' };
 const ptypeCol = (t) => {
   const R = window.PM_TYPES;
   if (R) { const d = R[PARAM_SHARED[t] || t]; if (d) return d.col; }
   return window.typeColOf ? window.typeColOf(PARAM_WIRE[t] || 'any') : HB.inkMute;
 };
-// same socket the app inspector draws: colour = type, shape = cardinality
+// The same socket the app's inspector draws: colour = type, shape = cardinality.
 const ptypeSocket = (t, filled, size) => {
   const c = ptypeCol(t);
   return <span style={{ width: size || 9, height: size || 9, flexShrink: 0, display: 'inline-block',
@@ -261,7 +388,15 @@ function StemParams({ node, patchNode }) {
   const params = node.params || [];
   const ports = node.ports || { ins: [], outs: [] };
   const promoted = new Set((ports.ins || []).map(x => x.id));
-  const setParam = (i, patch) => patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...patch } : p) });
+  const setParam = (i, patch) => {
+    patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...patch } : p) });
+    // A live-graph parameter commits through the governed write; the
+    // local patch above keeps the panel instant either way.
+    const held = params[i];
+    if (patch.v !== undefined && held && held.rel && window.ARCHHUB_SET_PROP) {
+      window.ARCHHUB_SET_PROP(held.rel, String(patch.v)).catch(() => {});
+    }
+  };
   const delParam = (i) => { const p = params[i]; patchNode(node.id, { params: params.filter((_, j) => j !== i), ports: { ...ports, ins: (ports.ins || []).filter(x => x.id !== p.k) } }); };
   const addParam = (t) => {
     const n = params.length + 1;
@@ -277,7 +412,8 @@ function StemParams({ node, patchNode }) {
   const promote = (p) => { const has = promoted.has(p.k); const ins = has ? (ports.ins || []).filter(x => x.id !== p.k) : [...(ports.ins || []), { id: p.k, t: PARAM_WIRE[ptypeOf(p)] || 'any' }]; patchNode(node.id, { ports: { ...ports, ins } }); };
 
   const wrap = { display: 'flex', flexDirection: 'column', borderTop: `1px solid ${HB.lineSoft}` };
-  // matches studio-params.jsx ParamRow: 34px line, control inline, left edge carries state
+  // One flat 34px line per parameter, control inline, left edge carrying the state.
+  // The same row the app's inspector draws, so a parameter reads identically in both.
   const card = (on) => ({ display: 'flex', alignItems: 'center', gap: 8, minHeight: 34, paddingLeft: 8,
     borderLeft: `2px solid ${on ? HB.accent : 'transparent'}`, borderBottom: `1px solid ${HB.lineSoft}` });
   const keyInput = { flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: HB.ink, fontFamily: HB.sans, fontSize: 12.5, outline: 'none', padding: 0 };
@@ -412,9 +548,7 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
             <HBtn small onClick={addStage} style={{ alignSelf: 'flex-start', marginTop: 4 }}><CKIcon name="plus" size={12}/>Add stage</HBtn>
           </div>
         )}
-        {tab === 'runs' && RT && (
-          <RT.RunsBody node={node} onRun={() => onRun && onRun(node.id)} onVariant={(r) => onVariant && onVariant(node.id, r)}/>
-        )}
+        {tab === 'runs' && <RunsList node={node} onRun={() => onRun && onRun(node.id)} onVariant={(r) => onVariant && onVariant(node.id, r)}/>}
         {tab === 'wires' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px', borderRadius: 8, background: HB.paper2, border: `1px solid ${HB.lineSoft}` }}>
@@ -442,6 +576,46 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
 }
 
 const WireRow = ({ dir, node, why, sig, sigCol, onClick }) => <div className="hb-rowh" onClick={onClick} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 9px', borderRadius: 7, cursor: 'pointer', marginBottom: 2 }}><span style={{ color: dir === '→' ? HB.green : HB.blue, fontFamily: HB.mono, fontSize: 13, marginTop: 1 }}>{dir}</span><div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 12.5, fontWeight: 500 }}>{node ? node.title : '—'}</span>{sig && <span style={{ fontFamily: HB.mono, fontSize: 8.5, color: sigCol || HB.inkMute, padding: '1px 6px', borderRadius: 999, border: `1px solid ${sigCol || HB.line}`, flexShrink: 0 }}>{sig}</span>}</div>{why && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 2, lineHeight: 1.4 }}>{why}</div>}</div>{node && <HPill k={node.status}>{node.status}</HPill>}</div>;
+// The run history, drawn here rather than delegated, so an unmeasured field is simply not
+// printed. A run relayed to the app comes back with an outcome and the text the app gave;
+// it carries no duration, and a "0ms" beside it would be a number nobody measured.
+const RunsList = ({ node, onRun, onVariant }) => {
+  const RT = window.RT;
+  const runs = ((node.rt && node.rt.runs) || []).slice().reverse();
+  const state = (node.rt && node.rt.state) || 'idle';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {RT && <RT.RTChip state={state}/>}
+        <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>{runs.length} run{runs.length === 1 ? '' : 's'}</span>
+        <div style={{ flex: 1 }}/>
+        <button onClick={onRun} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 7, border: 'none', background: HB.accent, color: (window.AH && window.AH.onFill) || '#180f08', cursor: 'pointer', fontFamily: HB.mono, fontSize: 11, fontWeight: 600 }}>▸ Run</button>
+      </div>
+      {!node.engine && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkSoft, lineHeight: 1.5 }}>This node has no engine, so there is nothing here to run.</div>}
+      {runs.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>No runs yet.</div>}
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {runs.map((r, i) => (
+          <div key={r.id} style={{ display: 'flex', gap: 10, paddingLeft: r.variantOf ? 18 : 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: r.ok ? HB.green : HB.red, marginTop: 6 }}/>
+              {i < runs.length - 1 && <span style={{ flex: 1, width: 1.5, background: HB.line }}/>}
+            </div>
+            <div style={{ flex: 1, paddingBottom: 12, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+                <span style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink }}>run #{r.n}</span>
+                <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: r.ok ? HB.green : HB.red }}>{r.ok ? '✓' : '✗ failed'}</span>
+                {r.ms ? <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.ms}ms</span> : null}
+                {r.app && <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute }}>in your app</span>}
+                <button onClick={() => onVariant(r)} title="Run it again" style={{ marginLeft: 'auto', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.inkSoft, borderRadius: 6, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9 }}>run again</button>
+              </div>
+              <div style={{ fontFamily: HB.mono, fontSize: 11, color: HB.inkSoft, marginTop: 3, whiteSpace: 'pre-wrap' }}>{r.result}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 const Stat = ({ label, value }) => <div style={{ padding: '8px 10px', borderRadius: 7, background: HB.paper2, border: `1px solid ${HB.lineSoft}` }}><div style={{ fontFamily: HB.mono, fontSize: 8, color: HB.inkMute, letterSpacing: '0.12em' }}>{label}</div><div style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink, marginTop: 3, wordBreak: 'break-word' }}>{value}</div></div>;
 const Empty = ({ children }) => <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>{children}</div>;
 const chip = (col) => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, textTransform: 'capitalize', border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft });
@@ -574,9 +748,9 @@ function MultiFieldPanel({ M, ids, onGroup, clearSel }) {
   );
 }
 
-// Wire parameters come from param-types.jsx — the SAME definition Studio's inspector uses,
-// so a connection means one thing in both graphs.
-const WIRE_PARAM_DEFS = (window.WIRE_PARAMS || []).map(p => ({
+// Wire parameters come from the shared type registry (window.WIRE_PARAMS) — the SAME
+// definition the app's inspector uses, so a connection means one thing in both graphs.
+const WIRE_PARAM_DEFS = () => (window.WIRE_PARAMS || []).map(p => ({
   k: p.k, v: p.def, t: p.type === 'toggle' ? 'boolean' : p.type === 'number' ? 'number' : 'string',
   opts: p.opts, help: p.help, label: p.label,
 }));
@@ -593,7 +767,7 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
       : (x.a === w.a && x.b === w.b) || (x.a === w.b && x.b === w.a);
   });
   const A = domById[w.da], B = domById[w.db];
-  // wire parameters live on the wire records themselves, so they persist with the model
+  // Wire parameters live on the wire records themselves, so they persist with the model.
   const wp = (members[0] && members[0].params) || {};
   const setWP = (k, v) => patchWire && patchWire(members, { [k]: v });
   const sig = (id) => { const n = nodeById[id]; return n ? (window.sigOf ? window.sigOf(n) : n.cat) : '—'; };
@@ -618,7 +792,7 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
           Applies to all {members.length} underlying wire{members.length === 1 ? '' : 's'}.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${HB.lineSoft}` }}>
-          {WIRE_PARAM_DEFS.map(p => {
+          {WIRE_PARAM_DEFS().map(p => {
             const val = wp[p.k] === undefined ? p.v : wp[p.k];
             const changed = String(val) !== String(p.v);
             return (

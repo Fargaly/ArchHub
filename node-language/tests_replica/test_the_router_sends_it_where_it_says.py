@@ -344,3 +344,33 @@ def test_the_studio_source_still_compiles():
     )
     assert done.returncode == 0, done.stderr[-600:]
     assert int(done.stdout) > 100_000
+
+
+def test_there_is_no_hidden_default_model():
+    """A model nobody chose answered for months: the composer fell back to a
+    route hidden in the source, on OpenRouter, for money. A default is DECLARED
+    or it does not exist; without one and without a pick, the composer says
+    what to pick instead of guessing."""
+    import inspect
+
+    from nodelang import agent_composer as ac
+
+    src = inspect.getsource(ac)
+    assert 'os.environ.get("ARCHHUB_AGENT_MODEL", "")' in src
+    assert 'os.environ.get(' + chr(10) + '    "ARCHHUB_AGENT_MODEL", "anthropic/claude-sonnet-4.5"' not in src, (
+        "the old hidden route must not survive as a fallback")
+    assert '"ARCHHUB_AGENT_MODEL", "anthropic' not in src
+    assert "raise InvalidCell(NO_MODEL_CHOSEN)" in src
+    assert "picker" in ac.NO_MODEL_CHOSEN and "ARCHHUB_AGENT_MODEL" in ac.NO_MODEL_CHOSEN
+
+
+def test_the_studio_pick_is_remembered_for_the_companion():
+    """BABOOM and the relay have no picker; they used to fall through to the
+    hidden default. They ride the founder's last studio pick now."""
+    from pathlib import Path
+
+    server = (Path(__file__).resolve().parents[1] / "nodelang" / "application_server.py").read_text(encoding="utf-8")
+    assert "def _remember_agent_model(self, route: str) -> str:" in server
+    assert "model=self._remember_agent_model(str(body.get('model') or ''))" in server
+    assert 'model=getattr(owner, "_last_agent_model", "") or ""' in server
+    assert 'model="",' not in server.split("def answer_open_question")[1].split("answered = dict(payload)")[0]

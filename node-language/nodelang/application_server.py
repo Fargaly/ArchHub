@@ -3698,7 +3698,10 @@ def answer_open_question(owner, utterance, context, payload):
         owner.universal_store,
         owner.universal_registry,
         prompt,
-        model="",
+        # BABOOM and the cloud gateway have no picker of their own; they ride
+        # the last model the founder picked in the studio. With none picked
+        # yet, the composer refuses and names the picker.
+        model=getattr(owner, "_last_agent_model", "") or "",
         effect_engines=owner.pipeline_effect_engines,
         authentication_context=context,
     )
@@ -4506,6 +4509,23 @@ class ApplicationServer:
                                      + str(exc),
                         })
                         return
+                if parsed.path == '/api/universal/providers':
+                    # The Providers tab reads THIS, not a fixture: keyed or not,
+                    # running or not, and never a spend figure.
+                    try:
+                        self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    try:
+                        from .model_router import provider_rows
+                        from .cloud_relay import load_cloud_session
+                        appdata = os.environ.get('APPDATA', '')
+                        session = load_cloud_session(Path(appdata)) if appdata else None
+                        self._json(200, {'ok': True, 'providers': provider_rows(cloud_session=session)})
+                    except Exception as exc:
+                        self._json(200, {'ok': False, 'error': str(exc)[:200], 'providers': []})
+                    return
                 if parsed.path == '/api/universal/models':
                     # The model picker's list, read live: the founder's cloud,
                     # OpenRouter's public catalogue with real prices, and the
@@ -5757,7 +5777,7 @@ class ApplicationServer:
                                         brain_first_prompt(
                                             str(body.get('prompt', ''))
                                         ),
-                                        model=str(body.get('model') or ''),
+                                        model=self._remember_agent_model(str(body.get('model') or '')),
                                         effect_engines=(
                                             owner.pipeline_effect_engines
                                         ),
@@ -7816,6 +7836,19 @@ class ApplicationServer:
         value = self._refresh_in_background("brain", 15.0, self._probe_brain)
         return value if isinstance(value, dict) else {"ok": None, "facts": 0}
 
+    def _remember_agent_model(self, route: str) -> str:
+        """The studio's pick outlives the request that carried it.
+
+        BABOOM and the relay ask open questions with no picker; they used to
+        fall through to a model hidden in the composer. They ride the
+        founder's last studio pick now, and an empty pick is left empty so
+        the composer can say 'no model chosen' rather than guess.
+        """
+        route = (route or "").strip()
+        if route:
+            self._last_agent_model = route
+        return route
+
     def _host_rows(self) -> list:
         """probe_connectors rows, refreshed every 30 s off the request path."""
         value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
@@ -8589,6 +8622,7 @@ class ApplicationServer:
             ("GET", "/api/universal/runtime-handoff-readiness"),
             ("GET", "/api/universal/runtime-backend"),
             ("GET", "/api/universal/models"),
+            ("GET", "/api/universal/providers"),
             ("GET", "/api/universal/baboom-context"),
             ("GET", "/api/universal/baboom-presence"),
             ("GET", "/api/universal/baboom-native-frame"),

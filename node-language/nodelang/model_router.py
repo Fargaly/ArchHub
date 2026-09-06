@@ -192,6 +192,48 @@ def discover_key(
     raise ModelRouteRefused(plan["missing"])
 
 
+def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
+                  local_probe=None) -> list:
+    """What each provider really is on this machine: keyed or not, running or not.
+
+    The studio's Providers tab showed 'ant-****e2af  $23.84 this month' and
+    friends: invented keys and invented spend, typed into a fixture. Nothing
+    here is invented. A cloud provider is 'keyed' with the place the key came
+    from, or 'no key'. A local runtime is 'running' or 'not running'. There is
+    no spend figure because nothing on this machine measures one.
+    """
+    rows = []
+    labels = {"openrouter": "OpenRouter", "cloud": "ArchHub cloud",
+              "anthropic": "Anthropic", "openai": "OpenAI"}
+    for family, plan in _KEY_PLAN.items():
+        try:
+            _key, source = discover_key(
+                family, environ=environ, secrets_loader=secrets_loader,
+                cloud_session=cloud_session)
+            rows.append({"id": family, "name": labels.get(family, family.title()),
+                         "state": "keyed", "source": source, "sets": plan["variable"]})
+        except ModelRouteRefused:
+            rows.append({"id": family, "name": labels.get(family, family.title()),
+                         "state": "no key", "source": "", "sets": plan["variable"]})
+    probe = local_probe
+    if probe is None:
+        def probe(host, port):
+            import socket
+            s = socket.socket()
+            s.settimeout(0.4)
+            try:
+                return s.connect_ex((host, int(port))) == 0
+            except Exception:
+                return False
+            finally:
+                s.close()
+    for family, name, port in (("lmstudio", "LM Studio", 1234), ("ollama", "Ollama", 11434)):
+        rows.append({"id": family, "name": name,
+                     "state": "running" if probe("127.0.0.1", port) else "not running",
+                     "source": "127.0.0.1:%d" % port, "sets": ""})
+    return rows
+
+
 def default_cloud_session() -> Optional[dict]:
     """The founder's recorded cloud session, or nothing on a machine without one."""
     appdata = os.environ.get("APPDATA", "")

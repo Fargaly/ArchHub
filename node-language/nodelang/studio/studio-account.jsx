@@ -197,6 +197,66 @@ const AC_DETECT = [
   { name: 'Excel',       ops: 13, found: true },
 ];
 
+// The desktop signs in through the cloud: the app opens the browser on the
+// cloud's own sign-in (Google, or a link mailed to the address) and holds a
+// loopback for the one-time code. This dialog only starts it and polls; the
+// email it shows is the one the cloud named, never one typed here.
+function CloudSignIn({ email, onSignedIn }) {
+  const [phase, setPhase] = React.useState(email ? 'done' : 'idle');
+  const [err, setErr] = React.useState('');
+  const timer = React.useRef(null);
+  const stop = () => { if (timer.current) { clearInterval(timer.current); timer.current = null; } };
+  React.useEffect(() => stop, []);
+  const poll = () => {
+    stop();
+    timer.current = setInterval(async () => {
+      try {
+        const s = await window.ARCHHUB_CLOUD_SIGNIN_STATUS();
+        if (s.phase === 'done') { stop(); setPhase('done'); onSignedIn && onSignedIn(s.email); }
+        else if (s.phase === 'failed' || s.phase === 'idle') { stop(); setPhase('idle'); setErr(s.error || 'sign-in did not finish'); }
+      } catch (e) { stop(); setPhase('idle'); setErr(String((e && e.message) || e)); }
+    }, 1000);
+  };
+  const start = async (method) => {
+    setErr('');
+    if (!window.ARCHHUB_CLOUD_SIGNIN) { setErr('the app did not expose cloud sign-in'); return; }
+    try {
+      const s = await window.ARCHHUB_CLOUD_SIGNIN(method);
+      if (s.phase === 'failed') { setErr(s.error || 'sign-in could not start'); return; }
+      if (s.phase === 'done') { setPhase('done'); onSignedIn && onSignedIn(s.email); return; }
+      setPhase('waiting'); poll();
+    } catch (e) { setErr(String((e && e.message) || e)); }
+  };
+  const button = (label, method, primary) => (
+    <button key={method} onClick={() => start(method)} style={{
+      flex: 1, padding: '10px 12px', borderRadius: AC.rad.sm, cursor: 'pointer', fontFamily: AC.sans, fontSize: 13,
+      border: `1px solid ${primary ? AC.accent : AC.line}`, background: primary ? AC.accentSoft : AC.bg, color: AC.ink,
+    }}>{label}</button>
+  );
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <span style={{ display: 'block', fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.14em', marginBottom: 5 }}>ACCOUNT</span>
+      {phase === 'done' && (
+        <div style={{ padding: '9px 11px', borderRadius: AC.rad.sm, border: `1px solid ${AC.line}`, background: AC.bg, fontFamily: AC.mono, fontSize: 12, color: AC.ink }}>
+          <span style={{ color: AC.ok }}>signed in</span> · {email}
+        </div>
+      )}
+      {phase === 'waiting' && (
+        <div style={{ padding: '9px 11px', borderRadius: AC.rad.sm, border: `1px solid ${AC.line}`, background: AC.bg, fontFamily: AC.mono, fontSize: 12, color: AC.inkSoft }}>
+          finish in your browser — this dialog updates by itself
+        </div>
+      )}
+      {phase === 'idle' && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          {button('Continue with Google', 'google', true)}
+          {button('Email me a sign-in link', 'magic', false)}
+        </div>
+      )}
+      {err && <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.danger || '#b4443c', marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}
+
 function SignUp({ onDone, onCancel, plan }) {
   const [step, setStep] = React.useState(0);
   const [a, setA] = React.useState(() => Object.assign({}, acLoad(), plan ? { plan } : {}));
@@ -205,7 +265,7 @@ function SignUp({ onDone, onCancel, plan }) {
 
   const steps = ['Identity', 'Practice', 'Hosts', 'Brain'];
   const canNext = [
-    /\S+@\S+\.\S+/.test(a.email) && a.name.trim().length > 1,
+    !!a.email && a.name.trim().length > 1,
     a.firm.trim().length > 1 && !!a.discipline,
     true,
     true,
@@ -268,9 +328,9 @@ function SignUp({ onDone, onCancel, plan }) {
         <div style={{ padding: '20px 24px 22px' }}>
           {step === 0 && (
             <div>
-              <SHead title="Create your account" sub="Your keys and your brain stay on your machine. This is the only thing we store server-side."/>
+              <SHead title="Sign in to ArchHub" sub="Your account is an email, signed in through the cloud in your browser. Your keys and your brain stay on this machine."/>
               {field('YOUR NAME', a.name, v => set('name', v), 'Amina Habib')}
-              {field('WORK EMAIL', a.email, v => set('email', v), 'you@practice.com', 'email')}
+              <CloudSignIn email={a.email} onSignedIn={mail => set('email', mail)}/>
               <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 4, lineHeight: 1.6 }}>
                 No credit card until you publish your first sheet set.
               </div>
@@ -472,7 +532,7 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           background: AC.accentSoft, color: AC.accent, fontFamily: AC.serif, fontSize: 17,
         }}>{(a.name || 'A').slice(0, 1).toUpperCase()}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 500 }}>{a.name || 'Not signed in'}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 500 }}>{a.signedIn ? (a.name || a.email) : 'Not signed in'}</div>
           <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 2 }}>
             {a.email || '—'}{a.firm ? ' · ' + a.firm : ''}
           </div>
@@ -482,6 +542,18 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           <div style={{ fontFamily: AC.mono, fontSize: 11, color: AC.inkSoft }}>{a.created || '—'}</div>
         </div>
       </div>
+
+      {/* not signed in: the cloud signs the account in right here */}
+      {!a.signedIn && (
+        <CloudSignIn email="" onSignedIn={mail => {
+          patchA({ email: mail, signedIn: true, created: a.created || new Date().toISOString().slice(0, 10) });
+          if (window.ARCHHUB_LOGIN) {
+            window.ARCHHUB_LOGIN(mail).then(live => {
+              if (live && live.tier) patchA({ email: mail, signedIn: true, plan: live.tier, graphTier: live.tier, founder: !!live.founder });
+            }).catch(() => {});
+          }
+        }}/>
+      )}
 
       {/* usage meters — real numbers against the plan the account actually holds */}
       <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', marginBottom: 9 }}>THIS CYCLE</div>

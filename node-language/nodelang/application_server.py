@@ -4526,6 +4526,27 @@ class ApplicationServer:
                     except Exception as exc:
                         self._json(200, {'ok': False, 'error': str(exc)[:200], 'providers': []})
                     return
+                if parsed.path == '/api/universal/cloud-session':
+                    # The account signed in on this machine: cloud.json, the
+                    # record the relay and the brain already trust.
+                    try:
+                        self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .cloud_signin import session_summary
+                    self._json(200, {'ok': True, **session_summary()})
+                    return
+                if parsed.path == '/api/universal/cloud-signin':
+                    # What the sign-up dialog polls while the browser is open.
+                    try:
+                        self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .cloud_signin import current_status
+                    self._json(200, {'ok': True, **current_status()})
+                    return
                 if parsed.path == '/api/universal/models':
                     # The model picker's list, read live: the founder's cloud,
                     # OpenRouter's public catalogue with real prices, and the
@@ -5837,6 +5858,21 @@ class ApplicationServer:
                                     authentication_context=binding.context,
                                 )
                                 self._json(200, run_result)
+                                return
+                            elif self.path == '/api/universal/cloud-signin':
+                                # Sign in to the cloud from the desktop: the
+                                # app opens the browser on the cloud's own
+                                # sign-in and holds a loopback for the code.
+                                from .cloud_signin import METHODS, begin
+                                method = str(body.get('method') or 'google')
+                                if method not in METHODS:
+                                    raise InvalidCell(
+                                        'sign-in method must be google or magic')
+                                self._json(200, {'ok': True, **begin(method)})
+                                return
+                            elif self.path == '/api/universal/cloud-signout':
+                                from .cloud_signin import sign_out
+                                self._json(200, {'ok': True, **sign_out()})
                                 return
                             elif self.path == '/api/universal/login':
                                 from .cell_accounts import (
@@ -8623,6 +8659,8 @@ class ApplicationServer:
             ("GET", "/api/universal/runtime-backend"),
             ("GET", "/api/universal/models"),
             ("GET", "/api/universal/providers"),
+            ("GET", "/api/universal/cloud-session"),
+            ("GET", "/api/universal/cloud-signin"),
             ("GET", "/api/universal/baboom-context"),
             ("GET", "/api/universal/baboom-presence"),
             ("GET", "/api/universal/baboom-native-frame"),

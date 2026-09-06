@@ -349,7 +349,28 @@ const StudioLM = () => {
     window.addEventListener('storage', onStore);
     return () => window.removeEventListener('storage', onStore);
   }, []);
-  const signOut = () => { const next = Object.assign({}, account, { signedIn: false }); acSave(next); setAccount(next); setSettingsOpen(false); setSignUpOpen(true); };
+  // The cloud session on this machine decides signed-in, not a stored flag:
+  // boot reads it, sign-out forgets it in the app before the dialog reopens.
+  React.useEffect(() => {
+    if (!window.ARCHHUB_CLOUD_SESSION) return;
+    window.ARCHHUB_CLOUD_SESSION().then(s => {
+      if (!s || s.ok === false) return;
+      const held = acLoad();
+      if (s.signed_in && (held.email !== s.email || !held.signedIn)) {
+        const next = Object.assign({}, held, { email: s.email, signedIn: true });
+        acSave(next); setAccount(next);
+      } else if (!s.signed_in && held.signedIn) {
+        const next = Object.assign({}, held, { signedIn: false });
+        acSave(next); setAccount(next);
+      }
+    }).catch(() => {});
+  }, []);
+  const signOut = () => {
+    const next = Object.assign({}, account, { signedIn: false, email: '' });
+    acSave(next); setAccount(next); setSettingsOpen(false);
+    const forget = window.ARCHHUB_CLOUD_SIGNOUT ? window.ARCHHUB_CLOUD_SIGNOUT() : Promise.resolve();
+    Promise.resolve(forget).catch(() => {}).then(() => setSignUpOpen(true));
+  };
   const [docsOpen, setDocsOpen] = React.useState(false);
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [panel, setPanel] = React.useState('nodes'); // chats | nodes | skills | search
@@ -444,7 +465,7 @@ const StudioLM = () => {
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             onHome={() => setOpenId(null)}/>
         : <Home onOpen={openSession} model={model} setPickerOpen={setPickerOpen}/>}
-      <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs}/>
+      <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs} account={account}/>
       {pickerOpen && <ModelPicker setModel={setModel} onClose={() => setPickerOpen(false)} model={model}/>}
       {/* Every ask box in the app reads the current choice from here, so a
           box that was not handed a model still asks the model the founder
@@ -2705,7 +2726,8 @@ const SET_LS = 'archhub.studio.settings.v1';
 const hostState = (store, h) => ((store && store.hosts) || {})[h.name] || h.state;
 const permMode  = (store, p) => ((store && store.perms) || {})[p.id] || p.mode;
 const Settings = ({ onClose, account, setAccount, onSignOut }) => {
-  const [tab, setTab] = React.useState(account && account.signedIn ? 'account' : 'memory');
+  // Account first either way: signed in it states the plan, signed out it signs you in.
+  const [tab, setTab] = React.useState('account');
   const [store, setStore] = React.useState(() => {
     var seed = {
       perms: LM_PERMISSIONS.reduce(function (a, p) { a[p.id] = p.mode; return a; }, {}),
@@ -3722,7 +3744,7 @@ POST /v1/brain/promote         → { id, to: "practice" }`}</DCode>
 );
 
 // ──────────────────────── SERVER STRIP ────────────────────────
-const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
+const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, account }) => {
   const live = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.drive && (c.state === 'connected' || c.state === 'listening')).length;
   const StripItem = ({ onClick, children, accent }) => {
     const [h, setH] = React.useState(false);
@@ -3763,6 +3785,13 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen }) => {
         </>
       )}
       <div style={{ flex:1 }}/>
+      {/* the signed-in account, or the way in: Settings opens on Account */}
+      <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
+        {account && account.signedIn && account.email
+          ? <span style={{ color:LM.inkSoft }}>{account.email}</span>
+          : <span style={{ color:LM.accent }}>sign in</span>}
+      </StripItem>
+      <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setDocsOpen && setDocsOpen(true)}>docs</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>

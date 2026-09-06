@@ -878,6 +878,166 @@ LIBRARY_ITEM_ENGINES["o_pdf"] = {"engine": "library.publish_pdf",
                                  "params": {"sheets": "", "folder": ""}}
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
 
+
+# --------------------------------------------------- revit authoring --
+# Three cards that write into the open model through the same broker the
+# wall cards use. Each runs in one named transaction, skips what is already
+# done, and answers with counts the model itself reported.
+
+def _revit_exec(script: str, transaction: str, params: Mapping[str, object]):
+    """One /exec against the newest live Revit session; (session, answer) or (None, why)."""
+    from .clean_revit_adapter import _call, live_sessions
+    sessions = [s for s in live_sessions() if s.get("revit_version")]
+    if not sessions:
+        return None, "no Revit session is listening"
+    session = sessions[-1]
+    try:
+        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": transaction})
+    except Exception as failed:
+        return None, "Revit did not answer: %s" % str(failed)[:160]
+    if not isinstance(answer, Mapping) or answer.get("status") != "ok":
+        return None, "Revit refused: %s" % (answer.get("error") if isinstance(answer, Mapping) else answer)
+    return session, answer.get("result") if isinstance(answer.get("result"), Mapping) else {}
+
+
+_TAG_ROOMS = """
+var view = Doc.ActiveView;
+var already = new HashSet<int>();
+foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(SpatialElementTag))) {
+    var rt = e as RoomTag; if (rt != null && rt.Room != null) already.Add(rt.Room.Id.IntegerValue);
+}
+int tagged = 0, skipped = 0;
+using (var t = new Transaction(Doc, "ArchHub tag rooms")) {
+    t.Start();
+    foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()) {
+        var room = e as Room;
+        if (room == null || room.Area <= 0 || already.Contains(room.Id.IntegerValue)) { skipped++; continue; }
+        var lp = room.Location as LocationPoint;
+        if (lp == null) { skipped++; continue; }
+        Doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(lp.Point.X, lp.Point.Y), view.Id);
+        tagged++;
+    }
+    t.Commit();
+}
+result = new Dictionary<string, object>{ {"tagged", tagged}, {"skipped", skipped}, {"view", view.Name} };
+"""
+
+
+def tag_rooms(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """A room tag on every untagged room of the active view, placed at the room point."""
+    session, result = _revit_exec(_TAG_ROOMS, "ArchHub tag rooms", params)
+    if session is None:
+        return {"out": []}, str(result)
+    return {"out": result, "tagged": result.get("tagged")}, "%s room(s) tagged, %s skipped, in %s of %s" % (
+        result.get("tagged"), result.get("skipped"), result.get("view"), session.get("document") or session["port"])
+
+
+_PLACE_TAGS = """
+var view = Doc.ActiveView;
+var catName = %s;
+BuiltInCategory bic;
+if (!Enum.TryParse("OST_" + catName, out bic)) throw new Exception("unknown category " + catName);
+bool leader = %s;
+var already = new HashSet<int>();
+foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(IndependentTag))) {
+    var it = e as IndependentTag; if (it == null) continue;
+    foreach (var id in it.GetTaggedLocalElementIds()) already.Add(id.IntegerValue);
+}
+int tagged = 0, skipped = 0;
+using (var t = new Transaction(Doc, "ArchHub place tags")) {
+    t.Start();
+    foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(bic).WhereElementIsNotElementType()) {
+        if (already.Contains(e.Id.IntegerValue)) { skipped++; continue; }
+        var bb = e.get_BoundingBox(view); if (bb == null) { skipped++; continue; }
+        var c = (bb.Min + bb.Max) / 2;
+        IndependentTag.Create(Doc, view.Id, new Reference(e), leader, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, c);
+        tagged++;
+    }
+    t.Commit();
+}
+result = new Dictionary<string, object>{ {"tagged", tagged}, {"skipped", skipped}, {"category", catName}, {"view", view.Name} };
+"""
+
+
+def place_tags(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """A tag on every untagged element of one category in the active view, leader optional."""
+    import json
+    category = _text(params, "category", "Doors")
+    leader = _text(params, "leader", "true").casefold() in ("1", "true", "yes", "on")
+    script = _PLACE_TAGS % (json.dumps(category), "true" if leader else "false")
+    session, result = _revit_exec(script, "ArchHub place tags", params)
+    if session is None:
+        return {"out": []}, str(result)
+    return {"out": result, "tagged": result.get("tagged")}, "%s %s tagged, %s skipped, in %s" % (
+        result.get("tagged"), category.lower(), result.get("skipped"), result.get("view"))
+
+
+_PLACE_ON_SHEET = """
+var number = %s;
+var names = new List<string>{%s};
+ViewSheet sheet = null;
+foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) if (vs.SheetNumber == number) { sheet = vs; break; }
+var placed = new List<string>(); var skipped = new List<string>();
+using (var t = new Transaction(Doc, "ArchHub place on sheet")) {
+    t.Start();
+    if (sheet == null) {
+        ElementId tb = ElementId.InvalidElementId;
+        foreach (Element e in new FilteredElementCollector(Doc).OfCategory(BuiltInCategory.OST_TitleBlocks).OfClass(typeof(FamilySymbol))) { tb = e.Id; break; }
+        sheet = ViewSheet.Create(Doc, tb);
+        sheet.SheetNumber = number;
+    }
+    var box = sheet.Outline;
+    double w = box.Max.U - box.Min.U, h = box.Max.V - box.Min.V;
+    int i = 0;
+    foreach (var name in names) {
+        View view = null;
+        foreach (Element e in new FilteredElementCollector(Doc).OfClass(typeof(View))) { var v = e as View; if (v != null && !v.IsTemplate && v.Name == name) { view = v; break; } }
+        if (view == null || !Viewport.CanAddViewToSheet(Doc, sheet.Id, view.Id)) { skipped.Add(name); continue; }
+        int col = i %% 2, row = i / 2;
+        var pt = new XYZ(box.Min.U + w * (0.25 + 0.5 * col), box.Max.V - h * (0.25 + 0.5 * row), 0);
+        Viewport.Create(Doc, sheet.Id, view.Id, pt);
+        placed.Add(name); i++;
+    }
+    t.Commit();
+}
+result = new Dictionary<string, object>{ {"sheet", sheet.SheetNumber}, {"placed", placed}, {"skipped", skipped} };
+"""
+
+
+def place_on_sheet(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Named views onto one sheet (made if missing), two per row, through the live Revit."""
+    import json
+    number = _text(params, "sheet")
+    if not number:
+        return {"out": []}, "no sheet number given"
+    held = _wired(feeds, "in", "views")
+    names = [str(item_field(row, "name") or row) for row in as_list(held)] if held is not None else [
+        piece.strip() for piece in _text(params, "views").split(",") if piece.strip()]
+    if not names:
+        return {"out": []}, "no view named, nothing wired in"
+    script = _PLACE_ON_SHEET % (json.dumps(number), ", ".join(json.dumps(name) for name in names))
+    session, result = _revit_exec(script, "ArchHub place on sheet", params)
+    if session is None:
+        return {"out": []}, str(result)
+    placed = as_list(result.get("placed"))
+    skipped = as_list(result.get("skipped"))
+    return {"out": result, "placed": placed}, "%d view(s) on sheet %s%s" % (
+        len(placed), result.get("sheet"), (", %d skipped" % len(skipped)) if skipped else "")
+
+
+LIBRARY_ENGINES.update({
+    "library.tag_rooms": tag_rooms,
+    "library.place_tags": place_tags,
+    "library.place_on_sheet": place_on_sheet,
+})
+LIBRARY_ITEM_ENGINES.update({
+    "a_rooms": {"engine": "library.tag_rooms", "params": {}},
+    "a_tags": {"engine": "library.place_tags", "params": {"category": "Doors", "leader": "true"}},
+    "c_sheet": {"engine": "library.place_on_sheet", "params": {"sheet": "", "views": ""}},
+})
+for _wired_now in ("a_rooms", "a_tags", "c_sheet"):
+    LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
+
 __all__ = [
     "LIBRARY_ENGINES",
     "set_notify_surface",

@@ -303,13 +303,13 @@ const LM_LIBRARY = [
   ]},
   { cat:'annotate', items:[
     { id:'a_dims',  title:'create_dimensions', sub:'aligned, parallel, baseline' , engine:'library.dimensions'},
-    { id:'a_tags',  title:'place_tags',         sub:'tag per element + leader' , noEngine:true},
+    { id:'a_tags',  title:'place_tags',         sub:'tag every untagged element of a category' , engine:'library.place_tags'},
     { id:'a_text',  title:'add_text',           sub:'text note · positioned' , engine:'library.add_text'},
-    { id:'a_rooms', title:'tag_rooms',          sub:'room boundaries + names' , noEngine:true},
+    { id:'a_rooms', title:'tag_rooms',          sub:'tag every untagged room in the view' , engine:'library.tag_rooms'},
   ]},
   { cat:'compose', items:[
     { id:'c_sched', title:'build_schedule',  sub:'table from a stream' , engine:'library.build_schedule'},
-    { id:'c_sheet', title:'place_on_sheet',  sub:'lay views onto a sheet' , noEngine:true},
+    { id:'c_sheet', title:'place_on_sheet',  sub:'named views onto a sheet' , engine:'library.place_on_sheet'},
     { id:'c_legend',title:'make_legend',     sub:'symbol legend block' , engine:'library.make_legend'},
   ]},
   { cat:'logic', items:[

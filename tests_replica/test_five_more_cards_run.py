@@ -125,8 +125,8 @@ def test_the_launcher_registers_its_tray_as_the_notify_surface():
     assert "_notifier.asked.emit(" in block, "a queued signal, not a cross-thread widget call"
 
 
-def test_the_four_that_remain_say_why():
-    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"a_tags", "a_rooms", "c_sheet", "o_spk"}
+def test_the_one_that_remains_says_why():
+    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"o_spk"}
     for item, reason in L.LIBRARY_ITEMS_WITHOUT_ENGINE.items():
         assert reason, item
 
@@ -192,3 +192,56 @@ def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_
     monkeypatch.setattr(adapter, "live_sessions", lambda: [])
     out, said = L.publish_pdf({}, {})
     assert out["out"] == [] and said == "no Revit session is listening"
+
+
+def _revit(monkeypatch, result):
+    from nodelang import clean_revit_adapter as adapter
+    sent = {}
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [
+        {"port": 48885, "revit_version": "2025", "document": "P-664.rvt"}])
+
+    def call(port, route, body=None, timeout=None):
+        sent["port"], sent["route"], sent["body"] = port, route, dict(body or {})
+        return {"status": "ok", "result": result}
+
+    monkeypatch.setattr(adapter, "_call", call)
+    return sent
+
+
+def test_tag_rooms_tags_the_untagged_rooms_of_the_active_view(monkeypatch):
+    sent = _revit(monkeypatch, {"tagged": 6, "skipped": 2, "view": "Level 1"})
+    out, said = L.tag_rooms({}, {})
+    code = sent["body"]["code"]
+    assert "Doc.Create.NewRoomTag(" in code and "OST_Rooms" in code and "already.Contains(room.Id" in code
+    assert sent["body"]["transaction_name"] == "ArchHub tag rooms" and 'new Transaction(Doc, "ArchHub tag rooms")' in code
+    assert out["tagged"] == 6 and said == "6 room(s) tagged, 2 skipped, in Level 1 of P-664.rvt"
+
+
+def test_place_tags_tags_one_category_with_or_without_a_leader(monkeypatch):
+    sent = _revit(monkeypatch, {"tagged": 11, "skipped": 0, "category": "Doors", "view": "Level 1"})
+    out, said = L.place_tags({"category": "Doors", "leader": "false"}, {})
+    code = sent["body"]["code"]
+    assert "IndependentTag.Create(Doc, view.Id, new Reference(e), leader" in code
+    assert 'var catName = "Doors";' in code and "bool leader = false;" in code
+    assert "GetTaggedLocalElementIds()" in code, "already tagged elements are skipped"
+    assert out["tagged"] == 11 and said == "11 doors tagged, 0 skipped, in Level 1"
+
+
+def test_place_on_sheet_places_named_views_and_makes_the_sheet_if_missing(monkeypatch):
+    sent = _revit(monkeypatch, {"sheet": "A101", "placed": ["Level 1", "Level 2"], "skipped": ["Roof"]})
+    out, said = L.place_on_sheet({"sheet": "A101"}, {"in": [{"name": "Level 1"}, {"name": "Level 2"}, {"name": "Roof"}]})
+    code = sent["body"]["code"]
+    assert 'var number = "A101";' in code and 'new List<string>{"Level 1", "Level 2", "Roof"}' in code
+    assert "ViewSheet.Create(Doc, tb)" in code and "Viewport.CanAddViewToSheet" in code and "Viewport.Create(" in code
+    assert out["placed"] == ["Level 1", "Level 2"] and said == "2 view(s) on sheet A101, 1 skipped"
+    out, said = L.place_on_sheet({}, {})
+    assert out["out"] == [] and said == "no sheet number given"
+
+
+def test_revit_authoring_is_honest_without_a_session(monkeypatch):
+    from nodelang import clean_revit_adapter as adapter
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [])
+    for engine, params in ((L.tag_rooms, {}), (L.place_tags, {"category": "Doors"}),
+                           (L.place_on_sheet, {"sheet": "A101", "views": "Level 1"})):
+        out, said = engine(params, {})
+        assert out["out"] == [] and said == "no Revit session is listening"

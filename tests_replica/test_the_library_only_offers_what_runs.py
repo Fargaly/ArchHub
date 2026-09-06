@@ -68,6 +68,9 @@ _PLACEMENTS = {
     "library.draft_email": ({"to": "eng@firm.com"}, {}),
     "library.vision": ({"prompt": "what is this"}, {}),
     "library.publish_pdf": ({"sheets": "A101"}, {}),
+    "library.tag_rooms": ({}, {}),
+    "library.place_tags": ({"category": "Doors"}, {}),
+    "library.place_on_sheet": ({"sheet": "A101", "views": "Level 1"}, {}),
 }
 
 # Engines whose input is a stream: with nothing wired they must answer an
@@ -82,7 +85,8 @@ _STREAM_ENGINES = [
                     # empty answers are courted in test_five_more_cards_run.
                     "library.think", "library.match_skill", "library.embed",
                     "library.notify", "library.draft_email", "library.vision",
-                    "library.publish_pdf")
+                    "library.publish_pdf", "library.tag_rooms",
+                    "library.place_tags", "library.place_on_sheet")
 ]
 
 
@@ -162,17 +166,17 @@ def test_every_library_card_either_runs_or_says_it_cannot():
 
     Dropping a card with no engine put it in the browser's memory only:
     invisible to Run, never written to the graph, gone on the next reload.
-    Twenty of those got real engines first; seven more followed (think,
-    match_skill, embed, draft_email, notify, vision, publish_pdf) once the
-    model route, the brain, Outlook, the tray and the Revit broker gave
-    them something real to do. The four that remain are marked so the drop
-    refuses out loud instead of pretending. This court holds the LANDED
-    state, not the plan.
+    Twenty of those got real engines first; ten more followed (think,
+    match_skill, embed, draft_email, notify, vision, publish_pdf,
+    tag_rooms, place_tags, place_on_sheet) once the model route, the
+    brain, Outlook, the tray and the Revit broker gave them something real
+    to do. The one that remains (Speckle) is marked so the drop refuses
+    out loud instead of pretending. This court holds the LANDED state.
     """
     items = _library_items()
     assert len(items) == 53, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 49, sorted(wired)
+    assert len(wired) == 52, sorted(wired)
 
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         assert items.get(item) == wiring["engine"], (

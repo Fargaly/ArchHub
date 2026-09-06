@@ -874,7 +874,12 @@ def create_baboom_native_companion_window(
                 )
             self._origin = QPoint(left, top)
             window_rect = QRect(left, top, right - left, bottom - top)
-            if self.geometry() != window_rect:
+            # Qt caches what it last SET; Windows holds what the window really
+            # is. On the founder's desktop those disagreed -- Qt said
+            # 280x245+1582+729 while Windows had 160x28+1120+1004 -- and
+            # because Qt's cache matched the target, nothing ever corrected it
+            # and BABOOM sat shrunk in the wrong corner. Ask the system.
+            if self._native_rect_differs(window_rect) or self.geometry() != window_rect:
                 self.setGeometry(window_rect)
                 # One line per change, so the next "it is not there" can be
                 # read off a file instead of guessed at from a screenshot.
@@ -951,6 +956,46 @@ def create_baboom_native_companion_window(
                 self.show()
             self.update()
 
+        def _native_rect_differs(self, target) -> bool:
+            """True when the real window is not where Qt thinks it put it."""
+            try:
+                import ctypes as _ct
+
+                class _R(_ct.Structure):
+                    _fields_ = [("l", _ct.c_long), ("t", _ct.c_long),
+                                ("r", _ct.c_long), ("b", _ct.c_long)]
+
+                box = _R()
+                if not _ct.windll.user32.GetWindowRect(int(self.winId()), _ct.byref(box)):
+                    return False
+                return (
+                    box.l != target.x() or box.t != target.y()
+                    or (box.r - box.l) != target.width()
+                    or (box.b - box.t) != target.height()
+                )
+            except Exception:
+                return False
+
+        def _disown(self) -> None:
+            """Stop any window from owning this one.
+
+            A Qt::Tool window is OWNED by whatever was active when it was
+            created -- here the ArchHub main window. Windows moves and hides
+            owned windows with their owner, which is how the companion ended
+            up shrunk at the bottom of the screen after the main window was
+            minimized and restored. The companion belongs to the desktop.
+            """
+            try:
+                import ctypes as _ct
+
+                user32 = _ct.windll.user32
+                handle = int(self.winId())
+                GWLP_HWNDPARENT = -8
+                setter = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+                setter(_ct.c_void_p(handle), GWLP_HWNDPARENT, _ct.c_void_p(0))
+            except Exception:
+                pass
+
         def paintEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             painter = QPainter(self)
             # Clear the whole window to transparent first, every paint, so no
@@ -964,6 +1009,7 @@ def create_baboom_native_companion_window(
 
         def showEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             super().showEvent(event)
+            self._disown()
             # Windows 11 draws a rounded corner and a 1px border on every
             # top-level window; on a transparent companion that border IS the
             # frame the founder saw. Tell the compositor: no corners, no border.

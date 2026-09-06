@@ -166,3 +166,28 @@ def test_the_window_exposes_its_controller_so_the_receipt_can_be_wired():
     assert "made.controller = controller" in src
     launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
     assert 'getattr(baboom_window, "controller", None)' in launcher
+
+
+def test_the_window_repairs_itself_from_what_windows_reports():
+    """Qt's cache said the companion was at 280x245+1582+729 while Windows had
+    a 160x28 window at 1120,1004. Because Qt's cache matched the target,
+    nothing corrected it and BABOOM sat shrunk in the wrong corner."""
+    src = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    assert "def _native_rect_differs(self, target)" in window
+    assert "GetWindowRect" in window
+    refresh = window[window.index("def refresh(self)"):window.index("def paintEvent")]
+    assert "self._native_rect_differs(window_rect) or self.geometry() != window_rect" in refresh, (
+        "the system's answer must be asked, not Qt's cache alone")
+
+
+def test_the_companion_is_owned_by_nothing():
+    """A Qt Tool window is owned by whatever was active when it was created.
+    Windows moves and hides owned windows with their owner, which is how the
+    companion followed the main window into the wrong corner."""
+    src = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = src[src.index("class CompanionWindow"):]
+    assert "def _disown(self)" in window
+    assert "GWLP_HWNDPARENT = -8" in window
+    show = window[window.index("def showEvent"):window.index("def _open_interaction")]
+    assert "self._disown()" in show, "disown on every show, once the handle exists"

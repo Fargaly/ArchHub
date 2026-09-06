@@ -779,6 +779,359 @@ LIBRARY_ITEM_ENGINES.update({
 for _wired_now in ("i_think", "i_match", "i_embed", "o_email", "o_notify"):
     LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
 
+
+_IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".webp": "image/webp", ".gif": "image/gif"}
+
+
+def vision(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Read a sketch or screenshot with the picked model; the image travels as a data URL."""
+    import base64
+    import os
+    from pathlib import Path
+    from . import model_router
+    from .agent_composer import NO_MODEL_CHOSEN
+    from .pipeline_engines import _local_input_path
+    route = _text(params, "model") or os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+    if not route:
+        return {"out": []}, NO_MODEL_CHOSEN
+    held = _wired(feeds, "in", "image_path", "path")
+    try:
+        path = _local_input_path(_text(params, "image_path") or (held if isinstance(held, str) else ""), label="image_path")
+    except ValueError as missing:
+        return {"out": []}, str(missing)
+    kind = _IMAGE_TYPES.get(Path(path).suffix.lower())
+    if not kind:
+        return {"out": []}, "not an image this card reads: %s" % Path(path).name
+    data = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    prompt = _text(params, "prompt") or (
+        "Describe this architectural drawing: rooms, walls, openings, and any "
+        "dimensions or text you can read. Millimetres. Be terse.")
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (kind, data)}},
+    ]}]
+    try:
+        answer = model_router.route_chat(route, messages, max_tokens=int(_number(params, "max_tokens", 600)))
+    except Exception as refused:
+        return {"out": []}, "%s refused: %s" % (route, str(refused)[:160])
+    text = str(answer.get("text") or "") if isinstance(answer, Mapping) else str(answer)
+    return {"out": text, "image_path": path}, "%s read %s (%d chars)" % (route, Path(path).name, len(text))
+
+
+LIBRARY_ENGINES["library.vision"] = vision
+LIBRARY_ITEM_ENGINES["i_vis"] = {"engine": "library.vision",
+                                 "params": {"image_path": "", "prompt": "", "model": "", "max_tokens": "600"}}
+LIBRARY_ITEMS_WITHOUT_ENGINE.pop("i_vis", None)
+
+
+_EXPORT_PDF = """
+var folder = %s;
+var wanted = new List<string>{%s};
+var sheets = new List<ElementId>();
+foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) {
+    if (vs.IsPlaceholder) continue;
+    if (wanted.Count > 0 && !wanted.Contains(vs.SheetNumber)) continue;
+    sheets.Add(vs.Id);
+}
+if (sheets.Count == 0) throw new Exception("no sheet to publish");
+System.IO.Directory.CreateDirectory(folder);
+var options = new PDFExportOptions();
+options.Combine = false;
+if (!Doc.Export(folder, sheets, options)) throw new Exception("Revit declined the PDF export");
+var written = new List<string>();
+foreach (var f in System.IO.Directory.GetFiles(folder, "*.pdf")) written.Add(f);
+result = new Dictionary<string, object>{ {"sheets", sheets.Count}, {"folder", folder}, {"files", written} };
+"""
+
+
+def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """The sheets of the open model as PDF files, exported by the live Revit; files, never a claim."""
+    import json
+    import os
+    import time
+    from .clean_revit_adapter import _call, live_sessions
+    sessions = [s for s in live_sessions() if s.get("revit_version")]
+    if not sessions:
+        return {"out": []}, "no Revit session is listening"
+    session = sessions[-1]
+    held = _wired(feeds, "in", "sheets")
+    wanted = [str(item_field(row, "number") or row) for row in as_list(held)] if held is not None else [
+        piece.strip() for piece in _text(params, "sheets").split(",") if piece.strip()]
+    folder = _text(params, "folder") or os.path.join(
+        os.path.expanduser("~"), "Documents", "ArchHub", "pdf", time.strftime("%Y%m%d-%H%M%S"))
+    script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in wanted))
+    try:
+        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": "ArchHub publish pdf"})
+    except Exception as failed:
+        return {"out": []}, "Revit did not answer: %s" % str(failed)[:160]
+    if not isinstance(answer, Mapping) or answer.get("status") != "ok":
+        return {"out": []}, "Revit refused: %s" % ((answer or {}).get("error") if isinstance(answer, Mapping) else answer)
+    result = answer.get("result") if isinstance(answer.get("result"), Mapping) else {}
+    files = [str(name) for name in as_list(result.get("files"))]
+    return {"out": files, "folder": folder}, "%d PDF(s) in %s from %s" % (
+        len(files), folder, session.get("document") or session["port"])
+
+
+LIBRARY_ENGINES["library.publish_pdf"] = publish_pdf
+LIBRARY_ITEM_ENGINES["o_pdf"] = {"engine": "library.publish_pdf",
+                                 "params": {"sheets": "", "folder": ""}}
+LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
+
+
+# --------------------------------------------------- revit authoring --
+# Three cards that write into the open model through the same broker the
+# wall cards use. Each runs in one named transaction, skips what is already
+# done, and answers with counts the model itself reported.
+
+def _revit_exec(script: str, transaction: str, params: Mapping[str, object]):
+    """One /exec against the newest live Revit session; (session, answer) or (None, why)."""
+    from .clean_revit_adapter import _call, live_sessions
+    sessions = [s for s in live_sessions() if s.get("revit_version")]
+    if not sessions:
+        return None, "no Revit session is listening"
+    session = sessions[-1]
+    try:
+        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": transaction})
+    except Exception as failed:
+        return None, "Revit did not answer: %s" % str(failed)[:160]
+    if not isinstance(answer, Mapping) or answer.get("status") != "ok":
+        return None, "Revit refused: %s" % (answer.get("error") if isinstance(answer, Mapping) else answer)
+    return session, answer.get("result") if isinstance(answer.get("result"), Mapping) else {}
+
+
+_TAG_ROOMS = """
+var view = Doc.ActiveView;
+var already = new HashSet<int>();
+foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(SpatialElementTag))) {
+    var rt = e as RoomTag; if (rt != null && rt.Room != null) already.Add(rt.Room.Id.IntegerValue);
+}
+int tagged = 0, skipped = 0;
+using (var t = new Transaction(Doc, "ArchHub tag rooms")) {
+    t.Start();
+    foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()) {
+        var room = e as Room;
+        if (room == null || room.Area <= 0 || already.Contains(room.Id.IntegerValue)) { skipped++; continue; }
+        var lp = room.Location as LocationPoint;
+        if (lp == null) { skipped++; continue; }
+        Doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(lp.Point.X, lp.Point.Y), view.Id);
+        tagged++;
+    }
+    t.Commit();
+}
+result = new Dictionary<string, object>{ {"tagged", tagged}, {"skipped", skipped}, {"view", view.Name} };
+"""
+
+
+def tag_rooms(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """A room tag on every untagged room of the active view, placed at the room point."""
+    session, result = _revit_exec(_TAG_ROOMS, "ArchHub tag rooms", params)
+    if session is None:
+        return {"out": []}, str(result)
+    return {"out": result, "tagged": result.get("tagged")}, "%s room(s) tagged, %s skipped, in %s of %s" % (
+        result.get("tagged"), result.get("skipped"), result.get("view"), session.get("document") or session["port"])
+
+
+_PLACE_TAGS = """
+var view = Doc.ActiveView;
+var catName = %s;
+BuiltInCategory bic;
+if (!Enum.TryParse("OST_" + catName, out bic)) throw new Exception("unknown category " + catName);
+bool leader = %s;
+var already = new HashSet<int>();
+foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(IndependentTag))) {
+    var it = e as IndependentTag; if (it == null) continue;
+    foreach (var id in it.GetTaggedLocalElementIds()) already.Add(id.IntegerValue);
+}
+int tagged = 0, skipped = 0;
+using (var t = new Transaction(Doc, "ArchHub place tags")) {
+    t.Start();
+    foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(bic).WhereElementIsNotElementType()) {
+        if (already.Contains(e.Id.IntegerValue)) { skipped++; continue; }
+        var bb = e.get_BoundingBox(view); if (bb == null) { skipped++; continue; }
+        var c = (bb.Min + bb.Max) / 2;
+        IndependentTag.Create(Doc, view.Id, new Reference(e), leader, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, c);
+        tagged++;
+    }
+    t.Commit();
+}
+result = new Dictionary<string, object>{ {"tagged", tagged}, {"skipped", skipped}, {"category", catName}, {"view", view.Name} };
+"""
+
+
+def place_tags(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """A tag on every untagged element of one category in the active view, leader optional."""
+    import json
+    category = _text(params, "category", "Doors")
+    leader = _text(params, "leader", "true").casefold() in ("1", "true", "yes", "on")
+    script = _PLACE_TAGS % (json.dumps(category), "true" if leader else "false")
+    session, result = _revit_exec(script, "ArchHub place tags", params)
+    if session is None:
+        return {"out": []}, str(result)
+    return {"out": result, "tagged": result.get("tagged")}, "%s %s tagged, %s skipped, in %s" % (
+        result.get("tagged"), category.lower(), result.get("skipped"), result.get("view"))
+
+
+_PLACE_ON_SHEET = """
+var number = %s;
+var names = new List<string>{%s};
+ViewSheet sheet = null;
+foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) if (vs.SheetNumber == number) { sheet = vs; break; }
+var placed = new List<string>(); var skipped = new List<string>();
+using (var t = new Transaction(Doc, "ArchHub place on sheet")) {
+    t.Start();
+    if (sheet == null) {
+        ElementId tb = ElementId.InvalidElementId;
+        foreach (Element e in new FilteredElementCollector(Doc).OfCategory(BuiltInCategory.OST_TitleBlocks).OfClass(typeof(FamilySymbol))) { tb = e.Id; break; }
+        sheet = ViewSheet.Create(Doc, tb);
+        sheet.SheetNumber = number;
+    }
+    var box = sheet.Outline;
+    double w = box.Max.U - box.Min.U, h = box.Max.V - box.Min.V;
+    int i = 0;
+    foreach (var name in names) {
+        View view = null;
+        foreach (Element e in new FilteredElementCollector(Doc).OfClass(typeof(View))) { var v = e as View; if (v != null && !v.IsTemplate && v.Name == name) { view = v; break; } }
+        if (view == null || !Viewport.CanAddViewToSheet(Doc, sheet.Id, view.Id)) { skipped.Add(name); continue; }
+        int col = i %% 2, row = i / 2;
+        var pt = new XYZ(box.Min.U + w * (0.25 + 0.5 * col), box.Max.V - h * (0.25 + 0.5 * row), 0);
+        Viewport.Create(Doc, sheet.Id, view.Id, pt);
+        placed.Add(name); i++;
+    }
+    t.Commit();
+}
+result = new Dictionary<string, object>{ {"sheet", sheet.SheetNumber}, {"placed", placed}, {"skipped", skipped} };
+"""
+
+
+def place_on_sheet(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Named views onto one sheet (made if missing), two per row, through the live Revit."""
+    import json
+    number = _text(params, "sheet")
+    if not number:
+        return {"out": []}, "no sheet number given"
+    held = _wired(feeds, "in", "views")
+    names = [str(item_field(row, "name") or row) for row in as_list(held)] if held is not None else [
+        piece.strip() for piece in _text(params, "views").split(",") if piece.strip()]
+    if not names:
+        return {"out": []}, "no view named, nothing wired in"
+    script = _PLACE_ON_SHEET % (json.dumps(number), ", ".join(json.dumps(name) for name in names))
+    session, result = _revit_exec(script, "ArchHub place on sheet", params)
+    if session is None:
+        return {"out": []}, str(result)
+    placed = as_list(result.get("placed"))
+    skipped = as_list(result.get("skipped"))
+    return {"out": result, "placed": placed}, "%d view(s) on sheet %s%s" % (
+        len(placed), result.get("sheet"), (", %d skipped" % len(skipped)) if skipped else "")
+
+
+LIBRARY_ENGINES.update({
+    "library.tag_rooms": tag_rooms,
+    "library.place_tags": place_tags,
+    "library.place_on_sheet": place_on_sheet,
+})
+LIBRARY_ITEM_ENGINES.update({
+    "a_rooms": {"engine": "library.tag_rooms", "params": {}},
+    "a_tags": {"engine": "library.place_tags", "params": {"category": "Doors", "leader": "true"}},
+    "c_sheet": {"engine": "library.place_on_sheet", "params": {"sheet": "", "views": ""}},
+})
+for _wired_now in ("a_rooms", "a_tags", "c_sheet"):
+    LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
+
+
+# ------------------------------------------------------------- speckle --
+# The last card. Same wire the 2026-05 client used: one object uploaded to
+# /objects/<project>, one commitCreate on the branch, plain urllib, the
+# token from the environment or the secrets store, never typed here.
+
+SPECKLE_SERVER = "https://app.speckle.systems"
+_COMMIT_CREATE = "mutation CreateCommit($commit: CommitCreateInput!) { commitCreate(commit: $commit) }"
+
+
+def _speckle_token(environ=None, secrets_loader=None) -> str:
+    import os
+    env = os.environ if environ is None else environ
+    token = str(env.get("SPECKLE_TOKEN") or "").strip()
+    if token:
+        return token
+    if secrets_loader is None:
+        def secrets_loader(name):
+            try:
+                from app import secrets_store  # noqa: PLC0415
+                return str(secrets_store.load_api_key(name) or "")
+            except Exception:
+                return ""
+    return str(secrets_loader("speckle") or "").strip()
+
+
+def _speckle_object_id(obj: Mapping[str, object]) -> str:
+    import hashlib
+    import json
+    canonical = json.dumps({k: v for k, v in obj.items() if k != "id"},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _speckle_call(url: str, body: object, token: str, opener=None) -> dict:
+    import json
+    import urllib.request
+    request = urllib.request.Request(
+        url, data=json.dumps(body, ensure_ascii=True, default=str).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json",
+                 "Authorization": "Bearer " + token})
+    with (opener or urllib.request.urlopen)(request, timeout=60) as response:
+        raw = response.read()
+    try:
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+    except ValueError:
+        parsed = {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def push_speckle(params: Mapping[str, object], feeds: Mapping[str, object], *,
+                 opener=None, environ=None, secrets_loader=None):
+    """The wired rows as one Speckle object, committed to a branch of a project."""
+    rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, _EMPTY_LIST
+    project = _text(params, "project")
+    if not project:
+        return {"out": []}, "no Speckle project id given"
+    branch = _text(params, "branch", "archhub/main")
+    message = _text(params, "message", "ArchHub push")
+    server = (_text(params, "server") or SPECKLE_SERVER).rstrip("/")
+    token = _speckle_token(environ, secrets_loader)
+    if not token:
+        return {"out": []}, "no Speckle token: set SPECKLE_TOKEN or store a key named speckle"
+    obj = {"speckle_type": "Objects.BuiltElements.ArchHub.RowSet@1.0.0", "__closure": {},
+           "applicationId": None, "rows": rows, "count": len(rows)}
+    obj["id"] = _speckle_object_id(obj)
+    try:
+        _speckle_call("%s/objects/%s" % (server, project), [obj], token, opener)
+        answer = _speckle_call("%s/graphql" % server, {
+            "query": _COMMIT_CREATE,
+            "variables": {"commit": {"streamId": project, "branchName": branch, "objectId": obj["id"],
+                                     "message": message, "sourceApplication": "ArchHub"}},
+        }, token, opener)
+    except Exception as failed:
+        return {"out": []}, "Speckle refused: %s" % str(failed)[:160]
+    errors = answer.get("errors")
+    if errors:
+        first = errors[0] if isinstance(errors, list) and errors else errors
+        return {"out": []}, "Speckle refused: %s" % (first.get("message") if isinstance(first, Mapping) else first)
+    commit = str((answer.get("data") or {}).get("commitCreate") or "")
+    if not commit:
+        return {"out": []}, "Speckle made no commit"
+    return {"out": {"commit_id": commit, "object_id": obj["id"], "branch": branch,
+                    "project": project, "rows": len(rows)}}, (
+        "commit %s on %s (%d rows) at %s" % (commit[:8], branch, len(rows), server))
+
+
+LIBRARY_ENGINES["library.push_speckle"] = push_speckle
+LIBRARY_ITEM_ENGINES["o_spk"] = {"engine": "library.push_speckle",
+                                 "params": {"project": "", "branch": "archhub/main", "message": "ArchHub push", "server": ""}}
+LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_spk", None)
+
 __all__ = [
     "LIBRARY_ENGINES",
     "set_notify_surface",

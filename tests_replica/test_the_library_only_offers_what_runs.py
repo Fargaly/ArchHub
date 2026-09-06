@@ -71,6 +71,7 @@ _PLACEMENTS = {
     "library.tag_rooms": ({}, {}),
     "library.place_tags": ({"category": "Doors"}, {}),
     "library.place_on_sheet": ({"sheet": "A101", "views": "Level 1"}, {}),
+    "library.push_speckle": ({"project": "abc123"}, _ROWS),
 }
 
 # Engines whose input is a stream: with nothing wired they must answer an
@@ -166,17 +167,18 @@ def test_every_library_card_either_runs_or_says_it_cannot():
 
     Dropping a card with no engine put it in the browser's memory only:
     invisible to Run, never written to the graph, gone on the next reload.
-    Twenty of those got real engines first; ten more followed (think,
+    Twenty of those got real engines first; eleven more followed (think,
     match_skill, embed, draft_email, notify, vision, publish_pdf,
-    tag_rooms, place_tags, place_on_sheet) once the model route, the
-    brain, Outlook, the tray and the Revit broker gave them something real
-    to do. The one that remains (Speckle) is marked so the drop refuses
-    out loud instead of pretending. This court holds the LANDED state.
+    tag_rooms, place_tags, place_on_sheet, push_speckle) once the model
+    route, the brain, Outlook, the tray, the Revit broker and the Speckle
+    wire gave them something real to do. Every card runs; the refusal path
+    for a bare card stays so the next bare card cannot pretend. This court
+    holds the LANDED state.
     """
     items = _library_items()
     assert len(items) == 53, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 52, sorted(wired)
+    assert len(wired) == 53, sorted(wired)
 
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         assert items.get(item) == wiring["engine"], (

@@ -1038,6 +1038,100 @@ LIBRARY_ITEM_ENGINES.update({
 for _wired_now in ("a_rooms", "a_tags", "c_sheet"):
     LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
 
+
+# ------------------------------------------------------------- speckle --
+# The last card. Same wire the 2026-05 client used: one object uploaded to
+# /objects/<project>, one commitCreate on the branch, plain urllib, the
+# token from the environment or the secrets store, never typed here.
+
+SPECKLE_SERVER = "https://app.speckle.systems"
+_COMMIT_CREATE = "mutation CreateCommit($commit: CommitCreateInput!) { commitCreate(commit: $commit) }"
+
+
+def _speckle_token(environ=None, secrets_loader=None) -> str:
+    import os
+    env = os.environ if environ is None else environ
+    token = str(env.get("SPECKLE_TOKEN") or "").strip()
+    if token:
+        return token
+    if secrets_loader is None:
+        def secrets_loader(name):
+            try:
+                from app import secrets_store  # noqa: PLC0415
+                return str(secrets_store.load_api_key(name) or "")
+            except Exception:
+                return ""
+    return str(secrets_loader("speckle") or "").strip()
+
+
+def _speckle_object_id(obj: Mapping[str, object]) -> str:
+    import hashlib
+    import json
+    canonical = json.dumps({k: v for k, v in obj.items() if k != "id"},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _speckle_call(url: str, body: object, token: str, opener=None) -> dict:
+    import json
+    import urllib.request
+    request = urllib.request.Request(
+        url, data=json.dumps(body, ensure_ascii=True, default=str).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json",
+                 "Authorization": "Bearer " + token})
+    with (opener or urllib.request.urlopen)(request, timeout=60) as response:
+        raw = response.read()
+    try:
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+    except ValueError:
+        parsed = {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def push_speckle(params: Mapping[str, object], feeds: Mapping[str, object], *,
+                 opener=None, environ=None, secrets_loader=None):
+    """The wired rows as one Speckle object, committed to a branch of a project."""
+    rows = _rows(feeds)
+    if not rows:
+        return {"out": []}, _EMPTY_LIST
+    project = _text(params, "project")
+    if not project:
+        return {"out": []}, "no Speckle project id given"
+    branch = _text(params, "branch", "archhub/main")
+    message = _text(params, "message", "ArchHub push")
+    server = (_text(params, "server") or SPECKLE_SERVER).rstrip("/")
+    token = _speckle_token(environ, secrets_loader)
+    if not token:
+        return {"out": []}, "no Speckle token: set SPECKLE_TOKEN or store a key named speckle"
+    obj = {"speckle_type": "Objects.BuiltElements.ArchHub.RowSet@1.0.0", "__closure": {},
+           "applicationId": None, "rows": rows, "count": len(rows)}
+    obj["id"] = _speckle_object_id(obj)
+    try:
+        _speckle_call("%s/objects/%s" % (server, project), [obj], token, opener)
+        answer = _speckle_call("%s/graphql" % server, {
+            "query": _COMMIT_CREATE,
+            "variables": {"commit": {"streamId": project, "branchName": branch, "objectId": obj["id"],
+                                     "message": message, "sourceApplication": "ArchHub"}},
+        }, token, opener)
+    except Exception as failed:
+        return {"out": []}, "Speckle refused: %s" % str(failed)[:160]
+    errors = answer.get("errors")
+    if errors:
+        first = errors[0] if isinstance(errors, list) and errors else errors
+        return {"out": []}, "Speckle refused: %s" % (first.get("message") if isinstance(first, Mapping) else first)
+    commit = str((answer.get("data") or {}).get("commitCreate") or "")
+    if not commit:
+        return {"out": []}, "Speckle made no commit"
+    return {"out": {"commit_id": commit, "object_id": obj["id"], "branch": branch,
+                    "project": project, "rows": len(rows)}}, (
+        "commit %s on %s (%d rows) at %s" % (commit[:8], branch, len(rows), server))
+
+
+LIBRARY_ENGINES["library.push_speckle"] = push_speckle
+LIBRARY_ITEM_ENGINES["o_spk"] = {"engine": "library.push_speckle",
+                                 "params": {"project": "", "branch": "archhub/main", "message": "ArchHub push", "server": ""}}
+LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_spk", None)
+
 __all__ = [
     "LIBRARY_ENGINES",
     "set_notify_surface",

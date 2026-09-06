@@ -125,8 +125,8 @@ def test_the_launcher_registers_its_tray_as_the_notify_surface():
     assert "_notifier.asked.emit(" in block, "a queued signal, not a cross-thread widget call"
 
 
-def test_the_one_that_remains_says_why():
-    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"o_spk"}
+def test_every_card_now_runs():
+    assert L.LIBRARY_ITEMS_WITHOUT_ENGINE == {}
     for item, reason in L.LIBRARY_ITEMS_WITHOUT_ENGINE.items():
         assert reason, item
 
@@ -245,3 +245,57 @@ def test_revit_authoring_is_honest_without_a_session(monkeypatch):
                            (L.place_on_sheet, {"sheet": "A101", "views": "Level 1"})):
         out, said = engine(params, {})
         assert out["out"] == [] and said == "no Revit session is listening"
+
+
+class _SpeckleWire:
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.sent = []
+
+    def __call__(self, request, timeout=None):
+        self.sent.append(request)
+        payload = self.answers.pop(0)
+        wire = self
+
+        class _Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *unused):
+                return False
+            def read(self):
+                return __import__("json").dumps(payload).encode("utf-8")
+        return _Response()
+
+
+def test_push_speckle_uploads_one_object_and_commits_it_to_the_branch():
+    wire = _SpeckleWire([{}, {"data": {"commitCreate": "c0ffee42"}}])
+    rows = [{"id": 1, "type": "Basic Wall", "length_mm": 4200}]
+    out, said = L.push_speckle({"project": "abc123", "branch": "archhub/main", "message": "walls"}, {"in": rows},
+                               opener=wire, environ={"SPECKLE_TOKEN": "spk-live"})
+    upload, commit = wire.sent
+    assert upload.full_url == "https://app.speckle.systems/objects/abc123"
+    assert upload.headers["Authorization"] == "Bearer spk-live"
+    sent = __import__("json").loads(upload.data.decode("utf-8"))
+    assert len(sent) == 1 and sent[0]["rows"] == rows and sent[0]["count"] == 1
+    assert sent[0]["id"] == L._speckle_object_id(sent[0]), "the id is the sha of the object"
+    body = __import__("json").loads(commit.data.decode("utf-8"))
+    assert commit.full_url == "https://app.speckle.systems/graphql" and "commitCreate" in body["query"]
+    assert body["variables"]["commit"] == {"streamId": "abc123", "branchName": "archhub/main",
+                                           "objectId": sent[0]["id"], "message": "walls",
+                                           "sourceApplication": "ArchHub"}
+    assert out["out"]["commit_id"] == "c0ffee42" and out["out"]["rows"] == 1
+    assert said == "commit c0ffee42 on archhub/main (1 rows) at https://app.speckle.systems"
+
+
+def test_push_speckle_is_honest_about_no_rows_no_project_no_token_and_a_refusal():
+    out, said = L.push_speckle({"project": "abc123"}, {}, environ={"SPECKLE_TOKEN": "x"})
+    assert out["out"] == [] and said == "nothing is wired in"
+    out, said = L.push_speckle({}, {"in": [{"a": 1}]}, environ={"SPECKLE_TOKEN": "x"})
+    assert out["out"] == [] and said == "no Speckle project id given"
+    out, said = L.push_speckle({"project": "abc123"}, {"in": [{"a": 1}]}, environ={}, secrets_loader=lambda name: "")
+    assert out["out"] == [] and said.startswith("no Speckle token")
+    wire = _SpeckleWire([{}, {"errors": [{"message": "branch not found"}]}])
+    out, said = L.push_speckle({"project": "abc123", "branch": "nope"}, {"in": [{"a": 1}]},
+                               opener=wire, environ={}, secrets_loader=lambda name: "spk-store")
+    assert out["out"] == [] and said == "Speckle refused: branch not found"
+    assert wire.sent[0].headers["Authorization"] == "Bearer spk-store", "the secrets store is asked by name"

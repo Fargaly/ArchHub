@@ -75,7 +75,7 @@ def test_the_window_shows_the_face_when_nothing_else_is_said_and_a_click_runs_th
     src = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
     window = src[src.index("class CompanionWindow"):]
     refresh = window[window.index("def refresh(self)"):window.index("def paintEvent")]
-    assert "baboom_face_line(context, foreground_app_windows())" in refresh
+    assert "front = foreground_app_windows()" in refresh and "baboom_face_line(context, front)" in refresh
     assert "if report is None and not self._input.isVisible():" in refresh
     events = window[window.index("def eventFilter"):window.index("def keyPressEvent")]
     assert "obj is self._report" in events and "self._say(self._face_offer)" in events
@@ -214,3 +214,48 @@ def test_a_minimized_companion_is_restored_before_it_is_placed():
         "restore before placing, or the placement is a no-op")
     # and the receipt now says who owns the window and whether it is iconic
     assert "GW_OWNER = 4" in refresh and 'owner += " iconic=%s"' in refresh
+
+
+def test_the_app_in_front_also_gets_acts_behind_an_explicit_pick():
+    """The founder said BABOOM cannot help with what he is doing. Reading the
+    app in front was the first help; acting in it is the second: the
+    right-click menu offers the engines that write into the open model,
+    each an utterance the catalog already runs. Acts never sit behind the
+    face click, which stays a read."""
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
+    from nodelang.universal_application import _BABOOM_COMMAND_CATALOG_ROOT  # noqa: F401 - the catalog exists
+    labels = {label for label, _engine, _verb in companion._FOREGROUND_HOSTS.values()}
+    for label, acts in companion._FOREGROUND_ACTS.items():
+        assert label in labels, label
+        for act_label, engine in acts:
+            assert act_label and engine in PIPELINE_ENGINES, (label, engine)
+            assert engine.startswith("library."), "acts are library cards, run without parameters"
+    src = inspect.getsource(companion)
+    face = src[src.index("def baboom_face_line"):src.index("return (line, offer)")]
+    assert "_FOREGROUND_ACTS" not in face, "an act is never the face offer"
+    menu = src[src.index("def contextMenuEvent"):]
+    assert 'f = menu.addMenu("%s is open" % front_label)' in menu
+    assert "for act_label, act_engine in _FOREGROUND_ACTS.get(front_label, ())" in menu
+    assert 'self._say("run %s on the graph" % e)' in menu
+
+
+def test_an_act_is_named_before_the_press_and_its_receipt_is_shown_after():
+    """Three audit findings (2026-09-06): the confirm read "Run this on the
+    graph?" whatever the engine; the execution renderer knew only the task
+    shape and said "could not create the task" after a run; and the menu
+    asked which app was in front AFTER the right-click had activated
+    BABOOM. The companion now names the act from the app's summary, shows
+    any act's summary as its receipt, and remembers the host seen in front
+    before the click."""
+    src = inspect.getsource(companion)
+    response = src[src.index("def _apply_response"):src.index("def _execute_task")]
+    assert 'if intent == "run-engine" and isinstance(said, str) and said.strip():' in response
+    assert "question = said.strip()" in response
+    execution = src[src.index("def _apply_execution"):src.index("made = CompanionWindow()")]
+    assert 'summary = result.get("summary")' in execution
+    assert "self._transient_report = summary.strip()" in execution
+    assert execution.index("summary.strip()") < execution.index("elif created is True"), "an act's words come before the task shape"
+    refresh = src[src.index("front = foreground_app_windows()"):]
+    assert "self._front, self._front_at = front, time.monotonic()" in refresh
+    menu = src[src.index("def contextMenuEvent"):]
+    assert "front = self._front" in menu and "time.monotonic() - self._front_at < 30.0" in menu

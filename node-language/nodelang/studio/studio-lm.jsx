@@ -366,10 +366,13 @@ const StudioLM = () => {
     }).catch(() => {});
   }, []);
   const signOut = () => {
-    const next = Object.assign({}, account, { signedIn: false, email: '' });
-    acSave(next); setAccount(next); setSettingsOpen(false);
-    const forget = window.ARCHHUB_CLOUD_SIGNOUT ? window.ARCHHUB_CLOUD_SIGNOUT() : Promise.resolve();
-    Promise.resolve(forget).catch(() => {}).then(() => setSignUpOpen(true));
+    // The app forgets the cloud session first; only then does the studio
+    // forget the account. A refusal leaves the founder signed in, honestly.
+    const forget = window.ARCHHUB_CLOUD_SIGNOUT ? window.ARCHHUB_CLOUD_SIGNOUT() : Promise.resolve({ ok: true });
+    Promise.resolve(forget).then(() => {
+      const next = Object.assign({}, account, { signedIn: false, email: '' });
+      acSave(next); setAccount(next); setSettingsOpen(false); setSignUpOpen(true);
+    }).catch(() => {});
   };
   const [docsOpen, setDocsOpen] = React.useState(false);
   const [libraryOpen, setLibraryOpen] = React.useState(false);

@@ -226,3 +226,29 @@ def test_the_flagship_chain_answers_from_the_shipped_sample():
     assert produced["out"], shown
     _passed, watched = watch_lines({}, {"in": produced["out"]})
     assert watched.startswith("%d lines" % len(produced["out"]))
+
+
+def test_a_confirmed_act_runs_only_its_own_node(graph):
+    """BABOOM's run-engine creates one node and runs the pipeline; before the
+    audit of 2026-09-06 that run evaluated every engine node on the canvas
+    (twelve seeded cards and every prior act) on each confirm. With
+    only_roots the run is one node, and its status is the engine's words."""
+    from nodelang.universal_pipeline import run_universal_pipeline
+    store, registry = graph
+    made = create_engine_node(
+        store, registry, title="BABOOM: library.notify", engine="library.notify",
+        x=260.0, y=200.0, properties={"message": "sheet set published"},
+    )
+    root = str(made["root"])
+    other = create_engine_node(
+        store, registry, title="BABOOM: library.notify (earlier)", engine="library.notify",
+        x=260.0, y=320.0, properties={"message": "an earlier act"},
+    )
+    outcome = run_universal_pipeline(
+        store, registry, effect_engines=PIPELINE_ENGINES, only_roots=[root])
+    assert outcome["ran"] == 1, outcome["ran"]
+    said = str(outcome["display"].get(root) or outcome["pending"].get(root) or "")
+    assert "no desktop surface registered" in said, said
+    assert str(other["root"]) not in outcome["display"], "the earlier act did not run again"
+    whole = run_universal_pipeline(store, registry, effect_engines=PIPELINE_ENGINES)
+    assert whole["ran"] >= 2, "the unbounded run still covers the canvas"

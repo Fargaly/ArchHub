@@ -343,6 +343,35 @@ def _host_of(url: str) -> str:
     return rest.split("/", 1)[0]
 
 
+def _payload_from_event_stream(raw: bytes) -> dict:
+    """One OpenAI-shaped payload assembled from an SSE chat stream."""
+    pieces: list[str] = []
+    finish = None
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        body = line[5:].strip()
+        if not body or body == "[DONE]":
+            continue
+        try:
+            event = json.loads(body)
+        except ValueError:
+            continue
+        choices = event.get("choices") if isinstance(event, Mapping) else None
+        if not isinstance(choices, (list, tuple)) or not choices:
+            continue
+        first = choices[0] if isinstance(choices[0], Mapping) else {}
+        delta = first.get("delta") if isinstance(first.get("delta"), Mapping) else None
+        message = first.get("message") if isinstance(first.get("message"), Mapping) else None
+        text = (delta or message or {}).get("content")
+        if isinstance(text, str):
+            pieces.append(text)
+        if first.get("finish_reason"):
+            finish = first["finish_reason"]
+    return {"choices": [{"message": {"role": "assistant", "content": "".join(pieces)}, "finish_reason": finish}]}
+
+
 def route_chat(
     route: object,
     messages: object,
@@ -385,11 +414,25 @@ def route_chat(
     send = urllib.request.urlopen if opener is None else opener
     try:
         with send(request, timeout=timeout) as answer:
-            payload = json.loads(answer.read().decode("utf-8"))
+            raw = answer.read()
+            headers = getattr(answer, "headers", None)
+            kind = str(headers.get("Content-Type", "") if headers is not None else "")
+            if "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
+                # The founder's cloud always streams (proxy.py: Server-Sent
+                # Events); a reader that expected one JSON document saw the
+                # cloud family as never answering (audit 2026-09-06).
+                payload = _payload_from_event_stream(raw)
+            else:
+                payload = json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as refused:
+        detail = ""
+        try:
+            detail = refused.read().decode("utf-8", errors="replace").strip()[:240]
+        except Exception:
+            detail = ""
         raise ModelRouteRefused(
-            "%s refused this request: HTTP %s. Check the key or pick another "
-            "model." % (destination.provider, refused.code)
+            "%s refused this request: HTTP %s%s. Check the key or pick another "
+            "model." % (destination.provider, refused.code, (": " + detail) if detail else "")
         ) from refused
     except (urllib.error.URLError, OSError) as unreachable:
         raise ModelRouteRefused(

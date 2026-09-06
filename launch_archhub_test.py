@@ -638,16 +638,22 @@ try:
     # optimistic concurrency, and its answer is to re-read and try again
     # -- the seed is idempotent, so a retry adds nothing twice. Without
     # this a FRESH INSTALL opened with an empty canvas.
-    for attempt in range(4):
+    for attempt in range(10):
         try:
             seed_wall_pipeline(
                 server.universal_store, server.universal_registry
             )
             break
         except Exception as clash:
-            if attempt == 3:
+            # Only a revision clash is worth retrying. Anything else is a real
+            # refusal and must surface at once instead of being slept over
+            # four times. Four tries 0.4 s apart also lost to the boot's own
+            # writers (the runtime announcement, the first map push): the
+            # canvas came up empty with "expected revision 25791, current
+            # revision is 25792". Ten tries with growing backoff outlast them.
+            if "expected revision" not in str(clash) or attempt == 9:
                 raise
-            time.sleep(0.4)
+            time.sleep(0.25 * (attempt + 1))
     outcome = run_universal_pipeline(
         server.universal_store,
         server.universal_registry,

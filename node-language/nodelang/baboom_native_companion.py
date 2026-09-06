@@ -311,6 +311,24 @@ class BaboomNativeCompanionController:
         self._occupied_provider = occupied_provider
         self._user_origin: tuple[int, int] | None = None
         self._animation_tick = 0
+        # How long the host has been silent, and where the window really
+        # landed. Both exist so "BABOOM is not there" can be read off a file.
+        self.host_silent_seconds = 0.0
+        self._geometry_log = None
+
+    def watch_geometry(self, path) -> None:
+        """Record every geometry change to this file, newest last."""
+        self._geometry_log = path
+
+    def geometry_receipt(self, line: str) -> None:
+        if self._geometry_log is None:
+            return
+        try:
+            import time as _t
+            with open(self._geometry_log, "a", encoding="utf-8") as sink:
+                sink.write("%s %s" % (_t.strftime("%H:%M:%S"), line) + chr(10))
+        except Exception:
+            pass
 
     @property
     def latest_snapshot(self):
@@ -348,8 +366,12 @@ class BaboomNativeCompanionController:
         # "keeps appearing and disappearing"). Presence first: the last
         # snapshot keeps drawing; the companion only ever disappears when
         # the host has been silent for a long time.
-        if time.time() > float(snapshot.frame_expires_at) + _FRAME_SILENCE_SECONDS:
-            return None
+        # Presence first, always. The companion used to vanish after ten
+        # minutes of host silence; on the founder's desktop that read as
+        # "appears and disappears" (2026-09-04, and again 2026-09-06 when
+        # only a floating line of text was left). A silent host is said on
+        # the face; the sprite stays.
+        self.host_silent_seconds = max(0.0, time.time() - float(snapshot.frame_expires_at))
         frame = project_baboom_native_visual_frame(
             snapshot,
             self._atlas,
@@ -508,6 +530,11 @@ def foreground_app_windows() -> tuple[str, str, str] | None:
         return None
 
 
+# Two lines of the compact box at the companion font. Beyond this the box
+# either grows past the sprite or cuts a word; both read as broken.
+FACE_MAX_CHARS = 72
+
+
 def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, str] | None) -> tuple[str, str | None]:
     """One line of live graph state for BABOOM's face, and the offer it carries.
 
@@ -518,6 +545,10 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     is missing is left out, not made up.
     """
     parts: list[str] = []
+    # Priority order: what the founder is in front of, then the canvas, the
+    # brain, agents, the current work. The box holds two lines; lower parts
+    # are dropped before higher ones are cut mid-word (which is what the
+    # founder saw: "canvas 11/12 answered · brai").
     canvas = context.get("canvas") if isinstance(context, Mapping) else None
     if isinstance(canvas, Mapping) and isinstance(canvas.get("ran"), int):
         answered = canvas.get("answered")
@@ -533,7 +564,7 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
             parts.append("brain silent")
     agents = context.get("agents") if isinstance(context, Mapping) else None
     working = agents.get("working") if isinstance(agents, Mapping) else None
-    if isinstance(working, (list, tuple)):
+    if isinstance(working, (list, tuple)) and working:
         parts.append("%d agent%s working" % (len(working), "" if len(working) == 1 else "s"))
     work = context.get("work") if isinstance(context, Mapping) else None
     if isinstance(work, Mapping) and isinstance(work.get("title"), str) and work["title"].strip():
@@ -545,9 +576,16 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     offer = None
     if foreground is not None:
         label, engine, verb = foreground
-        parts.append("%s is open: %s?" % (label, verb))
+        parts.insert(0, "%s is open: %s?" % (label, verb))
         offer = "run %s on the graph" % engine
-    return (" · ".join(parts) if parts else "watching the graph", offer)
+    silent = context.get("host_silent_seconds") if isinstance(context, Mapping) else None
+    if isinstance(silent, (int, float)) and silent >= 120:
+        parts.append("host silent %dm" % int(silent // 60))
+    line = " · ".join(parts) if parts else "watching the graph"
+    while len(line) > FACE_MAX_CHARS and len(parts) > 1:
+        parts.pop()
+        line = " · ".join(parts)
+    return (line, offer)
 
 
 def create_baboom_native_companion_window(
@@ -731,7 +769,16 @@ def create_baboom_native_companion_window(
                 int(Qt.TextFlag.TextWordWrap),
                 text,
             )
-            return (width, max(minimum, wrapped.height() + padding_y))
+            # The label wraps by its own style (padding, line-height), which
+            # the bare font metrics do not see. Ask the label what it needs at
+            # this width and take the larger answer, so no last line is lost.
+            asked = 0
+            try:
+                self._report.setText(text)
+                asked = int(self._report.heightForWidth(width))
+            except Exception:
+                asked = 0
+            return (width, max(minimum, wrapped.height() + padding_y, asked))
 
         def _layout_for_report(
             self,
@@ -807,6 +854,7 @@ def create_baboom_native_companion_window(
                 # Nothing being said: the face shows the graph, live.
                 snapshot = controller.latest_snapshot
                 context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
+                context["host_silent_seconds"] = getattr(controller, "host_silent_seconds", 0.0)
                 report, self._face_offer = baboom_face_line(context, foreground_app_windows())
                 self._face_showing = True
             layout = self._layout_for_report(frame, screen, report)
@@ -826,8 +874,54 @@ def create_baboom_native_companion_window(
                 )
             self._origin = QPoint(left, top)
             window_rect = QRect(left, top, right - left, bottom - top)
-            if self.geometry() != window_rect:
-                self.setGeometry(window_rect)
+            # Qt caches what it last SET; Windows holds what the window really
+            # is. On the founder's desktop those disagreed -- Qt said
+            # 280x245+1582+729 while Windows had 160x28+1120+1004 -- and
+            # because Qt's cache matched the target, nothing ever corrected it
+            # and BABOOM sat shrunk in the wrong corner. Ask the system.
+            # Place on EVERY tick, unconditionally. Comparing first is what
+            # let the window stay lost: Qt's cache matched the target while
+            # Windows had the companion shrunk to 160x28 in another corner, so
+            # the branch was never taken and nothing repaired it for the rest
+            # of the session. setGeometry on an unchanged window costs nothing.
+            drifted = self._native_rect_differs(window_rect)
+            self.setGeometry(window_rect)
+            if drifted or self.geometry() != window_rect:
+                # One line per change, so the next "it is not there" can be
+                # read off a file instead of guessed at from a screenshot.
+                try:
+                    receipt = getattr(controller, "geometry_receipt", None)
+                    if receipt is not None:
+                        # What Qt was ASKED for, what Qt then reports, and what
+                        # WINDOWS reports. The founder's companion was asked for
+                        # 280x245+1582+729 and Windows had a 160x28 window at
+                        # 1120,1004: three numbers in one line say which layer
+                        # moved it.
+                        got = self.geometry()
+                        native = ""
+                        try:
+                            import ctypes as _ct
+
+                            class _R(_ct.Structure):
+                                _fields_ = [("l", _ct.c_long), ("t", _ct.c_long),
+                                            ("r", _ct.c_long), ("b", _ct.c_long)]
+
+                            box = _R()
+                            _ct.windll.user32.GetWindowRect(int(self.winId()), _ct.byref(box))
+                            native = "%dx%d+%d+%d" % (box.r - box.l, box.b - box.t, box.l, box.t)
+                        except Exception:
+                            native = "unreadable"
+                        receipt(
+                            "sprite=%dx%d+%d+%d message=%s asked=%dx%d+%d+%d qt=%dx%d+%d+%d win=%s visible=%s sprite_img=%s" % (
+                                bounds.width, bounds.height, bounds.x, bounds.y,
+                                ("%dx%d+%d+%d" % (layout.message.width, layout.message.height, layout.message.x, layout.message.y)) if layout.message else "none",
+                                window_rect.width(), window_rect.height(), window_rect.x(), window_rect.y(),
+                                got.width(), got.height(), got.x(), got.y(),
+                                native, self.isVisible(),
+                                ("null" if self._sprite is None or self._sprite.isNull()
+                                 else "%dx%d" % (self._sprite.width(), self._sprite.height()))))
+                except Exception:
+                    pass
             sprite_rect = QRect(
                 bounds.x - left, bounds.y - top, bounds.width, bounds.height
             )
@@ -868,6 +962,46 @@ def create_baboom_native_companion_window(
                 self.show()
             self.update()
 
+        def _native_rect_differs(self, target) -> bool:
+            """True when the real window is not where Qt thinks it put it."""
+            try:
+                import ctypes as _ct
+
+                class _R(_ct.Structure):
+                    _fields_ = [("l", _ct.c_long), ("t", _ct.c_long),
+                                ("r", _ct.c_long), ("b", _ct.c_long)]
+
+                box = _R()
+                if not _ct.windll.user32.GetWindowRect(int(self.winId()), _ct.byref(box)):
+                    return False
+                return (
+                    box.l != target.x() or box.t != target.y()
+                    or (box.r - box.l) != target.width()
+                    or (box.b - box.t) != target.height()
+                )
+            except Exception:
+                return False
+
+        def _disown(self) -> None:
+            """Stop any window from owning this one.
+
+            A Qt::Tool window is OWNED by whatever was active when it was
+            created -- here the ArchHub main window. Windows moves and hides
+            owned windows with their owner, which is how the companion ended
+            up shrunk at the bottom of the screen after the main window was
+            minimized and restored. The companion belongs to the desktop.
+            """
+            try:
+                import ctypes as _ct
+
+                user32 = _ct.windll.user32
+                handle = int(self.winId())
+                GWLP_HWNDPARENT = -8
+                setter = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+                setter(_ct.c_void_p(handle), GWLP_HWNDPARENT, _ct.c_void_p(0))
+            except Exception:
+                pass
+
         def paintEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             painter = QPainter(self)
             # Clear the whole window to transparent first, every paint, so no
@@ -881,6 +1015,7 @@ def create_baboom_native_companion_window(
 
         def showEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             super().showEvent(event)
+            self._disown()
             # Windows 11 draws a rounded corner and a 1px border on every
             # top-level window; on a transparent companion that border IS the
             # frame the founder saw. Tell the compositor: no corners, no border.
@@ -1235,7 +1370,12 @@ def create_baboom_native_companion_window(
             if on_response is not None:
                 on_response({"execution": dict(result)})
 
-    return CompanionWindow()
+    made = CompanionWindow()
+    # The launcher needs the controller to point the geometry receipt at a
+    # file; nothing else exposed it, so the receipt was never wired and the
+    # log stayed empty exactly when it was needed (2026-09-06).
+    made.controller = controller
+    return made
 
 
 __all__ = [

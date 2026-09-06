@@ -119,23 +119,46 @@ def _fact_record(frag: Fragment) -> dict[str, Any]:
     }
 
 
+DEFAULT_LIST_LIMIT = 500
+
+
 def list_facts(
     store: Any,
     *,
     owner_user: Optional[str] = None,
     include_archived: bool = False,
-    limit: int = 100_000,
+    limit: int = DEFAULT_LIST_LIMIT,
+    offset: int = 0,
 ) -> dict[str, Any]:
-    """Enumerate every brain fact, grouped into folders for the UI tree.
+    """The newest facts, grouped into folders for the UI tree, one page at a time.
 
-    Returns {ok, total, folders:[{id,label,count,facts:[record,...]}, ...]}.
-    Folders are returned in FOLDER_ORDER; the four founder-named ones always
-    appear (even when empty) so the tree shape is stable.
+    Returns {ok, total, held, offset, limit, folders:[{id,label,count,facts}]}.
+    `total` is the number of facts in this page; `held` is how many the store
+    holds in all, so a caller knows there is more without asking for it.
+
+    This used to return EVERY fact by default. Measured on the founder's
+    brain: 54,076 rows in 88 s, and a thread dump caught four such calls in
+    flight at once beside the organize worker, all scanning the whole store
+    while brain.health waited behind them. A listing is a page; a caller that
+    truly wants everything says so with an explicit limit.
     """
     try:
-        frags = store.list_fragments(owner_user=owner_user, limit=limit)
+        limit = max(1, int(limit))
+        offset = max(0, int(offset))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "limit and offset must be integers", "folders": []}
+    try:
+        frags = store.list_fragments(owner_user=owner_user, limit=limit + offset)
     except Exception as ex:  # pragma: no cover - defensive
         return {"ok": False, "error": f"list_fragments: {ex}", "folders": []}
+    frags = list(frags)[offset:offset + limit]
+    held = None
+    counter = getattr(store, "count_fragments", None)
+    if callable(counter):
+        try:
+            held = int(counter())
+        except Exception:
+            held = None
 
     buckets: dict[str, list[dict[str, Any]]] = {k: [] for k in FOLDER_ORDER}
     total = 0
@@ -160,7 +183,8 @@ def list_facts(
             "count": len(facts),
             "facts": facts,
         })
-    return {"ok": True, "total": total, "folders": folders}
+    return {"ok": True, "total": total, "held": held, "offset": offset,
+            "limit": limit, "folders": folders}
 
 
 def edit_fact(store: Any, fragment_id: str, text: str) -> dict[str, Any]:

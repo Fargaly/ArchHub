@@ -135,7 +135,14 @@ def test_the_window_records_where_it_landed():
     assert "def watch_geometry(self, path)" in src
     assert "def geometry_receipt(self, line: str)" in src
     window = src[src.index("class CompanionWindow"):]
-    assert 'receipt("sprite=%dx%d+%d+%d message=%s window=%dx%d+%d+%d"' in window
+    assert 'receipt(' in window and "sprite=%dx%d+%d+%d" in window
+    # Three rectangles, not one: what Qt was asked for, what Qt reports, and
+    # what Windows reports. The founder's companion was asked for
+    # 280x245+1582+729 while Windows had a 160x28 window at 1120,1004, and one
+    # rectangle could not say which layer moved it.
+    for field in ("asked=", "qt=", "win=", "visible=", "sprite_img="):
+        assert field in window, field
+    assert "GetWindowRect" in window
     launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
     assert 'controller.watch_geometry(state_dir / "baboom-geometry.log")' in launcher
 

@@ -881,10 +881,34 @@ def create_baboom_native_companion_window(
                 try:
                     receipt = getattr(controller, "geometry_receipt", None)
                     if receipt is not None:
-                        receipt("sprite=%dx%d+%d+%d message=%s window=%dx%d+%d+%d" % (
-                            bounds.width, bounds.height, bounds.x, bounds.y,
-                            ("%dx%d+%d+%d" % (layout.message.width, layout.message.height, layout.message.x, layout.message.y)) if layout.message else "none",
-                            window_rect.width(), window_rect.height(), window_rect.x(), window_rect.y()))
+                        # What Qt was ASKED for, what Qt then reports, and what
+                        # WINDOWS reports. The founder's companion was asked for
+                        # 280x245+1582+729 and Windows had a 160x28 window at
+                        # 1120,1004: three numbers in one line say which layer
+                        # moved it.
+                        got = self.geometry()
+                        native = ""
+                        try:
+                            import ctypes as _ct
+
+                            class _R(_ct.Structure):
+                                _fields_ = [("l", _ct.c_long), ("t", _ct.c_long),
+                                            ("r", _ct.c_long), ("b", _ct.c_long)]
+
+                            box = _R()
+                            _ct.windll.user32.GetWindowRect(int(self.winId()), _ct.byref(box))
+                            native = "%dx%d+%d+%d" % (box.r - box.l, box.b - box.t, box.l, box.t)
+                        except Exception:
+                            native = "unreadable"
+                        receipt(
+                            "sprite=%dx%d+%d+%d message=%s asked=%dx%d+%d+%d qt=%dx%d+%d+%d win=%s visible=%s sprite_img=%s" % (
+                                bounds.width, bounds.height, bounds.x, bounds.y,
+                                ("%dx%d+%d+%d" % (layout.message.width, layout.message.height, layout.message.x, layout.message.y)) if layout.message else "none",
+                                window_rect.width(), window_rect.height(), window_rect.x(), window_rect.y(),
+                                got.width(), got.height(), got.x(), got.y(),
+                                native, self.isVisible(),
+                                ("null" if self._sprite is None or self._sprite.isNull()
+                                 else "%dx%d" % (self._sprite.width(), self._sprite.height()))))
                 except Exception:
                     pass
             sprite_rect = QRect(

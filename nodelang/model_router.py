@@ -257,11 +257,37 @@ def _checked_messages(messages: object) -> list:
             raise ModelRouteRefused(
                 "A message for the model must carry a role and content."
             )
+        content = row["content"]
+        if isinstance(content, (list, tuple)):
+            # A message with parts: text and images, the OpenAI shape every
+            # non-ollama family here speaks. Each part must say what it is.
+            parts = []
+            for part in content:
+                if not isinstance(part, Mapping) or part.get("type") not in ("text", "image_url"):
+                    raise ModelRouteRefused(
+                        "A message part must be text or an image_url."
+                    )
+                parts.append(dict(part))
+            if not parts:
+                raise ModelRouteRefused("A message with parts must carry at least one.")
+            content = parts
+        else:
+            content = str(content)
         checked.append({
             "role": str(row.get("role") or "user"),
-            "content": str(row["content"]),
+            "content": content,
         })
     return checked
+
+
+def _carries_an_image(messages: Sequence) -> bool:
+    for row in messages:
+        content = row.get("content") if isinstance(row, Mapping) else None
+        if isinstance(content, list) and any(
+            isinstance(part, Mapping) and part.get("type") == "image_url" for part in content
+        ):
+            return True
+    return False
 
 
 def _body(
@@ -271,6 +297,11 @@ def _body(
     temperature: float,
 ) -> dict:
     if destination.family == "ollama":
+        if _carries_an_image(messages):
+            raise ModelRouteRefused(
+                "An ollama route cannot carry an image in this build; pick a "
+                "vision model on openrouter or the cloud."
+            )
         return {
             "model": destination.model,
             "messages": list(messages),

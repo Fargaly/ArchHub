@@ -320,7 +320,7 @@ const LM_LIBRARY = [
   ]},
   { cat:'ai', items:[
     { id:'i_think', title:'think',  sub:'reason with the picked model' , engine:'library.think'},
-    { id:'i_vis',   title:'vision', sub:'parse a sketch / screenshot' , noEngine:true},
+    { id:'i_vis',   title:'vision', sub:'read a sketch / screenshot with the picked model' , engine:'library.vision'},
     { id:'i_match', title:'match_skill', sub:'best saved skill for an intent' , engine:'library.match_skill'},
     { id:'i_embed', title:'embed',  sub:'similar facts from the brain' , engine:'library.embed'},
   ]},

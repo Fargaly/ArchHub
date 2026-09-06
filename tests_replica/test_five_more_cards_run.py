@@ -125,7 +125,40 @@ def test_the_launcher_registers_its_tray_as_the_notify_surface():
     assert "_notifier.asked.emit(" in block, "a queued signal, not a cross-thread widget call"
 
 
-def test_the_six_that_remain_say_why():
-    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"a_tags", "a_rooms", "c_sheet", "i_vis", "o_pdf", "o_spk"}
+def test_the_five_that_remain_say_why():
+    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"a_tags", "a_rooms", "c_sheet", "o_pdf", "o_spk"}
     for item, reason in L.LIBRARY_ITEMS_WITHOUT_ENGINE.items():
         assert reason, item
+
+
+def test_vision_sends_the_image_as_a_data_url_with_the_picked_model(monkeypatch):
+    seen = {}
+
+    def route_chat(route, messages, **options):
+        seen["route"] = route
+        seen["parts"] = messages[0]["content"]
+        return {"text": "a plan: 4 rooms, walls 200 mm"}
+
+    monkeypatch.setattr(model_router, "route_chat", route_chat)
+    monkeypatch.delenv("ARCHHUB_AGENT_MODEL", raising=False)
+    sample = ROOT / "nodelang" / "samples" / "sample-plan.png"
+    assert sample.is_file()
+    out, said = L.vision({"model": "openrouter/x/vision", "prompt": "rooms?"}, {"in": str(sample)})
+    assert out["out"].startswith("a plan") and out["image_path"] == str(sample)
+    assert seen["route"] == "openrouter/x/vision" and "sample-plan.png" in said
+    text, image = seen["parts"]
+    assert text == {"type": "text", "text": "rooms?"}
+    assert image["type"] == "image_url" and image["image_url"]["url"].startswith("data:image/png;base64,")
+    out, said = L.vision({"prompt": "rooms?"}, {"in": str(sample)})
+    assert out["out"] == [] and said == NO_MODEL_CHOSEN
+
+
+def test_vision_is_honest_about_a_missing_or_unreadable_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_router, "route_chat", lambda *a, **k: {"text": "never"})
+    out, said = L.vision({"model": "openrouter/x/vision", "image_path": str(tmp_path / "nope.png")}, {})
+    assert out["out"] == [] and "does not exist" in said
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    out, said = L.vision({"model": "openrouter/x/vision", "image_path": str(tmp_path / "notes.txt")}, {})
+    assert out["out"] == [] and "not an image" in said
+    out, said = L.vision({"model": "openrouter/x/vision"}, {})
+    assert out["out"] == [] and "no image_path" in said

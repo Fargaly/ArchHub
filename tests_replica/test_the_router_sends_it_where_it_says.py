@@ -374,3 +374,38 @@ def test_the_studio_pick_is_remembered_for_the_companion():
     assert "model=self._remember_agent_model(str(body.get('model') or ''))" in server
     assert 'model=getattr(owner, "_last_agent_model", "") or ""' in server
     assert 'model="",' not in server.split("def answer_open_question")[1].split("answered = dict(payload)")[0]
+
+
+SEE = [{"role": "user", "content": [
+    {"type": "text", "text": "what is this"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+]}]
+
+
+def test_a_message_with_an_image_part_reaches_openrouter_whole():
+    """The vision card sends text plus an image; the OpenAI shape every
+    non-ollama family speaks carries both as parts, untouched."""
+    wire = _Wire(_openai_answer("a plan with four rooms"))
+    out = route_chat("deepseek/deepseek-r1", SEE, opener=wire,
+                     environ={"OPENROUTER_API_KEY": "or-live"},
+                     secrets_loader=lambda name: "")
+    assert out["text"] == "a plan with four rooms"
+    sent = wire.body["messages"][0]["content"]
+    assert isinstance(sent, list) and sent[0] == {"type": "text", "text": "what is this"}
+    assert sent[1]["type"] == "image_url" and sent[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_an_ollama_route_refuses_an_image_by_name():
+    wire = _Wire(_openai_answer("never asked"))
+    with pytest.raises(ModelRouteRefused) as refused:
+        route_chat("ollama/llama3.3:70b", SEE, opener=wire, environ={},
+                   secrets_loader=lambda name: "")
+    assert "ollama route cannot carry an image" in str(refused.value)
+    assert wire.sent == [], "nothing left the machine"
+
+
+def test_a_part_that_is_neither_text_nor_image_is_refused():
+    with pytest.raises(ModelRouteRefused):
+        route_chat("deepseek/deepseek-r1", [{"role": "user", "content": [{"type": "audio"}]}],
+                   opener=_Wire(_openai_answer("x")), environ={"OPENROUTER_API_KEY": "k"},
+                   secrets_loader=lambda name: "")

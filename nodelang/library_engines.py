@@ -779,6 +779,51 @@ LIBRARY_ITEM_ENGINES.update({
 for _wired_now in ("i_think", "i_match", "i_embed", "o_email", "o_notify"):
     LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
 
+
+_IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".webp": "image/webp", ".gif": "image/gif"}
+
+
+def vision(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Read a sketch or screenshot with the picked model; the image travels as a data URL."""
+    import base64
+    import os
+    from pathlib import Path
+    from . import model_router
+    from .agent_composer import NO_MODEL_CHOSEN
+    from .pipeline_engines import _local_input_path
+    route = _text(params, "model") or os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+    if not route:
+        return {"out": []}, NO_MODEL_CHOSEN
+    held = _wired(feeds, "in", "image_path", "path")
+    try:
+        path = _local_input_path(_text(params, "image_path") or (held if isinstance(held, str) else ""), label="image_path")
+    except ValueError as missing:
+        return {"out": []}, str(missing)
+    kind = _IMAGE_TYPES.get(Path(path).suffix.lower())
+    if not kind:
+        return {"out": []}, "not an image this card reads: %s" % Path(path).name
+    data = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    prompt = _text(params, "prompt") or (
+        "Describe this architectural drawing: rooms, walls, openings, and any "
+        "dimensions or text you can read. Millimetres. Be terse.")
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (kind, data)}},
+    ]}]
+    try:
+        answer = model_router.route_chat(route, messages, max_tokens=int(_number(params, "max_tokens", 600)))
+    except Exception as refused:
+        return {"out": []}, "%s refused: %s" % (route, str(refused)[:160])
+    text = str(answer.get("text") or "") if isinstance(answer, Mapping) else str(answer)
+    return {"out": text, "image_path": path}, "%s read %s (%d chars)" % (route, Path(path).name, len(text))
+
+
+LIBRARY_ENGINES["library.vision"] = vision
+LIBRARY_ITEM_ENGINES["i_vis"] = {"engine": "library.vision",
+                                 "params": {"image_path": "", "prompt": "", "model": "", "max_tokens": "600"}}
+LIBRARY_ITEMS_WITHOUT_ENGINE.pop("i_vis", None)
+
 __all__ = [
     "LIBRARY_ENGINES",
     "set_notify_surface",

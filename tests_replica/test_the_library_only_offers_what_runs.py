@@ -66,6 +66,7 @@ _PLACEMENTS = {
     "library.embed": ({}, {}),
     "library.notify": ({"message": "sheet set published"}, {}),
     "library.draft_email": ({"to": "eng@firm.com"}, {}),
+    "library.vision": ({"prompt": "what is this"}, {}),
 }
 
 # Engines whose input is a stream: with nothing wired they must answer an
@@ -79,7 +80,7 @@ _STREAM_ENGINES = [
                     # message or a draft, not on a wired stream; their
                     # empty answers are courted in test_five_more_cards_run.
                     "library.think", "library.match_skill", "library.embed",
-                    "library.notify", "library.draft_email")
+                    "library.notify", "library.draft_email", "library.vision")
 ]
 
 
@@ -159,16 +160,16 @@ def test_every_library_card_either_runs_or_says_it_cannot():
 
     Dropping a card with no engine put it in the browser's memory only:
     invisible to Run, never written to the graph, gone on the next reload.
-    Twenty of those got real engines first; five more followed (think,
-    match_skill, embed, draft_email, notify) once the model route, the
-    brain, Outlook and the tray gave them something real to do. The six
-    that remain are marked so the drop refuses out loud instead of
+    Twenty of those got real engines first; six more followed (think,
+    match_skill, embed, draft_email, notify, vision) once the model route,
+    the brain, Outlook and the tray gave them something real to do. The
+    five that remain are marked so the drop refuses out loud instead of
     pretending. This court holds the LANDED state, not the plan.
     """
     items = _library_items()
     assert len(items) == 53, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 47, sorted(wired)
+    assert len(wired) == 48, sorted(wired)
 
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         assert items.get(item) == wiring["engine"], (

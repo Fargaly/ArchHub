@@ -10,6 +10,8 @@ the result -- no agent required.
 """
 from __future__ import annotations
 
+import time
+
 from pathlib import Path as _Path
 from typing import Mapping
 
@@ -160,6 +162,16 @@ def _graph_engines(store, registry):
     }
 
 
+# The last pipeline run, for anything that shows the canvas state without
+# re-running it. Empty until the first run of this process.
+_LAST_RUN: dict[str, object] = {}
+
+
+def last_pipeline_run() -> dict[str, object]:
+    """{ran, answered, pending, at} of the most recent run, or {}."""
+    return dict(_LAST_RUN)
+
+
 def run_universal_pipeline(
     store,
     registry,
@@ -236,6 +248,15 @@ def run_universal_pipeline(
             previews[root] = [
                 [float(v) for v in row[:4]] for row in value[:400]
             ]
+    # BABOOM's face reads this: how many cards ran and how many really
+    # answered, from the run itself rather than a guess over the graph.
+    _LAST_RUN.clear()
+    _LAST_RUN.update({
+        "ran": len(stem_nodes),
+        "answered": len(evaluation.display),
+        "pending": len(evaluation.pending),
+        "at": time.time(),
+    })
     return {
         "ran": len(stem_nodes),
         "wires": len(stem_wires),

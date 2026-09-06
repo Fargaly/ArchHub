@@ -440,10 +440,76 @@ def test_a_wedged_brain_is_replaced_rather_than_waited_on_forever():
         if isinstance(n, _ast.FunctionDef) and n.name == "_watch_brain"))
     assert "strict=True" in watch and "_replace_a_wedged_brain" in watch
     assert "_WEDGED_CHECKS_BEFORE_REPLACING" in watch
-    assert "_WEDGED_CHECKS_BEFORE_REPLACING = 6" in source  # two minutes at 20s
+    assert "_WEDGED_CHECKS_BEFORE_REPLACING = 30" in source  # ten minutes at 20s
+    assert "_BRAIN_SETTLING_SECONDS" in watch, (
+        "a brain that just started is doing its first sync, not wedging")
 
     replace = _ast.get_source_segment(source, next(
         n for n in tree.body
         if isinstance(n, _ast.FunctionDef) and n.name == "_replace_a_wedged_brain"))
     assert "LISTENING" in replace, "only what really serves the port is stopped"
     assert "taskkill" in replace and "CREATE_NO_WINDOW" in replace
+
+
+def test_the_watchdog_does_not_kill_a_brain_that_is_merely_working():
+    """46 restarts in one hour, because two minutes of silence is not a wedge.
+
+    A brain that has just started pushes the whole store to the cloud, and the
+    write lock that takes makes a health probe time out. The watchdog killed
+    it, the replacement began the same sync, and it killed that one too
+    (launcher.log, 2026-09-06). A young brain is never replaced, and silence
+    has to last ten minutes before it counts.
+    """
+    import ast as _ast
+
+    source = LAUNCHER.read_text(encoding="utf-8")
+    tree = _ast.parse(source, str(LAUNCHER))
+    watch = _ast.get_source_segment(source, next(
+        n for n in tree.body
+        if isinstance(n, _ast.FunctionDef) and n.name == "_watch_brain"))
+
+    wanted = {"_WEDGED_CHECKS_BEFORE_REPLACING", "_BRAIN_SETTLING_SECONDS"}
+    constants = [n for n in tree.body if isinstance(n, _ast.Assign)
+                 and any(isinstance(t, _ast.Name) and t.id in wanted for t in n.targets)]
+    namespace = {}
+    exec(compile(_ast.Module(body=constants, type_ignores=[]), str(LAUNCHER), "exec"), namespace)
+    checks = namespace["_WEDGED_CHECKS_BEFORE_REPLACING"]
+    settling = namespace["_BRAIN_SETTLING_SECONDS"]
+    assert checks * 20 >= 300, "silence must last minutes, not seconds: %ss" % (checks * 20)
+    assert settling >= 300, "a young brain is doing its first sync: %ss" % settling
+    assert "not young" in watch, "the age guard must gate the kill"
+    assert "started_watching = _clock.monotonic()" in watch.split("not young")[1], (
+        "a replacement restarts the grace period, or the loop kills again at once")
+
+
+def test_the_tray_click_uses_the_windows_foreground_dance():
+    """Clicking the tray icon did nothing: Qt alone cannot take the foreground.
+
+    A process that does not own the foreground has SetForegroundWindow refused
+    and the taskbar button flashes instead. The documented way round it is to
+    attach our input queue to the foreground thread for the moment of the call.
+    """
+    import ast as _ast
+
+    source = LAUNCHER.read_text(encoding="utf-8")
+    tree = _ast.parse(source, str(LAUNCHER))
+    names = [n.name for n in tree.body if isinstance(n, _ast.FunctionDef)]
+    assert names.index("_force_foreground") < names.index("_front_running_archhub"), (
+        "the helper must exist before the single-instance check calls it")
+
+    force = _ast.get_source_segment(source, next(
+        n for n in tree.body
+        if isinstance(n, _ast.FunctionDef) and n.name == "_force_foreground"))
+    assert "AttachThreadInput" in force and "SetForegroundWindow" in force
+    assert force.count("AttachThreadInput") >= 2, "the attach must be undone"
+    assert "SW_RESTORE" in force
+
+    opener = _ast.get_source_segment(source, next(
+        n for n in tree.body
+        if isinstance(n, _ast.FunctionDef) and n.name == "_tray_open"))
+    assert "_force_foreground(window.winId())" in opener
+
+    raiser = _ast.get_source_segment(source, next(
+        n for n in tree.body
+        if isinstance(n, _ast.FunctionDef) and n.name == "_front_running_archhub"))
+    assert "_force_foreground(handle)" in raiser

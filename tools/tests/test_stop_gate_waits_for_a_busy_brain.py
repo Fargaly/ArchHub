@@ -8,6 +8,7 @@ second time patiently, before calling anything unavailable.
 from __future__ import annotations
 
 import importlib.util
+import json
 import inspect
 import pathlib
 import sys
@@ -70,9 +71,10 @@ def test_the_gate_still_denies_on_a_real_absence():
     assert "Universal work authority is unavailable; stop denied." in source
 
 
-def _verdict_with(module, monkeypatch, *, held):
-    monkeypatch.setattr(module, "call_tool", lambda *_a, **_k: None)
+def _verdict_with(module, monkeypatch, *, held, young=True, answer=None):
+    monkeypatch.setattr(module, "call_tool", lambda *_a, **_k: answer)
     monkeypatch.setattr(module, "_port_held", lambda *_a, **_k: held)
+    monkeypatch.setattr(module, "_brain_is_young", lambda *_a, **_k: young)
     return module._completion_gate_verdict
 
 
@@ -103,3 +105,43 @@ def test_a_dead_port_still_denies(monkeypatch):
             kwargs[name] = None
     denied, reason = verdict(**kwargs)
     assert denied is True and "unavailable" in reason
+
+
+def _call(verdict):
+    sig = inspect.signature(verdict)
+    kwargs = {name: "s1" if name == "session_id" else "claude"
+              for name in sig.parameters if name in ("session_id", "runtime")}
+    for name in sig.parameters:
+        if name not in kwargs and sig.parameters[name].default is inspect._empty:
+            kwargs[name] = None
+    return verdict(**kwargs)
+
+
+def test_an_old_brain_that_holds_its_port_still_denies(monkeypatch):
+    """A brain that has run for an hour and stops answering is wedged, not
+    settling; a claim it holds is still a claim."""
+    module = _brainwrap()
+    denied, reason = _call(_verdict_with(module, monkeypatch, held=True, young=False))
+    assert denied is True and "unavailable" in reason
+
+
+def test_a_tool_error_is_not_an_authority_that_allows_the_stop(monkeypatch):
+    """An isError result parsed as its text read as a clean status with no
+    owned work, which allowed the stop (audit 2026-09-06)."""
+    module = _brainwrap()
+    LF = chr(10)
+    inner = json.dumps({"detail": "boom"})
+    frame = {"jsonrpc": "2.0", "id": 1, "result": {"isError": True, "content": [{"type": "text", "text": inner}]}}
+    raw = ("event: message" + LF + "data: " + json.dumps(frame) + LF + LF).encode("utf-8")
+    parsed = module._parse_sse(raw)
+    assert parsed.get("isError") is True and "agent_session" not in parsed
+    denied, reason = _call(_verdict_with(module, monkeypatch, held=False, young=False, answer=parsed))
+    assert denied is True
+
+
+def test_the_gate_fits_inside_the_stop_hook_timeout():
+    """Claude Code gives the stop hook 30 s (settings.json); two status
+    calls of 6 s + patient retry must stay under it."""
+    module = _brainwrap()
+    source = inspect.getsource(module.call_tool)
+    assert "min(max(budget * 2, 10.0), 12.0)" in source

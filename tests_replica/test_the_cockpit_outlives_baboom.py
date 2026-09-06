@@ -99,3 +99,21 @@ def test_a_stale_quit_marker_never_closes_a_fresh_build():
     clear = watcher.index("marker.unlink()")
     look = watcher.index("def _look()")
     assert clear < look, "the stale marker must be cleared BEFORE the watch starts"
+
+
+def test_a_show_marker_brings_the_window_up_on_the_qt_thread():
+    """An updater or a verification run can open ArchHub the way the tray
+    click does: a show-request file in the state directory, handled by the
+    same watcher as quit-request, on the Qt thread. Showing the window from
+    outside (ShowWindow on the HWND) leaves Qt believing the widget is hidden
+    and paints nothing (2026-09-06). A stale show marker is cleared before
+    the watch starts, like the quit marker."""
+    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    watcher = launcher[launcher.index("def _watch_quit_request()"):]
+    watcher = watcher[:watcher.index("    timer.start()")]
+    assert 'shower = state_dir / "show-request"' in watcher
+    look = watcher.index("def _look()")
+    assert watcher.index("shower.unlink()") < look, "stale show marker cleared first"
+    inside = watcher[look:]
+    assert "shower.is_file()" in inside and "_tray_open()" in inside
+    assert inside.index("_tray_open()") < inside.index("_tray_quit()"), "show is read before quit"

@@ -312,6 +312,11 @@ class BaboomNativeCompanionController:
         self._user_origin: tuple[int, int] | None = None
         self._animation_tick = 0
 
+    @property
+    def latest_snapshot(self):
+        """The host's newest snapshot, for the window that draws from it."""
+        return self._host.latest_snapshot
+
     def pin_sprite_origin(self, x: int, y: int) -> None:
         """The founder put BABOOM here; it stays here until he moves it again."""
         self._user_origin = (int(x), int(y))
@@ -872,7 +877,11 @@ def create_baboom_native_companion_window(
 
         def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             from PyQt6.QtWidgets import QMenu
-            snapshot = self._host.latest_snapshot
+            # The window has no host of its own: it is a closure over the
+            # controller, which holds the host. Reading self._host here raised
+            # AttributeError on every right-click and the launcher's excepthook
+            # turned that into "ArchHub could not open" (2026-09-06).
+            snapshot = controller.latest_snapshot
             context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
             menu = QMenu(self)
             brain = context.get("brain") or {}

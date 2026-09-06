@@ -269,3 +269,47 @@ def test_the_studio_signs_in_through_the_cloud_not_a_typed_email():
         assert name in page, name
     shell = (studio / "studio-lm.jsx").read_text(encoding="utf-8")
     assert "ARCHHUB_CLOUD_SIGNOUT" in shell and "ARCHHUB_CLOUD_SESSION" in shell
+
+
+def test_the_mailed_link_lands_with_the_clouds_fixed_marker(cloud, tmp_path):
+    """/auth/return forwards state "archhub" on the magic path (the mailed link
+    carries no state). The magic attempt accepts that marker; the Google
+    attempt does not, and a forged code still fails the PKCE exchange."""
+    record = tmp_path / "cloud.json"
+    base = f"http://127.0.0.1:{cloud.server_port}"
+    landed = {}
+
+    def browser(url):
+        query = parse_qs(urlparse(url).query)
+        landed["redirect"] = query["redirect"][0]
+
+    attempt = cloud_signin.SignIn("magic", base_url=base, path=record, opener=browser).start()
+    _wait(attempt, phases=("waiting",))
+    urllib.request.urlopen(landed["redirect"] + "?" + urlencode({"code": "mailed", "state": "archhub"}), timeout=5).read()
+    assert _wait(attempt)["phase"] == "done"
+
+    opened = []
+    google = cloud_signin.SignIn("google", base_url=base, path=tmp_path / "g.json", opener=lambda url: opened.append(url)).start()
+    _wait(google, phases=("waiting",))
+    # The fake cloud's auth_url IS the loopback with the right state; hit the
+    # same loopback with the marker instead and expect the refusal.
+    loopback = opened[0].split("?")[0]
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(loopback + "?" + urlencode({"code": "x", "state": "archhub"}), timeout=5)
+    assert refused.value.code == 400
+    google.cancel()
+
+
+def test_a_cloud_that_drops_the_exchange_fails_out_loud(cloud, tmp_path):
+    record = tmp_path / "cloud.json"
+    base = f"http://127.0.0.1:{cloud.server_port}"
+
+    def http(method, url, **options):
+        if url.endswith("/v1/auth/exchange"):
+            raise TimeoutError("timed out")
+        return cloud_signin.http_json(method, url, **options)
+
+    attempt = cloud_signin.SignIn("google", base_url=base, path=record, opener=_browser_that_follows, http=http).start()
+    state = _wait(attempt)
+    assert state["phase"] == "failed" and "did not answer the exchange" in state["error"]
+    assert not record.exists()

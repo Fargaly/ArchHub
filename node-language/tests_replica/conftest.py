@@ -123,3 +123,31 @@ _application_module.build_universal_application = _forking_build
 # Courts import the symbol directly at module load; conftest loads first,
 # so their `from ... import build_universal_application` binds the fork.
 build_universal_application = _forking_build
+
+
+# ---------------------------------------------------------------------------
+# No court may reach a live host. On 2026-09-06 the founder had Revit 2025
+# open with the ArchHub broker on :48884 while the library shape court ran
+# the Revit authoring cards with nothing stubbed: the C# went to his model
+# (it failed closed only because of a compile error and a nested
+# transaction). A court that can write into the founder's model is not a
+# court. Every test starts with the hosts unreachable; a test that needs a
+# host fakes it with its own monkeypatch, which wins over this one.
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def no_live_hosts(monkeypatch):
+    import nodelang.clean_revit_adapter as _revit
+    import nodelang.host_brokers as _hosts
+    import nodelang.library_engines as _library
+
+    def _refuse(*_args, **_kwargs):
+        raise AssertionError("a court tried to reach a live host")
+
+    monkeypatch.setattr(_revit, "live_sessions", lambda: [])
+    monkeypatch.setattr(_revit, "_call", _refuse)
+    monkeypatch.setattr(_hosts, "_com_alive", lambda _prog_id: False)
+    monkeypatch.setattr(_hosts, "_port_open", lambda *_a, **_k: False)
+    monkeypatch.setattr(_library, "_OUTLOOK", [lambda: None])
+    monkeypatch.setattr(_library, "_NOTIFY_SURFACE", [])

@@ -85,7 +85,7 @@ def test_notify_lands_on_the_registered_surface_or_says_there_is_none(monkeypatc
     shown = []
     L.set_notify_surface(lambda title, message: shown.append((title, message)))
     out, said = L.notify({"title": "ArchHub", "message": "sheet set published"}, {})
-    assert shown == [("ArchHub", "sheet set published")] and said.startswith("shown on the desktop")
+    assert shown == [("ArchHub", "sheet set published")] and said.startswith("sent to the desktop tray")
     out, said = L.notify({}, {})
     assert out["out"] == [] and "nothing to say" in said
 
@@ -181,7 +181,11 @@ def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_
     code = sent["body"]["code"]
     assert "PDFExportOptions" in code and "Doc.Export(folder, sheets, options)" in code
     assert 'new List<string>{"A101", "A102"}' in code
-    assert code.lstrip().startswith("var folder = " + __import__("json").dumps(str(tmp_path)))
+    head = code.lstrip()
+    folder = __import__("json").loads(head[len("var folder = "):head.index(";")])
+    base = __import__("os").path.join(__import__("os").path.expanduser("~"), "Documents", "ArchHub", "pdf")
+    assert folder.startswith(base) and __import__("os").path.basename(folder).startswith(__import__("os").path.basename(str(tmp_path)) + "-"), folder
+    assert sent["body"]["transaction_name"] == "ArchHub publish pdf"
     assert out["out"] == [str(tmp_path / "A101.pdf"), str(tmp_path / "A102.pdf")]
     assert said.startswith("2 PDF(s) in") and "P-664.rvt" in said
 
@@ -213,7 +217,9 @@ def test_tag_rooms_tags_the_untagged_rooms_of_the_active_view(monkeypatch):
     out, said = L.tag_rooms({}, {})
     code = sent["body"]["code"]
     assert "Doc.Create.NewRoomTag(" in code and "OST_Rooms" in code and "already.Contains(room.Id" in code
-    assert sent["body"]["transaction_name"] == "ArchHub tag rooms" and 'new Transaction(Doc, "ArchHub tag rooms")' in code
+    assert sent["body"]["transaction_name"] == "ArchHub tag rooms"
+    assert "new Transaction(" not in code, "the broker owns the transaction; a second Start throws"
+    assert "Autodesk.Revit.DB.Architecture.Room" in code, "Room lives outside the broker usings"
     assert out["tagged"] == 6 and said == "6 room(s) tagged, 2 skipped, in Level 1 of P-664.rvt"
 
 
@@ -224,6 +230,7 @@ def test_place_tags_tags_one_category_with_or_without_a_leader(monkeypatch):
     assert "IndependentTag.Create(Doc, view.Id, new Reference(e), leader" in code
     assert 'var catName = "Doors";' in code and "bool leader = false;" in code
     assert "GetTaggedLocalElementIds()" in code, "already tagged elements are skipped"
+    assert "new Transaction(" not in code and sent["body"]["transaction_name"] == "ArchHub place tags"
     assert out["tagged"] == 11 and said == "11 doors tagged, 0 skipped, in Level 1"
 
 
@@ -233,6 +240,7 @@ def test_place_on_sheet_places_named_views_and_makes_the_sheet_if_missing(monkey
     code = sent["body"]["code"]
     assert 'var number = "A101";' in code and 'new List<string>{"Level 1", "Level 2", "Roof"}' in code
     assert "ViewSheet.Create(Doc, tb)" in code and "Viewport.CanAddViewToSheet" in code and "Viewport.Create(" in code
+    assert "new Transaction(" not in code and sent["body"]["transaction_name"] == "ArchHub place on sheet"
     assert out["placed"] == ["Level 1", "Level 2"] and said == "2 view(s) on sheet A101, 1 skipped"
     out, said = L.place_on_sheet({}, {})
     assert out["out"] == [] and said == "no sheet number given"
@@ -299,3 +307,25 @@ def test_push_speckle_is_honest_about_no_rows_no_project_no_token_and_a_refusal(
                                opener=wire, environ={}, secrets_loader=lambda name: "spk-store")
     assert out["out"] == [] and said == "Speckle refused: branch not found"
     assert wire.sent[0].headers["Authorization"] == "Bearer spk-store", "the secrets store is asked by name"
+
+
+def test_revit_acts_refuse_two_sessions_rather_than_guess_the_model(monkeypatch):
+    from nodelang import clean_revit_adapter as adapter
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [
+        {"port": 48884, "revit_version": "2025", "document": "A.rvt"},
+        {"port": 48885, "revit_version": "2025", "document": "B.rvt"}])
+    called = []
+    monkeypatch.setattr(adapter, "_call", lambda *a, **k: called.append(a))
+    for engine, params in ((L.tag_rooms, {}), (L.publish_pdf, {"sheets": "A101"})):
+        out, said = engine(params, {})
+        assert out["out"] == [] and said.startswith("2 Revit sessions are open (ports 48884, 48885)")
+    assert called == []
+
+
+def test_publish_pdf_never_lets_a_graph_name_a_share(monkeypatch, tmp_path):
+    sent = _revit(monkeypatch, {"sheets": 1, "folder": "x", "files": []})
+    out, said = L.publish_pdf({"folder": "//evil/share/drop"}, {})
+    head = sent["body"]["code"].lstrip()
+    folder = __import__("json").loads(head[len("var folder = "):head.index(";")])
+    base = __import__("os").path.join(__import__("os").path.expanduser("~"), "Documents", "ArchHub", "pdf")
+    assert folder.startswith(base) and "evil" not in folder and __import__("os").path.basename(folder).startswith("drop-")

@@ -212,6 +212,7 @@ function CloudSignIn({ email, onSignedIn }) {
     timer.current = setInterval(async () => {
       try {
         const s = await window.ARCHHUB_CLOUD_SIGNIN_STATUS();
+        if (!s || s.ok === false) { stop(); setPhase('idle'); setErr((s && s.error) || 'the app refused the poll'); return; }
         if (s.phase === 'done') { stop(); setPhase('done'); onSignedIn && onSignedIn(s.email); }
         else if (s.phase === 'failed' || s.phase === 'idle') { stop(); setPhase('idle'); setErr(s.error || 'sign-in did not finish'); }
       } catch (e) { stop(); setPhase('idle'); setErr(String((e && e.message) || e)); }

@@ -9619,11 +9619,22 @@ def execute_universal_baboom_utterance(
             store, registry, title="BABOOM: " + engine, engine=engine,
             x=260.0, y=200.0, properties={}, authentication_context=authentication_context,
         )
-        outcome = run_universal_pipeline(store, registry, effect_engines=PIPELINE_ENGINES)
+        root = str(created.get("root") if isinstance(created, Mapping) else created)
+        # Only THIS node runs, under the founder's own binding, and the
+        # receipt is the engine's own display line ("6 room(s) tagged" or
+        # "no Revit session is listening"), never a count of canvas nodes.
+        outcome = run_universal_pipeline(
+            store, registry, effect_engines=PIPELINE_ENGINES,
+            authentication_context=authentication_context, only_roots=[root],
+        )
+        display = dict(outcome.get("display") or {})
+        pending = dict(outcome.get("pending") or {})
+        said = str(display.get(root) or pending.get(root) or "").strip()
         return {
             "kind": "engine-ran",
-            "summary": "%s ran on the graph (%d node(s) ran)." % (engine, int(outcome.get("ran") or 0)),
-            "data": {"engine": engine, "node": created if isinstance(created, (str, dict)) else str(created), "ran": outcome.get("ran")},
+            "summary": ("%s: %s" % (engine, said)) if said else ("%s ran on the graph and said nothing." % engine),
+            "data": {"engine": engine, "node": created if isinstance(created, (str, dict)) else str(created),
+                     "ran": outcome.get("ran"), "status": said},
             "command": command,
         }
     if command["intent"] not in {"assign-task", "assign-and-claim"}:

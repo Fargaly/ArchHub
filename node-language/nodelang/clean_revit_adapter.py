@@ -80,7 +80,10 @@ def live_sessions() -> list[dict]:
             info = {"status": "error"}
         document = info.get("document") if info.get("status") == "ok" else None
         if document is None and info.get("status") == "ok":
-            document = info.get("title") or info.get("doc") or info
+            # A title, or nothing. The whole /info dict used to stand in here
+            # and carried document_path and username into every status line
+            # and onto BABOOM's face (audit 2026-09-06).
+            document = info.get("title") or info.get("doc") or None
         found.append({
             "port": port,
             "pid": answer.get("pid"),

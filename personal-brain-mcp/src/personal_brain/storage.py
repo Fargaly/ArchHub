@@ -60,7 +60,6 @@ _SIBLINGS_KEY = "__siblings__"
 _RECONCILE_KEY = "__reconcile__"
 
 
-@dataclass
 class _Busy:
     """The store was busy. Distinct from None, which means 'no such value'."""
 
@@ -76,6 +75,7 @@ class _Busy:
 BUSY = _Busy()
 
 
+@dataclass
 class ReconcileOutcome:
     """Result of :meth:`BrainStore.write_fragment_versioned`."""
 

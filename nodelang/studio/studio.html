@@ -92,6 +92,20 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       jpost('/api/universal/reveal', {what});
     window.ARCHHUB_LOGIN = email =>
       jpost('/api/universal/login', {email});
+    // Cloud sign-in: the app opens the browser on the cloud's own sign-in and
+    // holds a loopback for the one-time code; the studio only polls.
+    window.ARCHHUB_CLOUD_SESSION = async () => {
+      const r = await fetch('/api/universal/cloud-session', {headers: H()});
+      return r.json();
+    };
+    window.ARCHHUB_CLOUD_SIGNIN = method =>
+      jpost('/api/universal/cloud-signin', {method});
+    window.ARCHHUB_CLOUD_SIGNIN_STATUS = async () => {
+      const r = await fetch('/api/universal/cloud-signin', {headers: H()});
+      return r.json();
+    };
+    window.ARCHHUB_CLOUD_SIGNOUT = () =>
+      jpost('/api/universal/cloud-signout', {});
     window.ARCHHUB_ACCOUNTS = async () =>
       (await jpost('/api/universal/accounts', {})).accounts || [];
     window.ARCHHUB_SET_TIER = (email, tier) =>

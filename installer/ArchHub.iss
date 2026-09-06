@@ -1,7 +1,8 @@
 ; ArchHub installer -- one double-click for a colleague.
 ;
-; It carries the application, refuses plainly on a machine with no usable
-; Python, and leaves a Start-menu and Desktop entry. It does NOT install the
+; It carries the application, fetches Python 3.14.7 from python.org (pinned
+; SHA-256, per-user, no PATH change) when the machine has no usable Python,
+; and leaves a Start-menu and Desktop entry. It does NOT install the
 ; Python packages: the FIRST open of either shortcut runs ArchHub.bat, which
 ; runs colleague_setup.py against requirements.txt in a window the person can
 ; read, and only then opens the application. Saying the installer installed
@@ -155,18 +156,83 @@ begin
     SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False);
 end;
 
+{ A colleague without Python is not sent away: the setup fetches the
+  python.org installer (pinned by SHA-256, over HTTPS) and runs it quietly
+  for this user only, no PATH change, no py launcher; FindPython then finds
+  it in the per-user Programs\Python folder. Same Python the founder runs. }
+const
+  PythonUrl = 'https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe';
+  PythonFile = 'python-3.14.7-amd64.exe';
+  PythonSha256 = '9d9eb2709ef81bf5cd30db3c2096bdbc4ea10087c22e62f27d356b36f6ae9649';
+  PythonArgs = '/quiet InstallAllUsers=0 PrependPath=0 Include_launcher=0 Include_test=0 Shortcuts=0';
+
+var
+  PythonPage: TDownloadWizardPage;
+  PythonWanted: Boolean;
+
+function OnPythonProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+begin
+  Result := True;
+end;
+
+procedure InitializeWizard();
+begin
+  PythonPage := CreateDownloadPage('Python',
+    'ArchHub needs Python and this machine has none: fetching 3.14.7 from python.org.',
+    @OnPythonProgress);
+end;
+
+function InstallPython(): Boolean;
+var
+  Code: Integer;
+begin
+  Result := False;
+  PythonPage.Clear;
+  PythonPage.Add(PythonUrl, PythonFile, PythonSha256);
+  PythonPage.Show;
+  try
+    try
+      PythonPage.Download;
+    except
+      SuppressibleMsgBox('Python could not be fetched from python.org: ' + GetExceptionMessage + #13#10 +
+        'Install Python 3.11 or newer from python.org, then run this setup again.',
+        mbCriticalError, MB_OK, IDOK);
+      exit;
+    end;
+  finally
+    PythonPage.Hide;
+  end;
+  if not Exec(ExpandConstant('{tmp}\' + PythonFile), PythonArgs, '', SW_SHOW, ewWaitUntilTerminated, Code) then
+  begin
+    SuppressibleMsgBox('The Python installer would not start.', mbCriticalError, MB_OK, IDOK);
+    exit;
+  end;
+  if (Code <> 0) and (Code <> 3010) then
+  begin
+    SuppressibleMsgBox('The Python installer ended with code ' + IntToStr(Code) + '.', mbCriticalError, MB_OK, IDOK);
+    exit;
+  end;
+  Result := PythonPresent();
+  if not Result then
+    SuppressibleMsgBox('Python was installed but could not be found afterwards. Install Python 3.11 or newer from python.org, then run this setup again.',
+      mbCriticalError, MB_OK, IDOK);
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpReady) and PythonWanted then
+    Result := InstallPython();
+end;
+
 function InitializeSetup(): Boolean;
 begin
-  { A colleague without Python is told plainly, never handed a broken app.
+  { No usable Python: the wizard fetches one before it copies ArchHub.
     A silent install proceeds and the launcher reports it on first run. }
   Result := True;
-  if PythonPresent() then
-    exit;
-  if not WizardSilent() then
-  begin
-    MsgBox('ArchHub needs Python 3.11 or newer.' + #13#10 +
-           'Install it from python.org (tick "Add python.exe to PATH"), then run this again.',
+  PythonWanted := not PythonPresent();
+  if PythonWanted and (not WizardSilent()) then
+    MsgBox('This machine has no Python 3.11 or newer.' + #13#10 +
+           'Setup will fetch Python 3.14.7 from python.org (about 33 MB) and install it for you only, before it installs ArchHub.',
            mbInformation, MB_OK);
-    Result := False;
-  end;
 end;

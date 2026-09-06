@@ -125,7 +125,177 @@ def test_the_launcher_registers_its_tray_as_the_notify_surface():
     assert "_notifier.asked.emit(" in block, "a queued signal, not a cross-thread widget call"
 
 
-def test_the_six_that_remain_say_why():
-    assert set(L.LIBRARY_ITEMS_WITHOUT_ENGINE) == {"a_tags", "a_rooms", "c_sheet", "i_vis", "o_pdf", "o_spk"}
+def test_every_card_now_runs():
+    assert L.LIBRARY_ITEMS_WITHOUT_ENGINE == {}
     for item, reason in L.LIBRARY_ITEMS_WITHOUT_ENGINE.items():
         assert reason, item
+
+
+def test_vision_sends_the_image_as_a_data_url_with_the_picked_model(monkeypatch):
+    seen = {}
+
+    def route_chat(route, messages, **options):
+        seen["route"] = route
+        seen["parts"] = messages[0]["content"]
+        return {"text": "a plan: 4 rooms, walls 200 mm"}
+
+    monkeypatch.setattr(model_router, "route_chat", route_chat)
+    monkeypatch.delenv("ARCHHUB_AGENT_MODEL", raising=False)
+    sample = ROOT / "nodelang" / "samples" / "sample-plan.png"
+    assert sample.is_file()
+    out, said = L.vision({"model": "openrouter/x/vision", "prompt": "rooms?"}, {"in": str(sample)})
+    assert out["out"].startswith("a plan") and out["image_path"] == str(sample)
+    assert seen["route"] == "openrouter/x/vision" and "sample-plan.png" in said
+    text, image = seen["parts"]
+    assert text == {"type": "text", "text": "rooms?"}
+    assert image["type"] == "image_url" and image["image_url"]["url"].startswith("data:image/png;base64,")
+    out, said = L.vision({"prompt": "rooms?"}, {"in": str(sample)})
+    assert out["out"] == [] and said == NO_MODEL_CHOSEN
+
+
+def test_vision_is_honest_about_a_missing_or_unreadable_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_router, "route_chat", lambda *a, **k: {"text": "never"})
+    out, said = L.vision({"model": "openrouter/x/vision", "image_path": str(tmp_path / "nope.png")}, {})
+    assert out["out"] == [] and "does not exist" in said
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    out, said = L.vision({"model": "openrouter/x/vision", "image_path": str(tmp_path / "notes.txt")}, {})
+    assert out["out"] == [] and "not an image" in said
+    out, said = L.vision({"model": "openrouter/x/vision"}, {})
+    assert out["out"] == [] and "no image_path" in said
+
+
+def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_path):
+    from nodelang import clean_revit_adapter as adapter
+    sent = {}
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [
+        {"port": 48885, "revit_version": "2025", "document": "P-664.rvt"}])
+
+    def call(port, route, body=None, timeout=None):
+        sent["port"], sent["route"], sent["body"] = port, route, dict(body or {})
+        return {"status": "ok", "result": {"sheets": 2, "folder": str(tmp_path),
+                                           "files": [str(tmp_path / "A101.pdf"), str(tmp_path / "A102.pdf")]}}
+
+    monkeypatch.setattr(adapter, "_call", call)
+    out, said = L.publish_pdf({"sheets": "A101, A102", "folder": str(tmp_path)}, {})
+    assert sent["port"] == 48885 and sent["route"] == "/exec"
+    code = sent["body"]["code"]
+    assert "PDFExportOptions" in code and "Doc.Export(folder, sheets, options)" in code
+    assert 'new List<string>{"A101", "A102"}' in code
+    assert code.lstrip().startswith("var folder = " + __import__("json").dumps(str(tmp_path)))
+    assert out["out"] == [str(tmp_path / "A101.pdf"), str(tmp_path / "A102.pdf")]
+    assert said.startswith("2 PDF(s) in") and "P-664.rvt" in said
+
+    monkeypatch.setattr(adapter, "_call", lambda *a, **k: {"status": "error", "error": "no sheet to publish"})
+    out, said = L.publish_pdf({}, {})
+    assert out["out"] == [] and said == "Revit refused: no sheet to publish"
+
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [])
+    out, said = L.publish_pdf({}, {})
+    assert out["out"] == [] and said == "no Revit session is listening"
+
+
+def _revit(monkeypatch, result):
+    from nodelang import clean_revit_adapter as adapter
+    sent = {}
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [
+        {"port": 48885, "revit_version": "2025", "document": "P-664.rvt"}])
+
+    def call(port, route, body=None, timeout=None):
+        sent["port"], sent["route"], sent["body"] = port, route, dict(body or {})
+        return {"status": "ok", "result": result}
+
+    monkeypatch.setattr(adapter, "_call", call)
+    return sent
+
+
+def test_tag_rooms_tags_the_untagged_rooms_of_the_active_view(monkeypatch):
+    sent = _revit(monkeypatch, {"tagged": 6, "skipped": 2, "view": "Level 1"})
+    out, said = L.tag_rooms({}, {})
+    code = sent["body"]["code"]
+    assert "Doc.Create.NewRoomTag(" in code and "OST_Rooms" in code and "already.Contains(room.Id" in code
+    assert sent["body"]["transaction_name"] == "ArchHub tag rooms" and 'new Transaction(Doc, "ArchHub tag rooms")' in code
+    assert out["tagged"] == 6 and said == "6 room(s) tagged, 2 skipped, in Level 1 of P-664.rvt"
+
+
+def test_place_tags_tags_one_category_with_or_without_a_leader(monkeypatch):
+    sent = _revit(monkeypatch, {"tagged": 11, "skipped": 0, "category": "Doors", "view": "Level 1"})
+    out, said = L.place_tags({"category": "Doors", "leader": "false"}, {})
+    code = sent["body"]["code"]
+    assert "IndependentTag.Create(Doc, view.Id, new Reference(e), leader" in code
+    assert 'var catName = "Doors";' in code and "bool leader = false;" in code
+    assert "GetTaggedLocalElementIds()" in code, "already tagged elements are skipped"
+    assert out["tagged"] == 11 and said == "11 doors tagged, 0 skipped, in Level 1"
+
+
+def test_place_on_sheet_places_named_views_and_makes_the_sheet_if_missing(monkeypatch):
+    sent = _revit(monkeypatch, {"sheet": "A101", "placed": ["Level 1", "Level 2"], "skipped": ["Roof"]})
+    out, said = L.place_on_sheet({"sheet": "A101"}, {"in": [{"name": "Level 1"}, {"name": "Level 2"}, {"name": "Roof"}]})
+    code = sent["body"]["code"]
+    assert 'var number = "A101";' in code and 'new List<string>{"Level 1", "Level 2", "Roof"}' in code
+    assert "ViewSheet.Create(Doc, tb)" in code and "Viewport.CanAddViewToSheet" in code and "Viewport.Create(" in code
+    assert out["placed"] == ["Level 1", "Level 2"] and said == "2 view(s) on sheet A101, 1 skipped"
+    out, said = L.place_on_sheet({}, {})
+    assert out["out"] == [] and said == "no sheet number given"
+
+
+def test_revit_authoring_is_honest_without_a_session(monkeypatch):
+    from nodelang import clean_revit_adapter as adapter
+    monkeypatch.setattr(adapter, "live_sessions", lambda: [])
+    for engine, params in ((L.tag_rooms, {}), (L.place_tags, {"category": "Doors"}),
+                           (L.place_on_sheet, {"sheet": "A101", "views": "Level 1"})):
+        out, said = engine(params, {})
+        assert out["out"] == [] and said == "no Revit session is listening"
+
+
+class _SpeckleWire:
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.sent = []
+
+    def __call__(self, request, timeout=None):
+        self.sent.append(request)
+        payload = self.answers.pop(0)
+        wire = self
+
+        class _Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *unused):
+                return False
+            def read(self):
+                return __import__("json").dumps(payload).encode("utf-8")
+        return _Response()
+
+
+def test_push_speckle_uploads_one_object_and_commits_it_to_the_branch():
+    wire = _SpeckleWire([{}, {"data": {"commitCreate": "c0ffee42"}}])
+    rows = [{"id": 1, "type": "Basic Wall", "length_mm": 4200}]
+    out, said = L.push_speckle({"project": "abc123", "branch": "archhub/main", "message": "walls"}, {"in": rows},
+                               opener=wire, environ={"SPECKLE_TOKEN": "spk-live"})
+    upload, commit = wire.sent
+    assert upload.full_url == "https://app.speckle.systems/objects/abc123"
+    assert upload.headers["Authorization"] == "Bearer spk-live"
+    sent = __import__("json").loads(upload.data.decode("utf-8"))
+    assert len(sent) == 1 and sent[0]["rows"] == rows and sent[0]["count"] == 1
+    assert sent[0]["id"] == L._speckle_object_id(sent[0]), "the id is the sha of the object"
+    body = __import__("json").loads(commit.data.decode("utf-8"))
+    assert commit.full_url == "https://app.speckle.systems/graphql" and "commitCreate" in body["query"]
+    assert body["variables"]["commit"] == {"streamId": "abc123", "branchName": "archhub/main",
+                                           "objectId": sent[0]["id"], "message": "walls",
+                                           "sourceApplication": "ArchHub"}
+    assert out["out"]["commit_id"] == "c0ffee42" and out["out"]["rows"] == 1
+    assert said == "commit c0ffee42 on archhub/main (1 rows) at https://app.speckle.systems"
+
+
+def test_push_speckle_is_honest_about_no_rows_no_project_no_token_and_a_refusal():
+    out, said = L.push_speckle({"project": "abc123"}, {}, environ={"SPECKLE_TOKEN": "x"})
+    assert out["out"] == [] and said == "nothing is wired in"
+    out, said = L.push_speckle({}, {"in": [{"a": 1}]}, environ={"SPECKLE_TOKEN": "x"})
+    assert out["out"] == [] and said == "no Speckle project id given"
+    out, said = L.push_speckle({"project": "abc123"}, {"in": [{"a": 1}]}, environ={}, secrets_loader=lambda name: "")
+    assert out["out"] == [] and said.startswith("no Speckle token")
+    wire = _SpeckleWire([{}, {"errors": [{"message": "branch not found"}]}])
+    out, said = L.push_speckle({"project": "abc123", "branch": "nope"}, {"in": [{"a": 1}]},
+                               opener=wire, environ={}, secrets_loader=lambda name: "spk-store")
+    assert out["out"] == [] and said == "Speckle refused: branch not found"
+    assert wire.sent[0].headers["Authorization"] == "Bearer spk-store", "the secrets store is asked by name"

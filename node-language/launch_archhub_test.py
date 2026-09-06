@@ -856,6 +856,11 @@ def _watch_quit_request() -> None:
     from PyQt6.QtCore import QTimer as _QT
 
     marker = state_dir / "quit-request"
+    # The same file-shaped ask brings the window up: an updater, a colleague
+    # script or a verification run can open ArchHub the way the tray click
+    # does, on the Qt thread, without touching the window from outside
+    # (an external ShowWindow leaves Qt believing the widget is hidden).
+    shower = state_dir / "show-request"
     # A marker written before THIS process started was meant for the copy that
     # is already gone. Leaving it made a freshly installed build read it and
     # quit itself the moment it finished booting (2026-09-06 13:19). Clear it
@@ -865,8 +870,20 @@ def _watch_quit_request() -> None:
             marker.unlink()
     except Exception:
         pass
+    try:
+        if shower.is_file():
+            shower.unlink()
+    except Exception:
+        pass
 
     def _look():
+        if shower.is_file():
+            try:
+                shower.unlink()
+            except Exception:
+                pass
+            print("  show       : asked from outside; bringing the window up", flush=True)
+            _tray_open()
         if marker.is_file():
             try:
                 marker.unlink()

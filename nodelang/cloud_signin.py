@@ -304,18 +304,29 @@ def begin(method: str, **options) -> dict:
     return attempt.status()
 
 
-def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict]] = http_json) -> dict:
-    """Forget the session on this machine; tell the cloud best-effort."""
+def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict]] = http_json,
+             wait: bool = False) -> dict:
+    """Forget the session on this machine now; tell the cloud on its own thread.
+
+    The app serves this under its one mutation lock; a 5 s cloud call held
+    every canvas request behind it (audit 2026-09-06). The file is cleared
+    before this returns; the cloud is told best-effort, off the caller's
+    thread unless `wait` asks for it (courts do)."""
     record = path or cloud_session_path()
     held = read_cloud_session(record)
     token = str(held.get("token") or "")
     base = str(held.get("cloud_base_url") or DEFAULT_BASE).rstrip("/")
     if token:
-        try:
-            http("POST", f"{base}/v1/auth/logout", body={},
-                 headers={"Authorization": f"Bearer {token}"}, timeout=5.0)
-        except Exception:
-            pass
+        def _tell_cloud() -> None:
+            try:
+                http("POST", f"{base}/v1/auth/logout", body={},
+                     headers={"Authorization": f"Bearer {token}"}, timeout=5.0)
+            except Exception:
+                pass
+        if wait:
+            _tell_cloud()
+        else:
+            threading.Thread(target=_tell_cloud, name="archhub-cloud-signout", daemon=True).start()
     if held:
         write_cloud_session(record, {"token": None, "expires_at": None,
                                      "email": None, "user_id": None})

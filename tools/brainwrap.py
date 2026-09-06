@@ -123,6 +123,10 @@ def _parse_sse(raw: bytes) -> dict:
             except Exception:
                 continue
             res = obj.get("result") or {}
+            if res.get("isError"):
+                # A tool error parsed as its text used to read as a clean
+                # status dict with no owned work, which allowed the stop.
+                return {"error": "tool error", "isError": True}
             sc = res.get("structuredContent")
             if isinstance(sc, dict):
                 return sc
@@ -152,7 +156,7 @@ def call_tool(name: str, arguments: dict[str, Any],
     # authority is unavailable" and refuse the founder's session (2026-09-06).
     # Two tries, the second patient, before anything is called unavailable.
     budget = timeout or _TIMEOUT
-    for attempt, wait in enumerate((budget, max(budget * 3, 20.0))):
+    for attempt, wait in enumerate((budget, min(max(budget * 2, 10.0), 12.0))):
         try:
             with urllib.request.urlopen(req, timeout=wait) as r:
                 return _parse_sse(r.read())
@@ -592,6 +596,37 @@ def _port_held(port: int, *, timeout: float = 1.0) -> bool:
         return False
 
 
+def _brain_is_young(port: int, *, seconds: float = 600.0) -> bool:
+    """True when the process listening on the port started less than `seconds` ago.
+
+    Fails closed: any doubt (no listener found, no start time) reads as not young."""
+    try:
+        listing = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, timeout=4,
+        ).stdout
+    except Exception:
+        return False
+    pid = ""
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[1].endswith(":%d" % port) and parts[3].upper() == "LISTENING":
+            pid = parts[4]
+            break
+    if not pid.isdigit():
+        return False
+    try:
+        started = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-Process -Id %s).StartTime.ToUniversalTime().ToString('o')" % pid],
+            capture_output=True, text=True, timeout=6,
+        ).stdout.strip()
+        born = datetime.fromisoformat(started.replace("Z", "+00:00"))
+    except Exception:
+        return False
+    age = (datetime.now(timezone.utc) - born).total_seconds()
+    return 0 <= age < seconds
+
+
 def _completion_gate_verdict(
     cwd: Optional[str] = None,
     *,
@@ -609,11 +644,13 @@ def _completion_gate_verdict(
             "session_id": session_id,
             "vendor": runtime,
         })
-        if not isinstance(state, dict):
+        if isinstance(state, dict) and not state.get("agent_session") and not state.get("isError"):
             # The founder's app restarting orphans every enrolled Agent
             # Session. That is the runtime's lifecycle, not the agent's
             # fault: re-enroll against the new runtime once and retry,
             # instead of denying the stop and demanding a human ritual.
+            # Only an ANSWERING brain gets this ritual: a silent one would
+            # not answer the re-enrolment either, and the hook has 30 s.
             call_tool("brain.hook_session_start", {
                 "session_id": session_id,
                 "vendor": runtime,
@@ -623,13 +660,13 @@ def _completion_gate_verdict(
                 "session_id": session_id,
                 "vendor": runtime,
             })
-        if not isinstance(state, dict):
+        if not isinstance(state, dict) or not state.get("agent_session"):
             # A brain that holds its port but cannot answer yet is booting
             # (its startup sync runs for minutes after the founder's app
-            # relaunches). That restart already orphaned every enrolment,
-            # so there is no claim left here to protect: a settling brain
-            # is not a missing authority (2026-09-06).
-            if _port_held(DAEMON_PORT):
+            # relaunches). Only a YOUNG brain earns that reading: an old
+            # brain that stops answering is wedged, and a claim it holds
+            # is still a claim (audit 2026-09-06).
+            if _port_held(DAEMON_PORT) and _brain_is_young(DAEMON_PORT):
                 return False, ""
             return True, "Universal work authority is unavailable; stop denied."
         session_root = state.get("agent_session")

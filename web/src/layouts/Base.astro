@@ -76,7 +76,7 @@ const isActive = (href) => href === '/' ? path === '/' : path.startsWith(href);
       :root {
         /* Canonical values mirror tokens.jsx (window.AH) — the source of truth. */
         --bg: #0e0e11; --bg-panel: #15151a; --bg-soft: #1c1c23; --bg-deep: #0a0a0d; --bg-ink: #18181e;
-        --ink: #ece8e0; --ink-soft: #9b938a; --ink-muted: #5e574f; --ink-dim: #3a3530;
+        --ink: #ece8e0; --ink-soft: #9b938a; --ink-muted: #8b837a; --ink-dim: #8a837c; /* muted/dim carry TEXT (labels, captions, footer): #5e574f and #3a3530 measured 2.7:1 and 1.6:1 on --bg and failed AA at every size used; the handoff's tokens.jsx replaced them. */
         --line: #26262e; --line-soft: #1e1e24; --line-hair: #1a1a20;
         --accent: #d97757; --accent-soft: #3a2018; --accent-hi: #e8896a;
         --ok: #7ec18e; --warn: #e5b25a; --err: #e6705f; --cyan: #5fb3b3; --purple: #a98cd6; --blue: #7898d6;

@@ -358,14 +358,24 @@ def _brain_answers(port=8473, timeout=1.5, strict=False) -> bool:
     import urllib.error as _err
     import urllib.request as _req
 
-    ask = _json.dumps({
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-06-18",
-            "capabilities": {},
-            "clientInfo": {"name": "archhub-launcher", "version": "1"},
-        },
-    }).encode("utf-8")
+    if strict:
+        # Ask for WORK. Measured on the founder's daemon at 04:20 on
+        # 2026-09-06: initialize answered in 0.0 s while every tools/call hung,
+        # so a handshake-only probe reported a brain that could do nothing as
+        # healthy. brain.health is the cheapest real tool (about 1.8 s well).
+        ask = _json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "brain.health", "arguments": {}},
+        }).encode("utf-8")
+    else:
+        ask = _json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "archhub-launcher", "version": "1"},
+            },
+        }).encode("utf-8")
     request = _req.Request(
         "http://127.0.0.1:%d/mcp" % port, data=ask,
         headers={"Content-Type": "application/json",
@@ -395,11 +405,15 @@ def _brain_answers(port=8473, timeout=1.5, strict=False) -> bool:
             # answers the boot question ("is a brain there") and cannot answer
             # this one ("is it still working").
             return False
+
         if isinstance(unanswered, (TimeoutError, OSError)) and _port_held(port):
             return True
         return False
     if "jsonrpc" not in body:
         return False
+    if strict:
+        # A tool answer, or a refusal that only a working dispatcher can make.
+        return '"result"' in body or '"error"' in body
     return any(mark in body for mark in
                ("protocolVersion", "serverInfo", "capabilities", '"error"'))
 
@@ -517,7 +531,7 @@ def _watch_brain() -> None:
             if outcome.startswith("answering"):
                 # _brain_answers treats a held port as alive, so reaching here
                 # does not yet mean the daemon spoke. Ask it directly.
-                if _brain_answers(timeout=4.0, strict=True):
+                if _brain_answers(timeout=12.0, strict=True):
                     silent = 0
                     continue
                 silent += 1

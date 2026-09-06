@@ -391,14 +391,14 @@ def test_a_busy_brain_is_never_mistaken_for_an_absent_one():
 
 
 def test_a_wedged_brain_is_replaced_rather_than_waited_on_forever():
-    """Busy is alive; wedged is not, and the difference is time.
+    """Busy is alive; wedged is not, and the difference is time and work.
 
     Treating a held port as proof the brain is there fixed the watchdog
-    starting rivals, and created the opposite failure: a daemon that held
-    :8473 and answered nothing left the founder with a dead brain for the
-    whole session (2026-09-06, one listener silent through twelve checks).
-    The boot question is "is a brain there"; the watchdog's question is "is it
-    still working", and only a strict probe can answer that one.
+    starting rivals, and created the opposite failure: a daemon holding :8473
+    and answering nothing left the founder with a dead brain for a whole
+    session. Then the strict probe asked for a GREETING, and on his machine
+    initialize answered in 0.0 s while every tools/call hung, so a brain that
+    could do nothing still passed. The watchdog asks for work now.
     """
     import ast as _ast
     import socket
@@ -412,6 +412,8 @@ def test_a_wedged_brain_is_replaced_rather_than_waited_on_forever():
 
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
+    # A real daemon keeps accepting while it works. A backlog of one would make
+    # the probe's own abandoned connection look like a closed port.
     listener.listen(16)
     port = listener.getsockname()[1]
     try:
@@ -422,16 +424,26 @@ def test_a_wedged_brain_is_replaced_rather_than_waited_on_forever():
     finally:
         listener.close()
 
-    watch = ast.get_source_segment(source, next(
+    assert namespace["_port_held"](port) is False
+    assert namespace["_brain_answers"](port=port, timeout=0.4) is False, (
+        "nothing holds the port: start our own brain")
+
+    probe = _ast.get_source_segment(source, next(
         n for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "_watch_brain"))
-    assert "strict=True" in watch, "the watchdog must ask strictly"
-    assert "_replace_a_wedged_brain" in watch
+        if isinstance(n, _ast.FunctionDef) and n.name == "_brain_answers"))
+    assert '"method": "tools/call"' in probe and "brain.health" in probe, (
+        "the strict probe must ask for work, not a greeting")
+    assert "if strict:" in probe.split('"method": "tools/call"')[0]
+
+    watch = _ast.get_source_segment(source, next(
+        n for n in tree.body
+        if isinstance(n, _ast.FunctionDef) and n.name == "_watch_brain"))
+    assert "strict=True" in watch and "_replace_a_wedged_brain" in watch
     assert "_WEDGED_CHECKS_BEFORE_REPLACING" in watch
     assert "_WEDGED_CHECKS_BEFORE_REPLACING = 6" in source  # two minutes at 20s
 
-    replace = ast.get_source_segment(source, next(
+    replace = _ast.get_source_segment(source, next(
         n for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "_replace_a_wedged_brain"))
+        if isinstance(n, _ast.FunctionDef) and n.name == "_replace_a_wedged_brain"))
     assert "LISTENING" in replace, "only what really serves the port is stopped"
     assert "taskkill" in replace and "CREATE_NO_WINDOW" in replace

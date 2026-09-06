@@ -70,6 +70,45 @@ state_dir = Path(
 state_dir.mkdir(parents=True, exist_ok=True)
 state_path = state_dir / "archhub-test.universal.sqlite3"
 
+def _force_foreground(handle) -> bool:
+    """Make Windows actually bring our window forward.
+
+    Qt's showNormal/raise_/activateWindow are the whole story on other
+    desktops. On Windows a process that does not own the foreground cannot
+    take it: SetForegroundWindow is refused and the taskbar button flashes
+    instead. The founder clicked the tray icon and nothing happened
+    (2026-09-06). The documented way round it is to attach our input queue to
+    the foreground window's thread for the moment of the call, which is what
+    every app that restores from a tray does.
+    """
+    try:
+        import ctypes as _ct
+
+        user32 = _ct.windll.user32
+        kernel32 = _ct.windll.kernel32
+        handle = int(handle)
+        if not handle:
+            return False
+        SW_RESTORE = 9
+        if user32.IsIconic(handle):
+            user32.ShowWindow(handle, SW_RESTORE)
+        user32.ShowWindow(handle, SW_RESTORE)
+        ours = kernel32.GetCurrentThreadId()
+        front = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+        attached = bool(front and front != ours
+                        and user32.AttachThreadInput(front, ours, True))
+        try:
+            user32.BringWindowToTop(handle)
+            user32.SetForegroundWindow(handle)
+            user32.SetActiveWindow(handle)
+        finally:
+            if attached:
+                user32.AttachThreadInput(front, ours, False)
+        return bool(user32.IsWindowVisible(handle))
+    except Exception:
+        return False
+
+
 def _front_running_archhub():
     """Bring an ArchHub window already on this desktop to the front.
 
@@ -90,8 +129,9 @@ def _front_running_archhub():
             klass = _ct.create_unicode_buffer(256)
             _u.GetClassNameW(handle, klass, 256)
             if title.value == "ArchHub" and "QWindowIcon" in klass.value:
-                _u.ShowWindow(handle, 9)
-                _u.SetForegroundWindow(handle)
+                # Same Windows foreground rule as the tray click: without the
+                # input-queue attach the call is refused and the button blinks.
+                _force_foreground(handle)
                 _shown.append(handle)
             return True
 
@@ -473,7 +513,14 @@ except Exception as _brain_refusal:
     print("  brain      : not started -- %s" % _brain_refusal, flush=True)
 
 
-_WEDGED_CHECKS_BEFORE_REPLACING = 6   # six checks at 20 s: two full minutes
+# Two minutes was far too eager. A brain that has just started spends its
+# first minutes pushing the whole store to the cloud, and the write lock it
+# holds makes a health probe time out -- so the watchdog killed it, the new one
+# started the same sync, and it killed that one too: 46 restarts in an hour on
+# the founder's machine (launcher.log, 2026-09-06). Ten minutes of continuous
+# silence is a wedge; anything shorter is work.
+_WEDGED_CHECKS_BEFORE_REPLACING = 30  # thirty checks at 20 s: ten minutes
+_BRAIN_SETTLING_SECONDS = 600.0       # never replace one younger than this
 
 
 def _replace_a_wedged_brain(port=8473) -> str:
@@ -521,7 +568,10 @@ def _watch_brain() -> None:
     import time as _time
 
     def loop() -> None:
+        import time as _clock
+
         silent = 0
+        started_watching = _clock.monotonic()
         while True:
             _time.sleep(20)
             try:
@@ -535,8 +585,10 @@ def _watch_brain() -> None:
                     silent = 0
                     continue
                 silent += 1
-                if silent >= _WEDGED_CHECKS_BEFORE_REPLACING:
+                young = (_clock.monotonic() - started_watching) < _BRAIN_SETTLING_SECONDS
+                if silent >= _WEDGED_CHECKS_BEFORE_REPLACING and not young:
                     silent = 0
+                    started_watching = _clock.monotonic()
                     print("  brain      : %s (watchdog)" % _replace_a_wedged_brain(),
                           flush=True)
                 continue
@@ -773,6 +825,8 @@ from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
 def _tray_open():
     window.showNormal(); window.raise_(); window.activateWindow()
+    # Qt alone leaves the window behind everything else on Windows.
+    _force_foreground(window.winId())
 
 def _tray_check_updates():
     import threading as _t

@@ -74,3 +74,15 @@ def test_restart_to_update_reads_the_response_not_the_envelope():
     # the old check read result["kind"], which is never present: respond returns
     # {"command": ..., "response": ...} -- the restart branch could not fire.
     assert 'if result.get("kind") == "update-ready"' not in server
+
+
+def test_the_right_click_menu_reads_the_controller_not_a_host_the_window_lacks():
+    """Every right-click raised AttributeError and the launcher's excepthook
+    turned it into an 'ArchHub could not open' dialog (2026-09-06). The window
+    is a closure over the controller; only the controller holds the host."""
+    source = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    window = source[source.index("class CompanionWindow"):]
+    code = "\n".join(line for line in window.split("\n") if not line.strip().startswith("#"))
+    assert "self._host" not in code, "the window has no _host"
+    assert "controller.latest_snapshot" in code
+    assert "def latest_snapshot(self)" in source

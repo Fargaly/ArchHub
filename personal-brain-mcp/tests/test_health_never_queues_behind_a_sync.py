@@ -100,3 +100,48 @@ def test_a_busy_store_never_reports_a_token_as_rejected():
         personal_cloud_sync.PersonalCloudSync)
     holder.store = _AlwaysBusy()
     assert holder._is_auth_invalid_for("any-token") is False
+
+
+def test_every_read_on_the_status_path_is_non_blocking():
+    """The first fix covered one of two. A thread dump found the other.
+
+    After _is_auth_invalid_for stopped waiting, brain.health still blocked in
+    get_meta through _load_cursor, called from the same status() body. Both
+    reads on that path must peek.
+    """
+    import inspect
+
+    from personal_brain import personal_cloud_sync
+
+    status = inspect.getsource(personal_cloud_sync.PersonalCloudSync.status)
+    assert "_load_cursor()" not in status, "status must not take the blocking read"
+    assert "_peek_cursor()" in status
+
+    peek = inspect.getsource(personal_cloud_sync.PersonalCloudSync._peek_cursor)
+    assert "peek_meta" in peek and "BUSY" in peek
+
+
+def test_a_busy_store_still_reports_a_cursor():
+    from personal_brain import personal_cloud_sync
+
+    class _AlwaysBusy:
+        def peek_meta(self, _key, **_kw):
+            return storage.BUSY
+        def get_meta(self, _key):
+            raise AssertionError("the status path must not take the blocking read")
+
+    holder = personal_cloud_sync.PersonalCloudSync.__new__(
+        personal_cloud_sync.PersonalCloudSync)
+    holder.store = _AlwaysBusy()
+    said = holder._peek_cursor()
+    assert isinstance(said, str) and said, said
+
+    class _Free(_AlwaysBusy):
+        def peek_meta(self, _key, **_kw):
+            return "2026-09-06T05:00:00Z"
+
+    holder.store = _Free()
+    assert holder._peek_cursor() == "2026-09-06T05:00:00Z"
+    holder.store = _AlwaysBusy()
+    assert holder._peek_cursor() == "2026-09-06T05:00:00Z", (
+        "a busy store reports the cursor it last saw")

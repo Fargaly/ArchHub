@@ -967,6 +967,30 @@ class PersonalCloudSync:
             cur = ""
         return cur or _HLC_FLOOR
 
+    def _peek_cursor(self) -> str:
+        """The cursor for a STATUS answer: never waits for the store.
+
+        status() reads two things through the shared connection lock, and the
+        second one was still blocking after the first was fixed: a thread dump
+        found brain.health inside get_meta via _load_cursor while another tool
+        held the lock. A status line is not worth a caller's whole budget, so a
+        busy store reports the cursor it last saw.
+        """
+        from .storage import BUSY
+
+        peek = getattr(self.store, "peek_meta", None)
+        if peek is None:
+            return self._load_cursor()
+        try:
+            seen = peek(_META_SINCE_HLC)
+        except Exception:
+            seen = BUSY
+        if seen is BUSY:
+            return getattr(self, "_cursor_last_seen", "") or _HLC_FLOOR
+        cursor = str(seen or "").strip() or _HLC_FLOOR
+        self._cursor_last_seen = cursor
+        return cursor
+
     def _save_cursor(self, new_hlc: str) -> None:
         try:
             self.store.set_meta(_META_SINCE_HLC, new_hlc)
@@ -1001,7 +1025,7 @@ class PersonalCloudSync:
             "auth_invalid": auth_invalid,
             "needs_reauth": auth_invalid,   # alias the UI/CLI can key on
             "cloud": cfg.redacted(),
-            "since_hlc": self._load_cursor(),
+            "since_hlc": self._peek_cursor(),
             "cycle_count": self._cycle_count,
             "error_count": self._error_count,
             "last_result": asdict(self._last_result) if self._last_result else None,

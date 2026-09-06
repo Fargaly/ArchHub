@@ -30823,7 +30823,6 @@ def record_universal_baboom_steward_signal(
                 "summary": summary,
             }
             or signal.observer_root != entry.body_root
-            or signal.provenance_root != session.root_id
             or signal.trust_root != entry.policy_root
             or signal.affected_roots != (
                 registry.application_root, entry.grand_map_node_root,
@@ -30834,6 +30833,13 @@ def record_universal_baboom_steward_signal(
             or signal.idempotency_key != fingerprint
         ):
             raise InvalidCell("BABOOM Steward signal identity was reused")
+        # The idempotency key identifies the OBSERVATION -- its kind, source,
+        # summary and the state that produced it -- not who noticed it. Every
+        # launch binds a fresh agent session, so comparing the recorded
+        # provenance against the current session refused an identical
+        # observation on the second launch and BABOOM could not attach at all
+        # ("Steward signal identity was reused", 2026-09-06). The first
+        # reporter stays recorded; a later one reads the same signal.
         return signal_root, snapshot.revision
     if source_root in snapshot.cells:
         raise InvalidCell("BABOOM Steward signal source collides with a missing signal")

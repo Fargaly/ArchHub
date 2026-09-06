@@ -856,6 +856,15 @@ def _watch_quit_request() -> None:
     from PyQt6.QtCore import QTimer as _QT
 
     marker = state_dir / "quit-request"
+    # A marker written before THIS process started was meant for the copy that
+    # is already gone. Leaving it made a freshly installed build read it and
+    # quit itself the moment it finished booting (2026-09-06 13:19). Clear it
+    # once, at startup, before anyone watches for it.
+    try:
+        if marker.is_file():
+            marker.unlink()
+    except Exception:
+        pass
 
     def _look():
         if marker.is_file():

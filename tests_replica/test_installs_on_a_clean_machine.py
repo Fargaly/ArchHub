@@ -388,3 +388,50 @@ def test_a_busy_brain_is_never_mistaken_for_an_absent_one():
     assert namespace["_port_held"](port) is False
     assert namespace["_brain_answers"](port=port, timeout=0.4) is False, (
         "nothing holds the port: start our own brain")
+
+
+def test_a_wedged_brain_is_replaced_rather_than_waited_on_forever():
+    """Busy is alive; wedged is not, and the difference is time.
+
+    Treating a held port as proof the brain is there fixed the watchdog
+    starting rivals, and created the opposite failure: a daemon that held
+    :8473 and answered nothing left the founder with a dead brain for the
+    whole session (2026-09-06, one listener silent through twelve checks).
+    The boot question is "is a brain there"; the watchdog's question is "is it
+    still working", and only a strict probe can answer that one.
+    """
+    import ast as _ast
+    import socket
+
+    source = LAUNCHER.read_text(encoding="utf-8")
+    tree = _ast.parse(source, str(LAUNCHER))
+    namespace = {}
+    exec(compile(_ast.Module(
+        body=[n for n in tree.body if isinstance(n, _ast.FunctionDef)],
+        type_ignores=[]), str(LAUNCHER), "exec"), namespace)
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(16)
+    port = listener.getsockname()[1]
+    try:
+        assert namespace["_brain_answers"](port=port, timeout=0.4) is True, (
+            "the boot probe leaves a busy daemon alone")
+        assert namespace["_brain_answers"](port=port, timeout=0.4, strict=True) is False, (
+            "the strict probe reports that the daemon did not speak")
+    finally:
+        listener.close()
+
+    watch = ast.get_source_segment(source, next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_watch_brain"))
+    assert "strict=True" in watch, "the watchdog must ask strictly"
+    assert "_replace_a_wedged_brain" in watch
+    assert "_WEDGED_CHECKS_BEFORE_REPLACING" in watch
+    assert "_WEDGED_CHECKS_BEFORE_REPLACING = 6" in source  # two minutes at 20s
+
+    replace = ast.get_source_segment(source, next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_replace_a_wedged_brain"))
+    assert "LISTENING" in replace, "only what really serves the port is stopped"
+    assert "taskkill" in replace and "CREATE_NO_WINDOW" in replace

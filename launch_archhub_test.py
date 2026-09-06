@@ -345,7 +345,7 @@ print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 # Every user gets their own brain. The daemon on :8473 is what BABOOM, the
 # memory panel and every agent speak to; on a machine that has none, the
 # shipped personal_brain package is started here, hidden, once.
-def _brain_answers(port=8473, timeout=1.5) -> bool:
+def _brain_answers(port=8473, timeout=1.5, strict=False) -> bool:
     """True only when the thing on this port is really our brain.
 
     A bare TCP connect said yes to ANY listener. On a shared machine that
@@ -389,6 +389,12 @@ def _brain_answers(port=8473, timeout=1.5) -> bool:
         # started another one, twice in a row (2026-09-06 launcher.log). When
         # something still holds the port, leave it alone: only an unheld port,
         # or a listener that answers and is not MCP, means start our own.
+        if strict:
+            # The watchdog asks strictly: it needs to know whether the daemon
+            # SPOKE, not whether something is still on the port. A held port
+            # answers the boot question ("is a brain there") and cannot answer
+            # this one ("is it still working").
+            return False
         if isinstance(unanswered, (TimeoutError, OSError)) and _port_held(port):
             return True
         return False
@@ -453,25 +459,75 @@ except Exception as _brain_refusal:
     print("  brain      : not started -- %s" % _brain_refusal, flush=True)
 
 
+_WEDGED_CHECKS_BEFORE_REPLACING = 6   # six checks at 20 s: two full minutes
+
+
+def _replace_a_wedged_brain(port=8473) -> str:
+    """Stop a daemon that holds the port and has stopped answering.
+
+    Holding the port used to be proof enough that the brain was there, which
+    it is for a BUSY daemon and is not for a WEDGED one: the founder was left
+    with a listener that answered nothing for the rest of the session. After
+    two minutes of silence from something that still holds the port, it is not
+    busy any more. Only a process that is really serving this port is stopped.
+    """
+    import subprocess as _sp
+
+    stopped = []
+    try:
+        listing = _sp.run(
+            ["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+            timeout=15, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
+        for line in listing.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[0] == "TCP" and parts[-2] == "LISTENING"                     and parts[1].endswith(":%d" % port):
+                stopped.append(parts[-1])
+    except Exception as exc:
+        return "could not find what holds :%d (%s)" % (port, str(exc)[:60])
+    for pid in dict.fromkeys(stopped):
+        try:
+            _sp.run(["taskkill", "/PID", pid, "/F"], capture_output=True,
+                    timeout=15, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
+        except Exception:
+            pass
+    return "stopped the wedged holder of :%d (pid %s)" % (
+        port, ", ".join(dict.fromkeys(stopped)) or "none found")
+
+
 def _watch_brain() -> None:
     """Keep the brain online for as long as ArchHub runs.
 
     Starting it once at boot left the founder with a dead :8473 the moment
     the daemon fell over (2026-09-05, 16:20). Every 20 s: if nothing answers
-    on the port, start it again and say so in the launch log.
+    on the port, start it again and say so in the launch log. A daemon that
+    holds the port but has answered nothing for two minutes is wedged, not
+    busy, and is replaced rather than waited on forever.
     """
     import threading as _t
     import time as _time
 
     def loop() -> None:
+        silent = 0
         while True:
             _time.sleep(20)
             try:
                 outcome = str(_ensure_brain())
             except Exception as exc:
                 outcome = "watch failed (%s)" % str(exc)[:80]
-            if not outcome.startswith("answering"):
-                print("  brain      : %s (watchdog)" % outcome, flush=True)
+            if outcome.startswith("answering"):
+                # _brain_answers treats a held port as alive, so reaching here
+                # does not yet mean the daemon spoke. Ask it directly.
+                if _brain_answers(timeout=4.0, strict=True):
+                    silent = 0
+                    continue
+                silent += 1
+                if silent >= _WEDGED_CHECKS_BEFORE_REPLACING:
+                    silent = 0
+                    print("  brain      : %s (watchdog)" % _replace_a_wedged_brain(),
+                          flush=True)
+                continue
+            silent = 0
+            print("  brain      : %s (watchdog)" % outcome, flush=True)
 
     _t.Thread(target=loop, name="archhub-brain-watch", daemon=True).start()
 

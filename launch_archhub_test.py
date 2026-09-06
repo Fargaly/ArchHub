@@ -940,6 +940,18 @@ if QSystemTrayIcon.isSystemTrayAvailable():
     _tray.show()
     window._tray = _tray
     _watch_quit_request()
+    # The notify card lands on this tray. Engines run on worker threads and
+    # Qt widgets belong to this one, so the ask crosses over as a queued
+    # signal rather than a direct call.
+    from PyQt6.QtCore import QObject as _QObject, pyqtSignal as _signal
+    from nodelang.library_engines import set_notify_surface
+
+    class _Notifier(_QObject):
+        asked = _signal(str, str)
+
+    _notifier = _Notifier(app)
+    _notifier.asked.connect(lambda title, message: _tray.showMessage(title, message))
+    set_notify_surface(lambda title, message: _notifier.asked.emit(str(title), str(message)))
     app.setQuitOnLastWindowClosed(False)
     print("  tray       : icon shown (close hides to tray; Quit is in the menu)", flush=True)
 else:

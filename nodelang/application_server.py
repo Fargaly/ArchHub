@@ -8659,8 +8659,6 @@ class ApplicationServer:
             ("GET", "/api/universal/runtime-backend"),
             ("GET", "/api/universal/models"),
             ("GET", "/api/universal/providers"),
-            ("GET", "/api/universal/cloud-session"),
-            ("GET", "/api/universal/cloud-signin"),
             ("GET", "/api/universal/baboom-context"),
             ("GET", "/api/universal/baboom-presence"),
             ("GET", "/api/universal/baboom-native-frame"),

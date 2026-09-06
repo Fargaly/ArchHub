@@ -737,6 +737,10 @@ def create_baboom_native_companion_window(
             # BABOOM's face: the live line and the offer it carries. The
             # report label doubles as the face when nothing else is said.
             self._face_offer: str | None = None
+            # The last host seen in front, and when: the right-click that opens
+            # the menu activates this window, so the menu cannot ask then.
+            self._front: tuple[str, str, str] | None = None
+            self._front_at = 0.0
             self._face_showing = False
             self._report.installEventFilter(self)
 
@@ -867,7 +871,10 @@ def create_baboom_native_companion_window(
                 snapshot = controller.latest_snapshot
                 context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
                 context["host_silent_seconds"] = getattr(controller, "host_silent_seconds", 0.0)
-                report, self._face_offer = baboom_face_line(context, foreground_app_windows())
+                front = foreground_app_windows()
+                if front is not None:
+                    self._front, self._front_at = front, time.monotonic()
+                report, self._face_offer = baboom_face_line(context, front)
                 self._face_showing = True
             layout = self._layout_for_report(frame, screen, report)
             self._frame = frame
@@ -1205,6 +1212,8 @@ def create_baboom_native_companion_window(
             a.addAction("Queue work for the agents...", lambda: self._prefill("Assign task: "))
             a.addAction("Send a task to a model...", lambda: self._prefill("assign task to claude: "))
             front = foreground_app_windows()
+            if front is None and self._front is not None and time.monotonic() - self._front_at < 30.0:
+                front = self._front
             if front is not None:
                 front_label, front_engine, front_verb = front
                 f = menu.addMenu("%s is open" % front_label)
@@ -1370,6 +1379,11 @@ def create_baboom_native_companion_window(
                     intent = str(command.get("intent") or "")
                     question, label = _BABOOM_ACT_PROMPTS.get(
                         intent, ("Do this in ArchHub?", "Do it"))
+                    # An act that writes says WHAT before the founder presses:
+                    # the app names the engine in its summary.
+                    said = response.get("summary") if isinstance(response, Mapping) else None
+                    if intent == "run-engine" and isinstance(said, str) and said.strip():
+                        question = said.strip()
                     self._pending_task_utterance = utterance
                     self._transient_report = question
                     self._act_progress = _BABOOM_ACT_PROGRESS.get(intent, "Working...")
@@ -1407,7 +1421,14 @@ def create_baboom_native_companion_window(
 
         def _apply_execution(self, result: Mapping[str, object]) -> None:
             created = result.get("created")
-            if created is True:
+            summary = result.get("summary")
+            if isinstance(summary, str) and summary.strip() and created is None:
+                # Every act other than a task reports what it did in words
+                # (engine-ran, agent-message...). Reading only "created"
+                # here told the founder "could not create the task" after a
+                # run that had happened (audit 2026-09-06).
+                self._transient_report = summary.strip()
+            elif created is True:
                 self._transient_report = "Task created in ArchHub."
             elif created is False:
                 self._transient_report = "That task already exists in ArchHub."

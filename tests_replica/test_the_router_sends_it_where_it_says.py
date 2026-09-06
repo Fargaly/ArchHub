@@ -13,6 +13,7 @@ selected model and showing the answer where it was typed.
 from __future__ import annotations
 
 import io
+import urllib.error
 import json
 import shutil
 import subprocess
@@ -409,3 +410,31 @@ def test_a_part_that_is_neither_text_nor_image_is_refused():
         route_chat("deepseek/deepseek-r1", [{"role": "user", "content": [{"type": "audio"}]}],
                    opener=_Wire(_openai_answer("x")), environ={"OPENROUTER_API_KEY": "k"},
                    secrets_loader=lambda name: "")
+
+
+def test_a_streamed_answer_is_read_whole_and_a_refusal_carries_its_body():
+    """The founder's cloud always streams (proxy.py: Server-Sent Events)."""
+    LF = chr(10)
+    chunks = (LF + LF).join([
+        "data: " + json.dumps({"choices": [{"delta": {"content": "two "}}]}),
+        "data: " + json.dumps({"choices": [{"delta": {"content": "walls"}, "finish_reason": "stop"}]}),
+        "data: [DONE]",
+    ]).encode("utf-8")
+    sent = []
+
+    def opener(request, timeout=None):
+        sent.append(request)
+        return _Answer(chunks)
+
+    out = route_chat("cloud/anthropic/claude-sonnet-5", ASK, opener=opener,
+                     environ={}, secrets_loader=lambda name: "",
+                     cloud_session={"token": "ah_" + "x" * 40, "base_url": "https://api.archhub.io"})
+    assert out["text"] == "two walls" and len(sent) == 1
+
+    class _Refusing:
+        def __call__(self, request, timeout=None):
+            raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"error":"model has no vision"}'))
+
+    with pytest.raises(ModelRouteRefused) as refused:
+        route_chat("deepseek/deepseek-r1", ASK, opener=_Refusing(), environ={"OPENROUTER_API_KEY": "k"}, secrets_loader=lambda name: "")
+    assert "HTTP 400" in str(refused.value) and "model has no vision" in str(refused.value)

@@ -84,51 +84,67 @@ Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}
 [Run]
 ; The first open prepares the machine before any window appears; a plain
 ; "Open ArchHub now" left people staring at a setup window they did not expect.
-Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open installs what it needs, in a window you can read)"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open installs what it needs, in a window you can read)"; Flags: shellexec postinstall nowait skipifsilent
 
 [Code]
-function FindPython(): String;
+function VersionScore(Name: String): Integer;
 var
-  Base: String;
-  Rec: TFindRec;
+  I, Major, Minor: Integer;
+  Digits: String;
+  SeenDot: Boolean;
 begin
-  { Absolute paths only. A bare 'py' or 'python' is resolved from the
-    installer's own folder first, so a file planted beside the setup on a
-    share would run before the person has consented to anything. }
-  Result := '';
-  Base := ExpandConstant('{localappdata}') + '\Python';
-  if FindFirst(Base + '\pythoncore*', Rec) then
+  { "Python314" -> 314, "Python39" -> 39, "pythoncore-3.14-64" -> 314,
+    "Python3" -> 3: enough to rank a fresh 3.14 above an older 3.x that
+    sorts after it alphabetically (Python39 > Python314 as strings). }
+  Major := 0; Minor := 0; Digits := ''; SeenDot := False;
+  for I := 1 to Length(Name) do
   begin
-    try
-      repeat
-        if (Rec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and
-           FileExists(Base + '\' + Rec.Name + '\python.exe') then
-          Result := Base + '\' + Rec.Name + '\python.exe';
-      until not FindNext(Rec);
-    finally
-      FindClose(Rec);
-    end;
+    if (Name[I] >= '0') and (Name[I] <= '9') then
+      Digits := Digits + Name[I]
+    else if (Name[I] = '.') and (Digits <> '') and not SeenDot then
+    begin
+      Major := StrToIntDef(Digits, 0); Digits := ''; SeenDot := True;
+    end
+    else if Digits <> '' then
+      break;
   end;
-  if Result <> '' then exit;
-  Base := ExpandConstant('{localappdata}') + '\Programs\Python';
-  if FindFirst(Base + '\Python3*', Rec) then
+  if SeenDot then
+    Result := Major * 100 + StrToIntDef(Digits, 0)
+  else
+    Result := StrToIntDef(Digits, 0);
+end;
+
+function PythonRuns(Py: String): Boolean;
+var
+  Code: Integer;
+begin
+  Result := Exec(Py, '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
+                 '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+function BestPythonUnder(Base, Pattern: String): String;
+var
+  Rec: TFindRec;
+  Best: Integer;
+  Candidate: String;
+begin
+  { Every matching folder is a candidate; the highest version that really
+    answers 3.11+ wins. The old code kept whichever folder FindNext listed
+    last, so a fresh Python314 lost to an older sibling (audit 2026-09-06). }
+  Result := ''; Best := -1;
+  if FindFirst(Base + '\' + Pattern, Rec) then
   begin
     try
       repeat
-        if FileExists(Base + '\' + Rec.Name + '\python.exe') then
-          Result := Base + '\' + Rec.Name + '\python.exe';
-      until not FindNext(Rec);
-    finally
-      FindClose(Rec);
-    end;
-  end;
-  if Result <> '' then exit;
-  if FindFirst(ExpandConstant('{pf}') + '\Python3*', Rec) then
-  begin
-    try
-      repeat
-        if FileExists(ExpandConstant('{pf}') + '\' + Rec.Name + '\python.exe') then
-          Result := ExpandConstant('{pf}') + '\' + Rec.Name + '\python.exe';
+        if (Rec.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) then
+        begin
+          Candidate := Base + '\' + Rec.Name + '\python.exe';
+          if FileExists(Candidate) and (VersionScore(Rec.Name) > Best) and PythonRuns(Candidate) then
+          begin
+            Best := VersionScore(Rec.Name);
+            Result := Candidate;
+          end;
+        end;
       until not FindNext(Rec);
     finally
       FindClose(Rec);
@@ -136,17 +152,24 @@ begin
   end;
 end;
 
-function PythonPresent(): Boolean;
-var
-  Code: Integer;
-  Py: String;
+function FindPython(): String;
 begin
-  Result := False;
-  Py := FindPython();
-  if Py = '' then exit;
-  if Exec(Py, '-c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"',
-          '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
-    Result := True;
+  { Absolute paths only. A bare 'py' or 'python' is resolved from the
+    installer's own folder first, so a file planted beside the setup on a
+    share would run before the person has consented to anything. The three
+    places python.org and the Python install manager write to, per user
+    first, then all users. }
+  Result := BestPythonUnder(ExpandConstant('{localappdata}') + '\Python', 'pythoncore*');
+  if Result <> '' then exit;
+  Result := BestPythonUnder(ExpandConstant('{localappdata}') + '\Programs\Python', 'Python3*');
+  if Result <> '' then exit;
+  Result := BestPythonUnder(ExpandConstant('{pf}'), 'Python3*');
+end;
+
+function PythonPresent(): Boolean;
+begin
+  { FindPython only returns a python.exe that already answered 3.11+. }
+  Result := FindPython() <> '';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

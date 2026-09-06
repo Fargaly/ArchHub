@@ -129,19 +129,17 @@ foreach (Level lv in new FilteredElementCollector(Doc).OfClass(typeof(Level)))
     if (level == null || lv.Name == levelName) { if (lv.Name == levelName || level == null) level = lv; }
 if (level == null) throw new Exception("no level in the model");
 var built = new List<int>();
-using (var t = new Transaction(Doc, "ArchHub build walls")) {
-    t.Start();
-    foreach (var seg in data) {
-        double x1 = seg[0] / 304.8, y1 = seg[1] / 304.8;
-        double x2 = seg[2] / 304.8, y2 = seg[3] / 304.8;
-        if (Math.Abs(x2-x1) < 1e-6 && Math.Abs(y2-y1) < 1e-6) continue;
-        var line = Line.CreateBound(new XYZ(x1, y1, 0), new XYZ(x2, y2, 0));
-        var wall = Wall.Create(Doc, line, level.Id, false);
-        var hp = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
-        if (hp != null) hp.Set(heightMm / 304.8);
-        built.Add(wall.Id.IntegerValue);
-    }
-    t.Commit();
+// The broker (RevitMCPCore.ExecAsync) runs this inside the transaction named
+// by transaction_name and commits it; a second Transaction.Start here throws.
+foreach (var seg in data) {
+    double x1 = seg[0] / 304.8, y1 = seg[1] / 304.8;
+    double x2 = seg[2] / 304.8, y2 = seg[3] / 304.8;
+    if (Math.Abs(x2-x1) < 1e-6 && Math.Abs(y2-y1) < 1e-6) continue;
+    var line = Line.CreateBound(new XYZ(x1, y1, 0), new XYZ(x2, y2, 0));
+    var wall = Wall.Create(Doc, line, level.Id, false);
+    var hp = wall.get_Parameter(BuiltInParameter.WALL_USER_HEIGHT_PARAM);
+    if (hp != null) hp.Set(heightMm / 304.8);
+    built.Add(wall.Id.IntegerValue);
 }
 result = built;
 """

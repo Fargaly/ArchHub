@@ -720,7 +720,7 @@ def notify(params: Mapping[str, object], feeds: Mapping[str, object]):
         _NOTIFY_SURFACE[0](title, message)
     except Exception as failed:
         return {"out": message}, "the desktop refused: %s" % failed
-    return {"out": message}, "shown on the desktop: %s" % message[:60]
+    return {"out": message}, "sent to the desktop tray: %s" % message[:60]
 
 
 def _open_outlook():
@@ -803,7 +803,10 @@ def vision(params: Mapping[str, object], feeds: Mapping[str, object]):
     kind = _IMAGE_TYPES.get(Path(path).suffix.lower())
     if not kind:
         return {"out": []}, "not an image this card reads: %s" % Path(path).name
-    data = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    raw = Path(path).read_bytes()
+    if len(raw) > 8_000_000:
+        return {"out": []}, "image too large for a model call: %.1f MB (8 MB is the ceiling)" % (len(raw) / 1e6)
+    data = base64.b64encode(raw).decode("ascii")
     prompt = _text(params, "prompt") or (
         "Describe this architectural drawing: rooms, walls, openings, and any "
         "dimensions or text you can read. Millimetres. Be terse.")
@@ -850,19 +853,26 @@ def publish_pdf(params: Mapping[str, object], feeds: Mapping[str, object]):
     import json
     import os
     import time
-    from .clean_revit_adapter import _call, live_sessions
-    sessions = [s for s in live_sessions() if s.get("revit_version")]
-    if not sessions:
-        return {"out": []}, "no Revit session is listening"
-    session = sessions[-1]
+    from .clean_revit_adapter import _call
+    session, why = _revit_session()
+    if session is None:
+        return {"out": []}, why
     held = _wired(feeds, "in", "sheets")
     wanted = [str(item_field(row, "number") or row) for row in as_list(held)] if held is not None else [
         piece.strip() for piece in _text(params, "sheets").split(",") if piece.strip()]
-    folder = _text(params, "folder") or os.path.join(
-        os.path.expanduser("~"), "Documents", "ArchHub", "pdf", time.strftime("%Y%m%d-%H%M%S"))
+    # Always a fresh, dated folder under Documents/ArchHub/pdf: a graph is
+    # data anyone can hand you, so a folder it names is only a NAME inside
+    # that base (never a share, never a path of its own), and the listing
+    # afterwards is exactly what this run wrote.
+    base = os.path.join(os.path.expanduser("~"), "Documents", "ArchHub", "pdf")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    asked = os.path.basename(_text(params, "folder").replace(chr(92), "/").rstrip("/"))
+    safe = "".join(ch for ch in asked if ch.isalnum() or ch in "-_ ").strip()
+    folder = os.path.join(base, (safe + "-" + stamp) if safe else stamp)
     script = _EXPORT_PDF % (json.dumps(folder), ", ".join(json.dumps(number) for number in wanted))
     try:
-        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": "ArchHub publish pdf"})
+        # A sheet set takes longer than a read: three minutes before "did not answer".
+        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": "ArchHub publish pdf"}, timeout=180.0)
     except Exception as failed:
         return {"out": []}, "Revit did not answer: %s" % str(failed)[:160]
     if not isinstance(answer, Mapping) or answer.get("status") != "ok":
@@ -884,15 +894,26 @@ LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_pdf", None)
 # wall cards use. Each runs in one named transaction, skips what is already
 # done, and answers with counts the model itself reported.
 
-def _revit_exec(script: str, transaction: str, params: Mapping[str, object]):
-    """One /exec against the newest live Revit session; (session, answer) or (None, why)."""
-    from .clean_revit_adapter import _call, live_sessions
+def _revit_session():
+    """The one live Revit session, or (None, why): two sessions means a wrong-model risk."""
+    from .clean_revit_adapter import live_sessions
     sessions = [s for s in live_sessions() if s.get("revit_version")]
     if not sessions:
         return None, "no Revit session is listening"
-    session = sessions[-1]
+    if len(sessions) > 1:
+        ports = ", ".join(str(s.get("port")) for s in sessions)
+        return None, "%d Revit sessions are open (ports %s); close the others so the act lands in one model" % (len(sessions), ports)
+    return sessions[0], ""
+
+
+def _revit_exec(script: str, transaction: str, params: Mapping[str, object], *, timeout: float = 30.0):
+    """One /exec against the one live Revit session; (session, answer) or (None, why)."""
+    from .clean_revit_adapter import _call
+    session, why = _revit_session()
+    if session is None:
+        return None, why
     try:
-        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": transaction})
+        answer = _call(session["port"], "/exec", {"code": script, "transaction_name": transaction}, timeout=timeout)
     except Exception as failed:
         return None, "Revit did not answer: %s" % str(failed)[:160]
     if not isinstance(answer, Mapping) or answer.get("status") != "ok":
@@ -904,20 +925,17 @@ _TAG_ROOMS = """
 var view = Doc.ActiveView;
 var already = new HashSet<int>();
 foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(SpatialElementTag))) {
-    var rt = e as RoomTag; if (rt != null && rt.Room != null) already.Add(rt.Room.Id.IntegerValue);
+    var rt = e as Autodesk.Revit.DB.Architecture.RoomTag; if (rt != null && rt.Room != null) already.Add(rt.Room.Id.IntegerValue);
 }
 int tagged = 0, skipped = 0;
-using (var t = new Transaction(Doc, "ArchHub tag rooms")) {
-    t.Start();
-    foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()) {
-        var room = e as Room;
-        if (room == null || room.Area <= 0 || already.Contains(room.Id.IntegerValue)) { skipped++; continue; }
-        var lp = room.Location as LocationPoint;
-        if (lp == null) { skipped++; continue; }
-        Doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(lp.Point.X, lp.Point.Y), view.Id);
-        tagged++;
-    }
-    t.Commit();
+// The broker runs this inside the transaction it named; a second Start here would throw.
+foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(BuiltInCategory.OST_Rooms).WhereElementIsNotElementType()) {
+    var room = e as Autodesk.Revit.DB.Architecture.Room;
+    if (room == null || room.Area <= 0 || already.Contains(room.Id.IntegerValue)) { skipped++; continue; }
+    var lp = room.Location as LocationPoint;
+    if (lp == null) { skipped++; continue; }
+    Doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(lp.Point.X, lp.Point.Y), view.Id);
+    tagged++;
 }
 result = new Dictionary<string, object>{ {"tagged", tagged}, {"skipped", skipped}, {"view", view.Name} };
 """
@@ -944,16 +962,13 @@ foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfClass(typeof(
     foreach (var id in it.GetTaggedLocalElementIds()) already.Add(id.IntegerValue);
 }
 int tagged = 0, skipped = 0;
-using (var t = new Transaction(Doc, "ArchHub place tags")) {
-    t.Start();
-    foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(bic).WhereElementIsNotElementType()) {
-        if (already.Contains(e.Id.IntegerValue)) { skipped++; continue; }
-        var bb = e.get_BoundingBox(view); if (bb == null) { skipped++; continue; }
-        var c = (bb.Min + bb.Max) / 2;
-        IndependentTag.Create(Doc, view.Id, new Reference(e), leader, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, c);
-        tagged++;
-    }
-    t.Commit();
+// The broker runs this inside the transaction it named; a second Start here would throw.
+foreach (Element e in new FilteredElementCollector(Doc, view.Id).OfCategory(bic).WhereElementIsNotElementType()) {
+    if (already.Contains(e.Id.IntegerValue)) { skipped++; continue; }
+    var bb = e.get_BoundingBox(view); if (bb == null) { skipped++; continue; }
+    var c = (bb.Min + bb.Max) / 2;
+    IndependentTag.Create(Doc, view.Id, new Reference(e), leader, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, c);
+    tagged++;
 }
 result = new Dictionary<string, object>{ {"tagged", tagged}, {"skipped", skipped}, {"category", catName}, {"view", view.Name} };
 """
@@ -978,27 +993,24 @@ var names = new List<string>{%s};
 ViewSheet sheet = null;
 foreach (ViewSheet vs in new FilteredElementCollector(Doc).OfClass(typeof(ViewSheet))) if (vs.SheetNumber == number) { sheet = vs; break; }
 var placed = new List<string>(); var skipped = new List<string>();
-using (var t = new Transaction(Doc, "ArchHub place on sheet")) {
-    t.Start();
-    if (sheet == null) {
-        ElementId tb = ElementId.InvalidElementId;
-        foreach (Element e in new FilteredElementCollector(Doc).OfCategory(BuiltInCategory.OST_TitleBlocks).OfClass(typeof(FamilySymbol))) { tb = e.Id; break; }
-        sheet = ViewSheet.Create(Doc, tb);
-        sheet.SheetNumber = number;
-    }
-    var box = sheet.Outline;
-    double w = box.Max.U - box.Min.U, h = box.Max.V - box.Min.V;
-    int i = 0;
-    foreach (var name in names) {
-        View view = null;
-        foreach (Element e in new FilteredElementCollector(Doc).OfClass(typeof(View))) { var v = e as View; if (v != null && !v.IsTemplate && v.Name == name) { view = v; break; } }
-        if (view == null || !Viewport.CanAddViewToSheet(Doc, sheet.Id, view.Id)) { skipped.Add(name); continue; }
-        int col = i %% 2, row = i / 2;
-        var pt = new XYZ(box.Min.U + w * (0.25 + 0.5 * col), box.Max.V - h * (0.25 + 0.5 * row), 0);
-        Viewport.Create(Doc, sheet.Id, view.Id, pt);
-        placed.Add(name); i++;
-    }
-    t.Commit();
+// The broker runs this inside the transaction it named; a second Start here would throw.
+if (sheet == null) {
+    ElementId tb = ElementId.InvalidElementId;
+    foreach (Element e in new FilteredElementCollector(Doc).OfCategory(BuiltInCategory.OST_TitleBlocks).OfClass(typeof(FamilySymbol))) { tb = e.Id; break; }
+    sheet = ViewSheet.Create(Doc, tb);
+    sheet.SheetNumber = number;
+}
+var box = sheet.Outline;
+double w = box.Max.U - box.Min.U, h = box.Max.V - box.Min.V;
+int i = 0;
+foreach (var name in names) {
+    View view = null;
+    foreach (Element e in new FilteredElementCollector(Doc).OfClass(typeof(View))) { var v = e as View; if (v != null && !v.IsTemplate && v.Name == name) { view = v; break; } }
+    if (view == null || !Viewport.CanAddViewToSheet(Doc, sheet.Id, view.Id)) { skipped.Add(name); continue; }
+    int col = i %% 2, row = i / 2;
+    var pt = new XYZ(box.Min.U + w * (0.25 + 0.5 * col), box.Max.V - h * (0.25 + 0.5 * row), 0);
+    Viewport.Create(Doc, sheet.Id, view.Id, pt);
+    placed.Add(name); i++;
 }
 result = new Dictionary<string, object>{ {"sheet", sheet.SheetNumber}, {"placed", placed}, {"skipped", skipped} };
 """

@@ -120,7 +120,15 @@ class _Callback(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         code = (query.get("code") or [""])[0]
         state = (query.get("state") or [""])[0]
-        if state != getattr(self.server, "expected_state", ""):
+        expected = getattr(self.server, "expected_state", "")
+        # The cloud echoes the desktop's state on the Google path, but its
+        # mailed link carries none and /auth/return forwards the fixed
+        # marker "archhub" (cloud_backend/main.py, fwd_state). The magic path
+        # accepts that marker: the one-time code is still bound to this
+        # attempt's PKCE verifier, so a code landed here by anyone else
+        # cannot be exchanged.
+        marker_ok = getattr(self.server, "accepts_marker", False) and state == "archhub"
+        if state != expected and not marker_ok:
             self._html(400, "<h1>Sign-in failed</h1><p>Security state mismatch. Retry from ArchHub.</p>")
             return
         if not code:
@@ -201,6 +209,7 @@ class SignIn:
             self._set(phase="failed", error=f"no loopback port: {failed}")
             return
         server.expected_state = state
+        server.accepts_marker = self.method == "magic"
         server.received_code = None
         server.timeout = 0.5
         redirect = f"http://127.0.0.1:{server.server_port}/cb"
@@ -244,16 +253,23 @@ class SignIn:
         code = str(server.received_code)
         server.server_close()
         self._set(phase="exchanging")
-        status, payload = self._http(
-            "POST", f"{self.base_url}/v1/auth/exchange",
-            body={"code": code, "code_verifier": verifier})
+        try:
+            status, payload = self._http(
+                "POST", f"{self.base_url}/v1/auth/exchange",
+                body={"code": code, "code_verifier": verifier})
+        except Exception as unreachable:
+            self._set(phase="failed", error=("the cloud did not answer the exchange: %s" % unreachable)[:200])
+            return
         token = str(payload.get("token") or "")
         if status != 200 or not token:
             self._set(phase="failed", error=str(payload.get("error") or payload.get("detail")
                                                 or f"exchange refused ({status})")[:200])
             return
-        _status, me = self._http("GET", f"{self.base_url}/v1/me",
-                                 headers={"Authorization": f"Bearer {token}"})
+        try:
+            _status, me = self._http("GET", f"{self.base_url}/v1/me",
+                                     headers={"Authorization": f"Bearer {token}"})
+        except Exception:
+            me = {}
         email = str(me.get("email") or payload.get("email") or "").strip().casefold()
         if "@" not in email:
             self._set(phase="failed", error="the cloud did not name the account")

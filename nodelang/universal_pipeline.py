@@ -178,14 +178,22 @@ def run_universal_pipeline(
     *,
     effect_engines: Mapping[str, object],
     authentication_context: object | None = None,
+    only_roots: object = None,
 ) -> dict[str, object]:
-    """Evaluate every engine-declaring node along its wires; land statuses."""
+    """Evaluate every engine-declaring node along its wires; land statuses.
+
+    `only_roots` narrows the run to those nodes (and wires between them):
+    an act BABOOM confirms runs its one node, not every effect node left on
+    the canvas (audit 2026-09-06: each confirm re-ran every prior act).
+    """
     snapshot = store.snapshot()
     owned = _owner_properties(snapshot, registry)
     projection = project_universal_canvas(
         store, registry, authentication_context=authentication_context
     )
     node_ids = {str(node["id"]) for node in projection.get("nodes", ())}
+    if only_roots is not None:
+        node_ids &= {str(root) for root in only_roots}
     stem_nodes = []
     for root in node_ids:
         rows = owned.get(root) or {}

@@ -135,3 +135,19 @@ def test_the_tray_open_settles_after_qt_and_writes_a_receipt():
     assert "_force_foreground(window.winId())" in body[body.index("def _settle()"):]
     assert "if user32.IsIconic(handle):" in body and "ShowWindow(handle, 9)" in body
     assert 'print("  show       : window %dx%d at %d,%d iconic=%s"' in body
+
+
+def test_a_confirmed_act_runs_its_one_node_under_the_founders_binding():
+    """The run-engine branch ran EVERY engine node on the canvas after each
+    confirm (a once-confirmed publish_pdf exported the sheets again on every
+    later confirm of anything), without the founder's binding, and summed
+    up with a node count instead of the engine's answer (audit 2026-09-06)."""
+    ua = (ROOT / "nodelang" / "universal_application.py").read_text(encoding="utf-8")
+    branch = ua[ua.index('if command["intent"] == "run-engine":'):]
+    branch = branch[:branch.index('if command["intent"] not in {"assign-task"')]
+    assert "only_roots=[root]" in branch and "authentication_context=authentication_context, only_roots" in branch
+    assert 'said = str(display.get(root) or pending.get(root) or "").strip()' in branch
+    assert "node(s) ran" not in branch, "the receipt is the engine's words, not a canvas count"
+    pipeline = (ROOT / "nodelang" / "universal_pipeline.py").read_text(encoding="utf-8")
+    assert "only_roots: object = None" in pipeline
+    assert "node_ids &= {str(root) for root in only_roots}" in pipeline

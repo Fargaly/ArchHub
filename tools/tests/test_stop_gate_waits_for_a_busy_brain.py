@@ -68,3 +68,38 @@ def test_the_gate_still_denies_on_a_real_absence():
     module = _brainwrap()
     source = inspect.getsource(module)
     assert "Universal work authority is unavailable; stop denied." in source
+
+
+def _verdict_with(module, monkeypatch, *, held):
+    monkeypatch.setattr(module, "call_tool", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_port_held", lambda *_a, **_k: held)
+    return module._completion_gate_verdict
+
+
+def test_a_booting_brain_that_holds_its_port_does_not_deny(monkeypatch):
+    """After the founder's app relaunches, the fresh brain holds :8473 for
+    minutes before its tools answer. That restart orphaned every enrolment,
+    so nothing is left to protect; the gate must let the session stop."""
+    module = _brainwrap()
+    verdict = _verdict_with(module, monkeypatch, held=True)
+    sig = inspect.signature(verdict)
+    kwargs = {name: "s1" if name == "session_id" else "claude"
+              for name in sig.parameters if name in ("session_id", "runtime")}
+    for name in sig.parameters:
+        if name not in kwargs and sig.parameters[name].default is inspect._empty:
+            kwargs[name] = None
+    denied, _reason = verdict(**kwargs)
+    assert denied is False
+
+
+def test_a_dead_port_still_denies(monkeypatch):
+    module = _brainwrap()
+    verdict = _verdict_with(module, monkeypatch, held=False)
+    sig = inspect.signature(verdict)
+    kwargs = {name: "s1" if name == "session_id" else "claude"
+              for name in sig.parameters if name in ("session_id", "runtime")}
+    for name in sig.parameters:
+        if name not in kwargs and sig.parameters[name].default is inspect._empty:
+            kwargs[name] = None
+    denied, reason = verdict(**kwargs)
+    assert denied is True and "unavailable" in reason

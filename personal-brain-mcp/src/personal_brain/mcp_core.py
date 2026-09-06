@@ -663,6 +663,53 @@ class InHouseMCP:
             name=self.name, version=self.version).model_dump(exclude_none=True)
 
     # ── streamable-HTTP POST /mcp (stateless) — the SSE responder ────────────
+    _TOOL_LANE_WORKERS = 8
+    _TOOL_CALL_BUDGET_SECONDS = 180.0
+
+    def _tool_lane(self):
+        """The bounded pool tool work runs on, made once per server."""
+        lane = getattr(self, "_tool_lane_pool", None)
+        if lane is None:
+            import concurrent.futures
+
+            lane = concurrent.futures.ThreadPoolExecutor(
+                max_workers=self._TOOL_LANE_WORKERS,
+                thread_name_prefix="brain-tool")
+            self._tool_lane_pool = lane
+        return lane
+
+    async def _dispatch_in_tool_lane(self, message):
+        """Render one message on the tool lane, inside a budget.
+
+        A tool that never returns used to hold a shared executor thread for
+        the life of the process. It still cannot be killed mid-flight -- the
+        thread runs on -- but the CALLER is released and told, so the daemon
+        keeps serving everything else instead of going silent.
+        """
+        import json as _json
+
+        loop = asyncio.get_running_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(self._tool_lane(), self.render_sse, message),
+                timeout=self._TOOL_CALL_BUDGET_SECONDS)
+        except asyncio.TimeoutError:
+            request_id = None
+            if isinstance(message, dict):
+                request_id = message.get("id")
+            frame = _json.dumps({
+                "jsonrpc": "2.0", "id": request_id,
+                "error": {
+                    "code": -32000,
+                    "message": ("the brain did not finish this call within %d "
+                                "seconds and released the caller"
+                                % int(self._TOOL_CALL_BUDGET_SECONDS)),
+                },
+            })
+            newline = chr(10)
+            return ("event: message" + newline + "data: " + frame
+                    + newline + newline)
+
     def render_sse(self, message: dict) -> bytes:
         """Render ONE JSON-RPC request → the streamable-HTTP SSE body bytes the
         client reads: a single `event: message` block whose `data:` line is the
@@ -801,7 +848,16 @@ class InHouseMCP:
             # Handlers remain synchronous for direct callers and tests, but
             # HTTP dispatch must not block the ASGI loop while a tool waits on
             # a real subprocess. Health/ping stays responsive in parallel.
-            body = await asyncio.to_thread(self.render_sse, message)
+            #
+            # asyncio.to_thread runs on the DEFAULT executor, which every other
+            # await in this process shares. A handful of slow tool calls filled
+            # it and the daemon stopped answering anything at all: on the
+            # founder's machine `initialize` returned in 0.0 s while every
+            # tools/call hung, until the watchdog replaced the process. Tool
+            # work gets its own bounded pool, so a slow tool can exhaust only
+            # the tool lane, and a call that outlives the budget returns a
+            # JSON-RPC error instead of holding a thread for good.
+            body = await self._dispatch_in_tool_lane(message)
             if not body:
                 # Notification(s) only — no response object. 202 Accepted, empty
                 # body: byte-true to the SDK's stateless responder.

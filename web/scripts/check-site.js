@@ -382,3 +382,15 @@ group('doc claims');
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'} — ${checks - failures}/${checks} checks passed`);
 process.exit(failures === 0 ? 0 : 1);
+
+// ---- text palette meets AA (the handoff's own decision; the site shipped the pre-fix pair for weeks)
+{
+  const base = read('src/layouts/Base.astro');
+  const muted = (base.match(/--ink-muted:\s*(#[0-9a-f]{6})/i) || [])[1];
+  const dim = (base.match(/--ink-dim:\s*(#[0-9a-f]{6})/i) || [])[1];
+  const lum = (hex) => { const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const bg = (base.match(/--bg:\s*(#[0-9a-f]{6})/i) || [])[1] || '#0e0e11';
+  assert(muted && contrast(muted, bg) >= 4.5, '--ink-muted reaches AA on --bg', `${muted} on ${bg} = ${muted ? contrast(muted, bg).toFixed(2) : 'missing'}:1`);
+  assert(dim && contrast(dim, bg) >= 3.0, '--ink-dim reaches AA for large text on --bg', `${dim} on ${bg} = ${dim ? contrast(dim, bg).toFixed(2) : 'missing'}:1`);
+}

@@ -460,6 +460,96 @@ class BaboomNativeCompanionController:
         return self._host.execute_input(utterance)
 
 
+# What the founder is working in right now, and the engine BABOOM can run
+# for it. The companion used to know only where windows WERE, for placement;
+# it never knew which app they belonged to, so it could not offer anything.
+_FOREGROUND_HOSTS = {
+    "revit.exe": ("Revit", "revit.read", "read the walls"),
+    "acad.exe": ("AutoCAD", "cad.host_lines", "read the lines"),
+    "excel.exe": ("Excel", "office.read", "read the workbook"),
+    "winword.exe": ("Word", "office.read", "read the document"),
+    "powerpnt.exe": ("PowerPoint", "office.read", "read the deck"),
+    "outlook.exe": ("Outlook", "outlook.inbox", "read the inbox"),
+    "rhino.exe": ("Rhino", "rhino.exec", "read the model"),
+    "blender.exe": ("Blender", "blender.exec", "read the scene"),
+    "3dsmax.exe": ("3ds Max", "max.exec", "read the scene"),
+}
+
+
+def foreground_app_windows() -> tuple[str, str, str] | None:
+    """(label, engine, verb) for the app in front, or None when it is not a host."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        handle = user32.GetForegroundWindow()
+        if not handle:
+            return None
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+        if not pid.value:
+            return None
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        process = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        if not process:
+            return None
+        try:
+            size = wintypes.DWORD(1024)
+            buffer = ctypes.create_unicode_buffer(size.value)
+            if not kernel32.QueryFullProcessImageNameW(process, 0, buffer, ctypes.byref(size)):
+                return None
+        finally:
+            kernel32.CloseHandle(process)
+        exe = buffer.value.replace("/", chr(92)).rsplit(chr(92), 1)[-1].lower()
+        return _FOREGROUND_HOSTS.get(exe)
+    except Exception:
+        return None
+
+
+def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, str] | None) -> tuple[str, str | None]:
+    """One line of live graph state for BABOOM's face, and the offer it carries.
+
+    The founder said BABOOM did not show that it reflects the graph, and he
+    was right: the state was there, in the snapshot, and only a right-click
+    revealed it. This is what the companion says when nothing else is being
+    said. It is built from the snapshot alone, never invented: a count that
+    is missing is left out, not made up.
+    """
+    parts: list[str] = []
+    canvas = context.get("canvas") if isinstance(context, Mapping) else None
+    if isinstance(canvas, Mapping) and isinstance(canvas.get("ran"), int):
+        answered = canvas.get("answered")
+        if isinstance(answered, int):
+            parts.append("canvas %d/%d answered" % (answered, canvas["ran"]))
+        else:
+            parts.append("canvas %d ran" % canvas["ran"])
+    brain = context.get("brain") if isinstance(context, Mapping) else None
+    if isinstance(brain, Mapping):
+        if brain.get("ok") and isinstance(brain.get("facts"), int):
+            parts.append("brain %d" % brain["facts"])
+        elif brain.get("ok") is False:
+            parts.append("brain silent")
+    agents = context.get("agents") if isinstance(context, Mapping) else None
+    working = agents.get("working") if isinstance(agents, Mapping) else None
+    if isinstance(working, (list, tuple)):
+        parts.append("%d agent%s working" % (len(working), "" if len(working) == 1 else "s"))
+    work = context.get("work") if isinstance(context, Mapping) else None
+    if isinstance(work, Mapping) and isinstance(work.get("title"), str) and work["title"].strip():
+        parts.append("on: " + work["title"].strip()[:40])
+    attention = context.get("attention") if isinstance(context, Mapping) else None
+    blocked = attention.get("blocked_obligations") if isinstance(attention, Mapping) else None
+    if isinstance(blocked, (list, tuple)) and blocked:
+        parts.append("%d blocked" % len(blocked))
+    offer = None
+    if foreground is not None:
+        label, engine, verb = foreground
+        parts.append("%s is open: %s?" % (label, verb))
+        offer = "run %s on the graph" % engine
+    return (" · ".join(parts) if parts else "watching the graph", offer)
+
+
 def create_baboom_native_companion_window(
     controller: BaboomNativeCompanionController,
     *,
@@ -594,6 +684,11 @@ def create_baboom_native_companion_window(
             self.response_ready.connect(self._apply_response)
             self.execution_ready.connect(self._apply_execution)
             self.voice_ready.connect(self._apply_voice)
+            # BABOOM's face: the live line and the offer it carries. The
+            # report label doubles as the face when nothing else is said.
+            self._face_offer: str | None = None
+            self._face_showing = False
+            self._report.installEventFilter(self)
 
         def start_projection(self) -> None:
             """Start paint and bounded projection checks; never start the host."""
@@ -707,6 +802,13 @@ def create_baboom_native_companion_window(
             report = self._transient_report or frame.report
             if report is None and self._interaction_requested:
                 report = "Reply or assign a task"
+            self._face_showing = False
+            if report is None and not self._input.isVisible():
+                # Nothing being said: the face shows the graph, live.
+                snapshot = controller.latest_snapshot
+                context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
+                report, self._face_offer = baboom_face_line(context, foreground_app_windows())
+                self._face_showing = True
             layout = self._layout_for_report(frame, screen, report)
             self._frame = frame
             self._layout = layout
@@ -852,6 +954,17 @@ def create_baboom_native_companion_window(
                 and event.key() == Qt.Key.Key_Escape
             ):
                 self._close_interaction()
+                return True
+            # A click on the face runs what it offered ("Revit is open: read
+            # the walls?"). The offer is an utterance the graph already
+            # executes; nothing here is a promise the runtime cannot keep.
+            if (
+                obj is self._report
+                and event.type() == QEvent.Type.MouseButtonPress
+                and self._face_showing
+                and self._face_offer
+            ):
+                self._say(self._face_offer)
                 return True
             return super().eventFilter(obj, event)
 

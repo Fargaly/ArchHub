@@ -36463,11 +36463,17 @@ def project_universal_baboom_context(
         for row in (hosts or ())
         if isinstance(row, Mapping) and row.get("drive") and row.get("state") == "absent"
     ]
+    # The canvas as the last run left it: how many cards ran and how many
+    # answered. BABOOM's face shows this line; without it the companion could
+    # not show that it reflects the graph at all (founder, 2026-09-06).
+    from .universal_pipeline import last_pipeline_run
+    canvas_view = last_pipeline_run()
     return {
         "cell_native": True,
         "context_lens": _BABOOM_CONTEXT_LENS_VERSION,
         "agents": {"working": agents_working, "count": len(agents_working)},
         "brain": brain_view,
+        "canvas": canvas_view,
         "hosts": {"down": hosts_down},
         "update": ({"build_id": str(staged_update.get("build_id")), "tag": str(staged_update.get("tag") or "")}
                    if isinstance(staged_update, Mapping) and staged_update.get("build_id") else {}),

@@ -312,6 +312,10 @@ class BrainStore:
         self._conn = conn
         self._path = path
         self._lock = threading.RLock()
+        # A file-backed store in WAL mode can serve extra readers; an
+        # in-memory one cannot be reopened, so long reads stay on the shared
+        # connection there.
+        self._path_for_readers = None if str(path) == ":memory:" else str(path)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -813,9 +817,37 @@ class BrainStore:
             LIMIT ?
         """
         params.append(limit)
-        with self._lock:
-            rows = self._conn.execute(sql, params).fetchall()
+        # A LONG read must not hold the one shared connection. Measured on the
+        # founder's brain: this call with the default limit scans 54,076 rows
+        # and takes 88 s, and three thread dumps caught brain.health waiting
+        # behind it while the daemon answered nothing at all. WAL lets readers
+        # run beside the writer, so a big read gets its own connection and the
+        # lock is never taken. A small read stays on the shared one, which
+        # costs nothing and keeps :memory: stores working.
+        if int(limit) > self._OWN_READER_ABOVE and self._path_for_readers:
+            reader = self._open_reader()
+            try:
+                rows = reader.execute(sql, params).fetchall()
+            finally:
+                reader.close()
+        else:
+            with self._lock:
+                rows = self._conn.execute(sql, params).fetchall()
         return [_row_to_fragment(r) for r in rows]
+
+    # Above this many rows a read opens its own connection instead of holding
+    # the shared one. Chosen so ordinary listings keep the cheap path.
+    _OWN_READER_ABOVE = 2_000
+
+    def _open_reader(self):
+        """A read-only connection of this store's own file, for long reads."""
+        reader = sqlite3.connect(
+            self._path_for_readers, isolation_level=None, check_same_thread=False
+        )
+        reader.row_factory = sqlite3.Row
+        reader.execute("PRAGMA query_only=ON")
+        reader.execute("PRAGMA busy_timeout=10000")
+        return reader
 
     def count_fragments(self, scope: Optional[Scope] = None) -> int:
         with self._lock:

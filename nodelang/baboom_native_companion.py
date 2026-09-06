@@ -1294,7 +1294,12 @@ def create_baboom_native_companion_window(
             if on_response is not None:
                 on_response({"execution": dict(result)})
 
-    return CompanionWindow()
+    made = CompanionWindow()
+    # The launcher needs the controller to point the geometry receipt at a
+    # file; nothing else exposed it, so the receipt was never wired and the
+    # log stayed empty exactly when it was needed (2026-09-06).
+    made.controller = controller
+    return made
 
 
 __all__ = [

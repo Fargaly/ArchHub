@@ -149,3 +149,13 @@ def test_the_app_can_be_asked_to_quit_so_its_tray_icon_goes_with_it():
     assert 'marker = state_dir / "quit-request"' in watcher
     assert "_tray_quit()" in watcher.split("def ", 2)[0] + watcher
     assert "_watch_quit_request()" in launcher.split("def _watch_quit_request")[0] or launcher.count("_watch_quit_request()") >= 2
+
+
+def test_the_window_exposes_its_controller_so_the_receipt_can_be_wired():
+    """The launcher asks the window for its controller to point the geometry
+    receipt at a file. Nothing exposed it, so the log stayed empty exactly
+    when the founder reported BABOOM missing (2026-09-06)."""
+    src = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
+    assert "made.controller = controller" in src
+    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    assert 'getattr(baboom_window, "controller", None)' in launcher

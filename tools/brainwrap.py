@@ -68,6 +68,7 @@ import json
 import os
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -582,6 +583,15 @@ def flush_turn_memory(evidence: dict, *, vendor: str, blocked: bool,
         return None
 
 
+def _port_held(port: int, *, timeout: float = 1.0) -> bool:
+    """True when something accepts on the daemon port, answering or not."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _completion_gate_verdict(
     cwd: Optional[str] = None,
     *,
@@ -614,6 +624,13 @@ def _completion_gate_verdict(
                 "vendor": runtime,
             })
         if not isinstance(state, dict):
+            # A brain that holds its port but cannot answer yet is booting
+            # (its startup sync runs for minutes after the founder's app
+            # relaunches). That restart already orphaned every enrolment,
+            # so there is no claim left here to protect: a settling brain
+            # is not a missing authority (2026-09-06).
+            if _port_held(DAEMON_PORT):
+                return False, ""
             return True, "Universal work authority is unavailable; stop denied."
         session_root = state.get("agent_session")
         owned = [

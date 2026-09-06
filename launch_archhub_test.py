@@ -843,6 +843,35 @@ def _tray_quit():
     window.quitting = True
     app.quit()
 
+
+def _watch_quit_request() -> None:
+    """Quit cleanly when asked from outside, so the tray icon goes with us.
+
+    Every update this week ended with the process being killed, and Windows
+    keeps a dead process's tray icon until the mouse crosses it: the founder
+    clicked ArchHub in the tray and nothing opened, because that icon belonged
+    to a process that was gone (14 of them in one day, 2026-09-06). A file in
+    the state directory is the ask; the app quits the way the menu quits.
+    """
+    from PyQt6.QtCore import QTimer as _QT
+
+    marker = state_dir / "quit-request"
+
+    def _look():
+        if marker.is_file():
+            try:
+                marker.unlink()
+            except Exception:
+                pass
+            print("  quit       : asked from outside; leaving cleanly", flush=True)
+            _tray_quit()
+
+    timer = _QT(app)
+    timer.setInterval(2000)
+    timer.timeout.connect(_look)
+    timer.start()
+    app._archhub_quit_watch = timer
+
 def _tray_menu_about_to_show():
     _restart_action.setVisible((state_dir / "updates" / "staged.json").is_file())
 
@@ -860,6 +889,7 @@ if QSystemTrayIcon.isSystemTrayAvailable():
     _tray.activated.connect(lambda reason: _tray_open() if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick) else None)
     _tray.show()
     window._tray = _tray
+    _watch_quit_request()
     app.setQuitOnLastWindowClosed(False)
     print("  tray       : icon shown (close hides to tray; Quit is in the menu)", flush=True)
 else:
@@ -907,6 +937,14 @@ try:
             time.sleep(2.5)
     else:
         raise _attach_error
+    # Where BABOOM actually lands, every time it changes. The founder has
+    # twice reported it missing while the app said it was drawing.
+    try:
+        controller = getattr(baboom_window, "controller", None) or getattr(baboom_host, "controller", None)
+        if controller is not None and hasattr(controller, "watch_geometry"):
+            controller.watch_geometry(state_dir / "baboom-geometry.log")
+    except Exception:
+        pass
     baboom_window.show()
     # show() only makes the widget exist; projection is what makes BABOOM
     # actually draw itself and follow the graph.

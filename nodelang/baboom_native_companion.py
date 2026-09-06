@@ -311,6 +311,24 @@ class BaboomNativeCompanionController:
         self._occupied_provider = occupied_provider
         self._user_origin: tuple[int, int] | None = None
         self._animation_tick = 0
+        # How long the host has been silent, and where the window really
+        # landed. Both exist so "BABOOM is not there" can be read off a file.
+        self.host_silent_seconds = 0.0
+        self._geometry_log = None
+
+    def watch_geometry(self, path) -> None:
+        """Record every geometry change to this file, newest last."""
+        self._geometry_log = path
+
+    def geometry_receipt(self, line: str) -> None:
+        if self._geometry_log is None:
+            return
+        try:
+            import time as _t
+            with open(self._geometry_log, "a", encoding="utf-8") as sink:
+                sink.write("%s %s" % (_t.strftime("%H:%M:%S"), line) + chr(10))
+        except Exception:
+            pass
 
     @property
     def latest_snapshot(self):
@@ -348,8 +366,12 @@ class BaboomNativeCompanionController:
         # "keeps appearing and disappearing"). Presence first: the last
         # snapshot keeps drawing; the companion only ever disappears when
         # the host has been silent for a long time.
-        if time.time() > float(snapshot.frame_expires_at) + _FRAME_SILENCE_SECONDS:
-            return None
+        # Presence first, always. The companion used to vanish after ten
+        # minutes of host silence; on the founder's desktop that read as
+        # "appears and disappears" (2026-09-04, and again 2026-09-06 when
+        # only a floating line of text was left). A silent host is said on
+        # the face; the sprite stays.
+        self.host_silent_seconds = max(0.0, time.time() - float(snapshot.frame_expires_at))
         frame = project_baboom_native_visual_frame(
             snapshot,
             self._atlas,
@@ -508,6 +530,11 @@ def foreground_app_windows() -> tuple[str, str, str] | None:
         return None
 
 
+# Two lines of the compact box at the companion font. Beyond this the box
+# either grows past the sprite or cuts a word; both read as broken.
+FACE_MAX_CHARS = 72
+
+
 def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, str] | None) -> tuple[str, str | None]:
     """One line of live graph state for BABOOM's face, and the offer it carries.
 
@@ -518,6 +545,10 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     is missing is left out, not made up.
     """
     parts: list[str] = []
+    # Priority order: what the founder is in front of, then the canvas, the
+    # brain, agents, the current work. The box holds two lines; lower parts
+    # are dropped before higher ones are cut mid-word (which is what the
+    # founder saw: "canvas 11/12 answered · brai").
     canvas = context.get("canvas") if isinstance(context, Mapping) else None
     if isinstance(canvas, Mapping) and isinstance(canvas.get("ran"), int):
         answered = canvas.get("answered")
@@ -533,7 +564,7 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
             parts.append("brain silent")
     agents = context.get("agents") if isinstance(context, Mapping) else None
     working = agents.get("working") if isinstance(agents, Mapping) else None
-    if isinstance(working, (list, tuple)):
+    if isinstance(working, (list, tuple)) and working:
         parts.append("%d agent%s working" % (len(working), "" if len(working) == 1 else "s"))
     work = context.get("work") if isinstance(context, Mapping) else None
     if isinstance(work, Mapping) and isinstance(work.get("title"), str) and work["title"].strip():
@@ -545,9 +576,16 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     offer = None
     if foreground is not None:
         label, engine, verb = foreground
-        parts.append("%s is open: %s?" % (label, verb))
+        parts.insert(0, "%s is open: %s?" % (label, verb))
         offer = "run %s on the graph" % engine
-    return (" · ".join(parts) if parts else "watching the graph", offer)
+    silent = context.get("host_silent_seconds") if isinstance(context, Mapping) else None
+    if isinstance(silent, (int, float)) and silent >= 120:
+        parts.append("host silent %dm" % int(silent // 60))
+    line = " · ".join(parts) if parts else "watching the graph"
+    while len(line) > FACE_MAX_CHARS and len(parts) > 1:
+        parts.pop()
+        line = " · ".join(parts)
+    return (line, offer)
 
 
 def create_baboom_native_companion_window(
@@ -731,7 +769,16 @@ def create_baboom_native_companion_window(
                 int(Qt.TextFlag.TextWordWrap),
                 text,
             )
-            return (width, max(minimum, wrapped.height() + padding_y))
+            # The label wraps by its own style (padding, line-height), which
+            # the bare font metrics do not see. Ask the label what it needs at
+            # this width and take the larger answer, so no last line is lost.
+            asked = 0
+            try:
+                self._report.setText(text)
+                asked = int(self._report.heightForWidth(width))
+            except Exception:
+                asked = 0
+            return (width, max(minimum, wrapped.height() + padding_y, asked))
 
         def _layout_for_report(
             self,
@@ -807,6 +854,7 @@ def create_baboom_native_companion_window(
                 # Nothing being said: the face shows the graph, live.
                 snapshot = controller.latest_snapshot
                 context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
+                context["host_silent_seconds"] = getattr(controller, "host_silent_seconds", 0.0)
                 report, self._face_offer = baboom_face_line(context, foreground_app_windows())
                 self._face_showing = True
             layout = self._layout_for_report(frame, screen, report)
@@ -828,6 +876,17 @@ def create_baboom_native_companion_window(
             window_rect = QRect(left, top, right - left, bottom - top)
             if self.geometry() != window_rect:
                 self.setGeometry(window_rect)
+                # One line per change, so the next "it is not there" can be
+                # read off a file instead of guessed at from a screenshot.
+                try:
+                    receipt = getattr(controller, "geometry_receipt", None)
+                    if receipt is not None:
+                        receipt("sprite=%dx%d+%d+%d message=%s window=%dx%d+%d+%d" % (
+                            bounds.width, bounds.height, bounds.x, bounds.y,
+                            ("%dx%d+%d+%d" % (layout.message.width, layout.message.height, layout.message.x, layout.message.y)) if layout.message else "none",
+                            window_rect.width(), window_rect.height(), window_rect.x(), window_rect.y()))
+                except Exception:
+                    pass
             sprite_rect = QRect(
                 bounds.x - left, bounds.y - top, bounds.width, bounds.height
             )

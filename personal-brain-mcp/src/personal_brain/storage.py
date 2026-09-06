@@ -61,6 +61,21 @@ _RECONCILE_KEY = "__reconcile__"
 
 
 @dataclass
+class _Busy:
+    """The store was busy. Distinct from None, which means 'no such value'."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "BUSY"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+BUSY = _Busy()
+
+
 class ReconcileOutcome:
     """Result of :meth:`BrainStore.write_fragment_versioned`."""
 
@@ -1386,6 +1401,29 @@ class BrainStore:
             row = self._conn.execute(
                 "SELECT value FROM brain_meta WHERE key = ?", (key,)
             ).fetchone()
+        return row["value"] if row else None
+
+    _META_PROBE_SECONDS = 0.5
+
+    def peek_meta(self, key: str, *, timeout: float = _META_PROBE_SECONDS):
+        """One meta value if the store is free, or BUSY. Never waits.
+
+        A STATUS read must not queue behind a bulk write. The founder's brain
+        stopped answering anything for minutes at a time: a thread dump showed
+        brain.health inside get_meta, waiting on the connection lock that the
+        sync worker held while it pushed 1,824 facts, with a second thread
+        stacked behind it. Whether a token was latched invalid is not worth a
+        caller's whole budget, so a busy store answers BUSY and the status
+        says so instead of hanging.
+        """
+        if not self._lock.acquire(timeout=max(0.0, float(timeout))):
+            return BUSY
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM brain_meta WHERE key = ?", (key,)
+            ).fetchone()
+        finally:
+            self._lock.release()
         return row["value"] if row else None
 
     def update_meta(self, key: str, fn: "Any") -> "Any":

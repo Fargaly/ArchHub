@@ -583,11 +583,24 @@ class PersonalCloudSync:
         """True iff the latch is set AND it was set for THIS exact token. A
         different (fresh) token is never considered rejected — the verdict was
         about the old one."""
+        # This runs on the STATUS path, which brain.health calls. A blocking
+        # read here queued the whole health answer behind the sync worker's
+        # bulk write and the daemon stopped answering (thread dump, 2026-09-06:
+        # two threads inside get_meta while brain-sync-worker held the lock).
+        # A busy store means "not known right now", which for this latch is
+        # the same safe answer as "not latched": stay inert, never hang.
+        from .storage import BUSY
+
         try:
-            latched = (self.store.get_meta(_META_AUTH_INVALID) or "").strip()
-            if not latched:
+            peek = getattr(self.store, "peek_meta", None)
+            read = peek if peek is not None else self.store.get_meta
+            latched = read(_META_AUTH_INVALID)
+            if latched is BUSY or not str(latched or "").strip():
                 return False
-            latched_fp = (self.store.get_meta(_META_AUTH_INVALID_TOKEN) or "").strip()
+            latched_raw = read(_META_AUTH_INVALID_TOKEN)
+            if latched_raw is BUSY:
+                return False
+            latched_fp = str(latched_raw or "").strip()
         except Exception:
             return False
         # No recorded fingerprint (legacy) → treat the latch as applying to the

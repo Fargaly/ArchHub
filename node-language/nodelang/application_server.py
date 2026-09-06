@@ -5984,8 +5984,18 @@ class ApplicationServer:
                                 import json as _json
 
                                 from .pipeline_engines import _brain_call
+                                # The studio hit this route TWICE at every
+                                # boot with no bound, and the daemon scanned
+                                # its whole store (54,076 rows, 88 s) each
+                                # time. The Memory panel wants a page; the
+                                # Export button says it wants everything.
+                                try:
+                                    wanted = int((body or {}).get('limit') or 500)
+                                except (TypeError, ValueError):
+                                    wanted = 500
                                 listing = str(_brain_call(
-                                    'brain.list_facts', {}
+                                    'brain.list_facts',
+                                    {'limit': max(1, min(wanted, 100000))}
                                 ))
                                 try:
                                     held = _json.loads(listing)

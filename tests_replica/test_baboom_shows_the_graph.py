@@ -214,3 +214,26 @@ def test_a_minimized_companion_is_restored_before_it_is_placed():
         "restore before placing, or the placement is a no-op")
     # and the receipt now says who owns the window and whether it is iconic
     assert "GW_OWNER = 4" in refresh and 'owner += " iconic=%s"' in refresh
+
+
+def test_the_app_in_front_also_gets_acts_behind_an_explicit_pick():
+    """The founder said BABOOM cannot help with what he is doing. Reading the
+    app in front was the first help; acting in it is the second: the
+    right-click menu offers the engines that write into the open model,
+    each an utterance the catalog already runs. Acts never sit behind the
+    face click, which stays a read."""
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
+    from nodelang.universal_application import _BABOOM_COMMAND_CATALOG_ROOT  # noqa: F401 - the catalog exists
+    labels = {label for label, _engine, _verb in companion._FOREGROUND_HOSTS.values()}
+    for label, acts in companion._FOREGROUND_ACTS.items():
+        assert label in labels, label
+        for act_label, engine in acts:
+            assert act_label and engine in PIPELINE_ENGINES, (label, engine)
+            assert engine.startswith("library."), "acts are library cards, run without parameters"
+    src = inspect.getsource(companion)
+    face = src[src.index("def baboom_face_line"):src.index("return (line, offer)")]
+    assert "_FOREGROUND_ACTS" not in face, "an act is never the face offer"
+    menu = src[src.index("def contextMenuEvent"):]
+    assert 'f = menu.addMenu("%s is open" % front_label)' in menu
+    assert "for act_label, act_engine in _FOREGROUND_ACTS.get(front_label, ())" in menu
+    assert 'self._say("run %s on the graph" % e)' in menu

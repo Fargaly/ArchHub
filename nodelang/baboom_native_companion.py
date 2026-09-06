@@ -497,6 +497,18 @@ _FOREGROUND_HOSTS = {
     "3dsmax.exe": ("3ds Max", "max.exec", "read the scene"),
 }
 
+# What BABOOM can DO in the app in front, beyond reading it. These are the
+# library engines that run with no parameters and write into the open
+# model, so they live behind an explicit right-click pick, never behind the
+# face click: a click on the face reads, a chosen menu line acts.
+_FOREGROUND_ACTS = {
+    "Revit": (
+        ("tag the rooms in this view", "library.tag_rooms"),
+        ("tag the doors in this view", "library.place_tags"),
+        ("publish the sheets to PDF", "library.publish_pdf"),
+    ),
+}
+
 
 def foreground_app_windows() -> tuple[str, str, str] | None:
     """(label, engine, verb) for the app in front, or None when it is not a host."""
@@ -1192,6 +1204,13 @@ def create_baboom_native_companion_window(
             a.addAction("Interrupt an agent...", lambda: self._prefill("interrupt codex"))
             a.addAction("Queue work for the agents...", lambda: self._prefill("Assign task: "))
             a.addAction("Send a task to a model...", lambda: self._prefill("assign task to claude: "))
+            front = foreground_app_windows()
+            if front is not None:
+                front_label, front_engine, front_verb = front
+                f = menu.addMenu("%s is open" % front_label)
+                f.addAction(front_verb, (lambda e=front_engine: self._say("run %s on the graph" % e)))
+                for act_label, act_engine in _FOREGROUND_ACTS.get(front_label, ()):
+                    f.addAction(act_label, (lambda e=act_engine: self._say("run %s on the graph" % e)))
             h = menu.addMenu("Hosts: open with ArchHub")
             for label, host in (("Excel", "excel"), ("Word", "word"), ("PowerPoint", "powerpoint"), ("Outlook", "outlook"),
                                 ("Rhino (with bridge)", "rhino"), ("Blender (with add-on)", "blender")):

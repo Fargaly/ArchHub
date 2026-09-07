@@ -283,7 +283,19 @@ def test_push_speckle_uploads_one_object_and_commits_it_to_the_branch():
     upload, commit = wire.sent
     assert upload.full_url == "https://app.speckle.systems/objects/abc123"
     assert upload.headers["Authorization"] == "Bearer spk-live"
-    sent = __import__("json").loads(upload.data.decode("utf-8"))
+    # Speckle's object endpoint takes a MULTIPART file part whose content is
+    # the JSON array; a raw JSON body is answered 400 (audit 2026-09-07).
+    ctype = upload.headers["Content-type"]
+    assert ctype.startswith("multipart/form-data; boundary=")
+    boundary = ctype.split("boundary=", 1)[1]
+    raw_body = upload.data
+    assert raw_body.startswith(("--" + boundary).encode())
+    assert b'name="batch1"' in raw_body and b"Content-Type: application/json" in raw_body
+    assert raw_body.rstrip().endswith(("--" + boundary + "--").encode())
+    eol = (chr(13) + chr(10)).encode()
+    head, _, rest = raw_body.partition(eol + eol)
+    body_json = rest.rsplit(eol + b"--" + boundary.encode(), 1)[0]
+    sent = __import__("json").loads(body_json.decode("utf-8"))
     assert len(sent) == 1 and sent[0]["rows"] == rows and sent[0]["count"] == 1
     assert sent[0]["id"] == L._speckle_object_id(sent[0]), "the id is the sha of the object"
     body = __import__("json").loads(commit.data.decode("utf-8"))
@@ -329,3 +341,26 @@ def test_publish_pdf_never_lets_a_graph_name_a_share(monkeypatch, tmp_path):
     folder = __import__("json").loads(head[len("var folder = "):head.index(";")])
     base = __import__("os").path.join(__import__("os").path.expanduser("~"), "Documents", "ArchHub", "pdf")
     assert folder.startswith(base) and "evil" not in folder and __import__("os").path.basename(folder).startswith("drop-")
+
+
+def test_a_model_call_cannot_hold_the_canvas_for_a_minute(monkeypatch, tmp_path):
+    """The pipeline runs under the app's one mutation lock, so a model call
+    holds every gesture while it waits. The router's own default was 60 s
+    and the vision card adds a multi-MB upload (audit 2026-09-07): the
+    cards bound it, and the founder can raise it per card."""
+    seen = {}
+
+    def route_chat(route, messages, **options):
+        seen["timeout"] = options.get("timeout")
+        return {"text": "ok"}
+
+    monkeypatch.setattr(model_router, "route_chat", route_chat)
+    L.think({"model": "openrouter/x/y", "prompt": "hi"}, {})
+    assert seen["timeout"] == L.MODEL_CALL_SECONDS <= 30.0
+    L.think({"model": "openrouter/x/y", "prompt": "hi", "timeout_s": "90"}, {})
+    assert seen["timeout"] == 90.0
+    L.think({"model": "openrouter/x/y", "prompt": "hi", "timeout_s": "9000"}, {})
+    assert seen["timeout"] == 120.0, "the ceiling holds"
+    sample = ROOT / "nodelang" / "samples" / "sample-plan.png"
+    L.vision({"model": "openrouter/x/vision"}, {"in": str(sample)})
+    assert seen["timeout"] == L.MODEL_CALL_SECONDS

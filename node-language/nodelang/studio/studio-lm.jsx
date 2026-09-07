@@ -354,8 +354,13 @@ const StudioLM = () => {
   React.useEffect(() => {
     if (!window.ARCHHUB_CLOUD_SESSION) return;
     window.ARCHHUB_CLOUD_SESSION().then(s => {
-      if (!s || s.ok === false) return;
       const held = acLoad();
+      if (!s || s.ok === false) {
+        // The app could not say who is signed in; a stored flag is not an
+        // identity, so the strip says sign in rather than a stale email.
+        if (held.signedIn) { const next = Object.assign({}, held, { signedIn: false }); acSave(next); setAccount(next); }
+        return;
+      }
       if (s.signed_in && (held.email !== s.email || !held.signedIn)) {
         const next = Object.assign({}, held, { email: s.email, signedIn: true });
         acSave(next); setAccount(next);

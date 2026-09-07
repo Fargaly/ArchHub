@@ -665,12 +665,15 @@ def _completion_gate_verdict(
                 "vendor": runtime,
             }, timeout=3.0, patient=False)
         if not isinstance(state, dict) or state.get("isError"):
-            # No answer, or a tool error: not an authority. A brain that
-            # holds its port but cannot answer yet is booting (its startup
-            # sync runs for minutes after the founder's app relaunches);
-            # only a YOUNG brain earns that reading - an old brain that
-            # stops answering is wedged, and a claim it holds is still a
-            # claim (audit 2026-09-06).
+            # No answer, or a tool error: not an authority. One reading is
+            # allowed through: a brain YOUNGER than ten minutes that holds
+            # its port is still booting, and nothing can be asked of it for
+            # minutes. This is a deliberate trade, not a proof the session
+            # owns nothing - a re-enrolment can continue the SAME Agent
+            # Session, so a claim can survive the restart (audit
+            # 2026-09-07). Blocking every stop for ten minutes after each
+            # app relaunch is the worse failure; an old brain that stops
+            # answering is wedged and still denies.
             if _port_held(DAEMON_PORT) and _brain_is_young(DAEMON_PORT):
                 return False, ""
             return True, "Universal work authority is unavailable; stop denied."

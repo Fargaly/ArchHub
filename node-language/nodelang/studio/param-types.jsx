@@ -55,11 +55,11 @@ const Socket = ({ type, list, filled, size = 9 }) => {
 //   throttle — rate limit for a wire fed by a live host.
 const WIRE_PARAMS = [
   { k: 'enabled',     label: 'Enabled',   type: 'toggle', def: true,       help: 'Mute the connection without deleting it — downstream sees nothing.' },
-  { k: 'lacing',      label: 'Lacing',    type: 'menu',   def: 'shortest', opts: ['shortest', 'longest', 'cross product'], help: 'How two lists of different length are paired.' },
-  { k: 'tree',        label: 'Data tree', type: 'menu',   def: 'none',     opts: ['none', 'flatten', 'graft', 'simplify'], help: 'Restructure on the way through — flatten, graft, or simplify.' },
+  { k: 'lacing',      label: 'Lacing',    type: 'menu',   def: 'shortest', opts: ['shortest', 'longest', 'cross product'], help: 'How two lists of different length are paired: shortest stops at the short one, longest repeats the last item, cross product pairs every combination.' },
+  { k: 'tree',        label: 'Data tree', type: 'menu',   def: 'none',     opts: ['none', 'flatten', 'graft', 'simplify'], help: 'Restructure on the way through — flatten to one list, graft each item into its own branch, simplify removes empty levels.' },
   { k: 'condition',   label: 'Condition', type: 'text',   def: '',         page: 'Rules', help: 'The wire only carries when this holds. Empty means always.' },
   { k: 'on_fail',     label: 'On block',  type: 'menu',   def: 'block',    opts: ['block', 'pass last', 'pass empty'], page: 'Rules', help: 'What downstream receives when the condition blocks or the source errors.' },
-  { k: 'throttle_ms', label: 'Throttle',  type: 'number', def: 0,          unit: 'ms', min: 0, max: 2000, step: 50, page: 'Rules', help: 'Minimum gap between deliveries — for a wire fed by a live host.' },
+  { k: 'throttle_ms', label: 'Throttle',  type: 'number', def: 0,          unit: 'ms', min: 0, max: 2000, step: 50, hard: [0, 10000], page: 'Rules', help: 'Minimum gap between deliveries — for a wire fed by a live host.' },
 ];
 
 Object.assign(window, { PM_TYPES, PM_WIRE, PM_ALIAS, pmType, Socket, WIRE_PARAMS });

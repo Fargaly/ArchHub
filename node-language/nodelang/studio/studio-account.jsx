@@ -67,11 +67,18 @@ const _bootDetail = (key) => {
   const live = window.ARCHHUB_LIVE || {};
   if (key === 'tokens') {
     const T = window.AH || {};
-    return Object.keys(T).length + ' tokens';
+    const keys = Object.keys(T);
+    const colours = keys.filter(k => typeof T[k] === 'string' && /^#|^rgb/.test(T[k]));
+    return colours.length + ' colours · ' + (keys.length - colours.length) + ' other';
   }
   if (key === 'brain') {
-    return window.ARCHHUB_BRAIN_FACTS != null
-      ? window.ARCHHUB_BRAIN_FACTS + ' facts' : 'connecting';
+    // ARCHHUB_BRAIN_FACTS is assigned nowhere, so this line always read
+    // 'connecting' (2026-09-07). The facts the app already loaded are right
+    // here, and his two-part phrasing is true of them.
+    const held = live.memory || [];
+    if (!held.length) return 'connecting';
+    const sources = new Set(held.map(m => m.src).filter(Boolean));
+    return held.length + ' facts' + (sources.size ? ' · ' + sources.size + ' folders' : '');
   }
   if (key === 'hosts') {
     const live_hosts = (live.connectors || []).filter(
@@ -253,7 +260,7 @@ function CloudSignIn({ email, onSignedIn }) {
           {button('Email me a sign-in link', 'magic', false)}
         </div>
       )}
-      {err && <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.danger || '#b4443c', marginTop: 6 }}>{err}</div>}
+      {err && <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.err, marginTop: 6 }}>{err}</div>}
     </div>
   );
 }

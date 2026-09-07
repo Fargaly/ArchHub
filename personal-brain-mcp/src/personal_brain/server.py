@@ -4730,6 +4730,28 @@ def _hide_own_console() -> None:
         pass  # a daemon never fails to start over a cosmetic window
 
 
+def _refuse_if_port_is_taken(port: int) -> None:
+    """Exit now if another Brain already owns this port.
+
+    One brain per port is the whole design; a second one is pure cost. The
+    socket is bound and released immediately -- it is a question, not the
+    serving bind, which the server itself performs later.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", int(port)))
+    except OSError as taken:
+        print(
+            "[brain] port %s is already owned by another Brain (%s); exiting "
+            "rather than building an engine that can serve nothing"
+            % (port, taken),
+            file=sys.stderr, flush=True,
+        )
+        raise SystemExit(1)
+    finally:
+        probe.close()
+
+
 def main(argv: Optional[list[str]] = None) -> None:
     """Default CLI: stdio transport (matches Claude Code / Codex / Cursor)."""
     parser = argparse.ArgumentParser(
@@ -4765,6 +4787,10 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     if args.http is not None:
         _hide_own_console()
+        # Refuse EARLY when the port is already owned. The real bind happens
+        # last, after the engine is built and every worker runs, so without
+        # this a losing daemon paid for a whole engine before finding out.
+        _refuse_if_port_is_taken(args.http)
 
     if args.http is None and not args.local_stdio:
         # No-arg stdio is the cached-client compatibility path. It must never
@@ -4909,7 +4935,14 @@ def main(argv: Optional[list[str]] = None) -> None:
         host = os.environ.get("BRAIN_HTTP_HOST", "127.0.0.1")
         server.run(transport="http", host=host, port=args.http,
                    stateless_http=True)
-        return
+        # SERVING IS OVER, SO THIS PROCESS IS OVER. run() returns both on a
+        # clean stop and on a failed bind, and the bind failure does NOT
+        # raise -- so a daemon that lost the port used to return here, fall
+        # out of main(), and then LIVE FOREVER because its worker threads are
+        # not daemon threads: loading the graph, syncing to the cloud,
+        # serving nothing. The founder had six of them, several holding
+        # gigabytes (2026-09-07). Nothing may outlive the listener.
+        raise SystemExit(0)
 
     # stdio is the default transport.
     server.run(transport="stdio")

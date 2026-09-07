@@ -46,40 +46,41 @@ def test_a_brain_that_answers_and_refuses_still_blocks():
     )
 
 
-def test_only_one_shell_may_start_the_daemon():
+def test_a_listening_daemon_is_waited_for_never_duplicated():
     body = inspect.getsource(brainwrap.ensure_daemon)
-    assert "_port_held(DAEMON_PORT)" in body
-    assert "_claim_daemon_start_lock()" in body
+    held = body.index("_port_held(DAEMON_PORT)")
     spawn = body.index("subprocess.Popen")
-    assert body.index("_port_held(DAEMON_PORT)") < spawn, (
-        "a listener must be seen BEFORE another daemon is started"
-    )
-    assert body.index("_claim_daemon_start_lock()") < spawn
+    assert held < spawn, "a listener must be seen BEFORE another is started"
+    assert "already listening" in body
 
 
-def test_a_shell_that_loses_the_race_waits_instead_of_spawning():
-    body = inspect.getsource(brainwrap.ensure_daemon)
-    assert body.count("_wait_for_health(") >= 2
-    assert "already listening" in body and "another shell is starting" in body
+def test_nothing_else_guards_the_start():
+    """The daemon takes its port before it builds anything, so a redundant
+    start loses the bind in milliseconds and exits. A lock here solved what
+    the port claim already solves, and when a starter died mid-boot its lock
+    outlived it and left the machine with no brain at all (2026-09-07)."""
+    source = inspect.getsource(brainwrap)
+    for gone in (
+        "_claim_daemon_start_lock",
+        "_release_daemon_start_lock",
+        "_daemon_start_lock_path",
+        "_DAEMON_START_LOCK_SECONDS",
+    ):
+        assert gone not in source, "%s must not come back" % gone
 
 
-def test_an_abandoned_start_lock_is_taken_over():
-    """A shell killed mid-start must not make the brain unstartable."""
-    body = inspect.getsource(brainwrap._claim_daemon_start_lock)
-    assert "_DAEMON_START_LOCK_SECONDS" in body
-    assert "path.unlink()" in body
-    assert brainwrap._DAEMON_START_LOCK_SECONDS <= 300
-
-
-def test_the_lock_is_won_by_exactly_one_caller(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        brainwrap, "_daemon_start_lock_path", lambda: tmp_path / "start.lock"
-    )
-    first = brainwrap._claim_daemon_start_lock()
-    assert first is not None
-    assert brainwrap._claim_daemon_start_lock() is None
-    brainwrap._release_daemon_start_lock(first)
-    assert brainwrap._claim_daemon_start_lock() is not None
+def test_the_daemon_itself_refuses_to_be_the_second_one():
+    """The whole guard lives in the daemon, where it cannot go stale."""
+    server = (
+        ROOT / "personal-brain-mcp" / "src" / "personal_brain" / "server.py"
+    ).read_text(encoding="utf-8")
+    assert "_claim_http_port_or_exit(" in server
+    claim = server.index("_http_claim = _claim_http_port_or_exit(")
+    serve = server.index('server.run(transport="http"')
+    assert claim < serve
+    assert "raise SystemExit(1)" in server[
+        server.index("def _claim_http_port_or_exit"):serve
+    ]
 
 
 def test_the_daemon_gets_no_console_window():

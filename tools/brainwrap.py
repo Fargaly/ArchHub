@@ -588,53 +588,6 @@ def flush_turn_memory(evidence: dict, *, vendor: str, blocked: bool,
         return None
 
 
-# How long a start lock is believed before it is treated as abandoned. A
-# daemon that has not opened its port in this long is not coming.
-_DAEMON_START_LOCK_SECONDS = 90.0
-
-
-def _daemon_start_lock_path() -> Path:
-    """One lock per machine, beside the brain it guards."""
-    return Path(tempfile.gettempdir()) / "archhub-brain-daemon-start.lock"
-
-
-def _claim_daemon_start_lock():
-    """Win the right to start the daemon, or None when someone else has it.
-
-    Exclusive create is the whole mechanism: whoever creates the file starts
-    the one daemon and everybody else waits for its port. A lock older than
-    _DAEMON_START_LOCK_SECONDS is taken over, so a shell killed mid-start
-    cannot leave the brain unstartable forever.
-    """
-    path = _daemon_start_lock_path()
-    try:
-        held = time.time() - path.stat().st_mtime
-        if held < _DAEMON_START_LOCK_SECONDS:
-            return None
-        path.unlink()
-    except OSError:
-        pass
-    try:
-        handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        return None
-    except OSError:
-        # A machine that cannot hold a lock still gets a brain; it simply
-        # has no protection against a second shell racing it.
-        return path
-    os.write(handle, str(os.getpid()).encode("ascii"))
-    os.close(handle)
-    return path
-
-
-def _release_daemon_start_lock(path) -> None:
-    """Let the next shell start a daemon once this attempt has finished."""
-    try:
-        Path(path).unlink()
-    except OSError:
-        pass
-
-
 def _wait_for_health(wait_s: float, note: str):
     """Wait for the ONE daemon to answer, rather than starting another."""
     deadline = time.time() + wait_s
@@ -957,17 +910,15 @@ def ensure_daemon(*, wait_s: float = 12.0, log: bool = True,
     if not auto_start:
         return False, "brain down (auto-start disabled)"
 
-    # ONE daemon, ever. This spawned unconditionally whenever health did not
-    # answer inside the wait, so every shell that opened while a brain was
-    # still coming up started ANOTHER one: the founder had five brain
-    # processes on his machine, each holding the same graph (2026-09-07).
-    # A listener on the port -- answering yet or not -- means one is already
-    # there, and a fresh start lock means one is already on its way.
+    # A listener on the port -- answering yet or not -- means a daemon is
+    # already there, so wait for it instead of starting another. Nothing
+    # else is guarded: the daemon TAKES ITS PORT before it builds anything,
+    # so a redundant start loses the bind in milliseconds and exits having
+    # cost one socket. A start lock here was wrong twice over -- it solved
+    # what the port claim already solves, and a starter that died mid-boot
+    # left its lock behind and the machine with no brain (2026-09-07).
     if _port_held(DAEMON_PORT):
         return _wait_for_health(wait_s, "a daemon is already listening")
-    holder = _claim_daemon_start_lock()
-    if holder is None:
-        return _wait_for_health(wait_s, "another shell is starting the daemon")
 
     cmd = daemon_start_command()
     if log:
@@ -1009,10 +960,7 @@ def ensure_daemon(*, wait_s: float = 12.0, log: bool = True,
     except Exception as ex:
         return False, f"could not launch daemon: {type(ex).__name__}: {ex}"
 
-    try:
-        return _wait_for_health(wait_s, "daemon started")
-    finally:
-        _release_daemon_start_lock(holder)
+    return _wait_for_health(wait_s, "daemon started")
 
 
 # ── 2. wiring announce ──────────────────────────────────────────────────

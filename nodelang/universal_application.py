@@ -9995,7 +9995,7 @@ def inspect_legacy_baboom_execution_migration(
         entry.policy_root,
         entry.control_root,
     }
-    missing = tuple(sorted(required - set(snapshot.cells)))
+    missing = tuple(sorted(root for root in required if root not in snapshot.cells))
     blockers = [
         "canonical BABOOM execution targets are not staged"
         if missing else ""

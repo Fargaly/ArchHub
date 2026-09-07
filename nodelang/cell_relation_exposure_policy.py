@@ -224,7 +224,8 @@ def build_relation_exposure_policy(
             store.snapshot(), protocol, policy_id
         )
     snapshot = store.snapshot()
-    unknown_evidence = set(evidence_roots) - set(snapshot.cells)
+    # Point reads: materialising the head map streams the whole store (2026-09-07).
+    unknown_evidence = {root for root in evidence_roots if root not in snapshot.cells}
     if unknown_evidence:
         raise InvalidCell("exposure-policy evidence root is missing")
     unknown = {

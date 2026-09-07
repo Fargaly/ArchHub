@@ -524,7 +524,7 @@ def extend_deliberation_space(
     requested_requirements = tuple(requirements)
     if len(requested_requirements) > MAX_REQUIREMENTS:
         raise InvalidCell("deliberation extension requirements exceed their bounded size")
-    if set((*participants, *categories)) - set(snapshot.cells):
+    if absent_roots(snapshot.cells, (*participants, *categories)):
         raise InvalidCell("deliberation extension references missing Cells")
     new_participants = tuple(
         root for root in participants if root not in space.participant_roots
@@ -679,6 +679,19 @@ def _read_requirement(
         if not 0 <= evidence_minimum <= 1_000:
             raise InvalidCell("requirement evidence minimum is outside its bounds")
     return DeliberationRequirement(phase, category, minimum, evidence_minimum)
+
+
+def absent_roots(cells, roots, pending=()) -> tuple[str, ...]:
+    """The roots that are neither pending nor in the store, by point reads.
+
+    Materialising the head map as a set streamed every id in the store (162,904 on the
+    founder's graph) for ONE membership check, on every deliberation entry:
+    each brain observe held the app's mutation lock for the whole scan, the
+    brain's tool workers queued on the pipe behind it, health timed out and
+    the watchdog killed the brain in a loop (2026-09-07). The head map answers
+    membership in O(1); ask it root by root."""
+    waiting = set(pending)
+    return tuple(sorted(root for root in roots if root not in waiting and root not in cells))
 
 
 def read_deliberation_space(
@@ -1001,7 +1014,7 @@ def prepare_deliberation_entry(
         label="pending entry references",
         maximum=MAX_REFERENCES + MAX_EVIDENCE,
     )
-    if referenced - (set(snapshot.cells) | set(pending)):
+    if absent_roots(snapshot.cells, referenced, pending):
         raise InvalidCell("deliberation entry references missing Cells")
 
     decision = require_authorization(

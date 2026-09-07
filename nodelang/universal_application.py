@@ -237,6 +237,7 @@ from .cell_deliberation import (
     evaluate_deliberation_gate,
     extend_deliberation_space,
     list_deliberation_entries,
+    list_recent_deliberation_entries,
     open_deliberation_protocol,
     prepare_deliberation_entry,
     read_deliberation_entry,
@@ -37082,15 +37083,25 @@ def project_universal_founder_workshop_report(
     prompt-ready export of the deliberation graph.
     """
     snapshot = store.snapshot()
-    entries = list_deliberation_entries(
+    # Read the tail, never the whole space. This lens renders eight entries;
+    # reading every entry so eight could be sliced off the end cost seconds
+    # on the founder's Workshop and expired the BABOOM frame budget, so the
+    # companion never attached (2026-09-07).
+    space = read_deliberation_space(
         snapshot,
         registry.deliberation_protocol,
         registry.workshop_root,
     )
+    entry_count = len(space.entry_roots)
+    selected = list_recent_deliberation_entries(
+        snapshot,
+        registry.deliberation_protocol,
+        registry.workshop_root,
+        limit=_FOUNDER_WORKSHOP_REPORT_LIMIT,
+    )
     categories = {
         root: name for name, root in registry.workshop_category_roots.items()
     }
-    selected = entries[-_FOUNDER_WORKSHOP_REPORT_LIMIT:]
     projected: list[dict[str, object]] = []
     protected = 0
     for entry in selected:
@@ -37118,9 +37129,9 @@ def project_universal_founder_workshop_report(
     return {
         "projection": "founder-local-workshop-report",
         "revision": snapshot.revision,
-        "count": len(entries),
+        "count": entry_count,
         "protected": protected,
-        "truncated": len(entries) > len(selected),
+        "truncated": entry_count > len(selected),
         "entries": projected,
     }
 

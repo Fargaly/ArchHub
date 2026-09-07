@@ -24,6 +24,16 @@ from .application_machine_transport import (
 )
 
 
+# The first frame after a boot reads the founder's Workshop and governed
+# work out of a cold journal; later frames read the same Cells from memory.
+# One budget for both meant the cold first frame expired and BABOOM reported
+# that the universal runtime did not respond, so the companion never
+# attached at all (2026-09-07). The steady budget stays short because every
+# frame holds the application mutation lock while it projects.
+_FIRST_FRAME_SECONDS = 60.0
+_STEADY_FRAME_SECONDS = 5.0
+
+
 class BaboomNativeTransport(Protocol):
     """The minimum released transport surface needed by the physical host."""
 
@@ -157,9 +167,11 @@ class BaboomNativeHost:
                     device_credential_provider=self._device_credential_provider,
                 )
             self._connected = True
-        return self.poll()
+        return self.poll(response_timeout_seconds=_FIRST_FRAME_SECONDS)
 
-    def poll(self) -> BaboomNativeSnapshot:
+    def poll(
+        self, *, response_timeout_seconds: float = _STEADY_FRAME_SECONDS
+    ) -> BaboomNativeSnapshot:
         """Read and project one graph revision; no Work or provider action occurs."""
         with self._lock:
             if not self._connected or not self._transport.agent_session_root:
@@ -173,7 +185,9 @@ class BaboomNativeHost:
         ):
             raise RuntimeError("BABOOM native host presence response is invalid")
         self._record_foreground_activity()
-        raw_frame = self._transport.baboom_native_frame(response_timeout_seconds=5.0)
+        raw_frame = self._transport.baboom_native_frame(
+            response_timeout_seconds=response_timeout_seconds
+        )
         try:
             frame = validate_baboom_native_frame_payload(raw_frame)
         except MachineTransportError as exc:

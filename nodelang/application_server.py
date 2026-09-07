@@ -8662,6 +8662,16 @@ class ApplicationServer:
             **projection,
         }
 
+    # One machine request projects the same huge relations several times:
+    # the BABOOM frame builds the context lens, then the Steward briefing
+    # rebuilds that context and adds the governed-work, Workshop and
+    # attention lenses. Without this scope each of those walked the whole
+    # Workshop chain again -- 17,004 members on the founder's graph -- and
+    # the 5s frame budget expired, so BABOOM reported that the universal
+    # runtime did not respond and never attached (2026-09-07). The browser
+    # canvas has carried the same scope for the same reason; it expires
+    # with the request, so no walk is remembered across a revision.
+    @with_relation_projection_scope
     def dispatch_universal_machine_route(
         self, request: dict[str, object]
     ) -> dict[str, object]:

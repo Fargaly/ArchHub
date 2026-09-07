@@ -917,6 +917,48 @@ def list_deliberation_entries(
     return entries
 
 
+def list_recent_deliberation_entries(
+    snapshot: Snapshot,
+    protocol: DeliberationProtocol,
+    space_root: str,
+    *,
+    limit: int,
+    budget: int = RELATION_BUDGET,
+) -> tuple[DeliberationEntryProjection, ...]:
+    """Read only the newest `limit` entries of one deliberation space.
+
+    ``list_deliberation_entries`` reads every entry because it proves the
+    whole sequence is contiguous. A founder-local tail lens does not need
+    that audit and must not pay for it: the founder's Workshop space holds
+    thousands of entries, the Workshop report renders eight, and reading all
+    of them inside every BABOOM frame expired the frame budget so the
+    companion never attached (2026-09-07).
+
+    Every check that can be made about the entries actually returned is
+    still made: each belongs to this space, and their sequence numbers are
+    contiguous and land exactly where the tail of this space must be. Only
+    entries this lens does not return go unread.
+    """
+    if type(limit) is not int or isinstance(limit, bool) or limit < 1:
+        raise InvalidCell("deliberation entry tail limit is invalid")
+    space = read_deliberation_space(
+        snapshot, protocol, space_root, budget=budget
+    )
+    roots = space.entry_roots[-limit:]
+    preceding = len(space.entry_roots) - len(roots)
+    entries = tuple(
+        read_deliberation_entry(snapshot, protocol, root, budget=budget)
+        for root in roots
+    )
+    if any(entry.space_root != space_root for entry in entries):
+        raise InvalidCell("entry belongs to a different deliberation space")
+    if tuple(entry.sequence for entry in entries) != tuple(
+        range(preceding + 1, preceding + len(entries) + 1)
+    ):
+        raise InvalidCell("deliberation entry sequence is discontinuous")
+    return entries
+
+
 def _validated_timestamp(value: str) -> None:
     if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 128:
         raise InvalidCell("entry timestamp is invalid")
@@ -1387,6 +1429,7 @@ __all__ = [
     "prepare_deliberation_entry",
     "read_authorized_deliberation_entries",
     "read_deliberation_entry",
+    "list_recent_deliberation_entries",
     "read_deliberation_space",
     "upgrade_deliberation_protocol",
 ]

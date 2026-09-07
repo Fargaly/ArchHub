@@ -234,6 +234,45 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
     return rows
 
 
+# The order the router tries when the founder has picked nothing. His own
+# pick always wins; this is only what a machine with no pick can reach.
+# Keyed cloud providers first because they answer anything, then a local
+# runtime that happens to be up.
+_ROUTER_FALLBACK_ORDER = ("openrouter", "cloud", "lmstudio", "ollama")
+_ROUTER_FALLBACK_MODELS = {
+    "openrouter": "openrouter/anthropic/claude-sonnet-4.5",
+    "cloud": "cloud/auto",
+    "lmstudio": "lmstudio/local-model",
+    "ollama": "ollama/llama3",
+}
+
+
+def first_reachable_route(
+    *, environ=None, secrets_loader=None, cloud_session=None, local_probe=None
+) -> Optional[str]:
+    """A route this machine can actually reach right now, or None.
+
+    The composer refused with "No model chosen" on every restart because the
+    founder's pick lived only in memory, so his chat answered nothing at all
+    (2026-09-07). This is not a hidden default in the composer -- the thing
+    he had removed. It is the ROUTER answering the only question it is for:
+    of the providers THIS machine really has, which one can answer. It
+    invents nothing: a provider with no key and a runtime that is not up are
+    both skipped, and with none reachable the refusal still stands.
+    """
+    reachable = {
+        row["id"]: row for row in provider_rows(
+            environ=environ, secrets_loader=secrets_loader,
+            cloud_session=cloud_session, local_probe=local_probe,
+        )
+        if row.get("state") in ("keyed", "running")
+    }
+    for family in _ROUTER_FALLBACK_ORDER:
+        if family in reachable:
+            return _ROUTER_FALLBACK_MODELS[family]
+    return None
+
+
 def default_cloud_session() -> Optional[dict]:
     """The founder's recorded cloud session, or nothing on a machine without one."""
     appdata = os.environ.get("APPDATA", "")

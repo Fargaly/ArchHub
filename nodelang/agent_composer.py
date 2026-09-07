@@ -11,7 +11,7 @@ import json
 import os
 from typing import Mapping
 
-from .model_router import route_chat
+from .model_router import first_reachable_route, route_chat
 from .universal_cell import InvalidCell
 
 # There is no built-in default model. One was hidden here for months
@@ -39,6 +39,23 @@ Each action is one of:
 Only use node ids and definition names that appear in the context. Answer in
 the founder's language. If the request needs no canvas change, return
 {"actions":[],"answer":"..."}."""
+
+
+def chosen_model_route(model: object) -> str:
+    """Which model answers this turn: his pick, else what is reachable.
+
+    His pick lived only in memory, so every restart left the composer with
+    nothing and his chat answered nothing at all (2026-09-07). His own pick
+    always wins. Only with none does the ROUTER -- not this module -- say
+    what this machine can actually reach, skipping a provider with no key
+    and a runtime that is down. A machine that can reach nothing refuses.
+    """
+    chosen = (str(model or "")).strip() or _DEFAULT_MODEL
+    if not chosen:
+        chosen = first_reachable_route() or ""
+    if not chosen:
+        raise InvalidCell(NO_MODEL_CHOSEN)
+    return chosen
 
 
 def _chat(prompt: str, context_block: str, model: str) -> str:
@@ -118,9 +135,7 @@ def run_agent_composer(
     # answers, at that model's own endpoint. Only its absence falls back to
     # the default, and a provider that cannot be reached says so rather than
     # being quietly replaced by another one.
-    chosen = (model or "").strip() or _DEFAULT_MODEL
-    if not chosen:
-        raise InvalidCell(NO_MODEL_CHOSEN)
+    chosen = chosen_model_route(model)
     raw = _chat(prompt.strip(), context_block, chosen)
     text = raw.strip()
     if text.startswith("```"):

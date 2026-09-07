@@ -316,28 +316,31 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
 // searchable, collapsible categories, drag an item onto the map to create it.
 // Same gesture in the cockpit as in the app: the graph logic is one concept.
 // ─────────────────────────────────────────────────────────────────────────────
+// The COCKPIT library. It held the desktop studio's node palette -- Revit,
+// Rhino, IFC, parameter reads -- which do nothing here: the founder asked
+// what a Revit host node would even do in the cockpit (2026-09-07). The
+// cockpit is where he runs the business and directs the agents, so its
+// library is the work he actually places on this map. Host and geometry
+// nodes stay in the studio, on the canvas that can run them.
 const LIB_GROUPS = [
-  { cat: 'connector', label: 'HOSTS · CONNECTORS', items: [
-    ['Revit', 'open doc · view · selection'], ['Rhino / Grasshopper', 'geometry · definition'],
-    ['IFC / Speckle', 'federated exchange'], ['Navisworks', 'clash · appended model'] ] },
-  { cat: 'input', label: 'READ · INPUT', items: [
-    ['Parameter read', 'element → value'], ['Schedule read', 'tabular extract'],
-    ['Sheet index', 'sheets · revisions'], ['Model health', 'warnings · file size'] ] },
-  { cat: 'transform', label: 'TRANSFORM', items: [
-    ['Map values', 'per-element rewrite'], ['Join / merge', 'two streams → one'],
-    ['Units convert', 'metric ↔ imperial'], ['Classify', 'assign Uniclass / OmniClass'] ] },
-  { cat: 'logic', label: 'LOGIC', items: [
-    ['Filter', 'predicate → subset'], ['Branch', 'route by condition'],
-    ['Gate', 'hold until approved'], ['Loop', 'iterate a collection'] ] },
-  { cat: 'ai', label: 'AI · AGENTS', items: [
-    ['Agent', 'model + tools + brief'], ['Intent', 'natural language → plan'],
-    ['Review', 'critique against a rule'], ['Summarise', 'stream → digest'] ] },
-  { cat: 'skill', label: 'SKILLS', items: [
-    ['Saved field', 'a field you promoted'], ['Saved canvas', 'a whole workflow'],
-    ['Shared skill', 'from the marketplace'] ] },
-  { cat: 'watch', label: 'WATCH · OUTPUT', items: [
-    ['Watcher', 'observe a value live'], ['Preview', 'render the data'],
-    ['Publish', 'write back to host'], ['Notify', 'alert a person or channel'] ] },
+  { cat: 'ai', label: 'AGENTS', items: [
+    ['Agent', 'a runtime that claims Work'], ['Assignment', 'give this to an agent'],
+    ['Review', 'an agent critiques the result'], ['Handoff', 'pass Work between agents'] ] },
+  { cat: 'logic', label: 'WORK', items: [
+    ['Work item', 'something to be done'], ['Gate', 'hold until approved'],
+    ['Court', 'the check that proves it'], ['Blocker', 'why it cannot proceed'] ] },
+  { cat: 'input', label: 'BRAIN', items: [
+    ['Recall', 'ask the brain a question'], ['Remember', 'commit a fact'],
+    ['Fact', 'one thing the brain holds'], ['Digest', 'summarise a stream'] ] },
+  { cat: 'watch', label: 'WATCH', items: [
+    ['Metric', 'a number to follow'], ['Alert', 'tell me when it moves'],
+    ['Report', 'a view assembled on demand'], ['Log', 'what happened, in order'] ] },
+  { cat: 'transform', label: 'MAP', items: [
+    ['Domain', 'a place on this map'], ['Field', 'a domain of domains'],
+    ['Capability', 'something the product does'], ['Wire', 'this depends on that'] ] },
+  { cat: 'connector', label: 'REACH', items: [
+    ['Host', 'an application on a machine'], ['Cloud service', 'something running remotely'],
+    ['Person', 'someone who is told'], ['Schedule', 'when it runs by itself'] ] },
 ];
 
 function LibraryPanel({ onCreateNode, onAddDomain, flash }) {

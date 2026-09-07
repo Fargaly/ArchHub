@@ -1050,6 +1050,43 @@ try:
     print("  BABOOM     : attached (signed agent session)", flush=True)
 except Exception as refusal:
     print("  BABOOM     : not attached -- %s" % refusal, flush=True)
+    # Giving up here cost the founder his companion for the whole session
+    # (2026-09-07 05:53): the app was simply busy for the fifteen seconds the
+    # retries covered - its own boot writes and the brain's startup observes
+    # both queue on the one mutation lock. Keep asking quietly in the
+    # background; the companion arrives late instead of never, and the log
+    # says when.
+    def _keep_attaching():
+        import time as _t
+        from PyQt6.QtCore import QTimer as _LateTimer
+        from nodelang.baboom_attach import attach_baboom_companion as _attach
+        for _later in range(40):          # ten minutes, every fifteen seconds
+            _t.sleep(15.0)
+            try:
+                _host, _window = _attach(
+                    server,
+                    state_dir=state_dir,
+                    descriptor_path=descriptor_path,
+                    key_provider=machine_key_provider,
+                    external_session_id="founder-desktop-baboom:late-%d" % _later,
+                )
+            except Exception:
+                continue
+            def _land(host=_host, window=_window):
+                globals()["baboom_host"] = host
+                try:
+                    controller = getattr(window, "controller", None) or getattr(host, "controller", None)
+                    if controller is not None and hasattr(controller, "watch_geometry"):
+                        controller.watch_geometry(state_dir / "baboom-geometry.log")
+                except Exception:
+                    pass
+                window.show()
+                window.start_projection()
+                print("  BABOOM     : attached on a later try (%d s after boot)"
+                      % ((_later + 1) * 15), flush=True)
+            _LateTimer.singleShot(0, _land)
+            return
+    threading.Thread(target=_keep_attaching, name="archhub-baboom-attach", daemon=True).start()
     # The cockpit relay used to live inside the BABOOM block, so a companion
     # that failed to attach took the founder's whole cockpit with it: every
     # control on the web read "waiting for the app push" and nothing said why

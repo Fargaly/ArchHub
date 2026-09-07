@@ -34,7 +34,9 @@ import urllib.parse
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import (
+    HTMLResponse, RedirectResponse, JSONResponse, Response,
+)
 from pydantic import BaseModel, EmailStr, Field
 
 import auth
@@ -2209,3 +2211,32 @@ def billing_credits_landing() -> HTMLResponse:
         f"<b>BYO-key</b> mode to use your own provider key.</p>"
         f"</body></html>"
     )
+
+# ── The founder's brain, over MCP, from any machine ──────────────────────
+import brain_mcp  # noqa: E402  (module-local import style of this file)
+
+
+@app.post("/mcp")
+async def brain_over_mcp(req: Request,
+                         authorization: str | None = Header(None)) -> Response:
+    """This account's brain, over MCP.
+
+    Sessions speak MCP and this cloud served only REST, so Claude, Codex and
+    Antigravity all pointed at a LOCAL daemon on 127.0.0.1:8473 -- the thing
+    that has to be alive, hold a port and survive a wedge. The memory itself
+    has been here all along (audit, 2026-09-07).
+
+    Stateless: every POST is self-contained and no prior initialize is
+    required, exactly like the local daemon, so a client only changes its
+    URL. The identity is the ACCOUNT token, never a machine.
+    """
+    try:
+        message = json.loads((await req.body()).decode("utf-8"))
+    except Exception:
+        message = None
+    status, body, media = brain_mcp.answer(
+        message,
+        resolve_user=lambda: _require_user(authorization),
+        open_replica=_brain_read_replica,
+    )
+    return Response(status_code=status, content=body, media_type=media)

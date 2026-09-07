@@ -289,4 +289,8 @@ def test_the_runtime_bundle_invents_neither_a_result_nor_a_duration():
         for invented in ("18 rooms", "1,820 tok", "sheet set A.101", "212 elements remapped",
                          "session live", "handshake", "12 rules passed"):
             assert invented not in body, "%s still ships %r" % (name, invented)
-        assert "not run" in body  # a node that has not run says exactly that
+        # A node that has not run shows the quiet em dash the founder drew,
+        # never an invented result. The words "not run" printed in success
+        # green on every watcher card until something ran (2026-09-07).
+        assert "—" in body, "%s lost the empty state" % name
+        assert "not run" not in body, "%s still writes words where a dash belongs" % name

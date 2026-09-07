@@ -588,6 +588,63 @@ def flush_turn_memory(evidence: dict, *, vendor: str, blocked: bool,
         return None
 
 
+# How long a start lock is believed before it is treated as abandoned. A
+# daemon that has not opened its port in this long is not coming.
+_DAEMON_START_LOCK_SECONDS = 90.0
+
+
+def _daemon_start_lock_path() -> Path:
+    """One lock per machine, beside the brain it guards."""
+    return Path(tempfile.gettempdir()) / "archhub-brain-daemon-start.lock"
+
+
+def _claim_daemon_start_lock():
+    """Win the right to start the daemon, or None when someone else has it.
+
+    Exclusive create is the whole mechanism: whoever creates the file starts
+    the one daemon and everybody else waits for its port. A lock older than
+    _DAEMON_START_LOCK_SECONDS is taken over, so a shell killed mid-start
+    cannot leave the brain unstartable forever.
+    """
+    path = _daemon_start_lock_path()
+    try:
+        held = time.time() - path.stat().st_mtime
+        if held < _DAEMON_START_LOCK_SECONDS:
+            return None
+        path.unlink()
+    except OSError:
+        pass
+    try:
+        handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return None
+    except OSError:
+        # A machine that cannot hold a lock still gets a brain; it simply
+        # has no protection against a second shell racing it.
+        return path
+    os.write(handle, str(os.getpid()).encode("ascii"))
+    os.close(handle)
+    return path
+
+
+def _release_daemon_start_lock(path) -> None:
+    """Let the next shell start a daemon once this attempt has finished."""
+    try:
+        Path(path).unlink()
+    except OSError:
+        pass
+
+
+def _wait_for_health(wait_s: float, note: str):
+    """Wait for the ONE daemon to answer, rather than starting another."""
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        if probe_health(timeout=2.0) is not None:
+            return True, note + " + healthy"
+        time.sleep(0.5)
+    return False, f"daemon did not answer health within {wait_s:.0f}s ({note})"
+
+
 def _port_held(port: int, *, timeout: float = 1.0) -> bool:
     """True when something accepts on the daemon port, answering or not."""
     try:
@@ -865,6 +922,14 @@ def daemon_start_command() -> list[str]:
         brain = exe if exe else f'"{sys.executable}" -m personal_brain.server'
 
     full = f'{brain} --http {DAEMON_PORT}'
+    # A console interpreter opens a console. pythonw is the same Python
+    # without one, so the daemon runs where it belongs -- in the background
+    # (2026-09-07). Only swapped when that binary really is there.
+    if os.name == "nt" and "python.exe" in full:
+        windowless = full.replace("python.exe", "pythonw.exe")
+        probe = windowless.split(" -m ")[0].strip().strip(chr(34))
+        if Path(probe).is_file():
+            full = windowless
     import shlex
     if os.name == "nt":
         # posix=False keeps Windows backslashes intact and still honours the
@@ -892,6 +957,18 @@ def ensure_daemon(*, wait_s: float = 12.0, log: bool = True,
     if not auto_start:
         return False, "brain down (auto-start disabled)"
 
+    # ONE daemon, ever. This spawned unconditionally whenever health did not
+    # answer inside the wait, so every shell that opened while a brain was
+    # still coming up started ANOTHER one: the founder had five brain
+    # processes on his machine, each holding the same graph (2026-09-07).
+    # A listener on the port -- answering yet or not -- means one is already
+    # there, and a fresh start lock means one is already on its way.
+    if _port_held(DAEMON_PORT):
+        return _wait_for_health(wait_s, "a daemon is already listening")
+    holder = _claim_daemon_start_lock()
+    if holder is None:
+        return _wait_for_health(wait_s, "another shell is starting the daemon")
+
     cmd = daemon_start_command()
     if log:
         print(f"[brainwrap] brain down — starting daemon: {' '.join(cmd)}",
@@ -916,9 +993,15 @@ def ensure_daemon(*, wait_s: float = 12.0, log: bool = True,
         if os.name == "nt":
             # Detach + no console so the daemon outlives this wrapper and
             # serves future sessions (same intent as the service install).
+            # CREATE_NO_WINDOW as well: DETACHED_PROCESS only stops the
+            # daemon INHERITING a console, it does not stop a console
+            # executable from allocating its own. The founder got a black
+            # window full of [brain.personal-sync] lines over his work and
+            # asked why it was not in the background (2026-09-07).
             kwargs["creationflags"] = (
                 getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 | getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0)
             )
         else:
             kwargs["start_new_session"] = True
@@ -926,12 +1009,10 @@ def ensure_daemon(*, wait_s: float = 12.0, log: bool = True,
     except Exception as ex:
         return False, f"could not launch daemon: {type(ex).__name__}: {ex}"
 
-    deadline = time.time() + wait_s
-    while time.time() < deadline:
-        if probe_health(timeout=2.0) is not None:
-            return True, "daemon started + healthy"
-        time.sleep(0.5)
-    return False, f"daemon did not answer health within {wait_s:.0f}s"
+    try:
+        return _wait_for_health(wait_s, "daemon started")
+    finally:
+        _release_daemon_start_lock(holder)
 
 
 # ── 2. wiring announce ──────────────────────────────────────────────────
@@ -1439,10 +1520,17 @@ def cmd_launch(opts: argparse.Namespace, vendor_argv: list[str]) -> int:
     # 1. CONNECT — health + (if down) start the daemon the service way.
     ok, note = ensure_daemon(auto_start=not opts.skip_daemon_start)
     print(f"[brainwrap] connect: {note}", file=sys.stderr)
-    if governed_strict and not ok:
-        print("[brainwrap] governance: blocked (brain unreachable)",
+    if not ok:
+        # A brain that is UNREACHABLE is not a refusal. Strict mode blocked
+        # here, so the founder typed CLAUDE, the daemon was still coming up,
+        # and his shell answered "governance: blocked (brain unreachable)"
+        # and refused to run his CLI at all (2026-09-07). Governance means a
+        # brain that ANSWERS and says no -- that still blocks, below. Silence
+        # degrades the session to no context and no diligence, exactly as
+        # this module has always promised, and never stops him working.
+        print("[brainwrap] governance: ungoverned this session "
+              "(brain unreachable) -- fail-open",
               file=sys.stderr)
-        return GOVERNANCE_BLOCK_EXIT
 
     context_injection: Optional[str] = None
     if ok:

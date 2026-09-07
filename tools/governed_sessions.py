@@ -725,8 +725,15 @@ if (Test-Path $path) {
   $old = $shell.CreateShortcut($path)
   $changed = (($old.TargetPath -ne $target) -or ($old.Arguments -ne $arguments) -or ($old.WorkingDirectory -ne $workdir))
   if ($changed) {
-    $backup = "$path.archhub-raw-bak.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).lnk"
-    Copy-Item -LiteralPath $path -Destination $backup -Force
+    # ONE backup: the shortcut as it was before ArchHub ever touched it.
+    # This stamped a NEW file every rewrite, so the founder found eight
+    # copies of every shortcut in his Start menu (2026-09-07). A second
+    # backup would only preserve a shortcut ArchHub itself wrote, which is
+    # worth nothing -- the first one is the only one worth keeping.
+    $backup = "$path.archhub-raw-bak.lnk"
+    if (-not (Test-Path -LiteralPath $backup)) {
+      Copy-Item -LiteralPath $path -Destination $backup -Force
+    }
   }
 }
 if ($changed) {

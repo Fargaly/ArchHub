@@ -74,27 +74,25 @@ const pmLabel = (spec, labels) => (labels && labels[spec.k]) || spec.label || (P
 //   on_fail     — what downstream receives when the rule blocks or the source errors.
 //   throttle_ms — rate limit, for a wire fed by a live host.
 //   enabled     — mute the connection without deleting it.
-Object.assign(PM_OPTS, {
-  lacing:  ['shortest', 'longest', 'cross product'],
-  tree:    ['none', 'flatten', 'graft', 'simplify'],
-  on_fail: ['block', 'pass last', 'pass empty'],
-});
-Object.assign(PM_META, {
-  enabled:     { label: 'Enabled', help: 'Mute the connection without deleting it — downstream sees nothing.' },
-  lacing:      { label: 'Lacing', help: 'How two lists of different length are paired: shortest stops at the short one, longest repeats the last item, cross product pairs every combination.' },
-  tree:        { label: 'Data tree', help: 'Restructure on the way through — flatten to one list, graft each item into its own branch, simplify removes empty levels.' },
-  condition:   { label: 'Condition', help: 'The wire only carries when this holds. Empty means always.' },
-  on_fail:     { label: 'On block', help: 'What downstream receives when the condition blocks or the source errors.' },
-  throttle_ms: { label: 'Throttle', unit: 'ms', hard: [0, 10000], help: 'Minimum gap between deliveries — for a wire fed by a live host.' },
-});
+// ONE definition, in param-types.jsx. The founder's handover: "defined once
+// in param-types.jsx so a connection means the same thing in the cockpit and
+// in Studio... If it adds a parameter type to one and not the other, it is
+// wrong." This file held a second copy and the two had already drifted (a
+// throttle ceiling of 10 s here, 2 s there), so the studio now derives from
+// window.WIRE_PARAMS and nothing here can drift again.
+const WIRE_SPECS = (typeof window !== 'undefined' && window.WIRE_PARAMS) || [];
+const WIRE_ROW_TYPE = { toggle: 'toggle', menu: 'select', text: 'text', number: 'slider' };
 
-// The six connection parameters are graph rows, not panel state: held[k] is the wire's own
-// property and its relation, so a value the founder types survives the reload that proves it
-// was written. A wire with no rows yet reads as its defaults and writes the first one.
-const WIRE_DEFAULTS = {
-  enabled: true, lacing: 'shortest', tree: 'none',
-  condition: '', on_fail: 'block', throttle_ms: 0,
-};
+Object.assign(PM_OPTS, Object.fromEntries(
+  WIRE_SPECS.filter(spec => spec.opts).map(spec => [spec.k, spec.opts])));
+Object.assign(PM_META, Object.fromEntries(
+  WIRE_SPECS.map(spec => [spec.k, Object.assign(
+    { label: spec.label, help: spec.help },
+    spec.unit ? { unit: spec.unit } : {},
+    spec.hard ? { hard: spec.hard } : {})])));
+
+const WIRE_DEFAULTS = Object.fromEntries(WIRE_SPECS.map(spec => [spec.k, spec.def]));
+
 const wireHeld = (w) => Object.fromEntries(
   (w.params || []).map(p => [p.k, p])
 );
@@ -106,8 +104,9 @@ function wireAsNode(w, i, nodes) {
   const heldValue = (k) => {
     const row = held[k];
     if (!row) return WIRE_DEFAULTS[k];
-    if (k === 'enabled') return String(row.v) !== 'false';
-    if (k === 'throttle_ms') return Number(row.v) || 0;
+    const spec = WIRE_SPECS.find(entry => entry.k === k) || {};
+    if (spec.type === 'toggle') return String(row.v) !== 'false';
+    if (spec.type === 'number') return Number(row.v) || 0;
     return row.v;
   };
   const src = (from.outs || []).find(o => o.id === w.from[1]) || (from.outs || [])[0] || { label: 'out', t: 'any' };
@@ -119,14 +118,13 @@ function wireAsNode(w, i, nodes) {
     sub: 'connection · ' + src.t + (ok ? '' : ' ✕ ' + dst.t),
     ins:  [{ id: 'src', label: from.title, t: src.t, val: src.label }],
     outs: [{ id: 'dst', label: to.title,   t: dst.t, val: dst.label }],
-    params: [
-      { k: 'enabled', v: heldValue('enabled'), type: 'toggle' },
-      { k: 'lacing', v: heldValue('lacing'), type: 'select' },
-      { k: 'tree', v: heldValue('tree'), type: 'select' },
-      { k: 'condition', v: heldValue('condition'), type: 'text', page: 'Rules' },
-      { k: 'on_fail', v: heldValue('on_fail'), type: 'select', page: 'Rules' },
-      { k: 'throttle_ms', v: heldValue('throttle_ms'), min: 0, max: 2000, step: 50, type: 'slider', page: 'Rules' },
-    ],
+    // The rows ARE the one definition, in its order, with its pages.
+    params: WIRE_SPECS.map(spec => Object.assign(
+      { k: spec.k, v: heldValue(spec.k), type: WIRE_ROW_TYPE[spec.type] || 'text' },
+      spec.page ? { page: spec.page } : {},
+      spec.min !== undefined ? { min: spec.min } : {},
+      spec.max !== undefined ? { max: spec.max } : {},
+      spec.step !== undefined ? { step: spec.step } : {})),
     // The wire is as live as any node: its rows carry the relations the
     // inspector writes through, and its own root owns rows it has not
     // grown yet.

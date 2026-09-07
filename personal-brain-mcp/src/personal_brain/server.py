@@ -4739,6 +4739,16 @@ def _refuse_if_port_is_taken(port: int) -> None:
     """
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        if sys.platform == "win32":
+            # Ask Windows for EXCLUSIVE address use, exactly as the
+            # supervisor probe does. Without it a plain bind can appear to
+            # succeed alongside a listener that permits address reuse, and
+            # this guard would wave a second daemon through only for the
+            # real bind to fail later with WinError 10048 -- which is the
+            # failure it exists to prevent (audit, 2026-09-07).
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                probe.setsockopt(socket.SOL_SOCKET, exclusive, 1)
         probe.bind(("127.0.0.1", int(port)))
     except OSError as taken:
         print(

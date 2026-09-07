@@ -17778,40 +17778,57 @@ def _ensure_canvas_domain_interfaces(
             continue
         source_member, target_member = source_members[0], target_members[0]
 
-        def owner(member) -> str:
-            projected = _project_canvas_interface(
+        def projected_of(member):
+            return _project_canvas_interface(
                 snapshot, protocol, member.participant_id
             )
-            return str(projected["owner"]) if projected else member.participant_id
 
-        source_owner = owner(source_member)
-        target_owner = owner(target_member)
+        source_projected = projected_of(source_member)
+        target_projected = projected_of(target_member)
+
+        def owner_of(member, projected) -> str:
+            return (
+                str(projected["owner"]) if projected
+                else member.participant_id
+            )
+
+        source_owner = owner_of(source_member, source_projected)
+        target_owner = owner_of(target_member, target_projected)
         if source_owner not in domain_set or target_owner not in domain_set:
             continue
-        interfaces.extend((
-            (
-                _relation_canvas_interface_root(relation_root, "source"),
-                "source", source_owner, target_owner, source_member.incidence_id,
+        for side, member, projected, owner_root, peer_root in (
+            ("source", source_member, source_projected,
+             source_owner, target_owner),
+            ("target", target_member, target_projected,
+             target_owner, source_owner),
+        ):
+            # RETAIN what is already an interface. This migrator exists to
+            # turn a retired generic domain dot into an exact per-incidence
+            # interface, and it read every endpoint as a dot: owner_of()
+            # dissolved a perfectly good interface down to the placement
+            # owning it, a fresh read-only interface was minted for the
+            # relation, and the rewrite below repointed the incidence onto
+            # it. So a wire the founder drew from his own "Result" socket
+            # was moved off that socket by the next BOOT -- the socket then
+            # reads unwired, and the new one is read-only, so the cable
+            # hangs off something nobody can re-wire (2026-09-07).
+            #
+            # The sibling composer already states this rule and has since
+            # it was written: "either retain an already-valid interface or
+            # receive one exact, read-only interface" -- it returns the
+            # participant untouched when the projection resolves. Only the
+            # migration path was missing it. A projection with the WRONG
+            # side is left to migrate as before; refusing mid-boot the way
+            # the composer does would take the application down instead.
+            if projected is not None and projected["side"] == side:
+                continue
+            legacy_root = _domain_canvas_interface_root(owner_root, side)
+            interfaces.append((
+                _relation_canvas_interface_root(relation_root, side),
+                side, owner_root, peer_root, member.incidence_id,
                 relation_root,
-                (
-                    _domain_canvas_interface_root(source_owner, "source")
-                    if _domain_canvas_interface_root(
-                        source_owner, "source"
-                    ) in snapshot.cells else None
-                ),
-            ),
-            (
-                _relation_canvas_interface_root(relation_root, "target"),
-                "target", target_owner, source_owner, target_member.incidence_id,
-                relation_root,
-                (
-                    _domain_canvas_interface_root(target_owner, "target")
-                    if _domain_canvas_interface_root(
-                        target_owner, "target"
-                    ) in snapshot.cells else None
-                ),
-            ),
-        ))
+                legacy_root if legacy_root in snapshot.cells else None,
+            ))
 
     interface_roots: list[str] = []
     for (
@@ -19300,7 +19317,70 @@ def _ensure_view_visibility_scope_projection(
         assigned,
     )
     if markers:
-        if indexed_relations != canonical_relations:
+        # A wire the canvas has gained is not drift, for exactly the reason
+        # the properties below are not. Before the marker exists this
+        # function APPENDS canonical members; after it exists relations were
+        # only VERIFIED, and by ordered tuple equality at that -- so the
+        # first wire drawn after the marker landed made the refusal
+        # permanent, and the browser authoring court has been red on it
+        # since (universal_application.py:19304, 2026-09-07). Properties and
+        # interfaces were both given grow-then-shed already; relations were
+        # the one member role left frozen. Order is not load-bearing here:
+        # this index answers membership, and both readers below take it as
+        # a set.
+        unindexed_relations = tuple(
+            root for root in canonical_relations
+            if root not in set(indexed_relations)
+        )
+        if unindexed_relations:
+            relation_growth = prepare_append_relation_members(
+                snapshot,
+                view_session.visibility_root,
+                (
+                    (registry.roles["relation"], root)
+                    for root in unindexed_relations
+                ),
+                budget=100_000,
+            )
+            store.commit(
+                snapshot.revision,
+                create=relation_growth.create,
+                replace=relation_growth.replace,
+            )
+            snapshot, members, (
+                assigned, indexed_relations, indexed_properties,
+                indexed_interfaces,
+            ) = _reread_visibility_index(
+                store, registry, view_session, interface_role
+            )
+        # SHED is growth's mirror: a wire whose endpoints left the view is
+        # no longer this scope's relation, and leaving it indexed made the
+        # projection carry wires the view can no longer see.
+        stale_relations = set(indexed_relations) - set(canonical_relations)
+        if stale_relations:
+            stale_relation_incidences = tuple(
+                member.incidence_id
+                for member in members
+                if member.role_id == registry.roles["relation"]
+                and member.participant_id in stale_relations
+            )
+            shed_relations = prepare_remove_relation_members(
+                snapshot,
+                view_session.visibility_root,
+                stale_relation_incidences,
+                budget=100_000,
+            )
+            store.commit(
+                snapshot.revision,
+                replace=shed_relations.replace,
+            )
+            snapshot, members, (
+                assigned, indexed_relations, indexed_properties,
+                indexed_interfaces,
+            ) = _reread_visibility_index(
+                store, registry, view_session, interface_role
+            )
+        if set(indexed_relations) != set(canonical_relations):
             raise InvalidCell("persisted visibility relation projection drifted")
         # A property the scope has gained is not drift. Before the marker
         # exists this function APPENDS canonical members; after it exists
@@ -19812,6 +19892,36 @@ def _machine_node_library_sections(
             "definitions": [],
         })
     return tuple(sections)
+
+
+def _reread_visibility_index(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    interface_role: str,
+):
+    """The visibility index as it stands after a commit to it.
+
+    Every block that grows or sheds a member role has to see the members
+    the previous block wrote, or it judges the index it no longer has.
+    """
+    snapshot = store.snapshot()
+    members = read_relation(
+        snapshot, view_session.visibility_root, budget=100_000
+    )
+
+    def _for(role_id: str) -> tuple[str, ...]:
+        return tuple(
+            member.participant_id for member in members
+            if member.role_id == role_id
+        )
+
+    return snapshot, members, (
+        _for(registry.roles["visible"]),
+        _for(registry.roles["relation"]),
+        _for(registry.roles["property"]),
+        _for(interface_role),
+    )
 
 
 def _canvas_scope_for_assigned(

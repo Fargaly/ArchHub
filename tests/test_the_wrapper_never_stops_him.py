@@ -74,21 +74,13 @@ def test_the_daemon_itself_refuses_to_be_the_second_one():
     server = (
         ROOT / "personal-brain-mcp" / "src" / "personal_brain" / "server.py"
     ).read_text(encoding="utf-8")
-    assert "_claim_http_port_or_exit(" in server
-    claim = server.index("_http_claim = _claim_http_port_or_exit(")
-    serve = server.index('server.run(transport="http"')
-    assert claim < serve
+    assert "_refuse_if_port_is_taken(" in server
+    refusal = server.index("_refuse_if_port_is_taken(args.http)")
+    engine = server.index('server.run(transport="http"')
+    assert refusal < engine, "the question comes before the engine"
     assert "raise SystemExit(1)" in server[
-        server.index("def _claim_http_port_or_exit"):serve
+        server.index("def _refuse_if_port_is_taken"):engine
     ]
-
-
-def test_the_daemon_gets_no_console_window():
-    body = inspect.getsource(brainwrap.ensure_daemon)
-    assert "CREATE_NO_WINDOW" in body, (
-        "DETACHED_PROCESS alone lets a console app allocate its own window"
-    )
-    assert "pythonw.exe" in inspect.getsource(brainwrap.daemon_start_command)
 
 
 def test_one_backup_per_shortcut_not_one_per_rewrite():

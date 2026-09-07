@@ -929,11 +929,22 @@ async def cockpit_map_state(request: Request,
 def cockpit_asset(asset: str,
                   _founder: dict = Depends(require_founder)) -> Response:
     """One cockpit module, behind the founder gate like every other route."""
-    if asset == "map-data.js" and _MAP_STATE.is_file():
-        # The founder's LIVE graph, as pushed by his running application.
+    if asset == "map-data.js":
+        if _MAP_STATE.is_file():
+            # The founder's LIVE graph, as pushed by his running application.
+            return Response(
+                b"window.ATLAS_MAP = " + _MAP_STATE.read_bytes()
+                + b"; window.ATLAS_LIVE = true;",
+                media_type="text/javascript; charset=utf-8",
+            )
+        # NO PUSH, SO NO MAP. This fell through to a checked-in, hand-authored
+        # map-data.js -- 142 KB of authored domains and hand-written prose --
+        # served as if it were his graph. An absent application has to be
+        # VISIBLE, not papered over with a fixture he cannot tell apart from
+        # the real thing (audit, 2026-09-07). ATLAS_LIVE stays false, so the
+        # page says so instead of drawing someone else's map.
         return Response(
-            b"window.ATLAS_MAP = " + _MAP_STATE.read_bytes()
-            + b"; window.ATLAS_LIVE = true;",
+            b"window.ATLAS_MAP = null; window.ATLAS_LIVE = false;",
             media_type="text/javascript; charset=utf-8",
         )
     # The asset name comes off the URL: normalise it, refuse anything that

@@ -354,17 +354,24 @@ class TestGovernedLaunch:
         assert not run_mock.called
         assert "brain.hook_coverage_audit_cell_first" in cap.names()
 
-    def test_governed_strict_refuses_dead_brain(self, tmp_path):
-        """Strict governed launch is fail-closed. A dead Brain cannot be
-        treated like the legacy fail-open wrapper because no audit can run."""
+    def test_a_dead_brain_never_stops_his_cli(self, tmp_path):
+        """Unreachable is not a refusal.
+
+        The founder typed CLAUDE and his shell answered that governance was
+        blocked because the brain was unreachable, and refused to run the
+        CLI at all, while the daemon was merely still coming up. This module
+        has always promised that silence degrades a session to no context
+        and no diligence rather than stopping the vendor CLI; strict mode
+        broke that promise (2026-09-07). A brain that ANSWERS and says no
+        still blocks."""
         opts = _launch_opts(cwd=str(tmp_path), governed=True,
                             governed_strict=True, skip_daemon_start=True)
         with patch.object(brainwrap.urllib.request, "urlopen", _boom), \
              patch.object(brainwrap, "run_vendor", return_value=0) as run_mock:
             code = brainwrap.cmd_launch(opts, ["codex", "--version"])
 
-        assert code == brainwrap.GOVERNANCE_BLOCK_EXIT
-        assert not run_mock.called
+        assert code == 0
+        assert run_mock.called, "his CLI must run when the brain is silent"
 
     def test_governed_launch_stamps_child_environment_when_green(
         self, tmp_path, monkeypatch
@@ -529,7 +536,11 @@ class TestDaemonStartCommand:
         def fake_probe(*a, **k):
             return probes.pop(0) if probes else {"ok": True}
 
+        # The port must be answered for by the test, not by whatever this
+        # machine happens to be running: a real brain listening on 8473
+        # made ensure_daemon adopt it and never spawn (2026-09-07).
         with patch.object(brainwrap, "probe_health", side_effect=fake_probe), \
+             patch.object(brainwrap, "_port_held", return_value=False), \
              patch.object(brainwrap.subprocess, "Popen") as popen, \
              patch.object(brainwrap, "daemon_start_command",
                           return_value=["python", "-m", "personal_brain.server",

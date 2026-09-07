@@ -511,7 +511,11 @@ function AtlasCockpit() {
         grid: L.grid || S.grid
       });
     };
-    var data = live ? mergeLive(live, saved && saved.M) : saved && saved.M || window.ATLAS_MAP || {
+    // With NO live push there is no map. Falling back to the saved
+    // snapshot drew localStorage as if it were the graph -- the same
+    // second truth, on the path where nothing can contradict it. An
+    // absent application must be visible (audit, 2026-09-07).
+    var data = live ? mergeLive(live, saved && saved.M) : {
       domains: [],
       nodes: [],
       wires: [],
@@ -3532,7 +3536,7 @@ function AtlasCockpit() {
       whiteSpace: 'nowrap'
     }
   }, "\xB7 ", M.domains.length, " domains")), /*#__PURE__*/React.createElement("div", {
-    title: mapMeta.live ? 'Drawn from the projection your running ArchHub pushed to the cloud.' : 'Your app has not pushed a projection; this is the authored model that ships with the cockpit.',
+    title: mapMeta.live ? 'Drawn from the projection your running ArchHub pushed to the cloud.' : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub and it will appear here.',
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -3559,7 +3563,7 @@ function AtlasCockpit() {
       fontSize: 10,
       color: HB.ink
     }
-  }, mapMeta.live ? 'LIVE PUSH' : 'AUTHORED MODEL'), /*#__PURE__*/React.createElement("span", {
+  }, mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'), /*#__PURE__*/React.createElement("span", {
     style: {
       fontFamily: HB.mono,
       fontSize: 10,

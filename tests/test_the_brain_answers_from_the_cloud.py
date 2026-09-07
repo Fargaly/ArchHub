@@ -168,6 +168,7 @@ def test_the_route_itself_answers_not_only_the_dispatcher():
     that looked exactly like a malformed request (2026-09-07).
     """
     from fastapi.testclient import TestClient
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "cloud_backend"))
     import main
 
     client = TestClient(main.app, base_url="https://testserver",
@@ -188,6 +189,7 @@ def test_the_route_itself_answers_not_only_the_dispatcher():
 
 def test_a_body_that_is_not_json_is_refused_honestly():
     from fastapi.testclient import TestClient
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "cloud_backend"))
     import main
 
     client = TestClient(main.app, base_url="https://testserver",

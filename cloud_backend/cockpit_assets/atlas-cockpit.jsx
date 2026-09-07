@@ -184,8 +184,12 @@ function AtlasCockpit() {
       const wires = (L.wires || []);
       return { ...L, nodes, domains, wires, fields: S.fields || L.fields, grid: L.grid || S.grid };
     };
+    // With NO live push there is no map. Falling back to the saved
+    // snapshot drew localStorage as if it were the graph -- the same
+    // second truth, on the path where nothing can contradict it. An
+    // absent application must be visible (audit, 2026-09-07).
     let data = live ? mergeLive(live, saved && saved.M)
-      : ((saved && saved.M) || window.ATLAS_MAP || { domains: [], nodes: [], wires: [], w: 2448, h: 2348 });
+      : { domains: [], nodes: [], wires: [], w: 2448, h: 2348 };
     // Attention is a real seed NODE (importance is a node, not a hardcoded rule) and it is
     // WIRED. This is a safety-net only — re-mints the node and/or its wires for any saved
     // state that predates them, so stale localStorage never shows Attention floating loose.
@@ -965,10 +969,10 @@ function AtlasCockpit() {
                 page took delivery of it, and when the app was last seen answering. */}
             <div title={mapMeta.live
                   ? 'Drawn from the projection your running ArchHub pushed to the cloud.'
-                  : 'Your app has not pushed a projection; this is the authored model that ships with the cockpit.'}
+                  : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub and it will appear here.'}
               style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${mapMeta.live ? HB.line : HB.amber}`, flexShrink: 0, pointerEvents: 'auto', whiteSpace: 'nowrap' }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: mapMeta.live ? HB.green : HB.amber }}/>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink }}>{mapMeta.live ? 'LIVE PUSH' : 'AUTHORED MODEL'}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink }}>{mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'}</span>
               <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>
                 {'· taken ' + new Date(mapMeta.at).toLocaleTimeString()}
               </span>

@@ -1,5 +1,3 @@
-"use strict";
-
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _createForOfIteratorHelper(r, e) { var t = "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (!t) { if (Array.isArray(r) || (t = _unsupportedIterableToArray(r)) || e && r && "number" == typeof r.length) { t && (r = t); var _n = 0, F = function F() {}; return { s: F, n: function n() { return _n >= r.length ? { done: !0 } : { done: !1, value: r[_n++] }; }, e: function e(r) { throw r; }, f: F }; } throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); } var o, a = !0, u = !1; return { s: function s() { t = t.call(r); }, n: function n() { var r = t.next(); return a = r.done, r; }, e: function e(r) { u = !0, o = r; }, f: function f() { try { a || null == t["return"] || t["return"](); } finally { if (u) throw o; } } }; }
 function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
@@ -481,9 +479,13 @@ function AtlasCockpit() {
           w: sd[d.key].w,
           h: sd[d.key].h
         }) : d;
-      }).concat((S.domains || []).filter(function (d) {
-        return !same(d.key);
-      }));
+      });
+      // NOTHING is added from the saved snapshot. A saved domain or node the
+      // live push no longer contains was DRAWN AS REAL, so the founder read a
+      // cockpit full of agent-session cards his graph had already stopped
+      // reporting -- localStorage was their only store, which is exactly the
+      // duplicate truth field SPEC.md:232 forbids a lens to own (2026-09-07).
+      // The push is the content; the snapshot contributes layout alone.
       var keptDoms = new Set(domains.map(function (d) {
         return d.key;
       }));
@@ -492,18 +494,15 @@ function AtlasCockpit() {
           x: sn[n.id].x,
           y: sn[n.id].y
         }) : n;
-      }).concat((S.nodes || []).filter(function (n) {
-        return !ln.has(n.id) && keptDoms.has(n.dom);
-      }));
+      });
       var ids = new Set(nodes.map(function (n) {
         return n.id;
       }));
       var lw = new Set((L.wires || []).map(function (w) {
         return w.a + '|' + w.b;
       }));
-      var wires = (L.wires || []).concat((S.wires || []).filter(function (w) {
-        return !lw.has(w.a + '|' + w.b) && ids.has(w.a) && ids.has(w.b);
-      }));
+      // A wire is a relation, so it is content too: the push owns them.
+      var wires = L.wires || [];
       return _objectSpread(_objectSpread({}, L), {}, {
         nodes: nodes,
         domains: domains,
@@ -2069,6 +2068,32 @@ function AtlasCockpit() {
     });
     flash("".concat(item.title, " \u2192 ").concat(d.title));
   };
+  // The library drags with POINTER events, not HTML5 drag-and-drop. The
+  // founder could not drag a node onto the canvas at all: QtWebEngine does
+  // not carry an HTML5 drag reliably inside the desktop shell, and a drag
+  // that silently never starts leaves no error to read (2026-09-07). Every
+  // fixed-canvas editor that works inside an embedded view does it this way.
+  // The library calls this on release; the map decides where the node lands.
+  React.useEffect(function () {
+    window.__atlasDropLibraryItem = function (item, clientX, clientY) {
+      var col = mapColRef.current;
+      if (!col || !item) return false;
+      var box = col.getBoundingClientRect();
+      if (clientX < box.left || clientX > box.right || clientY < box.top || clientY > box.bottom) return false;
+      var w = window.__atlasToWorld && window.__atlasToWorld(clientX, clientY);
+      var host = w && M.domains.find(function (d) {
+        return w.x >= d.x && w.x <= d.x + d.w && w.y >= d.y && w.y <= d.y + d.h;
+      });
+      createFromLibrary(item, host && host.key, w && host ? {
+        x: w.x - 76,
+        y: w.y - 43
+      } : null);
+      return true;
+    };
+    return function () {
+      delete window.__atlasDropLibraryItem;
+    };
+  }, [M.domains, sel.domain]);
   var addDomain = function addDomain(title, col) {
     var key = (title || 'domain').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 14) + '_' + Math.random().toString(36).slice(2, 4);
     var cols = M.domains.length;

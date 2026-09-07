@@ -334,6 +334,15 @@ class BrainStore:
         conn.row_factory = sqlite3.Row
         if str(path) != ":memory:":
             conn.execute("PRAGMA journal_mode=WAL")
+            # A WAL that nothing ever checkpoints grows without bound. The
+            # founder's reached 19 GB beside a 1 GB database and filled his
+            # disk -- 0.00 GB free, which is what finally took the Brain and
+            # every hook down with it (2026-09-07). SQLite checkpoints at
+            # 1000 pages by default; a long-lived daemon with a reader always
+            # open can starve that, so the ceiling is stated here and the
+            # size is bounded outright.
+            conn.execute("PRAGMA wal_autocheckpoint=1000")
+            conn.execute("PRAGMA journal_size_limit=%d" % (256 * 1024 * 1024))
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA synchronous=NORMAL")
         # busy_timeout is load-bearing for CROSS-PROCESS atomicity: update_meta's

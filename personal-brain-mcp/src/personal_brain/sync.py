@@ -70,15 +70,48 @@ class JsonFileTransport:
 
     def push(self, snapshot: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", delete=False,
-            dir=str(self.path.parent),
-            prefix=self.path.name + ".",
-            suffix=".tmp",
-        ) as f:
-            json.dump(snapshot, f, indent=2, default=str, sort_keys=True)
-            tmp_name = f.name
-        os.replace(tmp_name, self.path)
+        self._sweep_abandoned()
+        tmp_name = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", delete=False,
+                dir=str(self.path.parent),
+                prefix=self.path.name + ".",
+                suffix=".tmp",
+            ) as f:
+                tmp_name = f.name
+                json.dump(snapshot, f, indent=2, default=str, sort_keys=True)
+            os.replace(tmp_name, self.path)
+            tmp_name = None
+        finally:
+            # A write that FAILS must take its half-file with it. delete=False
+            # with no cleanup left one behind every time the dump raised, and
+            # when the founder's disk filled it kept trying: 80 orphans of
+            # 150 MB each, 6.18 GB, feeding the very condition that caused
+            # them (2026-09-07).
+            if tmp_name is not None:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+
+    def _sweep_abandoned(self, *, older_than_seconds: float = 300.0) -> int:
+        """Clear half-written snapshots a killed process could not clean up."""
+        cleared = 0
+        now = time.time()
+        try:
+            siblings = list(self.path.parent.glob(self.path.name + ".*.tmp"))
+        except OSError:
+            return 0
+        for stale in siblings:
+            try:
+                if now - stale.stat().st_mtime < older_than_seconds:
+                    continue
+                stale.unlink()
+                cleared += 1
+            except OSError:
+                continue
+        return cleared
 
     def pull(self) -> Optional[dict[str, Any]]:
         if not self.path.exists():

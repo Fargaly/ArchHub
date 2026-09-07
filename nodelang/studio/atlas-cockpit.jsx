@@ -573,15 +573,19 @@ function AtlasCockpit() {
     return next;
   });
 
-  // ── the agent work loop: assigned nodes actually run, and the run propagates ──
+  // Assignment is not a run. The ticker that ended a node's RUNNING after
+  // 1.2 s invented the result, so it went; this kept SETTING running and
+  // nothing could clear it, so the button sat at running for good
+  // (2026-09-07). An agent arriving records who is on the node and when;
+  // only the app that really runs it moves the state, through Run above.
   const queueWork = (nodeId, agentId) => {
     setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === nodeId
-      ? { ...n, rt: { ...(n.rt || {}), state: 'running', by: agentId, since: Date.now(), runs: (n.rt && n.rt.runs) || [] } }
+      ? { ...n, rt: { ...(n.rt || {}), by: agentId, assigned_at: Date.now(), runs: (n.rt && n.rt.runs) || [] } }
       : n) }));
   };
   const standDown = (nodeId) => {
     setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === nodeId
-      ? { ...n, rt: { ...(n.rt || {}), state: (n.rt && n.rt.runs && n.rt.runs.length) ? 'fresh' : 'idle', by: null } }
+      ? { ...n, rt: { ...(n.rt || {}), by: null, assigned_at: null } }
       : n) }));
   };
 

@@ -18,7 +18,9 @@ function rtResult(node) {
   const runs = rtRuns(node);
   const last = runs.length ? runs[runs.length - 1] : null;
   const said = last && last.result;
-  return (said === 0 || said) ? String(said) : 'not run';
+  // Nothing to show reads as a quiet em dash, not the words 'not run' in
+  // success green on every card until something runs (2026-09-07).
+  return (said === 0 || said) ? String(said) : '—';
 }
 
 let RUN_SEQ = 1;

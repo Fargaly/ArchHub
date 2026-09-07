@@ -681,7 +681,11 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
               <rect x={b.x + 10} y={b.y + 10} width={b.w - 20} height={Math.max(34, scr(30, 90))} rx={8} fill="transparent"/>
               {(() => {
                 const fsz = titleSize(d, b);
-                return <text x={b.x + 22} y={b.y + 26 + fsz * 0.78} fontSize={fsz} fontWeight="700" fontFamily={HB.serif} fill={d.col}><title>{d.title}</title>{fitTitle(d, b, fsz)}</text>;
+                // The halo his legibility rules call for: the largest type on the map sits
+  // over open node cards, ports and wire bundles, and needs a paper stroke
+  // under the fill to stay readable. It grows with the zoom (2026-09-07).
+  return <text x={b.x + 22} y={b.y + 26 + fsz * 0.78} fontSize={fsz} fontWeight="700" fontFamily={HB.serif} fill={d.col}
+    stroke={HB.paper} strokeWidth={Math.max(7 * upp, fsz * 0.16)} strokeLinejoin="round" paintOrder="stroke fill"><title>{d.title}</title>{fitTitle(d, b, fsz)}</text>;
               })()}
               {(() => {
                 const fsz = Math.max(11 * upp, Math.min(scr(10.5), b.h * 0.062));

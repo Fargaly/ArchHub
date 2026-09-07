@@ -51,12 +51,38 @@ _META_KEY_ERRORS = "sync_worker.error_count"
 # ─────────────────────── snapshot helpers ─────────────────────────────
 
 
+_SYNCED_FRAGMENT_COLUMNS: dict[int, str] = {}
+
+
+def _synced_fragment_columns(conn) -> str:
+    """Every fragment column the snapshot keeps, named explicitly.
+
+    SELECT * read embedding_blob for every row and then threw it away one
+    line later. On the founder machine that is 648 MB of vectors lifted out
+    of SQLite into Python objects and freed again, every 300 s tick, for a
+    snapshot that never carried them (2026-09-07). Naming the columns costs
+    nothing and never reads them. Derived from the live schema so a new
+    column joins the snapshot the way SELECT * used to.
+    """
+    cached = _SYNCED_FRAGMENT_COLUMNS.get(id(conn))
+    if cached:
+        return cached
+    names = [
+        row[1] for row in conn.execute("PRAGMA table_info(fragments)")
+        if row[1] != "embedding_blob"
+    ]
+    columns = ", ".join('"%s"' % name for name in names) if names else "*"
+    _SYNCED_FRAGMENT_COLUMNS[id(conn)] = columns
+    return columns
+
+
 def _scoped_fragments(
     store: BrainStore, scopes: list[Scope], owner_user: Optional[str],
 ) -> list[dict[str, Any]]:
     """Pull all fragments at the given scopes as plain dicts ready to
     serialise. Uses search_fragments with a wildcard query."""
     out: list[dict[str, Any]] = []
+    columns = _synced_fragment_columns(store._conn)
     # `*` doesn't work in FTS5; iterate kinds + each scope
     for scope in scopes:
         # Use scope-only filter with a permissive text query that the
@@ -64,10 +90,10 @@ def _scoped_fragments(
         # least one tokenisable word)
         rows = store._conn.execute(
             """
-            SELECT * FROM fragments
+            SELECT %s FROM fragments
             WHERE scope = ?
               AND (? IS NULL OR scope != 'user' OR owner_user = ?)
-            """,
+            """ % columns,
             (scope.value, owner_user, owner_user),
         ).fetchall()
         for row in rows:

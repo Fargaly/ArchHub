@@ -23,6 +23,7 @@ Tests cover Transport contract + JSON impl + HLC merge semantics.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -399,19 +400,48 @@ class MergeResult:
     conflicts_resolved: int = 0
 
 
+def content_digest(item: dict[str, Any]) -> str:
+    """A stable digest of everything about an item except its provenance."""
+    body = {k: v for k, v in item.items() if k != "provenance"}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
 def stamp_with_hlc(item: dict[str, Any], clock: Optional[_hlc.HLC] = None) -> dict[str, Any]:
-    """Add an HLC timestamp to an item's provenance.hlc field. Returns the
-    same dict (mutates in place for convenience).
+    """Advance an item's HLC when its CONTENT changed, and only then.
+
+    merge_snapshots resolves an id collision by "newer HLC wins". This
+    function used to tick every item it was handed, and the sync worker
+    hands it every fragment on every cycle -- so a record nobody had
+    touched since June carried a stamp from minutes ago. Two consequences,
+    both real (2026-09-07):
+
+      * The merge stopped meaning what it says. Whichever device synced
+        most recently won every collision, so a device could silently
+        revert another device's genuine edit with its own stale copy.
+      * No two cycles could ever produce the same snapshot, so the whole
+        corpus was re-serialised and rewritten every 300 s -- 176 MB a
+        cycle on the founder machine -- and no "nothing changed" shortcut
+        was possible.
+
+    Stamping on content change fixes both: the HLC now dates the edit, and
+    an idle corpus produces byte-identical snapshots. Returns the same dict
+    (mutates in place for convenience).
     """
-    clock = clock or _hlc.device_clock()
-    ts = clock.tick()
     prov = item.get("provenance") or {}
     if isinstance(prov, str):
         try:
             prov = json.loads(prov)
         except Exception:
             prov = {}
-    prov["hlc"] = ts
+    digest = content_digest(item)
+    if prov.get("hlc") and prov.get("hlc_digest") == digest:
+        item["provenance"] = prov
+        return item
+    clock = clock or _hlc.device_clock()
+    prov["hlc"] = clock.tick()
+    prov["hlc_digest"] = digest
     item["provenance"] = prov
     return item
 

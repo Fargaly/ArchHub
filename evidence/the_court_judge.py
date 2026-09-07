@@ -71,20 +71,38 @@ def judge_by_binding(court_id, cases, decl):
     spec = decl.get("bindings", {}).get(court_id)
     if not spec:
         return None, None
-    matched, failed = [], []
+    # A court passes only on tests that RAN and passed. This counted every
+    # matching case as a success and rejected only "fail", so a skipped test
+    # passed its court, and a declared selector the report never mentioned
+    # was ignored as long as some other selector matched. Both were
+    # reproduced against this function (Codex audit, 2026-09-07). A court
+    # that can pass without evidence is worse than no court.
+    matched, failed, skipped, unseen = [], [], [], []
     for selector in spec["tests"]:
         f, _, only = selector.partition("::")
+        found = 0
         for name, outcome in cases.get(f, []):
             if only and name != only:
                 continue
+            found += 1
             matched.append(name)
             if outcome == "fail":
                 failed.append("%s::%s" % (f.split("/")[-1], name))
+            elif outcome == "skip":
+                skipped.append("%s::%s" % (f.split("/")[-1], name))
+        if not found:
+            unseen.append(selector)
     if not matched:
         return None, "declared %d test file(s) but the report has none of them" % len(spec["tests"])
     if failed:
         return False, "%d of %d bound tests failed: %s" % (
             len(failed), len(matched), "; ".join(failed[:3]))
+    if unseen:
+        return None, "%d declared selector(s) produced no result: %s" % (
+            len(unseen), "; ".join(unseen[:3]))
+    if skipped:
+        return None, "%d bound test(s) were skipped, so nothing was proved: %s" % (
+            len(skipped), "; ".join(skipped[:3]))
     return True, "%d bound tests passed across %d file(s)" % (len(matched), len(spec["tests"]))
 
 

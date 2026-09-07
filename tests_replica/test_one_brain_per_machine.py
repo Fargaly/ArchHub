@@ -1,31 +1,30 @@
-"""One brain per machine, and a second daemon costs a socket -- not gigabytes.
+"""One brain per machine, guaranteed by the daemon itself.
 
-The founder asked why several brain servers open, and told me to fix it
-properly rather than patch it.
+The founder repeatedly found three to six `personal_brain.server --http 8473`
+processes while the port was free or held by one that answered nothing, and
+told me to fix it at the root rather than patch it.
 
-The chain: the daemon binds its port LAST -- after building the engine and
-starting every worker, which takes minutes. For all that time the port looks
-FREE, so everything that wants a brain (the app's 20-second watchdog, every
-shell, the supervisor) concludes none is coming and starts one. The loser of
-the bind race logged "[Errno 10048]" and then KEPT RUNNING forever, loading
-the graph and syncing to the cloud while serving nothing. He had three,
-holding 8.4 GB between them, and none of them answered (2026-09-07).
+The root, read out of the code: the real bind happens LAST -- after the
+engine is built and every worker runs -- so a daemon paid for a whole engine
+before finding out it lost, and for the minutes in between the port looked
+FREE, so every starter concluded no brain was coming and began one more.
 
-Two mechanisms fix it at the root, and these courts hold both:
-  * the daemon takes its port BEFORE building the engine and holds it until
-    uvicorn serves on that very socket, so a losing daemon exits at once;
-  * every starter -- the app and the shell wrapper -- takes the SAME
-    machine-wide claim, held through the whole boot.
+The guarantee lives in the DAEMON, where it cannot go stale: it asks for the
+port before it builds anything and exits when the answer is no. Guarding it
+with a lock file instead was wrong twice over -- it solved what that question
+already solves, and when a starter died mid-boot its lock outlived it and
+left the founder with NO brain at all until the lock aged out (2026-09-07).
 """
 from __future__ import annotations
 
-import ast
-import inspect
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
 PRODUCTION = ROOT.parent / "12.PRODUCTION"
+SERVER = (
+    PRODUCTION / "personal-brain-mcp" / "src" / "personal_brain" / "server.py"
+).read_text(encoding="utf-8")
 
 
 def test_the_port_is_one_fixed_number():
@@ -40,65 +39,51 @@ def test_the_port_is_one_fixed_number():
     assert '"--http", "8473"' in LAUNCHER
 
 
-def test_the_daemon_takes_its_port_before_it_builds_anything():
-    server = (
-        PRODUCTION / "personal-brain-mcp" / "src" / "personal_brain"
-        / "server.py"
-    ).read_text(encoding="utf-8")
-    assert "_claim_http_port_or_exit(" in server
-    claim = server.index("_http_claim = _claim_http_port_or_exit(")
-    serve = server.index('server.run(transport="http"')
-    assert claim < serve, "the port must be taken before the engine serves"
-    assert "raise SystemExit(1)" in server[
-        server.index("def _claim_http_port_or_exit"):serve
-    ], "a daemon that cannot take the port must exit, not keep running"
+def test_the_daemon_asks_for_the_port_before_it_builds_anything():
+    refusal = SERVER.index("_refuse_if_port_is_taken(args.http)")
+    engine = SERVER.index('server.run(transport="http"')
+    assert refusal < engine, "the question must come before the engine"
+    body = SERVER[SERVER.index("def _refuse_if_port_is_taken"):engine]
+    assert "raise SystemExit(1)" in body, "a losing daemon must exit"
 
 
-def test_the_daemon_serves_on_the_socket_it_already_holds():
-    """Releasing the claim would reopen the window it exists to close."""
-    core = (
-        PRODUCTION / "personal-brain-mcp" / "src" / "personal_brain"
-        / "mcp_core.py"
-    ).read_text(encoding="utf-8")
-    assert "claimed_socket" in core
-    assert "uvicorn.Server(config).run(sockets=[claimed])" in core
+def test_the_question_is_asked_the_way_windows_answers_it():
+    """A plain bind can succeed beside a listener that permits reuse."""
+    body = SERVER[SERVER.index("def _refuse_if_port_is_taken"):]
+    body = body[:body.index("def main(")]
+    assert "SO_EXCLUSIVEADDRUSE" in body
+    assert "setsockopt" in body
+    assert "probe.close()" in body, "this is a question, not the serving bind"
 
 
-def test_the_app_and_the_shell_share_one_claim():
-    """Two starters with two locks is two brains."""
+def test_nothing_outlives_the_listener():
+    """A returned run() means serving is over, so the process is over."""
+    after = SERVER[SERVER.index('server.run(transport="http"'):]
+    after = after[:after.index("# stdio is the default transport.")]
+    assert "raise SystemExit(0)" in after
+
+
+def test_no_starter_keeps_a_lock_that_can_outlive_it():
+    """The lock left the founder with no brain when its owner died mid-boot."""
+    for gone in (
+        "_claim_brain_start",
+        "_release_brain_start_claim",
+        "_brain_start_claim_path",
+        "_BRAIN_START_CLAIM_SECONDS",
+        "archhub-brain-daemon-start.lock",
+    ):
+        assert gone not in LAUNCHER, "%s must not come back" % gone
     wrapper = (PRODUCTION / "tools" / "brainwrap.py").read_text(encoding="utf-8")
-    assert "archhub-brain-daemon-start.lock" in wrapper
-    assert "archhub-brain-daemon-start.lock" in LAUNCHER, (
-        "the app must take the SAME claim the shell wrapper takes"
-    )
+    for gone in ("_claim_daemon_start_lock", "_daemon_start_lock_path"):
+        assert gone not in wrapper, "%s must not come back" % gone
 
 
-def test_the_app_claims_before_it_spawns():
-    tree = ast.parse(LAUNCHER)
-    claim = LAUNCHER.index("if not _claim_brain_start():")
-    spawn = LAUNCHER.index('_sp.Popen([exe, "-m", "personal_brain.server"')
-    assert claim < spawn
-    assert tree is not None
-
-
-def test_the_claim_outlives_a_slow_boot():
-    """Released after ten seconds, it would let the next tick start another."""
-    body = LAUNCHER[LAUNCHER.index("if not _claim_brain_start():"):]
-    body = body[:body.index("def _replace_a_wedged_brain")] if (
-        "def _replace_a_wedged_brain" in body
-    ) else body[:4000]
-    released = body.index("_release_brain_start_claim()")
-    alive = body.index("if _alive():")
-    assert alive < released, (
-        "the claim is released only once the brain actually answers"
-    )
-    assert "The claim is NOT released here" in body
-
-
-def test_an_abandoned_claim_is_taken_over():
-    """A starter killed mid-boot must not leave the brain unstartable."""
-    assert "_BRAIN_START_CLAIM_SECONDS" in LAUNCHER
-    block = LAUNCHER[LAUNCHER.index("def _claim_brain_start"):]
-    block = block[:block.index("def _release_brain_start_claim")]
-    assert "path.unlink()" in block
-    assert "O_CREAT | os.O_EXCL" in block
+def test_a_starter_still_checks_before_it_spawns():
+    """Cheap to lose is not a licence to spawn on every tick."""
+    wrapper = (PRODUCTION / "tools" / "brainwrap.py").read_text(encoding="utf-8")
+    ensure = wrapper[wrapper.index("def ensure_daemon("):]
+    ensure = ensure[:ensure.index("# ── 2. wiring announce")]
+    assert ensure.index("_port_held(DAEMON_PORT)") < ensure.index("subprocess.Popen")
+    alive = LAUNCHER[LAUNCHER.index("def _ensure_brain("):]
+    alive = alive[:alive.index("_sp.Popen(")]
+    assert "if _alive():" in alive, "the app must adopt a running brain"

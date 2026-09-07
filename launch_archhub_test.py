@@ -472,55 +472,6 @@ def _port_held(port) -> bool:
         probe.close()
 
 
-# How long a brain start claim is believed before it is treated as
-# abandoned. A daemon that has not opened its port in this long is not
-# coming, and the next starter should be allowed to try.
-_BRAIN_START_CLAIM_SECONDS = 180.0
-
-
-def _brain_start_claim_path():
-    """One claim per machine, shared with every other brain starter."""
-    import tempfile
-
-    return Path(tempfile.gettempdir()) / "archhub-brain-daemon-start.lock"
-
-
-def _claim_brain_start() -> bool:
-    """Win the right to start the brain, or leave it to whoever has it.
-
-    Exclusive create is the whole mechanism, and it is the same file the
-    shell wrapper uses, so the app and a shell cannot both start one. A
-    claim older than _BRAIN_START_CLAIM_SECONDS is taken over, so a starter
-    that died mid-boot cannot leave the brain unstartable.
-    """
-    path = _brain_start_claim_path()
-    try:
-        if time.time() - path.stat().st_mtime < _BRAIN_START_CLAIM_SECONDS:
-            return False
-        path.unlink()
-    except OSError:
-        pass
-    try:
-        handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        return False
-    except OSError:
-        # A machine that cannot hold a claim still gets a brain; it simply
-        # has no protection against a second starter racing it.
-        return True
-    os.write(handle, str(os.getpid()).encode("ascii"))
-    os.close(handle)
-    return True
-
-
-def _release_brain_start_claim() -> None:
-    """Let the next starter try once this attempt has finished."""
-    try:
-        _brain_start_claim_path().unlink()
-    except OSError:
-        pass
-
-
 def _ensure_brain() -> str:
     import subprocess as _sp
     # The brain serves /mcp. Only an answer in MCP counts as a brain being
@@ -546,15 +497,13 @@ def _ensure_brain() -> str:
     # The daemon's own words survive it: a crash leaves its last lines in
     # state_dir/brain.log instead of vanishing with a windowless process
     # (2026-09-05: the brain went silent with nothing to read).
-    # ONE starter on this machine. The daemon binds its port LAST -- after
-    # building the engine and starting every worker, which takes minutes --
-    # so for all that time the port looks FREE and the watchdog below, which
-    # asks every 20 seconds, started another. And another. The founder had
-    # three, holding 8.4 GB between them, and none of them answered
-    # (2026-09-07). A claim taken here and held while the daemon boots is
-    # the same claim every other starter takes, so only one ever runs.
-    if not _claim_brain_start():
-        return "another starter is bringing the brain up"
+    # No permission is asked before starting one. The daemon TAKES ITS PORT
+    # before it builds anything, so a redundant start loses the bind in
+    # milliseconds and exits having cost one socket. Guarding this with a
+    # lock instead was wrong twice over: it solved a problem the port claim
+    # already solves, and when a starter died mid-boot its lock outlived it
+    # and left the founder with NO brain at all until the lock aged out
+    # (2026-09-07).
     brain_log = open(state_dir / "brain.log", "ab")
     _sp.Popen([exe, "-m", "personal_brain.server", "--http", "8473"], env=env, cwd=str(app_dir), close_fds=True,
               stdin=_sp.DEVNULL, stdout=brain_log, stderr=brain_log,
@@ -562,13 +511,7 @@ def _ensure_brain() -> str:
     for _ in range(20):
         time.sleep(0.5)
         if _alive():
-            _release_brain_start_claim()
             return "started on :8473"
-    # The claim is NOT released here. This daemon is still booting -- that is
-    # exactly the window in which the port looks free -- so releasing now
-    # would let the next watchdog tick start another one, which is how the
-    # founder ended up with three. It expires on its own if this boot never
-    # finishes (_BRAIN_START_CLAIM_SECONDS).
     return "starting on :8473"
 
 try:

@@ -217,9 +217,14 @@ begin
     try
       PythonPage.Download;
     except
-      SuppressibleMsgBox('Python could not be fetched from python.org: ' + GetExceptionMessage + #13#10 +
-        'Install Python 3.11 or newer from python.org, then run this setup again.',
-        mbCriticalError, MB_OK, IDOK);
+      if PythonPage.AbortedByUser then
+        SuppressibleMsgBox('You stopped the Python download, so ArchHub was not installed.' + #13#10 +
+          'Run this setup again when you are ready, or install Python 3.11 or newer from python.org first.',
+          mbInformation, MB_OK, IDOK)
+      else
+        SuppressibleMsgBox('Python could not be fetched from python.org: ' + GetExceptionMessage + #13#10 +
+          'Install Python 3.11 or newer from python.org, then run this setup again.',
+          mbCriticalError, MB_OK, IDOK);
       exit;
     end;
   finally

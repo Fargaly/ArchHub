@@ -10751,7 +10751,13 @@ def _ensure_application_agent_body_catalog(
             _harness_agent_body_roots(runtime)[1],
             runtime,
             baboom_map_node,
-            "device-proof",
+            # These runtimes authenticate through the signed machine
+            # transport, like the founder entry they used to fall back to.
+            # "device-proof" is BABOOM's mode because BABOOM holds a device
+            # key; a Codex or Claude CLI holds none, so demanding it made
+            # every one of them UNABLE to attach and turned 13 transport
+            # courts red (audit, 2026-09-07).
+            "machine-transport",
             (),
             ("claim", "submit", "block", "resume", "release"),
         )

@@ -3737,9 +3737,14 @@ def test_compact_work_index_exposes_state_and_claimant(tmp_path):
         )
         assert claimed_item["operational"]["current_state_label"] == "CLAIMED"
         assert claimed_item["claimant_session"] == session_root
-        assert claimed_item["claimant_agent_body"] == (
+        # The CODEX body claimed it, not the founder body. Every runtime but
+        # BABOOM used to borrow founder authority; the founder asked for one
+        # separately auditable body per runtime he runs, so this is stricter
+        # than what it replaced (2026-09-07).
+        assert claimed_item["claimant_agent_body"] == "app:agent-body:codex"
+        assert claimed_item["claimant_agent_body"] != (
             server.universal_registry.agent_body.body.root_id
-        )
+        ), "a runtime must never claim with the founder body"
         assert claimed_item["claim_binding"].startswith(
             "app:governed-work-claim-binding:"
         )
@@ -6584,9 +6589,14 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         assert claimed["status"]["counts"]["claimed"] == 1
         claimed_item = claimed["status"]["items"][0]
         assert claimed_item["claimant_session"] == session_a
-        assert claimed_item["claimant_agent_body"] == (
+        # The CODEX body claimed it, not the founder body. Every runtime but
+        # BABOOM used to borrow founder authority; the founder asked for one
+        # separately auditable body per runtime he runs, so this is stricter
+        # than what it replaced (2026-09-07).
+        assert claimed_item["claimant_agent_body"] == "app:agent-body:codex"
+        assert claimed_item["claimant_agent_body"] != (
             server.universal_registry.agent_body.body.root_id
-        )
+        ), "a runtime must never claim with the founder body"
         binding_root = claimed_item["claim_binding"]
         assert binding_root.startswith("app:governed-work-claim-binding:")
         assert claimed["compliance_observation"]
@@ -6603,9 +6613,11 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         assert binding_values == {
             binding_roles["work"]: created["created_root"],
             binding_roles["agent-session"]: session_a,
-            binding_roles["agent-body"]: (
-                server.universal_registry.agent_body.body.root_id
-            ),
+            # The claim binding records the CODEX body, not the founder one:
+            # one separately auditable body per runtime, which is stricter
+            # than the founder authority every runtime used to borrow
+            # (2026-09-07).
+            binding_roles["agent-body"]: "app:agent-body:codex",
             binding_roles["transition"]: binding_values[
                 binding_roles["transition"]
             ],

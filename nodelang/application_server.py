@@ -8704,6 +8704,25 @@ class ApplicationServer:
     # runtime did not respond and never attached (2026-09-07). The browser
     # canvas has carried the same scope for the same reason; it expires
     # with the request, so no walk is remembered across a revision.
+    def _require_founder_machine_session(self, request, direct, path) -> None:
+        """A BABOOM command route answers the founder session or nobody.
+
+        These three routes read the caller-supplied session and never checked
+        it, so anything that could reach the local pipe could drive BABOOM --
+        including asking it to restart the application into a staged build
+        (audit, 2026-09-07). The Steward briefing route beside them has always
+        made exactly this check; they now make it too.
+        """
+        holder = (
+            self.universal_registry.agent_body.session.root_id
+            if direct or request.get("session") == {}
+            else self._resolve_universal_machine_agent_session(request)
+        )
+        if holder != self.universal_registry.agent_body.session.root_id:
+            raise AuthorizationDenied(
+                "founder-local BABOOM command requires the founder session"
+            )
+
     @with_relation_projection_scope
     def dispatch_universal_machine_route(
         self, request: dict[str, object]
@@ -9272,6 +9291,7 @@ class ApplicationServer:
             self.require_universal_http_route(
                 method, path, authentication_context=context
             )
+            self._require_founder_machine_session(request, direct, path)
             return resolve_universal_baboom_utterance(
                 self.universal_store,
                 self.universal_registry,
@@ -9288,6 +9308,7 @@ class ApplicationServer:
             self.require_universal_http_route(
                 method, path, authentication_context=context
             )
+            self._require_founder_machine_session(request, direct, path)
             with self.mutation_lock:
                 result = respond_universal_baboom_utterance(
                     self.universal_store,
@@ -9319,6 +9340,7 @@ class ApplicationServer:
             self.require_universal_http_route(
                 method, path, authentication_context=context
             )
+            self._require_founder_machine_session(request, direct, path)
             with self.mutation_lock:
                 return execute_universal_baboom_utterance(
                     self.universal_store,

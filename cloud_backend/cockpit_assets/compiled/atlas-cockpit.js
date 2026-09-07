@@ -1,3 +1,5 @@
+"use strict";
+
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _createForOfIteratorHelper(r, e) { var t = "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (!t) { if (Array.isArray(r) || (t = _unsupportedIterableToArray(r)) || e && r && "number" == typeof r.length) { t && (r = t); var _n = 0, F = function F() {}; return { s: F, n: function n() { return _n >= r.length ? { done: !0 } : { done: !1, value: r[_n++] }; }, e: function e(r) { throw r; }, f: F }; } throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); } var o, a = !0, u = !1; return { s: function s() { t = t.call(r); }, n: function n() { var r = t.next(); return a = r.done, r; }, e: function e(r) { u = !0, o = r; }, f: function f() { try { a || null == t["return"] || t["return"](); } finally { if (u) throw o; } } }; }
 function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
@@ -1962,16 +1964,19 @@ function AtlasCockpit() {
     });
   };
 
-  // ── the agent work loop: assigned nodes actually run, and the run propagates ──
+  // Assignment is not a run. The ticker that ended a node's RUNNING after
+  // 1.2 s invented the result, so it went; this kept SETTING running and
+  // nothing could clear it, so the button sat at running for good
+  // (2026-09-07). An agent arriving records who is on the node and when;
+  // only the app that really runs it moves the state, through Run above.
   var queueWork = function queueWork(nodeId, agentId) {
     setM(function (m) {
       return _objectSpread(_objectSpread({}, m), {}, {
         nodes: m.nodes.map(function (n) {
           return n.id === nodeId ? _objectSpread(_objectSpread({}, n), {}, {
             rt: _objectSpread(_objectSpread({}, n.rt || {}), {}, {
-              state: 'running',
               by: agentId,
-              since: Date.now(),
+              assigned_at: Date.now(),
               runs: n.rt && n.rt.runs || []
             })
           }) : n;
@@ -1985,8 +1990,8 @@ function AtlasCockpit() {
         nodes: m.nodes.map(function (n) {
           return n.id === nodeId ? _objectSpread(_objectSpread({}, n), {}, {
             rt: _objectSpread(_objectSpread({}, n.rt || {}), {}, {
-              state: n.rt && n.rt.runs && n.rt.runs.length ? 'fresh' : 'idle',
-              by: null
+              by: null,
+              assigned_at: null
             })
           }) : n;
         })

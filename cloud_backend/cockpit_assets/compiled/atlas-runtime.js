@@ -1,3 +1,5 @@
+"use strict";
+
 function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
 function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
 function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
@@ -34,7 +36,9 @@ function rtResult(node) {
   var runs = rtRuns(node);
   var last = runs.length ? runs[runs.length - 1] : null;
   var said = last && last.result;
-  return said === 0 || said ? String(said) : 'not run';
+  // Nothing to show reads as a quiet em dash, not the words 'not run' in
+  // success green on every card until something runs (2026-09-07).
+  return said === 0 || said ? String(said) : '—';
 }
 var RUN_SEQ = 1;
 // A run record is only ever made from what really happened: the caller passes

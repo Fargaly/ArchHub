@@ -1,3 +1,5 @@
+"use strict";
+
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
@@ -1751,13 +1753,20 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
       fill: "transparent"
     }), function () {
       var fsz = titleSize(d, b);
+      // The halo his legibility rules call for: the largest type on the map sits
+      // over open node cards, ports and wire bundles, and needs a paper stroke
+      // under the fill to stay readable. It grows with the zoom (2026-09-07).
       return /*#__PURE__*/React.createElement("text", {
         x: b.x + 22,
         y: b.y + 26 + fsz * 0.78,
         fontSize: fsz,
         fontWeight: "700",
         fontFamily: HB.serif,
-        fill: d.col
+        fill: d.col,
+        stroke: HB.paper,
+        strokeWidth: Math.max(7 * upp, fsz * 0.16),
+        strokeLinejoin: "round",
+        paintOrder: "stroke fill"
       }, /*#__PURE__*/React.createElement("title", null, d.title), fitTitle(d, b, fsz));
     }(), function () {
       var fsz = Math.max(11 * upp, Math.min(scr(10.5), b.h * 0.062));

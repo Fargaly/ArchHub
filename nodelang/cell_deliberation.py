@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
 from typing import Iterable, Mapping
+import hashlib
 import uuid
 
 from .cell_authorization import (
@@ -917,6 +918,21 @@ def list_deliberation_entries(
     return entries
 
 
+# How far back a legacy, randomly-rooted entry is still matched by its
+# idempotency key. A retry arrives within seconds, never thousands of
+# entries later.
+_IDEMPOTENCY_TAIL_ENTRIES = 512
+
+
+def _derived_entry_root(space_root: str, idempotency_key: str) -> str:
+    """One entry root per (space, idempotency key), so a retry is a lookup."""
+    digest = hashlib.sha256(
+        ("deliberation-entry:v1" + chr(0) + space_root + chr(0)
+         + idempotency_key).encode("utf-8")
+    ).hexdigest()[:32]
+    return "%s:entry:%s" % (space_root, digest)
+
+
 def list_recent_deliberation_entries(
     snapshot: Snapshot,
     protocol: DeliberationProtocol,
@@ -1086,10 +1102,30 @@ def prepare_deliberation_entry(
     if decision.action_root != space.action_root:
         raise AuthorizationDenied("entry authorization action does not match")
 
-    existing_entries = list_deliberation_entries(
-        snapshot, protocol, space_root
+    # Appending read EVERY entry to answer two questions, so one entry cost
+    # 4.253s on the founder's 16,919-entry Workshop -- which is why no agent
+    # could coordinate through it (2026-09-07). Both questions are answered
+    # without reading the history: the next sequence is the count the space
+    # already holds, and an idempotency key now NAMES its own entry, so
+    # "has this key been used" is one point read.
+    #
+    # Entries written before this carry a random root, so a bounded tail is
+    # still scanned for them. A key reused after that many later entries is
+    # not a retry; retries happen within seconds.
+    derived_root = _derived_entry_root(space_root, idempotency_key)
+    candidates: list[DeliberationEntryProjection] = []
+    if derived_root in snapshot.cells:
+        candidates.append(
+            read_deliberation_entry(snapshot, protocol, derived_root)
+        )
+    candidates.extend(
+        entry for entry in list_recent_deliberation_entries(
+            snapshot, protocol, space_root,
+            limit=_IDEMPOTENCY_TAIL_ENTRIES,
+        )
+        if entry.root_id != derived_root
     )
-    for existing in existing_entries:
+    for existing in candidates:
         if existing.idempotency_key != idempotency_key:
             continue
         if _same_idempotent_payload(
@@ -1112,8 +1148,7 @@ def prepare_deliberation_entry(
             "deliberation idempotency identity was reused for another payload"
         )
 
-    token = uuid.uuid4().hex
-    entry_root = "%s:entry:%s" % (space_root, token)
+    entry_root = derived_root
     content_root = entry_root + ":content"
     created_root = entry_root + ":created-at"
     sequence_root = entry_root + ":sequence"
@@ -1122,7 +1157,7 @@ def prepare_deliberation_entry(
     terminals = (
         _terminal(content_root, content),
         _terminal(created_root, created_at),
-        _terminal(sequence_root, len(existing_entries) + 1),
+        _terminal(sequence_root, len(space.entry_roots) + 1),
         _terminal(idempotency_root, idempotency_key),
         _terminal(reason_root, decision.reason),
     )

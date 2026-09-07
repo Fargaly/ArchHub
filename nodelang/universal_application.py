@@ -32101,6 +32101,19 @@ def transition_universal_governed_work(
     )
     if evidence_root not in store.snapshot().cells:
         raise InvalidCell("work evidence was not persisted")
+    # Every agent event lands in the Workshop, naming the runtime that did
+    # it. The Workshop was written from one place -- the founder typing into
+    # it -- so nothing an agent did ever showed there and several agents
+    # could not work one project together (2026-09-07). This is the account,
+    # never the authority: the transition above already stands.
+    record_workshop_work_event(
+        store,
+        registry,
+        agent_session_root=agent_session_root,
+        work_root=work_root,
+        event=_WORK_EVENT_SAID.get(event, event),
+        authentication_context=authentication_context,
+    )
     return history_root, revision
 
 
@@ -37814,6 +37827,116 @@ def claim_next_universal_governed_work(
         "revision": revision,
         "status": changed,
     }
+
+
+def _utc_now_text() -> str:
+    """One timezone-aware stamp, the shape the deliberation protocol takes."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _agent_session_runtime_label(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    agent_session_root: str,
+) -> str:
+    """Which runtime this session is -- codex, claude, baboom -- or a session.
+
+    The founder reads the Workshop to see WHO did what, so a line that says
+    only "a session" is worth nothing to him. Never invents a name: an
+    unreadable session is called what it is.
+    """
+    try:
+        session = read_agent_session(
+            store.snapshot(),
+            registry.agent_body.protocol,
+            registry.authorization.protocol,
+            agent_session_root,
+        )
+    except Exception:
+        return "an agent"
+    runtime = str(getattr(session, "runtime", "") or "").strip()
+    return runtime or "an agent"
+
+
+def _work_title_for_workshop(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    work_root: str,
+    *,
+    authentication_context: object | None = None,
+) -> str:
+    """The Work as the founder named it, or its root when it cannot be read."""
+    try:
+        status = project_universal_governed_work_status(
+            store, registry, authentication_context=authentication_context
+        )
+        for item in status["items"]:
+            if item["root"] == work_root:
+                return str(item.get("title") or work_root)[:120]
+    except Exception:
+        pass
+    return work_root
+
+
+# How each Work event reads in a sentence a person is meant to read.
+_WORK_EVENT_SAID = {
+    "claim": "claimed",
+    "release": "released",
+    "block": "blocked",
+    "resume": "resumed",
+    "submit": "submitted",
+}
+
+
+def record_workshop_work_event(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    work_root: str,
+    event: str,
+    detail: str = "",
+    authentication_context: object | None = None,
+) -> str | None:
+    """Say in the Workshop that an agent did something to this Work.
+
+    The Workshop was written from exactly one place -- the founder typing
+    into it -- so nothing an agent did ever appeared there and there was no
+    room for several agents to work one project together (2026-09-07). Every
+    governed Work event now lands here, naming the runtime that did it, so
+    the Workshop is the one place the founder reads to see all of them.
+
+    Best effort by design: a Work claim must not fail because the record of
+    it could not be written. The claim is the authority; this is its account.
+    """
+    runtime = _agent_session_runtime_label(
+        store, registry, agent_session_root
+    )
+    said = "%s %s %s" % (runtime, event, _work_title_for_workshop(
+        store, registry, work_root,
+        authentication_context=authentication_context,
+    ))
+    if detail:
+        said = said + " -- " + detail
+    try:
+        entry = append_universal_workshop_entry(
+            store,
+            registry,
+            actor_root=agent_session_root,
+            category_root=registry.workshop_category_roots["note"],
+            content=said[:400],
+            idempotency_key="work-event:%s:%s:%s" % (
+                work_root, event, agent_session_root,
+            ),
+            created_at=_utc_now_text(),
+            reference_roots=(work_root,),
+            authentication_context=authentication_context,
+        )
+    except Exception:
+        return None
+    return getattr(entry, "root_id", None) or (
+        entry.get("root") if isinstance(entry, Mapping) else None
+    )
 
 
 def claim_universal_governed_work(

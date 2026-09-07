@@ -783,7 +783,21 @@ def create_baboom_native_companion_window(
             # founder is.
             from PyQt6.QtGui import QGuiApplication
 
-            screen = QGuiApplication.primaryScreen() or self.screen()
+            # Once the founder has PUT it somewhere, that screen is the
+            # authority -- he could not move BABOOM to his second monitor
+            # because every projection measured the primary screen and
+            # placed it back there (2026-09-07). The primary screen is only
+            # the answer at birth, when he has chosen nothing yet.
+            screen = None
+            placed = getattr(controller, "_user_origin", None)
+            if placed:
+                from PyQt6.QtCore import QPoint
+
+                screen = QGuiApplication.screenAt(
+                    QPoint(int(placed[0]), int(placed[1]))
+                )
+            if screen is None:
+                screen = QGuiApplication.primaryScreen() or self.screen()
             if screen is None:
                 return None
             geometry = screen.availableGeometry()

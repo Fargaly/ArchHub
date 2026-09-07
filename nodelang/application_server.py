@@ -7236,34 +7236,40 @@ class ApplicationServer:
             current["used"] = True
         return custody_root
 
-    def _machine_session_surface_values(
-        self,
-        snapshot,
-        session_root: str,
-    ) -> dict[str, str]:
-        """Read the two released runtime identity properties for one session."""
-        values: dict[str, str] = {}
+    def _machine_session_surface_index(self, snapshot) -> dict:
+        """owner -> {label: value} for the released runtime identity properties.
+
+        The canvas relation was walked ONCE PER CANDIDATE SESSION while
+        enrolling one: every abandoned attach left another active session, so
+        each attempt cost more than the last and BABOOM stopped attaching at
+        all (2026-09-07). One walk, cached against the snapshot revision.
+        """
+        held = getattr(self, "_surface_index_cache", None)
+        if held is not None and held[0] == snapshot.revision:
+            return held[1]
+        index: dict = {}
+        roles = self.universal_registry.roles
         for member in read_relation(
             snapshot, self.universal_registry.canvas_root, budget=100_000
         ):
-            if member.role_id != self.universal_registry.roles["property"]:
+            if member.role_id != roles["property"]:
                 continue
             property_members = read_relation(
                 snapshot, member.participant_id, budget=32
             )
             owners = tuple(
                 item.participant_id for item in property_members
-                if item.role_id == self.universal_registry.roles["owner"]
+                if item.role_id == roles["owner"]
             )
-            if owners != (session_root,):
+            if len(owners) != 1:
                 continue
             labels = tuple(
                 item.participant_id for item in property_members
-                if item.role_id == self.universal_registry.roles["label"]
+                if item.role_id == roles["label"]
             )
             property_values = tuple(
                 item.participant_id for item in property_members
-                if item.role_id == self.universal_registry.roles["value"]
+                if item.role_id == roles["value"]
             )
             if len(labels) != 1 or len(property_values) != 1:
                 raise InvalidCell("runtime Agent Session surface property drifted")
@@ -7274,13 +7280,25 @@ class ApplicationServer:
                 raise InvalidCell(
                     "runtime Agent Session surface property is malformed"
                 ) from exc
-            if label in {"runtime", "session fingerprint"}:
-                if label in values:
-                    raise InvalidCell(
-                        "runtime Agent Session surface property is ambiguous"
-                    )
-                values[label] = value
-        return values
+            if label not in {"runtime", "session fingerprint"}:
+                continue
+            for_owner = index.setdefault(owners[0], {})
+            if label in for_owner:
+                raise InvalidCell(
+                    "runtime Agent Session surface property is ambiguous"
+                )
+            for_owner[label] = value
+        self._surface_index_cache = (snapshot.revision, index)
+        return index
+
+    def _machine_session_surface_values(
+        self,
+        snapshot,
+        session_root: str,
+    ) -> dict[str, str]:
+        """The two released runtime identity properties for one session."""
+        return dict(self._machine_session_surface_index(snapshot).get(session_root, {}))
+
 
     @staticmethod
     def _machine_agent_session_identity_binding_root(

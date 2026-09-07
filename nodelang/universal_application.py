@@ -32078,6 +32078,19 @@ def transition_universal_governed_work(
             additional_create=additional_create,
             additional_replace=tuple(additional_replace_by_id.values()),
         )
+        # Say it in the Workshop here too. An evidence-free transition --
+        # which is every CLAIM and every RELEASE -- returned from this branch
+        # before ever reaching the record below, so the two events that say
+        # who picked up a piece of work and who put it down were the exact
+        # two the founder could not see (audit, 2026-09-07).
+        record_workshop_work_event(
+            store,
+            registry,
+            agent_session_root=agent_session_root,
+            work_root=work_root,
+            event=_WORK_EVENT_SAID.get(event, event),
+            authentication_context=authentication_context,
+        )
         return history_root, revision
     if additional_create:
         raise InvalidCell("governed work claim binding requires an evidence-free claim")

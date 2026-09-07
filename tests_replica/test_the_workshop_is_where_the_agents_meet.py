@@ -131,3 +131,27 @@ def test_a_legacy_entry_is_still_matched_by_its_key():
     assert "list_recent_deliberation_entries(" in body
     assert "_IDEMPOTENCY_TAIL_ENTRIES" in body
     assert deliberation._IDEMPOTENCY_TAIL_ENTRIES >= 128
+
+
+def test_a_claim_and_a_release_are_not_the_two_events_he_cannot_see():
+    """An evidence-free transition returns early -- and that is every claim.
+
+    transition_universal_governed_work has two exits. The evidence-free
+    branch, which carries every CLAIM and every RELEASE, returned before it
+    ever reached the Workshop record, so the two events that say who picked
+    a piece of work up and who put it down were the exact two the founder
+    could not see (audit, 2026-09-07).
+    """
+    body = inspect.getsource(app_module.transition_universal_governed_work)
+    early = body.index("if not transition.required_evidence_type_roots:")
+    tail = body.index("if additional_create:")
+    branch = body[early:tail]
+    assert "record_workshop_work_event(" in branch, (
+        "the evidence-free branch must say it in the Workshop before it returns"
+    )
+    said = branch.index("record_workshop_work_event(")
+    returned = branch.index("return history_root, revision")
+    assert said < returned, "recorded before the return, not after it"
+    assert body.count("record_workshop_work_event(") == 2, (
+        "both exits of the transition must reach the Workshop"
+    )

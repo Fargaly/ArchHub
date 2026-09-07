@@ -754,6 +754,28 @@ def api_actions(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse({"actions": db.recent_founder_actions(40)})
 
 
+@router.post("/api/browser-code")
+def api_browser_code(founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Mint one short-lived, single-use code that opens the cockpit signed in.
+
+    The desktop already holds the founder session; the browser does not, so
+    the cockpit link dropped him on a token form he has no token for. This
+    is the hand-off every CLI-to-browser sign-in uses: the caller proves it
+    is the founder here, over the Authorization header, and receives a code
+    that GET /founder/claim spends exactly once for a real cookie.
+
+    The code is not a session. It expires in five minutes, it is deleted the
+    first time it is spent, and it is minted only for the founder account,
+    so the value that travels in the opened URL is worth nothing afterwards.
+    """
+    code = db.issue_code(founder["id"], "")
+    return JSONResponse({
+        "claim_url": "%s/founder/claim?code=%s" % (
+            config.PUBLIC_URL.rstrip("/"), _urlquote(code, safe=""),
+        ),
+    })
+
+
 @router.get("/api/agent-tasks")
 def api_agent_tasks(_founder: dict = Depends(require_founder)) -> JSONResponse:
     """The agent task queue the cockpit fills + the app-side loop drains."""

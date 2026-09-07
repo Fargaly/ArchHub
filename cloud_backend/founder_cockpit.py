@@ -1065,6 +1065,48 @@ async def login_email(email: str = Form(default="")) -> Response:
     return HTMLResponse(_login_html(notice=said))
 
 
+COCKPIT_RETURN_STATE = "cockpit"
+
+
+@router.get("/login/google")
+def login_google() -> Response:
+    """Start Google sign-in for the cockpit, in the tab the founder is in.
+
+    The page offered an emailed link and a token field, so signing in meant
+    leaving the cockpit, opening a mail tab, and coming back. The Google
+    flow this cloud already runs for the desktop and the website ends at
+    /auth/return on this very host, so the cockpit can use it with no new
+    redirect target: one tab, out to Google and back.
+
+    The state carried through is the fixed string "cockpit", never anything
+    a visitor supplies, and it only selects which finisher runs. 503 when
+    Google login is not configured, so the page can still say so.
+    """
+    import google_auth as _google
+    try:
+        url = _google.build_authorization_url(
+            code_challenge="", redirect="", app_state=COCKPIT_RETURN_STATE,
+        )
+    except _google.GoogleLoginUnconfigured:
+        return HTMLResponse(
+            _login_html(
+                error="Google sign-in is not configured on this server."
+            ),
+            status_code=503,
+        )
+    return RedirectResponse(url=url, status_code=307)
+
+
+def finish_cockpit_google_return(code: str) -> Response:
+    """Spend a Google one-time code for the cockpit cookie.
+
+    Called by /auth/return when the flow was started from the cockpit. It
+    is the same spend the emailed link already does: exchange the code,
+    require the founder account, mint the cookie, land on /founder.
+    """
+    return login_claim(code=code)
+
+
 @router.get("/claim")
 def login_claim(code: str = "") -> Response:
     """Finish the emailed sign-in: spend the code, set the cockpit cookie.
@@ -1619,14 +1661,22 @@ _LOGIN_HTML_TMPL = """<!doctype html>
   .err{background:rgba(217,103,87,.12);border:1px solid rgba(217,103,87,.35);
     color:#e7a99a;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:18px}
   .foot{color:var(--ink-faint);font-size:11.5px;margin-top:18px;line-height:1.45}
+  .google{display:block;text-align:center;text-decoration:none;padding:11px 0;
+    border-radius:10px;background:#fff;color:#1f1f1f;font-weight:600;font-size:14px;
+    border:1px solid rgba(0,0,0,.16)}
+  .google:hover{filter:brightness(.97)}
+  .or{text-align:center;color:var(--ink-faint);font-size:11.5px;margin:14px 0 10px;
+    letter-spacing:.12em;text-transform:uppercase}
 </style>
 </head>
 <body>
   <div class="card">
     <h1>Founder <span class="sub">Cockpit</span></h1>
-    <p class="help">Private business oversight. Sign in with your email.</p>
+    <p class="help">Private business oversight.</p>
     {error_block}
     {notice_block}
+    <a class="google" href="/founder/login/google">Continue with Google</a>
+    <div class="or">or</div>
     <form method="post" action="/founder/login/email" autocomplete="on">
       <label for="email">Your email</label>
       <input id="email" name="email" type="email" autofocus required

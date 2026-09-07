@@ -1472,6 +1472,13 @@ def auth_return(code: str = "", redirect: str = "",
     uses our OWN fixed "/signin" path, so a smuggled path can't steer the
     code; the loopback case reuses the unchanged _is_loopback_redirect
     guard."""
+    # 0) The cockpit started this flow in the founder's own tab. The state
+    #    is our own fixed string, never a visitor value and never a URL, and
+    #    it only selects the finisher: the same code spend the emailed
+    #    cockpit link already performs, which requires the founder account
+    #    before it mints anything (2026-09-07).
+    if not redirect and state == founder_cockpit.COCKPIT_RETURN_STATE:
+        return founder_cockpit.finish_cockpit_google_return(code)
     if redirect:
         # 1) Cross-domain WEBSITE return — bounce the code to the marketing
         #    site's /signin so auth.js (inlineCode path) exchanges it there.

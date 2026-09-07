@@ -92,3 +92,77 @@ def test_a_stranger_cannot_mint_a_cockpit_session(client):
 def test_an_unauthenticated_caller_cannot_mint_a_cockpit_session(client):
     refused = client.post("/founder/api/browser-code")
     assert refused.status_code == 403
+
+
+# --- Same-tab Google sign-in -------------------------------------------------
+# "ايه اللوجين اللي زي الخرا بتاع الكوكبيت ده؟ مش المفروض يكون g-OUTH علشان
+# يفتح في نفس التاب" -- the page offered an emailed link and a token field, so
+# signing in meant leaving the cockpit for a mail tab and coming back.
+
+
+def test_the_login_page_leads_with_google(client):
+    page = client.get("/founder/login").text
+    assert 'href="/founder/login/google"' in page
+    assert "Continue with Google" in page
+    assert page.index("Continue with Google") < page.index('action="/founder/login/email"'), (
+        "Google must be the first thing offered, not a footnote"
+    )
+
+
+def test_google_sign_in_stays_in_the_same_tab(client, monkeypatch):
+    """One redirect out to Google and back; never a second tab or a token."""
+    import google_auth
+
+    seen = {}
+
+    def build(*, code_challenge, redirect, app_state=""):
+        seen.update(
+            {"challenge": code_challenge, "redirect": redirect, "state": app_state}
+        )
+        return "https://accounts.google.com/o/oauth2/v2/auth?x=1"
+
+    monkeypatch.setattr(google_auth, "build_authorization_url", build)
+    answer = client.get("/founder/login/google", follow_redirects=False)
+    assert answer.status_code == 307
+    assert answer.headers["location"].startswith("https://accounts.google.com/")
+    assert seen["redirect"] == "", (
+        "the cockpit must land on this host's own finisher, not a new target"
+    )
+    assert seen["state"] == "cockpit"
+
+
+def test_the_google_return_lands_in_the_cockpit_signed_in(client):
+    """The finisher is the same founder-checked code spend the email uses."""
+    import db
+
+    user = db.get_or_create_user(FOUNDER_EMAIL)
+    code = db.issue_code(user["id"], "")
+    landed = client.get(
+        "/auth/return?code=" + code + "&state=cockpit", follow_redirects=False
+    )
+    assert landed.status_code == 303
+    assert landed.headers["location"] == "/founder"
+    assert "founder_session" in landed.headers.get("set-cookie", "")
+
+
+def test_a_stranger_signing_in_with_google_does_not_get_the_cockpit(client):
+    import db
+
+    user = db.get_or_create_user(STRANGER)
+    code = db.issue_code(user["id"], "")
+    refused = client.get(
+        "/auth/return?code=" + code + "&state=cockpit", follow_redirects=False
+    )
+    assert refused.status_code == 401
+    assert "founder_session" not in refused.headers.get("set-cookie", "")
+
+
+def test_the_cockpit_state_never_steers_a_redirect(client):
+    """The branch is selected by our own fixed string, never a visitor URL."""
+    import founder_cockpit
+
+    assert founder_cockpit.COCKPIT_RETURN_STATE == "cockpit"
+    hostile = client.get(
+        "/auth/return?code=x&state=https://evil.example", follow_redirects=False
+    )
+    assert "evil.example" not in hostile.headers.get("location", "")

@@ -614,6 +614,9 @@ _BRAIN_CONTROL_COMPLIANCE_CATEGORY = (
 )
 
 
+_BRAIN_CONTROL_RECEIPT_TIMEOUT_SECONDS = 20.0
+
+
 def _append_brain_control_receipt(
     runtime: Any,
     *,
@@ -631,6 +634,10 @@ def _append_brain_control_receipt(
         "source": source,
         "provenance": provenance,
     }
+    # Bounded: an unbounded wait on the app's pipe held a tool-lane worker
+    # for the life of the process; seven of them waited on one slow append
+    # and the daemon went silent (2026-09-07). Twenty seconds, then the
+    # caller learns the receipt did not land and the worker is free.
     receipt = runtime.deliberation_append(
         space=_BRAIN_CONTROL_LEDGER_ROOT,
         category=_BRAIN_CONTROL_COMPLIANCE_CATEGORY,
@@ -638,6 +645,7 @@ def _append_brain_control_receipt(
         payload=payload,
         idempotency_key=source,
         created_at=None,
+        response_timeout_seconds=_BRAIN_CONTROL_RECEIPT_TIMEOUT_SECONDS,
     )
     root = receipt.get("root")
     if not isinstance(root, str) or not root:

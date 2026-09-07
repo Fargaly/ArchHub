@@ -678,6 +678,16 @@ class InHouseMCP:
             self._tool_lane_pool = lane
         return lane
 
+    _STATUS_READS = frozenset({"brain.health", "brain.liveness"})
+
+    @classmethod
+    def _is_status_read(cls, message) -> bool:
+        if not isinstance(message, dict) or message.get("method") != "tools/call":
+            return False
+        params = message.get("params")
+        name = params.get("name") if isinstance(params, dict) else None
+        return name in cls._STATUS_READS
+
     async def _dispatch_in_tool_lane(self, message):
         """Render one message on the tool lane, inside a budget.
 
@@ -857,7 +867,16 @@ class InHouseMCP:
             # work gets its own bounded pool, so a slow tool can exhaust only
             # the tool lane, and a call that outlives the budget returns a
             # JSON-RPC error instead of holding a thread for good.
-            body = await self._dispatch_in_tool_lane(message)
+            if self._is_status_read(message):
+                # brain.health is how the launcher's watchdog decides whether
+                # this process lives. When every lane worker sits on the
+                # app's pipe (2026-09-07: seven workers waiting on one
+                # deliberation append), health queued behind them, timed
+                # out, and the watchdog killed a brain that was merely
+                # waiting. A status read never enters the lane.
+                body = await asyncio.to_thread(self.render_sse, message)
+            else:
+                body = await self._dispatch_in_tool_lane(message)
             if not body:
                 # Notification(s) only — no response object. 202 Accepted, empty
                 # body: byte-true to the SDK's stateless responder.

@@ -251,7 +251,7 @@ def prepare_value_graph(
         raise InvalidCell("value-graph root already exists")
     builder = _Builder(protocol)
     builder.build(root_id, value)
-    if set(builder.cells) & set(snapshot.cells):
+    if any(root in snapshot.cells for root in builder.cells):
         raise InvalidCell("value-graph would overwrite an existing Cell")
     patch = prepare_append_relation_member(
         snapshot,
@@ -286,7 +286,7 @@ def build_value_graphs(
     builder = _Builder(protocol)
     for root_id in roots:
         builder.build(root_id, values_by_root[root_id])
-    if set(builder.cells) & set(snapshot.cells):
+    if any(root in snapshot.cells for root in builder.cells):
         raise InvalidCell("value-graph would overwrite an existing Cell")
     patch = prepare_append_relation_members(
         snapshot,

@@ -205,7 +205,7 @@ def test_sign_out_forgets_the_session_and_keeps_the_rest(cloud, tmp_path):
         "token": "ah_" + "y" * 40, "email": "ahmed@example.com", "user_id": "u-42",
         "cloud_base_url": base, "sync_cursor": "hlc-17"})
     assert cloud_signin.session_summary(record) == {"signed_in": True, "email": "ahmed@example.com"}
-    out = cloud_signin.sign_out(record)
+    out = cloud_signin.sign_out(record, wait=True)
     assert out == {"signed_in": False, "email": ""}
     held = json.loads(record.read_text(encoding="utf-8"))
     assert "token" not in held and "email" not in held and held["sync_cursor"] == "hlc-17"
@@ -313,3 +313,24 @@ def test_a_cloud_that_drops_the_exchange_fails_out_loud(cloud, tmp_path):
     state = _wait(attempt)
     assert state["phase"] == "failed" and "did not answer the exchange" in state["error"]
     assert not record.exists()
+
+
+def test_sign_out_returns_before_the_cloud_answers(tmp_path):
+    """The app serves sign-out under its one mutation lock: the file is cleared
+    at once and the cloud is told on its own thread."""
+    record = tmp_path / "cloud.json"
+    cloud_signin.write_cloud_session(record, {"token": "ah_" + "z" * 40, "email": "a@b.c", "cloud_base_url": "http://127.0.0.1:9"})
+    started = threading.Event()
+    released = threading.Event()
+
+    def slow_http(method, url, **options):
+        started.set()
+        released.wait(5)
+        return 200, {}
+
+    t0 = time.monotonic()
+    out = cloud_signin.sign_out(record, http=slow_http)
+    assert time.monotonic() - t0 < 1.0 and out == {"signed_in": False, "email": ""}
+    assert signed_in_cloud_account(record) is None, "the file is forgotten before the cloud answers"
+    assert started.wait(2), "the cloud is still told"
+    released.set()

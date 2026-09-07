@@ -105,7 +105,7 @@ def project_legacy_custom_node_protocol(
 ) -> LegacyCustomNodeProtocol:
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     root_id = prefix + ":root"
-    missing = {root_id, *roles.values()} - set(snapshot.cells)
+    missing = {root for root in (root_id, *roles.values()) if root not in snapshot.cells}
     if missing:
         raise InvalidCell("legacy custom-node protocol is incomplete")
     members = read_relation(snapshot, root_id, budget=100_000)

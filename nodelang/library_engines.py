@@ -614,6 +614,10 @@ LIBRARY_ITEMS_WITHOUT_ENGINE = {
 # the model route (think), the skills catalogue (match_skill), the brain
 # recall (embed), the open Outlook (draft_email) and the tray (notify).
 
+# How long one model call may hold the canvas (the pipeline runs under the
+# app's mutation lock). Raise it per card with the timeout_s parameter.
+MODEL_CALL_SECONDS = 30.0
+
 _NOTIFY_SURFACE: list = []
 
 
@@ -649,7 +653,12 @@ def think(params: Mapping[str, object], feeds: Mapping[str, object]):
         {"role": "user", "content": (prompt + chr(10) + chr(10) + context).strip()},
     ]
     try:
-        answer = model_router.route_chat(route, messages, max_tokens=int(_number(params, "max_tokens", 600)))
+        # The pipeline runs under the app's one mutation lock, so a model call
+        # holds the canvas while it waits: bounded, and the founder can raise
+        # it on the card when he means to wait (audit 2026-09-07).
+        answer = model_router.route_chat(
+            route, messages, max_tokens=int(_number(params, "max_tokens", 600)),
+            timeout=max(5.0, min(_number(params, "timeout_s", MODEL_CALL_SECONDS), 120.0)))
     except Exception as refused:
         return {"out": []}, "%s refused: %s" % (route, str(refused)[:160])
     text = str(answer.get("text") or "") if isinstance(answer, Mapping) else str(answer)
@@ -815,7 +824,9 @@ def vision(params: Mapping[str, object], feeds: Mapping[str, object]):
         {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (kind, data)}},
     ]}]
     try:
-        answer = model_router.route_chat(route, messages, max_tokens=int(_number(params, "max_tokens", 600)))
+        answer = model_router.route_chat(
+            route, messages, max_tokens=int(_number(params, "max_tokens", 600)),
+            timeout=max(5.0, min(_number(params, "timeout_s", MODEL_CALL_SECONDS), 120.0)))
     except Exception as refused:
         return {"out": []}, "%s refused: %s" % (route, str(refused)[:160])
     text = str(answer.get("text") or "") if isinstance(answer, Mapping) else str(answer)
@@ -1091,6 +1102,38 @@ def _speckle_call(url: str, body: object, token: str, opener=None) -> dict:
         url, data=json.dumps(body, ensure_ascii=True, default=str).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json", "Accept": "application/json",
                  "Authorization": "Bearer " + token})
+    return _speckle_send(request, opener)
+
+
+def _speckle_objects(url: str, objects: list, token: str, opener=None) -> dict:
+    """Upload a batch to /objects/<project> the way the server takes it.
+
+    Speckle's object endpoint reads a MULTIPART file part whose content is the
+    JSON array of objects (docs.speckle.systems, REST API); a raw JSON body is
+    answered 400 and the card could never push (audit 2026-09-07)."""
+    import json
+    import urllib.request
+    boundary = "archhub-" + _speckle_object_id({"batch": len(objects)})[:24]
+    payload = json.dumps(objects, ensure_ascii=True, default=str).encode("utf-8")
+    eol = (chr(13) + chr(10)).encode("ascii")
+    body = b"".join([
+        b"--" + boundary.encode("ascii") + eol,
+        b'Content-Disposition: form-data; name="batch1"; filename="batch1"' + eol,
+        b"Content-Type: application/json" + eol + eol,
+        payload,
+        eol + b"--" + boundary.encode("ascii") + b"--" + eol,
+    ])
+    request = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": "multipart/form-data; boundary=" + boundary,
+                 "Accept": "application/json",
+                 "Authorization": "Bearer " + token})
+    return _speckle_send(request, opener)
+
+
+def _speckle_send(request, opener=None) -> dict:
+    import json
+    import urllib.request
     with (opener or urllib.request.urlopen)(request, timeout=60) as response:
         raw = response.read()
     try:
@@ -1119,7 +1162,7 @@ def push_speckle(params: Mapping[str, object], feeds: Mapping[str, object], *,
            "applicationId": None, "rows": rows, "count": len(rows)}
     obj["id"] = _speckle_object_id(obj)
     try:
-        _speckle_call("%s/objects/%s" % (server, project), [obj], token, opener)
+        _speckle_objects("%s/objects/%s" % (server, project), [obj], token, opener)
         answer = _speckle_call("%s/graphql" % server, {
             "query": _COMMIT_CREATE,
             "variables": {"commit": {"streamId": project, "branchName": branch, "objectId": obj["id"],

@@ -17,6 +17,7 @@ service.
 """
 from __future__ import annotations
 
+import os
 import re
 import ast
 import importlib.metadata as metadata
@@ -532,3 +533,34 @@ def test_a_machine_without_python_is_given_python_not_a_lecture():
     assert "Result := InstallPython()" in iss
     assert "tick \"Add python.exe to PATH\"" not in iss, "no lecture as the only path"
     assert "then run this setup again" in iss, "the fetch failing is still said plainly"
+
+
+def test_the_installer_script_actually_compiles():
+    """The court for the Python fetch was a substring grep: it stayed green
+    through a Pascal syntax error, a double-quoted string, and a comment
+    whose brace closed early (all three happened on 2026-09-06/07). When
+    Inno Setup is on this machine, the script is compiled for real."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    compiler = shutil.which("ISCC") or "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+    if not os.path.isfile(compiler):
+        pytest.skip("Inno Setup is not installed on this machine")
+    with tempfile.TemporaryDirectory() as out:
+        done = subprocess.run(
+            [compiler, "/DBuildId=court", "/O" + out, "/Q", str(ROOT / "installer" / "ArchHub.iss")],
+            capture_output=True, text=True, timeout=600,
+        )
+    assert done.returncode == 0, (done.stdout or "") + (done.stderr or "")
+
+
+def test_a_cancelled_download_is_not_reported_as_a_failure():
+    """Pressing Abort on the download page told the person python.org could
+    not be reached and to install Python by hand (audit 2026-09-07)."""
+    iss = (ROOT / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
+    start = iss.index("PythonPage.Download;")
+    handler = iss[start:iss.index("finally", start)]
+    assert "PythonPage.AbortedByUser" in handler
+    assert "You stopped the Python download" in handler
+    assert handler.index("AbortedByUser") < handler.index("could not be fetched")

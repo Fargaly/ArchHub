@@ -185,6 +185,7 @@ from .cell_agent_body_catalog import (
     AgentBodyCatalogEntry,
     AgentBodyCatalogProtocol,
     bootstrap_agent_body_catalog_protocol,
+    revise_agent_body_catalog_entry_credential_mode,
     compose_agent_body_catalog_entry,
     list_agent_body_catalog_entries,
     project_agent_body_catalog_protocol,
@@ -10863,6 +10864,40 @@ def _ensure_application_agent_body_catalog(
         work_events,
     ) in expected:
         entry = by_runtime.get(runtime)
+        if entry is not None and entry.credential_mode != credential_mode:
+            # A released credential mode can be CORRECTED. The harness
+            # runtimes were first written asking for BABOOM's device proof,
+            # which a Codex or Claude CLI cannot give, so they could not
+            # attach at all; the correction is to the transport they really
+            # speak. Refusing here instead set the founder's whole graph
+            # aside and started him a fresh one (2026-09-07). Only these
+            # runtimes migrate, and only when nothing else about the entry
+            # moved -- the founder and BABOOM entries are untouched.
+            harness = {name for name, _label in _HARNESS_AGENT_RUNTIMES}
+            migratable = (
+                runtime in harness
+                and entry.root_id == entry_root
+                and entry.body_root == body_root
+                and entry.control_root == control_root
+                and entry.policy_root == policy_root
+                and entry.grand_map_node_root == map_node_root
+                and entry.work_events == work_events
+            )
+            if migratable:
+                revise_agent_body_catalog_entry_credential_mode(
+                    store,
+                    protocol,
+                    entry_id=entry_root,
+                    credential_mode=credential_mode,
+                )
+                snapshot = store.snapshot()
+                by_runtime = {
+                    item.runtime: item
+                    for item in list_agent_body_catalog_entries(
+                        snapshot, protocol
+                    )
+                }
+                entry = by_runtime.get(runtime)
         if (
             entry is None
             or entry.root_id != entry_root

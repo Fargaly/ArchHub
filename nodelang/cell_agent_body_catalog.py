@@ -202,6 +202,36 @@ def compose_agent_body_catalog_entry(
     )
 
 
+def revise_agent_body_catalog_entry_credential_mode(
+    store: CellStore,
+    protocol,
+    *,
+    entry_id: str,
+    credential_mode: str,
+) -> int:
+    """Correct a released entry's credential mode in place.
+
+    The mode is one terminal Cell under the entry, so a correction replaces
+    that Cell and nothing else -- the entry keeps its identity, its body, its
+    policy and its Work events. This exists because the harness runtimes were
+    first released asking for BABOOM's device proof, which a Codex or Claude
+    CLI cannot give; refusing the difference instead set the founder's whole
+    graph aside and started him a fresh one (2026-09-07).
+    """
+    credential_mode = str(credential_mode).strip()
+    if credential_mode not in CREDENTIAL_MODES:
+        raise InvalidCell("Agent Body catalog credential mode is invalid")
+    root = entry_id + ":credential-mode"
+    snapshot = store.snapshot()
+    if root not in snapshot.cells:
+        raise InvalidCell("Agent Body catalog entry has no credential mode")
+    return store.commit(
+        snapshot.revision,
+        create=(),
+        replace=(_terminal(root, credential_mode),),
+    )
+
+
 def read_agent_body_catalog_entry(
     snapshot: Snapshot,
     protocol: AgentBodyCatalogProtocol,

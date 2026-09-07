@@ -472,6 +472,55 @@ def _port_held(port) -> bool:
         probe.close()
 
 
+# How long a brain start claim is believed before it is treated as
+# abandoned. A daemon that has not opened its port in this long is not
+# coming, and the next starter should be allowed to try.
+_BRAIN_START_CLAIM_SECONDS = 180.0
+
+
+def _brain_start_claim_path():
+    """One claim per machine, shared with every other brain starter."""
+    import tempfile
+
+    return Path(tempfile.gettempdir()) / "archhub-brain-daemon-start.lock"
+
+
+def _claim_brain_start() -> bool:
+    """Win the right to start the brain, or leave it to whoever has it.
+
+    Exclusive create is the whole mechanism, and it is the same file the
+    shell wrapper uses, so the app and a shell cannot both start one. A
+    claim older than _BRAIN_START_CLAIM_SECONDS is taken over, so a starter
+    that died mid-boot cannot leave the brain unstartable.
+    """
+    path = _brain_start_claim_path()
+    try:
+        if time.time() - path.stat().st_mtime < _BRAIN_START_CLAIM_SECONDS:
+            return False
+        path.unlink()
+    except OSError:
+        pass
+    try:
+        handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    except OSError:
+        # A machine that cannot hold a claim still gets a brain; it simply
+        # has no protection against a second starter racing it.
+        return True
+    os.write(handle, str(os.getpid()).encode("ascii"))
+    os.close(handle)
+    return True
+
+
+def _release_brain_start_claim() -> None:
+    """Let the next starter try once this attempt has finished."""
+    try:
+        _brain_start_claim_path().unlink()
+    except OSError:
+        pass
+
+
 def _ensure_brain() -> str:
     import subprocess as _sp
     # The brain serves /mcp. Only an answer in MCP counts as a brain being
@@ -536,55 +585,6 @@ except Exception as _brain_refusal:
 # silence is a wedge; anything shorter is work.
 _WEDGED_CHECKS_BEFORE_REPLACING = 30  # thirty checks at 20 s: ten minutes
 _BRAIN_SETTLING_SECONDS = 600.0       # never replace one younger than this
-
-
-# How long a brain start claim is believed before it is treated as
-# abandoned. A daemon that has not opened its port in this long is not
-# coming, and the next starter should be allowed to try.
-_BRAIN_START_CLAIM_SECONDS = 180.0
-
-
-def _brain_start_claim_path():
-    """One claim per machine, shared with every other brain starter."""
-    import tempfile
-
-    return Path(tempfile.gettempdir()) / "archhub-brain-daemon-start.lock"
-
-
-def _claim_brain_start() -> bool:
-    """Win the right to start the brain, or leave it to whoever has it.
-
-    Exclusive create is the whole mechanism, and it is the same file the
-    shell wrapper uses, so the app and a shell cannot both start one. A
-    claim older than _BRAIN_START_CLAIM_SECONDS is taken over, so a starter
-    that died mid-boot cannot leave the brain unstartable.
-    """
-    path = _brain_start_claim_path()
-    try:
-        if time.time() - path.stat().st_mtime < _BRAIN_START_CLAIM_SECONDS:
-            return False
-        path.unlink()
-    except OSError:
-        pass
-    try:
-        handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        return False
-    except OSError:
-        # A machine that cannot hold a claim still gets a brain; it simply
-        # has no protection against a second starter racing it.
-        return True
-    os.write(handle, str(os.getpid()).encode("ascii"))
-    os.close(handle)
-    return True
-
-
-def _release_brain_start_claim() -> None:
-    """Let the next starter try once this attempt has finished."""
-    try:
-        _brain_start_claim_path().unlink()
-    except OSError:
-        pass
 
 
 def _replace_a_wedged_brain(port=8473) -> str:

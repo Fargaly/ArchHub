@@ -4513,7 +4513,9 @@ class ApplicationServer:
                     # The Providers tab reads THIS, not a fixture: keyed or not,
                     # running or not, and never a spend figure.
                     try:
-                        binding = self._browser_session_binding()
+                        # The binding is a (binding, token) pair, as every
+                        # peer GET on this handler unpacks it.
+                        binding, _session_token = self._browser_session_binding()
                         # The graph declares this route; the graph admits it.
                         owner.require_universal_http_route(
                             'GET', parsed.path,
@@ -4535,7 +4537,9 @@ class ApplicationServer:
                     # The account signed in on this machine: cloud.json, the
                     # record the relay and the brain already trust.
                     try:
-                        binding = self._browser_session_binding()
+                        # The binding is a (binding, token) pair, as every
+                        # peer GET on this handler unpacks it.
+                        binding, _session_token = self._browser_session_binding()
                         # The graph declares this route; the graph admits it.
                         owner.require_universal_http_route(
                             'GET', parsed.path,
@@ -4550,7 +4554,9 @@ class ApplicationServer:
                 if parsed.path == '/api/universal/cloud-signin':
                     # What the sign-up dialog polls while the browser is open.
                     try:
-                        binding = self._browser_session_binding()
+                        # The binding is a (binding, token) pair, as every
+                        # peer GET on this handler unpacks it.
+                        binding, _session_token = self._browser_session_binding()
                         # The graph declares this route; the graph admits it.
                         owner.require_universal_http_route(
                             'GET', parsed.path,

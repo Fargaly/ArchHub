@@ -25,6 +25,43 @@ function taskStamp(row) {
   return s ? s * 1000 : null;
 }
 
+// He drew a composer under the sessions: you type to your app and the
+// exchange lands in the same list. The panel was handed the relay and never
+// used it, so the sidebar could only watch (2026-09-07). This sends through
+// the same door the ask bar uses and refreshes the list on the answer.
+function SessionComposer({ onRelay, onReloadTasks, flash }) {
+  const [draft, setDraft] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const send = () => {
+    const said = draft.trim();
+    if (!said || busy || !onRelay) return;
+    setBusy(true);
+    Promise.resolve(onRelay(said, true))
+      .then(d => {
+        const text = String((d && d.message) || '').slice(0, 160);
+        if (flash) flash(text || 'Sent to your app');
+        setDraft('');
+        if (onReloadTasks) onReloadTasks();
+      })
+      .catch(e => { if (flash) flash('Not sent: ' + String((e && e.message) || e).slice(0, 120)); })
+      .then(() => setBusy(false));
+  };
+  return (
+    <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+      <input value={draft} onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') send(); }}
+        placeholder={busy ? 'Sending…' : 'Message your app…'}
+        style={{ flex: 1, padding: '7px 10px', borderRadius: 8, border: '1px solid ' + HB.line,
+          background: HB.card, color: HB.ink, fontSize: 12, outline: 'none', fontFamily: HB.sans }}/>
+      <button onClick={send} disabled={busy || !draft.trim()} style={{ border: '1px solid ' + HB.line,
+        background: draft.trim() && !busy ? HB.accent : 'transparent',
+        color: draft.trim() && !busy ? '#fff' : HB.inkMute, borderRadius: 8, padding: '0 12px',
+        cursor: draft.trim() && !busy ? 'pointer' : 'default', fontFamily: HB.mono, fontSize: 10 }}>send</button>
+    </div>
+  );
+}
+
+
 function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNode, setColl, flash, control, tasks, onRelay, onReloadTasks }) {
   const [tab, setTab] = React.useState('activity');
   const rows = tasks || [];
@@ -182,11 +219,11 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
           <div>
             <div style={{ ...sideSec, borderBottom: `1px solid ${HB.line}` }}>
               <div style={{ ...sideLabel, display: 'flex', justifyContent: 'space-between' }}>
-                <span>WHAT YOU ASKED YOUR APP</span>
+                <span>CONVERSATIONS WITH YOUR AGENTS</span>
                 <button onClick={() => onReloadTasks && onReloadTasks()} style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9 }}>refresh</button>
               </div>
               <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, marginBottom: 10, lineHeight: 1.5 }}>
-                Every instruction the cockpit queued for your ArchHub app, and the answer it posted back.
+                What you said to your app, and what it said back. Type below to say something new.
               </div>
               {rows.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>No instructions yet. Ask the cockpit something and the exchange lands here.</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -194,24 +231,29 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                   const tone = { ok: HB.green, err: HB.red, accent: HB.accent, mute: HB.inkMute }[TASK_TONE[r.status] || 'mute'];
                   const at = taskStamp(r);
                   return (
-                    <div key={r.id} style={{ border: `1px solid ${HB.line}`, borderLeft: `3px solid ${tone}`, borderRadius: 10, overflow: 'hidden', background: HB.card }}>
-                      <div style={{ padding: '9px 11px' }}>
-                        <div style={{ fontSize: 12.5, color: HB.ink, lineHeight: 1.45 }}>{r.directive}</div>
-                        <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 4 }}>
-                          {r.status}{r.claimed_by ? ' · ' + r.claimed_by : ''}{at ? ' · ' + ago(at) + ' ago' : ''}
-                        </div>
+                    // His treatment: what the founder said sits right in an
+                    // accent bubble, what the app answered sits left in a
+                    // bordered card, both capped so the exchange reads as a
+                    // conversation instead of two stacked blocks.
+                    <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: 8 }}>
+                        <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.45, background: HB.accent, color: '#fff' }}>{r.directive}</span>
                       </div>
-                      {r.result ? (
-                        <div style={{ borderTop: `1px solid ${HB.lineSoft}`, padding: '9px 11px', background: HB.paper2, fontSize: 12, color: HB.ink, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{r.result}</div>
-                      ) : (
-                        <div style={{ borderTop: `1px solid ${HB.lineSoft}`, padding: '7px 11px', background: HB.paper2, fontFamily: HB.serif, fontStyle: 'italic', fontSize: 12.5, color: HB.inkMute }}>
-                          {r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.'}
-                        </div>
-                      )}
+                      <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: 8 }}>
+                        <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: tone }}>
+                          {r.status}{r.claimed_by ? ' · ' + r.claimed_by : ''}{at ? ' · ' + ago(at) + ' ago' : ''}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'row', gap: 8 }}>
+                        <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.5, background: HB.card, color: r.result ? HB.ink : HB.inkMute, border: `1px solid ${HB.line}`, whiteSpace: 'pre-wrap', fontFamily: r.result ? HB.sans : HB.serif, fontStyle: r.result ? 'normal' : 'italic' }}>
+                          {r.result || (r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.')}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}
               </div>
+              <SessionComposer onRelay={onRelay} onReloadTasks={onReloadTasks} flash={flash}/>
             </div>
             {ctl && (ctl.agents || []).length > 0 && (
               <div style={{ ...sideSec, borderBottom: 'none' }}>

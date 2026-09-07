@@ -18,8 +18,13 @@ LAUNCHER = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
 
 
 def _baboom_failure_block() -> str:
-    start = LAUNCHER.index('except Exception as refusal:\n    print("  BABOOM     : not attached')
-    return LAUNCHER[start:start + 3000]
+    # From the BABOOM failure print to the end of the file: the handler grew
+    # when the late-attach loop landed inside it, and a fixed 3,000 character
+    # window stopped reaching the relay this court exists to hold
+    # (2026-09-07). Anchoring on the earlier bare 'except Exception as
+    # refusal:' would pick a different handler entirely.
+    start = LAUNCHER.index('  BABOOM     : not attached')
+    return LAUNCHER[start:]
 
 
 def test_a_companion_that_cannot_attach_does_not_take_the_cockpit_with_it():
@@ -151,3 +156,20 @@ def test_a_confirmed_act_runs_its_one_node_under_the_founders_binding():
     pipeline = (ROOT / "nodelang" / "universal_pipeline.py").read_text(encoding="utf-8")
     assert "only_roots: object = None" in pipeline
     assert "node_ids &= {str(root) for root in only_roots}" in pipeline
+
+
+def test_a_busy_boot_does_not_cost_the_founder_his_companion():
+    """Six tries over fifteen seconds was the whole budget: on 2026-09-07 the
+    app was busy for all of it (its own boot writes and the brain's startup
+    observes queue on the one mutation lock) and the founder had no companion
+    for the session. The launcher keeps asking in the background, lands it on
+    the Qt thread, and says how late it was."""
+    launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
+    block = launcher[launcher.index("BABOOM     : not attached"):]
+    block = block[:block.index("archhub-baboom-attach") + 400]
+    assert "def _keep_attaching()" in block
+    assert "for _later in range(40)" in block and "_t.sleep(15.0)" in block
+    assert "_LateTimer.singleShot(0, _land)" in block, "the window lands on the Qt thread"
+    assert "window.start_projection()" in block, "a late companion still projects"
+    assert "attached on a later try" in block, "the log says when it arrived"
+    assert "daemon=True" in block

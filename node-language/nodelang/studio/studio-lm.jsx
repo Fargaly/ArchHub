@@ -272,6 +272,7 @@ const LM_LIBRARY = [
     { id:'h_outlook', title:'Outlook',  sub:'the inbox, newest first', engine:'outlook.inbox', params:{ count:20 } },
     { id:'h_notion',  title:'Notion',   sub:'search your workspace', engine:'notion.search', params:{ query:'' } },
     { id:'h_dropbox', title:'Dropbox',  sub:'files in your Dropbox folder', engine:'dropbox.list', params:{ path:'' } },
+    { id:'h_speckle', title:'Speckle',  sub:'commit the wired rows to a branch', engine:'library.push_speckle', params:{ project:'', branch:'archhub/main', message:'ArchHub push' } },
   ]},
   { cat:'read', items:[
     { id:'r_walls',     title:'list_walls',    sub:'pull walls from active view', engine:'revit.read', params:{ operation:'revit.list_walls' } },
@@ -970,7 +971,10 @@ const Home = ({ onOpen, model, setPickerOpen }) => {
         {shown.length} · CLICK TO OPEN
       </span>
       <div style={{ flex:1 }}/>
-      {['all', 'running', 'idle'].map(kind => (
+      {/* The chips are the states sessions really carry: an 'idle' chip could
+          never match, and scheduled and workflow sessions had no chip at all
+          (2026-09-07). One list, derived from the same table the badges use. */}
+      {['all'].concat(Object.keys(LM_STATE_META)).map(kind => (
         <button key={kind} onClick={() => onFilter && onFilter(kind)}
           style={chipBtn(filter === kind)}>{kind}</button>
       ))}
@@ -1899,7 +1903,18 @@ const ModelInWindow = ({ model }) => {
   return null;
 };
 
-const InlineAsk = ({ placeholder, model, onAnswer }) => {
+// Three scales, as he drew them: the canvas composer is the largest ask on
+// the screen, the chat reply sits just under it, and the one inside a node
+// is node chrome. Collapsing all three onto the smallest made the composer
+// read as chrome (2026-09-07).
+const ASK_SCALE = {
+  composer: { field: 14, send: { padding: '4px 11px', radius: LM.rad.sm, size: 11.5 }, lead: 6 },
+  reply:    { field: 13.5, send: { padding: '4px 11px', radius: LM.rad.sm, size: 11.5 }, lead: 0 },
+  node:     { field: 12, send: { padding: '3px 8px', radius: 4, size: 10 }, lead: 0 },
+};
+
+const InlineAsk = ({ placeholder, model, onAnswer, scale, before }) => {
+  const S = ASK_SCALE[scale] || ASK_SCALE.node;
   const picked = model || (typeof window !== 'undefined' ? window.ARCHHUB_PICKED_MODEL : null);
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
@@ -1925,9 +1940,11 @@ const InlineAsk = ({ placeholder, model, onAnswer }) => {
         onKeyDown={e => { if (e.key === 'Enter') ask(); }}
         placeholder={state || placeholder || 'Reply…'}
         style={{ flex:1, background:'transparent', border:0, outline:0,
-          fontStyle:'italic', fontFamily:LM.serif, fontSize:12,
+          fontStyle:'italic', fontFamily:LM.serif, fontSize:S.field,
+          marginLeft: S.lead || 0,
           color: state ? LM.accent : LM.ink }}/>
-      <button onClick={ask} style={{ padding:'3px 8px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:4, fontSize:10, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
+      {before || null}
+      <button onClick={ask} style={{ padding:S.send.padding, background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
     </>
   );
 };
@@ -2061,7 +2078,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           background:LM.bg, border:`1px solid ${LM.accent}55`, borderRadius:LM.rad.sm,
         }}>
           <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:11 }}>/</span>
-          <InlineAsk/>
+          <InlineAsk scale="node"/>
         </div>
       </div>
     );
@@ -2405,8 +2422,11 @@ const FloatingComposer = ({ setLibraryOpen, model }) => {
       <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
         <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
         <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4 }}/>
-        <InlineAsk placeholder="Reply, or ask the agent to build…" model={model} onAnswer={setAnswer}/>
-        <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+        {/* His order: the slash glyph, the field, library, then Send as the
+            rightmost control - the placeholder names the affordance drawn
+            beside it again (2026-09-07). */}
+        <InlineAsk scale="composer" placeholder="Reply, or type / to add a node…" model={model} onAnswer={setAnswer}
+          before={<button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>}/>
       </div>
       <div style={{ marginTop:6, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>
         → {modelRoute(model) || 'no model picked'}
@@ -2636,7 +2656,7 @@ const ConversationRail = ({ node }) => {
           padding:'8px 11px',
         }}>
           <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
-            <InlineAsk placeholder="Reply to this conversation…"/>
+            <InlineAsk scale="reply" placeholder="Reply to this conversation…"/>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted }}>
             <ChatAction>@ skill</ChatAction>
@@ -3074,6 +3094,12 @@ const SettingsPermissions = ({ store, patch }) => (
 // figures typed in 2025 and shown to the founder as his account. It reads the app now (/api/universal/providers):
 // keyed or not, with the place the key came from; running or not, for the
 // local runtimes. There is no spend figure because nothing here measures one.
+// The swatch identifies the vendor, as he drew it; the state has its own
+// pill and does not need to paint the avatar too (2026-09-07). Only the
+// colour is his fixture worth keeping - the key and the monthly spend beside
+// it were invented figures and stay gone.
+const BRAND = { openrouter: '#3a6acc', cloud: '#cc785c', ollama: '#1a8a4a', lmstudio: '#4285f4' };
+
 const SettingsProviders = ({ store, patch }) => {
   const [rows, setRows] = React.useState(null);
   const [err, setErr] = React.useState('');
@@ -3096,7 +3122,7 @@ const SettingsProviders = ({ store, patch }) => {
             padding:'12px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
             borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}`,
           }}>
-            <span style={{ width:24, height:24, borderRadius:LM.rad.sm, background:tone(p.state), color:(window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:12, fontWeight:700 }}>{p.name[0]}</span>
+            <span style={{ width:24, height:24, borderRadius:LM.rad.sm, background:BRAND[p.id] || tone(p.state), color:(window.AH && window.AH.onFill) || '#180f08', display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:12, fontWeight:700 }}>{p.name[0]}</span>
             <div style={{ flex:1, minWidth:0, lineHeight:1.2 }}>
               <div style={{ fontSize:13, fontWeight:500, color: p.state==='no key' || p.state==='not running' ? LM.inkMuted : LM.ink }}>{p.name}</div>
               <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>

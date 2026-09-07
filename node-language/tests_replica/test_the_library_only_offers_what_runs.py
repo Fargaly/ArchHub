@@ -176,9 +176,9 @@ def test_every_library_card_either_runs_or_says_it_cannot():
     holds the LANDED state.
     """
     items = _library_items()
-    assert len(items) == 53, len(items)
+    assert len(items) == 54, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 53, sorted(wired)
+    assert len(wired) == 54, sorted(wired)
 
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         assert items.get(item) == wiring["engine"], (

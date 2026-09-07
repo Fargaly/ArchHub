@@ -2213,6 +2213,7 @@ def billing_credits_landing() -> HTMLResponse:
     )
 
 # ── The founder's brain, over MCP, from any machine ──────────────────────
+import json as json_module  # noqa: E402  (this module has no top-level json)
 import brain_mcp  # noqa: E402  (module-local import style of this file)
 
 
@@ -2236,8 +2237,18 @@ async def brain_over_mcp(req: Request,
     # error that looked exactly like a malformed request (2026-09-07).
     try:
         message = await req.json()
-    except Exception:
-        message = None
+    except Exception as unread:
+        # Say WHY. A silent 400 with an empty body is indistinguishable from
+        # a malformed request, and that is exactly how a NameError in this
+        # very line hid for two deploys (2026-09-07).
+        return Response(
+            status_code=400,
+            content=json_module.dumps({
+                "error": "unreadable request body",
+                "reason": type(unread).__name__,
+            }).encode("utf-8"),
+            media_type="application/json",
+        )
     status, body, media = brain_mcp.answer(
         message,
         resolve_user=lambda: _require_user(authorization),

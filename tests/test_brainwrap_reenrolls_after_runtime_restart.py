@@ -35,6 +35,8 @@ def test_gate_reenrolls_once_then_reads_status(monkeypatch):
 
 def test_gate_still_denies_when_reenroll_cannot_restore(monkeypatch):
     monkeypatch.setattr(brainwrap, "call_tool", lambda *a, **k: None)
+    # No brain on the port at all: the settling-brain reading cannot apply.
+    monkeypatch.setattr(brainwrap, "_port_held", lambda *a, **k: False)
     blocked, reason = brainwrap._completion_gate_verdict(
         None, runtime="claude-code", session_id="s-1"
     )

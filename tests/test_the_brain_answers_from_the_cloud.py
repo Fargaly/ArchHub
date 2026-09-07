@@ -157,3 +157,41 @@ def test_a_notification_is_accepted_without_a_body():
         {"jsonrpc": "2.0", "method": "notifications/initialized"}
     )
     assert status == 202 and body == b""
+
+
+def test_the_route_itself_answers_not_only_the_dispatcher():
+    """A dispatcher that works behind a route that does not is worth nothing.
+
+    The route first read the body with `json.loads`, but main.py has no
+    module-level `json`: the NameError was swallowed by the except beside it
+    and EVERY request came back 400 with an empty body -- a swallowed error
+    that looked exactly like a malformed request (2026-09-07).
+    """
+    from fastapi.testclient import TestClient
+    import main
+
+    client = TestClient(main.app, base_url="https://testserver",
+                        raise_server_exceptions=False)
+    answered = client.post(
+        "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    )
+    assert answered.status_code == 200, answered.text
+    assert answered.text.startswith("event: message\ndata: ")
+    names = {
+        tool["name"]
+        for tool in json.loads(
+            answered.text.splitlines()[1][5:]
+        )["result"]["tools"]
+    }
+    assert names == {"brain.health", "brain.search", "brain.list_facts"}
+
+
+def test_a_body_that_is_not_json_is_refused_honestly():
+    from fastapi.testclient import TestClient
+    import main
+
+    client = TestClient(main.app, base_url="https://testserver",
+                        raise_server_exceptions=False)
+    refused = client.post("/mcp", content=b"not json at all",
+                          headers={"Content-Type": "application/json"})
+    assert refused.status_code == 400

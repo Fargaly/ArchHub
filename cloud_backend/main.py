@@ -2230,8 +2230,12 @@ async def brain_over_mcp(req: Request,
     required, exactly like the local daemon, so a client only changes its
     URL. The identity is the ACCOUNT token, never a machine.
     """
+    # req.json() rather than json.loads: this module has no module-level
+    # `json`, so the bare name raised NameError, the except below swallowed
+    # it, and EVERY request came back 400 with an empty body -- a swallowed
+    # error that looked exactly like a malformed request (2026-09-07).
     try:
-        message = json.loads((await req.body()).decode("utf-8"))
+        message = await req.json()
     except Exception:
         message = None
     status, body, media = brain_mcp.answer(

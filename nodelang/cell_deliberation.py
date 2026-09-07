@@ -439,7 +439,7 @@ def compose_deliberation_space(
             operational_state_root,
         ) if root is not None),
     }
-    missing = referenced - set(store.snapshot().cells)
+    missing = absent_roots(store.snapshot().cells, referenced)
     if missing:
         raise InvalidCell("deliberation space references missing Cells")
 

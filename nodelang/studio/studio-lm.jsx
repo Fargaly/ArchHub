@@ -272,6 +272,7 @@ const LM_LIBRARY = [
     { id:'h_outlook', title:'Outlook',  sub:'the inbox, newest first', engine:'outlook.inbox', params:{ count:20 } },
     { id:'h_notion',  title:'Notion',   sub:'search your workspace', engine:'notion.search', params:{ query:'' } },
     { id:'h_dropbox', title:'Dropbox',  sub:'files in your Dropbox folder', engine:'dropbox.list', params:{ path:'' } },
+    { id:'h_speckle', title:'Speckle',  sub:'commit the wired rows to a branch', engine:'library.push_speckle', params:{ project:'', branch:'archhub/main', message:'ArchHub push' } },
   ]},
   { cat:'read', items:[
     { id:'r_walls',     title:'list_walls',    sub:'pull walls from active view', engine:'revit.read', params:{ operation:'revit.list_walls' } },
@@ -970,7 +971,10 @@ const Home = ({ onOpen, model, setPickerOpen }) => {
         {shown.length} · CLICK TO OPEN
       </span>
       <div style={{ flex:1 }}/>
-      {['all', 'running', 'idle'].map(kind => (
+      {/* The chips are the states sessions really carry: an 'idle' chip could
+          never match, and scheduled and workflow sessions had no chip at all
+          (2026-09-07). One list, derived from the same table the badges use. */}
+      {['all'].concat(Object.keys(LM_STATE_META)).map(kind => (
         <button key={kind} onClick={() => onFilter && onFilter(kind)}
           style={chipBtn(filter === kind)}>{kind}</button>
       ))}
@@ -1909,7 +1913,7 @@ const ASK_SCALE = {
   node:     { field: 12, send: { padding: '3px 8px', radius: 4, size: 10 }, lead: 0 },
 };
 
-const InlineAsk = ({ placeholder, model, onAnswer, scale }) => {
+const InlineAsk = ({ placeholder, model, onAnswer, scale, before }) => {
   const S = ASK_SCALE[scale] || ASK_SCALE.node;
   const picked = model || (typeof window !== 'undefined' ? window.ARCHHUB_PICKED_MODEL : null);
   const [text, setText] = React.useState('');
@@ -1939,6 +1943,7 @@ const InlineAsk = ({ placeholder, model, onAnswer, scale }) => {
           fontStyle:'italic', fontFamily:LM.serif, fontSize:S.field,
           marginLeft: S.lead || 0,
           color: state ? LM.accent : LM.ink }}/>
+      {before || null}
       <button onClick={ask} style={{ padding:S.send.padding, background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
     </>
   );
@@ -2417,8 +2422,11 @@ const FloatingComposer = ({ setLibraryOpen, model }) => {
       <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
         <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
         <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4 }}/>
-        <InlineAsk scale="composer" placeholder="Reply, or ask the agent to build…  ( / for the library )" model={model} onAnswer={setAnswer}/>
-        <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+        {/* His order: the slash glyph, the field, library, then Send as the
+            rightmost control - the placeholder names the affordance drawn
+            beside it again (2026-09-07). */}
+        <InlineAsk scale="composer" placeholder="Reply, or type / to add a node…" model={model} onAnswer={setAnswer}
+          before={<button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>}/>
       </div>
       <div style={{ marginTop:6, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>
         → {modelRoute(model) || 'no model picked'}

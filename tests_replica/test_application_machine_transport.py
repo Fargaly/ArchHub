@@ -2661,6 +2661,11 @@ def test_baboom_presence_route_is_a_graph_directive_without_work_content(tmp_pat
         machine_key_provider=provider,
     ).start()
     client = UniversalRuntimeClient(descriptor_path, provider)
+    # A court server has no brain daemon, and a down brain outranks Work in
+    # the directive, so without this every message below read "Your brain is
+    # not answering." and the Work directives this court exists to hold were
+    # never reached (2026-09-07).
+    server._brain_state = lambda: {"ok": True, "facts": 0}
     try:
         idle = client.request("GET", "/api/universal/baboom-presence")
         created = client.request("POST", "/api/universal/work", {
@@ -2688,6 +2693,16 @@ def test_baboom_presence_route_is_a_graph_directive_without_work_content(tmp_pat
         assert directive["message"] == "1 Work item is ready to claim."
         assert idle["message"] == "No governed Work needs attention."
         assert idle["compact_message"] == ""
+
+        # A brain that stops answering outranks claimable Work: every other
+        # report the founder reads depends on it.
+        server._brain_state = lambda: {"ok": False, "facts": 0}
+        down = client.request("GET", "/api/universal/baboom-presence")
+        assert down["message"] == "Your brain is not answering."
+        assert down["motion"] == "warning"
+        assert down["action"] == "brain-health"
+        assert down["fingerprint"] != directive["fingerprint"]
+        server._brain_state = lambda: {"ok": True, "facts": 0}
         text = json.dumps(directive, sort_keys=True)
         assert "Sensitive companion work title" not in text
         assert "detailed Work body" not in text
@@ -2706,6 +2721,10 @@ def test_baboom_native_frame_keeps_host_context_and_directive_on_one_revision(tm
         machine_key_provider=provider,
     ).start()
     client = UniversalRuntimeClient(descriptor_path, provider)
+    # A court server has no brain daemon, and a down brain outranks Work
+    # in the directive, so the Work message this court holds was never
+    # reached (2026-09-07).
+    server._brain_state = lambda: {"ok": True, "facts": 0}
     try:
         quiet = client.baboom_native_frame()
         created = client.request("POST", "/api/universal/work", {
@@ -6331,6 +6350,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
             "cell_native", "context_lens", "revision", "work",
             "workshop", "attention", "presence", "activity", "meeting_notes",
             "device", "persona_form", "suggestion",
+            "agents", "brain", "canvas", "hosts", "update",
         }
         assert baboom_context["cell_native"] is True
         assert baboom_context["context_lens"] == "app:baboom-context:v3"

@@ -706,11 +706,25 @@ try:
             if "expected revision" not in str(clash) or attempt == 9:
                 raise
             time.sleep(0.25 * (attempt + 1))
-    outcome = run_universal_pipeline(
-        server.universal_store,
-        server.universal_registry,
-        effect_engines=PIPELINE_ENGINES,
-    )
+    # The run is optimistic about the revision exactly like the seed above,
+    # and only the seed was retried. BABOOM now attaches during boot and its
+    # presence lease is another writer, so the run lost the race and the
+    # founder booted to "not seeded -- expected revision 41093, current
+    # revision is 41094" with no node run at all (2026-09-07). Running the
+    # pipeline twice runs nothing twice: a node that already ran is done.
+    outcome = None
+    for attempt in range(10):
+        try:
+            outcome = run_universal_pipeline(
+                server.universal_store,
+                server.universal_registry,
+                effect_engines=PIPELINE_ENGINES,
+            )
+            break
+        except Exception as clash:
+            if "expected revision" not in str(clash) or attempt == 9:
+                raise
+            time.sleep(0.25 * (attempt + 1))
     print("  pipeline   : %d node(s) ran" % outcome["ran"], flush=True)
 except Exception as refusal:
     # A refusal nobody can locate is a refusal nobody can fix: name the

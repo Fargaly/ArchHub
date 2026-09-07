@@ -43,6 +43,37 @@ def load_cloud_session(appdata: Path) -> Optional[dict]:
     return {"token": str(token), "base_url": base}
 
 
+def cockpit_url(appdata: Path) -> str:
+    """The cockpit address for THIS machine, signed in when it can be.
+
+    A browser carries none of the desktop's sign-in, so opening the cockpit
+    landed the founder on a token form he has no token for. When this
+    machine holds a founder session, spend it once here for a short-lived
+    claim link the browser can open already signed in; with no session, fall
+    back to the plain address so the link is never dead.
+    """
+    session = load_cloud_session(appdata)
+    base = (session or {}).get("base_url") or DEFAULT_BASE
+    plain = base.rstrip("/") + "/founder"
+    if not session:
+        return plain
+    request = urllib.request.Request(
+        base.rstrip("/") + "/founder/api/browser-code",
+        data=b"",
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + session["token"],
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as answer:
+            claim = json.loads(answer.read().decode("utf-8")).get("claim_url")
+    except Exception:
+        return plain
+    return str(claim) if isinstance(claim, str) and claim.startswith("https://") else plain
+
+
 def render_answer(result: Mapping[str, object]) -> str:
     """One founder-readable text from a BABOOM response or execution payload."""
     body = result.get("response") if isinstance(result.get("response"), Mapping) else result

@@ -591,8 +591,15 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
         parts.insert(0, "%s is open: %s?" % (label, verb))
         offer = "run %s on the graph" % engine
     silent = context.get("host_silent_seconds") if isinstance(context, Mapping) else None
-    if isinstance(silent, (int, float)) and silent >= 120:
-        parts.append("host silent %dm" % int(silent // 60))
+    # The companion keeps drawing through a lapsed lease on purpose: hiding
+    # on every lapse read as "keeps appearing and disappearing" on the
+    # founder's desktop. What it must never do is present an hour-old count
+    # as live. The notice went LAST and the truncation below dropped it from
+    # exactly the busy faces that most needed it, so it goes FIRST and the
+    # other parts are what give way (2026-09-07).
+    stale = isinstance(silent, (int, float)) and silent >= 120
+    if stale:
+        parts.insert(0, "host silent %dm" % int(silent // 60))
     line = " · ".join(parts) if parts else "watching the graph"
     while len(line) > FACE_MAX_CHARS and len(parts) > 1:
         parts.pop()
@@ -1174,6 +1181,18 @@ def create_baboom_native_companion_window(
             self._input.setFocus()
             self._input.setCursorPosition(len(prefix))
 
+        def _open_cockpit(self) -> None:
+            "Open the cockpit already signed in, never on a token form."
+            import os
+            import webbrowser
+            from pathlib import Path
+            from .cloud_relay import cockpit_url
+            appdata = os.environ.get("LOCALAPPDATA") or ""
+            webbrowser.open(
+                cockpit_url(Path(appdata)) if appdata
+                else "https://api.archhub.io/founder"
+            )
+
         def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             from PyQt6.QtWidgets import QMenu
             # The window has no host of its own: it is a closure over the
@@ -1235,9 +1254,20 @@ def create_baboom_native_companion_window(
                 menu.addAction("Restart to install build %s" % update["build_id"], lambda: self._say("restart-to-update"))
             else:
                 menu.addAction("Check for updates", lambda: self._say("restart-to-update"))
-            menu.addAction("Open the cockpit (api.archhub.io)", lambda: __import__("webbrowser").open("https://api.archhub.io/founder"))
+            menu.addAction("Open the cockpit", self._open_cockpit)
             menu.addAction("Hide BABOOM until next launch", self.hide)
-            menu.exec(event.globalPos())
+            # Hold the companion still while the menu is open. refresh()
+            # runs every 750ms and moves, reshapes and repaints this window,
+            # which is WindowStaysOnTopHint: each submenu popup opened on
+            # hover and was immediately restacked underneath the companion,
+            # so the founder saw a menu whose rows never opened (2026-09-07).
+            self._projection_timer.stop()
+            self._animation_timer.stop()
+            try:
+                menu.exec(event.globalPos())
+            finally:
+                self._projection_timer.start()
+                self._animation_timer.start()
 
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             if event.button() == Qt.MouseButton.LeftButton:

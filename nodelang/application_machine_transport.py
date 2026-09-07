@@ -1714,10 +1714,14 @@ class UniversalRuntimeClient:
             {},
             response_timeout_seconds=response_timeout_seconds,
         )
+        # The exact shape the graph projects. It stayed frozen at the twelve
+        # keys of an earlier lens while the projection grew five more, so
+        # this reader could not accept any real response (2026-09-07).
         expected = {
             "cell_native", "context_lens", "revision", "work", "workshop",
             "attention", "presence", "activity", "meeting_notes", "device",
             "persona_form", "suggestion",
+            "agents", "brain", "canvas", "hosts", "update",
         }
         if set(result) != expected:
             raise MachineTransportError("BABOOM context response shape is invalid")

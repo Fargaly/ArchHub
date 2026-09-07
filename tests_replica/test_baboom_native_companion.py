@@ -541,10 +541,14 @@ def test_native_companion_report_box_fits_the_whole_briefing(tmp_path):
         app.processEvents()
 
 
-def test_native_companion_disappears_past_its_lease_rather_than_lie(tmp_path):
-    """An expired frame is not painted. The founder read live-looking counts
-    off a panel whose server had been gone for an hour; past the lease the
-    companion hides instead."""
+def test_native_companion_says_it_is_stale_rather_than_lie(tmp_path):
+    """Past its lease the companion stays and SAYS the host is silent.
+
+    It used to hide, and hiding on every brief lapse read as "keeps
+    appearing and disappearing" on the founder's desktop (2026-09-04, again
+    2026-09-06). The founder's design is that the sprite stays. The lie this
+    court forbids is the other one: presenting an hour-old count as live.
+    The notice must therefore reach the face even when the face is busy."""
     import time as _time
     from dataclasses import replace as _replace
 
@@ -562,4 +566,26 @@ def test_native_companion_disappears_past_its_lease_rather_than_lie(tmp_path):
     stale = _replace(host.latest_snapshot, frame_expires_at=_time.time() - 3600.0)
     with host._lock:
         host._latest = stale
-    assert controller.next_frame(screen) is None, "an expired lease must not be painted"
+    frame = controller.next_frame(screen)
+    assert frame is not None, "the sprite stays; the founder asked for that"
+    assert controller.host_silent_seconds >= 3600.0
+
+    # The face must carry the staleness, and must carry it even when there is
+    # more to say than fits: the notice used to be appended last and dropped
+    # by the truncation on exactly the busy faces that needed it.
+    from nodelang.baboom_native_companion import baboom_face_line, FACE_MAX_CHARS
+    quiet, _offer = baboom_face_line(
+        {"host_silent_seconds": controller.host_silent_seconds}, None
+    )
+    assert "host silent 60m" in quiet
+    crowded_context = {
+        "host_silent_seconds": controller.host_silent_seconds,
+        "work": {"open": 9, "blocked": 4, "review": 7},
+        "agents": {"count": 3},
+        "brain": {"ok": True, "facts": 999999},
+    }
+    crowded, _ = baboom_face_line(crowded_context, None)
+    assert len(crowded) <= FACE_MAX_CHARS
+    assert "host silent" in crowded, (
+        "a busy face dropped the staleness notice: %r" % crowded
+    )

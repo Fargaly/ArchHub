@@ -155,3 +155,23 @@ def test_the_first_frame_gets_more_time_than_a_steady_frame():
         signature.parameters["response_timeout_seconds"].default
         == host_module._STEADY_FRAME_SECONDS
     ), "an unattended poll must keep the short budget"
+
+
+def test_the_boot_retries_the_pipeline_run_not_only_the_seed():
+    """Both boot writers race the same store, so both must retry.
+
+    Only the seed was retried. BABOOM now attaches during boot and its
+    presence lease is another writer, so the RUN lost the race and the
+    founder booted with no node run at all (2026-09-07).
+    """
+    from pathlib import Path
+
+    launcher = (
+        Path(__file__).resolve().parents[1] / "launch_archhub_test.py"
+    ).read_text(encoding="utf-8")
+    run = launcher[launcher.index("outcome = None"):]
+    run = run[:run.index('print("  pipeline   : %d node(s) ran"')]
+    assert "run_universal_pipeline(" in run
+    assert 'if "expected revision" not in str(clash) or attempt == 9:' in run
+    assert "for attempt in range(10):" in run
+    assert "time.sleep(0.25 * (attempt + 1))" in run

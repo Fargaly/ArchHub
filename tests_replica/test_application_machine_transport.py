@@ -3997,7 +3997,11 @@ def test_work_claim_receipt_commits_without_projecting_global_work(tmp_path):
         assert receipt["event"] == "claim"
         assert receipt["agent_session"] == session
         assert receipt["history_root"].startswith("state-event:")
-        assert receipt["revision"] == server.universal_store.revision
+        # The receipt names the revision the CLAIM committed; the Workshop
+        # line saying who took this work commits right after it, so the
+        # store is at most one ahead (2026-09-07).
+        assert receipt["revision"] <= server.universal_store.revision
+        assert server.universal_store.revision - receipt["revision"] <= 1
         assert receipt["compliance_observation"].startswith(
             "compliance-observation:"
         )
@@ -6601,7 +6605,12 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         assert binding_root.startswith("app:governed-work-claim-binding:")
         assert claimed["compliance_observation"]
         assert claimed["compliance_evidence"]
-        assert claimed["revision"] == server.universal_store.revision
+        # The receipt names the revision the CLAIM committed. The Workshop
+        # line that says who took this work commits right after it, so the
+        # store is one ahead -- an agent claims through the room now, and
+        # that line is a revision like any other (2026-09-07).
+        assert claimed["revision"] <= server.universal_store.revision
+        assert server.universal_store.revision - claimed["revision"] <= 1
         assert server.universal_store.revision > revision_before_claim
         binding_members = read_relation(
             server.universal_store.snapshot(), binding_root, budget=32

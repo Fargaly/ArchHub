@@ -32084,12 +32084,12 @@ def transition_universal_governed_work(
             additional_create=additional_create,
             additional_replace=tuple(additional_replace_by_id.values()),
         )
-        # Say it in the Workshop here too. An evidence-free transition --
-        # which is every CLAIM and every RELEASE -- returned from this branch
-        # before ever reaching the record below, so the two events that say
-        # who picked up a piece of work and who put it down were the exact
-        # two the founder could not see (audit, 2026-09-07).
-        record_workshop_work_event(
+        # Say it in the Workshop. An evidence-free transition -- which is
+        # every CLAIM and every RELEASE -- returned from this branch before
+        # ever reaching the record, so the two events that say who picked a
+        # piece of work up and who put it down were the exact two the founder
+        # could not see (audit, 2026-09-07).
+        said = record_workshop_work_event(
             store,
             registry,
             agent_session_root=agent_session_root,
@@ -32097,6 +32097,18 @@ def transition_universal_governed_work(
             event=_WORK_EVENT_SAID.get(event, event),
             authentication_context=authentication_context,
         )
+        if event == "claim" and said is None:
+            # THE WORKSHOP IS THE ROOM. An agent that cannot say in it that
+            # it is taking this work does not take the work: that is what
+            # "every agent works through the Workshop" has to mean, or the
+            # room is a log nobody is obliged to write to.
+            #
+            # Only the claim is gated. Release, block, resume and submit stay
+            # possible whatever the Workshop does, so a silent room can never
+            # trap work in an agent that is trying to let go of it.
+            raise AuthorizationDenied(
+                "governed Work is claimed in the Workshop or not at all"
+            )
         return history_root, revision
     if additional_create:
         raise InvalidCell("governed work claim binding requires an evidence-free claim")
@@ -37941,7 +37953,12 @@ def record_workshop_work_event(
         entry = append_universal_workshop_entry(
             store,
             registry,
-            actor_root=agent_session_root,
+            # The entry actor is the AUTHENTICATED SUBJECT, not the session:
+            # prepare_deliberation_entry refuses an entry whose actor is not
+            # the subject that signed the request, which is why every agent
+            # write to the Workshop failed silently (2026-09-07). Who did it
+            # is not lost -- the runtime is named in the line itself.
+            actor_root=registry.authorization.subject_root,
             category_root=registry.workshop_category_roots["note"],
             content=said[:400],
             idempotency_key="work-event:%s:%s:%s" % (

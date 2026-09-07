@@ -55,12 +55,18 @@ def test_the_line_names_the_runtime_that_did_it(monkeypatch):
     )
     registry = types.SimpleNamespace(
         workshop_category_roots={"note": "cat:note"},
+        authorization=types.SimpleNamespace(subject_root="subject:founder"),
     )
     app_module.record_workshop_work_event(
         object(), registry,
         agent_session_root="app:agent-session:runtime:x",
         work_root="work:1", event="claimed",
     )
+    # The ACTOR is the authenticated subject -- an entry whose actor is not
+    # the subject that signed the request is refused, which is why every
+    # agent write to the Workshop failed silently (2026-09-07). Who did it is
+    # not lost: the runtime is named in the line.
+    assert written["actor_root"] == "subject:founder"
     assert written["content"] == "codex claimed Ship the map"
     assert written["reference_roots"] == ("work:1",)
     assert "work:1" in written["idempotency_key"]
@@ -95,6 +101,7 @@ def test_the_record_is_an_account_not_the_authority(monkeypatch):
     )
     registry = types.SimpleNamespace(
         workshop_category_roots={"note": "cat:note"},
+        authorization=types.SimpleNamespace(subject_root="subject:founder"),
     )
     assert app_module.record_workshop_work_event(
         object(), registry, agent_session_root="s", work_root="w",
@@ -155,3 +162,32 @@ def test_a_claim_and_a_release_are_not_the_two_events_he_cannot_see():
     assert body.count("record_workshop_work_event(") == 2, (
         "both exits of the transition must reach the Workshop"
     )
+
+
+def test_a_claim_that_cannot_be_said_in_the_workshop_is_not_a_claim():
+    """The Workshop is the room, not a log nobody must write to.
+
+    The founder asked for months whether the Workshop is working and
+    MANDATORY. The one enforcement site armed only when the Work already
+    carried a Workshop assignment, so work created without one bypassed the
+    room entirely (audit, 2026-09-07).
+    """
+    body = inspect.getsource(app_module.transition_universal_governed_work)
+    early = body.index("if not transition.required_evidence_type_roots:")
+    branch = body[early:body.index("if additional_create:")]
+    assert 'if event == "claim" and said is None:' in branch
+    assert "AuthorizationDenied(" in branch
+    assert "claimed in the Workshop or not at all" in branch
+
+
+def test_letting_go_of_work_is_never_gated():
+    """A silent room must not trap work inside an agent."""
+    body = inspect.getsource(app_module.transition_universal_governed_work)
+    early = body.index("if not transition.required_evidence_type_roots:")
+    branch = body[early:body.index("if additional_create:")]
+    gate = branch.index('if event == "claim" and said is None:')
+    condition = branch[gate:gate + 200]
+    for freed in ("release", "block", "resume", "submit"):
+        assert freed not in condition, (
+            "%s must stay possible whatever the Workshop does" % freed
+        )

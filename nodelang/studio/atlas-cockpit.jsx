@@ -168,13 +168,20 @@ function AtlasCockpit() {
       // ("gm:domain:ui" vs "ui"): it is layout for the live card, never a second card.
       const same = (k) => ld.has(k) || ld.has(String(k).replace(/^gm:domain:/, '')) || ld.has('gm:domain:' + k);
       const domains = (L.domains || []).map(d => sd[d.key] ? { ...d, x: sd[d.key].x, y: sd[d.key].y, w: sd[d.key].w, h: sd[d.key].h } : d)
-        .concat((S.domains || []).filter(d => !same(d.key)));
+        ;
+      // NOTHING is added from the saved snapshot. A saved domain or node the
+      // live push no longer contains was DRAWN AS REAL, so the founder read a
+      // cockpit full of agent-session cards his graph had already stopped
+      // reporting -- localStorage was their only store, which is exactly the
+      // duplicate truth field SPEC.md:232 forbids a lens to own (2026-09-07).
+      // The push is the content; the snapshot contributes layout alone.
       const keptDoms = new Set(domains.map(d => d.key));
       const nodes = (L.nodes || []).map(n => sn[n.id] ? { ...n, x: sn[n.id].x, y: sn[n.id].y } : n)
-        .concat((S.nodes || []).filter(n => !ln.has(n.id) && keptDoms.has(n.dom)));
+        ;
       const ids = new Set(nodes.map(n => n.id));
       const lw = new Set((L.wires || []).map(w => w.a + '|' + w.b));
-      const wires = (L.wires || []).concat((S.wires || []).filter(w => !lw.has(w.a + '|' + w.b) && ids.has(w.a) && ids.has(w.b)));
+      // A wire is a relation, so it is content too: the push owns them.
+      const wires = (L.wires || []);
       return { ...L, nodes, domains, wires, fields: S.fields || L.fields, grid: L.grid || S.grid };
     };
     let data = live ? mergeLive(live, saved && saved.M)

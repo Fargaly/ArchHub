@@ -1,3 +1,5 @@
+"use strict";
+
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
 function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
@@ -79,24 +81,97 @@ function taskStamp(row) {
   var s = row.finished_at || row.claimed_at || row.created_at;
   return s ? s * 1000 : null;
 }
-function AgenticPanel(_ref) {
-  var M = _ref.M,
-    DB = _ref.DB,
-    assign = _ref.assign,
-    attention = _ref.attention,
-    onGoto = _ref.onGoto,
-    onTuneAttention = _ref.onTuneAttention,
-    attNode = _ref.attNode,
-    setColl = _ref.setColl,
-    flash = _ref.flash,
-    control = _ref.control,
-    tasks = _ref.tasks,
-    onRelay = _ref.onRelay,
-    onReloadTasks = _ref.onReloadTasks;
-  var _React$useState = React.useState('activity'),
+
+// He drew a composer under the sessions: you type to your app and the
+// exchange lands in the same list. The panel was handed the relay and never
+// used it, so the sidebar could only watch (2026-09-07). This sends through
+// the same door the ask bar uses and refreshes the list on the answer.
+function SessionComposer(_ref) {
+  var onRelay = _ref.onRelay,
+    onReloadTasks = _ref.onReloadTasks,
+    flash = _ref.flash;
+  var _React$useState = React.useState(''),
     _React$useState2 = _slicedToArray(_React$useState, 2),
-    tab = _React$useState2[0],
-    setTab = _React$useState2[1];
+    draft = _React$useState2[0],
+    setDraft = _React$useState2[1];
+  var _React$useState3 = React.useState(false),
+    _React$useState4 = _slicedToArray(_React$useState3, 2),
+    busy = _React$useState4[0],
+    setBusy = _React$useState4[1];
+  var send = function send() {
+    var said = draft.trim();
+    if (!said || busy || !onRelay) return;
+    setBusy(true);
+    Promise.resolve(onRelay(said, true)).then(function (d) {
+      var text = String(d && d.message || '').slice(0, 160);
+      if (flash) flash(text || 'Sent to your app');
+      setDraft('');
+      if (onReloadTasks) onReloadTasks();
+    })["catch"](function (e) {
+      if (flash) flash('Not sent: ' + String(e && e.message || e).slice(0, 120));
+    }).then(function () {
+      return setBusy(false);
+    });
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: draft,
+    onChange: function onChange(e) {
+      return setDraft(e.target.value);
+    },
+    onKeyDown: function onKeyDown(e) {
+      if (e.key === 'Enter') send();
+    },
+    placeholder: busy ? 'Sending…' : 'Message your app…',
+    style: {
+      flex: 1,
+      padding: '7px 10px',
+      borderRadius: 8,
+      border: '1px solid ' + HB.line,
+      background: HB.card,
+      color: HB.ink,
+      fontSize: 12,
+      outline: 'none',
+      fontFamily: HB.sans
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: send,
+    disabled: busy || !draft.trim(),
+    style: {
+      border: '1px solid ' + HB.line,
+      background: draft.trim() && !busy ? HB.accent : 'transparent',
+      color: draft.trim() && !busy ? '#fff' : HB.inkMute,
+      borderRadius: 8,
+      padding: '0 12px',
+      cursor: draft.trim() && !busy ? 'pointer' : 'default',
+      fontFamily: HB.mono,
+      fontSize: 10
+    }
+  }, "send"));
+}
+function AgenticPanel(_ref2) {
+  var M = _ref2.M,
+    DB = _ref2.DB,
+    assign = _ref2.assign,
+    attention = _ref2.attention,
+    onGoto = _ref2.onGoto,
+    onTuneAttention = _ref2.onTuneAttention,
+    attNode = _ref2.attNode,
+    setColl = _ref2.setColl,
+    flash = _ref2.flash,
+    control = _ref2.control,
+    tasks = _ref2.tasks,
+    onRelay = _ref2.onRelay,
+    onReloadTasks = _ref2.onReloadTasks;
+  var _React$useState5 = React.useState('activity'),
+    _React$useState6 = _slicedToArray(_React$useState5, 2),
+    tab = _React$useState6[0],
+    setTab = _React$useState6[1];
   var rows = tasks || [];
   var ctl = control || null;
 
@@ -134,11 +209,11 @@ function AgenticPanel(_ref) {
       flexShrink: 0,
       background: HB.card
     }
-  }, [['activity', 'Activity', 'bolt'], ['routing', 'Routing', 'sliders'], ['sessions', 'Sessions', 'agent'], ['history', 'History', 'pulse']].map(function (_ref2) {
-    var _ref3 = _slicedToArray(_ref2, 3),
-      k = _ref3[0],
-      l = _ref3[1],
-      ic = _ref3[2];
+  }, [['activity', 'Activity', 'bolt'], ['routing', 'Routing', 'sliders'], ['sessions', 'Sessions', 'agent'], ['history', 'History', 'pulse']].map(function (_ref3) {
+    var _ref4 = _slicedToArray(_ref3, 3),
+      k = _ref4[0],
+      l = _ref4[1],
+      ic = _ref4[2];
     return /*#__PURE__*/React.createElement("button", {
       key: k,
       onClick: function onClick() {
@@ -646,7 +721,7 @@ function AgenticPanel(_ref) {
       display: 'flex',
       justifyContent: 'space-between'
     })
-  }, /*#__PURE__*/React.createElement("span", null, "WHAT YOU ASKED YOUR APP"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", null, "CONVERSATIONS WITH YOUR AGENTS"), /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       return onReloadTasks && onReloadTasks();
     },
@@ -668,7 +743,7 @@ function AgenticPanel(_ref) {
       marginBottom: 10,
       lineHeight: 1.5
     }
-  }, "Every instruction the cockpit queued for your ArchHub app, and the answer it posted back."), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, "What you said to your app, and what it said back. Type below to say something new."), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: HB.serif,
       fontStyle: 'italic',
@@ -689,54 +764,74 @@ function AgenticPanel(_ref) {
       mute: HB.inkMute
     }[TASK_TONE[r.status] || 'mute'];
     var at = taskStamp(r);
-    return /*#__PURE__*/React.createElement("div", {
-      key: r.id,
-      style: {
-        border: "1px solid ".concat(HB.line),
-        borderLeft: "3px solid ".concat(tone),
-        borderRadius: 10,
-        overflow: 'hidden',
-        background: HB.card
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        padding: '9px 11px'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12.5,
-        color: HB.ink,
-        lineHeight: 1.45
-      }
-    }, r.directive), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: HB.mono,
-        fontSize: 9.5,
-        color: HB.inkMute,
-        marginTop: 4
-      }
-    }, r.status, r.claimed_by ? ' · ' + r.claimed_by : '', at ? ' · ' + ago(at) + ' ago' : '')), r.result ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        borderTop: "1px solid ".concat(HB.lineSoft),
-        padding: '9px 11px',
-        background: HB.paper2,
-        fontSize: 12,
-        color: HB.ink,
-        lineHeight: 1.5,
-        whiteSpace: 'pre-wrap'
-      }
-    }, r.result) : /*#__PURE__*/React.createElement("div", {
-      style: {
-        borderTop: "1px solid ".concat(HB.lineSoft),
-        padding: '7px 11px',
-        background: HB.paper2,
-        fontFamily: HB.serif,
-        fontStyle: 'italic',
-        fontSize: 12.5,
-        color: HB.inkMute
-      }
-    }, r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.'));
-  }))), ctl && (ctl.agents || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    return (
+      /*#__PURE__*/
+      // His treatment: what the founder said sits right in an
+      // accent bubble, what the app answered sits left in a
+      // bordered card, both capped so the exchange reads as a
+      // conversation instead of two stacked blocks.
+      React.createElement("div", {
+        key: r.id,
+        style: {
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: 'flex',
+          flexDirection: 'row-reverse',
+          gap: 8
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          maxWidth: '82%',
+          padding: '7px 10px',
+          borderRadius: 10,
+          fontSize: 12,
+          lineHeight: 1.45,
+          background: HB.accent,
+          color: '#fff'
+        }
+      }, r.directive)), /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: 'flex',
+          flexDirection: 'row-reverse',
+          gap: 8
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontFamily: HB.mono,
+          fontSize: 9.5,
+          color: tone
+        }
+      }, r.status, r.claimed_by ? ' · ' + r.claimed_by : '', at ? ' · ' + ago(at) + ' ago' : '')), /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: 'flex',
+          flexDirection: 'row',
+          gap: 8
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          maxWidth: '82%',
+          padding: '7px 10px',
+          borderRadius: 10,
+          fontSize: 12,
+          lineHeight: 1.5,
+          background: HB.card,
+          color: r.result ? HB.ink : HB.inkMute,
+          border: "1px solid ".concat(HB.line),
+          whiteSpace: 'pre-wrap',
+          fontFamily: r.result ? HB.sans : HB.serif,
+          fontStyle: r.result ? 'normal' : 'italic'
+        }
+      }, r.result || (r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.'))))
+    );
+  })), /*#__PURE__*/React.createElement(SessionComposer, {
+    onRelay: onRelay,
+    onReloadTasks: onReloadTasks,
+    flash: flash
+  })), ctl && (ctl.agents || []).length > 0 && /*#__PURE__*/React.createElement("div", {
     style: _objectSpread(_objectSpread({}, sideSec), {}, {
       borderBottom: 'none'
     })
@@ -936,22 +1031,22 @@ var LIB_GROUPS = [{
   label: 'WATCH · OUTPUT',
   items: [['Watcher', 'observe a value live'], ['Preview', 'render the data'], ['Publish', 'write back to host'], ['Notify', 'alert a person or channel']]
 }];
-function LibraryPanel(_ref4) {
-  var onCreateNode = _ref4.onCreateNode,
-    onAddDomain = _ref4.onAddDomain,
-    flash = _ref4.flash;
-  var _React$useState3 = React.useState(''),
-    _React$useState4 = _slicedToArray(_React$useState3, 2),
-    q = _React$useState4[0],
-    setQ = _React$useState4[1];
-  var _React$useState5 = React.useState(function () {
+function LibraryPanel(_ref5) {
+  var onCreateNode = _ref5.onCreateNode,
+    onAddDomain = _ref5.onAddDomain,
+    flash = _ref5.flash;
+  var _React$useState7 = React.useState(''),
+    _React$useState8 = _slicedToArray(_React$useState7, 2),
+    q = _React$useState8[0],
+    setQ = _React$useState8[1];
+  var _React$useState9 = React.useState(function () {
       return Object.fromEntries(LIB_GROUPS.map(function (g) {
         return [g.cat, true];
       }));
     }),
-    _React$useState6 = _slicedToArray(_React$useState5, 2),
-    open = _React$useState6[0],
-    setOpen = _React$useState6[1];
+    _React$useState0 = _slicedToArray(_React$useState9, 2),
+    open = _React$useState0[0],
+    setOpen = _React$useState0[1];
   var ql = q.trim().toLowerCase();
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1008,10 +1103,10 @@ function LibraryPanel(_ref4) {
       minHeight: 0
     }
   }, LIB_GROUPS.map(function (g) {
-    var items = ql ? g.items.filter(function (_ref5) {
-      var _ref6 = _slicedToArray(_ref5, 2),
-        t = _ref6[0],
-        s = _ref6[1];
+    var items = ql ? g.items.filter(function (_ref6) {
+      var _ref7 = _slicedToArray(_ref6, 2),
+        t = _ref7[0],
+        s = _ref7[1];
       return (t + ' ' + s).toLowerCase().includes(ql);
     }) : g.items;
     if (!items.length) return null;
@@ -1066,10 +1161,10 @@ function LibraryPanel(_ref4) {
         gap: 1,
         paddingLeft: 4
       }
-    }, items.map(function (_ref7) {
-      var _ref8 = _slicedToArray(_ref7, 2),
-        title = _ref8[0],
-        sub = _ref8[1];
+    }, items.map(function (_ref8) {
+      var _ref9 = _slicedToArray(_ref8, 2),
+        title = _ref9[0],
+        sub = _ref9[1];
       return /*#__PURE__*/React.createElement("div", {
         key: title,
         draggable: "true",

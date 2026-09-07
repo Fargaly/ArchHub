@@ -191,7 +191,11 @@ def test_the_sessions_lens_renders_real_agent_task_rows(side: str) -> None:
     assert "directive" in side
     assert "claimed_by" in side
     assert "taskStamp" in side
-    assert "WHAT YOU ASKED YOUR APP" in side
+    # His heading, from the design handoff: the lens is a conversation with
+    # the agents, not a log to watch. The rows it renders are still the real
+    # task queue, which is what the rest of this court holds (2026-09-07).
+    assert "CONVERSATIONS WITH YOUR AGENTS" in side
+    assert "SessionComposer" in side, "and there is a way to say something new"
 
 
 def test_the_cockpit_feeds_the_panel_real_rows(cockpit: str) -> None:
@@ -289,4 +293,8 @@ def test_the_runtime_bundle_invents_neither_a_result_nor_a_duration():
         for invented in ("18 rooms", "1,820 tok", "sheet set A.101", "212 elements remapped",
                          "session live", "handshake", "12 rules passed"):
             assert invented not in body, "%s still ships %r" % (name, invented)
-        assert "not run" in body  # a node that has not run says exactly that
+        # A node that has not run shows the quiet em dash the founder drew,
+        # never an invented result. The words "not run" printed in success
+        # green on every watcher card until something ran (2026-09-07).
+        assert "—" in body, "%s lost the empty state" % name
+        assert "not run" not in body, "%s still writes words where a dash belongs" % name

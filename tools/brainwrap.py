@@ -140,7 +140,7 @@ def _parse_sse(raw: bytes) -> dict:
 
 
 def call_tool(name: str, arguments: dict[str, Any],
-              *, timeout: Optional[float] = None) -> Optional[dict]:
+              *, timeout: Optional[float] = None, patient: bool = True) -> Optional[dict]:
     body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": name, "arguments": arguments},
@@ -156,12 +156,13 @@ def call_tool(name: str, arguments: dict[str, Any],
     # authority is unavailable" and refuse the founder's session (2026-09-06).
     # Two tries, the second patient, before anything is called unavailable.
     budget = timeout or _TIMEOUT
-    for attempt, wait in enumerate((budget, min(max(budget * 2, 10.0), 12.0))):
+    waits = (budget, min(max(budget * 2, 10.0), 12.0)) if patient else (budget,)
+    for attempt, wait in enumerate(waits):
         try:
             with urllib.request.urlopen(req, timeout=wait) as r:
                 return _parse_sse(r.read())
         except Exception:
-            if attempt:
+            if attempt == len(waits) - 1:
                 return None
             time.sleep(0.5)
     return None
@@ -644,31 +645,37 @@ def _completion_gate_verdict(
             "session_id": session_id,
             "vendor": runtime,
         })
-        if isinstance(state, dict) and not state.get("agent_session") and not state.get("isError"):
+        orphaned = state is None or (
+            isinstance(state, dict) and (state.get("isError") or not state.get("agent_session"))
+        )
+        if orphaned:
             # The founder's app restarting orphans every enrolled Agent
             # Session. That is the runtime's lifecycle, not the agent's
             # fault: re-enroll against the new runtime once and retry,
             # instead of denying the stop and demanding a human ritual.
-            # Only an ANSWERING brain gets this ritual: a silent one would
-            # not answer the re-enrolment either, and the hook has 30 s.
+            # Cheaply: the stop hook has 30 s in all, and the first read
+            # already spent its patient budget.
             call_tool("brain.hook_session_start", {
                 "session_id": session_id,
                 "vendor": runtime,
                 "cwd": cwd or str(Path.cwd()),
-            })
+            }, timeout=3.0, patient=False)
             state = call_tool("brain.universal_work_status", {
                 "session_id": session_id,
                 "vendor": runtime,
-            })
-        if not isinstance(state, dict) or not state.get("agent_session"):
-            # A brain that holds its port but cannot answer yet is booting
-            # (its startup sync runs for minutes after the founder's app
-            # relaunches). Only a YOUNG brain earns that reading: an old
-            # brain that stops answering is wedged, and a claim it holds
-            # is still a claim (audit 2026-09-06).
+            }, timeout=3.0, patient=False)
+        if not isinstance(state, dict) or state.get("isError"):
+            # No answer, or a tool error: not an authority. A brain that
+            # holds its port but cannot answer yet is booting (its startup
+            # sync runs for minutes after the founder's app relaunches);
+            # only a YOUNG brain earns that reading - an old brain that
+            # stops answering is wedged, and a claim it holds is still a
+            # claim (audit 2026-09-06).
             if _port_held(DAEMON_PORT) and _brain_is_young(DAEMON_PORT):
                 return False, ""
             return True, "Universal work authority is unavailable; stop denied."
+        # A status without an Agent Session is the graph saying this session
+        # owns nothing: there is nothing to protect, the stop proceeds.
         session_root = state.get("agent_session")
         owned = [
             item for item in (state.get("items") or [])

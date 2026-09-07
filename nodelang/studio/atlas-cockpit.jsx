@@ -610,6 +610,32 @@ function AtlasCockpit() {
     focusDomain(key); setSel({ domain: null, domains: new Set(), nodes: new Set([id]), field: null });
     flash(`${item.title} → ${d.title}`);
   };
+  // The library drags with POINTER events, not HTML5 drag-and-drop. The
+  // founder could not drag a node onto the canvas at all: QtWebEngine does
+  // not carry an HTML5 drag reliably inside the desktop shell, and a drag
+  // that silently never starts leaves no error to read (2026-09-07). Every
+  // fixed-canvas editor that works inside an embedded view does it this way.
+  // The library calls this on release; the map decides where the node lands.
+  React.useEffect(() => {
+    window.__atlasDropLibraryItem = (item, clientX, clientY) => {
+      const col = mapColRef.current;
+      if (!col || !item) return false;
+      const box = col.getBoundingClientRect();
+      if (
+        clientX < box.left || clientX > box.right
+        || clientY < box.top || clientY > box.bottom
+      ) return false;
+      const w = window.__atlasToWorld && window.__atlasToWorld(clientX, clientY);
+      const host = w && M.domains.find(
+        d => w.x >= d.x && w.x <= d.x + d.w && w.y >= d.y && w.y <= d.y + d.h
+      );
+      createFromLibrary(
+        item, host && host.key, w && host ? { x: w.x - 76, y: w.y - 43 } : null
+      );
+      return true;
+    };
+    return () => { delete window.__atlasDropLibraryItem; };
+  }, [M.domains, sel.domain]);
   const addDomain = (title, col) => { const key = (title || 'domain').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 14) + '_' + Math.random().toString(36).slice(2, 4); const cols = M.domains.length; const x = 40 + (cols % 4) * 600, y = 40 + Math.floor(cols / 4) * 572; setM(m => ({ ...m, domains: [...m.domains, { key, title: title || 'New Domain', col: col || DOM_COLS[cols % DOM_COLS.length], x, y, w: 568, h: 540 }] })); setVis(v => ({ ...v, domains: new Set([...v.domains, key]) })); flash(`Domain "${title}" created`); };
   // ── RECURSION: group selected nodes INTO a new grand node (a container domain).
   // Reuses the proven super-node machinery — it collapses to a volume, opens to its

@@ -9139,6 +9139,77 @@ def _ensure_baboom_application_agent_body(
     )
 
 
+# ArchHub is a harness, not a home for one pet. The founder runs Codex and
+# Claude and Gemini on the same project and asked for them to work it
+# together; the catalogue held only BABOOM, so every other runtime could
+# answer text but never hold a session or claim Work (2026-09-07). Each
+# runtime here gets its OWN body, policy and control -- the same constrained
+# shape BABOOM has, never founder authority -- so sessions stay separately
+# auditable and one agent cannot act as another.
+_HARNESS_AGENT_RUNTIMES = (
+    ("codex", "Codex"),
+    ("claude", "Claude"),
+    ("gemini", "Gemini"),
+)
+
+
+def _harness_agent_body_roots(runtime: str) -> tuple[str, str, str]:
+    """The body, policy and control roots for one harness runtime."""
+    return (
+        "app:agent-body:%s" % runtime,
+        "app:agent-body:%s-policy" % runtime,
+        "app:agent-control:%s" % runtime,
+    )
+
+
+def _harness_agent_body_rule_id_builder(runtime: str):
+    def rule_id(action_name: str, object_name: str) -> str:
+        return "app:agent-body:%s:rule:%s:%s" % (
+            runtime, action_name, object_name,
+        )
+    return rule_id
+
+
+def _ensure_harness_application_agent_bodies(
+    store: CellStore,
+    authorization: ApplicationAuthorization,
+    view_session: ApplicationViewSession,
+    roles: Mapping[str, str],
+    lifecycle_root: str,
+    models_domain_root: str,
+    governed_work_registry_root: str,
+    map_node_root: str,
+    application_root: str = "app:archhub",
+) -> dict[str, AgentBodyProjection]:
+    """Release one constrained Agent Body per runtime the founder runs.
+
+    Idempotent and additive: an existing body is read back, never rebuilt,
+    and no founder authority is widened. They share BABOOM's rule shape
+    because they do the same job -- claim governed Work, submit it, be
+    blocked -- from different runtimes.
+    """
+    bodies: dict[str, AgentBodyProjection] = {}
+    for runtime, label in _HARNESS_AGENT_RUNTIMES:
+        body_root, policy_root, control_root = _harness_agent_body_roots(runtime)
+        bodies[runtime] = _ensure_baboom_application_agent_body_variant(
+            store,
+            authorization,
+            view_session,
+            roles,
+            lifecycle_root,
+            models_domain_root,
+            governed_work_registry_root,
+            map_node_root,
+            body_root,
+            policy_root,
+            control_root,
+            _harness_agent_body_rule_id_builder(runtime),
+            label,
+            application_root,
+        )
+    return bodies
+
+
 def _ensure_baboom_execution_capability_control(
     store: CellStore,
     authorization: ApplicationAuthorization,
@@ -10622,6 +10693,7 @@ def _ensure_application_agent_body_catalog(
     founder_body: ApplicationAgentBody,
     baboom_body: AgentBodyProjection,
     baboom_execution_control_root: str,
+    harness_bodies: Mapping[str, AgentBodyProjection] | None = None,
 ) -> ApplicationAgentBodyCatalog:
     """Publish released runtime bodies and their exact graph authority."""
     protocol = bootstrap_agent_body_catalog_protocol(
@@ -10666,6 +10738,25 @@ def _ensure_application_agent_body_catalog(
             (),
             ("claim", "submit", "block", "resume", "release"),
         ),
+    ) + tuple(
+        # One catalogue entry per runtime the founder actually runs, so
+        # Codex and Claude and Gemini can hold a session and claim governed
+        # Work on the same project instead of only answering text. Each
+        # keeps its OWN body, control and policy: separately auditable, and
+        # no wider than BABOOM (2026-09-07).
+        (
+            "%s:%s" % (_AGENT_BODY_CATALOG_PREFIX, runtime),
+            (harness_bodies or {})[runtime].root_id,
+            _harness_agent_body_roots(runtime)[2],
+            _harness_agent_body_roots(runtime)[1],
+            runtime,
+            baboom_map_node,
+            "device-proof",
+            (),
+            ("claim", "submit", "block", "resume", "release"),
+        )
+        for runtime, _label in _HARNESS_AGENT_RUNTIMES
+        if (harness_bodies or {}).get(runtime) is not None
     )
     existing_entries = {
         entry.root_id: entry
@@ -12846,6 +12937,17 @@ def build_universal_application(
         baboom_map_node,
         application_root,
     )
+    harness_bodies = _ensure_harness_application_agent_bodies(
+        store,
+        authorization,
+        founder_view,
+        roles,
+        standard_library.lifecycle_protocol.states["wip"],
+        models_domain_root,
+        _GOVERNED_WORK_REGISTRY_ROOT,
+        baboom_map_node,
+        application_root,
+    )
     agent_body_catalog = _ensure_application_agent_body_catalog(
         store,
         authorization,
@@ -12856,6 +12958,7 @@ def build_universal_application(
         agent_body,
         baboom_body,
         baboom_execution_control_root,
+        harness_bodies,
     )
     baboom_command_catalog = _ensure_baboom_command_catalog(
         store,
@@ -16169,6 +16272,17 @@ def restore_universal_application(
         baboom_map_node,
         application_root,
     )
+    harness_bodies = _ensure_harness_application_agent_bodies(
+        store,
+        authorization,
+        founder_view,
+        roles,
+        standard_library.lifecycle_protocol.states["wip"],
+        models_domain_root,
+        _GOVERNED_WORK_REGISTRY_ROOT,
+        baboom_map_node,
+        application_root,
+    )
     agent_body_catalog = _ensure_application_agent_body_catalog(
         store,
         authorization,
@@ -16179,6 +16293,7 @@ def restore_universal_application(
         agent_body,
         baboom_body,
         baboom_execution_control_root,
+        harness_bodies,
     )
     baboom_command_catalog = _ensure_baboom_command_catalog(
         store,

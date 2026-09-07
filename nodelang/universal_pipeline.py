@@ -766,6 +766,36 @@ def _public_value(label: object, value: object) -> str:
     return text[:48]
 
 
+# A session is a real thing with real state, so it belongs on the map -- but
+# it is ONE place holding many sessions, not one place PER session. The
+# founder's canvas held 60 app:agent-session roots against 15 authored
+# domains, and his cockpit drew 95 domains, seventeen of them identical
+# cards reading "baboom Agent Ses..." (2026-09-07).
+_ATLAS_SESSION_ROOT = "app:agent-session:"
+_ATLAS_SESSION_DOMAIN = "runtime"
+_ATLAS_SESSION_TITLE = "Runtime Sessions"
+
+# Pure wiring: an incidence, a candidate, a dynamic property row. These carry
+# nothing a person reads or acts on, so they are not drawn as places. They
+# remain in the graph exactly as they are; the map simply is not their lens.
+_ATLAS_WIRING_ROOTS = (
+    "app:canvas-relation",
+    "app:dynamic:property",
+    "relation-candidate",
+    "assembly-instance",
+)
+
+
+def _is_atlas_session(root: str) -> bool:
+    """True for one runtime agent session -- a place's member, not a place."""
+    return root.startswith(_ATLAS_SESSION_ROOT)
+
+
+def _is_atlas_wiring(root: str) -> bool:
+    """True when a scope is an incidence or candidate with nothing to show."""
+    return any(root.startswith(prefix) for prefix in _ATLAS_WIRING_ROOTS)
+
+
 def project_atlas_map(store, registry, *, authentication_context=None):
     """The cockpit map IS the live graph: domains and their members.
 
@@ -793,7 +823,22 @@ def project_atlas_map(store, registry, *, authentication_context=None):
     nodes = []
     wires = []
     relation_roots: list[tuple[str, str]] = []   # (relation root, atlas domain key)
-    top = [n for n in projection.get("nodes", ()) if n.get("openable")]
+    # "Openable" only means a scope has members, and the runtime opens one
+    # per attach. Sessions stay ON the map -- they are real and they have
+    # state -- but as members of one Runtime Sessions place. Only pure
+    # wiring is left undrawn, and both rules are named, never an allowlist,
+    # so a domain the founder authors tomorrow is never silently hidden.
+    openable = [
+        n for n in projection.get("nodes", ()) if n.get("openable")
+    ]
+    session_scopes = [
+        n for n in openable if _is_atlas_session(str(n.get("id") or ""))
+    ]
+    top = [
+        n for n in openable
+        if not _is_atlas_session(str(n.get("id") or ""))
+        and not _is_atlas_wiring(str(n.get("id") or ""))
+    ]
     # The authored cockpit seed names the grand-map domains by their short key
     # ("ui", "brain"); the graph holds them as "gm:domain:ui". Emit the seed's
     # key so the cockpit merges live and authored as ONE domain -- with two
@@ -909,6 +954,43 @@ def project_atlas_map(store, registry, *, authentication_context=None):
             continue
         seen_wires.add((a, b))
         wires.append({"a": a, "b": b, "why": str(wire.get("title") or wire.get("id") or "")[:60], "dom": atlas_of.get(str(wire.get("source")), "")})
+    # ONE Runtime Sessions place holding every session the runtime opened,
+    # with what each one actually is: which runtime attached, and whether it
+    # still holds presence. A place that only counts things is decoration;
+    # this one says which session is live and which is finished, so the
+    # founder can see an attach that never let go.
+    if session_scopes:
+        seat = len(domains)
+        session_x = 40 + (seat % per_row) * 650
+        session_y = 40 + (seat // per_row) * 560
+        domains.append({
+            "key": _ATLAS_SESSION_DOMAIN, "root": _ATLAS_SESSION_ROOT,
+            "title": _ATLAS_SESSION_TITLE,
+            "x": session_x, "y": session_y, "w": 560, "h": 480,
+            "col": _ATLAS_COLORS[seat % len(_ATLAS_COLORS)],
+        })
+        for spot, scope in enumerate(session_scopes[:24]):
+            root = str(scope.get("id") or "")
+            held = rows_of(root)
+            data = {label: value for label, (_r, value) in held.items()}
+            runtime = str(data.get("runtime") or "").strip()
+            state = str(data.get("state") or data.get("status") or "").strip()
+            nodes.append({
+                "id": root, "dom": _ATLAS_SESSION_DOMAIN, "cat": "ai",
+                "engine": None,
+                "title": (runtime or str(scope.get("label") or "session"))[:28],
+                "sub": root.rsplit(":", 1)[-1][:18],
+                "status": "live" if state in {"active", "live"} else "vision",
+                "params": [
+                    {"k": label, "v": _public_value(label, value), "rel": rel,
+                     "t": "string"}
+                    for label, (rel, value) in held.items()
+                    if label in {"runtime", "state", "status", "opened_at"}
+                ][:4],
+                "evidence_ref": "",
+                "x": session_x + 30 + (spot % 3) * 175,
+                "y": session_y + 60 + (spot // 3) * 96,
+            })
     # The founder's brain facts live INSIDE the Brain & Memory domain --
     # brain, cockpit, grand map: one model. Daemon down = domain shown
     # without facts, honestly, never a crash.

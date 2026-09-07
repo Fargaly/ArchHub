@@ -546,6 +546,20 @@ def foreground_app_windows() -> tuple[str, str, str] | None:
 # either grows past the sprite or cuts a word; both read as broken.
 FACE_MAX_CHARS = 72
 
+# The companion menu paints itself. Terracotta is the product accent, and
+# white text on it is the only pairing that stays readable on both the
+# founder's dark desktop and a light one.
+_MENU_STYLE = """
+QMenu { background: #1c1b1a; color: #eceae6; border: 1px solid #3a3734;
+        border-radius: 8px; padding: 5px; }
+QMenu::item { padding: 7px 30px 7px 14px; border-radius: 5px;
+              background: transparent; }
+QMenu::item:selected { background: #d97757; color: #ffffff; }
+QMenu::item:disabled { color: #6d6a66; }
+QMenu::separator { height: 1px; background: #3a3734; margin: 5px 8px; }
+QMenu::right-arrow { width: 9px; height: 9px; margin-right: 9px; }
+"""
+
 
 def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, str] | None) -> tuple[str, str | None]:
     """One line of live graph state for BABOOM's face, and the offer it carries.
@@ -1202,6 +1216,13 @@ def create_baboom_native_companion_window(
             snapshot = controller.latest_snapshot
             context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
             menu = QMenu(self)
+            # This window is styled "background:transparent;border:0;" so the
+            # sprite has no rectangle behind it, and Qt cascades that into
+            # every child widget -- including this menu, whose hover and
+            # submenu-open highlight became invisible. The founder could not
+            # see which row he was on (2026-09-07). The menu states its own
+            # surface, so nothing is inherited and nothing is guessed.
+            menu.setStyleSheet(_MENU_STYLE)
             brain = context.get("brain") or {}
             brain_line = ("Brain: %d facts" % int(brain.get("facts") or 0)) if brain.get("ok") else ("Brain: not answering" if brain.get("ok") is False else "Brain")
             b = menu.addMenu(brain_line)

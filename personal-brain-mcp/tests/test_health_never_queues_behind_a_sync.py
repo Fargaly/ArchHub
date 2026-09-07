@@ -193,3 +193,34 @@ def test_a_waiting_caller_still_gets_the_blocking_read():
 
     assert community_groups.current_community(_Store()) is None
     assert calls, "the blocking read really was used"
+
+
+def test_health_never_enters_the_tool_lane():
+    """With every lane worker waiting on the app's pipe (seven of them on one
+    deliberation append, 2026-09-07), brain.health queued behind them, timed
+    out, and the launcher's watchdog killed a brain that was merely waiting.
+    A status read is dispatched outside the lane."""
+    from personal_brain import mcp_core
+    server_type = next(
+        value for name, value in vars(mcp_core).items()
+        if isinstance(value, type) and hasattr(value, "_is_status_read")
+    )
+    call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "brain.health", "arguments": {}}}
+    assert server_type._is_status_read(call) is True
+    assert server_type._is_status_read({**call, "params": {"name": "brain.observe", "arguments": {}}}) is False
+    assert server_type._is_status_read({"jsonrpc": "2.0", "id": 1, "method": "initialize"}) is False
+    source = __import__("inspect").getsource(mcp_core)
+    dispatch = source[source.index("if self._is_status_read(message):"):]
+    assert "await asyncio.to_thread(self.render_sse, message)" in dispatch
+    assert dispatch.index("to_thread") < dispatch.index("_dispatch_in_tool_lane(message)")
+
+
+def test_a_control_receipt_waits_a_bounded_time_on_the_app():
+    """Every observe appends a receipt through the app's pipe. Unbounded, one
+    slow append held a lane worker for good; seven did, and the daemon fell
+    silent. The append now carries a timeout so the worker is freed and the
+    observe reports the receipt did not land."""
+    from personal_brain import server
+    assert server._BRAIN_CONTROL_RECEIPT_TIMEOUT_SECONDS <= 30.0
+    source = __import__("inspect").getsource(server._append_brain_control_receipt)
+    assert "response_timeout_seconds=_BRAIN_CONTROL_RECEIPT_TIMEOUT_SECONDS" in source

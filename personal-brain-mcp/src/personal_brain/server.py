@@ -4730,13 +4730,32 @@ def _hide_own_console() -> None:
         pass  # a daemon never fails to start over a cosmetic window
 
 
-def _refuse_if_port_is_taken(port: int) -> None:
-    """Exit now if another Brain already owns this port.
+_PORT_CLAIM: "Optional[socket.socket]" = None
 
-    One brain per port is the whole design; a second one is pure cost. The
-    socket is bound and released immediately -- it is a question, not the
-    serving bind, which the server itself performs later.
+
+def _refuse_if_port_is_taken(port: int) -> None:
+    """Take this port NOW and hold it until the real server binds.
+
+    It used to bind and release, "a question, not the serving bind". That
+    left the port unowned for the whole of build_server -- opening a 1.16 GB
+    store and its embeddings, minutes on the founder machine -- and the
+    launcher decides a brain is missing by asking whether anything is
+    listening (launch_archhub_test.py:485 _port_held, connect_ex == 0).
+    So its 20-second watchdog saw no brain, started another, which also
+    answered nothing while IT built, and so on: ten daemons in sixteen
+    hours, 10.86 GB of RSS, and -- because each orphan pinned an open read
+    snapshot on brain.db -- a WAL that could not checkpoint and reached
+    15.8 GB against a disk with 27 GB left (2026-09-08).
+
+    The launcher was never wrong. Its own comment states the invariant it
+    was given: "The daemon TAKES ITS PORT before it builds anything, so a
+    redundant start loses the bind in milliseconds and exits having cost
+    one socket." This makes that true. A loser now exits before opening the
+    store, and a winner is visible to the watchdog for the whole warm-up --
+    which already grants a settling window for a port that is held but not
+    yet speaking.
     """
+    global _PORT_CLAIM
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         if sys.platform == "win32":
@@ -4750,7 +4769,12 @@ def _refuse_if_port_is_taken(port: int) -> None:
             if exclusive is not None:
                 probe.setsockopt(socket.SOL_SOCKET, exclusive, 1)
         probe.bind(("127.0.0.1", int(port)))
+        # LISTEN, so the launcher's connect_ex probe can see the claim. A
+        # bound-but-silent socket is invisible to it and the spawning starts
+        # again.
+        probe.listen(1)
     except OSError as taken:
+        probe.close()
         print(
             "[brain] port %s is already owned by another Brain (%s); exiting "
             "rather than building an engine that can serve nothing"
@@ -4758,8 +4782,18 @@ def _refuse_if_port_is_taken(port: int) -> None:
             file=sys.stderr, flush=True,
         )
         raise SystemExit(1)
-    finally:
-        probe.close()
+    _PORT_CLAIM = probe
+
+
+def _release_port_claim() -> None:
+    """Hand the port to the real server, at the last possible moment."""
+    global _PORT_CLAIM
+    if _PORT_CLAIM is not None:
+        try:
+            _PORT_CLAIM.close()
+        except OSError:
+            pass
+        _PORT_CLAIM = None
 
 
 def main(argv: Optional[list[str]] = None) -> None:
@@ -4865,6 +4899,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 host=host,
                 port=args.http,
             )
+        _release_port_claim()
         server.run(
             transport="http",
             host=host,

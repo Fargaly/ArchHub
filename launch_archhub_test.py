@@ -358,15 +358,39 @@ except Exception as refusal:
             # Each failed attempt can leave OUR OWN fence behind; without
             # clearing it every later attempt fails on ourselves.
             _release_own_fence(again)
-if boot_refusal is not None and any(
-    mark in str(boot_refusal)
-    for mark in ("disk I/O error", "database is locked", "already owned", "unable to open",
-                 "held by another live process", "owner fence could not be taken")
+# WHICH REFUSALS MAY COST HIM THE GRAPH. This list used to name what to
+# KEEP, so anything unnamed fell through and set the graph aside. Four
+# times it did, for four different reasons, and only two were on the list:
+#
+#   runtime descriptor signature is invalid        (2026-09-01)
+#   held by another live process                   (2026-09-01)
+#   disk I/O error                                 (2026-09-03)
+#   Application Agent Body catalog binding drifted (2026-09-07)
+#
+# The last one is the tell. A binding disagreeing with a catalogue is
+# DERIVED state; every Cell underneath it was intact, and the founder
+# opened an empty canvas over 5 GB of his own work because a projection
+# had drifted. So the default is inverted: the graph is kept unless the
+# bytes themselves cannot be read as a database. Everything else -- a
+# lock, a transient, a signature, a drifted binding -- stops the boot and
+# says so, and he decides. Quarantine is still not destruction, but a
+# quarantine he never asked for and cannot see is indistinguishable from
+# losing the work (2026-09-08).
+_UNREADABLE_MARKS = (
+    "file is not a database",
+    "database disk image is malformed",
+    "database corruption",
+    "no such table",
+)
+if boot_refusal is not None and not any(
+    mark in str(boot_refusal) for mark in _UNREADABLE_MARKS
 ):
     print("  could not open the saved graph: %s"
           % str(boot_refusal).splitlines()[-1][:160], flush=True)
-    print("  the graph is kept in place; this is a transient, not corruption."
-          " Close every ArchHub process and launch again.", flush=True)
+    print("  the graph is KEPT IN PLACE. This is not corruption: the Cells"
+          " were readable and something above them refused.", flush=True)
+    print("  close every ArchHub process and launch again; if it repeats,"
+          " the refusal above names what to fix.", flush=True)
     raise boot_refusal
 if boot_refusal is not None:
     print("  could not open the saved graph: %s"

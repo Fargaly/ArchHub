@@ -312,6 +312,9 @@ class BrainStore:
         self._conn = conn
         self._path = path
         self._lock = threading.RLock()
+        # Read-only connections, one per thread, so a read never queues behind
+        # the writer. See _reader_for_this_thread.
+        self._thread_readers = threading.local()
         # A file-backed store in WAL mode can serve extra readers; an
         # in-memory one cannot be reopened, so long reads stay on the shared
         # connection there.
@@ -737,10 +740,13 @@ class BrainStore:
         return [_row_to_fragment(r) for r in rows]
 
     def get_fragment(self, fragment_id: str) -> Optional[Fragment]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM fragments WHERE id = ?", (fragment_id,)
-            ).fetchone()
+        sql = "SELECT * FROM fragments WHERE id = ?"
+        reader = self._reader_for_this_thread()
+        if reader is None:
+            with self._lock:
+                row = self._conn.execute(sql, (fragment_id,)).fetchone()
+        else:
+            row = reader.execute(sql, (fragment_id,)).fetchone()
         return _row_to_fragment(row) if row else None
 
     def delete_fragment(self, fragment_id: str) -> bool:
@@ -848,6 +854,37 @@ class BrainStore:
     # the shared one. Chosen so ordinary listings keep the cheap path.
     _OWN_READER_ABOVE = 2_000
 
+    def _reader_for_this_thread(self):
+        """This thread's own read-only connection, opened once and kept.
+
+        Every read in this class took self._lock and used the ONE shared
+        connection, so a background worker holding it blocked every tool call
+        behind it. Measured with py-spy on the founder machine, 2026-09-08,
+        while the brain answered nothing and every agent in the workspace
+        failed closed behind it:
+
+            brain-personal-cloud-sync   set_meta         storage.py:1433
+            brain-sync-worker           get_fragment     storage.py:740
+            brain-tool_0                count_fragments  storage.py:862
+
+        Three threads, one lock, and the one that mattered was last in line.
+        WAL already allows concurrent readers alongside a single writer -- the
+        lock was serialising reads that the database was happy to run at the
+        same time. A private read-only connection per thread removes the
+        queue; the writer keeps the lock to itself.
+        """
+        if not self._path_for_readers:
+            # An in-memory store cannot be reopened, so there is no second
+            # connection to hand out. Callers fall back to the shared one
+            # under the lock -- which is safe, because a store with no file
+            # has no background workers competing for it.
+            return None
+        reader = getattr(self._thread_readers, "conn", None)
+        if reader is None:
+            reader = self._open_reader()
+            self._thread_readers.conn = reader
+        return reader
+
     def _open_reader(self):
         """A read-only connection of this store's own file, for long reads."""
         reader = sqlite3.connect(
@@ -859,16 +896,19 @@ class BrainStore:
         return reader
 
     def count_fragments(self, scope: Optional[Scope] = None) -> int:
-        with self._lock:
-            if scope is None:
-                row = self._conn.execute(
-                    "SELECT COUNT(*) AS n FROM fragments"
-                ).fetchone()
-            else:
-                row = self._conn.execute(
-                    "SELECT COUNT(*) AS n FROM fragments WHERE scope = ?",
-                    (scope.value,),
-                ).fetchone()
+        if scope is None:
+            sql, params = "SELECT COUNT(*) AS n FROM fragments", ()
+        else:
+            sql, params = (
+                "SELECT COUNT(*) AS n FROM fragments WHERE scope = ?",
+                (scope.value,),
+            )
+        reader = self._reader_for_this_thread()
+        if reader is None:
+            with self._lock:
+                row = self._conn.execute(sql, params).fetchone()
+        else:
+            row = reader.execute(sql, params).fetchone()
         return int(row["n"]) if row else 0
 
     # ── skills ───────────────────────────────────────────────────────────

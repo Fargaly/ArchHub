@@ -252,8 +252,15 @@ def project_grand_map_cells(
             "source", "target", "why",
         )
     }
-    cell_roots = frozenset(snapshot.cells)
-    missing_roles = set(roles.values()) - cell_roots
+    # Point reads, never frozenset(snapshot.cells). The head map is lazy over
+    # a journal of millions of rows, so materialising every id to test EIGHT
+    # role roots streamed the founder's whole head -- 3.9M ids, 15.7% of a
+    # 148s boot (boot-profile.log 2026-09-07). cell_registry_projection.py
+    # learned this on 2026-09-05 and wrote it down; this line predates the
+    # lesson and never got it.
+    missing_roles = {
+        root for root in roles.values() if root not in snapshot.cells
+    }
     if missing_roles:
         raise InvalidCell("persisted Grand Map role vocabulary is incomplete")
 
@@ -287,7 +294,10 @@ def project_grand_map_cells(
         owner_root = by_role[roles["owner"]][0]
         value_root = by_role[roles["value"]][0]
         label_root = by_role[roles["label"]][0]
-        if {owner_root, value_root, label_root} - cell_roots:
+        if any(
+            root not in snapshot.cells
+            for root in (owner_root, value_root, label_root)
+        ):
             raise InvalidCell("Grand Map property references missing Cells")
         return owner_root, PropertyRef(
             relation_root, value_root, label_root

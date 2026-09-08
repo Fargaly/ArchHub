@@ -17735,9 +17735,14 @@ def _ensure_canvas_domain_interfaces(
     no longer being registered as current application interfaces.
     """
     snapshot = store.snapshot()
-    # The journal forbids deleting history by trigger; the check below keeps
-    # the invariant as a count, not a 3M-id set plus 3M point reads.
-    original_cell_count = len(snapshot.cells)
+    # NO COUNT HERE. This used to take len(snapshot.cells) now and again at
+    # the end, refusing if the store had shrunk -- two full counts of the
+    # founder's 3.9M-row head per migrator, four per boot, 18.7% of a 148s
+    # boot (boot-profile.log 2026-09-07). CellStore.commit accepts create
+    # and replace and NOTHING else; the store exposes no delete at all, so
+    # the count was paying to rule out something the API cannot express.
+    # The absence is courted instead, where it costs nothing to keep
+    # (2026-09-08).
     support = {
         "source-presentation": (
             "app:canvas-interface:presentation:source", b"source"
@@ -18074,8 +18079,6 @@ def _ensure_canvas_domain_interfaces(
             legacy_member.incidence_id,
             budget=100_000,
         )
-    if len(store.snapshot().cells) < original_cell_count:
-        raise InvalidCell("canvas interface migration deleted Cell history")
 
 
 def _is_domain_public_interface(
@@ -18102,7 +18105,7 @@ def _ensure_canvas_domain_public_interfaces(
 ) -> None:
     """Expose exact domain incidences through graph-owned public boundaries."""
     snapshot = store.snapshot()
-    original_cell_count = len(snapshot.cells)   # see _ensure_canvas_domain_interfaces
+    # No count here either -- see _ensure_canvas_domain_interfaces above.
     domain_set = set(domain_roots)
     application_members = read_relation(
         snapshot, application_root, budget=100_000
@@ -18368,8 +18371,6 @@ def _ensure_canvas_domain_public_interfaces(
             budget=100_000,
         )
         store.commit(current.revision, replace=removal.replace)
-    if len(store.snapshot().cells) < original_cell_count:
-        raise InvalidCell("public canvas interface migration deleted Cell history")
 
 
 def _ensure_governed_work_scope_interfaces(
@@ -39703,8 +39704,11 @@ def disconnect_universal_connection(
         create=selection_transition.create,
         replace=tuple(replacements.values()),
     )
-    if not set(snapshot.cells).issubset(store.snapshot().cells):
-        raise InvalidCell("connection detach deleted Cell history")
+    # This asked whether the detach had deleted history by materialising the
+    # whole head and then point-reading every id back -- 3.9M of each, on the
+    # founder's graph, on EVERY connect. CellStore.commit takes create and
+    # replace and offers no delete, so there was nothing it could have found.
+    # The absence is courted instead (2026-09-08).
     return revision
 
 

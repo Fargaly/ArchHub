@@ -87,6 +87,7 @@ def resolve_node_model_route(
     callers must hold their mutation lock across projection and resolution.
     """
     from .library_engines import LIBRARY_ITEM_ENGINES
+    from .cell_protocols import read_relation
     from .universal_application import (
         _property_index, _session_canvas_roots, _text, _view_session_for_context,
     )
@@ -103,7 +104,16 @@ def resolve_node_model_route(
     visible, _, property_roots = _session_canvas_roots(snapshot, registry, view)
     if node_root not in visible:
         raise InvalidCell("agent node is not visible in this canvas scope")
-    rows = _property_index(snapshot, registry, property_roots).get(node_root, ())
+    # The entered composition contributes its direct property incidences, while
+    # the view's Properties lens also admits properties attached to its members.
+    # This is the same complete scope used by project_universal_canvas; indexing
+    # only the composition drops a placed node's engine and model parameters.
+    lens_property_roots = tuple(member.participant_id for member in read_relation(
+        snapshot, view.properties_lens_root, budget=100_000,
+    ) if member.role_id == registry.roles["scope"])
+    if not set(property_roots).issubset(lens_property_roots):
+        raise InvalidCell("active canvas properties leave the Properties lens")
+    rows = _property_index(snapshot, registry, lens_property_roots).get(node_root, ())
     engines = [row for row in rows if _text(snapshot, row.label_root) == "engine"]
     model_engines = {entry["engine"] for entry in LIBRARY_ITEM_ENGINES.values()
                      if "model" in entry.get("params", {})}

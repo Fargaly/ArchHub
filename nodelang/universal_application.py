@@ -45987,6 +45987,33 @@ def _prepare_selection_transition(
     )
 
 
+def _session_editable_property_roots(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+) -> set[str]:
+    """Use the visible owners' admitted Properties lens in entered groups."""
+    visible_roots, relation_roots, property_roots = _session_canvas_roots(
+        snapshot, registry, view_session
+    )
+    lens_property_roots = tuple(
+        member.participant_id
+        for member in read_relation(
+            snapshot, view_session.properties_lens_root, budget=100_000
+        )
+        if member.role_id == registry.roles["scope"]
+    )
+    allowed = set(property_roots)
+    if not allowed.issubset(lens_property_roots):
+        raise InvalidCell("active canvas properties leave the Properties lens")
+    owners = set(visible_roots) | set(relation_roots)
+    indexed = _property_index(snapshot, registry, lens_property_roots)
+    allowed.update(
+        row.relation_root for owner in owners for row in indexed.get(owner, ())
+    )
+    return allowed
+
+
 def edit_universal_property(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -46009,10 +46036,7 @@ def edit_universal_property(
         authentication_context=context,
         resource_usage={"max-atom-bytes": (0, len(encoded))},
     )
-    _, _, property_roots = _session_canvas_roots(
-        snapshot, registry, view_session
-    )
-    allowed = set(property_roots)
+    allowed = _session_editable_property_roots(snapshot, registry, view_session)
     if relation_root not in allowed:
         raise InvalidCell("property relation is outside the application lens")
     members = read_relation(snapshot, relation_root, budget=64)
@@ -46066,10 +46090,7 @@ def edit_universal_property_batch(
         registry, authentication_context
     )
     encoded = value.encode("utf-8")
-    _, _, property_roots = _session_canvas_roots(
-        snapshot, registry, view_session
-    )
-    allowed = set(property_roots)
+    allowed = _session_editable_property_roots(snapshot, registry, view_session)
     selection_members = read_relation(
         snapshot, view_session.selection_state_root, budget=100_000
     )

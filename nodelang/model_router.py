@@ -770,6 +770,13 @@ def route_chat(
     except ModelRouteRefused:
         raise
     except urllib.error.HTTPError as refused:
+        if refused.code == 429:
+            # The status is sufficient. Do not expose provider bodies or retry
+            # a user turn merely because a different route might answer.
+            refused.close()
+            raise ModelRouteRefused(
+                "The model provider is rate-limiting requests (HTTP 429). Wait before sending again, or choose another model.",
+                reason_code="provider_rate_limited") from refused
         if response_byte_limit is not None:
             # A complete HTTP refusal is known; an oversized/interrupted body
             # stays uncertain. Never expose provider body text in this path.

@@ -269,6 +269,13 @@ def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, rout
         if not dispatched:
             return response(user, "not_sent", reason=getattr(exc, "reason_code", "admission_refused"),
                 message=str(exc), provider_not_called=True, model=route, node=node)
+        if isinstance(exc, ModelRouteRefused) and exc.reason_code == "provider_rate_limited":
+            message = ("The model provider is rate-limiting requests (HTTP 429). "
+                "Your message is saved. Wait before sending again, or choose another model. "
+                "Nothing was retried automatically.")
+            append(message, ":failure", refs=(node,), reply_to=user["id"])
+            return response(user, "failed", reason="provider_rate_limited",
+                message=message, model=route, node=node)
         append("The model did not return an admitted reply. Its outcome is not retried automatically.",
             ":failure", refs=(node,), reply_to=user["id"])
         return response(user, "failed", reason="model_reply_unavailable", model=route, node=node)

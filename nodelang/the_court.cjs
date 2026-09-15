@@ -3,14 +3,39 @@
 // It opens the live canvas in a real Chromium, does the founder's gestures,
 // and measures each against the bar SPEC.md sets. One verdict record out.
 const fs = require("fs");
-const { chromium } = require("playwright");
+const path = require("path");
+const { createHash, randomUUID } = require("crypto");
 
 const URL_ = process.env.ARCHHUB_COURT_URL || "http://127.0.0.1:8475";
 const OUT = process.env.ARCHHUB_COURT_OUT || "";
 const CHROME = process.env.ARCHHUB_CHROME_EXECUTABLE
   || "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
-const verdict = { court: "the-court", url: URL_, started_at: new Date().toISOString(), checks: [] };
+function safeUrl(value) {
+  try { const url = new URL(value); return url.origin + url.pathname; }
+  catch (_) { return "invalid URL"; }
+}
+const admissionCredentials = (() => {
+  try { const url = new URL(URL_); return ["key", "bootstrap", "token"].map(name => url.searchParams.get(name)).filter(Boolean); }
+  catch (_) { return []; }
+})();
+function redactText(value) {
+  let text = String(value);
+  for (const credential of admissionCredentials) text = text.split(credential).join("[REDACTED]");
+  return text.replace(/https?:\/\/[^\s"'<>]+/g, safeUrl);
+}
+const verdict = {
+  court: "the-court", run_id: randomUUID(), status: "RUNNING",
+  url: safeUrl(URL_), started_at: new Date().toISOString(), checks: [],
+  court_sources: {},
+  application_artifact_verified: false,
+  application_artifact_gap: "Loaded application artifact identity has not been established; this run cannot prove release readiness.",
+};
+function writeVerdict(emit = true) {
+  const text = JSON.stringify(verdict, (_key, value) => typeof value === "string" ? redactText(value) : value, 2);
+  if (OUT) fs.writeFileSync(OUT, text);
+  if (emit) process.stdout.write(text);
+}
 function judge(name, pass, measured, bar) {
   verdict.checks.push({ name, pass: !!pass, measured, bar });
 }
@@ -33,16 +58,24 @@ async function domState(page) {
 }
 
 async function run() {
+  // Invalidate an older result before attempting any browser work.
+  writeVerdict(false);
+  verdict.court_sources = Object.fromEntries(["the_court.cjs", "pointer_frame_court.cjs"].map(name => [
+    name, createHash("sha256").update(fs.readFileSync(path.join(__dirname, name))).digest("hex"),
+  ]));
+  const { chromium } = require("playwright");
+  const { measurePointerPan, judgePointerFrames } = require("./pointer_frame_court.cjs");
+  const pageErrors = verdict.page_errors = [];
   const browser = await chromium.launch({ headless: true, executablePath: fs.existsSync(CHROME) ? CHROME : undefined });
+  let runFailure;
+  try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 960 } });
   // A failed gesture with no reason is a verdict without evidence. Every
   // page error and console error is kept and written next to the checks.
-  const pageErrors = [];
-  page.on("pageerror", (err) => pageErrors.push({ kind: "pageerror", text: String(err && err.message || err) }));
-  page.on("console", (msg) => { if (msg.type() === "error" || msg.type() === "warning") pageErrors.push({ kind: msg.type(), text: msg.text().slice(0, 400) }); });
-  page.on("requestfailed", (req) => pageErrors.push({ kind: "requestfailed", text: req.url().slice(-120) + " " + (req.failure() && req.failure().errorText) }));
-  page.on("response", (res) => { if (res.status() >= 400 && res.url().includes("/api/")) res.text().then((t) => pageErrors.push({ kind: "http" + res.status(), text: res.url().slice(-80) + " " + t.slice(0, 300) })).catch(() => {}); });
-  try {
+  page.on("pageerror", (err) => pageErrors.push({ kind: "pageerror", text: redactText(err && err.message || err) }));
+  page.on("console", (msg) => { if (msg.type() === "error" || msg.type() === "warning") pageErrors.push({ kind: msg.type(), text: redactText(msg.text()).slice(0, 400) }); });
+  page.on("requestfailed", (req) => pageErrors.push({ kind: "requestfailed", text: safeUrl(req.url()) + " " + redactText(req.failure() && req.failure().errorText) }));
+  page.on("response", (res) => { if (res.status() >= 400 && res.url().includes("/api/")) res.text().then((t) => pageErrors.push({ kind: "http" + res.status(), text: safeUrl(res.url()) + " " + redactText(t).slice(0, 300) })).catch(() => {}); });
     // 1. OPEN — the page signs itself in and paints the entry scope.
     const t0 = Date.now();
     await page.goto(URL_, { waitUntil: "domcontentloaded" });
@@ -130,25 +163,39 @@ async function run() {
     if (PLACE) judge("place: a library card lands on the canvas", placed, placeNote, "grows by 1 within 15 s");
 
     // 6. POINTER frame budget (SPEC 11.14: p95 <= 16.7 ms) — pan across the canvas.
-    const frames = await page.evaluate(() => new Promise(res => {
-      const t = []; let last = performance.now(); let n = 0;
-      function tick(now) { t.push(now - last); last = now; if (++n < 60) requestAnimationFrame(tick); else res(t); }
-      requestAnimationFrame(tick);
-    }));
-    await page.mouse.move(c.x + 200, c.y + 200); await page.mouse.down();
-    for (let i = 0; i < 20; i++) await page.mouse.move(c.x + 200 + i * 15, c.y + 200 + i * 5);
-    await page.mouse.up();
-    const sorted = frames.slice().sort((a, b) => a - b); const p95 = sorted[Math.floor(sorted.length * 0.95)];
-    judge("pointer: frame p95 (SPEC 11.14)", p95 <= 16.7 * 2, `${p95?.toFixed(1)} ms`, "<= 16.7 ms (judged at 2x for headless)");
+    const pointerEvidence = await measurePointerPan(page, c);
+    const pointerVerdict = judgePointerFrames(pointerEvidence);
+    judge("pointer: frame p95 (SPEC 11.14)", pointerVerdict.pass, pointerVerdict,
+      "<= 16.7 ms during active pan; at least 20 intervals and a changed viewport");
+    // End pointer measurement.
+  } catch (error) {
+    runFailure = error;
   } finally {
-    await browser.close();
+    // A timed-out Playwright operation may still be pending. Closing this
+    // court-owned browser is the final boundary; input releases alone are not.
+    try { await browser.close(); }
+    catch (error) {
+      if (runFailure) verdict.browser_close_error = redactText(error && error.message || error);
+      else runFailure = error;
+    }
   }
+  if (runFailure) throw runFailure;
   verdict.finished_at = new Date().toISOString();
   verdict.page_errors = pageErrors;
   verdict.passed = verdict.checks.filter(c => c.pass).length;
   verdict.failed = verdict.checks.filter(c => !c.pass).length;
-  const text = JSON.stringify(verdict, null, 2);
-  if (OUT) fs.writeFileSync(OUT, text);
-  process.stdout.write(text);
+  verdict.status = verdict.failed ? "FAILED_CHECKS" : "CHECKS_PASSED_APPLICATION_UNBOUND";
+  writeVerdict();
+  if (verdict.failed) process.exitCode = 1;
 }
-run().catch(err => { verdict.error = String(err && err.stack || err); process.stdout.write(JSON.stringify(verdict, null, 2)); process.exit(1); });
+run().catch(err => {
+  verdict.status = "FAILED_RUN";
+  verdict.finished_at = new Date().toISOString();
+  verdict.error = redactText(err && err.stack || err);
+  try { writeVerdict(); }
+  catch (outputError) {
+    verdict.output_error = redactText(outputError && outputError.message || outputError);
+    process.stdout.write(JSON.stringify(verdict, (_key, value) => typeof value === "string" ? redactText(value) : value, 2));
+  }
+  process.exit(1);
+});

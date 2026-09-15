@@ -64,6 +64,12 @@ _METHODS = frozenset({
     "interrupt_agent",
     "inbox",
     "mark_message_read",
+    "claim_workshop_message",
+    "attach_agent",
+    "detach_agent",
+    "execute_workshop_task",
+    "run_workshop_task",
+    "publish_workshop_result",
     "wait_agent",
 })
 
@@ -285,9 +291,16 @@ class CleanCoordinationHost:
         self,
         authority: UnifiedAuthority,
         key_store: WindowsDpapiCallerKeyStore,
+        *,
+        host_invoker=None,
     ) -> None:
+        if host_invoker is not None and not callable(host_invoker):
+            raise InvalidCell("coordination host adapter must be callable")
         self.authority = authority
         self.key_store = key_store
+        self._host_invoker = host_invoker
+        from .runtime_activity import RuntimeActivity
+        self.activity = RuntimeActivity()
         self._lock = threading.RLock()
         self._changed = threading.Condition(self._lock)
         self._bindings: dict[
@@ -412,8 +425,58 @@ class CleanCoordinationHost:
         self._bindings[normalized.key_id] = bound
         return bound
 
+    def bind_host_invoker(self, authority, invoker):
+        """Owner-only in-process wiring; not exposed as a coordination method."""
+        if authority is not self.authority or not callable(invoker):
+            raise InvalidCell("coordination adapter must belong to this authority owner")
+        with self._changed:
+            if self.activity.closing:
+                raise InvalidCell("coordination owner is shutting down")
+            if self._host_invoker is not None and self._host_invoker is not invoker:
+                raise InvalidCell("coordination adapter is already bound")
+            self._host_invoker = invoker
+
     def dispatch(self, request: SignedCoordinationRequest) -> dict[str, object]:
+        with self.activity.admit():
+            return self._dispatch_admitted(request)
+
+    def begin_shutdown(self):
+        self.activity.begin_shutdown()
+        with self._changed:
+            self._changed.notify_all()
+
+    def _dispatch_admitted(self, request: SignedCoordinationRequest) -> dict[str, object]:
         self.verify_request(request)
+        if request.method in {"execute_workshop_task", "run_workshop_task"}:
+            from .clean_host_execution import HostOperationFailed, HostOperationUncertain
+            message_root = _bounded_text(request.parameters.get("message_root"),
+                "coordination message root", 256)
+            with self._changed:
+                _, coordinator = self._binding(request.identity)
+            # Do not hold the coordinator lock during a physical host call:
+            # other agents must still be able to read messages or disconnect.
+            try:
+                if request.method == "run_workshop_task":
+                    command = _uuid(request.parameters.get("idempotency_key"),
+                        "coordination idempotency key")
+                    result = coordinator.run_workshop_task(message_root,
+                        command_id=command, invoker=self._host_invoker)
+                    return {"ok":True, **result}
+                result = coordinator.execute_claimed_task(message_root, invoker=self._host_invoker)
+                return {"ok": True, "message_root": message_root, "effect": result.root_id,
+                    "receipt": result.receipt_root, "accepted_revision": result.revision,
+                    "replayed": result.replayed}
+            except HostOperationFailed as exc:
+                return {"ok": False, "outcome":"failed", "error":str(exc),
+                    "message_root":message_root, "effect":exc.result_root,
+                    "receipt":exc.receipt_root, "accepted_revision":exc.revision,
+                    "replayed":exc.replayed}
+            except HostOperationUncertain as exc:
+                return {"ok":False, "outcome":"uncertain", "error":str(exc),
+                    "message_root":message_root}
+            finally:
+                with self._changed:
+                    self._changed.notify_all()
         if request.method == "wait_agent":
             parameters = dict(request.parameters)
             return self.wait_for_inbox(
@@ -487,6 +550,20 @@ class CleanCoordinationHost:
                 )
                 self._changed.notify_all()
                 return {"ok": True, **changed}
+            if method == "publish_workshop_result":
+                root = _bounded_text(params.get("message_root"), "coordination message root", 256)
+                result = coordinator.publish_task_result(root)
+                self._changed.notify_all()
+                return {"ok":True, **result}
+            if method in {"attach_agent", "detach_agent"}:
+                target = _bounded_text(params.get("target"), "coordination target", 256)
+                command = _uuid(params.get("idempotency_key"), "coordination idempotency key")
+                action = coordinator.attach_agent if method == "attach_agent" else coordinator.detach_agent
+                result = action(target, command_id=command)
+                self._changed.notify_all()
+                return {"ok": True, "target": target, "action": method,
+                    "accepted_revision": result.revision, "receipt": result.receipt_root,
+                    "replayed": result.replayed}
             if method in {"send_message", "followup_task", "interrupt_agent"}:
                 target = _bounded_text(
                     params.get("target"), "coordination target", 256
@@ -514,6 +591,7 @@ class CleanCoordinationHost:
                         body=body,
                         operation_id=operation,
                         reply_to_root=reply,
+                        execution_root=params.get("execution_root"),
                     )
                 else:
                     message = coordinator.request_interrupt(
@@ -538,7 +616,7 @@ class CleanCoordinationHost:
                     "count": len(messages),
                     "revision": self.authority.store.revision,
                 }
-            if method == "mark_message_read":
+            if method in {"mark_message_read", "claim_workshop_message"}:
                 message_root = _bounded_text(
                     params.get("message_root"), "coordination message root", 256
                 )
@@ -546,7 +624,9 @@ class CleanCoordinationHost:
                     params.get("idempotency_key"),
                     "coordination idempotency key",
                 )
-                result = coordinator.mark_message_read(
+                action = (coordinator.claim_workshop_message
+                    if method == "claim_workshop_message" else coordinator.mark_message_read)
+                result = action(
                     message_root,
                     command_id=command,
                 )
@@ -556,6 +636,7 @@ class CleanCoordinationHost:
                     "message_root": result.root_id,
                     "revision": result.revision,
                     "replayed": result.replayed,
+                    "receipt": result.receipt_root,
                 }
             raise InvalidCell("coordination method is not implemented")
 
@@ -589,6 +670,8 @@ class CleanCoordinationHost:
         deadline = time.monotonic() + float(timeout_seconds)
         with self._changed:
             while True:
+                if self.activity.closing:
+                    return {"ok":True, "status":"shutdown", "messages":[], "count":0}
                 _, coordinator = self._binding(request.identity)
                 messages = coordinator.inbox(after_revision=after_revision)
                 if target is not None:

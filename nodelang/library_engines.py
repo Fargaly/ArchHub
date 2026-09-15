@@ -734,11 +734,10 @@ def notify(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 def _open_outlook():
     """The OPEN Outlook, or None; this never launches it."""
-    from .host_brokers import _com_alive
+    from .host_brokers import _com_alive, _outlook_application
     if not _com_alive("Outlook.Application"):
         return None
-    import win32com.client as client  # type: ignore
-    return client.GetActiveObject("Outlook.Application")
+    return _outlook_application()
 
 
 _OUTLOOK = [_open_outlook]

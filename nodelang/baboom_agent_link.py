@@ -66,7 +66,7 @@ def list_agents() -> list[dict]:
 
 
 def resolve_target(name: str, agents: Optional[Sequence[Mapping[str, object]]] = None) -> Optional[dict]:
-    """'codex' -> the newest online Codex session; a full session root matches exactly."""
+    """A full session root matches exactly; aliases match online providers or runtimes."""
     want = str(name or "").strip().casefold()
     if not want:
         return None
@@ -76,16 +76,13 @@ def resolve_target(name: str, agents: Optional[Sequence[Mapping[str, object]]] =
             return dict(row)
 
     def matches(row: Mapping[str, object]) -> bool:
-        return any(
-            want in str(row.get(field, "")).casefold()
-            for field in ("provider", "runtime", "session_root", "model")
+        return str(row.get("status", "")).casefold() == "online" and any(
+            str(row.get(field, "")).casefold() == want
+            for field in ("provider", "runtime")
         )
 
     found = [row for row in rows if matches(row)]
-    found.sort(
-        key=lambda row: (str(row.get("status")) == "online", int(row.get("revision") or 0)),
-        reverse=True,
-    )
+    found.sort(key=lambda row: int(row.get("revision") or 0), reverse=True)
     return dict(found[0]) if found else None
 
 

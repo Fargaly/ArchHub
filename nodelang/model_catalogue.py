@@ -11,6 +11,8 @@ was really everything (2026-09-05). It was a hard-coded list.
 from __future__ import annotations
 
 import json
+import copy
+import hashlib
 import threading
 import time
 import urllib.request
@@ -26,7 +28,7 @@ _VENDOR_COLOURS = {
     "nvidia": "#76b900", "local": "#3fb950",
 }
 _lock = threading.Lock()
-_cache: dict[str, object] = {"at": 0.0, "value": None}
+_cache: dict[str, object] = {"at": 0.0, "value": None, "identity": None}
 
 
 def _get_json(url: str, *, headers: Optional[Mapping[str, str]] = None, timeout: float, opener: Callable) -> object:
@@ -129,10 +131,15 @@ def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Op
     """Groups for the picker, cached ten minutes; every source best effort."""
     opener = opener or urllib.request.urlopen
     moment = time.time() if now is None else now
+    identity = hashlib.sha256(json.dumps({
+        "base_url":str(session.get("base_url", "")) if session else "",
+        "token":str(session.get("token", "")) if session else "",
+    }, sort_keys=True).encode("utf-8")).digest()
     with _lock:
         held = _cache["value"]
-        if held is not None and moment - float(_cache["at"]) < _CACHE_SECONDS:
-            return held
+        if (held is not None and _cache["identity"] == identity
+                and 0 <= moment - float(_cache["at"]) < _CACHE_SECONDS):
+            return copy.deepcopy(held)
     errors: dict[str, str] = {}
     groups = []
     for name, fn in (("CLOUD · subscription", lambda: cloud_models(session, opener=opener, timeout=timeout)),
@@ -149,7 +156,8 @@ def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Op
               "source_errors": errors, "read_at": moment}
     with _lock:
         _cache["at"] = moment
-        _cache["value"] = result
+        _cache["identity"] = identity
+        _cache["value"] = copy.deepcopy(result)
     return result
 
 
@@ -164,6 +172,8 @@ def routable_route(item: Mapping[str, object]) -> str:
     route = str(item.get("route") or "").strip()
     if str(item.get("tag") or "").upper() == "CLOUD" and not route.startswith("cloud/"):
         return "cloud/" + route
+    if str(item.get("tag") or "").upper() == "BYO" and not route.startswith("openrouter/"):
+        return "openrouter/" + route
     return route
 
 
@@ -192,6 +202,7 @@ def reset_cache() -> None:
     with _lock:
         _cache["at"] = 0.0
         _cache["value"] = None
+        _cache["identity"] = None
 
 
 __all__ = ["live_model_groups", "cloud_models", "openrouter_models", "local_models",

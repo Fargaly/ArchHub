@@ -13,6 +13,8 @@ from types import MappingProxyType
 from typing import Iterable, Mapping
 import hashlib
 import uuid
+from threading import RLock
+from weakref import WeakKeyDictionary
 
 from .cell_authorization import (
     AuthenticationBroker,
@@ -34,6 +36,8 @@ from .cell_value_graph import (
     ValueGraphProtocol,
     prepare_value_graph,
     read_value_graph,
+    value_graph_registration_count,
+    value_graph_values_equal,
 )
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
@@ -54,6 +58,12 @@ ROLE_NAMES = (
     "space-operational-state",
     "space-requirement",
     "space-entry",
+    "space-content-store",
+    "scope-content-instance",
+    "content-instance",
+    "content-scope",
+    "content-space",
+    "content-version",
     "requirement-phase",
     "requirement-category",
     "requirement-minimum",
@@ -88,6 +98,111 @@ MAX_CONTENT_BYTES = 65_536
 MAX_TITLE_BYTES = 512
 MAX_IDEMPOTENCY_BYTES = 512
 
+# Disposable process memory, never graph authority. Overflow disables reuse.
+_MAX_LOOKUP_DEPENDENCIES = 1_000_000
+_LOOKUP_GUARD = RLock()
+_LOOKUP_CACHES = WeakKeyDictionary()
+
+
+class _LookupHolder:
+    def __init__(self):
+        self.lock = RLock()
+        self.entry = None
+
+
+class _LookupReads(Mapping):
+    """Track point-read dependencies without retaining the snapshot afterward."""
+    def __init__(self, cells, previous):
+        self.cells = cells
+        self.previous = previous
+        self.dependencies = set()
+        self.complete = True
+
+    def __getitem__(self, key):
+        if self.complete and key not in self.previous:
+            if len(self.previous) + len(self.dependencies) >= _MAX_LOOKUP_DEPENDENCIES:
+                if key not in self.dependencies:
+                    self.complete = False
+                    self.dependencies.clear()
+            if self.complete:
+                self.dependencies.add(key)
+        return self.cells[key]
+
+    def __iter__(self):
+        raise InvalidCell("deliberation lookup must use point reads")
+
+    def __len__(self):
+        return len(self.cells)
+
+
+def _lookup_deliberation_key(snapshot, protocol, space, key, store):
+    signature = (protocol.root_id, tuple(sorted(protocol.roles.items())), space.root_id)
+    holder = None
+    prior = None
+    receipt = None
+    if store is not None:
+        with _LOOKUP_GUARD:
+            holder = _LOOKUP_CACHES.setdefault(store, _LookupHolder())
+        with holder.lock:
+            prior = holder.entry
+            previous_revision = prior["revision"] if prior is not None else None
+            previous_digest = prior["digest"] if prior is not None else None
+        # Never hold a cache guard while acquiring the store's lock.
+        receipt = store.snapshot_transition(
+            previous_revision=previous_revision, previous_digest=previous_digest,
+        )
+    lock = holder.lock if holder is not None else RLock()
+    with lock:
+        current = (receipt is not None
+                   and receipt.snapshot.revision == snapshot.revision
+                   and receipt.snapshot.cells is snapshot.cells)
+        reusable = (
+            current and prior is not None and holder.entry is prior
+            and prior["revision"] == previous_revision
+            and prior["digest"] == previous_digest
+            and prior["signature"] == signature and receipt.changed is not None
+            and space.entry_roots[:len(prior["roots"])] == prior["roots"]
+            and not any(cell.id in prior["dependencies"] for cell in receipt.changed)
+        )
+        base = prior["keys"] if reusable else {}
+        dependencies = prior["dependencies"] if reusable else set()
+        roots = space.entry_roots[len(prior["roots"]):] if reusable else space.entry_roots
+        reads = _LookupReads(snapshot.cells, dependencies)
+        tracked = Snapshot(snapshot.revision, reads)
+        added = {}
+        for root in roots:
+            members = read_relation(tracked, root, budget=RELATION_BUDGET,
+                                    retain_projection=False)
+            owner = _one(members, protocol.role("entry-space"), "entry space")
+            if owner != space.root_id:
+                raise InvalidCell("entry belongs to a different deliberation space")
+            terminal = _one(members, protocol.role("entry-idempotency"), "entry idempotency")
+            found = _text(tracked, terminal, "entry idempotency")
+            if found in base or found in added:
+                raise InvalidCell("deliberation space contains duplicate idempotency keys")
+            added[found] = root
+        result = added.get(key, base.get(key))
+        if holder is not None and current:
+            if (holder.entry is not None
+                    and holder.entry["revision"] > snapshot.revision):
+                # Another lookup published a newer valid head while this
+                # caller obtained its receipt. Do not evict its progress.
+                return result
+            if reads.complete and len(base) + len(added) <= MAX_ENTRIES:
+                # Validation is complete. Publish only a complete projection.
+                # If allocation fails while extending, no partial cache survives.
+                holder.entry = None
+                base.update(added)
+                dependencies.update(reads.dependencies)
+                holder.entry = dict(
+                    signature=signature, revision=snapshot.revision,
+                    digest=receipt.chain_digest, roots=space.entry_roots,
+                    keys=base, dependencies=dependencies,
+                )
+            else:
+                holder.entry = None
+        return result
+
 
 @dataclass(frozen=True, slots=True)
 class DeliberationProtocol:
@@ -116,6 +231,13 @@ class DeliberationSpaceBuild:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedDeliberationSpace:
+    expected_revision: int
+    build: DeliberationSpaceBuild
+    create: tuple[Cell, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DeliberationSpaceProjection:
     root_id: str
     title: str
@@ -132,6 +254,7 @@ class DeliberationSpaceProjection:
     operational_state_root: str | None
     requirement_roots: tuple[str, ...]
     entry_roots: tuple[str, ...]
+    content_store_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,8 +478,8 @@ def open_deliberation_protocol(
     )
 
 
-def compose_deliberation_space(
-    store: CellStore,
+def prepare_deliberation_space(
+    snapshot: Snapshot,
     protocol: DeliberationProtocol,
     *,
     space_id: str,
@@ -373,8 +496,9 @@ def compose_deliberation_space(
     classification_root: str | None = None,
     audience_root: str | None = None,
     operational_state_root: str | None = None,
-) -> DeliberationSpaceBuild:
-    open_deliberation_protocol(store.snapshot(), protocol.root_id)
+) -> PreparedDeliberationSpace:
+    """Prepare one space on the supplied immutable snapshot, without writes."""
+    open_deliberation_protocol(snapshot, protocol.root_id)
     if not isinstance(space_id, str) or not space_id:
         raise InvalidCell("deliberation space identity is invalid")
     if not isinstance(title, str) or not title.strip():
@@ -440,18 +564,28 @@ def compose_deliberation_space(
             operational_state_root,
         ) if root is not None),
     }
-    missing = absent_roots(store.snapshot().cells, referenced)
+    missing = absent_roots(snapshot.cells, referenced)
     if missing:
         raise InvalidCell("deliberation space references missing Cells")
 
-    batch = CellBatch(store)
+    cells: dict[str, Cell] = {}
+
+    def add(cell):
+        if cell.id in cells or cell.id in snapshot.cells:
+            raise InvalidCell("deliberation space Cell identity already exists")
+        cells[cell.id] = cell
+
+    def relation(members, *, relation_id):
+        for cell in compose_relation_cells(members, relation_id=relation_id).cells:
+            add(cell)
+
     title_root = space_id + ":title"
-    batch.add(_terminal(title_root, title.strip()))
+    add(_terminal(title_root, title.strip()))
     requirement_roots: list[str] = []
     for index, requirement in enumerate(requirement_specs):
         requirement_root = "%s:requirement:%s" % (space_id, index)
         minimum_root = requirement_root + ":minimum"
-        batch.add(_terminal(minimum_root, requirement.minimum_count))
+        add(_terminal(minimum_root, requirement.minimum_count))
         requirement_members = [
             (protocol.role("requirement-phase"), requirement.phase_root),
             (protocol.role("requirement-category"), requirement.category_root),
@@ -459,14 +593,14 @@ def compose_deliberation_space(
         ]
         if requirement.minimum_evidence_count:
             evidence_minimum_root = requirement_root + ":evidence-minimum"
-            batch.add(
+            add(
                 _terminal(evidence_minimum_root, requirement.minimum_evidence_count)
             )
             requirement_members.append((
                 protocol.role("requirement-evidence-minimum"),
                 evidence_minimum_root,
             ))
-        batch.relation(requirement_members, relation_id=requirement_root)
+        relation(requirement_members, relation_id=requirement_root)
         requirement_roots.append(requirement_root)
 
     members = [
@@ -489,9 +623,39 @@ def compose_deliberation_space(
     ):
         if root is not None:
             members.append((protocol.role(role_name), root))
-    batch.relation(members, relation_id=space_id)
-    batch.commit()
-    return DeliberationSpaceBuild(space_id, tuple(requirement_roots))
+    relation(members, relation_id=space_id)
+    return PreparedDeliberationSpace(snapshot.revision,
+        DeliberationSpaceBuild(space_id, tuple(requirement_roots)), tuple(cells.values()))
+
+
+def compose_deliberation_space(
+    store: CellStore,
+    protocol: DeliberationProtocol,
+    *,
+    space_id: str,
+    title: str,
+    participant_roots: Iterable[str],
+    category_roots: Iterable[str],
+    policy_root: str,
+    action_root: str,
+    scope_roots: Iterable[str],
+    lifecycle_root: str,
+    requirements: Iterable[DeliberationRequirement] = (),
+    interface_root: str | None = None,
+    purpose_root: str | None = None,
+    classification_root: str | None = None,
+    audience_root: str | None = None,
+    operational_state_root: str | None = None,
+) -> DeliberationSpaceBuild:
+    prepared = prepare_deliberation_space(store.snapshot(), protocol,
+        space_id=space_id, title=title, participant_roots=participant_roots,
+        category_roots=category_roots, policy_root=policy_root, action_root=action_root,
+        scope_roots=scope_roots, lifecycle_root=lifecycle_root, requirements=requirements,
+        interface_root=interface_root, purpose_root=purpose_root,
+        classification_root=classification_root, audience_root=audience_root,
+        operational_state_root=operational_state_root)
+    store.commit(prepared.expected_revision, create=prepared.create)
+    return prepared.build
 
 
 def extend_deliberation_space(
@@ -727,6 +891,11 @@ def read_deliberation_space(
         label="deliberation entries",
         maximum=MAX_ENTRIES,
     )
+    content_store_root = _optional(
+        members, protocol.role("space-content-store"), "conversation content store"
+    )
+    if content_store_root is not None and entries:
+        raise InvalidCell("ordinary content binding still contains legacy entries")
     if not participants or not categories:
         raise InvalidCell("deliberation space is incomplete")
     title_root = _one(members, protocol.role("space-title"), "space title")
@@ -755,6 +924,8 @@ def read_deliberation_space(
     }
     if any(_root not in snapshot.cells for _root in required_roots):
         raise InvalidCell("deliberation space references missing Cells")
+    if content_store_root is not None and content_store_root not in snapshot.cells:
+        raise InvalidCell("conversation content binding is missing")
     seen: set[tuple[str, str]] = set()
     for requirement_root in requirements:
         requirement = _read_requirement(
@@ -798,6 +969,7 @@ def read_deliberation_space(
         ),
         requirement_roots=requirements,
         entry_roots=entries,
+        content_store_root=content_store_root,
     )
 
 
@@ -895,6 +1067,11 @@ def read_deliberation_entry(
     )
 
 
+def _require_legacy_content(space: DeliberationSpaceProjection) -> None:
+    if space.content_store_root is not None:
+        raise InvalidCell("conversation uses ordinary content; legacy transcript path refused")
+
+
 def list_deliberation_entries(
     snapshot: Snapshot,
     protocol: DeliberationProtocol,
@@ -905,6 +1082,7 @@ def list_deliberation_entries(
     space = read_deliberation_space(
         snapshot, protocol, space_root, budget=budget
     )
+    _require_legacy_content(space)
     entries = tuple(
         read_deliberation_entry(snapshot, protocol, root, budget=budget)
         for root in space.entry_roots
@@ -916,12 +1094,6 @@ def list_deliberation_entries(
     ):
         raise InvalidCell("deliberation entry sequence is discontinuous")
     return entries
-
-
-# How far back a legacy, randomly-rooted entry is still matched by its
-# idempotency key. A retry arrives within seconds, never thousands of
-# entries later.
-_IDEMPOTENCY_TAIL_ENTRIES = 512
 
 
 def _derived_entry_root(space_root: str, idempotency_key: str) -> str:
@@ -960,13 +1132,30 @@ def list_recent_deliberation_entries(
     space = read_deliberation_space(
         snapshot, protocol, space_root, budget=budget
     )
+    return _recent_entries_from_validated_space(
+        snapshot, protocol, space, limit=limit, budget=budget
+    )
+
+
+def _recent_entries_from_validated_space(
+    snapshot: Snapshot,
+    protocol: DeliberationProtocol,
+    space: DeliberationSpaceProjection,
+    *,
+    limit: int,
+    budget: int = RELATION_BUDGET,
+) -> tuple[DeliberationEntryProjection, ...]:
+    """Reuse a space just validated at this snapshot; this grants no access."""
+    if type(limit) is not int or limit < 1:
+        raise InvalidCell("deliberation entry tail limit is invalid")
+    _require_legacy_content(space)
     roots = space.entry_roots[-limit:]
     preceding = len(space.entry_roots) - len(roots)
     entries = tuple(
         read_deliberation_entry(snapshot, protocol, root, budget=budget)
         for root in roots
     )
-    if any(entry.space_root != space_root for entry in entries):
+    if any(entry.space_root != space.root_id for entry in entries):
         raise InvalidCell("entry belongs to a different deliberation space")
     if tuple(entry.sequence for entry in entries) != tuple(
         range(preceding + 1, preceding + len(entries) + 1)
@@ -1026,6 +1215,7 @@ def prepare_deliberation_entry(
     reply_to_root: str | None = None,
     evidence_roots: Iterable[str] = (),
     pending_root_ids: Iterable[str] = (),
+    lookup_store: CellStore | None = None,
 ) -> PreparedDeliberationEntry:
     """Prepare one append-only entry without committing it.
 
@@ -1054,6 +1244,7 @@ def prepare_deliberation_entry(
     )
 
     space = read_deliberation_space(snapshot, protocol, space_root)
+    _require_legacy_content(space)
     if actor_root not in space.participant_roots:
         raise AuthorizationDenied("entry actor is not a space participant")
     if category_root not in space.category_roots:
@@ -1102,29 +1293,17 @@ def prepare_deliberation_entry(
     if decision.action_root != space.action_root:
         raise AuthorizationDenied("entry authorization action does not match")
 
-    # Appending read EVERY entry to answer two questions, so one entry cost
-    # 4.253s on the founder's 16,919-entry Workshop -- which is why no agent
-    # could coordinate through it (2026-09-07). Both questions are answered
-    # without reading the history: the next sequence is the count the space
-    # already holds, and an idempotency key now NAMES its own entry, so
-    # "has this key been used" is one point read.
-    #
-    # Entries written before this carry a random root, so a bounded tail is
-    # still scanned for them. A key reused after that many later entries is
-    # not a retry; retries happen within seconds.
+    # Legacy entries have random identities. A bounded tail cannot prove
+    # absence: retrying an older key must still return its original entry.
+    # Inspect only the space's admitted entries and follow the authoritative
+    # key relation; conventional terminal names are not semantic authority.
     derived_root = _derived_entry_root(space_root, idempotency_key)
     candidates: list[DeliberationEntryProjection] = []
-    if derived_root in snapshot.cells:
-        candidates.append(
-            read_deliberation_entry(snapshot, protocol, derived_root)
-        )
-    candidates.extend(
-        entry for entry in list_recent_deliberation_entries(
-            snapshot, protocol, space_root,
-            limit=_IDEMPOTENCY_TAIL_ENTRIES,
-        )
-        if entry.root_id != derived_root
+    existing_root = _lookup_deliberation_key(
+        snapshot, protocol, space, idempotency_key, lookup_store,
     )
+    if existing_root is not None:
+        candidates.append(read_deliberation_entry(snapshot, protocol, existing_root))
     for existing in candidates:
         if existing.idempotency_key != idempotency_key:
             continue
@@ -1224,6 +1403,7 @@ def append_deliberation_entry(
     prepared = prepare_deliberation_entry(
         snapshot,
         protocol,
+        lookup_store=store,
         space_root=space_root,
         actor_root=actor_root,
         category_root=category_root,
@@ -1282,6 +1462,7 @@ def append_deliberation_value_entry(
     prepared_entry = prepare_deliberation_entry(
         snapshot,
         protocol,
+        lookup_store=store,
         space_root=space_root,
         actor_root=actor_root,
         category_root=category_root,
@@ -1297,11 +1478,73 @@ def append_deliberation_value_entry(
         pending_root_ids=(payload_root,),
     )
     if prepared_entry.existing_entry is not None:
-        if read_value_graph(snapshot, value_protocol, payload_root) != payload:
+        registered = value_graph_registration_count(
+            snapshot, value_protocol, payload_root
+        )
+        if registered == 1:
+            if not value_graph_values_equal(
+                read_value_graph(snapshot, value_protocol, payload_root), payload
+            ):
+                raise InvalidCell(
+                    "deliberation idempotency identity was reused for another value"
+                )
+            return prepared_entry.existing_entry, payload_root, snapshot.revision
+        if registered:
+            raise InvalidCell(
+                "deliberation payload root is registered %d times" % registered
+            )
+        # THE ENTRY IS HERE AND ITS PAYLOAD IS NOT. This used to call
+        # read_value_graph anyway, which refused with "value-graph root is not
+        # registered exactly once" -- a message about registration drift for a
+        # payload that had simply never landed. The retry then failed forever
+        # on the same idempotency key, and because the CDE write permit runs
+        # through this path, EVERY governed write in the workspace stayed
+        # refused (2026-09-08).
+        #
+        # The entry already references this root, so writing the payload now
+        # is the repair that makes that reference resolve. Refusing instead
+        # leaves a dangling reference nobody can ever complete.
+        repair = prepare_value_graph(
+            snapshot, value_protocol, payload, root_id=payload_root
+        )
+        if len(repair.create) > _DELIBERATION_PAYLOAD_CELL_LIMIT:
+            raise InvalidCell(
+                "deliberation payload expands to %d cells, over the %d-cell "
+                "bound; record a summary and a digest instead of the whole "
+                "report" % (len(repair.create), _DELIBERATION_PAYLOAD_CELL_LIMIT)
+            )
+        revision = store.commit(
+            snapshot.revision,
+            create=repair.create,
+            replace=repair.replace,
+        )
+        return prepared_entry.existing_entry, payload_root, revision
+
+    if payload_root in snapshot.cells:
+        # A prior writer may have committed the payload without its entry.
+        # Entry preparation above still authenticates and authorizes this
+        # operation. Reuse only an exactly registered, equal value; never
+        # overwrite an unrelated root or silently accept a different payload.
+        registered = value_graph_registration_count(
+            snapshot, value_protocol, payload_root
+        )
+        if registered != 1:
+            raise InvalidCell(
+                "deliberation payload root is registered %d times" % registered
+            )
+        if not value_graph_values_equal(
+            read_value_graph(snapshot, value_protocol, payload_root), payload
+        ):
             raise InvalidCell(
                 "deliberation idempotency identity was reused for another value"
             )
-        return prepared_entry.existing_entry, payload_root, snapshot.revision
+        revision = store.commit(
+            snapshot.revision,
+            create=prepared_entry.create,
+            replace=prepared_entry.replace,
+        )
+        entry = read_deliberation_entry(store.snapshot(), protocol, prepared_entry.root_id)
+        return entry, payload_root, revision
 
     prepared_value = prepare_value_graph(
         snapshot, value_protocol, payload, root_id=payload_root
@@ -1328,7 +1571,9 @@ def append_deliberation_value_entry(
     )
     committed = store.snapshot()
     entry = read_deliberation_entry(committed, protocol, prepared_entry.root_id)
-    if read_value_graph(committed, value_protocol, payload_root) != payload:
+    if not value_graph_values_equal(
+        read_value_graph(committed, value_protocol, payload_root), payload
+    ):
         raise InvalidCell("committed deliberation payload does not round-trip")
     return entry, payload_root, revision
 
@@ -1381,6 +1626,7 @@ def evaluate_deliberation_gate(
     space = read_deliberation_space(
         snapshot, protocol, space_root, budget=budget
     )
+    _require_legacy_content(space)
     requirements = tuple(
         _read_requirement(snapshot, protocol, root, budget=budget)
         for root in space.requirement_roots

@@ -12,7 +12,7 @@ import math
 import re
 import time
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .cell_adapters import AdapterProtocol, read_permission, verify_released_adapter
 from .cell_protocols import (
@@ -475,8 +475,14 @@ def create_connector_execution_grant(
     session_root: str,
     expires_at: float,
     token_digest: str,
+    reserve: Callable[[Snapshot], tuple[tuple[Cell, ...], tuple[Cell, ...]]] | None = None,
 ) -> ConnectorExecutionGrantProjection:
-    """Persist only a host token digest; the one-use token is never a Cell."""
+    """Persist only a host token digest; the one-use token is never a Cell.
+
+    An optional reserve callback receives the same snapshot after the grant
+    checks and returns (create, replace) Cells committed atomically with the
+    grant, so a competing reservation cannot commit the same revision.
+    """
     _require_digest(token_digest, "connector grant token digest")
     if type(expires_at) not in (int, float) or not math.isfinite(float(expires_at)):
         raise InvalidCell("connector grant expiry is invalid")
@@ -484,11 +490,45 @@ def create_connector_execution_grant(
     if grant_id in snapshot.cells:
         raise InvalidCell("connector execution grant already exists")
     delegation = read_connector_delegation(snapshot, protocol, adapter_protocol, delegation_root)
+    if not time.time() < float(expires_at) <= delegation.expires_at:
+        raise InvalidCell("connector grant expiry must be usable within its delegation")
+    # A grant reserves the delegation, even after expiry or an uncertain call.
+    # Inspect registered facts at the same revision used by the commit below;
+    # competing reservations cannot both commit that revision.
+    grant_members = read_relation(
+        snapshot, protocol.registry("grant"), budget=100_000,
+        retain_projection=False,
+    )
+    _closed(grant_members, (protocol.role("registry-member"),), "connector grant registry")
+    grant_roots = _many(grant_members, protocol.role("registry-member"))
+    if len(grant_roots) != len(set(grant_roots)):
+        raise InvalidCell("connector grant registry repeats a grant")
+    for prior_root in grant_roots:
+        prior_members = read_relation(
+            snapshot, prior_root, budget=100_000, retain_projection=False,
+        )
+        prior_delegation = _one(
+            prior_members, protocol.role("grant-delegation"), "grant delegation",
+        )
+        if prior_delegation == delegation_root:
+            raise InvalidCell("connector delegation already has a reserved grant")
     permission = read_permission(snapshot, adapter_protocol, delegation.permission_root)
     if permission.lifecycle_root != adapter_protocol.states["granted"]:
         raise InvalidCell("connector execution permission is not granted")
     if session_root != delegation.session_root or session_root not in snapshot.cells:
         raise InvalidCell("connector grant session binding is invalid")
+    reserved_create: tuple[Cell, ...] = ()
+    reserved_replace: tuple[Cell, ...] = ()
+    if reserve is not None:
+        reserved = reserve(snapshot)
+        if (
+            type(reserved) is not tuple
+            or len(reserved) != 2
+            or any(type(part) is not tuple for part in reserved)
+            or any(type(cell) is not Cell for part in reserved for cell in part)
+        ):
+            raise InvalidCell("connector grant reservation patch is invalid")
+        reserved_create, reserved_replace = reserved
     values = {
         "expiry": grant_id + ":expires-at",
         "token": grant_id + ":token-digest",
@@ -509,6 +549,11 @@ def create_connector_execution_grant(
         grant_id,
         budget=100_000,
     )
+
+    def require_usable_expiry():
+        if time.time() >= float(expires_at):
+            raise InvalidCell("connector grant expired before reservation")
+
     store.commit(
         snapshot.revision,
         create=(
@@ -516,8 +561,10 @@ def create_connector_execution_grant(
             _terminal(values["token"], token_digest),
             *relation.cells,
             *patch.create,
+            *reserved_create,
         ),
-        replace=patch.replace,
+        replace=(*patch.replace, *reserved_replace),
+        precommit_guard=require_usable_expiry,
     )
     return read_connector_execution_grant(store.snapshot(), protocol, adapter_protocol, grant_id)
 

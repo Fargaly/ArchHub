@@ -1,8 +1,9 @@
-"""ArchHub TEST launcher -- one double-click, the windowed desktop app.
+"""ArchHub desktop launcher, with persistent state for this Windows user.
 
-Boots the universal cell application on a PERSISTENT store under
-%LOCALAPPDATA%/ArchHub-Test (your live graph is never touched) and opens
-it in its own application window. Close the window to stop ArchHub TEST.
+The existing application uses %LOCALAPPDATA%/ArchHub-Test for historical
+compatibility. That directory contains live user data. Explicit isolated runs
+select ARCHHUB_TEST_STATE_DIR and keep the machine's active runtime unchanged.
+Closing the window leaves ArchHub in its tray; Quit closes the application.
 """
 import faulthandler
 import os, sys, time, traceback
@@ -27,6 +28,18 @@ _log_path = _log_dir / "launcher.log"
 _log = open(_log_path, "a", encoding="utf-8", buffering=1)
 sys.stdout = _log
 sys.stderr = _log
+
+
+def _require_complete_local_update(app_dir):
+    # The existing local updater writes this reservation before replacing the
+    # launcher, then publishes the remaining files while launch/store fences
+    # are held. Keep it on any interrupted update until rollback or completion.
+    if (app_dir / 'local-update.pending.json').exists():
+        print('ArchHub update is incomplete. Resume its recorded update or rollback before opening.', flush=True)
+        raise SystemExit(2)
+
+
+_require_complete_local_update(Path(__file__).resolve().parent)
 
 
 # pythonw has no console and stdout is the log file above, so a boot that
@@ -55,7 +68,7 @@ def _tell_the_person(kind, value, tb):
         last = ''.join(traceback.format_exception_only(kind, value)).strip().splitlines()[-1]
         message = 'ArchHub could not open.' + chr(10) + chr(10) + last[:300]
         message += chr(10) + chr(10) + 'The full log is at:' + chr(10) + str(_log_path)
-        message += chr(10) + chr(10) + 'Send that file to Ahmed.'
+        message += chr(10) + chr(10) + 'Share that log when requesting support.'
         _message_box(message)
     except Exception:
         pass
@@ -199,37 +212,66 @@ else:
           flush=True)
     sys.exit(0)
 
-# listdir membership: Path.exists() returns False on a Windows sharing
-# violation (a dying prior instance still holds the handle), which would
-# mislabel a warm store as a first boot.
+_require_complete_local_update(Path(__file__).resolve().parent)
+
+def _saved_graph_exists(directory, database):
+    """Distinguish a new installation from saved state needing recovery.
+
+    This bounded read is a presence check, not journal integrity verification.
+    It runs after the single-instance lock and never initializes a database.
+    SQLite may update coordination read marks in the shared-memory file.
+    """
+    import sqlite3
+
+    names = {os.path.normcase(name) for name in os.listdir(directory)}
+    database_name = os.path.normcase(database.name)
+    if database_name not in names:
+        if any(name.startswith(database_name) for name in names) or any(
+            name in names for name in ("runtime-descriptor.json", "backups")
+        ):
+            raise RuntimeError(
+                "The saved graph database is missing but recovery files remain. "
+                "All files are kept in place; restore the saved graph before opening."
+            )
+        return False
+    with database.open("rb") as source:
+        if source.read(16) != b"SQLite format 3\x00":
+            raise RuntimeError(
+                "The existing saved graph has an unreadable database header. "
+                "It is kept in place; a replacement graph will not be created."
+            )
+    try:
+        connection = sqlite3.connect(
+            database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1,
+        )
+        try:
+            required = {"revisions", "cell_versions", "current_cells"}
+            tables = {row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('revisions', 'cell_versions', 'current_cells')"
+            )}
+            if tables != required:
+                raise RuntimeError("The saved graph journal is incomplete; files are kept in place.")
+            if connection.execute(
+                "SELECT 1 FROM current_cells WHERE cell_id = ? LIMIT 1", ("app:archhub",)
+            ).fetchone() is None:
+                raise RuntimeError("The saved application root is missing; files are kept in place.")
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        raise RuntimeError("The saved graph could not be read; files are kept in place.") from error
+    return True
+
+
 # The server reads the staged-update marker from here (BABOOM's "Restart now").
 os.environ["ARCHHUB_STATE_DIR"] = str(state_dir)
-first_boot = state_path.name not in os.listdir(state_dir)
-if first_boot:
-    for stale in state_dir.glob(state_path.name + "*"):
-        try:
-            stale.unlink(missing_ok=True)
-        except OSError:
-            pass
 
-if not first_boot:
-    # Rolling backups, like Revit's: a silent copy at every launch,
-    # last TWO kept -- insurance, not a museum.
-    import shutil
-    backups = state_dir / "backups"
-    backups.mkdir(exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    try:
-        shutil.copy2(state_path, backups / ("%s.%s" % (state_path.name, stamp)))
-        aged = sorted(backups.glob(state_path.name + ".*"))
-        for old_copy in aged[:-2]:
-            old_copy.unlink(missing_ok=True)
-    except OSError:
-        pass
+# A socket lock cannot coordinate the graph and its ordinary message database.
+# Their owner takes the bounded recovery snapshot after construction below.
+# This does not replace the separately verified pre-update recovery copy.
 
 print("ArchHub TEST")
 print("  graph store :", state_path)
-print("  first boot  :", first_boot, "(first boot builds the graph, ~1-2 min)")
 print("  booting ...", flush=True)
 
 from nodelang.application_server import ApplicationServer
@@ -254,36 +296,42 @@ machine_key_provider = WindowsDpapiSigningKeyProvider(
 )
 descriptor_path = state_dir / "runtime-descriptor.json"
 
-# Quiet update, the Chrome way: a build the previous run downloaded and
-# verified is applied now, before anything boots, and this launcher hands
-# over to the freshly installed one. The graph is never touched.
+# Apply only a verified release armed by the preceding owner's final recovery.
+# No synchronous network download belongs on the application startup path.
+_staged = {}
 try:
-    from nodelang.quiet_update import apply_staged as _apply_staged
-    _applied = _apply_staged(state_dir, Path(__file__).resolve().parent)
-    if _applied.get("applied"):
-        print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
-        import subprocess as _sp
-        _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
-        raise SystemExit(0)
-    elif _applied.get("reason") == "nothing staged":
-        # Nothing was staged while the app last ran: look once now, quickly,
-        # so a close-and-open lands a build published in the meantime.
-        from nodelang.quiet_update import stage_if_newer as _stage_now
-        _staged = _stage_now(state_dir, Path(__file__).resolve().parent)
-        if _staged.get("staged"):
-            _applied = _apply_staged(state_dir, Path(__file__).resolve().parent)
-            if _applied.get("applied"):
-                print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
-                import subprocess as _sp
+    from nodelang.quiet_update import apply_staged as _apply_staged, staged_update
+    _staged = staged_update(state_dir, Path(__file__).resolve().parent)
+    if _staged.get("status") == "applying":
+        print("  update     : previous installation is unresolved; recovery and installer retained. Startup refused.", flush=True)
+        raise SystemExit(1)
+    if _staged.get("staged") and _staged.get("status") == "staged":
+        from nodelang.application_update_recovery import validate_update_ready
+        _update_content = Path(str(state_path) + ".conversations.sqlite3")
+        _applied = _apply_staged(state_dir, Path(__file__).resolve().parent,
+            before_apply=lambda: validate_update_ready(state_dir, Path(__file__).resolve().parent,
+                state_path, _update_content if _update_content.is_file() else None))
+        if _applied.get("applied"):
+            print("  update     : installed build %s; relaunching" % _applied.get("build_id"), flush=True)
+            import subprocess as _sp
+            try:
+                _instance_lock.close()
                 _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
-                raise SystemExit(0)
-    else:
+            except Exception as _relaunch_refusal:
+                print("  update     : installed; relaunch failed (%s). Reopen ArchHub; recovery is retained." % type(_relaunch_refusal).__name__, flush=True)
+                raise SystemExit(1) from None
+            raise SystemExit(0)
         print("  update     : %s" % _applied.get("reason"), flush=True)
+        if _applied.get("status") == "applying":
+            print("  update     : installation is unresolved; saved recovery retained. Startup refused.", flush=True)
+            raise SystemExit(1)
 except SystemExit:
     raise
 except Exception as _update_refusal:
     print("  update     : not applied -- %s" % _update_refusal, flush=True)
 
+first_boot = not _saved_graph_exists(state_dir, state_path)
+print("  first boot  :", first_boot, flush=True)
 started = time.perf_counter()
 
 def _boot():
@@ -294,13 +342,56 @@ def _boot():
     return profile_boot(_boot_unsampled, state_dir=state_dir)
 
 def _boot_unsampled():
-    return ApplicationServer(
+    from nodelang.desktop import create_workshop_transport, create_social_execution_arguments
+    from nodelang.existing_workshop_native_host import ExistingWorkshopNativeHost
+    from nodelang.model_execution_broker import (
+        ApplicationOpenRouterCredentialResolver, ModelExecutionBroker,
+    )
+    from nodelang.project_work_execution_broker import ProjectWorkExecutionBroker
+    artifact_root = state_dir / "workshop-artifacts"
+    artifact_root.mkdir(exist_ok=True)
+    workshop_transport = create_workshop_transport(state_dir)
+    workshop_arguments = ({"session_link_transport": workshop_transport}
+                          if workshop_transport is not None else {})
+    workshop_arguments.update(create_social_execution_arguments())
+    if workshop_transport is None:
+        print("  workshop   : native transport unavailable; declare SESSION_LINK_NODE or install the bundled runtime", flush=True)
+    server = ApplicationServer(
         universal_state_path=state_path,
         pipeline_effect_engines=PIPELINE_ENGINES,
         enable_machine_transport=True,
         machine_descriptor_path=descriptor_path,
         machine_key_provider=machine_key_provider,
-    ).start()
+        project_work_execution_broker=ProjectWorkExecutionBroker(artifact_root),
+        model_execution_broker=ModelExecutionBroker(
+            workspace_root=Path(__file__).resolve().parent,
+            credential_resolver=ApplicationOpenRouterCredentialResolver(),
+            timeout_seconds=60.0,
+        ),
+        **workshop_arguments,
+    )
+    try:
+        recovery = server.conversation_content.backup_recovery(state_dir / "backups",
+            authentication_context=server.universal_registry.authorization.session.context(),
+            timeout_seconds=2.0)
+        print("  backup     : checked post-construction recovery saved: " + recovery.name, flush=True)
+    except Exception as refusal:
+        print("  backup     : not completed (%s); existing backups retained" % type(refusal).__name__, flush=True)
+        if isinstance(refusal, TimeoutError):
+            print("  backup     : startup recovery exceeded its 2-second budget; no new recovery was published", flush=True)
+        sqlite_code = getattr(refusal, "sqlite_errorcode", None)
+        if type(sqlite_code) is int:
+            print("  backup     : SQLite error code %d; recovery remains incomplete" % sqlite_code, flush=True)
+        for note in getattr(refusal, "__notes__", ()):
+            print("  backup     : " + note, flush=True)
+    server._existing_workshop_native_host = ExistingWorkshopNativeHost(server,
+        state_dir=state_dir, descriptor_path=descriptor_path, key_provider=machine_key_provider)
+    try:
+        server.enable_native_workshop_compliance()
+    except Exception:
+        server.close()
+        raise
+    return server.start()
 
 def _release_own_fence(refusal) -> None:
     """A failed _boot() can leave this process holding the store fence twice over:
@@ -326,10 +417,6 @@ try:
     server = _boot()
 except Exception as refusal:
     boot_refusal = refusal
-    # SELF-HEALING BOOT. A desktop that refuses to open over local state
-    # it could rebuild is a locked door, not a security posture. The
-    # suspect universe is QUARANTINED -- never destroyed -- and a fresh
-    # one is born; the refusal is printed, not swallowed.
     # A lock held by a dying predecessor clears on its own; retrying once
     # costs a second and saves the founder's whole graph from being set
     # aside for a transient.
@@ -358,279 +445,18 @@ except Exception as refusal:
             # Each failed attempt can leave OUR OWN fence behind; without
             # clearing it every later attempt fails on ourselves.
             _release_own_fence(again)
-# WHICH REFUSALS MAY COST HIM THE GRAPH. This list used to name what to
-# KEEP, so anything unnamed fell through and set the graph aside. Four
-# times it did, for four different reasons, and only two were on the list:
-#
-#   runtime descriptor signature is invalid        (2026-09-01)
-#   held by another live process                   (2026-09-01)
-#   disk I/O error                                 (2026-09-03)
-#   Application Agent Body catalog binding drifted (2026-09-07)
-#
-# The last one is the tell. A binding disagreeing with a catalogue is
-# DERIVED state; every Cell underneath it was intact, and the founder
-# opened an empty canvas over 5 GB of his own work because a projection
-# had drifted. So the default is inverted: the graph is kept unless the
-# bytes themselves cannot be read as a database. Everything else -- a
-# lock, a transient, a signature, a drifted binding -- stops the boot and
-# says so, and he decides. Quarantine is still not destruction, but a
-# quarantine he never asked for and cannot see is indistinguishable from
-# losing the work (2026-09-08).
-_UNREADABLE_MARKS = (
-    "file is not a database",
-    "database disk image is malformed",
-    "database corruption",
-    "no such table",
-)
-if boot_refusal is not None and not any(
-    mark in str(boot_refusal) for mark in _UNREADABLE_MARKS
-):
-    print("  could not open the saved graph: %s"
-          % str(boot_refusal).splitlines()[-1][:160], flush=True)
-    print("  the graph is KEPT IN PLACE. This is not corruption: the Cells"
-          " were readable and something above them refused.", flush=True)
-    print("  close every ArchHub process and launch again; if it repeats,"
-          " the refusal above names what to fix.", flush=True)
-    raise boot_refusal
+# A startup failure never selects a replacement graph. Recovery of damaged
+# state is a separate operation; its files and original refusal stay visible.
 if boot_refusal is not None:
     print("  could not open the saved graph: %s"
-          % str(boot_refusal).splitlines()[-1][:160])
-    set_aside = state_dir / ("set-aside-%s" % time.strftime("%Y%m%d-%H%M%S"))
-    set_aside.mkdir(parents=True, exist_ok=True)
-    for stale in state_dir.glob(state_path.name + "*"):
-        try:
-            stale.rename(set_aside / stale.name)
-        except OSError:
-            pass
-    print("  old data kept in %s -- starting a fresh graph ..." % set_aside.name)
-    server = _boot()
+          % str(boot_refusal).splitlines()[-1][:160], flush=True)
+    print("  the saved graph is KEPT IN PLACE. No replacement graph was created.", flush=True)
+    raise boot_refusal
 print(f"  booted in {time.perf_counter()-started:.0f}s", flush=True)
 
-# Every user gets their own brain. The daemon on :8473 is what BABOOM, the
-# memory panel and every agent speak to; on a machine that has none, the
-# shipped personal_brain package is started here, hidden, once.
-def _brain_answers(port=8473, timeout=1.5, strict=False) -> bool:
-    """True only when the thing on this port is really our brain.
-
-    A bare TCP connect said yes to ANY listener. On a shared machine that
-    made ArchHub hand its memory to a stranger's service that happened to
-    sit on 8473. The brain speaks MCP over /mcp, so ask it in MCP and read
-    the answer; anything that cannot answer in MCP is not the brain.
-    Kept short because this runs on the boot path.
-    """
-    import json as _json
-    import urllib.error as _err
-    import urllib.request as _req
-
-    if strict:
-        # Ask for WORK. Measured on the founder's daemon at 04:20 on
-        # 2026-09-06: initialize answered in 0.0 s while every tools/call hung,
-        # so a handshake-only probe reported a brain that could do nothing as
-        # healthy. brain.health is the cheapest real tool (about 1.8 s well).
-        ask = _json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "brain.health", "arguments": {}},
-        }).encode("utf-8")
-    else:
-        ask = _json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "archhub-launcher", "version": "1"},
-            },
-        }).encode("utf-8")
-    request = _req.Request(
-        "http://127.0.0.1:%d/mcp" % port, data=ask,
-        headers={"Content-Type": "application/json",
-                 "Accept": "application/json, text/event-stream"},
-        method="POST",
-    )
-    try:
-        with _req.urlopen(request, timeout=timeout) as answer:
-            body = answer.read(4096).decode("utf-8", "replace")
-    except _err.HTTPError as refusal:
-        # An MCP endpoint that refuses this call still refuses in MCP, and
-        # that refusal identifies it just as well as a success would.
-        try:
-            body = refusal.read(4096).decode("utf-8", "replace")
-        except Exception:
-            return False
-    except Exception as unanswered:
-        # A BUSY brain is not an absent one. The daemon serves every agent on
-        # this machine and a heavy tool call holds it for tens of seconds; a
-        # short probe that timed out was read as "no brain" and the watchdog
-        # started another one, twice in a row (2026-09-06 launcher.log). When
-        # something still holds the port, leave it alone: only an unheld port,
-        # or a listener that answers and is not MCP, means start our own.
-        if strict:
-            # The watchdog asks strictly: it needs to know whether the daemon
-            # SPOKE, not whether something is still on the port. A held port
-            # answers the boot question ("is a brain there") and cannot answer
-            # this one ("is it still working").
-            return False
-
-        if isinstance(unanswered, (TimeoutError, OSError)) and _port_held(port):
-            return True
-        return False
-    if "jsonrpc" not in body:
-        return False
-    if strict:
-        # A tool answer, or a refusal that only a working dispatcher can make.
-        return '"result"' in body or '"error"' in body
-    return any(mark in body for mark in
-               ("protocolVersion", "serverInfo", "capabilities", '"error"'))
-
-
-def _port_held(port) -> bool:
-    """Whether anything at all is listening there, in a few milliseconds."""
-    import socket as _sk
-
-    probe = _sk.socket()
-    probe.settimeout(0.4)
-    try:
-        return probe.connect_ex(("127.0.0.1", int(port))) == 0
-    except Exception:
-        return False
-    finally:
-        probe.close()
-
-
-def _ensure_brain() -> str:
-    import subprocess as _sp
-    # The brain serves /mcp. Only an answer in MCP counts as a brain being
-    # there -- never start a second one on it, and never talk to a stranger.
-    def _alive() -> bool:
-        return _brain_answers()
-    if _alive():
-        return "answering on :8473"
-    app_dir = Path(__file__).resolve().parent
-    if not (app_dir / "personal_brain" / "__init__.py").is_file():
-        return "no brain package shipped beside this launcher"
-    env = dict(os.environ); env["PYTHONPATH"] = str(app_dir) + os.pathsep + env.get("PYTHONPATH", "")
-    # The brain's Workshop tools need the governed workspace root. A machine
-    # that has one (the founder's 00.ARCHUB) gets it; a stranger's install
-    # has none and the brain keeps those tools fail-closed, as it should.
-    if not env.get("ARCHHUB_WORKSPACE_ROOT"):
-        for candidate in (Path.home() / "00.ARCHUB", Path(os.environ.get("USERPROFILE", "")) / "00.ARCHUB"):
-            if (candidate / "AGENTS.md").is_file():
-                env["ARCHHUB_WORKSPACE_ROOT"] = str(candidate)
-                break
-    windowless = Path(sys.executable).with_name("pythonw.exe")
-    exe = str(windowless if windowless.exists() else sys.executable)
-    # The daemon's own words survive it: a crash leaves its last lines in
-    # state_dir/brain.log instead of vanishing with a windowless process
-    # (2026-09-05: the brain went silent with nothing to read).
-    # No permission is asked before starting one. The daemon TAKES ITS PORT
-    # before it builds anything, so a redundant start loses the bind in
-    # milliseconds and exits having cost one socket. Guarding this with a
-    # lock instead was wrong twice over: it solved a problem the port claim
-    # already solves, and when a starter died mid-boot its lock outlived it
-    # and left the founder with NO brain at all until the lock aged out
-    # (2026-09-07).
-    brain_log = open(state_dir / "brain.log", "ab")
-    _sp.Popen([exe, "-m", "personal_brain.server", "--http", "8473"], env=env, cwd=str(app_dir), close_fds=True,
-              stdin=_sp.DEVNULL, stdout=brain_log, stderr=brain_log,
-              creationflags=getattr(_sp, "DETACHED_PROCESS", 0) | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(_sp, "CREATE_NO_WINDOW", 0))
-    for _ in range(20):
-        time.sleep(0.5)
-        if _alive():
-            return "started on :8473"
-    return "starting on :8473"
-
-try:
-    print("  brain      : %s" % _ensure_brain(), flush=True)
-except Exception as _brain_refusal:
-    print("  brain      : not started -- %s" % _brain_refusal, flush=True)
-
-
-# Two minutes was far too eager. A brain that has just started spends its
-# first minutes pushing the whole store to the cloud, and the write lock it
-# holds makes a health probe time out -- so the watchdog killed it, the new one
-# started the same sync, and it killed that one too: 46 restarts in an hour on
-# the founder's machine (launcher.log, 2026-09-06). Ten minutes of continuous
-# silence is a wedge; anything shorter is work.
-_WEDGED_CHECKS_BEFORE_REPLACING = 30  # thirty checks at 20 s: ten minutes
-_BRAIN_SETTLING_SECONDS = 600.0       # never replace one younger than this
-
-
-def _replace_a_wedged_brain(port=8473) -> str:
-    """Stop a daemon that holds the port and has stopped answering.
-
-    Holding the port used to be proof enough that the brain was there, which
-    it is for a BUSY daemon and is not for a WEDGED one: the founder was left
-    with a listener that answered nothing for the rest of the session. After
-    two minutes of silence from something that still holds the port, it is not
-    busy any more. Only a process that is really serving this port is stopped.
-    """
-    import subprocess as _sp
-
-    stopped = []
-    try:
-        listing = _sp.run(
-            ["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
-            timeout=15, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
-        for line in listing.stdout.splitlines():
-            parts = line.split()
-            if len(parts) >= 5 and parts[0] == "TCP" and parts[-2] == "LISTENING"                     and parts[1].endswith(":%d" % port):
-                stopped.append(parts[-1])
-    except Exception as exc:
-        return "could not find what holds :%d (%s)" % (port, str(exc)[:60])
-    for pid in dict.fromkeys(stopped):
-        try:
-            _sp.run(["taskkill", "/PID", pid, "/F"], capture_output=True,
-                    timeout=15, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
-        except Exception:
-            pass
-    return "stopped the wedged holder of :%d (pid %s)" % (
-        port, ", ".join(dict.fromkeys(stopped)) or "none found")
-
-
-def _watch_brain() -> None:
-    """Keep the brain online for as long as ArchHub runs.
-
-    Starting it once at boot left the founder with a dead :8473 the moment
-    the daemon fell over (2026-09-05, 16:20). Every 20 s: if nothing answers
-    on the port, start it again and say so in the launch log. A daemon that
-    holds the port but has answered nothing for two minutes is wedged, not
-    busy, and is replaced rather than waited on forever.
-    """
-    import threading as _t
-    import time as _time
-
-    def loop() -> None:
-        import time as _clock
-
-        silent = 0
-        started_watching = _clock.monotonic()
-        while True:
-            _time.sleep(20)
-            try:
-                outcome = str(_ensure_brain())
-            except Exception as exc:
-                outcome = "watch failed (%s)" % str(exc)[:80]
-            if outcome.startswith("answering"):
-                # _brain_answers treats a held port as alive, so reaching here
-                # does not yet mean the daemon spoke. Ask it directly.
-                if _brain_answers(timeout=12.0, strict=True):
-                    silent = 0
-                    continue
-                silent += 1
-                young = (_clock.monotonic() - started_watching) < _BRAIN_SETTLING_SECONDS
-                if silent >= _WEDGED_CHECKS_BEFORE_REPLACING and not young:
-                    silent = 0
-                    started_watching = _clock.monotonic()
-                    print("  brain      : %s (watchdog)" % _replace_a_wedged_brain(),
-                          flush=True)
-                continue
-            silent = 0
-            print("  brain      : %s (watchdog)" % outcome, flush=True)
-
-    _t.Thread(target=loop, name="archhub-brain-watch", daemon=True).start()
-
-
-_watch_brain()
-print("  URL:", server.bootstrap_url, flush=True)
+# Brain and Workshop belong to the application owner opened above.
+# Do not start, poll, replace or kill a separate legacy Brain on a fixed port.
+print("  URL:", server.public_url, flush=True)
 
 
 def _publish_map_to_cloud():
@@ -688,6 +514,7 @@ _active_runtime = (
     Path(os.environ["LOCALAPPDATA"]) / "ArchHub" / "active-universal-runtime.json"
 )
 _previous_active = None
+_announced_active = None
 if os.environ.get("ARCHHUB_TEST_STATE_DIR"):
     # A verification run opens its OWN graph in its own state directory.
     # Announcing it would point the brain, BABOOM and every governed
@@ -701,62 +528,44 @@ else:
         _previous_active = (
             _active_runtime.read_bytes() if _active_runtime.is_file() else None
         )
-        _active_runtime.write_bytes(descriptor_path.read_bytes())
+        _announcement = descriptor_path.read_bytes()
+        _active_runtime.write_bytes(_announcement)
+        _announced_active = _announcement
         print("  runtime    : announced as the machine's active universal "
               "runtime", flush=True)
     except OSError as _refusal:
         _previous_active = None
         print("  runtime    : could not announce (%s)" % _refusal, flush=True)
 
-# The founder's first canvas: the wall pipeline plus the brain and BABOOM
-# nodes, seeded idempotently and run once so every card opens carrying a
-# real answer instead of a blank.
+def _initialize_startup_pipeline(owner, *, first_boot):
+    """Seed a new graph only; opening an application never invokes its effects."""
+    if not first_boot:
+        return None
+    from nodelang.universal_pipeline import seed_wall_pipeline
+    authority = owner.universal_registry.authorization
+    # The owner already serves requests. Use its ordinary mutation admission,
+    # minting the existing process context before taking the mutation lock.
+    for attempt in range(10):
+        try:
+            context = authority.session.context(minimum_validity_seconds=5)
+            with owner.mutation_lock, authority.broker.live_context(context):
+                return seed_wall_pipeline(owner.universal_store, owner.universal_registry,
+                    authentication_context=context)
+        except Exception as clash:
+            # Only idempotent graph seeding may retry a revision conflict.
+            # An engine invocation cannot safely be repeated on that evidence.
+            if "expected revision" not in str(clash) or attempt == 9:
+                raise
+            time.sleep(0.25 * (attempt + 1))
+
+
+# first_boot comes from the validated saved-graph check, not a UI marker.
+# Existing graphs retain their nodes, parameters and previous results. Repair
+# seeding and execution remain available through their admitted application routes.
 try:
-    from nodelang.universal_pipeline import (
-        run_universal_pipeline,
-        seed_wall_pipeline,
-    )
-    # Seeding reads the canvas, then writes to it; a commit landing in
-    # between makes the write's expected revision stale. That is ordinary
-    # optimistic concurrency, and its answer is to re-read and try again
-    # -- the seed is idempotent, so a retry adds nothing twice. Without
-    # this a FRESH INSTALL opened with an empty canvas.
-    for attempt in range(10):
-        try:
-            seed_wall_pipeline(
-                server.universal_store, server.universal_registry
-            )
-            break
-        except Exception as clash:
-            # Only a revision clash is worth retrying. Anything else is a real
-            # refusal and must surface at once instead of being slept over
-            # four times. Four tries 0.4 s apart also lost to the boot's own
-            # writers (the runtime announcement, the first map push): the
-            # canvas came up empty with "expected revision 25791, current
-            # revision is 25792". Ten tries with growing backoff outlast them.
-            if "expected revision" not in str(clash) or attempt == 9:
-                raise
-            time.sleep(0.25 * (attempt + 1))
-    # The run is optimistic about the revision exactly like the seed above,
-    # and only the seed was retried. BABOOM now attaches during boot and its
-    # presence lease is another writer, so the run lost the race and the
-    # founder booted to "not seeded -- expected revision 41093, current
-    # revision is 41094" with no node run at all (2026-09-07). Running the
-    # pipeline twice runs nothing twice: a node that already ran is done.
-    outcome = None
-    for attempt in range(10):
-        try:
-            outcome = run_universal_pipeline(
-                server.universal_store,
-                server.universal_registry,
-                effect_engines=PIPELINE_ENGINES,
-            )
-            break
-        except Exception as clash:
-            if "expected revision" not in str(clash) or attempt == 9:
-                raise
-            time.sleep(0.25 * (attempt + 1))
-    print("  pipeline   : %d node(s) ran" % outcome["ran"], flush=True)
+    _initialize_startup_pipeline(server, first_boot=first_boot)
+    print("  pipeline   : %s; execution awaits an admitted Run" % (
+        "initial seed checked" if first_boot else "saved graph retained"), flush=True)
 except Exception as refusal:
     # A refusal nobody can locate is a refusal nobody can fix: name the
     # exact call that raised, not only its message.
@@ -814,15 +623,8 @@ window.setWindowTitle("ArchHub")
 import ctypes
 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ArchHub.Test")
 from PyQt6.QtGui import QIcon
-# The installer ships archhub.ico beside this file; the 12.PRODUCTION tree
-# exists only on the founder workstation, so it is the fallback, not the
-# first look -- a colleague window carried the default python icon.
-_icon_candidates = (
-    Path(__file__).resolve().parent / "archhub.ico",
-    Path(__file__).resolve().parents[1]
-    / "12.PRODUCTION" / "app" / "assets" / "archhub.ico",
-)
-_icon_path = next((c for c in _icon_candidates if c.is_file()), _icon_candidates[0])
+# Source and installer use the same owned asset beside this launcher.
+_icon_path = Path(__file__).resolve().parent / "archhub.ico"
 if _icon_path.is_file():
     app.setWindowIcon(QIcon(str(_icon_path)))
     window.setWindowIcon(QIcon(str(_icon_path)))
@@ -830,13 +632,53 @@ window.resize(1480, 920)
 window.setMinimumSize(960, 640)
 view = QWebEngineView(window)
 window.setCentralWidget(view)
+from nodelang.studio_downloads import install_studio_downloads
+
+
+def _download_status(status):
+    window.statusBar().showMessage(status["detail"])
+
+
+_studio_downloads = install_studio_downloads(
+    view.page().profile(), view.page(), server.public_url,
+    parent=window, on_status=_download_status)
+app.aboutToQuit.connect(_studio_downloads.close)
 # The bootstrap lands on / to mint the session cookie, then the window
 # lives on the studio face.
 _booted = {"done": False}
+_update_boot = {"pending": _staged.get("status") == "awaiting_boot", "checks": 0}
+
+
+def _acknowledge_update_surface():
+    """Acknowledge after the saved graph and Studio have actually mounted."""
+    if not _update_boot["pending"] or _update_boot["checks"] >= 60:
+        return
+    _update_boot["checks"] += 1
+
+    def observed(ready):
+        if ready:
+            _update_boot["pending"] = False
+            def confirm():
+                from nodelang.quiet_update import confirm_applied
+                result = confirm_applied(state_dir, Path(__file__).resolve().parent)
+                print("  update     : %s" % result.get("reason"), flush=True)
+            import threading as _ack_threading
+            _ack_threading.Thread(target=confirm, name="archhub-update-boot-ack", daemon=True).start()
+        else:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(2000, _acknowledge_update_surface)
+
+    view.page().runJavaScript(
+        "Boolean(window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.graph && "
+        "document.getElementById('root')?.children.length)", observed)
+
+
 def _to_studio(ok):
     if ok and not _booted["done"]:
         _booted["done"] = True
         view.load(QUrl(server.public_url + "/studio"))
+    elif ok and view.url().path().startswith("/studio"):
+        _acknowledge_update_surface()
 view.loadFinished.connect(_to_studio)
 # The studio's Browse buttons open THIS window's native file dialog; the
 # chosen path goes back over the same origin. Runs on the Qt thread.
@@ -898,14 +740,29 @@ def _tray_open():
     _QT.singleShot(150, _settle)
 
 def _tray_check_updates():
-    import threading as _t
-    _t.Thread(target=_stage_once, name="archhub-update-check", daemon=True).start()
-    _tray.showMessage("ArchHub", "Checking for a newer build; BABOOM will offer Restart now if there is one.")
+    server.application_update.check()
+    _tray.showMessage("ArchHub", "Checking for updates. Download status is available inside the app.")
+
+import threading as _restart_threading
+_update_restart_requested = _restart_threading.Event()
+_restart_after_shutdown = False
+from nodelang.application_update import ApplicationUpdate
+server.application_update = ApplicationUpdate(state_dir, Path(__file__).resolve().parent,
+    request_restart=_update_restart_requested.set, initial_stage=_staged)
+server._desktop_request_update_restart = server.application_update.reload
+
 
 def _tray_restart_to_update():
-    import subprocess as _sp
+    try:
+        server.application_update.reload()
+    except Exception as refusal:
+        _tray.showMessage("ArchHub", str(refusal))
+
+
+def _begin_update_exit():
+    global _restart_after_shutdown
+    _restart_after_shutdown = True
     window.quitting = True
-    _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")], close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
     app.quit()
 
 def _tray_quit():
@@ -946,6 +803,10 @@ def _watch_quit_request() -> None:
         pass
 
     def _look():
+        if _update_restart_requested.is_set():
+            _update_restart_requested.clear()
+            _begin_update_exit()
+            return
         if shower.is_file():
             try:
                 shower.unlink()
@@ -968,8 +829,9 @@ def _watch_quit_request() -> None:
     app._archhub_quit_watch = timer
 
 def _tray_menu_about_to_show():
-    _restart_action.setVisible((state_dir / "updates" / "staged.json").is_file())
+    _restart_action.setVisible(server.application_update.status().get("state") == "ready")
 
+_watch_quit_request()
 if QSystemTrayIcon.isSystemTrayAvailable():
     _tray = QSystemTrayIcon(app.windowIcon(), app)
     _tray.setToolTip("ArchHub - running")
@@ -984,7 +846,6 @@ if QSystemTrayIcon.isSystemTrayAvailable():
     _tray.activated.connect(lambda reason: _tray_open() if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick) else None)
     _tray.show()
     window._tray = _tray
-    _watch_quit_request()
     # The notify card lands on this tray. Engines run on worker threads and
     # Qt widgets belong to this one, so the ask crosses over as a queued
     # signal rather than a direct call.
@@ -1006,201 +867,402 @@ else:
 window.raise_()
 window.activateWindow()
 
-# BABOOM: the ambient companion, attached through the SAME signed
-# agent-session path any governed agent uses. A failure to attach is
-# printed honestly and never fakes a companion.
+# BABOOM: one signed host, prepared off the GUI thread and projected on it.
+# The relay resolves this attachment per request, including after a slow boot.
 baboom_host = None
-try:
-    from nodelang.baboom_attach import attach_baboom_companion
-    from nodelang.application_machine_transport import MachineTransportError
-    # The runtime pipe comes up a beat after the HTTP server on a busy
-    # machine. One attempt printed "universal runtime did not respond" and
-    # left the founder with no companion for the whole session; a short
-    # retry is what every client of a just-started service does.
-    _attach_error = None
-    for _attempt in range(6):
+baboom_window = None
+_baboom_stop = threading.Event()
+from PyQt6.QtCore import (
+    QObject as _BaboomObject, QTimer as _BaboomTimer, Qt as _BaboomQt,
+    pyqtSignal as _baboom_signal, pyqtSlot as _baboom_slot,
+)
+
+
+class _BaboomAttachment(_BaboomObject):
+    ready = _baboom_signal(object)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.worker = None
+        self.pending_host = None
+        self.ready.connect(self.land, _BaboomQt.ConnectionType.QueuedConnection)
+
+    def shutdown(self):
+        """Quiesce attachment before its server or journal can be closed."""
+        _baboom_stop.set()
+        if self.worker is not None:
+            self.worker.join(timeout=5.0)
+            if self.worker.is_alive():
+                raise RuntimeError("BABOOM attachment did not stop; server teardown refused")
+        host = self.pending_host or baboom_host
+        if host is not None:
+            host.stop(timeout_seconds=1.0)
+            if host.running:
+                raise RuntimeError("BABOOM heartbeat did not stop; server teardown refused")
+
+    @_baboom_slot(object)
+    def land(self, host):
+        global baboom_host, baboom_window
+        # Shutdown and duplicate deliveries cannot create an extra companion.
+        if _baboom_stop.is_set() or baboom_host is not None:
+            if host is not baboom_host:
+                host.stop(timeout_seconds=0.01)
+            return
+        companion = None
         try:
-            # A retry is the same launcher, not a second process: connect()
-            # binds the session identity before start() can time out, so a
-            # retry under the same id is refused as "already bound". Each
-            # attempt therefore carries its own id; the abandoned binding
-            # expires on its own lease.
-            baboom_host, baboom_window = attach_baboom_companion(
-                server,
-                state_dir=state_dir,
-                descriptor_path=descriptor_path,
-                key_provider=machine_key_provider,
-                external_session_id=(
-                    "founder-desktop-baboom" if _attempt == 0
-                    else "founder-desktop-baboom:retry-%d" % _attempt
-                ),
+            from nodelang.baboom_native_runtime import create_baboom_native_projection
+            companion = create_baboom_native_projection(
+                host, position_path=state_dir / "baboom-position.json"
             )
-            break
-        except Exception as exc:
-            text = str(exc)
-            if "did not respond" not in text and "already bound" not in text:
-                raise
-            _attach_error = exc
-            time.sleep(2.5)
-    else:
-        raise _attach_error
-    # Where BABOOM actually lands, every time it changes. The founder has
-    # twice reported it missing while the app said it was drawing.
-    try:
-        controller = getattr(baboom_window, "controller", None) or getattr(baboom_host, "controller", None)
-        if controller is not None and hasattr(controller, "watch_geometry"):
-            controller.watch_geometry(state_dir / "baboom-geometry.log")
-    except Exception:
-        pass
-    baboom_window.show()
-    # show() only makes the widget exist; projection is what makes BABOOM
-    # actually draw itself and follow the graph.
-    baboom_window.start_projection()
-    # The cockpit drives THIS application: instructions typed into the cloud
-    # ask bar are claimed here, put to BABOOM through its own signed session,
-    # and answered back; the live map projection is re-published as it changes.
-    try:
-        from nodelang.cloud_relay import start_cloud_relay as _start_relay
-        from nodelang.universal_pipeline import project_atlas_map as _atlas
-
-        _controller = getattr(baboom_window, "controller", None) or getattr(baboom_host, "controller", None)
-        _respond = (lambda u: _controller.respond(u)) if _controller is not None else (lambda u: baboom_host.respond_input(u))
-        _execute = (lambda u: _controller.execute(u)) if _controller is not None else (lambda u: baboom_host.execute_input(u))
-        cloud_relay = _start_relay(
-            appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
-            respond=_respond, execute=_execute,
-            map_script=lambda: _atlas(server.universal_store, server.universal_registry),
-            hosts=lambda: server._host_rows(),
-        )
-        print("  cockpit    :", "relay on (%s)" % cloud_relay.base_url if cloud_relay else "relay off (no cloud session or consent)", flush=True)
-    except Exception as _relay_error:
-        print("  cockpit    : relay failed (%s)" % str(_relay_error)[:120], flush=True)
-    # Say honestly whether the companion has anything to draw: a host
-    # with no snapshot, or a screen too crowded for a clear placement,
-    # hides itself -- and a silent hide reads as "BABOOM is broken".
-    from PyQt6.QtCore import QTimer as _QTimer
-
-    def _report_companion():
-        snapshot = getattr(baboom_host, "latest_snapshot", None)
-        if snapshot is None:
-            print("  BABOOM     : attached, waiting for its first snapshot",
-                  flush=True)
-            return
-        visible = baboom_window.isVisible()
-        rect = baboom_window.geometry()
-        print("  BABOOM     : drawing=%s at %dx%d+%d+%d" % (
-            visible, rect.width(), rect.height(), rect.x(), rect.y()),
-            flush=True)
-    _QTimer.singleShot(6000, _report_companion)
-    print("  BABOOM     : attached (signed agent session)", flush=True)
-except Exception as refusal:
-    print("  BABOOM     : not attached -- %s" % refusal, flush=True)
-    # Giving up here cost the founder his companion for the whole session
-    # (2026-09-07 05:53): the app was simply busy for the fifteen seconds the
-    # retries covered - its own boot writes and the brain's startup observes
-    # both queue on the one mutation lock. Keep asking quietly in the
-    # background; the companion arrives late instead of never, and the log
-    # says when.
-    def _keep_attaching():
-        import time as _t
-        from PyQt6.QtCore import QTimer as _LateTimer
-        from nodelang.baboom_attach import attach_baboom_companion as _attach
-        for _later in range(40):          # ten minutes, every fifteen seconds
-            _t.sleep(15.0)
+            controller = getattr(companion, "controller", None)
             try:
-                _host, _window = _attach(
-                    server,
-                    state_dir=state_dir,
-                    descriptor_path=descriptor_path,
-                    key_provider=machine_key_provider,
-                    external_session_id="founder-desktop-baboom:late-%d" % _later,
-                )
+                if controller is not None and hasattr(controller, "watch_geometry"):
+                    controller.watch_geometry(state_dir / "baboom-geometry.log")
             except Exception:
-                continue
-            def _land(host=_host, window=_window):
-                globals()["baboom_host"] = host
-                try:
-                    controller = getattr(window, "controller", None) or getattr(host, "controller", None)
-                    if controller is not None and hasattr(controller, "watch_geometry"):
-                        controller.watch_geometry(state_dir / "baboom-geometry.log")
-                except Exception:
-                    pass
-                window.show()
-                window.start_projection()
-                print("  BABOOM     : attached on a later try (%d s after boot)"
-                      % ((_later + 1) * 15), flush=True)
-            _LateTimer.singleShot(0, _land)
-            return
-    threading.Thread(target=_keep_attaching, name="archhub-baboom-attach", daemon=True).start()
-    # The cockpit relay used to live inside the BABOOM block, so a companion
-    # that failed to attach took the founder's whole cockpit with it: every
-    # control on the web read "waiting for the app push" and nothing said why
-    # (2026-09-06 00:27, "runtime device proof challenge is invalid"). They are
-    # separate failures now. Without BABOOM the relay answers from the server
-    # itself, so questions and engine runs still work; only the companion's own
-    # voice is missing.
+                print("  BABOOM     : geometry logging unavailable", flush=True)
+            companion.show()
+            companion.start_projection()
+            host.start()
+            baboom_window = companion
+            baboom_host = host
+            print("  BABOOM     : attached (signed agent session)", flush=True)
+        except Exception as refusal:
+            host.stop(timeout_seconds=0.01)
+            if companion is not None:
+                companion.close()
+                companion.deleteLater()
+            print("  BABOOM     : projection unavailable (%s)" % type(refusal).__name__, flush=True)
+
+
+_baboom_attachment = _BaboomAttachment(app)
+app.aboutToQuit.connect(_baboom_stop.set)
+
+
+def _keep_attaching():
+    from nodelang.application_machine_transport import MachineTransportError
+    from nodelang.baboom_attach import prepare_baboom_host
+
+    host = None
+    transient = {
+        "universal runtime did not respond",
+        "universal runtime pipe is unavailable",
+        "machine request timed out",
+    }
+    handed_off = False
     try:
-        from nodelang.cloud_relay import start_cloud_relay as _start_relay_alone
-        from nodelang.universal_application import (
-            respond_universal_baboom_utterance as _respond_alone,
+        for attempt in range(40):
+            if _baboom_stop.wait(0.0 if attempt == 0 else 15.0):
+                return
+            try:
+                if host is None:
+                    host = prepare_baboom_host(
+                        server, state_dir=state_dir, descriptor_path=descriptor_path,
+                        key_provider=machine_key_provider,
+                        external_session_id="founder-desktop-baboom",
+                        cancellation_event=_baboom_stop,
+                    )
+                    _baboom_attachment.pending_host = host
+                if _baboom_stop.is_set():
+                    return
+                # A failed first frame retains the already signed client. A retry
+                # renews that presence instead of minting another Agent Session.
+                host.connect()
+            except Exception as refusal:
+                retryable = isinstance(refusal, (TimeoutError, ConnectionError)) or (
+                    isinstance(refusal, MachineTransportError) and str(refusal) in transient
+                )
+                print("  BABOOM     : %s (attempt %d, %s)" % (
+                    "waiting for runtime" if retryable else "attachment refused",
+                    attempt + 1, type(refusal).__name__), flush=True)
+                if retryable:
+                    continue
+                return
+            if _baboom_stop.is_set():
+                return
+            # This receiver was created on the GUI thread. No Qt object is
+            # constructed by this worker; an undelivered host has no heartbeat.
+            try:
+                _baboom_attachment.ready.emit(host)
+            except RuntimeError:
+                print("  BABOOM     : attachment receiver unavailable", flush=True)
+                return
+            handed_off = True
+            return
+        print("  BABOOM     : runtime remained unavailable after 40 attempts", flush=True)
+
+    finally:
+        if host is not None and not handed_off:
+            host.stop(timeout_seconds=0.01)
+
+
+def _start_baboom_attachment():
+    if not _baboom_stop.is_set() and _baboom_attachment.worker is None:
+        _baboom_attachment.worker = threading.Thread(
+            target=_keep_attaching, name="archhub-baboom-attach", daemon=True
         )
-        from nodelang.universal_pipeline import project_atlas_map as _atlas_alone
+        _baboom_attachment.worker.start()
 
-        _context = server.universal_registry.authorization.session.context()
 
-        def _answer_without_baboom(utterance):
-            return _respond_alone(
-                server.universal_store, server.universal_registry,
-                utterance=utterance, authentication_context=_context,
-            )
+# Start only once the window's event loop is processing events.
+_BaboomTimer.singleShot(0, _start_baboom_attachment)
 
-        def _refuse_without_baboom(utterance):
-            # Reads are safe from here; an ACT must go through the companion's
-            # signed session and the application's mutation lock, so the
-            # cockpit is told plainly rather than acting unsigned.
-            return {
-                "command": {"intent": "open-question", "payload": utterance},
-                "response": {
-                    "kind": "companion-absent",
-                    "summary": ("BABOOM did not attach on this launch, so the app can "
-                                "answer but cannot act. Reopen ArchHub to restore it."),
-                    "data": {},
-                },
-            }
 
-        cloud_relay = _start_relay_alone(
-            appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
-            respond=_answer_without_baboom, execute=_refuse_without_baboom,
-            map_script=lambda: _atlas_alone(server.universal_store, server.universal_registry),
-            hosts=lambda: server._host_rows(),
+def _cockpit_respond(utterance):
+    if _baboom_stop.is_set():
+        raise RuntimeError("ArchHub is closing; the request was not performed")
+    host = baboom_host
+    if host is not None:
+        return host.respond_input(utterance)
+    from nodelang.universal_application import respond_universal_baboom_utterance
+    with server.mutation_lock:
+        return respond_universal_baboom_utterance(
+            server.universal_store, server.universal_registry,
+            utterance=utterance,
+            authentication_context=server.universal_registry.authorization.session.context(),
         )
-        if cloud_relay is not None:
-            print("  cockpit    : relay on, answers only (BABOOM did not attach)",
-                  flush=True)
-    except Exception as relay_refusal:
-        print("  cockpit    : relay off -- %s" % relay_refusal, flush=True)
 
-# While the founder works, look once for a newer release and stage it for
-# the next launch. Never applied here; never blocks the window.
+
+def _cockpit_execute(utterance):
+    if _baboom_stop.is_set():
+        raise RuntimeError("ArchHub is closing; the request was not performed")
+    host = baboom_host
+    if host is None:
+        raise RuntimeError("BABOOM is not attached; no action was performed. Retry when it connects.")
+    # Exactly the same signed method used by the companion, never a fallback
+    # server mutation or a GUI-bound controller call from the relay worker.
+    return host.execute_input(utterance)
+
+
+cloud_relay = None
+try:
+    from nodelang.cloud_relay import start_cloud_relay as _start_relay
+    from nodelang.universal_pipeline import project_atlas_map as _atlas
+    cloud_relay = _start_relay(
+        appdata=Path(os.environ["APPDATA"]), state_dir=state_dir,
+        respond=_cockpit_respond, execute=_cockpit_execute,
+        map_script=lambda: _atlas(server.universal_store, server.universal_registry),
+        hosts=lambda: server._host_rows(),
+    )
+    print("  cockpit    :", "relay on (actions wait for signed BABOOM attachment)"
+          if cloud_relay else "relay off (no cloud session or consent)", flush=True)
+except Exception as refusal:
+    print("  cockpit    : relay unavailable (%s)" % type(refusal).__name__, flush=True)
+
+# Reuse one existing background worker for local desktop trust and updates.
+# No navigation, model work or new session roots occur during renewal.
+_desktop_refresh_client = None
+_desktop_refresh_status = None
+_retention_cursor = None
+_retention_status = None
+
+
+def _renew_desktop_session():
+    global _desktop_refresh_client, _desktop_refresh_status
+    if _update_stop.is_set():
+        return
+    from time import monotonic as renewal_clock
+    renewal_started = renewal_clock()
+    response = None
+    try:
+        if _desktop_refresh_client is None:
+            from nodelang.application_machine_transport import UniversalRuntimeClient
+            client = UniversalRuntimeClient(descriptor_path, machine_key_provider,
+                cancellation_event=_update_stop)
+            client.pin_runtime_descriptor(server.machine_transport._descriptor("active"))
+            _desktop_refresh_client = client
+        response = _desktop_refresh_client.request("POST", "/api/universal/browser-handoff", {},
+            response_timeout_seconds=5)
+        if (response.get("application") != server.universal_registry.application_root
+                or response.get("session_root") != server.browser_session_root
+                or response.get("one_use") is not True):
+            raise RuntimeError("Desktop renewal returned another authority")
+        status = "ready"
+    except Exception as refusal:
+        if _update_stop.is_set():
+            return
+        status = type(refusal).__name__
+        if status == "MachineTransportError":
+            # Only fixed transport messages may become diagnostic codes. Never
+            # log a server error, response body, URL or credential-bearing text.
+            code = {
+                "universal runtime is not active": "not_active",
+                "universal runtime owner changed; reconnect through admitted enrollment": "owner_changed",
+                "machine request exceeds its size limit": "too_large",
+                "universal runtime pipe is unavailable": "pipe_unavailable",
+                "universal runtime response timeout is invalid": "invalid_timeout",
+                "universal runtime did not respond": "no_response",
+                "universal runtime response is invalid": "invalid_response",
+                "universal runtime response binding failed": "binding_failed",
+                "universal runtime response status is invalid": "invalid_status",
+                "universal runtime result is invalid": "invalid_result",
+            }.get(str(refusal), "other")
+            status += "[" + code + "]"
+    finally:
+        if isinstance(response, dict):
+            response.clear()  # Never retain or log the unused handoff URL.
+    if status != _desktop_refresh_status:
+        _desktop_refresh_status = status
+        elapsed = "" if status == "ready" else " after %.1fs" % (renewal_clock() - renewal_started)
+        print("  desktop session : %s%s" % (status, elapsed), flush=True)
+
+
+def _maintain_conversations():
+    global _retention_cursor, _retention_status
+    if _update_stop.is_set():
+        return
+    try:
+        session = server.universal_registry.authorization.session
+        held = []
+        try:
+            # Skip this cadence if process trust is busy; never wait behind a
+            # session renewal while the application is trying to shut down.
+            for lock in (session._lock, session.broker._lock):
+                if not lock.acquire(blocking=False):
+                    return
+                held.append(lock)
+            context = session.context(minimum_validity_seconds=5)
+        finally:
+            for lock in reversed(held):
+                lock.release()
+        result = server.conversation_content.maintain_retention(authentication_context=context,
+            after_conversation_id=_retention_cursor, cancellation_event=_update_stop, timeout_seconds=2.0)
+        _retention_cursor = result['next_conversation_id']
+        status = result['status']
+        if result['archived'] or result['purged']:
+            print('  conversation storage : archived %d; removed %d expired messages' %
+                (result['archived'], result['purged']), flush=True)
+        elif status != _retention_status and status not in ('idle', 'not-enabled', 'deferred'):
+            print('  conversation storage : %s' % status, flush=True)
+    except Exception as refusal:
+        status = type(refusal).__name__
+        if not _update_stop.is_set() and status != _retention_status:
+            print('  conversation storage : deferred (%s)' % status, flush=True)
+    _retention_status = status
+
+
 def _stage_update_quietly():
-    # First look two minutes after boot, then every thirty minutes: a build
-    # published while the app is open is staged within the half hour and
-    # installed by the next close-and-open, or by the Restart button.
-    time.sleep(120)
-    while True:
-        _stage_once()
-        time.sleep(1800)
+    # Existing update cadence stays two minutes, then thirty minutes.
+    # A minute cadence for renewal stays within its five-minute lead window.
+    next_renewal = time.monotonic() + 60
+    next_update = time.monotonic() + 120
+    while not _update_stop.is_set():
+        delay = max(0.0, min(next_renewal, next_update) - time.monotonic())
+        if _update_stop.wait(delay):
+            return
+        now = time.monotonic()
+        if now >= next_renewal:
+            _renew_desktop_session()
+            if not _update_stop.is_set():
+                _maintain_conversations()
+            next_renewal = time.monotonic() + 60
+        if not _update_stop.is_set() and time.monotonic() >= next_update:
+            _stage_once()
+            next_update = time.monotonic() + 1800
 
 def _stage_once():
     try:
-        from nodelang.quiet_update import stage_if_newer
-        outcome = stage_if_newer(state_dir, Path(__file__).resolve().parent)
-        print("  update     : %s%s" % (outcome.get("reason"), " (build %s)" % outcome["build_id"] if outcome.get("build_id") else ""), flush=True)
+        server.application_update.check()
     except Exception as refusal:
         print("  update     : check failed -- %s" % refusal, flush=True)
 
 import threading as _threading
-_threading.Thread(target=_stage_update_quietly, name="archhub-quiet-update", daemon=True).start()
+_update_stop = _threading.Event()
+_quiet_update_thread = _threading.Thread(target=_stage_update_quietly,
+    name="archhub-quiet-update", daemon=True)
+_quiet_update_thread.start()
+
+
+def _finish_application_shutdown():
+    """Return success only after quiescence and the existing server close path.
+
+    A blocked OS pipe handshake is not cancellable by a Python Event. If an
+    owned worker cannot quiesce, exit unsuccessfully with its descriptor and
+    journal retained for the normal stale-owner/crash-recovery path. Never
+    restore another descriptor or close a journal under that live worker.
+    """
+    if cloud_relay is not None:
+        cloud_relay.request_stop()
+    _baboom_stop.set()
+    _update_stop.set()
+    if not server.application_update.close(timeout_seconds=6.0):
+        print("  shutdown   : INCOMPLETE (update download still active); "
+              "descriptor and graph retained for recovery", flush=True)
+        return False
+    _quiet_update_thread.join(timeout=6.0)
+    if _quiet_update_thread.is_alive():
+        print("  shutdown   : INCOMPLETE (desktop maintenance still active); "
+              "descriptor and graph retained for recovery", flush=True)
+        return False
+    try:
+        if cloud_relay is not None:
+            cloud_relay.close(timeout_seconds=6.0)
+    except Exception as refusal:
+        print("  shutdown   : INCOMPLETE (cloud relay: %s); "
+              "descriptor and graph retained for recovery" % type(refusal).__name__, flush=True)
+        return False
+    try:
+        _baboom_attachment.shutdown()
+    except Exception as refusal:
+        print("  shutdown   : INCOMPLETE (%s); active descriptor and journal retained; "
+              "process exit requires stale-owner recovery" % type(refusal).__name__, flush=True)
+        return False
+    try:
+        if _restart_after_shutdown:
+            from nodelang.application_update_recovery import arm_update
+            content_path = server.conversation_content._path
+            recovery = server.close(recovery_directory=state_dir / "backups",
+                recovery_authentication_context=server.universal_registry.authorization.session.context(),
+                recovery_timeout_seconds=300.0)
+            arm_update(state_dir, Path(__file__).resolve().parent, state_path,
+                content_path if content_path is not None and content_path.is_file() else None, recovery)
+        else:
+            server.close()
+    except Exception as refusal:
+        print("  shutdown   : INCOMPLETE (server close: %s); active descriptor retained"
+              % type(refusal).__name__, flush=True)
+        return False
+    # An isolated launch never owned the machine binding. Another runtime may
+    # also have been selected since this launch; leave its selection untouched.
+    if _announced_active is None:
+        return True
+    try:
+        selected = _active_runtime.read_bytes()
+    except FileNotFoundError:
+        return True
+    except OSError as refusal:
+        print("  shutdown   : INCOMPLETE (descriptor read: %s)"
+              % type(refusal).__name__, flush=True)
+        return False
+    if selected != _announced_active:
+        return True
+    try:
+        if _previous_active is None:
+            _active_runtime.unlink(missing_ok=True)
+        else:
+            _active_runtime.write_bytes(_previous_active)
+    except OSError as refusal:
+        print("  shutdown   : INCOMPLETE (descriptor restore: %s)"
+              % type(refusal).__name__, flush=True)
+        return False
+    return True
+
+
+def _complete_desktop_exit(code):
+    """Relaunch only after the current owner and instance lock are released."""
+    if not _finish_application_shutdown():
+        return 1
+    if code != 0 or not _restart_after_shutdown:
+        return code
+    try:
+        _instance_lock.close()
+        import subprocess as _sp
+        _sp.Popen(["wscript.exe", str(Path(__file__).resolve().parent / "ArchHub.vbs")],
+            close_fds=True, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
+    except Exception as refusal:
+        print("  update     : restart failed (%s); staged update retained" % type(refusal).__name__, flush=True)
+        return 1
+    return code
+
 
 try:
     code = app.exec()
@@ -1208,19 +1270,5 @@ except BaseException:
     traceback.print_exc()
     code = 1
 finally:
-    if baboom_host is not None:
-        try:
-            baboom_host.stop()
-        except Exception:
-            pass
-    # Leaving a descriptor behind that points at a dead pipe is what
-    # made every brain write fail; put back whatever was there before.
-    try:
-        if _previous_active is None:
-            _active_runtime.unlink(missing_ok=True)
-        else:
-            _active_runtime.write_bytes(_previous_active)
-    except OSError:
-        pass
-    server.close()
+    code = _complete_desktop_exit(code)
 raise SystemExit(code)

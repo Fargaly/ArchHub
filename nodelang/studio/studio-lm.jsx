@@ -13,7 +13,7 @@
 const LM = window.AH;  // tokens.jsx — single source of truth
 
 // ─── Categories — each is a node type with color + icon + role ───
-const CAT = {
+const CAT = window.ArchHubTheme.derive((LM) => ({
   wire:      { col:LM.inkSoft, icon:'⇄', label:'CONNECTION' },
   host:      { col:LM.cyan,    icon:'⌬', label:'HOST',      role:'Connected app' },
   read:      { col:LM.cyan,    icon:'◇', label:'READ',      role:'Pulls data from a host' },
@@ -24,14 +24,71 @@ const CAT = {
   logic:     { col:LM.purple,  icon:'⌥', label:'LOGIC',     role:'Branch / loop / switch' },
   ai:        { col:LM.purple,  icon:'✦', label:'AI',        role:'LLM reasoning, vision, match' },
   output:    { col:LM.ok,      icon:'↗', label:'OUTPUT',    role:'Publishes / saves / notifies' },
-};
+}));
 
-const WIRE = {
+const WIRE = window.ArchHubTheme.derive((LM) => ({
   view:LM.cyan, selection:LM.cyan, walls:LM.accent, doors:LM.accent, sheets:LM.accent,
   intent:LM.purple, prediction:LM.purple, trace:LM.inkSoft, dims:LM.ok, file:LM.ok, any:LM.inkSoft,
+}));
+
+const studioCategory = name => CAT[name] || {col:LM.accent, icon:'○', label:name, role:''};
+const useStudioProjection = () => {
+  const signed = window.ARCHHUB_STUDIO_AUTHORITY;
+  const authority = signed || window.ARCHHUB_EXISTING_WORKSHOP;
+  const read = () => signed ? authority.getSnapshot() : authority?.getSnapshot()?.topology || null;
+  const [state, setState] = React.useState(read);
+  React.useEffect(() => {
+    const unsubscribe = authority?.subscribe(() => setState(read()));
+    setState(read());
+    return unsubscribe;
+  }, [authority, signed]);
+  return state;
 };
 
 // ──────────────────────── DATA ────────────────────────
+const useWorkshopProjection = () => {
+  const transport = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
+  const [state, setState] = React.useState(() => transport?.getSnapshot() || null);
+  React.useEffect(() => {
+    const read = () => setState(transport?.getSnapshot() || null);
+    const unsubscribe = transport?.subscribe(read);
+    read();
+    return unsubscribe;
+  }, [transport]);
+  return state;
+};
+const studioCanvasScope = canvas => JSON.stringify([canvas?.graph_id || canvas?.application_root || '',
+  canvas?.root || canvas?.scope?.current || '', canvas?.authorization?.subject || '', canvas?.authorization?.session || '']);
+// Work review and Canvas share the authenticated view's durable graph selection.
+const workshopSelectionId = value => typeof value === 'string' && value.length > 0 && value.length <= 1024;
+const workshopWorkSelectionIdentity = (state, root) => {
+  const canvas = state?.canvas, projected = state?.topology?.canvas || canvas;
+  const authorization = projected?.authorization;
+  if (!canvas || state.error || state.topology?.error ||
+      !state.workshops?.some(row => row.root === root) ||
+      (state.topology?.canvas && (projected.application_root !== canvas.graph_id ||
+        projected.scope?.current !== canvas.root))) return null;
+  const key = [authorization?.subject, authorization?.session, canvas.graph_id, canvas.root, root];
+  return key.every(workshopSelectionId) ? JSON.stringify(key) : null;
+};
+const workshopProjectedNodes = state => {
+  const nodes = state?.topology?.graph?.nodes ?? state?.topology?.canvas?.nodes ?? state?.graph?.nodes ?? state?.canvas?.nodes;
+  return Array.isArray(nodes) ? nodes : [];
+};
+const admittedWorkshopWork = (state, key, work, nodes) => {
+  if (!key || !workshopSelectionId(work) || !nodes.some(node => node.id === work)) return false;
+  const [owner, view, , scope, root] = JSON.parse(key), native = state?.nativeWork;
+  if (!native || native.owner !== owner || native.view !== view ||
+      native.scope !== scope || native.root !== root) return false;
+  return native.state === 'idle' ? Array.isArray(native.available_work) && native.available_work.includes(work) :
+    native.state !== 'unavailable' && typeof native.state === 'string' && native.work === work;
+};
+const selectedWorkshopWork = (state, root, nodes = workshopProjectedNodes(state)) => {
+  const key = workshopWorkSelectionIdentity(state, root);
+  const candidate = state?.nativeWork?.state !== 'idle' ? state?.nativeWork?.work :
+    (state?.topology?.selected ?? state?.canvas?.selected);
+  return admittedWorkshopWork(state, key, candidate, nodes) ? candidate : '';
+};
 const LM_SESSIONS = (window.ARCHHUB_LIVE?.sessions) || [];
 const _SEED_SESSIONS = [
   { id:'walls',   title:'Schedule wall types',   state:'running',  host:'revit',
@@ -64,19 +121,19 @@ const _SEED_HOSTS = [
   { id:'spk', name:'Speckle',     port:'cloud', state:'connected', file:'tower-a/main · 14 commits' },
 ];
 
-const LM_HOST_META = {
+const LM_HOST_META = window.ArchHubTheme.derive((LM) => ({
   revit:{name:'Revit',col:LM.cyan},     blender:{name:'Blender',col:LM.accent},
   speckle:{name:'Speckle',col:LM.purple}, rhino:{name:'Rhino',col:LM.ok},
   autocad:{name:'AutoCAD',col:LM.err},  outlook:{name:'Outlook',col:LM.blue},
-};
-const LM_STATE_META = {
+}));
+const LM_STATE_META = window.ArchHubTheme.derive((LM) => ({
   running:  { label:'running',     col:LM.accent, pulse:true },
   done:     { label:'done',        col:LM.ok },
   review:   { label:'needs review',col:LM.warn },
   paused:   { label:'paused',      col:LM.inkMuted },
   workflow: { label:'workflow',    col:LM.purple },
   scheduled:{ label:'scheduled',   col:LM.cyan },
-};
+}));
 
 // ─── The active graph for "walls" session — typed AEC nodes
 const LM_GRAPH = (window.ARCHHUB_LIVE?.graph) || { nodes: [], wires: [] };
@@ -336,10 +393,29 @@ const LM_LIBRARY = [
 
 // ──────────────────────── ROOT ────────────────────────
 const StudioLM = () => {
+  React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
+  useCatalogueVersion();
   const [openId, setOpenId] = React.useState(LM_SESSIONS[0]?.id || null);
   const [openTabs, setOpenTabs] = React.useState(LM_SESSIONS.slice(0, 3).map(s => s.id));
-  const [model, setModel] = React.useState({ name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', routed:'openrouter/anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'BYO', ctx:'200k', col:'#cc785c', latency:412 });
+  const [model, setModel] = React.useState({ name:'Choose a model', route:'', routed:'', vendor:'No provider selected', tag:'', ctx:'', col:LM.inkMuted, latency:null });
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    const session = window.__archhubSession || {};
+    fetch('/api/universal/models', {signal:controller.signal,
+      headers:{'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''}})
+      .then(response => { if (!response.ok) throw new Error('Model selection unavailable'); return response.json(); })
+      .then(result => {
+        const route = typeof result.selected_route === 'string' ? result.selected_route.trim() : '';
+        if (!route || controller.signal.aborted) return;
+        const selected = (result.groups || []).flatMap(group => group.items || [])
+          .find(item => (item.routed || item.route) === route);
+        setModel(current => current.routed || current.route ? current : selected || {
+          name:route, route, routed:route, vendor:'Saved selection', tag:'Availability not verified',
+          ctx:'', col:LM.inkMuted, latency:null});
+      }).catch(() => {});
+    return () => controller.abort();
+  }, []);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [account, setAccount] = React.useState(() => acLoad());
   const [booting, setBooting] = React.useState(true);
@@ -383,10 +459,63 @@ const StudioLM = () => {
   const [docsOpen, setDocsOpen] = React.useState(false);
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [panel, setPanel] = React.useState('nodes'); // chats | nodes | skills | search
-  const [focusId, setFocusId] = React.useState(LM_GRAPH.nodes[0]?.id || null);
+  const authorityState = useStudioProjection();
+  const [focusId, setLocalFocusId] = React.useState(() =>
+    window.ARCHHUB_STUDIO_AUTHORITY?.getSnapshot()?.selected || LM_GRAPH.nodes[0]?.id || null);
+  const setFocusId = root => {
+    const signed = window.ARCHHUB_STUDIO_AUTHORITY, existing = window.ARCHHUB_EXISTING_WORKSHOP;
+    if (root && signed) signed.select(root).catch(() => {});
+    else if (root && existing?.selectTopology) existing.selectTopology(root).catch(() => {});
+    else setLocalFocusId(root);
+  };
+  React.useEffect(() => {
+    if (authorityState) setLocalFocusId(authorityState.selected);
+  }, [authorityState?.selected]);
+  const modelTarget = (authorityState?.graph?.nodes || LM_GRAPH.nodes).find(n =>
+    n.id === focusId && n.live && nodeModelRow(n)?.editable === true) || null;
+  const targetRoute = modelTarget ? nodeModelRoute(modelTarget) : '';
+  const displayedModel = modelTarget ? {name:targetRoute || 'Choose a model', route:targetRoute,
+    routed:targetRoute, vendor:modelTarget.title, col:LM.inkMuted, latency:null} : model;
   // User-added nodes appear on top of the demo graph
   const [userNodes, setUserNodes] = React.useState([]);
   const session = openId ? LM_SESSIONS.find(s => s.id === openId) : null;
+  const workshopState = useWorkshopProjection();
+  const viewScope = JSON.stringify([session?.id || '', workshopState?.canvas?.graph_id || '',
+    workshopState?.canvas?.root || '',
+    (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.subject || '',
+    (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization?.session || '']);
+  // Selection is presentation state. Participants and connection status stay owner projections.
+  const [workspaceSelection, setWorkspaceSelection] = React.useState(null);
+  const projectedAuthorization = (workshopState?.topology?.canvas || workshopState?.canvas)?.authorization;
+  const workspaceReady = !!(session && workshopState?.canvas?.graph_id && workshopState?.canvas?.root &&
+    projectedAuthorization?.subject && projectedAuthorization?.session && Array.isArray(workshopState.workshops) &&
+    (!workshopState.topology?.canvas || (workshopState.topology.canvas.application_root === workshopState.canvas.graph_id &&
+      workshopState.topology.canvas.scope?.current === workshopState.canvas.root)));
+  const availableWorkshops = workspaceReady ? workshopState.workshops : [];
+  const generalWorkshops = availableWorkshops.filter(row => row.is_general === true && row.root);
+  const defaultWorkspaceView = {mode:'chat', conversationRoot:generalWorkshops.length === 1 ?
+    generalWorkshops[0].root : '', target:'', notice:'', scope:viewScope, pending:false};
+  const resolveWorkspaceView = previous => {
+    if (!workspaceReady) return {mode:previous?.mode || 'chat', conversationRoot:'', target:'', pending:true,
+      notice:workshopState?.error || workshopState?.topology?.error || 'Loading your workspace…'};
+    if (previous?.scope !== viewScope) return defaultWorkspaceView;
+    // Empty is an explicit Chat choice, distinct from no selection at startup.
+    if (!previous.conversationRoot || availableWorkshops.some(row => row.root === previous.conversationRoot)) {
+      return previous;
+    }
+    return {...defaultWorkspaceView, mode:previous.mode, notice:
+      'The selected conversation is no longer available in this scope.'};
+  };
+  const workspaceView = resolveWorkspaceView(workspaceSelection);
+  const updateWorkspaceView = change => setWorkspaceSelection(previous => !workspaceReady ? previous : ({
+    ...resolveWorkspaceView(previous), ...change, notice:'', scope:viewScope,
+  }));
+  const selectedWorkshop = session && workshopState?.workshops?.find(row => row.root === workspaceView.conversationRoot);
+  const workshopContext = selectedWorkshop && workspaceView.mode === 'chat' &&
+    workshopState?.canvas?.graph_id && workshopState?.canvas?.root ? {
+      descriptor:selectedWorkshop, graphId:workshopState.canvas.graph_id, scopeRoot:workshopState.canvas.root,
+      transcript:workshopState.workshop,
+    } : null;
 
   // open a session — also pin as a tab if not already open
   const openSession = (id) => {
@@ -403,6 +532,10 @@ const StudioLM = () => {
 
   // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click
   const addNodeFromLibrary = (libItem, x = 200, y = 200) => {
+    if (window.ARCHHUB_STUDIO_AUTHORITY) {
+      return window.ARCHHUB_NODE_CREATE({definition: libItem.definition || libItem.id,
+        definition_revision: libItem.revision_root, x, y}).catch(() => false);
+    }
     const cat = libItem.cat;
     const tmpl = LM_NODE_TEMPLATES[libItem.id] || LM_NODE_TEMPLATES[`__cat_${cat}`] || {};
     const id = `${libItem.id}_${Date.now().toString(36).slice(-4)}`;
@@ -462,20 +595,24 @@ const StudioLM = () => {
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
         onHome={() => setOpenId(null)} onSettings={() => { setDocsOpen(false); setSettingsOpen(true); }} onDocs={() => { setSettingsOpen(false); setDocsOpen(true); }}
-        addNodeFromLibrary={addNodeFromLibrary}/>
+        addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext}
+        workshopTarget={workspaceView.target} onWorkshopTarget={target => updateWorkspaceView({target})}/>
       {session
         ? <Workspace
-            session={session} model={model}
+            session={session} model={displayedModel}
             openTabs={openTabs} setOpenId={setOpenId} closeTab={closeTab}
             setPickerOpen={setPickerOpen}
             setSettingsOpen={openSettings}
             setLibraryOpen={setLibraryOpen}
             focusId={focusId} setFocusId={setFocusId}
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
+            view={workspaceView} updateView={updateWorkspaceView}
             onHome={() => setOpenId(null)}/>
         : <Home onOpen={openSession} model={model} setPickerOpen={setPickerOpen}/>}
       <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs} account={account}/>
-      {pickerOpen && <ModelPicker setModel={setModel} onClose={() => setPickerOpen(false)} model={model}/>}
+      {pickerOpen && <ModelPicker setModel={m => modelTarget
+        ? window.pmPersistValue(modelTarget, 'model', modelRoute(m))
+        : setModel(m)} onClose={() => setPickerOpen(false)} model={displayedModel}/>}
       {/* Every ask box in the app reads the current choice from here, so a
           box that was not handed a model still asks the model the founder
           picked instead of falling through to a server default. */}
@@ -570,22 +707,27 @@ const LM_NODE_TEMPLATES = {
 };
 
 // ──────────────────────── SIDEBAR (icon rail + active panel) ────────────────────────
-const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, addNodeFromLibrary }) => (
+const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, addNodeFromLibrary,
+  workshopContext, workshopTarget, onWorkshopTarget }) => (
   <aside style={{
     gridColumn:'1', gridRow:'1',
     display:'grid', gridTemplateColumns:'44px 1fr',
     background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
     overflow:'hidden', minHeight:0,
   }}>
-    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}/>
+    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
+      workshopActive={!!workshopContext}/>
     {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen}/>}
-    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary}/>}
+    {panel === 'nodes' && (workshopContext ?
+      <WorkshopAgentsPanel key={JSON.stringify([openId, workshopContext.graphId, workshopContext.scopeRoot,
+        workshopContext.descriptor.root])} context={workshopContext} target={workshopTarget} onSelect={onWorkshopTarget}/> :
+      <NodesPanel addNodeFromLibrary={addNodeFromLibrary}/>)}
     {panel === 'skills' && <SkillsPanel/>}
     {panel === 'search' && <SearchPanel/>}
   </aside>
 );
 
-const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
+const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, workshopActive }) => {
   const items = [
     { id:'chats',  title:'Chats',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
     { id:'nodes',  title:'Nodes',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
@@ -606,7 +748,8 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
       </RailIcon>
       <div style={{ height:6 }}/>
       {items.map(it => (
-        <RailIcon key={it.id} active={panel === it.id} onClick={() => setPanel(it.id)} title={it.title}>
+        <RailIcon key={it.id} active={panel === it.id} onClick={() => setPanel(it.id)}
+          title={it.id === 'nodes' && workshopActive ? 'Workshop agents' : it.title}>
           {it.svg}
         </RailIcon>
       ))}
@@ -715,10 +858,145 @@ const panelIconBtn = () => ({
   display:'grid', placeItems:'center',
 });
 
+const WorkshopAgentsPanel = ({context, target, onSelect}) => {
+  const {descriptor, graphId, scopeRoot, transcript:held} = context;
+  const transcript = held?.root === descriptor.root && held.graph_id === graphId &&
+    held.scope_root === scopeRoot && !held.error ? held : null;
+  const allParticipants = Array.isArray(transcript?.participants) ? transcript.participants : [];
+  const participants = allParticipants.filter(row => row.is_agent !== false);
+  const authority = window.ARCHHUB_EXISTING_WORKSHOP;
+  const canDisconnect = typeof authority?.disconnectAgent === 'function';
+  const sectionRef = React.useRef(null);
+  const mounted = React.useRef(true);
+  React.useEffect(() => () => { mounted.current = false; }, []);
+  const [menu, setMenu] = React.useState(null);
+  const [pending, setPending] = React.useState({});
+  const [outcomes, setOutcomes] = React.useState({});
+  const disconnectAgent = async row => {
+    if (pending[row.root]) return;
+    setPending(state => ({...state, [row.root]:true}));
+    setOutcomes(state => ({...state, [row.root]:null}));
+    try {
+      const result = await authority.disconnectAgent(descriptor.root, row.root);
+      if (mounted.current) setOutcomes(state => ({...state, [row.root]:{outcome:result.outcome}}));
+    } catch (error) {
+      if (mounted.current) setOutcomes(state => ({...state,
+        [row.root]:{error:error.message || 'The disconnect could not be confirmed. Retry to reconcile it.'}}));
+    } finally {
+      if (mounted.current) setPending(state => Object.fromEntries(Object.entries(state).filter(([root]) => root !== row.root)));
+    }
+  };
+  // Only a confirmed remote revocation reads as disconnected; everything else says what is known.
+  const linkStatus = row => {
+    const outcome = outcomes[row.root];
+    if (pending[row.root]) return 'Disconnecting…';
+    if (outcome?.error) return outcome.error;
+    if (outcome?.outcome === 'revoked') return 'Session Link disconnected; its grant was revoked';
+    if (outcome?.outcome === 'no_channel') return 'No Session Link channel was attached';
+    if (outcome?.outcome === 'detached_without_revocation') return 'Channel closed; the host reported no grant to revoke';
+    if (outcome?.outcome === 'uncertain' || row.session_link === 'retiring') return 'Disconnect unconfirmed; its grant may still be live. Retry Session Link disconnect.';
+    if (row.session_link === 'attached') return 'Session Link attached';
+    if (row.session_link === 'attaching') return 'Session Link attaching';
+    return '';
+  };
+  // Only an agent with its own Session Link channel is disconnectable; base-transport and
+  // unsupported participants never get this menu.
+  const disconnectable = row => canDisconnect && row.is_agent === true && row.root !== transcript?.self &&
+    (['attached', 'attaching', 'retiring'].includes(row.session_link) || outcomes[row.root]?.outcome === 'uncertain');
+  const openMenu = (event, row) => {
+    if (!disconnectable(row)) return;
+    event.preventDefault(); event.stopPropagation();
+    const bounds = sectionRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const anchor = event.currentTarget.getBoundingClientRect();
+    const pointer = event.type === 'contextmenu' && (event.clientX || event.clientY);
+    const x = Math.max(4, Math.min((pointer ? event.clientX : anchor.left + 12) - bounds.left, bounds.width - 236));
+    const y = Math.max(4, (pointer ? event.clientY : anchor.bottom) - bounds.top);
+    const retry = row.session_link === 'retiring' || outcomes[row.root]?.outcome === 'uncertain';
+    setMenu({x, y, maxHeight:Math.max(60, bounds.height - y - 8), opener:event.currentTarget, actions:[{
+      icon:'delete', label:retry ? 'Retry Session Link disconnect' : 'Disconnect Session Link channel', action:() => disconnectAgent(row),
+      disabled:!!pending[row.root],
+    }]});
+  };
+  const [now, setNow] = React.useState(() => Date.now() / 1000);
+  const clock = Math.max(now, Date.now() / 1000);
+  const observed = row => typeof row.observed_at === 'number' && Number.isFinite(row.observed_at) && row.observed_at > 0;
+  const verified = row => row.is_agent === true && row.connection_status === 'connected' && row.connection_basis === 'authenticated-request' &&
+    observed(row) && typeof row.expires_at === 'number' && Number.isFinite(row.expires_at) &&
+    row.expires_at > row.observed_at && row.expires_at > clock;
+  const connected = participants.filter(verified);
+  const other = participants.filter(row => !verified(row));
+  const nextExpiry = connected.length ? Math.min(...connected.map(row => row.expires_at)) : null;
+  React.useEffect(() => {
+    if (nextExpiry === null) return;
+    const timer = setTimeout(() => setNow(Date.now() / 1000),
+      Math.min(2147483647, Math.max(1, (nextExpiry - Date.now() / 1000) * 1000 + 1)));
+    return () => clearTimeout(timer);
+  }, [nextExpiry, now]);
+  const canAddress = row => row.attached === true && row.root !== transcript?.self &&
+    allParticipants.some(participant => participant.root === transcript?.self && participant.attached === true) &&
+    transcript?.can_send !== false;
+  const renderParticipant = row => {
+    const active = verified(row), selectable = canAddress(row);
+    const status = active ? 'Active recently' : row.is_agent !== true ? 'Agent identity unverified' :
+      row.connection_status === 'disconnected' ? 'Disconnected from this app' :
+      row.connection_status === 'stale' ? 'No recent activity' :
+      row.connection_status === 'connected' && observed(row) && row.expires_at <= clock ? 'Activity expired' : 'Connection unverified';
+    const seen = observed(row) ? new Date(row.observed_at * 1000).toLocaleString() : '';
+    return <button key={row.root} type="button" aria-disabled={!selectable} aria-pressed={target === row.root}
+      aria-haspopup={disconnectable(row) ? 'menu' : undefined}
+      onContextMenu={event => openMenu(event, row)}
+      onKeyDown={event => { if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) openMenu(event, row); }}
+      title={[row.root, selectable ? 'Choose as message recipient' : '', seen ? 'Last seen: ' + seen : ''].filter(Boolean).join('\n')}
+      onClick={() => { if (selectable) onSelect(row.root); }} style={{
+        display:'block', width:'100%', textAlign:'left', padding:'10px 12px', marginBottom:6,
+        border:`1px solid ${target === row.root ? LM.accent : LM.line}`, borderRadius:LM.rad.md,
+        background:target === row.root ? LM.accentDim : LM.bg, color:LM.ink,
+        cursor:selectable ? 'pointer' : 'default', fontFamily:LM.sans, overflowWrap:'anywhere',
+      }}>
+      <span style={{display:'flex', gap:8, alignItems:'center', fontSize:14, fontWeight:500}}>
+        <span aria-hidden="true" style={{width:7, height:7, borderRadius:'50%', flexShrink:0,
+          background:active ? LM.ok : LM.inkMuted}}/>
+        <span>{row.label || row.root}{row.root === transcript?.self ? ' (you)' : ''}</span>
+      </span>
+      {row.runtime && <span style={{display:'block', fontSize:12, color:LM.inkSoft, marginTop:3}}>{row.runtime}</span>}
+      <span style={{display:'block', fontSize:12, color:active ? LM.ok : LM.inkSoft, marginTop:3}}>{status}</span>
+      {seen && <span style={{display:'block', fontSize:11, color:LM.inkSoft, marginTop:3}}>Last seen {seen}</span>}
+      {linkStatus(row) && <span role="status" aria-live="polite" style={{display:'block', fontSize:11, color:LM.inkSoft, marginTop:3}}>{linkStatus(row)}</span>}
+      {!row.attached && <span style={{display:'block', fontSize:11, color:LM.inkSoft}}>History participant · detached</span>}
+    </button>;
+  };
+  return <section ref={sectionRef} aria-label="Workshop agents" style={{position:'relative', display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+    <div style={{padding:'12px 12px 10px', borderBottom:`1px solid ${LM.line}`}}>
+      <div style={{fontSize:14, fontWeight:600}}>Workshop agents</div>
+      <div style={{fontSize:12, color:LM.inkSoft, marginTop:4, overflowWrap:'anywhere'}}>{descriptor.label}</div>
+    </div>
+    <div className="ah-scroll" style={{flex:1, minHeight:0, overflow:'auto', padding:10}}>
+      <div style={{fontSize:12, color:LM.inkSoft, marginBottom:10}}>Active recently · {connected.length}</div>
+      {!transcript ? <p role="status" style={{fontSize:13, color:LM.inkSoft}}>No live agent data for this Workshop. Waiting for its current connection status.</p> :
+        !connected.length && <p role="status" style={{fontSize:13, color:LM.inkSoft}}>No agents have verified recent activity in this Workshop.</p>}
+      {connected.map(renderParticipant)}
+      {other.length > 0 && <details style={{marginTop:14}}>
+        <summary style={{fontSize:12, color:LM.inkSoft, cursor:'pointer', marginBottom:10}}>
+          Disconnected or unverified · {other.length}
+        </summary>
+        {other.map(renderParticipant)}
+      </details>}
+    </div>
+    <div style={{padding:'10px 12px', borderTop:`1px solid ${LM.line}`, fontSize:12, color:LM.inkSoft}}>
+      Select a participant to address a message. Recent activity does not mean an agent is running a task.
+      {canDisconnect && ' Right-click an agent with a Session Link channel, or press Shift+F10, to disconnect that channel. It does not end the agent session or undo work already delivered.'}
+    </div>
+    {menu && <CanvasMenu x={menu.x} y={menu.y} maxHeight={menu.maxHeight} opener={menu.opener}
+      actions={menu.actions} onClose={() => setMenu(null)}/>}
+  </section>;
+};
+
 // ─── Nodes panel — primary drag source ───
 const NodesPanel = ({ addNodeFromLibrary }) => {
+  const library = useStudioProjection()?.library || LM_LIBRARY;
   const [q, setQ] = React.useState('');
-  const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(Object.keys(CAT).map(k => [k, true])));
+  const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
   return (
     <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
@@ -745,8 +1023,8 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
       </div>
 
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
-        {LM_LIBRARY.map(group => {
-          const c = CAT[group.cat];
+        {library.map(group => {
+          const c = studioCategory(group.cat);
           const items = q ? group.items.filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : group.items;
           if (items.length === 0) return null;
           const open = q ? true : !!openCats[group.cat];
@@ -835,7 +1113,50 @@ const _SEED_SKILLS = [
   { id:'morning',     name:'Morning Outlook triage',          runs:42, args:'\u2014',             when:'daily' },
 ];
 
-const SkillsPanel = () => (
+const catalogueStates = new Map(), catalogueListeners = new Set();
+let catalogueVersion = 0;
+const catalogueChanged = () => {
+  catalogueVersion += 1;
+  for (const notify of catalogueListeners) {try {notify();} catch (_) {}}
+};
+const useCatalogueVersion = () => React.useSyncExternalStore(
+  React.useCallback(notify => {catalogueListeners.add(notify); return () => catalogueListeners.delete(notify);}, []),
+  () => catalogueVersion);
+const loadCatalogue = (loaderName, items) => {
+  const load = window[loaderName];
+  if (typeof load !== 'function') return Promise.resolve();
+  let state = catalogueStates.get(loaderName);
+  if (state?.pending) return state.pending;
+  state = {loading:true, error:'', pending:null};
+  catalogueStates.set(loaderName, state);
+  state.pending = Promise.resolve().then(load).then(result => {
+    const rows = loaderName === 'ARCHHUB_LOAD_HOSTS' ? result.hosts : result;
+    const connectors = loaderName === 'ARCHHUB_LOAD_HOSTS' ? window.ARCHHUB_LIVE?.connectors : null;
+    if (!Array.isArray(rows) || (loaderName === 'ARCHHUB_LOAD_HOSTS' &&
+        (!Array.isArray(result.connectors) || !Array.isArray(connectors)))) {
+      throw new Error('The catalogue response is invalid.');
+    }
+    items.splice(0, items.length, ...rows);
+    if (loaderName === 'ARCHHUB_LOAD_HOSTS') {
+      connectors.splice(0, connectors.length, ...result.connectors);
+    }
+  }).catch(error => {state.error = error.message || 'Catalogue unavailable.';})
+    .finally(() => {state.loading = false; state.pending = null; catalogueChanged();});
+  catalogueChanged();
+  return state.pending;
+};
+const withLiveCatalogue = (loaderName, items, View) => props => {
+  useCatalogueVersion();
+  React.useEffect(() => {loadCatalogue(loaderName, items);}, []);
+  const status = catalogueStates.get(loaderName) || {loading:false, error:''};
+  return <>
+    {status.loading && <p role="status">Loading catalogue…</p>}
+    {status.error && <p role="alert">{status.error} <button onClick={() => loadCatalogue(loaderName, items)}>Retry</button></p>}
+    <View {...props}/>
+  </>;
+};
+
+const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, () => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Skills</span>
@@ -874,7 +1195,7 @@ const SkillsPanel = () => (
       ))}
     </div>
   </div>
-);
+));
 
 // ─── Global search panel ───
 const SearchPanel = () => (
@@ -1040,14 +1361,23 @@ const SessionCard = ({ s, onOpen }) => {
 };
 
 // ──────────────────────── WORKSPACE ────────────────────────
-const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, onHome }) => {
-  const allNodes = [...LM_GRAPH.nodes, ...(userNodes || [])];
+const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpen, setSettingsOpen, setLibraryOpen, focusId, setFocusId, userNodes, addNodeFromLibrary, onHome, view, updateView }) => {
+  const authorityState = useStudioProjection();
+  const graph = authorityState?.graph || LM_GRAPH;
+  const allNodes = [...graph.nodes, ...(userNodes || [])];
   // A wire is a node: focusId may name one, and the SAME rail renders it.
-  const wireIdx = String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1;
+  const wireIdx = authorityState ? graph.wires.findIndex(wire => wire.id === focusId) : (String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1);
   const focusNode = wireIdx >= 0
-    ? window.wireAsNode(LM_GRAPH.wires[wireIdx], wireIdx, allNodes)
+    ? window.wireAsNode(graph.wires[wireIdx], wireIdx, allNodes)
     : allNodes.find(n => n.id === focusId);
-  const [mode, setMode] = React.useState('chat');   // chat (calm, default) | canvas (node graph)
+  const {mode, conversationRoot, target} = view;
+  const setMode = mode => updateView({mode});
+  const workshopState = useWorkshopProjection();
+  const workshops = workshopState?.workshops || [];
+  const workshop = workshops.find(row => row.root === conversationRoot);
+  if (view.pending) return <main style={{gridColumn:'2', gridRow:'1', padding:24, color:LM.inkSoft}}>
+    <p role="status">{view.notice}</p>
+  </main>;
   return (
     <main style={{
       gridColumn:'2', gridRow:'1', minHeight:0, overflow:'hidden',
@@ -1058,15 +1388,23 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
       <WsHeader
         session={session} model={model} openTabs={openTabs}
         setOpenId={setOpenId} closeTab={closeTab} mode={mode} setMode={setMode}
+        workshops={workshops} conversationRoot={workshop?.root || ''} conversationNotice={view.notice}
+        workshopModel={workshopState?.nativeWork?.model}
+        setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
         setPickerOpen={setPickerOpen} setSettingsOpen={setSettingsOpen} onHome={onHome}/>
       {mode === 'chat' ? (
-        <>
-          <ChatView session={session} model={model} setMode={setMode}/>
-          <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
+        workshop ? <WorkshopConversation key={JSON.stringify([session.id, workshopState.canvas.graph_id,
+          workshopState.canvas.root, workshop.root])} descriptor={workshop} target={target}
+          setTarget={target => updateView({target})}/> : <>
+          {window.ARCHHUB_LIVE || window.ARCHHUB_STUDIO_AUTHORITY
+            ? <p role="status" style={{padding:24, color:LM.inkSoft}}>
+                Choose a Workshop conversation, or select a node with a model on the canvas.</p>
+            : <><ChatView session={session} model={model} setMode={setMode}/>
+                <InferenceInspector model={model} setPickerOpen={setPickerOpen}/></>}
         </>
       ) : (
         <>
-          <NodeCanvas focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
+          <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)])} focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
           <NodeRail node={focusNode}/>
         </>
       )}
@@ -1078,6 +1416,1151 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
 // (the cloud and OpenRouter ids are the same shape, so the row says which);
 // older rows only have `route`.
 const modelRoute = (m) => String((m && (m.routed || m.route)) || '');
+const nodeModelRow = n => (n?.params || []).find(row => row.k === 'model') || null;
+const nodeModelRoute = n => {
+  const route = String(nodeModelRow(n)?.v || '').trim();
+  return route === 'provider-selected' ? '' : route;
+};
+
+// Presentation only: retain row identities/geometry, never a second transcript.
+const createWorkshopMessageScroll = onAway => {
+  let identity = null, ready = false, olderMode = false, following = true, anchors = [], position = 0, expected = null, away = false;
+  const rows = viewport => Array.from(viewport.querySelectorAll('[data-workshop-message]')).slice(0, 100);
+  const top = viewport => viewport.getBoundingClientRect().top + (viewport.clientTop || 0);
+  const report = () => {
+    if (away !== !following) { away = !following; onAway(away); }
+  };
+  const capture = viewport => {
+    const edge = top(viewport);
+    position = viewport.scrollTop;
+    anchors = rows(viewport).filter(row => row.getBoundingClientRect().bottom > edge).map(row => ({
+      root:row.getAttribute('data-workshop-message'), offset:row.getBoundingClientRect().top - edge,
+    }));
+  };
+  const move = (viewport, value) => {
+    viewport.scrollTop = Math.max(0, Math.min(value, viewport.scrollHeight - viewport.clientHeight));
+    expected = viewport.scrollTop;
+    capture(viewport);
+    report();
+  };
+  const restore = viewport => {
+    if (following) return move(viewport, viewport.scrollHeight);
+    const current = new Map(rows(viewport).map(row => [row.getAttribute('data-workshop-message'), row]));
+    const anchor = anchors.find(row => current.has(row.root));
+    move(viewport, anchor ? viewport.scrollTop + current.get(anchor.root).getBoundingClientRect().top -
+      top(viewport) - anchor.offset : position);
+  };
+  return {
+    update(viewport, key, successful, older, jump = false) {
+      ready = !!successful;
+      if (!viewport || !ready) return;
+      olderMode = older;
+      if (identity !== key) {
+        identity = key; following = !older; anchors = []; position = 0;
+        return move(viewport, following ? viewport.scrollHeight : 0);
+      }
+      if (jump && !older) following = true;
+      restore(viewport);
+    },
+    scroll(viewport) {
+      if (!viewport || !ready) return;
+      // Browser scroll events also follow our own assignments. They must not
+      // turn a clamped reading anchor into permission to follow new arrivals.
+      if (expected !== null && Math.abs(viewport.scrollTop - expected) < 1) return;
+      expected = null;
+      following = !olderMode && viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 48;
+      capture(viewport); report();
+    },
+    reflow(viewport) { if (viewport && ready) restore(viewport); },
+    jump(viewport) { if (viewport && ready && !olderMode) { following = true; move(viewport, viewport.scrollHeight); } },
+  };
+};
+
+// The conversation panel is a live lens; no browser-owned message history.
+const WorkshopReview = ({text}) => {
+  let review;
+  try {review = JSON.parse(text);} catch (_) {}
+  if (!review || typeof review.summary !== 'string' || !Array.isArray(review.next_actions) ||
+      !Array.isArray(review.risks) || [...review.next_actions, ...review.risks].some(value => typeof value !== 'string')) {
+    return <div style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere'}}>{text}</div>;
+  }
+  return <div style={{lineHeight:1.6, overflowWrap:'anywhere'}}>
+    <p>{review.summary}</p>
+    <ul style={{paddingLeft:20}}>{review.next_actions.map((action,index) => <li key={index}>{action}</li>)}</ul>
+    {review.risks.length > 0 && <><div style={{color:LM.inkSoft}}>Risks</div>
+      <ul style={{paddingLeft:20}}>{review.risks.map((risk,index) => <li key={index}>{risk}</li>)}</ul></>}
+    <div style={{fontSize:11, color:LM.inkSoft}}>Independent review is still required.</div>
+    {typeof review.uncertainty === 'number' && Number.isFinite(review.uncertainty) &&
+      <div style={{fontSize:11, color:LM.inkSoft}}>Model uncertainty: {Math.round(review.uncertainty * 100)}%</div>}
+  </div>;
+};
+
+const WorkshopConversation = ({descriptor, target, setTarget}) => {
+  const state = useWorkshopProjection();
+  const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
+  const existing = !window.ARCHHUB_STUDIO_AUTHORITY;
+  const nativeAvailable = existing && descriptor.native_work_available !== false;
+  const held = state?.workshop;
+  const transcript = held?.root === descriptor.root ? held : null;
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [paging, setPaging] = React.useState(false);
+  const pageIntent = React.useRef(0);
+  const messageViewport = React.useRef(null), messageContent = React.useRef(null);
+  const [awayFromLatest, setAwayFromLatest] = React.useState(false);
+  const messageScroll = React.useRef(null), latestJump = React.useRef(false);
+  if (!messageScroll.current) messageScroll.current = createWorkshopMessageScroll(setAwayFromLatest);
+  const [draft, setDraft] = React.useState('');
+  const [messageTextSize, setMessageTextSize] = React.useState(16);
+  const [execution, setExecution] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const busyRef = React.useRef(false);
+  const mounted = React.useRef(true);
+  const fileIntent = React.useRef(0);
+  const [actionError, setActionError] = React.useState('');
+  const [nativeSyncError, setNativeSyncError] = React.useState('');
+  const projectedWorkNodes = workshopProjectedNodes(state);
+  const nativeTarget = selectedWorkshopWork(state, descriptor.root, projectedWorkNodes);
+  const setNativeTarget = async work => {
+    const key = workshopWorkSelectionIdentity(state, descriptor.root);
+    if (!admittedWorkshopWork(state, key, work, projectedWorkNodes)) throw new Error('Choose a currently admitted Work.');
+    setPublicReview(false);
+    if (existing) await authority.selectTopology(work);
+    else await authority.select(work);
+  };
+  const [publicReview, setPublicReview] = React.useState(false);
+  const [repair, setRepair] = React.useState({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
+  const [sourceFile, setSourceFile] = React.useState(null);
+  const [readingFile, setReadingFile] = React.useState(false);
+  const [creationUncertain, setCreationUncertain] = React.useState(false);
+  const [revisionBase, setRevisionBase] = React.useState(null);
+  // Founder correction of one OPEN Work's acceptance gate, on the same Work.
+  const [gateEditor, setGateEditor] = React.useState(null);
+  const gateEditorFrom = (read, prior = null) => {
+    const spec = read.requirements.gate?.spec;
+    const currentPath = typeof spec?.path === 'string' ? spec.path : '';
+    const keep = {};
+    if (Array.isArray(spec?.args)) keep.args = spec.args;
+    if (typeof spec?.timeout_seconds === 'number') keep.timeout_seconds = spec.timeout_seconds;
+    return {work:read.work, target:read.target, digest:read.digest, revision:read.revision, state:read.state,
+      editable:read.editable, wired:read.wired, kind:read.requirements.gate?.kind || '',
+      currentPath, path:currentPath, keep, result:prior?.result || null,
+      submission:null, uncertain:false, refreshPending:false};
+  };
+  const openGateEditor = async work => {
+    if (busyRef.current || !work) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try {
+      const read = await authority.readWorkRequirements(descriptor.root, work);
+      if (!scopeCurrent()) return;
+      setGateEditor(value => {
+        const next = gateEditorFrom(read, value?.work === work ? value : null);
+        // An ordinary read cannot prove which correction produced this gate.
+        // Retain the exact request until its receipt or explicit discard.
+        if (value?.work === work && value.submission) {
+          return {...next, path:value.submission.gate.spec.path, submission:value.submission, uncertain:true, checked:true};
+        }
+        return next;
+      });
+    } catch (error) { if (scopeCurrent()) setActionError(error.message || 'The Work requirements could not be read.'); }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const saveGate = async event => {
+    event.preventDefault();
+    const edit = gateEditor;
+    if (busyRef.current || !edit || !edit.editable || edit.refreshPending) return;
+    const path = edit.submission ? edit.submission.gate.spec.path : edit.path.trim();
+    if (!path || (!edit.submission && path === edit.currentPath)) return;
+    const submission = edit.submission || {revision_id:window.crypto.randomUUID().replaceAll('-', ''),
+      expected_revision:edit.revision, expected_target:edit.target, expected_digest:edit.digest,
+      gate:{kind:'pytest', spec:{...edit.keep, path, selector:path}}};
+    busyRef.current = true; setBusy(true); setActionError('');
+    // Hold the exact correction before sending; an uncertain save is retried unchanged.
+    setGateEditor(value => ({...value, submission, uncertain:false}));
+    let saved;
+    try {
+      saved = await authority.reviseWorkRequirements(descriptor.root, edit.work, submission);
+    } catch (error) {
+      if (scopeCurrent()) {
+        setGateEditor(value => ({...value, submission, uncertain:true}));
+        setActionError((error.message || 'The corrected gate was not confirmed.') +
+          ' Retry sends this same correction. Reopen to inspect the current gate; only the correction receipt confirms this attempt.');
+      }
+      busyRef.current = false; if (mounted.current) setBusy(false);
+      return;
+    }
+    try {
+      if (!scopeCurrent()) return;
+      setGateEditor(value => ({...value, submission:null, uncertain:false, refreshPending:true,
+        result:saved.requirements_revision}));
+      const reopened = await authority.readWorkRequirements(descriptor.root, edit.work);
+      if (!scopeCurrent()) return;
+      setGateEditor(value => gateEditorFrom(reopened, value));
+      try { await authority.refreshWorkshop(descriptor.root); await authority.refreshTopologyCanvas(); }
+      catch (_) { setActionError('The corrected gate is saved. Refresh the Workshop and canvas to display the updated value.'); }
+    } catch (_) {
+      if (scopeCurrent()) setActionError('The corrected gate is saved, but this editor could not reload it. Reopen the current gate before making another change.');
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  // Founder configuration of an OPEN Work's inputs, requirements and CDE, on the same Work.
+  const [configEditor, setConfigEditor] = React.useState(null);
+  const configLines = raw => raw.split('\n').map(line => line.trim()).filter(Boolean);
+  const configEditorFrom = (current, prior = null) => {
+    const value = name => current.fields[name].value;
+    const cde = value('cde-container'), requirements = value('requirements'), inputs = value('inputs');
+    return {work:current.work, revision:current.revision, fields:current.fields, state:current.state,
+      drafts:current.drafts || [], invalidDrafts:current.invalid_drafts || [], draft:null, baselineFields:current.fields,
+      editable:current.editable, artifactReady:current.artifact_ready, blocker:current.artifact_blocker || '',
+      purpose:prior?.purpose || 'general',
+      allowedPaths:Array.isArray(cde?.allowed_paths) ? cde.allowed_paths.join('\n') : '',
+      reviewers:Array.isArray(requirements?.artifact_reviewers) ? requirements.artifact_reviewers.join('\n') : '',
+      publicInputs:inputs?.data_class === 'public-text',
+      result:prior?.result || null, submission:null, uncertain:false, checked:false, refreshPending:false};
+  };
+  const configChanges = edit => {
+    const fields = edit.draft ? {...edit.draft.fields} : {};
+    const entry = (name, value) => ({expected_target:edit.fields[name].target,
+      expected_digest:edit.fields[name].digest, value});
+    const cde = edit.fields['cde-container'].value, requirements = edit.fields.requirements.value;
+    const inputs = edit.fields.inputs.value;
+    const paths = configLines(edit.allowedPaths), reviewers = configLines(edit.reviewers);
+    if (JSON.stringify(paths) !== JSON.stringify(Array.isArray(cde?.allowed_paths) ? cde.allowed_paths : [])) {
+      fields['cde-container'] = entry('cde-container', {...(cde || {}), allowed_paths:paths});
+    }
+    const currentReviewers = Array.isArray(requirements?.artifact_reviewers) ? requirements.artifact_reviewers : [];
+    if (JSON.stringify(reviewers) !== JSON.stringify(currentReviewers)) {
+      const next = {...(requirements || {})};
+      if (reviewers.length) next.artifact_reviewers = reviewers; else delete next.artifact_reviewers;
+      fields.requirements = entry('requirements', next);
+    }
+    if (edit.publicInputs !== (inputs?.data_class === 'public-text')) {
+      const next = {...(inputs || {})};
+      if (edit.publicInputs) next.data_class = 'public-text'; else delete next.data_class;
+      fields.inputs = entry('inputs', next);
+    }
+    return fields;
+  };
+  const reviewConfigDraft = revisionId => {
+    setConfigEditor(edit => {
+      const draft = edit.drafts.find(item => item.revision_id === revisionId);
+      const fields = {...edit.baselineFields};
+      if (draft) Object.entries(draft.fields).forEach(([name, entry]) => {
+        fields[name] = {...fields[name], value:entry.value};
+      });
+      const cde = fields['cde-container'].value, requirements = fields.requirements.value;
+      return {...edit, fields, draft:draft || null, purpose:draft?.purpose || 'general',
+        allowedPaths:(cde?.allowed_paths || []).join('\n'),
+        reviewers:(requirements?.artifact_reviewers || []).join('\n'),
+        publicInputs:fields.inputs.value?.data_class === 'public-text', result:null};
+    });
+  };
+  const openConfigEditor = async work => {
+    if (busyRef.current || !work) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try {
+      const current = await authority.readWorkConfiguration(descriptor.root, work);
+      if (!scopeCurrent()) return;
+      setConfigEditor(value => {
+        const next = configEditorFrom(current, value?.work === work ? value : null);
+        // An unconfirmed configuration keeps its exact identity until it is retried or discarded.
+        if (value?.work === work && value.submission) {
+          return {...next, submission:value.submission, uncertain:true, checked:true};
+        }
+        return next;
+      });
+    } catch (error) { if (scopeCurrent()) setActionError(error.message || 'The Work configuration could not be read.'); }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const saveConfiguration = async event => {
+    event.preventDefault();
+    const edit = configEditor;
+    if (busyRef.current || !edit || !edit.editable || edit.refreshPending || edit.draft?.stale) return;
+    const fields = edit.submission ? null : configChanges(edit);
+    if (!edit.submission && !Object.keys(fields).length) return;
+    const unchangedDraft = edit.draft && edit.purpose === edit.draft.purpose &&
+      JSON.stringify(fields) === JSON.stringify(edit.draft.fields);
+    const submission = edit.submission || {revision_id:unchangedDraft ? edit.draft.revision_id :
+      window.crypto.randomUUID().replaceAll('-', ''),
+      expected_revision:unchangedDraft ? edit.draft.expected_revision : edit.revision, purpose:edit.purpose, fields};
+    busyRef.current = true; setBusy(true); setActionError('');
+    setConfigEditor(value => ({...value, submission, uncertain:false}));
+    let saved;
+    try {
+      saved = await authority.configureWork(descriptor.root, edit.work, submission);
+    } catch (error) {
+      if (scopeCurrent()) {
+        setConfigEditor(value => ({...value, submission, uncertain:true}));
+        setActionError((error.message || 'The Work configuration was not confirmed.') +
+          ' Retry sends this same configuration. Reopen the configuration to see whether it applied.');
+      }
+      busyRef.current = false; if (mounted.current) setBusy(false);
+      return;
+    }
+    try {
+      if (!scopeCurrent()) return;
+      setConfigEditor(value => ({...value, submission:null, uncertain:false, refreshPending:true,
+        result:saved.work_configuration}));
+      const reopened = await authority.readWorkConfiguration(descriptor.root, edit.work);
+      if (!scopeCurrent()) return;
+      setConfigEditor(value => configEditorFrom(reopened, value));
+      try { await authority.refreshWorkshop(descriptor.root); await authority.refreshTopologyCanvas(); }
+      catch (_) { setActionError('The Work configuration is saved. Refresh the Workshop and canvas to display it.'); }
+    } catch (_) {
+      if (scopeCurrent()) setActionError('The Work configuration is saved, but this editor could not reload it. Reopen it before making another change.');
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const discardConfigAttempt = () => {
+    setConfigEditor(value => value && ({...value, submission:null, uncertain:false, checked:false}));
+    setActionError('');
+  };
+  const discardConfigDraft = async () => {
+    const edit = configEditor;
+    if (busyRef.current || !edit?.draft || edit.submission) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try {
+      await authority.discardWorkConfiguration(descriptor.root, edit.work,
+        {revision_id:edit.draft.revision_id, expected_revision:edit.revision});
+      const current = await authority.readWorkConfiguration(descriptor.root, edit.work);
+      if (scopeCurrent()) setConfigEditor(configEditorFrom(current));
+    } catch (error) {
+      if (scopeCurrent()) setActionError(error.message || 'Discard was not confirmed. Reopen the configuration.');
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const discardGateAttempt = () => {
+    setGateEditor(value => value && ({...value, submission:null, uncertain:false, path:value.currentPath}));
+    setActionError('');
+  };
+  const revisionSubmission = React.useRef(null);
+  const protectedEditors = existing && typeof authority.openConversationEditor === 'function';
+  const editors = React.useRef({message:null, work:null, keys:null});
+  const [editorsReady, setEditorsReady] = React.useState(!protectedEditors);
+  const [editorError, setEditorError] = React.useState('');
+  const editorOpening = React.useRef(false);
+  const prepareEditors = async () => {
+    if (!protectedEditors || editorOpening.current) return;
+    editorOpening.current = true; setEditorError('');
+    try {
+      const held = editors.current;
+      if (!held.keys) held.keys = [window.crypto.randomUUID(), window.crypto.randomUUID()];
+      for (const [index, name] of ['message', ...(nativeAvailable ? ['work'] : [])].entries()) {
+        if (held[name]) await held[name].retry();
+        else held[name] = await authority.openConversationEditor(descriptor.root, held.keys[index], name);
+        if (!mounted.current) { await held[name].close(); return; }
+        // A lost save acknowledgement may resolve to clear while newer local
+        // text still exists. Re-arm protection before enabling that editor.
+        if (name === 'message' ? draft.length > 0 : sourceFile || readingFile || creationUncertain ||
+            ['title','description','criterion','verification','path'].some(key => repair[key].length > 0) ||
+            repair.model !== 'nex-agi/nex-n2.5-pro:free' || native?.state && native.state !== 'idle') {
+          await held[name].dirty();
+        }
+      }
+      if (mounted.current) setEditorsReady(true);
+    } catch (error) {
+      if (mounted.current) { setEditorsReady(false); setEditorError(error.message || 'Draft protection is unavailable.'); }
+    } finally { editorOpening.current = false; }
+  };
+  const protectDraft = name => {
+    const editor = editors.current[name];
+    if (!protectedEditors || !editor) return;
+    editor.dirty().catch(error => {
+      if (mounted.current) { setEditorsReady(false); setEditorError(error.message || 'Retry draft protection before continuing.'); }
+    });
+  };
+  const native = state?.nativeWork?.root === descriptor.root && state.nativeWork.scope === state?.canvas?.root ?
+    state.nativeWork : null;
+  const artifactWork = nativeTarget || native?.work;
+  const [publicationView, setPublicationView] = React.useState(null);
+  React.useEffect(() => { setPublicationView(null); }, [descriptor.root, state?.canvas?.root, artifactWork]);
+  const savedPublications = (native?.existing_artifacts || []).filter(row => row.work === artifactWork);
+  const savedArtifacts = (native?.artifacts || []).filter(row => row.work === artifactWork &&
+    !(native?.artifact?.result === row.result && native?.artifact?.receipt === row.receipt));
+  const failedProjects = (native?.failures || []).filter(row => row.work === artifactWork);
+  const localDeliveries = (native?.local_deliveries || []).filter(row => row.work === artifactWork);
+  const targetAvailable = native?.available_work?.includes(nativeTarget) && projectedWorkNodes.some(node => node.id === nativeTarget);
+  const scopeCurrent = () => mounted.current && authority.getSnapshot()?.canvas?.graph_id === state?.canvas?.graph_id &&
+    authority.getSnapshot()?.canvas?.root === state?.canvas?.root &&
+    authority.getSnapshot()?.workshops?.some(row => row.root === descriptor.root);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; fileIntent.current += 1; };
+  }, []);
+  React.useEffect(() => {
+    prepareEditors();
+    return () => {
+      // No unload/expiry inference: close preserves dirty/unknown records. If
+      // navigation or lost transport prevents closure, the open record remains.
+      for (const editor of Object.values(editors.current)) {
+        if (editor && typeof editor.close === 'function') editor.close().catch(() => {});
+      }
+    };
+  }, [authority, descriptor.root]);
+  React.useEffect(() => {
+    let disposed = false;
+    if (nativeAvailable) authority.refreshNativeWork(descriptor.root, nativeTarget || null).catch(error => {
+      if (!disposed && mounted.current) setActionError(error.message || 'Read the native Workshop status to continue.');
+    });
+    return () => { disposed = true; };
+  }, [authority, descriptor.root, nativeAvailable, nativeTarget]);
+  const page = state?.workshopPage?.root === descriptor.root ? state.workshopPage : null;
+  const olderPage = typeof page?.before === 'string';
+  const content = transcript?.storage === 'conversation-content';
+  const feed = page?.feed || 'all';
+  const feedIdentity = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root, descriptor.root]);
+  const chooseFeed = async value => {
+    const intent = ++pageIntent.current;
+    latestJump.current = true;
+    setPaging(true); setActionError('');
+    try { await authority.showWorkshopFeed(descriptor.root, value); }
+    catch (error) {
+      if (pageIntent.current === intent) setActionError(error.message || 'The Workshop feed could not be read.');
+    } finally { if (mounted.current && pageIntent.current === intent) setPaging(false); }
+  };
+  React.useEffect(() => {
+    if (content && !paging && !busy && !page?.feedInitialized && typeof authority.showWorkshopFeed === 'function') {
+      chooseFeed('messages');
+    }
+  }, [content, feedIdentity, authority, page?.feedInitialized, paging, busy]);
+  const navigatePage = async latest => {
+    if (latest && !olderPage && transcript && !transcript.error) {
+      messageScroll.current.jump(messageViewport.current);
+      return;
+    }
+    const intent = ++pageIntent.current;
+    latestJump.current = latest;
+    setPaging(true); setActionError('');
+    try {
+      if (latest) await authority.showLatestWorkshop(descriptor.root);
+      else await authority.loadOlderWorkshop(descriptor.root);
+    } catch (error) {
+      if (pageIntent.current === intent) {
+        latestJump.current = false;
+        setActionError(error.message || 'The message page could not be read.');
+      }
+    } finally { if (pageIntent.current === intent) setPaging(false); }
+  };
+  React.useEffect(() => { setPublicReview(false); }, [native?.request_id]);
+  const projectReviewExpired = native?.mode === 'project' && (native.review_expired === true ||
+    (Number.isFinite(native.review_expires_at) && Date.now() / 1000 >= native.review_expires_at));
+  const artifactReview = ['project', 'agent'].includes(native?.mode);
+  const artifactReviewExpired = artifactReview && (native.review_expired === true ||
+    (Number.isFinite(native.review_expires_at) && Date.now() / 1000 >= native.review_expires_at));
+  const selectedRepairMode = native?.artifacts_work === nativeTarget ? native.selected_work_mode : null;
+  const [stoppingNative, setStoppingNative] = React.useState(false);
+  const stopNative = async () => {
+    if (stoppingNative || native?.mode !== 'agent') return;
+    setStoppingNative(true);
+    try { await authority.nativeWorkAction(descriptor.root, 'stop_native', native.work); }
+    catch (error) { if (scopeCurrent()) setActionError(error.message || 'Read the native operation status before continuing.'); }
+    finally { if (mounted.current) setStoppingNative(false); }
+  };
+  const nativeAct = async (action, artifact = null) => {
+    if (busyRef.current || (action !== 'refresh' && !editorsReady)) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try {
+      if (!['refresh', 'read_publication'].includes(action) && protectedEditors) await editors.current.work.dirty();
+      if (action === 'refresh') await authority.refreshNativeWork(descriptor.root, nativeTarget || null);
+      else if (action === 'prepare_revision') {
+        const work = native.work;
+        await setNativeTarget(work);
+        await authority.nativeWorkAction(descriptor.root, 'release', work);
+        if (scopeCurrent()) await authority.nativeWorkAction(descriptor.root, 'prepare_project', work);
+      }
+      else if (action === 'approve') await authority.approveNativeWork(descriptor.root, native?.input_digest);
+      else if (action === 'refresh_project_review') await authority.nativeWorkAction(descriptor.root, action,
+        native.work, {delegation:native.delegation, input_digest:native.input_digest});
+      else if (action === 'recover_project' || action === 'recover_review') {
+        await setNativeTarget(artifact.work);
+        await authority.nativeWorkAction(descriptor.root, action,
+          artifact.work, {result:artifact.result, receipt:artifact.receipt});
+      }
+      else if (action === 'abandon_project') await authority.nativeWorkAction(descriptor.root, action,
+        artifact.work, {grant:artifact.grant, result:artifact.result, input_digest:artifact.input_digest});
+      else if (action === 'recover_local_project') {
+        await setNativeTarget(artifact.work);
+        await authority.nativeWorkAction(descriptor.root, action,
+          artifact.work, {result:artifact.result, resolution:artifact.resolution});
+      }
+      else if (action === 'read_publication') {
+        const result = await authority.readExistingPublication(descriptor.root, artifact.work, artifact.publication);
+        if (scopeCurrent()) setPublicationView(result);
+        return;
+      }
+      else if (action === 'read_artifact') {
+        const result = await authority.nativeWorkAction(descriptor.root, action, artifact?.work,
+          artifact ? {result:artifact.result, receipt:artifact.receipt} : {});
+        if (!scopeCurrent()) return;
+        const url = URL.createObjectURL(new Blob([new TextEncoder().encode(result.artifact_text)], {type:'text/plain;charset=utf-8'}));
+        const link = document.createElement('a');
+        try {
+          link.href = url; link.download = result.artifact.name;
+          document.body.appendChild(link); link.click();
+        } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+        return;
+      }
+      else await authority.nativeWorkAction(descriptor.root, action, nativeTarget);
+      if (scopeCurrent()) await authority.refreshWorkshop(descriptor.root);
+    } catch (error) { if (scopeCurrent()) setActionError(action === 'prepare_revision' ?
+      'Read the operation status. If closing is pending, recover the closed result; then prepare this selected Work. ' + (error.message || '') :
+      error.message || 'Read the operation status to reconcile this action.'); }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const selectSourceFile = async event => {
+    const file = event.target.files?.[0], intent = ++fileIntent.current;
+    setSourceFile(null); setPublicReview(false); setActionError('');
+    setRepair(value => ({...value, path:''}));
+    if (!file) { setReadingFile(false); return; }
+    setReadingFile(true);
+    try {
+      const selected = await authority.readProjectFile(descriptor.root, file);
+      if (intent !== fileIntent.current || !scopeCurrent()) return;
+      setSourceFile(selected); setRepair(value => ({...value, path:selected.path}));
+    } catch (error) {
+      if (intent === fileIntent.current && scopeCurrent()) setActionError(error.message || 'The source file could not be read.');
+    } finally { if (intent === fileIntent.current && mounted.current) setReadingFile(false); }
+  };
+  const createRepairWork = async event => {
+    event.preventDefault();
+    if (busyRef.current || !editorsReady || !sourceFile || readingFile || creationUncertain) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try {
+      if (protectedEditors) await editors.current.work.dirty();
+      if (revisionBase) {
+        const localSource = revisionBase.local_source;
+        const expectedRequest = revisionBase.request_id || (revisionSubmission.current &&
+          'local-revision-' + revisionSubmission.current.revision_id);
+        const operationMatches = localSource ?
+          (native?.state === 'idle' || (native?.state === 'local_delivery_abandoned' &&
+            native.work === revisionBase.work && native.request_id === expectedRequest &&
+            native.local_resolution?.result === localSource.result && native.local_resolution?.resolution === localSource.resolution)) :
+          revisionBase.request_id === native?.request_id && revisionBase.work === native?.work;
+        if (revisionBase.graph !== state?.canvas?.graph_id || revisionBase.scope !== state?.canvas?.root ||
+            revisionBase.owner !== native?.owner || revisionBase.view !== native?.view ||
+            !operationMatches) {
+          throw new Error('Return to this revision’s original Workshop operation before saving it.');
+        }
+        let held = revisionSubmission.current;
+        if (!held) {
+          const revisionId = window.crypto.randomUUID().replaceAll('-', '');
+          held = {revision_id:revisionId, base_digest:revisionBase.input_digest,
+            inputs:{...revisionBase.inputs, model:repair.model.trim(), artifact_name:revisionId + '.patch',
+              files:[{path:repair.path, content:sourceFile.content, sha256:sourceFile.sha256},
+                ...revisionBase.inputs.files.slice(1)]},
+            requirements:{acceptance_criteria:[{criterion:repair.criterion.trim(), verification:repair.verification.trim()},
+              ...revisionBase.requirements.acceptance_criteria.slice(1)]}};
+          revisionSubmission.current = held;
+        }
+        if (localSource && native?.state === 'idle') setRevisionBase(value => ({...value,
+          request_id:'local-revision-' + held.revision_id}));
+        const saved = await authority.nativeWorkAction(descriptor.root, 'revise_project', revisionBase.work,
+          {draft:held, ...(localSource || {})});
+        if (!scopeCurrent()) return;
+        setRevisionBase(null); revisionSubmission.current = null; setSourceFile(null);
+        setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
+        await authority.refreshWorkshop(descriptor.root);
+        try { await authority.refreshTopologyCanvas(); }
+        catch (_) { setActionError('Revised inputs are saved. Refresh the canvas to display their updated wires.'); }
+        if (scopeCurrent() && saved.work_revision.current_input_digest !== saved.work_revision.input_digest) {
+          setActionError('This revision was already saved, but the Work changed afterward. Reopen its current inputs before preparing.');
+        }
+        return;
+      }
+      const node = projectedWorkNodes.find(row => row.id === descriptor.root);
+      const result = await authority.createProjectWork(descriptor.root, {...repair, content:sourceFile.content,
+        x:Number.isFinite(node?.x) ? node.x + 280 : 200, y:Number.isFinite(node?.y) ? node.y : 200});
+      if (mounted.current) {
+        setSourceFile(null); setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
+        setCreationUncertain(true);
+      }
+      if (result.navigated || !scopeCurrent()) return;
+      // Select the newly created Work through the same durable view operation.
+      if (result.original_graph === state?.canvas?.graph_id && result.original_scope === state?.canvas?.root) {
+        await authority.refreshTopologyCanvas();
+        await authority.selectTopology(result.created_root);
+      }
+      window.location.reload();
+    } catch (error) {
+      if (scopeCurrent()) {
+        if (revisionBase && error.revisionRejectedNoWrite) revisionSubmission.current = null;
+        setActionError(error.message || 'Work creation could not be confirmed. Refresh the canvas before trying again.');
+        if (error.creationUncertain) setCreationUncertain(true);
+      }
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const beginWorkRevision = async (delivery = null) => {
+    const localSource = delivery || (native?.state === 'local_delivery_abandoned' ? native.local_resolution : null);
+    if (busyRef.current || !editorsReady || revisionBase ||
+        (localSource ? !['idle','local_delivery_abandoned'].includes(native?.state) : native?.state !== 'published')) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try {
+      if (protectedEditors) await editors.current.work.dirty();
+      const work = localSource?.work || native.work;
+      const result = await authority.nativeWorkAction(descriptor.root, 'read_project', work);
+      if (!scopeCurrent()) return;
+      const pending = result.draft.pending_revision;
+      if (pending && (!localSource || pending.result !== localSource.result || pending.resolution !== localSource.resolution)) {
+        throw new Error('Open the exact local delivery associated with this saved revision.');
+      }
+      const draft = pending ? {...result.draft, inputs:pending.inputs, requirements:pending.requirements,
+        input_digest:pending.base_digest} : result.draft;
+      const file = draft.inputs.files[0], criterion = draft.requirements.acceptance_criteria[0];
+      if (typeof file?.content !== 'string' || typeof file?.path !== 'string' ||
+          typeof criterion?.criterion !== 'string' || typeof criterion?.verification !== 'string') {
+        throw new Error('This Work’s editable inputs are incomplete.');
+      }
+      setRevisionBase({...draft, work:result.work, graph:state?.canvas?.graph_id, scope:state?.canvas?.root,
+        owner:result.owner, view:result.view, request_id:native.state === 'idle' ? null : native.request_id,
+        ...(localSource ? {local_source:{result:localSource.result, resolution:localSource.resolution}} : {})});
+      revisionSubmission.current = pending ? {revision_id:pending.revision_id, base_digest:pending.base_digest,
+        inputs:pending.inputs, requirements:pending.requirements} : null;
+      setRepair({title:draft.title, description:draft.description, model:draft.inputs.model,
+        path:file.path, criterion:criterion.criterion, verification:criterion.verification});
+      setSourceFile({...file, bytes:new TextEncoder().encode(file.content).byteLength});
+    } catch (error) { if (scopeCurrent()) setActionError(error.message || 'The Work could not be opened for revision.'); }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  React.useEffect(() => {
+    let disposed = false, timer, active = false;
+    let nativeCursor = authority.getSnapshot()?.workshop?.content_cursor || null;
+    let lastNativeRead = Date.now();
+    const refresh = async () => {
+      if (disposed || document.hidden || active) return;
+      clearTimeout(timer);
+      active = true; setRefreshing(true);
+      try {
+        let projection;
+        try {
+          projection = await authority.refreshWorkshop(descriptor.root);
+        } finally {
+          if (!disposed) setRefreshing(false);
+        }
+        const snapshot = authority.getSnapshot();
+        const operation = snapshot?.nativeWork;
+        const cursor = projection?.content_cursor || (projection ? String(projection.revision) : null);
+        const settling = operation?.root === descriptor.root &&
+          ['attaching', 'recovering', 'preparing', 'executing', 'uncertain', 'publication_uncertain'].includes(operation.state);
+        // Reuse the existing visible-page poll. An external worker's result
+        // must refresh this panel too; do not start another background timer.
+        if (!disposed && !document.hidden && nativeAvailable && !busyRef.current && !revisionSubmission.current &&
+            cursor && (cursor !== nativeCursor || settling) && Date.now() - lastNativeRead >= 10000) {
+          lastNativeRead = Date.now();
+          try {
+            const status = await authority.refreshNativeWork(descriptor.root, nativeTarget || null);
+            if (!disposed && status) { nativeCursor = cursor; setNativeSyncError(''); }
+          } catch (error) {
+            if (!disposed) setNativeSyncError(error.message || 'Task status could not refresh. Read operation status to retry.');
+          }
+        }
+      } catch (_) {}
+      finally {
+        active = false;
+        if (!disposed) {
+          timer = setTimeout(refresh, 2500);
+        }
+      }
+    };
+    const visibility = () => { clearTimeout(timer); if (!document.hidden) refresh(); };
+    document.addEventListener('visibilitychange', visibility);
+    refresh();
+    return () => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visibility); };
+  }, [authority, descriptor.root, nativeAvailable, nativeTarget]);
+  const participants = transcript?.participants || [];
+  const names = new Map(participants.map(row => [row.root, row.label]));
+  const messages = transcript?.messages || [];
+  const messagePageIdentity = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root,
+    descriptor.root, feed, page?.before ?? null, transcript?.owner ?? null, transcript?.view ?? null]);
+  React.useLayoutEffect(() => {
+    const successful = !!transcript && !transcript.error &&
+      (!content || transcript.page_before === (page?.before ?? null));
+    messageScroll.current.update(messageViewport.current, messagePageIdentity, successful, olderPage, latestJump.current);
+    if (successful && !olderPage) latestJump.current = false;
+  }, [messagePageIdentity, transcript, messageTextSize]);
+  React.useEffect(() => {
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(() => messageScroll.current.reflow(messageViewport.current));
+    if (messageViewport.current) observer.observe(messageViewport.current);
+    if (messageContent.current) observer.observe(messageContent.current);
+    return () => observer.disconnect();
+  }, []);
+  const joined = participants.some(row => row.root === transcript?.self && row.attached) &&
+    (!existing || transcript?.can_send === true);
+  const act = async (action) => {
+    if (busyRef.current || (action === 'send' && !editorsReady)) return;
+    const details = action === 'send' ? {target, message:draft.trim(), ...(execution ? {execution_root:execution} : {})} : {};
+    busyRef.current = true; setBusy(true); setActionError('');
+    try {
+      await authority.workshopAction(descriptor.root, action, null, details,
+        protectedEditors ? editors.current.message : null);
+      if (action === 'send' && mounted.current) setDraft('');
+    } catch (error) { setActionError(error.message || 'The action could not be confirmed. Retry to reconcile it.'); }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  return <>
+    <style>{`
+      [aria-label="Native Workshop review"] button,
+      [aria-label="Native Workshop review"] select,
+      [aria-label="Native Workshop review"] input:not([type="checkbox"]),
+      [aria-label="Native Workshop review"] textarea,
+      [aria-label="Workshop conversation"] button,
+      [aria-label="Workshop conversation"] select,
+      [aria-label="Workshop conversation"] textarea {
+        background:${LM.bgPanel}; color:${LM.ink}; border:1px solid ${LM.line};
+        border-radius:5px; padding:7px 9px; font:inherit; max-width:100%;
+      }
+      [aria-label="Native Workshop review"] button {margin:4px 4px 4px 0; cursor:pointer;}
+      [aria-label="Native Workshop review"] button:disabled,
+      [aria-label="Workshop conversation"] button:disabled {opacity:.5; cursor:default;}
+    `}</style>
+    <section aria-label="Workshop conversation" style={{gridColumn:'1', gridRow:'2', minHeight:0, minWidth:0,
+      display:'flex', flexDirection:'column', background:LM.bg, fontSize:14}}>
+      <div style={{padding:'16px 24px', borderBottom:`1px solid ${LM.line}`}}>
+        <div style={{display:'flex', gap:12, alignItems:'center', justifyContent:'space-between', flexWrap:'wrap'}}>
+          <div style={{fontFamily:LM.serif, fontSize:22, overflowWrap:'anywhere'}}>{descriptor.label}</div>
+          {content && typeof authority.showWorkshopFeed === 'function' &&
+            <select aria-label="Workshop feed" value={feed} disabled={busy || paging}
+              title="Notes and replies, routine tool activity, or the complete history"
+              onChange={event => chooseFeed(event.target.value)}>
+              <option value="messages">Notes &amp; replies</option>
+              <option value="activity">Tool activity</option>
+              <option value="all">All history</option>
+            </select>}
+          <label style={{display:'flex', gap:8, alignItems:'center'}}>
+            Text size
+            <select aria-label="Workshop message text size" value={messageTextSize}
+              onChange={event => setMessageTextSize(Number(event.target.value))}>
+              {[14, 16, 18, 20].map(size => <option key={size} value={size}>{size} px</option>)}
+            </select>
+          </label>
+        </div>
+        <div role={transcript?.error ? 'alert' : 'status'} style={{fontSize:12, color:transcript?.error ? LM.err : LM.inkSoft}}>
+          {transcript?.error || (paging ? 'Loading message page…' : refreshing ? 'Updating messages…' :
+            transcript ? (olderPage ? 'Earlier messages synchronized' : 'Messages synchronized') : 'Loading messages…')}
+        </div>
+        {(content || olderPage || transcript?.error || awayFromLatest) && <div style={{display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap'}}>
+          <button disabled={busy || paging || !transcript?.next_before || !!transcript?.error}
+            onClick={() => navigatePage(false)}>Older messages</button>
+          {(olderPage || transcript?.error || awayFromLatest) && <button disabled={busy}
+            aria-label="Jump to latest messages" title="Latest messages"
+            onClick={() => navigatePage(true)}>↓ Latest</button>}
+          {transcript && !transcript.error && <span style={{fontSize:12, color:LM.inkSoft}}>
+            {messages.length} displayed{content ? ` · ${transcript.total} ${feed === 'activity' ? 'tool records' : feed === 'messages' ? 'notes' : 'records'} available` : ''}
+          </span>}
+        </div>}
+      </div>
+      <div ref={messageViewport} className="ah-scroll" onScroll={() => messageScroll.current.scroll(messageViewport.current)}
+        style={{flex:1, minHeight:0, overflow:'auto', overflowAnchor:'none', padding:'20px 24px', fontSize:messageTextSize}}>
+        <div ref={messageContent}>
+        {!content && transcript?.has_older && <p style={{color:LM.inkSoft}}>Showing the available recent messages.</p>}
+        {transcript && !transcript.error && !messages.length && <p>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</p>}
+        {messages.map(message => <article key={message.root} data-workshop-message={message.root} style={{marginBottom:20}}>
+          <div style={{fontSize:Math.max(12, messageTextSize - 2), color:LM.inkSoft, overflowWrap:'anywhere'}}>
+            <span title={message.sender_root}>{names.get(message.sender_root) || message.sender_root}</span>
+            {' → '}
+            <span title={message.recipient_root}>
+              {Array.isArray(message.recipient_roots) ?
+                (message.recipient_roots.length ? message.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Everyone') :
+                (names.get(message.recipient_root) || message.recipient_root)}
+            </span>
+          </div>
+          <div style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', lineHeight:1.6, marginTop:5}}>
+            {message.body.startsWith('Model review evidence. Independent review is still required.\n') ?
+              <WorkshopReview text={message.body.slice(message.body.indexOf('\n') + 1)}/> : message.body}
+          </div>
+          <div style={{fontSize:Math.max(12, messageTextSize - 3), color:LM.inkMuted, marginTop:4}}>
+            {message.state === 'acted' ? 'Acted on · verification separate' : message.state} · {message.category}
+            {message.reply_to_root && ' · Reply'}
+          </div>
+        </article>)}
+        </div>
+      </div>
+      <div style={{padding:'14px 24px', borderTop:`1px solid ${LM.line}`, color:LM.inkSoft, fontSize:12}}>
+        {protectedEditors && !editorsReady && <div role={editorError ? 'alert' : 'status'} style={{marginBottom:8}}>
+          {editorError || 'Connecting draft protection…'}
+          {editorError && <button onClick={prepareEditors} style={{marginLeft:8}}>Retry</button>}
+        </div>}
+        {actionError && <div role="alert" style={{color:LM.err, marginBottom:8}}>{actionError}</div>}
+        {state?.workshopNotice && <div role="status" style={{marginBottom:8}}>{state.workshopNotice}</div>}
+        {!joined ? existing ? <span>Messaging requires an admitted Workshop participant.</span> :
+          <button disabled={busy || !transcript?.can_join} onClick={() => act('attach')}>
+          {busy ? 'Joining…' : 'Join Workshop'}</button> : <>
+          <select aria-label="Recipient" value={target} disabled={busy} onChange={e => setTarget(e.target.value)}>
+            <option value="">Choose a participant</option>
+            {participants.filter(row => row.attached && row.root !== transcript.self).map(row =>
+              <option key={row.root} value={row.root}>{row.label}</option>)}
+          </select>
+          {!existing && <select aria-label="Connected task node" value={execution} disabled={busy} onChange={e => setExecution(e.target.value)}>
+            <option value="">Message only</option>
+            {(transcript.execution_nodes || []).map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
+          </select>}
+          <textarea aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !editorsReady}
+            onChange={e => {protectDraft('message'); setDraft(e.target.value);}} placeholder="Message or task instructions"
+            style={{display:'block', width:'100%', margin:'8px 0', minHeight:64}}/>
+          <button disabled={busy || !editorsReady || !target || !draft.trim()} onClick={() => act('send')}>
+            {busy ? 'Sending…' : execution ? 'Assign task' : 'Send'}</button>
+        </>}
+      </div>
+    </section>
+    <aside aria-label="Workshop participants" className="ah-scroll" style={{gridColumn:'2', gridRow:'2',
+      background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`, padding:16, overflow:'auto'}}>
+      {nativeAvailable && <section aria-label="Native Workshop review" style={{marginBottom:24}}>
+        <h3 style={{fontSize:14, marginTop:0}}>Work on a project</h3>
+        <button disabled={busy} onClick={() => nativeAct('refresh')}>Read operation status</button>
+        <p role="status">{native?.state || 'Read status to connect to the native Workshop.'}</p>
+        {native?.review_recovered && <p style={{fontSize:12, color:LM.inkSoft}}>
+          Reviewing a saved result. No new model run has occurred.
+        </p>}
+        {(!native || native.state === 'idle' || revisionBase) && <>
+          <details open={!!revisionBase || !nativeTarget} style={{marginBottom:16}}>
+            <summary>{revisionBase ? 'Revise this Work' : 'Create a repair Work node'}</summary>
+            <p style={{fontSize:12, color:LM.inkSoft, lineHeight:1.5}}>
+              {revisionBase ? 'Saving replaces this Work’s source inputs and criteria together; earlier values and results remain saved.' :
+                'Choose one public text source file. Creating Work saves its text, your request, and criteria on the graph.'}
+              No model runs until you review and approve the prepared input, then generate a draft patch. This does not apply changes to your source.
+            </p>
+            {revisionBase && <p style={{fontSize:12, color:LM.inkSoft}}>
+              Update the source, model and acceptance criteria for this same Work. Earlier results stay saved.
+              Its task wording stays bound to the existing plan. Saving requires fresh input approval before another run.
+              {revisionBase.inputs.files.length > 1 || revisionBase.requirements.acceptance_criteria.length > 1 ?
+                ' This editor changes the first source and criterion; additional saved sources and criteria are retained.' : ''}
+            </p>}
+            <form onSubmit={createRepairWork} onChangeCapture={() => protectDraft('work')}>
+              <fieldset disabled={busy || !editorsReady || !!revisionSubmission.current} style={{border:0, margin:0, padding:0, minWidth:0}}>
+              <label style={{display:'block', margin:'10px 0'}}>Work title
+                <input aria-label="Repair Work title" required maxLength={160} value={repair.title}
+                  disabled={busy || !!revisionBase} onChange={event => setRepair(value => ({...value, title:event.target.value}))}
+                  style={{display:'block', width:'100%', marginTop:4}}/>
+              </label>
+              <label style={{display:'block', margin:'10px 0'}}>Requested change
+                <textarea aria-label="Requested source change" required maxLength={12000} value={repair.description}
+                  disabled={busy || !!revisionBase} onChange={event => setRepair(value => ({...value, description:event.target.value}))}
+                  style={{display:'block', width:'100%', minHeight:72, marginTop:4}}/>
+              </label>
+              {!revisionBase && <label style={{display:'block', margin:'10px 0'}}>Repair runtime
+                <select aria-label="Repair runtime" value={repair.runtime || 'openrouter'} disabled={busy}
+                  onChange={event => setRepair(value => ({...value, runtime:event.target.value,
+                    model:event.target.value === 'claude' ? 'sonnet' : 'nex-agi/nex-n2.5-pro:free'}))}>
+                  <option value="openrouter">Free OpenRouter</option>
+                  <option value="claude">Native Claude</option>
+                </select>
+              </label>}
+              <label style={{display:'block', margin:'10px 0'}}>{repair.runtime === 'claude' ? 'Claude model' : 'Free OpenRouter model'}
+                <input aria-label={repair.runtime === 'claude' ? 'Claude repair model' : 'Free OpenRouter repair model'} required maxLength={repair.runtime === 'claude' ? 160 : 256} value={repair.model}
+                  disabled={busy} onChange={event => setRepair(value => ({...value, model:event.target.value}))}
+                  style={{display:'block', width:'100%', marginTop:4}}/>
+              </label>
+              <p style={{fontSize:11, color:LM.inkSoft}}>{repair.runtime === 'claude' ?
+                'Uses the installed Claude account. The Work stores a 12-turn, 768 MiB process budget and a 180-second turn timeout. Review and approval are required before a model turn.' :
+                'Use an explicit :free model or openrouter/free. This choice is saved with the Work; there is no automatic fallback.'}</p>
+              <label style={{display:'block', margin:'10px 0'}}>One source file · UTF-8 · up to 64 KiB
+                <input aria-label="Repair source file" type="file" disabled={busy} onChange={selectSourceFile}
+                  style={{display:'block', width:'100%', marginTop:4}}/>
+              </label>
+              {readingFile && <p role="status">Reading and hashing the selected file…</p>}
+              {sourceFile && <div style={{fontSize:11, color:LM.inkSoft, overflowWrap:'anywhere'}}>
+                {sourceFile.bytes.toLocaleString()} bytes · SHA-256 {sourceFile.sha256}
+              </div>}
+              <label style={{display:'block', margin:'10px 0'}}>Relative source path
+                <input aria-label="Relative source path" required maxLength={512} value={repair.path}
+                  placeholder="src/example.js" disabled={busy || !sourceFile}
+                  onChange={event => setRepair(value => ({...value, path:event.target.value}))}
+                  style={{display:'block', width:'100%', marginTop:4}}/>
+              </label>
+              <label style={{display:'block', margin:'10px 0'}}>Acceptance criterion
+                <textarea aria-label="Repair acceptance criterion" required maxLength={4000} value={repair.criterion}
+                  disabled={busy} onChange={event => setRepair(value => ({...value, criterion:event.target.value}))}
+                  style={{display:'block', width:'100%', minHeight:56, marginTop:4}}/>
+              </label>
+              <label style={{display:'block', margin:'10px 0'}}>How to verify it
+                <textarea aria-label="Repair verification method" required maxLength={4000} value={repair.verification}
+                  disabled={busy} onChange={event => setRepair(value => ({...value, verification:event.target.value}))}
+                  style={{display:'block', width:'100%', minHeight:56, marginTop:4}}/>
+              </label>
+              <button type="submit" disabled={busy || readingFile || !sourceFile || creationUncertain ||
+                !repair.title.trim() || !repair.description.trim() || !repair.path.trim() ||
+                !repair.criterion.trim() || !repair.verification.trim() || !repair.model.trim()}>{revisionBase ? 'Save revised inputs' : 'Create repair Work'}</button>
+              {creationUncertain && <>
+                <p role="alert" style={{fontSize:12, color:LM.err}}>Inspect the refreshed canvas for a created Work node before submitting again.</p>
+                <button type="button" disabled={busy} onClick={() => window.location.reload()}>Refresh canvas</button>
+              </>}
+              </fieldset>
+              {revisionBase && revisionSubmission.current && <button type="submit" disabled={busy}>Reconcile this revision</button>}
+              {revisionBase && !revisionSubmission.current && <button type="button" disabled={busy} onClick={() => {
+                fileIntent.current += 1; setReadingFile(false); setRevisionBase(null); setSourceFile(null);
+                setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
+                setActionError('');
+              }}>Discard revision draft</button>}
+            </form>
+          </details>
+          {!revisionBase && <>
+          <select aria-label="Work node to review or repair" value={nativeTarget} disabled={busy}
+            onChange={event => {setNativeTarget(event.target.value).catch(error => setActionError(error.message));}}>
+            <option value="" disabled>Choose a Work node on this canvas</option>
+            {projectedWorkNodes.filter(node => native?.available_work?.includes(node.id)).map(node =>
+              <option key={node.id} value={node.id}>{node.title}</option>)}
+          </select>
+          {nativeTarget && <details style={{margin:'10px 0'}}>
+            <summary>Acceptance gate</summary>
+            {gateEditor?.work !== nativeTarget ?
+              <button type="button" disabled={busy} onClick={() => openGateEditor(nativeTarget)}>Open current gate</button> :
+              <form onSubmit={saveGate}>
+                <p style={{fontSize:12, color:LM.inkSoft, lineHeight:1.5}}>
+                  Current gate: {gateEditor.kind || 'none'} {gateEditor.currentPath}. Work state: {gateEditor.state}.
+                  {gateEditor.editable ?
+                    ' Saving replaces only this gate on the same Work; every other requirement keeps its saved content. A test file that does not exist yet is accepted, and completion still fails until it exists.' :
+                    ' Only an OPEN, unclaimed Work accepts a gate correction. The Work keeps its identity when its claim is released.'}
+                </p>
+                <label style={{display:'block', margin:'10px 0'}}>Pytest path inside the CDE of this Work
+                  <input aria-label="Acceptance gate pytest path" required maxLength={1024} value={gateEditor.path}
+                    disabled={busy || !gateEditor.editable || !!gateEditor.submission || gateEditor.refreshPending}
+                    onChange={event => setGateEditor(value => ({...value, path:event.target.value, result:null}))}
+                    style={{display:'block', width:'100%', marginTop:4}}/>
+                </label>
+                {gateEditor.refreshPending ? <>
+                  <p role="status" style={{fontSize:12}}>The corrected gate is saved. Reopen the current gate before making another change.</p>
+                  <button type="button" disabled={busy} onClick={() => openGateEditor(gateEditor.work)}>Reopen current gate</button>
+                </> : gateEditor.uncertain ? <>
+                  <p role="status" style={{fontSize:12}}>This correction was not confirmed. Retrying sends exactly the same correction.</p>
+                  <button type="submit" disabled={busy || !gateEditor.editable}>Retry the same correction</button>
+                  <button type="button" disabled={busy} onClick={() => openGateEditor(gateEditor.work)}>Reopen current gate</button>
+                  {gateEditor.checked && <button type="button" disabled={busy} onClick={discardGateAttempt}>Discard this attempt</button>}
+                </> : <button type="submit" disabled={busy || !gateEditor.editable || !gateEditor.path.trim() ||
+                  gateEditor.path.trim() === gateEditor.currentPath}>Save corrected gate</button>}
+                {gateEditor.result && !gateEditor.refreshPending && <p role="status" style={{fontSize:12}}>
+                  {gateEditor.result.reused ? 'This correction was already saved.' : 'Gate corrected on the same Work.'}
+                </p>}
+                {gateEditor.result && <details style={{fontSize:11, overflowWrap:'anywhere'}}>
+                  <summary>Saved value</summary>
+                  Requirements value {gateEditor.result.target}, digest {gateEditor.result.input_digest}.
+                </details>}
+              </form>}
+          </details>}
+          {nativeTarget && <details style={{margin:'10px 0'}}>
+            <summary>Work configuration</summary>
+            {configEditor?.work !== nativeTarget ?
+              <button type="button" disabled={busy} onClick={() => openConfigEditor(nativeTarget)}>Open current configuration</button> :
+              <form onSubmit={saveConfiguration}>
+                {!!configEditor.drafts.length && <label style={{display:'block', margin:'10px 0'}}>Agent proposals
+                  <select aria-label="Review agent configuration proposal" value={configEditor.draft?.revision_id || ''}
+                    disabled={busy || !!configEditor.submission || configEditor.refreshPending}
+                    onChange={event => reviewConfigDraft(event.target.value)} style={{display:'block', width:'100%'}}>
+                    <option value="">Current configuration</option>
+                    {configEditor.drafts.map(draft => <option key={draft.revision_id} value={draft.revision_id}>
+                      {draft.stale ? 'Outdated - ' : ''}
+                      {Object.keys(draft.fields).join(', ')} · {draft.proposing_actor} · {draft.revision_id.slice(0, 8)}
+                    </option>)}
+                  </select>
+                </label>}
+                {configEditor.draft && <section aria-label="Proposed configuration changes">
+                  {configEditor.draft.stale && <p role="status">The Work changed after this proposal was saved.
+                    Discard it or request an updated proposal; it cannot be approved.</p>}
+                  <button type="button" disabled={busy || !!configEditor.submission}
+                    onClick={discardConfigDraft} title="Discard this proposal; preserve its history">Discard proposal</button>
+                  <p style={{fontSize:12}}>Review the proposed inputs, criteria and destination below. Approval changes
+                    this Work's configuration; it does not run the Work. You can refine the fields before approving.</p>
+                  {Object.entries(configChanges(configEditor)).map(([name, entry]) => <details key={name}>
+                    <summary>{name === 'cde-container' ? 'Destination and allowed paths' :
+                      name === 'requirements' ? 'Criteria and reviewers' : 'Inputs'} — proposed change</summary>
+                    <div style={{display:'grid', gridTemplateColumns:'repeat(2, minmax(0, 1fr))', gap:8}}>
+                      <div><strong>Current</strong><pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:240, overflow:'auto'}}>
+                        {JSON.stringify(configEditor.baselineFields[name].value, null, 2)}</pre></div>
+                      <div><strong>Proposed</strong><pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', maxHeight:240, overflow:'auto'}}>
+                        {JSON.stringify(entry.value, null, 2)}</pre></div>
+                    </div>
+                  </details>)}
+                </section>}
+                {!!configEditor.invalidDrafts.length && <p role="status" style={{fontSize:12}}>
+                  {configEditor.invalidDrafts.length} damaged proposal(s) could not be opened. Current configuration remains available.</p>}
+                <p style={{fontSize:12, color:LM.inkSoft, lineHeight:1.5}}>
+                  Work state: {configEditor.state}. Inputs {configEditor.fields.inputs.wired ? 'wired' : 'unwired'},
+                  requirements {configEditor.fields.requirements.wired ? 'wired' : 'unwired'},
+                  CDE {configEditor.fields['cde-container'].wired ? 'wired' : 'unwired'}.
+                  {configEditor.editable ?
+                    ' Saving binds or revises only the fields you change, on this same Work; other keys keep their saved content.' :
+                    ' Only an OPEN, unclaimed Work accepts a configuration change. The Work keeps its identity when its claim is released.'}
+                  {configEditor.artifactReady ? ' Artifact input requirements are present; execution and review are separate.' :
+                    configEditor.blocker ? ' Not yet ready for artifact publication: ' + configEditor.blocker : ''}
+                </p>
+                <label style={{display:'block', margin:'10px 0'}}>CDE allowed paths, one per line
+                  <textarea aria-label="Work CDE allowed paths" maxLength={16000} value={configEditor.allowedPaths}
+                    disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
+                    onChange={event => setConfigEditor(value => ({...value, allowedPaths:event.target.value, result:null}))}
+                    style={{display:'block', width:'100%', minHeight:48, marginTop:4}}/>
+                </label>
+                <label style={{display:'block', margin:'10px 0'}}>Artifact reviewer Agent Sessions, one per line
+                  <textarea aria-label="Work artifact reviewers" maxLength={8000} value={configEditor.reviewers}
+                    disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
+                    onChange={event => setConfigEditor(value => ({...value, reviewers:event.target.value, result:null}))}
+                    style={{display:'block', width:'100%', minHeight:48, marginTop:4}}/>
+                </label>
+                <label style={{display:'block', margin:'10px 0'}}><input type="checkbox" checked={configEditor.publicInputs}
+                  disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
+                  onChange={event => setConfigEditor(value => ({...value, publicInputs:event.target.checked, result:null}))}/>
+                  {' '}Work inputs are public text</label>
+                <label style={{display:'block', margin:'10px 0'}}>Purpose
+                  <select aria-label="Work configuration purpose" value={configEditor.purpose}
+                    disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
+                    onChange={event => setConfigEditor(value => ({...value, purpose:event.target.value}))}
+                    style={{display:'block', marginTop:4}}>
+                    <option value="general">General Work</option>
+                    <option value="artifact-publication">Artifact publication: public inputs and independent reviewers</option>
+                  </select>
+                </label>
+                {configEditor.refreshPending ? <>
+                  <p role="status" style={{fontSize:12}}>The Work configuration is saved. Reopen it before making another change.</p>
+                  <button type="button" disabled={busy} onClick={() => openConfigEditor(configEditor.work)}>Reopen configuration</button>
+                </> : configEditor.uncertain ? <>
+                  <p role="status" style={{fontSize:12}}>This configuration was not confirmed. Retrying sends exactly the same configuration.</p>
+                  <button type="submit" disabled={busy || !configEditor.editable}>Retry the same configuration</button>
+                  <button type="button" disabled={busy} onClick={() => openConfigEditor(configEditor.work)}>Reopen configuration</button>
+                  {configEditor.checked && <button type="button" disabled={busy} onClick={discardConfigAttempt}>Discard this attempt</button>}
+                </> : <button type="submit" disabled={busy || !configEditor.editable || configEditor.draft?.stale ||
+                  !Object.keys(configChanges(configEditor)).length}>{configEditor.draft ?
+                    'Approve configuration changes' : 'Save configuration'}</button>}
+                {configEditor.result && !configEditor.refreshPending && <p role="status" style={{fontSize:12}}>
+                  {configEditor.result.reused ? 'This configuration was already saved.' : 'Configuration saved on the same Work.'}
+                </p>}
+                {configEditor.result && <details style={{fontSize:11, overflowWrap:'anywhere'}}>
+                  <summary>Saved values</summary>
+                  Configuration digest {configEditor.result.input_digest}.
+                </details>}
+              </form>}
+          </details>}
+          <label style={{display:'block', margin:'10px 0'}}><input type="checkbox" checked={publicReview}
+            onChange={event => setPublicReview(event.target.checked)} disabled={busy}/>
+            I confirm this Work, its source text, and instructions are public and may be sent to its selected model after approval.</label>
+          <button disabled={busy || !editorsReady || !!native?.revision_pending || !targetAvailable || !publicReview ||
+            !['project', 'agent'].includes(selectedRepairMode)}
+            onClick={() => nativeAct(selectedRepairMode === 'agent' ? 'prepare_native' : 'prepare_project')}>Prepare repair</button>
+          <button disabled={busy || !editorsReady || !!native?.revision_pending || !targetAvailable || !publicReview} onClick={() => nativeAct('prepare')}>Prepare review</button>
+          </>}
+        </>}
+        {native?.state === 'published' && native.mode === 'project' && !revisionBase && <details style={{margin:'12px 0'}}>
+          <summary>Work options</summary>
+          <button disabled={busy || !editorsReady || !!native.revision_pending} onClick={() => beginWorkRevision()}>Revise inputs and criteria</button>
+          {native.work_revision?.applied && native.work_revision.current_input_digest === native.work_revision.input_digest && <>
+            <p role="status">Revised inputs saved on the same Work. Prepare them for review and approval.</p>
+            <button disabled={busy || !editorsReady} onClick={() => nativeAct('prepare_revision')}>Prepare revised Work</button>
+          </>}
+          {native.work_revision?.applied && native.work_revision.current_input_digest !== native.work_revision.input_digest &&
+            <p role="status">This revision was already saved, but the Work changed afterward. Reopen its current inputs before preparing.</p>}
+        </details>}
+        {native?.review_text && <details><summary>Exact model input · {native.model}</summary>
+          <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontSize:11,
+            maxHeight:220, overflow:'auto', padding:8, background:LM.bg}}>{native.review_text}</pre>
+        </details>}
+        {artifactReview && native.input_digest && <div style={{fontSize:11, color:LM.inkSoft, overflowWrap:'anywhere', margin:'8px 0'}}>
+          Draft artifact: {native.artifact_name} · Input SHA-256: {native.input_digest}
+        </div>}
+        {native?.state === 'awaiting_approval' && <>
+          {projectReviewExpired && <p role="status">This review expired. Refresh it to review the same input and approve again.</p>}
+          {projectReviewExpired && native.approved === false && <button disabled={busy || !editorsReady || !!native.revision_pending}
+            onClick={() => nativeAct('refresh_project_review')}>Refresh review</button>}
+          {native.mode === 'agent' && artifactReviewExpired && <p role="status">This native review expired. Stop its retained session; the Work and its unapproved input remain saved.</p>}
+          <button disabled={busy || !editorsReady || (artifactReview &&
+            (artifactReviewExpired || native.approved === true || !native.review_text || !native.input_digest))}
+            onClick={() => nativeAct('approve')}>{artifactReview ? 'Approve this repair' : 'Approve this input'}</button>
+          <button disabled={busy || !editorsReady || (artifactReview && (artifactReviewExpired || native.approved !== true))}
+            onClick={() => nativeAct('execute')}>{artifactReview ? 'Generate repair artifact' : 'Run approved review'}</button>
+          {artifactReview && native.approved === true && <p role="status" style={{fontSize:12}}>This exact repair input is approved.</p>}
+        </>}
+        {native?.mode === 'agent' && ['attaching', 'preparing', 'awaiting_approval', 'executing', 'uncertain'].includes(native.state) &&
+          <button type="button" title="Stop native session" aria-label="Stop native session" disabled={stoppingNative}
+            onClick={stopNative} style={{padding:6, verticalAlign:'middle'}}>
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><rect x="3" y="3" width="8" height="8" rx="1" fill="currentColor"/></svg>
+          </button>}
+        {native?.result_text && (artifactReview ?
+          <div style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', lineHeight:1.6}}>{native.result_text}</div> :
+          <WorkshopReview text={native.result_text}/>)}
+        {artifactReview && native.artifact && native.artifact.outcome !== 'failed' && <div style={{fontSize:12, overflowWrap:'anywhere', margin:'12px 0'}}>
+          <strong>{native.artifact.name}</strong>
+          <div>{native.artifact.bytes} bytes · SHA-256 {native.artifact.digest}</div>
+          {native.artifact.summary && native.artifact.summary !== native.result_text && <p>{native.artifact.summary}</p>}
+          <div style={{color:LM.inkSoft}}>Draft patch generated. Review and verification are required before applying it.</div>
+          <button disabled={busy || !editorsReady || !['settled', 'published', 'publication_uncertain', 'release_pending'].includes(native.state)}
+            onClick={() => nativeAct('read_artifact')}>Download patch</button>
+        </div>}
+        {savedPublications.length > 0 && <section aria-label="Agent publications" style={{margin:'16px 0'}}>
+          <h4 style={{fontSize:13, margin:'8px 0'}}>Agent results</h4>
+          {savedPublications.map(artifact => <div key={artifact.publication}
+            style={{fontSize:12, overflowWrap:'anywhere', padding:'10px 0', borderTop:`1px solid ${LM.line}`}}>
+            <strong>{artifact.name}</strong>
+            <span style={{color:LM.inkSoft}}> · {artifact.bytes} bytes · {artifact.available ? 'Draft' : 'Work or evidence changed'}</span>
+            <button title="Inspect verified patch" aria-label={`Inspect ${artifact.name}`} disabled={busy || !editorsReady || !artifact.available}
+              onClick={() => nativeAct('read_publication', artifact)}>↗</button>
+          </div>)}
+          {publicationView?.work === artifactWork && <section aria-label="Selected agent result">
+            <strong>{publicationView.name}</strong>
+            <button title="Close result" aria-label="Close result" onClick={() => setPublicationView(null)}>×</button>
+            <p style={{fontSize:12, color:LM.inkSoft}}>Draft only. Opening this patch does not apply it or approve the Work.</p>
+            <pre tabIndex={0} style={{maxHeight:400, overflow:'auto', fontSize:12, whiteSpace:'pre'}}>{publicationView.artifact_text}</pre>
+          </section>}
+        </section>}
+        {savedArtifacts.length > 0 && <section aria-label="Saved Work patches" style={{margin:'16px 0'}}>
+          <h4 style={{fontSize:13, margin:'8px 0'}}>Saved patches for this Work</h4>
+          {savedArtifacts.map(artifact => <div key={artifact.result + ':' + artifact.receipt}
+            style={{fontSize:12, overflowWrap:'anywhere', padding:'10px 0', borderTop:`1px solid ${LM.line}`}}>
+            <strong>{artifact.name}</strong>
+            <div>{artifact.bytes} bytes · SHA-256 {artifact.digest}</div>
+            {artifact.summary && <p>{artifact.summary}</p>}
+            <p style={{color:LM.inkSoft}}>Saved draft patch. Review and verify it before applying.</p>
+            <button disabled={busy || !editorsReady} onClick={() => nativeAct('read_artifact', artifact)}>Download saved patch</button>
+            {native?.state === 'idle' && artifact.mode !== 'agent' && <details style={{marginTop:8}}>
+              <summary>Continue this Work</summary>
+              <p>Resume review of this saved result and revise the same task. This does not rerun the model.</p>
+              <button disabled={busy || !editorsReady} onClick={() => nativeAct('recover_review', artifact)}>Resume review</button>
+            </details>}
+          </div>)}
+        </section>}
+        {failedProjects.length > 0 && <section aria-label="Failed project attempts" style={{margin:'16px 0'}}>
+          <h4 style={{fontSize:13, margin:'8px 0'}}>Failed attempts for this Work</h4>
+          {failedProjects.map(failure => <div key={failure.receipt} style={{fontSize:12, overflowWrap:'anywhere', margin:'10px 0'}}>
+            <div>{failure.error}</div>
+            <div style={{color:LM.inkSoft}}>Receipt: {failure.receipt}</div>
+            <p>Prepare a retry of this same Work after its prior worker has disconnected. You will review and approve fresh input before any model runs.</p>
+            <button disabled={busy || !editorsReady || !['idle', 'settled', 'published', 'publication_uncertain', 'uncertain'].includes(native?.state)}
+              onClick={() => nativeAct('recover_project', failure)}>Prepare retry of this Work</button>
+          </div>)}
+        </section>}
+        {localDeliveries.length > 0 && <details style={{margin:'12px 0'}}>
+          <summary>Unreceived project results · {localDeliveries.length}</summary>
+          {localDeliveries.map(delivery => <div key={delivery.grant} style={{fontSize:12, margin:'10px 0'}}>
+            <p>No patch was received. The provider may have processed the request; its outcome is unknown.</p>
+            {delivery.state === 'local_delivery_abandoned' ? <>
+              <p role="status">Local delivery closed. Its original result remains saved.</p>
+              <button disabled={busy || !editorsReady || !!revisionBase || !['idle', 'local_delivery_abandoned'].includes(native?.state)}
+                onClick={() => beginWorkRevision(delivery)}>{native?.revision_pending ? 'Finish saved revision' : 'Revise inputs and criteria'}</button>
+              <p>Prepare this Work under a fresh worker once the previous worker disconnects. Review and approval are required before another model runs.</p>
+              <button disabled={busy || !editorsReady || !!revisionBase || !!native?.revision_pending || !['idle', 'local_delivery_abandoned'].includes(native?.state)}
+                onClick={() => nativeAct('recover_local_project', delivery)}>Prepare this Work again</button>
+              </> : <>
+                <p>Close local delivery to leave this attempt. This does not cancel the provider request or run it again.</p>
+                <button disabled={busy || !editorsReady || !['idle', 'uncertain'].includes(native?.state)}
+                  onClick={() => nativeAct('abandon_project', delivery)}>Close local delivery</button>
+              </>}
+          </div>)}
+        </details>}
+        {native?.state === 'uncertain' &&
+          <button disabled={busy || !editorsReady} onClick={() => nativeAct('reconcile')}>Recover recorded result</button>}
+        {['settled', 'publication_uncertain'].includes(native?.state) &&
+          !(native?.mode === 'agent' && native.native_result?.outcome === 'failed') &&
+          <button disabled={busy || !editorsReady} onClick={() => nativeAct('publish')}>Publish result to Workshop</button>}
+        {(['published', 'local_delivery_abandoned', 'release_pending'].includes(native?.state) ||
+          (native?.mode === 'agent' && native.state === 'settled' && native.native_result?.state === 'settled' &&
+            native.native_result?.outcome === 'failed' && native.native_result?.receipt) ||
+          (native?.mode === 'agent' && native.state === 'native_cancelled' &&
+            native.native_cancellation?.state === 'cancelled' && native.native_cancellation.releasable === true)) &&
+          <button disabled={busy || !editorsReady || !!revisionBase || !!native.revision_pending} onClick={() => nativeAct('release')}>
+            {native.state === 'release_pending' ? 'Recover closed result' :
+              native.state === 'native_cancelled' ? 'Close cancelled review' : 'Close result'}</button>}
+        {native?.error && <p role="alert">{native.error}</p>}
+        {nativeSyncError && <p role="status">{nativeSyncError}</p>}
+      </section>}
+      <h3 style={{fontSize:14, marginTop:0}}>Participants</h3>
+      {participants.map(participant => <div key={participant.root} style={{marginBottom:14, overflowWrap:'anywhere'}}>
+        <div style={{fontSize:12}}>{participant.label}</div>
+        <div style={{fontSize:11, color:LM.inkSoft}}>{participant.attached ? 'Attached' : 'History participant · detached'}</div>
+      </div>)}
+    </aside>
+  </>;
+};
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
 const ChatView = ({ session, model, setMode }) => {
@@ -1311,8 +2794,301 @@ const CalmRow = ({ k, v }) => (
   </div>
 );
 
-// Workspace header is now SESSION TABS (browser-style) + right-side actions.
-const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, setSettingsOpen, onHome }) => (
+const visuallyHiddenStyle = {position:'absolute', width:1, height:1, padding:0, margin:-1, overflow:'hidden',
+  clip:'rect(0, 0, 0, 0)', whiteSpace:'nowrap', border:0};
+const StudioHeaderIcon = ({name}) => <svg aria-hidden="true" focusable="false" width="15" height="15"
+  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+  {name === 'download' ? <><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M4 16v5h16v-5"/></> :
+    name === 'reload' ? <><path d="M20 7v5h-5"/><path d="M19 12a7 7 0 1 0-2 5M20 12a8 8 0 0 0-14-6"/></> :
+    name === 'skill' ? <><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/></> :
+    name === 'error' ? <><path d="m12 3 10 18H2Z"/><path d="M12 9v5m0 3h.01"/></> :
+    name === 'ready' ? <><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></> :
+    <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>}
+</svg>;
+
+const ApplicationUpdateControls = ({compact = false}) => {
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  const [snapshot, setSnapshot] = React.useState(() => transport?.getSnapshot() || null);
+  const [localError, setLocalError] = React.useState('');
+  const alive = React.useRef(true);
+  React.useEffect(() => {
+    alive.current = true;
+    if (!transport?.watchApplicationUpdate) return () => { alive.current = false; };
+    const unsubscribe = transport.subscribe(() => setSnapshot(transport.getSnapshot()));
+    const unwatch = transport.watchApplicationUpdate();
+    setSnapshot(transport.getSnapshot());
+    return () => { alive.current = false; unsubscribe(); unwatch(); };
+  }, [transport]);
+  if (!transport?.watchApplicationUpdate) return compact ? null :
+    <p style={{fontSize:12, color:LM.inkSoft}}>Release updates are unavailable in this Studio connection.</p>;
+  const status = snapshot?.applicationUpdate;
+  const pending = !!snapshot?.applicationUpdatePending;
+  const error = snapshot?.applicationUpdateError || localError;
+  const active = ['checking', 'downloading', 'restarting'].includes(status?.state);
+  const label = {idle:'No update in progress', checking:'Checking for a release…', downloading:'Downloading update…',
+    ready:'Update ready', restarting:'Restart requested…', failed:'Update failed'}[status?.state] || 'Reading release status…';
+  const act = async action => {
+    setLocalError('');
+    try {
+      if (action === 'read') await transport.refreshApplicationUpdate();
+      else await transport.applicationUpdateAction(action);
+    } catch (failure) {
+      if (alive.current) setLocalError(transport.getSnapshot()?.applicationUpdateError ? '' :
+        failure.message || 'The update request could not be confirmed.');
+    }
+  };
+  const buttonStyle = {...smallBtn(), fontSize:compact ? 10.5 : 12, flexShrink:0,
+    ...(compact ? {width:28, height:28, padding:0, display:'grid', placeItems:'center'} : {}),
+    opacity:pending ? .5 : 1, cursor:pending ? 'default' : 'pointer'};
+  return <section aria-label="Application release updates" style={compact ? {
+    display:'flex', alignItems:'center', gap:6, flexShrink:0, paddingLeft:6,
+  } : {marginTop:16, padding:'14px 16px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
+    {!compact && <>
+      <h3 style={{fontSize:14, margin:'0 0 8px'}}>Application updates</h3>
+      <div style={{fontSize:12, color:LM.inkSoft, overflowWrap:'anywhere'}}>Current build: {status?.current_build || 'Reading…'}</div>
+      {status?.available_build && <div style={{fontSize:12, color:LM.inkSoft, overflowWrap:'anywhere'}}>Available build: {status.available_build}</div>}
+      <p style={{fontSize:12, lineHeight:1.5}}>Check and download fetches a release. Update and reload restarts ArchHub into that release. Save unsubmitted drafts before restarting.</p>
+    </>}
+    <span role={error || status?.state === 'failed' ? 'alert' : 'status'}
+      title={[label, status?.current_build, status?.available_build, error || status?.detail].filter(Boolean).join(' · ')}
+      aria-label={compact ? error || label : undefined} tabIndex={compact ? 0 : undefined}
+      style={{display:compact ? 'inline-block' : 'block', fontSize:compact ? 10.5 : 12,
+        color:error || status?.state === 'failed' ? LM.err : LM.inkSoft,
+        ...(compact ? {width:24, height:28, display:'grid', placeItems:'center', position:'relative'} :
+          {margin:'10px 0', overflowWrap:'anywhere', whiteSpace:'pre-wrap'})}}>
+      {compact ? <><StudioHeaderIcon name={error || status?.state === 'failed' ? 'error' :
+        status?.state === 'ready' ? 'ready' : active ? 'reload' : 'status'}/>
+        <span style={visuallyHiddenStyle}>{error || label}</span></> : error || [label, status?.detail].filter(Boolean).join('\n')}
+    </span>
+    {status?.state === 'ready' && !error && <button disabled={pending || !status.restart_supported}
+      onClick={() => act('reload')} title="Install the ready release through the desktop restart"
+      aria-label="Update and reload"
+      style={{...buttonStyle, color:status.restart_supported ? LM.accent : LM.inkMuted,
+        cursor:pending || !status.restart_supported ? 'default' : 'pointer'}}>
+      {compact ? <StudioHeaderIcon name="reload"/> : 'Update and reload'}</button>}
+    {(!active && status?.state !== 'ready' && !error) && <button disabled={pending || !status}
+      onClick={() => act('check')} title="Check and download" aria-label="Check and download" style={buttonStyle}>
+      {compact ? <StudioHeaderIcon name="download"/> : 'Check and download'}</button>}
+    {error && <button disabled={pending} onClick={() => act('read')} title="Read status" aria-label="Read status" style={buttonStyle}>
+      {compact ? <StudioHeaderIcon name="reload"/> : 'Read status'}</button>}
+    {status?.state === 'ready' && !status.restart_supported && <span style={{fontSize:11, color:LM.inkSoft}}>
+      {compact ? 'Desktop restart unavailable' : 'Desktop restart is unavailable in this session.'}
+    </span>}
+  </section>;
+};
+
+const WorkshopStorageReview = ({root, label}) => {
+  const authority = window.ARCHHUB_EXISTING_WORKSHOP;
+  const [review, setReview] = React.useState(null), [error, setError] = React.useState('');
+  const [busy, setBusy] = React.useState(false), [confirmPage, setConfirmPage] = React.useState(null);
+  const [confirmTracking, setConfirmTracking] = React.useState(false);
+  const [notice, setNotice] = React.useState('');
+  const mounted = React.useRef(true), working = React.useRef(false);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const read = async (after = null) => {
+    if (working.current) return;
+    working.current = true; setBusy(true); setError(''); setConfirmPage(null); setConfirmTracking(false);
+    try {
+      const result = await authority.reviewConversationPages(root, after);
+      if (mounted.current) setReview(result);
+    } catch (failure) { if (mounted.current) { setReview(null); setError(failure.message || 'Could not read protected editors.'); } }
+    finally { working.current = false; if (mounted.current) setBusy(false); }
+  };
+  const release = async () => {
+    if (working.current || !confirmPage) return;
+    working.current = true; setBusy(true); setError(''); setNotice('');
+    try {
+      await authority.discardConversationPage(root, confirmPage);
+      if (mounted.current) { setConfirmPage(null); setReview(null); setNotice('Editor protection released. Conversation messages and graph nodes are unchanged.'); }
+    } catch (failure) {
+      if (mounted.current) { setConfirmPage(null); setReview(null); setError(failure.message || 'Release is not confirmed. Refresh before continuing.'); }
+    } finally { working.current = false; if (mounted.current) setBusy(false); }
+  };
+  const changeConversation = async action => {
+    if (working.current || !review || action === 'resolveConversationTracking' && !confirmTracking) return;
+    working.current = true; setBusy(true); setError(''); setNotice('');
+    try {
+      await authority[action](root, review);
+      if (mounted.current) {
+        setReview(null); setConfirmTracking(false);
+        setNotice(action === 'archiveConversation' ? 'Conversation archived. Its messages and saved graph remain.' :
+          'Earlier unsent drafts marked as resolved. Inactivity tracking starts now; open editors remain protected.');
+      }
+    } catch (failure) {
+      if (mounted.current) { setReview(null); setConfirmTracking(false); setError(failure.message || 'Refresh storage before retrying.'); }
+    } finally { working.current = false; if (mounted.current) setBusy(false); }
+  };
+  const control = {background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
+    padding:'5px 7px', fontSize:12, cursor:busy ? 'default' : 'pointer'};
+  return <details style={{marginTop:12, borderTop:`1px solid ${LM.line}`, paddingTop:10}}
+    onToggle={event => { if (event.currentTarget.open && !review) read(); }}>
+    <summary style={{cursor:'pointer'}}>Conversation storage</summary>
+    <p style={{color:LM.inkSoft, lineHeight:1.5}}>{label}: open editors and unresolved drafts prevent cleanup.
+      An open record can remain after a browser closes; it does not prove a running session.</p>
+    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+      <strong>Protected editors</strong>
+      <button disabled={busy} onClick={() => read()} style={control} aria-label="Refresh protected editors"
+        title="Refresh protected editors"><StudioHeaderIcon name="reload"/></button>
+    </div>
+    {review?.pages.map(page => <div key={page.page_id} style={{padding:'10px 0', borderBottom:`1px solid ${LM.lineSoft}`}}>
+      <div style={{display:'flex', gap:8, alignItems:'center'}}>
+        <span title={page.page_id} style={{flex:1}}>{page.editor_label}</span>
+        <button disabled={busy} onClick={() => setConfirmPage(page)} style={control}
+          aria-label={'Review release of editor ' + page.page_id.slice(-8)} title="Review release of cleanup protection">⋯</button>
+      </div>
+      <div style={{color:LM.inkSoft, marginTop:4}}>{page.state === 'open' ? 'Open record' : 'Closed record'} ·
+        {page.draft_state === 'dirty' ? ' draft pending' : page.draft_state === 'unknown' ? ' draft state unknown' : ' no pending draft'}</div>
+      <div title={'Session: ' + page.session_root + '\nView: ' + page.view_root} style={{color:LM.inkMuted, fontSize:11, marginTop:4}}>
+        Browser {page.session_root.slice(-8)} · editor {page.page_id.slice(-8)}</div>
+      <div style={{color:LM.inkMuted, fontSize:11, marginTop:4}}>Last changed {new Date(page.changed_at * 1000).toLocaleString()}</div>
+      {confirmPage === page && <div style={{marginTop:8}}>
+        <p style={{lineHeight:1.5}}>Release this editor’s protection only after saving or discarding its unsent work.
+          Unsent text is not stored in this record. This action does not delete conversation messages or graph nodes.</p>
+        <button disabled={busy} onClick={release} style={control}>Release protection</button>
+        <button disabled={busy} onClick={() => setConfirmPage(null)} style={{...control, marginLeft:6}}>Cancel</button>
+      </div>}
+    </div>)}
+    {review && review.pages.length === 0 && <p>No protected editor records in this conversation.</p>}
+    {review?.protection.tracking_state === 'unknown' && <div style={{color:LM.inkSoft}}>
+      <p>Earlier draft activity is still unknown. Automatic cleanup remains protected.</p>
+      {!confirmTracking ? <button disabled={busy} style={control} onClick={() => setConfirmTracking(true)}>Review earlier activity…</button> : <>
+        <p>Confirm that you have saved or discarded any earlier unsent drafts in this conversation.
+          This starts its inactivity period now. Existing protected editor records stay protected.</p>
+        <button disabled={busy} style={control} onClick={() => changeConversation('resolveConversationTracking')}>Confirm drafts resolved</button>
+        <button disabled={busy} style={{...control, marginLeft:6}} onClick={() => setConfirmTracking(false)}>Cancel</button>
+      </>}
+    </div>}
+    {review && <div style={{marginTop:10}}>
+      {review.retention.archived_at !== null ? <p>Archived {new Date(review.retention.archived_at * 1000).toLocaleString()}. Saved graph nodes are preserved.</p> :
+        <button disabled={busy || review.protection.protected} style={control} onClick={() => changeConversation('archiveConversation')}>Archive conversation</button>}
+      {review.protection.protected && <p style={{color:LM.inkSoft}}>Close or resolve protected editors before archiving. Running or unresolved Work also prevents archiving.</p>}
+    </div>}
+    {review?.next_page_id && <button disabled={busy} onClick={() => read(review.next_page_id)} style={{...control, marginTop:8}}>More editors</button>}
+    {notice && <p role="status">{notice}</p>}
+    {error && <p role="alert" style={{color:LM.err}}>{error}</p>}
+    {busy && <p role="status">Updating storage review…</p>}
+  </details>;
+};
+
+const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationRoot}) => {
+  const state = useWorkshopProjection();
+  const authority = window.ARCHHUB_EXISTING_WORKSHOP;
+  const anchor = workshops.find(row => row.is_general === true);
+  const selected = workshops.find(row => row.root === conversationRoot);
+  const menu = React.useRef(null), button = React.useRef(null);
+  const [open, setOpen] = React.useState(false), [creating, setCreating] = React.useState(false);
+  const [title, setTitle] = React.useState(''), [chosen, setChosen] = React.useState([]);
+  const [saved, setSaved] = React.useState(null);
+  const [busy, setBusy] = React.useState(false), [error, setError] = React.useState('');
+  const held = state?.conversationCatalog;
+  const catalog = held?.root === anchor?.root && held?.scope_root === state?.canvas?.root ? held : null;
+  const creation = saved && state?.conversationCreation?.root === saved.root ? state.conversationCreation : saved;
+  const close = () => { setOpen(false); button.current?.focus(); };
+  React.useEffect(() => {
+    if (!open) return;
+    const pointer = event => { if (!menu.current?.contains(event.target)) setOpen(false); };
+    const key = event => { if (event.key === 'Escape') { event.stopPropagation(); close(); } };
+    document.addEventListener('pointerdown', pointer);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', pointer); document.removeEventListener('keydown', key); };
+  }, [open]);
+  const read = async (method = 'refreshConversationCatalog') => {
+    if (busy || !anchor) return;
+    setBusy(true); setError('');
+    try { await authority[method](anchor.root); }
+    catch (failure) { setError(failure.message || 'Could not read conversations.'); }
+    finally { setBusy(false); }
+  };
+  const toggle = () => { if (open) close(); else { setOpen(true); if (anchor) read(); } };
+  const choose = root => { setConversationRoot(root); close(); };
+  const create = async event => {
+    event.preventDefault();
+    if (busy || !anchor || !catalog?.can_create) return;
+    setBusy(true); setError('');
+    try {
+      const participant_roots = (catalog.participants || []).filter(row =>
+        row.root === catalog.self || chosen.includes(row.root)).map(row => row.root);
+      const result = await authority.createConversation(anchor.root, {title, participant_roots});
+      if (result?.accepted) setSaved(result);
+    } catch (failure) { setError(failure.message || 'Creation is not confirmed. Retry the same request.'); }
+    finally { setBusy(false); }
+  };
+  const control = {background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`,
+    borderRadius:LM.rad.sm, padding:'7px 9px', fontFamily:LM.sans, fontSize:12};
+  return <div ref={menu} style={{position:'relative', minWidth:0}}>
+    <button ref={button} onClick={toggle} aria-label="Conversations" aria-haspopup="dialog" aria-expanded={open}
+      title={selected?.label || 'Conversations'} style={{...control, border:0, maxWidth:180,
+        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', cursor:'pointer'}}>
+      {selected?.label || 'Conversations'} <span aria-hidden="true">⌄</span>
+    </button>
+    {open && <div role="dialog" aria-label="Workshop conversations" style={{position:'absolute', top:'calc(100% + 6px)',
+      right:0, zIndex:300, width:340, maxWidth:'calc(100vw - 70px)', maxHeight:'min(70vh, 600px)', overflowY:'auto',
+      background:LM.bgPanel, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
+      boxShadow:'0 12px 32px #0008', padding:12, fontSize:12}}>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8}}>
+        <strong>Conversations</strong>
+        {anchor && <button disabled={busy} onClick={() => read()} title="Refresh conversations" aria-label="Refresh conversations"
+          style={{...control, display:'grid', placeItems:'center', padding:5}}><StudioHeaderIcon name="reload"/></button>}
+      </div>
+      <p style={{color:LM.inkSoft, margin:'0 0 10px', lineHeight:1.5}}>Saved rooms and their participants. A saved room does not mean its agents are running.</p>
+      <div style={{display:'grid', gap:4}}>
+        <button disabled={busy} onClick={() => choose('')} aria-current={!conversationRoot ? 'true' : undefined}
+          style={{...control, textAlign:'left', cursor:'pointer', background:!conversationRoot ? LM.accentDim : LM.bg}}>
+          Current conversation
+        </button>
+        {(catalog?.conversations || workshops.map(row => ({root:row.root, title:row.label}))).map(row => {
+          const visible = workshops.some(item => item.root === row.root);
+          return <button key={row.root} disabled={!visible || busy} onClick={() => choose(row.root)}
+            aria-current={conversationRoot === row.root ? 'true' : undefined}
+            title={visible ? row.title : 'Open the Workshop canvas to reach this conversation'}
+            style={{...control, textAlign:'left', overflowWrap:'anywhere', cursor:visible ? 'pointer' : 'default',
+              background:conversationRoot === row.root ? LM.accentDim : LM.bg}}>
+            <div>{row.title}</div>
+            {row.participant_roots && <small style={{color:LM.inkSoft}}>{row.participant_roots.length} participants{!visible ? ' · on Workshop canvas' : ''}</small>}
+          </button>;
+        })}
+      </div>
+      {catalog?.page_after && <button disabled={busy} onClick={() => read('showFirstConversationPage')} style={{...control, marginTop:8}}>First page</button>}
+      {catalog?.has_more && <button disabled={busy} onClick={() => read('loadNextConversationPage')} style={{...control, margin:'8px 0 0 6px'}}>More conversations</button>}
+      {catalog?.can_create && !creating && <button disabled={busy} onClick={() => { setCreating(true); setChosen([]); }}
+        style={{...control, width:'100%', marginTop:12, cursor:'pointer'}}>＋ New conversation</button>}
+      {creating && <form onSubmit={create} style={{marginTop:12, borderTop:`1px solid ${LM.line}`, paddingTop:12}}>
+        <label style={{display:'block'}}>Conversation name
+          <input autoFocus required disabled={busy || creation?.accepted} value={title} maxLength={512}
+            onChange={event => setTitle(event.target.value)} placeholder="Wall conversion workflow"
+            style={{...control, display:'block', width:'100%', margin:'6px 0 10px', boxSizing:'border-box'}}/>
+        </label>
+        <fieldset disabled={busy || creation?.accepted} style={{border:0, margin:0, padding:0}}>
+          <legend style={{marginBottom:6}}>Participants</legend>
+          {(catalog?.participants || []).filter(row => row.attached).map(row => <label key={row.root}
+            style={{display:'flex', gap:7, alignItems:'center', marginBottom:7, overflowWrap:'anywhere'}}>
+            <input type="checkbox" checked={row.root === catalog.self || chosen.includes(row.root)} disabled={row.root === catalog.self}
+              onChange={event => setChosen(old => event.target.checked ? [...old, row.root] : old.filter(root => root !== row.root))}/>
+            {row.label}{row.root === catalog.self ? ' (you)' : ''}
+          </label>)}
+        </fieldset>
+        {!creation?.accepted && <button type="submit" disabled={busy || !catalog?.can_create || !title.trim()}
+          style={{...control, marginTop:6}}>{busy ? 'Saving…' : error ? 'Retry creation' : 'Create conversation'}</button>}
+        {creation?.accepted && <div role="status" style={{marginTop:8, lineHeight:1.5}}>
+          Saved: {creation.title}. {creation.error || creation.notice || creation.warning}
+          {workshops.some(row => row.root === creation.root) && <button type="button" onClick={() => choose(creation.root)}
+            style={{...control, margin:'6px 0'}}>Open conversation</button>}
+          <button type="button" onClick={() => { setSaved(null); setTitle(''); setChosen([]); setCreating(false); }}
+            style={{...control, margin:'6px'}}>Done</button>
+        </div>}
+      </form>}
+      {(catalog?.can_create || state?.workshop?.root === (selected || anchor)?.root && state.workshop.can_manage_history) &&
+        (selected || anchor) && typeof authority.reviewConversationPages === 'function' &&
+        <WorkshopStorageReview key={(selected || anchor).root} root={(selected || anchor).root} label={(selected || anchor).label}/>}
+      {(error || catalog?.error) && <p role="alert" style={{color:LM.err, lineHeight:1.5}}>{error || catalog.error}</p>}
+      {busy && <div role="status" style={{marginTop:8, color:LM.inkSoft}}>Updating…</div>}
+    </div>}
+  </div>;
+};
+
+// Workspace header uses workspace tabs and one compact conversation menu.
+const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, setSettingsOpen, onHome,
+  workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '' }) => (
   <div style={{
     gridColumn:'1 / -1', gridRow:'1',
     borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
@@ -1336,20 +3112,22 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
         const sm = LM_STATE_META[s.state];
         return <WsTab key={id} s={s} a={a} sm={sm} onClick={() => setOpenId(id)} onClose={(e) => { e.stopPropagation(); closeTab(id); }}/>;
       })}
-      <button title="New session" style={{
-        width:26, height:26, padding:0, border:0, borderRadius:LM.rad.sm,
-        background:'transparent', color:LM.inkMuted, cursor:'pointer', flexShrink:0,
-        display:'grid', placeItems:'center', fontSize:14,
-      }}
-      onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
-      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>+</button>
     </div>
 
     <div style={{
       display:'flex', alignItems:'center', gap:1, padding:2, background:LM.bg,
       border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, flexShrink:0,
     }}>
-      {[['chat','Chat'],['canvas','Canvas']].map(([k,l]) => (
+      {workshops.length > 0 && (window.ARCHHUB_EXISTING_WORKSHOP?.refreshConversationCatalog ?
+        <WorkshopConversationMenu key={JSON.stringify([workshops.find(row => row.is_general)?.root, session.id])}
+          workshops={workshops} conversationRoot={conversationRoot} setConversationRoot={setConversationRoot}/> :
+        <select aria-label="Conversation source" value={conversationRoot}
+        onChange={event => setConversationRoot(event.target.value)} style={{maxWidth:180,
+          background:LM.bg, color:LM.ink, border:0, fontFamily:LM.sans, fontSize:12}}>
+        <option value="">Conversation</option>
+        {workshops.map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
+      </select>)}
+      {[['chat',conversationRoot ? 'Workshop' : 'Chat'],['canvas','Canvas']].map(([k,l]) => (
         <button key={k} onClick={() => setMode(k)} style={{
           padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:'pointer',
           background: mode===k ? LM.accentDim : 'transparent',
@@ -1359,9 +3137,19 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
       ))}
     </div>
 
-    <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
-    <HoverBtn>fork</HoverBtn>
-    <HoverBtn primary>save as skill</HoverBtn>
+    {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
+      color:LM.inkSoft, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+      {conversationNotice}</span>}
+    {conversationRoot ? (workshopModel ? <span style={{fontSize:11, color:LM.inkSoft, padding:'0 8px'}}>
+      {workshopModel}</span> : null) : <>
+      <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
+      <HoverBtn>fork</HoverBtn>
+      <HoverBtn primary disabled title="Save as skill unavailable" aria-label="Save as skill unavailable"
+        style={{width:28, height:28, padding:0, display:'grid', placeItems:'center'}}>
+        <StudioHeaderIcon name="skill"/>
+      </HoverBtn>
+    </>}
+    <ApplicationUpdateControls compact/>
   </div>
 );
 
@@ -1412,10 +3200,11 @@ const smallBtn = (primary) => ({
 });
 
 // Hoverable button wrappers (cards style — actually responsive)
-const HoverBtn = ({ primary, onClick, children, style }) => {
+const HoverBtn = ({ primary, onClick, children, style, disabled, title, 'aria-label':ariaLabel }) => {
   const [h, setH] = React.useState(false);
   return (
     <button
+      disabled={disabled} title={title} aria-label={ariaLabel}
       onClick={onClick}
       onMouseEnter={() => setH(true)}
       onMouseLeave={() => setH(false)}
@@ -1425,6 +3214,7 @@ const HoverBtn = ({ primary, onClick, children, style }) => {
           ? { filter: h ? 'brightness(1.12)' : 'none' }
           : { background: h ? LM.bgHover : 'transparent', borderColor: h ? LM.accent+'66' : LM.line, color: h ? LM.ink : LM.inkSoft }),
         ...style,
+        ...(disabled ? {opacity:.5, cursor:'default', filter:'none'} : {}),
       }}>{children}</button>
   );
 };
@@ -1468,30 +3258,210 @@ const SOCKET_R = 5;
 
 const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
 
-const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model }) => {
-  const allNodes = React.useMemo(() => [...LM_GRAPH.nodes, ...userNodes], [userNodes]);
+const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
+  const adjacency = new Map(nodeIds.map(id => [id, new Set()]));
+  for (const wire of wires) {
+    const from = wire.from?.[0], to = wire.to?.[0];
+    if (adjacency.has(from) && adjacency.has(to)) { adjacency.get(from).add(to); adjacency.get(to).add(from); }
+  }
+  const found = new Set(seeds.filter(id => adjacency.has(id))), queue = [...found];
+  for (let index = 0; index < queue.length; index++) {
+    for (const id of adjacency.get(queue[index])) {
+      if (!found.has(id)) { found.add(id); if (whole) queue.push(id); }
+    }
+  }
+  return [...found];
+};
+const canvasFitBounds = (ids, positions, sizes, viewport) => {
+  const width = viewport.width - 48, height = viewport.height - 152;
+  const left = Math.min(...ids.map(id => positions[id].x)), top = Math.min(...ids.map(id => positions[id].y));
+  const right = Math.max(...ids.map(id => positions[id].x + sizes[id].w));
+  const bottom = Math.max(...ids.map(id => positions[id].y + sizes[id].h));
+  const zoom = Math.min(2, width / Math.max(1, right - left), height / Math.max(1, bottom - top));
+  if (!ids.length || !Number.isFinite(zoom) || zoom < 0.01 || width < 1 || height < 1) {
+    throw new Error('The selected bounds are too large for this view. Fit a smaller selection.');
+  }
+  return {zoom, pan:{x:24 + width / 2 - (left + right) * zoom / 2,
+    y:72 + height / 2 - (top + bottom) * zoom / 2}, bounds:{left, top, right, bottom}};
+};
+const canvasArrangePositions = (ids, positions, sizes, allIds, wires) => {
+  const stable = [...ids].sort((a, b) => positions[a].y - positions[b].y || positions[a].x - positions[b].x || a.localeCompare(b));
+  const rank = new Map(stable.map((id, index) => [id, index]));
+  const neighbours = new Map(stable.map(id => [id, new Set()])), outgoing = new Map(stable.map(id => [id, new Set()]));
+  const indegree = new Map(stable.map(id => [id, 0]));
+  for (const wire of wires) {
+    const from = wire.from?.[0], to = wire.to?.[0];
+    if (!rank.has(from) || !rank.has(to) || from === to || outgoing.get(from).has(to)) continue;
+    neighbours.get(from).add(to); neighbours.get(to).add(from);
+    outgoing.get(from).add(to); indegree.set(to, indegree.get(to) + 1);
+  }
+  const remaining = new Set(stable), groups = [];
+  for (const seed of stable) {
+    if (!remaining.has(seed)) continue;
+    const component = new Set([seed]), queue = [seed];
+    for (let index = 0; index < queue.length; index++) for (const id of neighbours.get(queue[index])) {
+      if (!component.has(id)) { component.add(id); queue.push(id); }
+    }
+    const pending = new Set([...component].sort((a, b) => rank.get(a) - rank.get(b))), order = [];
+    while (pending.size) {
+      // Break cycles in stable visual order; acyclic edges retain upstream-first order.
+      const id = [...pending].find(root => indegree.get(root) === 0) || pending.values().next().value;
+      pending.delete(id); remaining.delete(id); order.push(id);
+      for (const target of outgoing.get(id)) indegree.set(target, indegree.get(target) - 1);
+    }
+    groups.push(order);
+  }
+  const gap = 48, totalArea = stable.reduce((area, id) => area + (sizes[id].w + gap) * (sizes[id].h + gap), 0);
+  const shelfWidth = Math.max(...stable.map(id => sizes[id].w), Math.sqrt(totalArea * 1.4));
+  const local = {};
+  let x = 0, y = 0, rowHeight = 0, packedWidth = 0;
+  for (const group of groups) {
+    if (x) { x = 0; y += rowHeight + gap; rowHeight = 0; }
+    for (const id of group) {
+      const size = sizes[id];
+      if (x && x + size.w > shelfWidth) { x = 0; y += rowHeight + gap; rowHeight = 0; }
+      local[id] = {x, y}; packedWidth = Math.max(packedWidth, x + size.w);
+      x += size.w + gap; rowHeight = Math.max(rowHeight, size.h);
+    }
+  }
+  const packedHeight = y + rowHeight, originX = Math.round(Math.min(...stable.map(id => positions[id].x)));
+  let originY = Math.round(Math.min(...stable.map(id => positions[id].y)));
+  const included = new Set(stable), obstacles = allIds.filter(id => !included.has(id));
+  for (let pass = 0; pass <= obstacles.length; pass++) {
+    const hits = obstacles.filter(id => {
+      const point = positions[id], size = sizes[id];
+      return originX < point.x + size.w + gap && originX + packedWidth + gap > point.x &&
+        originY < point.y + size.h + gap && originY + packedHeight + gap > point.y;
+    });
+    if (!hits.length) break;
+    originY = Math.ceil(Math.max(...hits.map(id => positions[id].y + sizes[id].h + gap)));
+  }
+  return Object.fromEntries(stable.map(id => [id, {x:originX + local[id].x, y:originY + local[id].y}]));
+};
 
-  // Persistent positions per node — initialized from node.x/y, then mutable via drag.
+const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model }) => {
+  const authorityState = useStudioProjection();
+  const graph = authorityState?.graph || LM_GRAPH;
+  const authority = window.ARCHHUB_STUDIO_AUTHORITY;
+  const normal = !authority && window.ARCHHUB_EXISTING_WORKSHOP;
+  const [wireStart, setWireStart] = React.useState(null);
+  const [wireError, setWireError] = React.useState('');
+  React.useEffect(() => { setWireStart(null); setWireError(''); }, [authorityState?.canvas?.scope?.current]);
+  const useSocket = async (root, port, side) => {
+    if ((!authority && !normal) || authorityState?.pending || saving.current || layoutNeedsRefresh) return;
+    setWireError('');
+    if (normal && (authorityState?.requires_refresh || port.mode !== 'connection')) {
+      setWireError(authorityState?.requires_refresh ? 'Refresh the canvas before editing connections.' :
+        'This port does not expose a connection command.');
+      return;
+    }
+    if (side === 'out') {
+      if (normal && (!port.connect_control || !port.connect_choices?.length)) {
+        setWireError('This output has no current compatible connection choices.'); return;
+      }
+      setWireStart({root, port}); return;
+    }
+    if (!wireStart) { setWireError('Choose an output first, then a compatible input.'); return; }
+    try {
+      if (authority) await authority.connect(wireStart.root, wireStart.port.id, root, port.id);
+      else await normal.connectTopology(wireStart.root, wireStart.port.id, root, port.id);
+      setWireStart(null);
+    } catch (error) { setWireError(error.message || 'The connection was refused.'); }
+  };
+  const normalConnectionAction = async action => {
+    if (!normal || authorityState?.pending) return;
+    setWireError(''); setWireStart(null);
+    try {
+      if (action === 'refresh') await normal.refreshTopologyCanvas();
+      else await normal.disconnectTopology(focusId);
+    } catch (error) { setWireError(error.message || 'The connection operation could not be confirmed.'); }
+  };
+  const allNodes = React.useMemo(() => [...graph.nodes, ...userNodes], [graph.nodes, userNodes]);
+  const scopeKey = studioCanvasScope(authorityState?.canvas);
+  const mountedScope = React.useRef(scopeKey);
+  const alive = React.useRef(true);
+  const saving = React.useRef(false);
+  const dragRef = React.useRef(null);
+  const wrapRef = React.useRef(null);
+  const saveRef = React.useRef(null);
+  const suppressNodeClick = React.useRef(false);
+  const MAX_LAYOUT_NODES = 256;
+  const [selectedIds, setSelectedIds] = React.useState([]);
+  const selected = new Set(selectedIds.filter(id => allNodes.some(node => node.id === id)));
+  const [layoutBusy, setLayoutBusy] = React.useState(false);
+  const [layoutError, setLayoutError] = React.useState('');
+  const [layoutNeedsRefresh, setLayoutNeedsRefresh] = React.useState(false);
+  const [undoLayout, setUndoLayout] = React.useState(null);
+  const revision = authorityState?.canvas?.revision;
+  const scopeStillCurrent = () => alive.current && mountedScope.current === scopeKey &&
+    studioCanvasScope(authority ? authority.getSnapshot()?.canvas : normal?.getSnapshot()?.topology?.canvas) === scopeKey;
+  const blocked = layoutBusy || layoutNeedsRefresh || !!authorityState?.pending || !!authorityState?.requires_refresh;
+  const canSaveLayout = !!(authority?.moveMany || normal?.moveTopologyNodes) && Number.isSafeInteger(revision);
+  // These positions are a gesture preview; the owner commits every completed map.
   const [positions, setPositions] = React.useState(() =>
     Object.fromEntries(allNodes.map(n => [n.id, { x: n.x, y: n.y }]))
   );
-  // Add positions for newly-added user nodes
   React.useEffect(() => {
     setPositions(p => {
-      const next = { ...p };
-      let changed = false;
-      allNodes.forEach(n => { if (!next[n.id]) { next[n.id] = { x: n.x, y: n.y }; changed = true; } });
+      const next = {};
+      let changed = Object.keys(p).length !== allNodes.length;
+      allNodes.forEach(n => {
+        const held = p[n.id], protectedPreview = saving.current || !!dragRef.current?.before?.[n.id];
+        next[n.id] = protectedPreview && held ? held : {x:n.x, y:n.y};
+        if (!held || held.x !== next[n.id].x || held.y !== next[n.id].y) changed = true;
+      });
       return changed ? next : p;
     });
-  }, [allNodes]);
+    setSelectedIds(ids => ids.filter(id => allNodes.some(node => node.id === id)));
+  }, [allNodes, layoutBusy]);
+  React.useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; dragRef.current = null; };
+  }, []);
+
+  const savePositions = async (next, before, expectedRevision, remember = true) => {
+    if (!scopeStillCurrent()) return false;
+    const entries = Object.entries(next).filter(([id, point]) => before[id]?.x !== point.x || before[id]?.y !== point.y);
+    if (!entries.length) return true;
+    const restore = () => setPositions(held => ({...held, ...before}));
+    if (!canSaveLayout || blocked || saving.current || entries.length > MAX_LAYOUT_NODES) {
+      restore();
+      setLayoutError(entries.length > MAX_LAYOUT_NODES ? 'Move or arrange at most 256 nodes at a time.' :
+        blocked || saving.current ? 'Wait for the current change, then try again.' : 'This connection cannot save node positions.');
+      return false;
+    }
+    const changes = Object.fromEntries(entries);
+    const expectedPositions = Object.fromEntries(entries.map(([id]) => [id, before[id]]));
+    saving.current = true; setLayoutBusy(true); setLayoutError('');
+    setPositions(held => ({...held, ...changes}));
+    try {
+      if (authority) await authority.moveMany(changes, expectedRevision, expectedPositions);
+      else await normal.moveTopologyNodes(changes, expectedRevision, expectedPositions);
+      if (!scopeStillCurrent()) return false;
+      setUndoLayout(remember ? {before:Object.fromEntries(entries.map(([id]) => [id, before[id]])), after:changes} : null);
+      return true;
+    } catch (error) {
+      if (scopeStillCurrent()) {
+        restore(); setUndoLayout(null); setLayoutNeedsRefresh(true);
+        setLayoutError((error.message || 'Positions could not be confirmed.') + ' Refresh the canvas to reconcile any saved positions.');
+      }
+      return false;
+    } finally {
+      saving.current = false;
+      if (alive.current) setLayoutBusy(false);
+    }
+  };
+  saveRef.current = savePositions;
 
   const [pan, setPan] = React.useState({ x: 14, y: 12 });
   const [zoom, setZoom] = React.useState(0.66);
   const [ctxMenu, setCtxMenu] = React.useState(null);
+  const closeContextMenu = () => {
+    setCtxMenu(null);
+    if (ctxMenu?.opener?.isConnected) ctxMenu.opener.focus({preventScroll:true});
+  };
   const [expanded, setExpanded] = React.useState({});
   const [dropTarget, setDropTarget] = React.useState(null); // {x,y} canvas-local
-  const dragRef = React.useRef(null);
-  const wrapRef = React.useRef(null);
 
   // Convert client coords → canvas coords (the world space the nodes live in)
   const toCanvasCoords = (clientX, clientY) => {
@@ -1506,29 +3476,69 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (e.button !== 0) return;
     if (e.target.closest('[data-no-pan]')) return;
     if (e.target.closest('.lm-node')) return;
-    setCtxMenu(null);
+    suppressNodeClick.current = false;
+    if (ctxMenu) { e.preventDefault(); closeContextMenu(); }
+    if (!e.shiftKey) setSelectedIds([]);
     dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
   };
 
-  const onContextMenu = (e) => {
-    if (e.target.closest('.lm-node') || e.target.closest('[data-no-pan]')) return;
+  const openContextMenu = (e, nodeId = null) => {
     e.preventDefault();
+    e.stopPropagation();
     const rect = wrapRef.current.getBoundingClientRect();
-    // Clamp so the menu never spills past the canvas edges (menu ≈ 220×350).
-    const MENU_W = 220, MENU_H = 350;
-    const rx = e.clientX - rect.left, ry = e.clientY - rect.top;
+    const MENU_W = 232, MENU_H = Math.min(460, rect.height - 16);
+    const opener = e.currentTarget;
+    const anchor = opener.getBoundingClientRect();
+    const keyboard = e.type === 'keydown';
+    const rx = (keyboard ? anchor.left + 16 : e.clientX) - rect.left;
+    const ry = (keyboard ? anchor.top + 24 : e.clientY) - rect.top;
     setCtxMenu({
+      nodeId, opener, maxHeight:MENU_H,
       x: Math.max(8, Math.min(rx, rect.width  - MENU_W - 8)),
       y: Math.max(8, Math.min(ry, rect.height - MENU_H - 8)),
     });
   };
+  const onContextMenu = e => {
+    if (!e.target.closest('.lm-node') && !e.target.closest('[data-no-pan]')) openContextMenu(e);
+  };
+  const onNodeContextMenu = id => e => {
+    if (e.target.isContentEditable || e.target.closest('input,textarea,select,[role="textbox"]')) return;
+    if (!selected.has(id)) setSelectedIds([id]);
+    setFocusId(id); openContextMenu(e, id);
+  };
+  const isContextKey = e => e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
+  const onCanvasKeyDown = e => {
+    if (e.target === e.currentTarget && isContextKey(e)) openContextMenu(e);
+  };
+  const onNodeKeyDown = id => e => {
+    if (e.target === e.currentTarget && isContextKey(e)) onNodeContextMenu(id)(e);
+  };
+  const onNodeFocus = id => e => {
+    if (suppressNodeClick.current) { suppressNodeClick.current = false; return; }
+    if (e?.target.closest('button,input,textarea,select,a,[contenteditable="true"]')) return;
+    if (e?.shiftKey) setSelectedIds(ids => ids.includes(id) ? ids.filter(root => root !== id) : [...ids, id]);
+    else if (!selected.has(id)) setSelectedIds([id]);
+    setFocusId(id);
+  };
 
   const onNodeDragStart = (id) => (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || e.target.closest('button,input,textarea,select,a')) return;
     e.stopPropagation();
+    if (e.shiftKey) return;
     e.preventDefault();
-    dragRef.current = { mode:'node', id, sx:e.clientX, sy:e.clientY, nx:positions[id].x, ny:positions[id].y };
-    setFocusId(id);
+    suppressNodeClick.current = false;
+    const ids = selected.has(id) ? [...selected] : [id];
+    setSelectedIds(ids); closeContextMenu();
+    if (!scopeStillCurrent() || blocked || saving.current) return;
+    if (!canSaveLayout || ids.length > MAX_LAYOUT_NODES) {
+      setLayoutError(!canSaveLayout ? 'This connection cannot save node positions.' : 'Move or arrange at most 256 nodes at a time.');
+      return;
+    }
+    if (ids.some(root => !allNodes.some(node => node.id === root && node.x === positions[root]?.x && node.y === positions[root]?.y))) {
+      setLayoutError('The canvas is receiving new positions. Try the drag again.'); return;
+    }
+    const before = Object.fromEntries(ids.filter(root => positions[root]).map(root => [root, {...positions[root]}]));
+    dragRef.current = {mode:'nodes', sx:e.clientX, sy:e.clientY, before, zoom, revision, scope:scopeKey};
   };
 
   React.useEffect(() => {
@@ -1539,18 +3549,27 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       const dy = e.clientY - d.sy;
       if (d.mode === 'pan') {
         setPan({ x: d.px + dx, y: d.py + dy });
-      } else {
-        setPositions(p => ({ ...p, [d.id]: { x: d.nx + dx / zoom, y: d.ny + dy / zoom } }));
+      } else if (d.scope === mountedScope.current) {
+        const mx = Math.round(dx / d.zoom), my = Math.round(dy / d.zoom);
+        d.last = Object.fromEntries(Object.entries(d.before).map(([id, point]) => [id, {x:point.x + mx, y:point.y + my}]));
+        if (mx || my) suppressNodeClick.current = true;
+        setPositions(p => ({ ...p, ...d.last }));
       }
     };
-    const onUp = () => { dragRef.current = null; };
+    const onUp = () => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (drag?.mode === 'nodes' && drag.last) {
+        saveRef.current(drag.last, drag.before, drag.revision);
+      }
+    };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     return () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, [zoom]);
+  }, []);
 
   const onWheel = (e) => {
     e.preventDefault();
@@ -1558,7 +3577,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     const delta = -e.deltaY * 0.0015;
-    const next = Math.max(0.3, Math.min(2, +(zoom * (1 + delta)).toFixed(3)));
+    const next = Math.max(0.01, Math.min(2, +(zoom * (1 + delta)).toFixed(3)));
     if (next === zoom) return;
     setPan(p => ({ x: mx - (mx - p.x) * (next / zoom), y: my - (my - p.y) * (next / zoom) }));
     setZoom(next);
@@ -1591,21 +3610,32 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     allNodes.map(n => [n.id, { ...n, x: positions[n.id]?.x ?? n.x, y: positions[n.id]?.y ?? n.y }])
   );
 
-  const focusWireIdx = String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1;
+  const focusWireIdx = authorityState ? graph.wires.findIndex(w => w.id === focusId) : (String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1);
   const connectedIds = new Set([focusId]);
-  LM_GRAPH.wires.forEach(w => {
+  graph.wires.forEach(w => {
     if (w.from[0] === focusId) connectedIds.add(w.to[0]);
     if (w.to[0]   === focusId) connectedIds.add(w.from[0]);
   });
 
-  const wires = LM_GRAPH.wires.map((w, i) => {
+  const unresolvedWires = [];
+  const wires = graph.wires.map((w, i) => {
     const fromNode = nodeById[w.from[0]];
     const toNode   = nodeById[w.to[0]];
-    if (!fromNode || !toNode) return null;
-    const fromIdx  = fromNode.outs.findIndex(o => o.id === w.from[1]);
-    const toIdx    = toNode.ins.findIndex(o => o.id === w.to[1]);
-    if (fromIdx < 0 || toIdx < 0) return null;
-    const x1 = fromNode.x + fromNode.w, y1 = fromNode.y + socketY(fromIdx);
+    if (!fromNode || !toNode) {
+      unresolvedWires.push({i, id:w.id, reason:'An endpoint node is absent from this canvas.'});
+      return null;
+    }
+    const hasSource = typeof w.from[1] === 'string' && w.from[1].length > 0;
+    const hasTarget = typeof w.to[1] === 'string' && w.to[1].length > 0;
+    const fromIdx = hasSource ? (fromNode.outs || []).findIndex(o => o.id === w.from[1]) : -1;
+    const toIdx = hasTarget ? (toNode.ins || []).findIndex(o => o.id === w.to[1]) : -1;
+    if (fromIdx < 0 || toIdx < 0) {
+      unresolvedWires.push({i, id:w.id, reason:!hasSource || !hasTarget ?
+        'The projection did not supply both port interfaces.' : 'A supplied port interface is absent from its node.'});
+      return null;
+    }
+    const sourceWidth = fromNode.cat === 'ai' && expanded[fromNode.id] ? Math.max(520, fromNode.w) : fromNode.w;
+    const x1 = fromNode.x + sourceWidth, y1 = fromNode.y + socketY(fromIdx);
     const x2 = toNode.x,                y2 = toNode.y + socketY(toIdx);
     const touches = w.from[0] === focusId || w.to[0] === focusId || i === focusWireIdx;
     return {
@@ -1617,13 +3647,102 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   }).filter(Boolean);
 
   const toggleExpanded = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
-  const onResetView = () => { setPan({ x:14, y:12 }); setZoom(0.66); setCtxMenu(null); };
+  const measureCards = () => {
+    if (document.fonts?.status === 'loading') {
+      setLayoutError('Fonts are loading; try again in a moment.'); return null;
+    }
+    if (!wrapRef.current || allNodes.length > MAX_LAYOUT_NODES) {
+      setLayoutError('Fit and Arrange support up to 256 visible nodes. Open a smaller canvas scope.'); return null;
+    }
+    const cards = new Map(Array.from(wrapRef.current.querySelectorAll('.lm-node[data-node-id]'))
+      .map(element => [element.getAttribute('data-node-id'), element]));
+    const sizes = {};
+    for (const node of allNodes) {
+      const card = cards.get(node.id), w = card?.offsetWidth, h = card?.offsetHeight;
+      if (!w || !h || !Number.isFinite(positions[node.id]?.x) || !Number.isFinite(positions[node.id]?.y)) {
+        setLayoutError('Wait for the node cards to finish rendering, then try again.'); return null;
+      }
+      const targetWidth = node.cat === 'ai' && expanded[node.id] ? Math.max(520, node.w) : node.w;
+      sizes[node.id] = {w:Math.ceil(Math.max(w, targetWidth)), h:Math.ceil(h)};
+    }
+    return sizes;
+  };
+  const fitIds = ids => {
+    if (!scopeStillCurrent() || !ids.length) return;
+    const sizes = measureCards();
+    if (!sizes) return;
+    try {
+      const result = canvasFitBounds(ids, positions, sizes, wrapRef.current.getBoundingClientRect());
+      setZoom(result.zoom); setPan(result.pan); closeContextMenu();
+    } catch (error) { setLayoutError(error.message); }
+  };
+  const selectConnected = whole => {
+    if (!scopeStillCurrent()) return;
+    if (allNodes.length > MAX_LAYOUT_NODES || graph.wires.length > 4096) {
+      setLayoutError('Connected selection supports up to 256 nodes and 4096 visible wires. Open a smaller scope.'); return;
+    }
+    const nodeIds = allNodes.map(node => node.id);
+    const seeds = ctxMenu?.nodeId
+      ? (selected.has(ctxMenu.nodeId) ? [...selected] : [ctxMenu.nodeId])
+      : selected.size ? [...selected] : nodeIds.includes(focusId) ? [focusId] : [];
+    setSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
+  };
+  const arrangeIds = async ids => {
+    if (!scopeStillCurrent() || blocked || saving.current || !ids.length) return;
+    if (allNodes.some(node => positions[node.id]?.x !== node.x || positions[node.id]?.y !== node.y)) {
+      setLayoutError('The canvas is receiving new positions. Try Arrange again.'); return;
+    }
+    if (graph.wires.length > 4096) { setLayoutError('Arrange supports up to 4096 visible wires. Open a smaller scope.'); return; }
+    const expectedRevision = revision, sizes = measureCards();
+    if (!sizes) return;
+    const before = Object.fromEntries(ids.map(id => [id, {...positions[id]}]));
+    const next = canvasArrangePositions(ids, positions, sizes, allNodes.map(node => node.id), graph.wires);
+    await savePositions(next, before, expectedRevision);
+  };
+  const undoAvailable = !!undoLayout && Object.entries(undoLayout.after).every(([id, point]) =>
+    allNodes.some(node => node.id === id && node.x === point.x && node.y === point.y) &&
+    positions[id]?.x === point.x && positions[id]?.y === point.y);
+  const undoPositions = () => {
+    if (undoAvailable && !blocked) savePositions(undoLayout.before, undoLayout.after, revision, false);
+  };
+  const refreshCanvas = async () => {
+    if (!scopeStillCurrent() || saving.current || authorityState?.pending) return;
+    try {
+      if (authority) await authority.load();
+      else if (normal) await normal.refreshTopologyCanvas();
+      else return;
+      if (scopeStillCurrent()) { setLayoutError(''); setWireError(''); setLayoutNeedsRefresh(false); setUndoLayout(null); }
+    } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
+  };
+  const allIds = allNodes.map(node => node.id);
+  const menuHasSeed = !!ctxMenu?.nodeId || selected.size > 0 || allIds.includes(focusId);
+  const menuActions = [
+    {icon:'add', label:'Add node', action:() => setLibraryOpen(true), disabled:blocked},
+    {icon:'near', label:'Select direct neighbours', action:() => selectConnected(false), disabled:!menuHasSeed},
+    {icon:'connected', label:'Select connected group', action:() => selectConnected(true), disabled:!menuHasSeed},
+    {icon:'select', label:'Select all nodes', action:() => setSelectedIds(allIds), disabled:!allIds.length},
+    {icon:'clear', label:'Clear selection', action:() => setSelectedIds([]), disabled:!selected.size},
+    {separator:true},
+    {icon:'fit', label:'Fit selection', action:() => fitIds([...selected]), disabled:!selected.size},
+    {icon:'fit', label:'Fit all nodes', action:() => fitIds(allIds), disabled:!allIds.length},
+    {icon:'arrange', label:'Arrange selection', action:() => arrangeIds([...selected]), disabled:blocked || !canSaveLayout || !selected.size},
+    {icon:'arrange', label:'Arrange all nodes', action:() => arrangeIds(allIds), disabled:blocked || !canSaveLayout || !allIds.length},
+    {icon:'undo', label:'Undo last layout', action:undoPositions, disabled:blocked || !undoAvailable},
+    {separator:true},
+    ...(normal && focusWireIdx >= 0 ? [{icon:'delete', label:'Delete selected connection',
+      action:() => normalConnectionAction('disconnect'), disabled:blocked || graph.wires[focusWireIdx]?.nary !== false}] : []),
+    ...(authority ? [{icon:'run', label:'Run current scope', action:() => window.ARCHHUB_RUN().catch(error =>
+      { if (scopeStillCurrent()) setLayoutError(error.message || 'The run could not be confirmed.'); }), disabled:blocked || !window.ARCHHUB_RUN}] : []),
+    {icon:'refresh', label:'Refresh canvas', action:refreshCanvas, disabled:layoutBusy || !!authorityState?.pending || (!authority && !normal)},
+  ];
 
   return (
     <div
       ref={wrapRef}
+      tabIndex={0} role="region" aria-label="Workflow canvas" aria-haspopup="menu" aria-keyshortcuts="Shift+F10"
       onMouseDown={onCanvasMouseDown}
       onContextMenu={onContextMenu}
+      onKeyDown={onCanvasKeyDown}
       onWheel={onWheel}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -1636,7 +3755,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         backgroundPosition:`${pan.x}px ${pan.y}px`,
         cursor: dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab',
         userSelect: dragRef.current ? 'none' : 'auto',
-        outline: dropTarget ? `1px dashed ${LM.accent}66` : 'none',
+        outline: dropTarget ? `1px dashed ${LM.accent}66` : undefined,
         outlineOffset:-1,
       }}>
       <div style={{
@@ -1659,7 +3778,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             return (
               <g key={w.i}>
                 <path d={d} stroke="transparent" strokeWidth={14} fill="none"
-                  onClick={(e) => { e.stopPropagation(); setFocusId('wire:' + w.i); }}
+                  onClick={(e) => { e.stopPropagation(); setFocusId(authorityState ? graph.wires[w.i].id : 'wire:' + w.i); }}
                   style={{ pointerEvents: 'stroke', cursor: 'pointer' }}>
                   <title>Open this connection</title>
                 </path>
@@ -1679,17 +3798,45 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             <NodeRenderer
               key={n.id}
               n={{ ...n, x: pos.x, y: pos.y }}
-              focused={n.id === focusId}
-              dimmed={!connectedIds.has(n.id) && focusId !== n.id && !n._user}
+              focused={selected.has(n.id) || n.id === focusId}
+              dimmed={!selected.has(n.id) && !connectedIds.has(n.id) && focusId !== n.id && !n._user}
               expanded={!!expanded[n.id]}
               onToggleExpand={() => toggleExpanded(n.id)}
               onDragStart={onNodeDragStart(n.id)}
-              onFocus={() => setFocusId(n.id)}
+              onFocus={onNodeFocus(n.id)}
+              onContextMenu={onNodeContextMenu(n.id)}
+              onKeyDown={onNodeKeyDown(n.id)}
+              onSocket={(port, side) => useSocket(n.id, port, side)}
+              onOpen={n.openable && authority ? () => authority.open(n.id).catch(() => {}) : undefined}
             />
           );
         })}
       </div>
 
+      {unresolvedWires.length > 0 && <details data-no-pan style={{position:'absolute', left:14, top:88,
+        zIndex:5, maxWidth:'min(420px, 70%)', maxHeight:180, overflow:'auto', padding:'7px 10px',
+        background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontSize:11, color:LM.warn}}>
+        <summary role="status">{unresolvedWires.length} connections cannot be drawn with their supplied endpoints</summary>
+        <p>The connections remain in the graph. Their display needs endpoint projection support.</p>
+        <ul style={{paddingLeft:16, overflowWrap:'anywhere'}}>{unresolvedWires.slice(0, 20).map(wire =>
+          <li key={wire.i}>{wire.id ? <button onClick={() => setFocusId(authorityState ? wire.id : 'wire:' + wire.i)}
+            style={{...smallBtn(), overflowWrap:'anywhere', textAlign:'left', maxWidth:'100%'}}>{wire.id}</button> :
+            'Unnamed connection'}: {wire.reason}</li>)}</ul>
+        {unresolvedWires.length > 20 && <p>{unresolvedWires.length - 20} more connections are affected.</p>}
+      </details>}
+      <div data-no-pan style={{position:'absolute', top:10, right:12, zIndex:5,
+        display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
+        <span role={authorityState?.error || wireError || layoutError ? 'alert' : 'status'} style={{fontSize:12,
+          color:authorityState?.error || wireError || layoutError ? LM.err : LM.inkSoft, overflowWrap:'anywhere'}}>
+          {layoutError || authorityState?.error || wireError || (layoutBusy ? 'Saving positions…' :
+            authorityState?.pending ? 'Saving…' : wireStart ? 'Choose an input for ' + wireStart.port.label :
+            selected.size ? selected.size + ' selected' : 'Canvas')}
+        </span>
+        {wireStart && <button disabled={blocked} onClick={() => setWireStart(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>
+          <CanvasActionIcon name="clear"/></button>}
+        <button disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}
+          title="Refresh canvas" aria-label="Refresh canvas" style={toolBtn()}><CanvasActionIcon name="refresh"/></button>
+      </div>
       {/* Drop-target ghost */}
       {dropTarget && (
         <div style={{
@@ -1704,12 +3851,15 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       <CanvasToolbar zoom={zoom} setZoom={(updater) => {
         setZoom(z => {
           const next = typeof updater === 'function' ? updater(z) : updater;
-          return Math.max(0.3, Math.min(2, next));
+          return Math.max(0.01, Math.min(2, next));
         });
-      }} onFit={onResetView} setLibraryOpen={setLibraryOpen}/>
-      <FloatingComposer setLibraryOpen={setLibraryOpen} model={model}/>
+      }} onFit={() => fitIds(selected.size ? [...selected] : allIds)}
+        fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
+      <FloatingComposer key={focusId || 'canvas'} setLibraryOpen={setLibraryOpen} model={model}
+        node={allNodes.find(n => n.id === focusId && n.live && nodeModelRow(n))}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
-      {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} onAddNode={() => { setLibraryOpen(true); setCtxMenu(null); }} onFit={onResetView} onClose={() => setCtxMenu(null)}/>}
+      {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} maxHeight={ctxMenu.maxHeight}
+        opener={ctxMenu.opener} actions={menuActions} onClose={closeContextMenu}/>}
       <CanvasHint/>
     </div>
   );
@@ -1726,61 +3876,81 @@ const CanvasHint = () => (
   }}>
     <span>scroll → zoom</span>
     <span style={{ color:LM.inkDim }}>·</span>
-    <span>drag → pan</span>
+    <span>Shift + click → select</span>
     <span style={{ color:LM.inkDim }}>·</span>
     <span>right-click → menu</span>
   </div>
 );
 
 // Right-click canvas context menu
-const CanvasMenu = ({ x, y, onAddNode, onFit, onClose }) => {
+const CanvasActionIcon = ({name}) => <svg aria-hidden="true" focusable="false" width="15" height="15"
+  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+  {name === 'add' ? <path d="M12 5v14M5 12h14"/> :
+    name === 'clear' ? <path d="m6 6 12 12M6 18 18 6"/> :
+    name === 'fit' ? <path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/> :
+    name === 'arrange' ? <><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></> :
+    name === 'near' || name === 'connected' ? <><circle cx="5" cy="12" r="3"/><circle cx="19" cy="5" r="3"/>
+      <path d="m8 11 8-5"/>{name === 'connected' && <><circle cx="19" cy="19" r="3"/><path d="m8 13 8 5"/></>}</> :
+    name === 'undo' ? <><path d="M3 10h12a6 6 0 0 1 0 12M3 10l5-5m-5 5 5 5"/></> :
+    name === 'delete' ? <><path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></> :
+    name === 'run' ? <path d="m8 4 12 8-12 8Z"/> :
+    name === 'refresh' ? <><path d="M20 4v6h-6"/><path d="M20 10a8 8 0 1 0-2 8"/></> :
+    <><rect x="3" y="3" width="18" height="18" strokeDasharray="3 3"/><path d="m8 12 3 3 5-6"/></>}
+</svg>;
+const CanvasMenu = ({ x, y, maxHeight, opener, actions, onClose }) => {
+  const menuRef = React.useRef(null);
+  const closeRef = React.useRef(onClose);
+  const openerRef = React.useRef(opener);
+  closeRef.current = onClose;
+  openerRef.current = opener;
+  const enabledItems = () => Array.from(menuRef.current?.querySelectorAll('button[role="menuitem"]:not(:disabled)') || []);
+  const dismiss = () => {
+    closeRef.current();
+    if (openerRef.current?.isConnected) openerRef.current.focus({preventScroll:true});
+  };
+  React.useLayoutEffect(() => {
+    (enabledItems()[0] || menuRef.current)?.focus({preventScroll:true});
+  }, [opener]);
   React.useEffect(() => {
-    const dismiss = () => onClose();
-    document.addEventListener('click', dismiss);
-    document.addEventListener('keydown', e => e.key === 'Escape' && dismiss());
-    return () => document.removeEventListener('click', dismiss);
-  }, [onClose]);
-  const items = [
-    { i:'＋',  t:'Add node…',          k:'⌘L',  on:onAddNode },
-    { i:'⎘',  t:'Paste',               k:'⌘V' },
-    { sep:true },
-    { i:'⌴',  t:'Fit graph to view',   k:'⌘0', on:onFit },
-    { i:'⊜',  t:'Zoom to 100%',        k:'⌘1' },
-    { sep:true },
-    { i:'·',  t:'Snap to grid',        toggle:true, on:true },
-    { i:'⧉',  t:'Auto-layout',         k:'⌘⇧L' },
-    { sep:true },
-    { i:'↻',  t:'Reset positions',     k:'⌘⇧R' },
-    { i:'✕',  t:'Clear all nodes',     k:'',    danger:true },
-  ];
+    const outside = e => { if (!menuRef.current?.contains(e.target)) dismiss(); };
+    const escape = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); } };
+    document.addEventListener('click', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('click', outside); document.removeEventListener('keydown', escape); };
+  }, []);
+  const navigate = e => {
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault(); e.stopPropagation();
+    const items = enabledItems();
+    if (!items.length) return;
+    const current = items.indexOf(document.activeElement);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 :
+      e.key === 'ArrowDown' ? (current + 1) % items.length : (current < 0 ? items.length - 1 : (current + items.length - 1) % items.length);
+    items[next].focus({preventScroll:true});
+    items[next].scrollIntoView({block:'nearest', inline:'nearest'});
+  };
   return (
-    <div data-no-pan onClick={e => e.stopPropagation()} style={{
+    <div ref={menuRef} data-no-pan role="menu" tabIndex={-1} aria-label="Canvas actions" onKeyDown={navigate}
+      onClick={e => e.stopPropagation()} style={{
       position:'absolute', left:x, top:y, zIndex:30,
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7,
-      boxShadow:'0 16px 36px rgba(0,0,0,.55)', padding:5, minWidth:220,
+      boxShadow:'0 16px 36px rgba(0,0,0,.55)', padding:5, width:232, maxHeight, overflowY:'auto',
       animation:'lmSlideIn .12s ease-out',
     }}>
-      {items.map((it, i) => it.sep ? (
+      {actions.map((it, i) => it.separator ? (
         <div key={i} style={{ height:1, background:LM.lineSoft, margin:'4px 4px' }}/>
       ) : (
-        <button key={i} onClick={() => { it.on && it.on(); onClose(); }} style={{
+        <button key={i} role="menuitem" disabled={!!it.disabled} title={it.label} aria-label={it.label}
+          onClick={() => { if (!it.disabled && typeof it.action === 'function') { dismiss(); it.action(); } }} style={{
           width:'100%', display:'flex', alignItems:'center', gap:10, padding:'6px 10px',
-          background:'transparent', border:0, borderRadius:4, cursor:'pointer',
-          color: it.danger ? LM.err : LM.ink, fontFamily:LM.sans, fontSize:12.5, textAlign:'left',
+          background:'transparent', border:0, borderRadius:4, cursor:it.disabled ? 'default' : 'pointer', opacity:it.disabled ? .45 : 1,
+          color:LM.ink, fontFamily:LM.sans, fontSize:12.5, textAlign:'left',
         }}
         onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-          <span style={{ width:14, color: it.danger ? LM.err : LM.inkMuted, fontFamily:LM.mono, fontSize:11, textAlign:'center' }}>{it.i}</span>
-          <span style={{ flex:1 }}>{it.t}</span>
-          {it.toggle && (
-            <span style={{
-              width:22, height:12, borderRadius:999,
-              background: it.on ? LM.accent : LM.lineSoft, position:'relative',
-            }}>
-              <span style={{ position:'absolute', top:1, left: it.on ? 11 : 1, width:10, height:10, borderRadius:'50%', background:'#fff' }}/>
-            </span>
-          )}
-          {it.k && <kbd style={kbd()}>{it.k}</kbd>}
+          <CanvasActionIcon name={it.icon}/>
+          <span style={{ flex:1 }}>{it.label}</span>
         </button>
       ))}
     </div>
@@ -1788,13 +3958,15 @@ const CanvasMenu = ({ x, y, onAddNode, onFit, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus }) => {
-  const cat = CAT[n.cat];
+const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown }) => {
+  const cat = studioCategory(n.cat);
   // AI nodes can expand horizontally for full conversation + search
   const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
   return (
-    <div className="lm-node" onClick={onFocus}
+    <div className="lm-node" data-node-id={n.id} onClick={onFocus} onDoubleClick={onOpen} onContextMenu={onContextMenu}
+      tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onKeyDown={onKeyDown}
+      title={[n.title, n.description || n.sub].filter((value, index, rows) => value && rows.indexOf(value) === index).join('\n')}
       style={{
         position:'absolute', left:n.x, top:n.y, width:w, minHeight:n.h,
         background:LM.bgPanel,
@@ -1807,7 +3979,7 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
           : '0 2px 8px rgba(0,0,0,.35)',
         cursor: 'default',
         opacity: dimmed ? 0.42 : 1,
-        transition:'border-color .12s, box-shadow .12s, opacity .15s, width .15s',
+        transition:'border-color .12s, box-shadow .12s, opacity .15s',
       }}>
       {/* Title bar — drag handle */}
       <div onMouseDown={onDragStart}
@@ -1844,8 +4016,8 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
       </div>
 
       {/* Sockets */}
-      {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label}/>)}
-      {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label}/>)}
+      {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
+      {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
     </div>
   );
 };
@@ -1864,7 +4036,7 @@ const NodeStateDot = ({ s }) => {
   );
 };
 
-const Socket = ({ side, i, t, label }) => {
+const Socket = ({ side, i, t, label, onUse }) => {
   const col = WIRE[t] || LM.inkSoft;
   return (
     <div style={{
@@ -1872,9 +4044,11 @@ const Socket = ({ side, i, t, label }) => {
       [side === 'in' ? 'left' : 'right']: -SOCKET_R,
       display:'flex', alignItems:'center', gap:6,
       flexDirection: side === 'in' ? 'row' : 'row-reverse',
-      pointerEvents:'none',
+      pointerEvents:onUse ? 'auto' : 'none',
     }}>
-      <span style={{
+      <button type="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
+        disabled={!onUse} onMouseDown={e => e.stopPropagation()}
+        onClick={e => { e.stopPropagation(); if (onUse) onUse(); }} style={{padding:0, cursor:onUse ? 'crosshair' : 'default',
         width: SOCKET_R*2, height: SOCKET_R*2, borderRadius:'50%',
         background: side === 'out' ? col : LM.bgPanel,
         border:`1.5px solid ${col}`, boxShadow:`0 0 0 2px ${LM.bgCanvas}`,
@@ -1913,9 +4087,12 @@ const ASK_SCALE = {
   node:     { field: 12, send: { padding: '3px 8px', radius: 4, size: 10 }, lead: 0 },
 };
 
-const InlineAsk = ({ placeholder, model, onAnswer, scale, before }) => {
+const InlineAsk = ({ placeholder, model, node, onAnswer, scale, before }) => {
   const S = ASK_SCALE[scale] || ASK_SCALE.node;
-  const picked = model || (typeof window !== 'undefined' ? window.ARCHHUB_PICKED_MODEL : null);
+  const picked = node ? null : model || (typeof window !== 'undefined' ? window.ARCHHUB_PICKED_MODEL : null);
+  const route = node ? nodeModelRoute(node) : modelRoute(picked);
+  const [asking, setAsking] = React.useState(false);
+  const needsNode = !!window.ARCHHUB_STUDIO_AUTHORITY && !node;
   const [text, setText] = React.useState('');
   const [state, setState] = React.useState('');
   // The composer renders the answer itself; the older inline replies have
@@ -1923,28 +4100,33 @@ const InlineAsk = ({ placeholder, model, onAnswer, scale, before }) => {
   const report = (line) => { if (onAnswer) onAnswer(line); else setState(String(line).slice(0, 60)); };
   const ask = async () => {
     const said = text.trim();
-    if (!said || !window.ARCHHUB_AGENT) return;
-    report('asking ' + ((picked && picked.name) || 'the agent') + '…');
+    if (!said || asking || !window.ARCHHUB_AGENT) return;
+    if (needsNode) { report('Select an AI node on the canvas to ask.'); return; }
+    if (node && !route) { report('Choose a model for this node first.'); return; }
+    setAsking(true);
+    report('asking ' + (node ? route : ((picked && picked.name) || 'the agent')) + '…');
     try {
-      // The model picked in the header is the model that answers.
-      const answer = String(await window.ARCHHUB_AGENT(said, modelRoute(picked)));
+      // Node asks carry the committed route as a consistency check.
+      const answer = String(await window.ARCHHUB_AGENT(said, route, node ? node.id : undefined));
       report(answer);
       setText('');
     } catch (error) {
       report('refused: ' + ((error && error.message) || error));
+    } finally {
+      setAsking(false);
     }
   };
   return (
     <>
-      <input value={text} onChange={e => setText(e.target.value)}
+      <input value={text} disabled={needsNode} onChange={e => setText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') ask(); }}
-        placeholder={state || placeholder || 'Reply…'}
+        placeholder={needsNode ? 'Select an AI node to ask…' : state || placeholder || 'Reply…'}
         style={{ flex:1, background:'transparent', border:0, outline:0,
           fontStyle:'italic', fontFamily:LM.serif, fontSize:S.field,
           marginLeft: S.lead || 0,
           color: state ? LM.accent : LM.ink }}/>
       {before || null}
-      <button onClick={ask} style={{ padding:S.send.padding, background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>Send ↵</button>
+      <button onClick={ask} disabled={needsNode || asking || !text.trim()} style={{ padding:S.send.padding, background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:S.send.radius, fontSize:S.send.size, fontWeight:500, cursor:'pointer' }}>{asking ? 'Waiting…' : 'Send ↵'}</button>
     </>
   );
 };
@@ -2371,24 +4553,25 @@ const StagePreview = () => (
 );
 
 // ─── canvas toolbar (TOP-LEFT) ───
-const CanvasToolbar = ({ zoom, setZoom, onFit, setLibraryOpen }) => (
+const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, setLibraryOpen }) => (
   <div data-no-pan style={{
     position:'absolute', left:14, top:14, display:'flex', gap:LM.sp.xs,
     background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7, padding:LM.sp.xs,
     boxShadow:'0 4px 12px rgba(0,0,0,.3)',
   }}>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} style={toolBtn()}>+</button>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} style={toolBtn()}>−</button>
+    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={toolBtn()}>+</button>
+    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.01, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={toolBtn()}>−</button>
     <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:10, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
-    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title="Reset view" style={toolBtn()}>⟲</button>
+    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>
+      <CanvasActionIcon name="fit"/></button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
-    <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" style={{
-      padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
+    <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
+      padding:'0 5px', height:22, border:0, background:'transparent', cursor:'pointer',
       color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em',
       display:'flex', alignItems:'center', gap:LM.sp.xs,
-    }}>＋ add node</button>
+    }}><CanvasActionIcon name="add"/></button>
   </div>
 );
 
@@ -2401,7 +4584,7 @@ const toolBtn = () => ({
 // This box used to ignore the model picker and drop the answer on the floor:
 // you typed, something happened somewhere, and nothing came back. It now asks
 // the model selected in the header and prints the reply above the field.
-const FloatingComposer = ({ setLibraryOpen, model }) => {
+const FloatingComposer = ({ setLibraryOpen, model, node }) => {
   const [answer, setAnswer] = React.useState('');
   return (
     <div data-no-pan style={{
@@ -2425,11 +4608,11 @@ const FloatingComposer = ({ setLibraryOpen, model }) => {
         {/* His order: the slash glyph, the field, library, then Send as the
             rightmost control - the placeholder names the affordance drawn
             beside it again (2026-09-07). */}
-        <InlineAsk scale="composer" placeholder="Reply, or type / to add a node…" model={model} onAnswer={setAnswer}
+        <InlineAsk scale="composer" placeholder={node ? 'Ask ' + node.title + '…' : 'Reply, or type / to add a node…'} model={model} node={node} onAnswer={setAnswer}
           before={<button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>}/>
       </div>
       <div style={{ marginTop:6, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>
-        → {modelRoute(model) || 'no model picked'}
+        → {(node ? nodeModelRoute(node) : modelRoute(model)) || 'no model picked'}
       </div>
     </div>
   );
@@ -2447,7 +4630,7 @@ const MiniMap = ({ pan, zoom, positions, allNodes }) => {
       <svg viewBox="0 0 2400 1400" style={{ width:'100%', height:'100%' }}>
         {nodes.map(n => {
           const p = positions[n.id] || { x: n.x, y: n.y };
-          const cat = CAT[n.cat];
+          const cat = studioCategory(n.cat);
           return (
             <rect key={n.id} x={p.x} y={p.y} width={n.w} height={n.h}
               fill={cat.col + '66'} stroke={LM.lineSoft} strokeWidth="2" rx="4"/>
@@ -2464,9 +4647,10 @@ const MiniMap = ({ pan, zoom, positions, allNodes }) => {
 
 // ──────────────────────── NODE LIBRARY ────────────────────────
 const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
+  const library = useStudioProjection()?.library || LM_LIBRARY;
   const [filter, setFilter] = React.useState('all');
   const [q, setQ] = React.useState('');
-  const groups = filter === 'all' ? LM_LIBRARY : LM_LIBRARY.filter(g => g.cat === filter);
+  const groups = filter === 'all' ? library : library.filter(g => g.cat === filter);
   return (
     <div onClick={onClose} style={{
       position:'absolute', inset:0, background:'rgba(0,0,0,.55)', zIndex:60,
@@ -2481,7 +4665,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, padding:'0 14px', display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Node library</span>
           <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>
-            {LM_LIBRARY.reduce((n, g) => n + g.items.length, 0)} NODES · CLICK TO ADD
+            {library.reduce((n, g) => n + g.items.length, 0)} NODES · CLICK TO ADD
           </span>
           <div style={{ flex:1 }}/>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search… (e.g. dimension, schedule, push)" style={{
@@ -2504,7 +4688,7 @@ const NodeLibrary = ({ onClose, addNodeFromLibrary }) => {
 
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'14px 18px' }}>
           {groups.map(g => {
-            const c = CAT[g.cat];
+            const c = studioCategory(g.cat);
             const items = q ? g.items.filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : g.items;
             if (items.length === 0) return null;
             return (
@@ -2552,11 +4736,23 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
 );
 
 // ──────────────────────── NODE RAIL ────────────────────────
+const NodeModelConversation = ({node}) => {
+  const [answer, setAnswer] = React.useState('');
+  return <section aria-label={'Conversation with ' + node.title}>
+    <p style={{fontFamily:LM.mono, fontSize:11, overflowWrap:'anywhere'}}>
+      {nodeModelRoute(node) || 'Choose a model for this node'}</p>
+    <div style={{display:'flex', gap:6, alignItems:'center'}}>
+      <InlineAsk scale="reply" node={node} onAnswer={setAnswer} placeholder={'Ask ' + node.title + '…'}/>
+    </div>
+    {answer && <p role="status" style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontSize:13}}>{answer}</p>}
+  </section>;
+};
+
 const NodeRail = ({ node }) => {
   if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
   // AI node gets a dedicated conversation rail — full scrollback + composer
-  if (node.cat === 'ai') return <ConversationRail node={node}/>;
-  const cat = CAT[node.cat];
+  if (node.cat === 'ai' && !node.live) return <ConversationRail node={node}/>;
+  const cat = studioCategory(node.cat);
   return (
     <aside className="ah-scroll" style={{
       gridColumn:'2', gridRow:'2',
@@ -2580,6 +4776,7 @@ const NodeRail = ({ node }) => {
           The old block was dead form widgets: native selects, a bare range input and four
           equal-weight buttons, none of which could be typed into or reverted. */}
       <window.NodeInspector key={node.id} node={node}/>
+      {node.live && nodeModelRow(node) && <NodeModelConversation key={node.id + ':conversation'} node={node}/>}
     </aside>
   );
 };
@@ -2747,6 +4944,17 @@ const ChatAction = ({ children }) => (
 
 // ──────────────────────── SETTINGS ────────────────────────
 const SET_LS = 'archhub.studio.settings.v1';
+const usePersonalTheme = () => {
+  const api = window.ARCHHUB_EXISTING_WORKSHOP;
+  const read = () => api?.getSnapshot()?.theme || null;
+  const [state, setState] = React.useState(read);
+  React.useEffect(() => {
+    const update = () => setState(read());
+    update();
+    return api?.subscribe(update);
+  }, [api]);
+  return state;
+};
 // Single source for "what is this item's current state?" — used by BOTH the sidebar badges and
 // the panel rows. Defined once precisely so the two cannot derive the same fact differently:
 // the badges previously counted only keys PRESENT in the store while the rows fell back to the
@@ -2754,12 +4962,12 @@ const SET_LS = 'archhub.studio.settings.v1';
 const hostState = (store, h) => ((store && store.hosts) || {})[h.name] || h.state;
 const permMode  = (store, p) => ((store && store.perms) || {})[p.id] || p.mode;
 const Settings = ({ onClose, account, setAccount, onSignOut }) => {
+  const personalTheme = usePersonalTheme();
   // Account first either way: signed in it states the plan, signed out it signs you in.
   const [tab, setTab] = React.useState('account');
   const [store, setStore] = React.useState(() => {
     var seed = {
       perms: LM_PERMISSIONS.reduce(function (a, p) { a[p.id] = p.mode; return a; }, {}),
-      theme: 'Dark',
       forgotten: [],
       hosts: LM_HOSTS.reduce(function (a, h) { a[h.name] = h.state; return a; }, {}),
       revealed: {},
@@ -2773,6 +4981,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
       var raw = localStorage.getItem(SET_LS);
       if (raw) {
         var saved = JSON.parse(raw) || {};
+        delete saved.theme; // Saved appearance belongs to the graph, never this legacy UI cache.
         return Object.assign({}, seed, saved, {
           perms: Object.assign({}, seed.perms, saved.perms || {}),
           hosts: Object.assign({}, seed.hosts, saved.hosts || {}),
@@ -2792,10 +5001,10 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
     ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(store, h) !== 'off').length} live`],
     ['providers',   'Providers',   'keys on this machine'],
     ['models',      'Models',      'Sonnet 4.5'],
-    ['theme',       'Theme',       store.theme],
+    ['theme',       'Theme',       personalTheme?.configuration?.state || window.ArchHubTheme.source],
     ['shortcuts',   'Shortcuts',   null],
     ['storage',     'Storage',     '2.3 GB'],
-    ['about',       'About',       'v1.4'],
+    ['about',       'About',       'build and updates'],
   ];
   return (
     <div onClick={onClose} style={{
@@ -2810,7 +5019,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
       }}>
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10, padding:'0 16px' }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Settings</span>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>STUDIO · v1.4</span>
+          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>STUDIO</span>
           <div style={{ flex:1 }}/>
           <button onClick={onClose} style={{
             width:24, height:24, padding:0, border:`1px solid ${LM.line}`, background:'transparent',
@@ -2858,10 +5067,10 @@ const SHead = ({ title, sub }) => (
 );
 
 // ── Memory: things the AI remembers about you (Notion AI / Claude style)
-// What the brain remembers, loaded at boot from brain.list_facts (see studio.html).
+// What the brain remembers, loaded when this panel opens (see studio.html).
 // Eight invented facts used to sit here; a colleague would have read them as his own.
 const LM_MEMORY = (window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.memory) || [];
-const SettingsMemory = ({ store, patch }) => (
+const SettingsMemory = withLiveCatalogue('ARCHHUB_LOAD_MEMORY', LM_MEMORY, ({ store, patch }) => (
   <div>
     <SHead title="Memory" sub="What Claude remembers about you across sessions. Edit, forget, or pin. Nothing is sent to the model unless you load this session."/>
     <div style={{
@@ -2965,7 +5174,7 @@ const SettingsMemory = ({ store, patch }) => (
       </div>
     </div>
   </div>
-);
+));
 
 // ── Profile: who you are, the AI's system prompt anchor
 const SettingsProfile = () => (
@@ -3042,11 +5251,11 @@ const LM_PERMISSIONS = [
   { id:'pub',   label:'Publish / export',         sub:'PDF, Speckle, email.',             mode:'ask' },
   { id:'shell', label:'Run shell / scripts',      sub:'pyrevit, IronPython, system.',     mode:'block' },
 ];
-const PERM_META = {
+const PERM_META = window.ArchHubTheme.derive((LM) => ({
   auto:  { col:LM.ok,     label:'AUTO',  note:'Runs without asking' },
   ask:   { col:LM.warn,   label:'ASK',   note:'Pauses for confirmation' },
   block: { col:LM.err,    label:'BLOCK', note:'Never run' },
-};
+}));
 const SettingsPermissions = ({ store, patch }) => (
   <div>
     <SHead title="Permissions" sub="What the AI can do on its own — and what it must pause to ask. Keeps the gas pedal under your foot."/>
@@ -3100,16 +5309,119 @@ const SettingsPermissions = ({ store, patch }) => (
 // it were invented figures and stay gone.
 const BRAND = { openrouter: '#3a6acc', cloud: '#cc785c', ollama: '#1a8a4a', lmstudio: '#4285f4' };
 
+const SettingsSocialEnrollment = ({transport}) => {
+  const form = React.useRef(null), busy = React.useRef(false), alive = React.useRef(true);
+  const [saving, setSaving] = React.useState(false), [message, setMessage] = React.useState('');
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; if (form.current) form.current.elements.token.value = ''; };
+  }, []);
+  const save = async event => {
+    event.preventDefault();
+    if (busy.current || !transport?.enrollSocialAccount) return;
+    const fields = form.current.elements;
+    const request = {provider:fields.provider.value, account_id:fields.account_id.value.trim(),
+      vault_entry:fields.vault_entry.value.trim(), token:fields.token.value};
+    fields.token.value = '';
+    busy.current = true; setSaving(true); setMessage(''); setFailed(false);
+    try {
+      const result = await transport.enrollSocialAccount(request);
+      if (alive.current) setMessage('Saved ' + result.vault_entry + ' for ' + result.account_id +
+        '. Use this reference in the connector node. Provider ownership has not been checked.');
+    } catch (error) {
+      if (alive.current) { setFailed(true); setMessage(error.message); }
+    } finally {
+      request.token = ''; busy.current = false;
+      if (alive.current) setSaving(false);
+    }
+  };
+  const remove = async () => {
+    if (busy.current || !transport?.removeLocalSocialAccount || !form.current) return;
+    const fields = form.current.elements;
+    if (!fields.account_id.reportValidity() || !fields.vault_entry.reportValidity()) return;
+    const request = {provider:fields.provider.value, account_id:fields.account_id.value.trim(),
+      vault_entry:fields.vault_entry.value.trim()};
+    fields.token.value = '';
+    busy.current = true; setSaving(true); setMessage(''); setFailed(false);
+    try {
+      const result = await transport.removeLocalSocialAccount(request);
+      if (alive.current) setMessage((result.state === 'absent' ? 'No local credential remains for ' : 'Removed local credential for ') +
+        result.vault_entry + '. Saved workflows remain. This does not revoke the token at the provider or stop a request already sent.');
+    } catch (error) {
+      if (alive.current) { setFailed(true); setMessage(error.message); }
+    } finally { busy.current = false; if (alive.current) setSaving(false); }
+  };
+  const inputStyle = {display:'block', width:'100%', margin:'6px 0 12px', padding:'8px 10px',
+    background:LM.bgPanel, color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm};
+  return <details style={{marginTop:16, padding:14, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
+    <summary style={{cursor:'pointer', fontSize:13}}>Social accounts</summary>
+    <p style={{fontSize:12, color:LM.inkSoft}}>Save an account credential on this machine and connect its reference to a Work node.</p>
+    <form ref={form} onSubmit={save}>
+      <fieldset disabled={saving || !transport?.enrollSocialAccount} style={{border:0, padding:0, margin:0, minWidth:0}}>
+        <label>Provider<select name="provider" style={inputStyle} defaultValue="linkedin">
+          <option value="linkedin">LinkedIn</option><option value="meta">Facebook / Instagram</option>
+        </select></label>
+        <label>Account ID<input name="account_id" required maxLength={256} style={inputStyle}
+          placeholder="LinkedIn person URN, or Meta user / Page ID"/></label>
+        <label>Reference name<input name="vault_entry" required maxLength={128} pattern="social-[A-Za-z0-9._-]+"
+          placeholder="social-studio" style={inputStyle}/></label>
+        <label>Access token<input name="token" type="password" required maxLength={16384} autoComplete="new-password"
+          autoCapitalize="none" spellCheck={false} style={inputStyle}/></label>
+        <p style={{fontSize:12, color:LM.inkSoft}}>You declare which account this token belongs to. Saving it does not publish anything or verify the account with the provider.</p>
+        <button type="submit" style={smallBtn()}>{saving ? 'Applying change…' : 'Save account'}</button>
+        <details style={{marginTop:12}}><summary style={{cursor:'pointer', fontSize:12}}>Remove a saved credential</summary>
+          <p style={{fontSize:12, color:LM.inkSoft}}>Uses the provider, account ID and reference above. No access token is needed. Saved workflows stay in the graph.</p>
+          <button type="button" disabled={!transport?.removeLocalSocialAccount} onClick={remove} style={smallBtn()}>Remove local credential</button>
+        </details>
+      </fieldset>
+      {!transport?.enrollSocialAccount && <p role="status">Account enrollment is unavailable in this connection.</p>}
+      {message && <p role={failed ? 'alert' : 'status'} style={{fontSize:12, overflowWrap:'anywhere', color:failed ? LM.err : LM.ok}}>{message}</p>}
+    </form>
+  </details>;
+};
+
 const SettingsProviders = ({ store, patch }) => {
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
   const [rows, setRows] = React.useState(null);
   const [err, setErr] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [hasKey, setHasKey] = React.useState(false);
+  const [saved, setSaved] = React.useState('');
+  const keyInput = React.useRef(null);
+  const mounted = React.useRef(true), savingRef = React.useRef(false), readIntent = React.useRef(0);
+  const loadProviders = React.useCallback(async () => {
+    const intent = ++readIntent.current;
+    setLoading(true); setErr('');
+    try {
+      if (!transport?.readProviders) throw new Error('Provider settings require the authenticated application connection.');
+      const current = await transport.readProviders();
+      if (mounted.current && intent === readIntent.current) setRows(current);
+    } catch (error) {
+      if (mounted.current && intent === readIntent.current) setErr(error.message || 'Provider status could not be read.');
+    } finally { if (mounted.current && intent === readIntent.current) setLoading(false); }
+  }, [transport]);
   React.useEffect(() => {
-    const s = window.__archhubSession || {};
-    fetch('/api/universal/providers', { headers: { 'X-ArchHub-Session': s.token || '', 'X-ArchHub-CSRF': s.csrf || '' } })
-      .then(r => r.json())
-      .then(d => { if (d && d.ok) setRows(d.providers || []); else setErr((d && d.error) || 'the app did not answer'); })
-      .catch(e => setErr(String(e && e.message || e)));
-  }, []);
+    mounted.current = true;
+    loadProviders();
+    return () => { mounted.current = false; readIntent.current += 1; if (keyInput.current) keyInput.current.value = ''; };
+  }, [loadProviders]);
+  const saveKey = async event => {
+    event.preventDefault();
+    if (savingRef.current || !keyInput.current?.value.trim()) return;
+    savingRef.current = true; setSaving(true); setErr(''); setSaved('');
+    try {
+      if (!transport?.saveProviderKey) throw new Error('Provider key saving is unavailable in this connection.');
+      await transport.saveProviderKey('openrouter', keyInput.current.value);
+      if (!mounted.current) return;
+      keyInput.current.value = ''; setHasKey(false);
+      setSaved('Saved on this machine. Provider connectivity has not been checked.');
+      await loadProviders();
+    } catch (error) {
+      if (mounted.current) setErr(error.message || 'The provider key could not be saved.');
+    } finally { savingRef.current = false; if (mounted.current) setSaving(false); }
+  };
   const tone = (state) => state === 'keyed' || state === 'running' ? LM.ok : LM.inkMuted;
   const keyed = (rows || []).filter(r => r.state === 'keyed').length;
   const running = (rows || []).filter(r => r.state === 'running').length;
@@ -3139,6 +5451,25 @@ const SettingsProviders = ({ store, patch }) => {
         ))}
         {rows && rows.length === 0 && <div style={{ padding:'12px 14px', fontSize:12, color:LM.inkMuted }}>nothing to show</div>}
       </div>
+      <form onSubmit={saveKey} style={{marginTop:18, padding:14, background:LM.bg,
+        border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
+        <label style={{display:'block', fontSize:13, fontWeight:500}}>OpenRouter API key
+          <input ref={keyInput} type="password" aria-label="OpenRouter API key" autoComplete="new-password"
+            autoCapitalize="none" spellCheck={false} maxLength={8192} disabled={saving || !transport?.saveProviderKey}
+            onChange={event => { setHasKey(!!event.target.value.trim()); setSaved(''); }}
+            style={{display:'block', width:'100%', margin:'8px 0', padding:'8px 10px', background:LM.bgPanel,
+              color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm}}/>
+        </label>
+        <p style={{fontSize:12, color:LM.inkSoft}}>Paste the raw key to save it in this machine’s encrypted secrets store.
+          An existing environment key remains the active source when one is set.</p>
+        <button type="submit" disabled={saving || !hasKey || !transport?.saveProviderKey}>
+          {saving ? 'Saving key…' : 'Save OpenRouter key'}</button>
+        <button type="button" disabled={saving || loading} onClick={loadProviders} style={{marginLeft:8}}>
+          {loading ? 'Reading status…' : 'Refresh provider status'}</button>
+        {saved && <p role="status" style={{fontSize:12, color:LM.ok}}>{saved}</p>}
+        {err && <p role="alert" style={{fontSize:12, color:LM.err}}>{err}</p>}
+      </form>
+      <SettingsSocialEnrollment transport={transport}/>
     </div>
   );
 };
@@ -3175,47 +5506,89 @@ const SettingsModels = () => (
 );
 
 // ── Theme / Shortcuts / Storage / About (lighter, but real)
-const SettingsTheme = ({ store, patch }) => (
-  <div>
-    <SHead title="Theme" sub="Honest dark for honest drafting. Light when you need to share a screen."/>
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
-      {[
-        ['System',  'follows OS', '#0e0e11', '#fbfbf9'],
-        ['Dark',    'studio default', '#0e0e11', null],
-        ['Light',   'high contrast',  null, '#f7f4ee'],
-      ].map(([name, sub, dark, light]) => (
-        <button key={name} onClick={() => patch('theme', name)} style={{
-          padding:'12px 14px', background:LM.bg, border:`1px solid ${name===store.theme?LM.accent:LM.line}`,
-          borderRadius:7, textAlign:'left', cursor:'pointer', color:LM.ink, fontFamily:LM.sans,
-        }}>
-          <div style={{ display:'flex', gap:LM.sp.xs, marginBottom:LM.sp.sm }}>
-            {dark && <div style={{ flex:1, height:36, background:dark, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>}
-            {light && <div style={{ flex:1, height:36, background:light, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>}
-          </div>
-          <div style={{ fontSize:13, fontWeight:500 }}>{name}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>
-        </button>
-      ))}
+const SettingsTheme = () => {
+  const state = usePersonalTheme(), api = window.ARCHHUB_EXISTING_WORKSHOP;
+  const config = state?.configuration;
+  const [accent, setAccent] = React.useState(() => LM.accent);
+  const [dirty, setDirty] = React.useState(false);
+  const [error, setError] = React.useState('');
+  React.useEffect(() => {
+    if (!dirty && config?.theme?.accent) setAccent(config.theme.accent);
+  }, [dirty, config?.theme?.accent]);
+  const oneDraft = config?.personal_wip_heads?.length === 1;
+  const unavailable = !api || !config || !oneDraft || state?.pending;
+  const run = async (action, clearDraft = false) => {
+    setError('');
+    try { await action(); if (clearDraft) setDirty(false); }
+    catch (failure) { setError(failure.message || 'Personal Settings could not be updated.'); }
+  };
+  const history = Array.isArray(config?.history) ? config.history : [];
+  const versions = history.map((entry, index) => ({entry, index, time:Date.parse(entry.timestamp)}))
+    .sort((a, b) => (Number.isFinite(b.time) ? b.time : -Infinity) -
+      (Number.isFinite(a.time) ? a.time : -Infinity) || a.index - b.index)
+    .slice(0, 10).map(row => row.entry);
+  const fieldStyle = {background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`,
+    borderRadius:LM.rad.md, padding:'8px 10px', fontFamily:LM.mono};
+  return <div>
+    <SHead title="Theme" sub="Appearance comes from this view’s Personal Settings."/>
+    <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:14, color:LM.inkSoft, fontSize:12}}>
+      <span style={{flex:1}}>{config ? `${config.binding_mode} · ${config.state}` :
+        !api && window.ArchHubTheme?.source === 'graph' ? 'Graph theme · read-only in this view' : 'Personal Settings not read'}</span>
+      <button title="Refresh Personal Settings" aria-label="Refresh Personal Settings" disabled={!api || state?.pending}
+        style={fieldStyle} onClick={() => run(() => api.refreshTheme())}>↻</button>
     </div>
-    <div style={{ marginTop:LM.sp.lg, display:'flex', flexDirection:'column', gap:10 }}>
-      {[
-        ['Accent color',  'oklch — same chroma · pick a hue', '#d97757'],
-        ['Editor font',   'JetBrains Mono · 13px'],
-        ['Display font',  'Instrument Serif · Inter for UI'],
-        ['Density',       'Comfortable'],
-      ].map(([k, v, c], i) => (
-        <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
-          {c && <span style={{ width:16, height:16, borderRadius:4, background:c, border:`1px solid ${LM.lineSoft}` }}/>}
-          <div style={{ flex:1 }}>
-            <div style={{ fontSize:12.5 }}>{k}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{v}</div>
-          </div>
-          <span style={{ color:LM.inkMuted, fontSize:11 }}>change</span>
+    <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10}}>
+      {['System','Dark','Light'].map(name => <div key={name} style={{padding:'12px 14px',
+        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7}}>
+        <div style={{display:'flex', gap:4, marginBottom:8}}>
+          {name !== 'Light' && <span style={{flex:1, height:30, background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4}}/>}
+          {name !== 'Dark' && <span style={{flex:1, height:30, background:LM.l_bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4}}/>}
         </div>
-      ))}
+        <div style={{fontSize:13}}>{name}</div>
+        <div style={{fontSize:10, color:LM.inkMuted, marginTop:4}}>Not linked to Personal Settings yet</div>
+      </div>)}
     </div>
-  </div>
-);
+    <div style={{marginTop:20, padding:12, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md}}>
+      <div style={{fontSize:13, marginBottom:6}}>Accent colour</div>
+      <div style={{fontSize:11, color:LM.inkSoft, marginBottom:10}}>Accent only; hover, pressed and soft shades follow when presets are linked.</div>
+      <p style={{fontSize:11, color:LM.inkSoft}}>Check text and control contrast after changing colours; automatic contrast adjustment is not available.</p>
+      {config && config.binding_mode !== 'personal-wip' && <p style={{fontSize:11, color:LM.warn}}>
+        Saving switches this view to its personal draft, including that draft’s other colours.
+      </p>}
+      <div style={{display:'flex', alignItems:'center', gap:8}}>
+        <span title="Current graph accent" style={{width:22, height:22, background:LM.accent, border:`1px solid ${LM.line}`, borderRadius:4}}/>
+        <input aria-label="Choose accent colour" type="color" value={/^#[0-9a-fA-F]{6}$/.test(accent) ? accent : LM.accent}
+          onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
+        <input aria-label="Accent hex colour" value={accent} maxLength={7} style={{...fieldStyle, width:100}}
+          onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
+        <button style={fieldStyle} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
+          onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Saving…' : 'Save accent'}</button>
+      </div>
+      {config && !oneDraft && <p style={{fontSize:11, color:LM.warn}}>
+        {config.personal_wip_heads.length > 1 ? 'Multiple theme drafts exist; merging is not linked yet.' : 'No personal theme draft is available.'}
+      </p>}
+    </div>
+    <div style={{marginTop:14, display:'grid', gap:8}}>
+      {[['Editor font',LM.mono],['Display font',LM.serif],['Density','Comfortable']].map(([name,value]) =>
+        <div key={name} style={{padding:10, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md}}>
+          <div style={{fontSize:12}}>{name} · {value}</div>
+          <div style={{fontSize:10, color:LM.inkMuted, marginTop:3}}>Not linked to Personal Settings yet</div>
+        </div>)}
+    </div>
+    {!!history.length && <div style={{marginTop:18}}>
+      <div style={{fontSize:12, marginBottom:8}}>Versions · showing {Math.min(10,history.length)} of {history.length}</div>
+      {versions.map(entry => <div key={entry.revision} style={{display:'flex', gap:8, alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${LM.lineSoft}`}}>
+        <span style={{flex:1, fontSize:11, color:LM.inkSoft}}>{entry.reason || entry.state} {entry.current ? '· current' : ''}
+          <small style={{display:'block'}}>{entry.timestamp || 'Time unavailable'} · {entry.state} · {entry.digest ? entry.digest.slice(0,10) : String(entry.revision).slice(-10)}</small></span>
+        {!entry.current && entry.restore_control && <button style={fieldStyle} disabled={unavailable}
+          onClick={() => run(() => api.restoreThemeRevision(entry.revision))}>Restore</button>}
+      </div>)}
+    </div>}
+    {(error || state?.error || window.ARCHHUB_THEME_ERROR) && <p role="alert" style={{fontSize:12, color:LM.warn}}>
+      {error || state?.error || window.ARCHHUB_THEME_ERROR}
+    </p>}
+  </div>;
+};
 
 const SettingsShortcuts = () => (
   <div>
@@ -3290,17 +5663,13 @@ const SettingsAbout = () => (
   <div>
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'14px 16px', fontFamily:LM.mono, fontSize:11.5, color:LM.inkSoft, lineHeight:1.85 }}>
-      <div><span style={{ color:LM.inkMuted }}>version    </span> 1.4.0-prototype</div>
-      <div><span style={{ color:LM.inkMuted }}>license    </span> proprietary · Fargaly</div>
-      <div><span style={{ color:LM.inkMuted }}>server     </span> localhost:7300 · running</div>
-      <div><span style={{ color:LM.inkMuted }}>hosts      </span> {LM_HOSTS.length} configured · {LM_HOSTS.filter(h=>h.state!=='off').length} live</div>
-      <div><span style={{ color:LM.inkMuted }}>providers  </span> Anthropic, OpenAI, OpenRouter, Ollama</div>
-      <div><span style={{ color:LM.inkMuted }}>updated    </span> 2 days ago · changelog →</div>
+      <div><span style={{ color:LM.inkMuted }}>connection </span> {window.location.origin}</div>
     </div>
+    <ApplicationUpdateControls/>
   </div>
 );
 
-const SettingsHosts = ({ store, patch }) => (
+const SettingsHosts = withLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS, ({ store, patch }) => (
   <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
     <div>
       <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em' }}>Hosts</div>
@@ -3354,33 +5723,33 @@ const SettingsHosts = ({ store, patch }) => (
       <span>+</span> Auto-build a new host connector…
     </button>
   </div>
-);
+));
 
 // ──────────────────────── MODEL PICKER ────────────────────────
 const ModelPicker = ({ setModel, onClose, model }) => {
   // The list is read LIVE from the app (/api/universal/models: the founder's
   // cloud, OpenRouter with real prices, LM Studio / Ollama on this machine);
-  // the rows below are only what shows until that answer arrives or when the
-  // machine is offline. `routed` is what the router reads: a CLOUD row must
+  // only discovered rows are selectable. `routed` is what the router reads: a CLOUD row must
   // reach the cloud, and a cloud id and an OpenRouter id look identical.
   const [live, setLive] = React.useState(null);
+  const [catalogueError, setCatalogueError] = React.useState('');
+  const [selectionError, setSelectionError] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
   const [q, setQ] = React.useState('');
+  const choose = async value => {
+    if (saving) return;
+    setSaving(true); setSelectionError('');
+    try { await setModel(value); onClose(); }
+    catch (error) { setSelectionError(error?.message || 'The model selection could not be saved.'); }
+    finally { setSaving(false); }
+  };
   React.useEffect(() => {
     const s = window.__archhubSession || {};
     fetch('/api/universal/models', { headers: { 'X-ArchHub-Session': s.token || '', 'X-ArchHub-CSRF': s.csrf || '' } })
-      .then(r => r.json()).then(d => { if (d && d.groups && d.groups.length) setLive(d); }).catch(() => {});
+      .then(r => { if (!r.ok) throw new Error('Catalogue unavailable'); return r.json(); })
+      .then(d => { if (!d || !Array.isArray(d.groups)) throw new Error('Invalid catalogue'); setLive(d); })
+      .catch(() => setCatalogueError('Model discovery is unavailable. Check the provider connection and reopen this picker.'));
   }, []);
-  const groups = [
-    { name:'CLOUD · subscription', items:[
-      { name:'Claude Sonnet 4.5', route:'anthropic/claude-sonnet-4.5', routed:'cloud/anthropic/claude-sonnet-4.5', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$3 / $15 per M', latency:412 },
-      { name:'Claude Opus 4.1',   route:'anthropic/claude-opus-4.1',   routed:'cloud/anthropic/claude-opus-4.1', vendor:'Anthropic', tag:'CLOUD', ctx:'200k', col:'#cc785c', cost:'$15 / $75 per M', latency:820 },
-      { name:'GPT-4o',            route:'openai/gpt-4o',               routed:'cloud/openai/gpt-4o', vendor:'OpenAI',    tag:'CLOUD', ctx:'128k', col:'#10a37f', cost:'$5 / $20 per M', latency:530 },
-    ]},
-    { name:'BYO · OpenRouter', items:[
-      { name:'DeepSeek R1', route:'deepseek/deepseek-r1', vendor:'OpenRouter', tag:'BYO', ctx:'128k', col:'#3a6acc', cost:'$0.55 / $2.20', latency:1450 },
-      { name:'Llama 3.3 70B', route:'meta-llama/llama-3.3-70b-instruct', vendor:'OpenRouter', tag:'BYO', ctx:'128k', col:'#3a6acc', cost:'$0.12 / $0.30', latency:900 },
-    ]},
-  ];
   return (
     <div onClick={onClose} style={{
       position:'absolute', inset:0, background:'rgba(0,0,0,.55)',
@@ -3392,20 +5761,28 @@ const ModelPicker = ({ setModel, onClose, model }) => {
       }}>
         <div style={{ padding:'12px 14px', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontSize:14 }}>⌕</span>
-          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search models or paste an OpenRouter id…" style={{
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search available models…" style={{
             flex:1, border:0, background:'transparent', color:LM.ink, fontSize:13.5, outline:'none', fontFamily:LM.sans,
           }}/>
-          <span style={{ fontFamily:LM.mono, fontSize:9, color: live ? LM.ok : LM.inkMuted, letterSpacing:'0.12em' }}>{live ? ('LIVE · ' + live.count) : 'OFFLINE LIST'}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:9, color: live ? LM.ok : LM.inkMuted, letterSpacing:'0.12em' }}>{live ? ('LIVE · ' + live.count) : 'DISCOVERING'}</span>
           <kbd style={kbd()}>esc</kbd>
+          <button disabled={saving} onClick={() => choose({name:'Choose a model', route:'', routed:''})}
+            title="Clear this model selection" aria-label="Clear this model selection"
+            style={{background:'transparent',border:0,color:LM.inkSoft,cursor:'pointer'}}>×</button>
         </div>
         <div className="ah-scroll" style={{ maxHeight:420, overflow:'auto', padding:'6px 8px 10px' }}>
-          {(live ? live.groups : groups).map(g => ({ ...g, items: g.items.filter(m => !q || (m.name + ' ' + m.route + ' ' + (m.vendor||'')).toLowerCase().includes(q.toLowerCase())).slice(0, q ? 60 : 40) })).filter(g => g.items.length).map(g => (
+          {selectionError && <p role="alert" style={{padding:12,color:LM.err}}>{selectionError}</p>}
+          {saving && <p role="status" style={{padding:12}}>Saving model selection…</p>}
+          {!live && <p role="status" style={{padding:12}}>{catalogueError || 'Discovering models from connected providers…'}</p>}
+          {live && !live.groups.some(group => group.items?.length) && <p role="status" style={{padding:12}}>
+            No models were discovered. Connect an online provider or start a local model service.</p>}
+          {(live?.groups || []).map(g => ({ ...g, items: g.items.filter(m => !q || (m.name + ' ' + m.route + ' ' + (m.vendor||'')).toLowerCase().includes(q.toLowerCase())).slice(0, q ? 60 : 40) })).filter(g => g.items.length).map(g => (
             <div key={g.name} style={{ marginTop:LM.sp.sm }}>
               <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', padding:'4px 10px' }}>{g.name}</div>
               {g.items.map(m => {
-                const sel = m.name === model.name;
+                const sel = modelRoute(m) === modelRoute(model);
                 return (
-                  <div key={m.route || m.name} onClick={() => { setModel(m); onClose(); }} style={{
+                  <div key={m.route || m.name} onClick={() => choose(m)} style={{
                     display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:LM.rad.md, cursor:'pointer',
                     background: sel ? LM.bgSoft : 'transparent',
                   }}
@@ -3436,7 +5813,7 @@ const ModelPicker = ({ setModel, onClose, model }) => {
 // ──────────────────────── DOCS ────────────────────────
 // Lives INSIDE the app shell — same overlay geometry, nav width and type scale as Settings,
 // so this is the screen the end user actually gets, only the content differs.
-const dCode = { fontFamily:LM.mono, fontSize:11.5, lineHeight:1.65, background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'11px 13px', color:LM.inkSoft, overflowX:'auto', whiteSpace:'pre', margin:'0 0 14px' };
+const dCode = window.ArchHubTheme.derive((LM) => ({ fontFamily:LM.mono, fontSize:11.5, lineHeight:1.65, background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.sm, padding:'11px 13px', color:LM.inkSoft, overflowX:'auto', whiteSpace:'pre', margin:'0 0 14px' }));
 const DP = ({ children }) => <p style={{ fontFamily:LM.sans, fontSize:13.5, lineHeight:1.65, color:LM.inkSoft, margin:'0 0 13px', textWrap:'pretty' }}>{children}</p>;
 const DSub = ({ children }) => <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.18em', margin:'22px 0 10px' }}>{children}</div>;
 const DCode = ({ children }) => <pre style={dCode}>{children}</pre>;
@@ -3514,7 +5891,7 @@ const Docs = ({ onClose }) => {
       }}>
         <div style={{ gridColumn:'1 / -1', gridRow:'1', borderBottom:`1px solid ${LM.line}`, display:'flex', alignItems:'center', gap:10, padding:'0 16px' }}>
           <span style={{ fontFamily:LM.serif, fontSize:18, letterSpacing:'-0.01em' }}>Documentation</span>
-          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>STUDIO · v1.4</span>
+          <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.1em' }}>STUDIO</span>
           <div style={{ flex:1 }}/>
           <div style={{ position:'relative', width:260 }}>
             <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
@@ -3830,7 +6207,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, account }) 
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>settings</StripItem>
       <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
-      <StripItem>v1.4 prototype</StripItem>
+      <StripItem>Studio</StripItem>
     </div>
   );
 };

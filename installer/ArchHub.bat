@@ -4,10 +4,10 @@ rem prepared and passes the absolute interpreter it found as %1; every
 rem shortcut opens ArchHub.vbs, so this window is the only place a colleague
 rem ever sees setup, and it stays open on failure.
 setlocal
+set "PYTHONPATH="
+set "PYTHONHOME="
+set "PYTHONNOUSERSITE=1"
 cd /d "%~dp0"
-if exist ".archhub-ready" goto launch
-echo Preparing ArchHub for first use. This runs once, and ArchHub opens
-echo by itself when it finishes - you do not have to click anything again.
 set "ARCHHUB_PY=%~1"
 if "%ARCHHUB_PY%"=="" (
   echo.
@@ -16,9 +16,12 @@ if "%ARCHHUB_PY%"=="" (
   pause
   exit /b 9009
 )
+"%ARCHHUB_PY%" -E -s colleague_setup.py --check-ready
+if "%errorlevel%"=="0" goto launch
+echo Preparing this ArchHub build. ArchHub opens by itself when it finishes.
 rem The interpreter is the absolute path the launcher found; a bare "py" or
 rem "python" would be resolved from this user-writable folder first.
-"%ARCHHUB_PY%" colleague_setup.py
+"%ARCHHUB_PY%" -E -s colleague_setup.py
 set "ARCHHUB_SETUP_RC=%errorlevel%"
 if not "%ARCHHUB_SETUP_RC%"=="0" (
   echo.
@@ -27,8 +30,7 @@ if not "%ARCHHUB_SETUP_RC%"=="0" (
   pause
   exit /b %ARCHHUB_SETUP_RC%
 )
-rem Written only here, after a zero exit read OUTSIDE any parenthesised block
-rem (inside one, %errorlevel% expands at parse time and always read 0).
-echo ready> ".archhub-ready"
+rem Setup writes the build-bound marker only after dependency checks succeed.
+rem Read the return code OUTSIDE a block so cmd does not reuse a stale value.
 :launch
-wscript.exe "%~dp0ArchHub.vbs"
+exit /b 0

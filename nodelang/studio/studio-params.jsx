@@ -99,7 +99,6 @@ const wireHeld = (w) => Object.fromEntries(
 
 function wireAsNode(w, i, nodes) {
   const from = nodes.find(x => x.id === w.from[0]), to = nodes.find(x => x.id === w.to[0]);
-  if (!from || !to) return null;
   const held = wireHeld(w);
   const heldValue = (k) => {
     const row = held[k];
@@ -109,15 +108,21 @@ function wireAsNode(w, i, nodes) {
     if (spec.type === 'number') return Number(row.v) || 0;
     return row.v;
   };
-  const src = (from.outs || []).find(o => o.id === w.from[1]) || (from.outs || [])[0] || { label: 'out', t: 'any' };
-  const dst = (to.ins || []).find(o => o.id === w.to[1]) || (to.ins || [])[0] || { label: 'in', t: 'any' };
-  const ok = src.t === dst.t || dst.t === 'any' || src.t === 'any';
+  const src = typeof w.from[1] === 'string' && w.from[1] ? (from?.outs || []).find(o => o.id === w.from[1]) : null;
+  const dst = typeof w.to[1] === 'string' && w.to[1] ? (to?.ins || []).find(o => o.id === w.to[1]) : null;
+  const endpointError = [
+    !src && 'Source interface ' + (w.from[1] || '(not supplied)') + ' is unavailable on ' + w.from[0] + '.',
+    !dst && 'Target interface ' + (w.to[1] || '(not supplied)') + ' is unavailable on ' + w.to[0] + '.',
+  ].filter(Boolean).join(' ');
+  const ok = src && dst ? src.t === dst.t || dst.t === 'any' || src.t === 'any' : null;
   return {
-    id: 'wire:' + i, cat: 'wire', isWire: true,
-    title: src.label + ' → ' + dst.label,
-    sub: 'connection · ' + src.t + (ok ? '' : ' ✕ ' + dst.t),
-    ins:  [{ id: 'src', label: from.title, t: src.t, val: src.label }],
-    outs: [{ id: 'dst', label: to.title,   t: dst.t, val: dst.label }],
+    id: w.id || 'wire:' + i, cat: 'wire', isWire: true,
+    title: (src ? src.label || src.id : 'Source unavailable') + ' → ' + (dst ? dst.label || dst.id : 'Target unavailable'),
+    sub: endpointError ? 'connection · endpoint projection unavailable' : 'connection · ' + src.t + (ok ? '' : ' ✕ ' + dst.t),
+    ins: src ? [{ id:src.id, label:from.title, t:src.t, val:src.label }] : [],
+    outs: dst ? [{ id:dst.id, label:to.title, t:dst.t, val:dst.label }] : [],
+    sourceRoot:w.from[0], sourceInterface:w.from[1] ?? null,
+    targetRoot:w.to[0], targetInterface:w.to[1] ?? null, endpointError,
     // The rows ARE the one definition, in its order, with its pages.
     params: WIRE_SPECS.map(spec => Object.assign(
       { k: spec.k, v: heldValue(spec.k), type: WIRE_ROW_TYPE[spec.type] || 'text' },
@@ -129,7 +134,7 @@ function wireAsNode(w, i, nodes) {
     // inspector writes through, and its own root owns rows it has not
     // grown yet.
     live: true, wireRoot: w.id, held,
-    typeOk: ok, srcType: src.t, dstType: dst.t,
+    typeOk: ok, srcType: src?.t ?? null, dstType: dst?.t ?? null,
   };
 }
 
@@ -150,6 +155,87 @@ const pmEdit = (id, defs) => {
   if (!PM_EDITS.has(id)) PM_EDITS.set(id, { vals: defs, cooked: defs, wired: {}, ran: 0, custom: [], labels: {}, pages: ['Main'], page: 'Main' });
   return PM_EDITS.get(id);
 };
+
+// Serialize admitted writes across inspectors; a newer queued keystroke replaces
+// the older draft, while an in-flight request finishes before the next starts.
+// These are disposable drafts and acknowledgements, not another parameter store.
+let pmWriteTail = Promise.resolve();
+let pmGraphRunning = false;
+const pmPersistence = rec => {
+  if (!rec.persistence) rec.persistence = {
+    drafts: new Map(), queued: new Set(), pending: new Set(), errors: new Map(),
+    acknowledged: {}, version: 0, listeners: new Set(), running: false, result: '', runError: '',
+  };
+  return rec.persistence;
+};
+const pmNotify = state => state.listeners.forEach(notify => notify());
+const pmNotifyAll = () => PM_EDITS.forEach(rec => pmNotify(pmPersistence(rec)));
+
+async function pmPersistValue(node, key, value) {
+  if (window.ARCHHUB_STUDIO_AUTHORITY && !node.isWire) {
+    return window.ARCHHUB_SET_NODE_PROP(node.id, key, value);
+  }
+  let relation = (node.params || []).find(row => row.k === key)?.rel;
+  if (node.isWire && node.wireRoot) {
+    relation = (node.held || {})[key]?.rel || relation;
+    if (!relation) {
+      if (!window.ARCHHUB_GET_CANVAS) throw new Error('Cannot read the saved connection parameters.');
+      const canvas = await window.ARCHHUB_GET_CANVAS();
+      const wire = (canvas.wires || []).find(row => String(row.id) === String(node.wireRoot));
+      if (!wire) throw new Error('This connection is no longer available.');
+      relation = (wire.params || []).find(row => row.label === key)?.relation;
+      if (relation) {
+        node.held = Object.assign({}, node.held, {[key]: {rel: relation}});
+      } else {
+        if (!window.ARCHHUB_SET_WIRE_PROP) throw new Error('Connection parameter saving is unavailable.');
+        const created = await window.ARCHHUB_SET_WIRE_PROP(node.wireRoot, key, String(value));
+        if (!created || created.ok === false) throw new Error(created?.error || 'Parameter was not saved.');
+        // The old endpoint returns a value root, not a property relation.
+        // Resolve the relation from the next projection before editing again.
+        return created;
+      }
+    }
+  }
+  if (!relation || !window.ARCHHUB_SET_PROP) throw new Error('This parameter has no available save binding.');
+  const saved = await window.ARCHHUB_SET_PROP(relation, String(value));
+  if (!saved || saved.ok === false) throw new Error(saved?.error || 'Parameter was not saved.');
+  return saved;
+}
+
+function pmQueueParameter(rec, node, key, value) {
+  const state = pmPersistence(rec);
+  const draft = {value, version: ++state.version};
+  state.drafts.set(key, draft);
+  state.pending.add(key);
+  state.errors.delete(key);
+  state.result = '';
+  pmNotify(state);
+  if (state.queued.has(key)) return;
+  state.queued.add(key);
+  pmWriteTail = pmWriteTail.then(async () => {
+    const held = state.drafts.get(key);
+    state.queued.delete(key);
+    try {
+      await pmPersistValue(node, key, held.value);
+      state.acknowledged[key] = held.value;
+      if (state.drafts.get(key) === held) state.errors.delete(key);
+    } catch (error) {
+      if (state.drafts.get(key) === held) state.errors.set(key, error?.message || 'Parameter was not saved.');
+    } finally {
+      if (state.drafts.get(key) === held) state.pending.delete(key);
+      pmNotify(state);
+    }
+  });
+}
+
+async function pmFlushParameters() {
+  let tail;
+  do { tail = pmWriteTail; await tail; } while (tail !== pmWriteTail);
+  for (const rec of PM_EDITS.values()) {
+    const state = pmPersistence(rec);
+    if (state.errors.size) throw new Error('Some parameter edits are unsaved. Retry them before running the graph.');
+  }
+}
 
 // A built-in parameter arrives in the node's own shorthand; normalise it into the same spec
 // shape a user-added one has, so one row component renders both.
@@ -443,6 +529,13 @@ function NodeInspector({ node }) {
   const [adding, setAdding] = React.useState(false);
   const [newPage, setNewPage] = React.useState('');
   const [confirmDel, setConfirmDel] = React.useState(false);
+  const persistence = pmPersistence(rec);
+  const [, refreshPersistence] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => refreshPersistence(value => value + 1);
+    persistence.listeners.add(refresh);
+    return () => persistence.listeners.delete(refresh);
+  }, [node.id]);
 
   const thru = (setter, field) => (v) => setter(prev => {
     const next = typeof v === 'function' ? v(prev) : v;
@@ -457,26 +550,68 @@ function NodeInspector({ node }) {
   const allDefs = Object.assign({}, defs); custom.forEach(c => allDefs[c.k] = c.def);
   const set = (k, v) => {
     setVals(s => Object.assign({}, s, { [k]: v }));
-    // A LIVE node's parameter is a graph cell: the edit commits through
-    // the governed write, so what the panel shows is what the graph
-    // holds. Design nodes keep their local behaviour untouched.
-    const held = (node.params || []).find(x => x.k === k);
-    if (node.live && held && held.rel && window.ARCHHUB_SET_PROP) {
-      window.ARCHHUB_SET_PROP(held.rel, String(v)).catch(() => {});
+    if (node.live || node.isWire) pmQueueParameter(rec, node, k, v);
+  };
+  const applyValues = values => Object.entries(values).forEach(([key, value]) => set(key, value));
+  const runGraph = async () => {
+    if (pmGraphRunning) return;
+    pmGraphRunning = true;
+    persistence.running = true;
+    persistence.runError = '';
+    persistence.result = '';
+    pmNotifyAll();
+    try {
+      await pmFlushParameters();
+      if (!window.ARCHHUB_RUN) throw new Error('Graph execution is unavailable.');
+      const versions = new Map(Array.from(PM_EDITS, ([id, entry]) => [id, pmPersistence(entry).version]));
+      const executedValues = Object.assign({}, rec.vals);
+      const result = await window.ARCHHUB_RUN();
+      if (!result || result.ok === false) throw new Error(result?.error || 'Graph execution failed.');
+      if (result.pending?.[node.id]) throw new Error(String(result.pending[node.id]));
+      if (node.isWire) {
+        persistence.result = 'Graph execution returned. Connection behavior is not independently verified.';
+      } else {
+        if (!Object.prototype.hasOwnProperty.call(result.display || {}, node.id)) {
+          throw new Error('The graph returned no execution result for this node.');
+        }
+        if (Array.from(PM_EDITS).some(([id, entry]) => pmPersistence(entry).version !== (versions.get(id) || 0))) {
+          throw new Error('Parameters changed during execution. Run again to update the output.');
+        }
+        setCooked(executedValues);
+        setRan(r => r + 1);
+        persistence.result = String(result.display[node.id]);
+      }
+      const waiting = Object.keys(result.pending || {}).length;
+      if (waiting) persistence.result += ' · ' + waiting + ' node(s) did not complete';
+    } catch (error) {
+      persistence.runError = error?.message || 'Graph execution failed.';
+    } finally {
+      persistence.running = false;
+      pmGraphRunning = false;
+      pmNotifyAll();
+    }
+  };
+  const discardCustom = key => {
+    // Only a local draft with no possible persistence path can be discarded.
+    // A wire create may have committed despite a lost response: keep that row
+    // visible for reconciliation instead of pretending the property vanished.
+    if (!rec.custom.some(row => row.k === key)) return;
+    if (persistence.pending.has(key) || node.isWire ||
+        (node.params || []).some(row => row.k === key && row.rel) ||
+        Object.prototype.hasOwnProperty.call(persistence.acknowledged, key)) {
+      persistence.runError = 'This parameter may be saved or still saving. It has not been removed.';
+      pmNotify(persistence);
       return;
     }
-    // A wire is a node, so its parameters are graph rows too. The row a
-    // connection already holds is edited through its relation; the first
-    // edit of one it has never held declares it on the wire's own root.
-    if (node.isWire && node.wireRoot) {
-      const row = (node.held || {})[k];
-      if (row && row.rel && window.ARCHHUB_SET_PROP) {
-        window.ARCHHUB_SET_PROP(row.rel, String(v)).catch(() => {});
-      } else if (window.ARCHHUB_SET_WIRE_PROP) {
-        window.ARCHHUB_SET_WIRE_PROP(node.wireRoot, k, String(v))
-          .catch(() => {});
-      }
-    }
+    persistence.drafts.delete(key);
+    persistence.errors.delete(key);
+    persistence.version++;
+    setCustom(rows => rows.filter(row => row.k !== key));
+    setVals(values => { const next = Object.assign({}, values); delete next[key]; return next; });
+    setCooked(values => { const next = Object.assign({}, values); delete next[key]; return next; });
+    setWired(values => { const next = Object.assign({}, values); delete next[key]; return next; });
+    persistence.runError = '';
+    pmNotify(persistence);
   };
 
   const editable = all.filter(p => !pmType(p.type).wire);
@@ -505,11 +640,15 @@ function NodeInspector({ node }) {
     setCustom(c => c.concat(full));
     if (!T.wire) { setVals(v => Object.assign({}, v, { [spec.k]: def })); setCooked(c => Object.assign({}, c, { [spec.k]: def })); }
     else setWired(w => Object.assign({}, w, { [spec.k]: 'unconnected' }));
+    if (node.live || node.isWire) pmQueueParameter(rec, node, spec.k, def);
     setAdding(false);
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {node.endpointError && <div role="alert" style={{fontSize:12, color:PM.warn, overflowWrap:'anywhere'}}>
+        {node.endpointError} Endpoint compatibility cannot be determined from this projection.
+      </div>}
       {(node.ins || node.outs || promoted.length > 0) && (
         <div>
           {pmHead('⇄', 'CONNECTIONS')}
@@ -533,7 +672,7 @@ function NodeInspector({ node }) {
 
       <div>
         {pmHead('⌗', 'PARAMETERS', overridden > 0 && (
-          <button onClick={() => setVals(allDefs)} style={{ border: 0, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 9.5, letterSpacing: '0.06em' }}>↺ REVERT ALL</button>
+          <button onClick={() => applyValues(allDefs)} style={{ border: 0, background: 'transparent', color: PM.inkSoft, cursor: 'pointer', fontFamily: PM.mono, fontSize: 9.5, letterSpacing: '0.06em' }}>↺ REVERT ALL</button>
         ))}
 
         {/* PAGES — Houdini folders / TouchDesigner pages. A long interface is a navigation
@@ -554,7 +693,7 @@ function NodeInspector({ node }) {
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginBottom: 10 }}>
             <span style={{ flexBasis: '100%', fontFamily: PM.mono, fontSize: 8.5, color: PM.inkSoft, letterSpacing: '0.14em' }}>PRACTICE STANDARDS</span>
             {presets.map(pr => (
-              <button key={pr.id} onClick={() => setVals(v => Object.assign({}, v, pr.vals))} style={{
+              <button key={pr.id} onClick={() => applyValues(pr.vals)} style={{
                 padding: '4px 9px', borderRadius: PM.rad.pill, cursor: 'pointer', fontFamily: PM.sans, fontSize: 11, whiteSpace: 'nowrap',
                 border: `1px solid ${activePreset === pr ? PM.accent : PM.line}`,
                 background: activePreset === pr ? PM.accentSoft : 'transparent',
@@ -572,7 +711,7 @@ function NodeInspector({ node }) {
               onPromote={() => setWired(w => Object.assign({}, w, { [spec.k]: 'graph input' }))}
               onUnwire={() => setWired(w => { const n = Object.assign({}, w); delete n[spec.k]; return n; })}
               onRename={lbl => setLabels(l => Object.assign({}, l, { [spec.k]: lbl }))}
-              onDelete={() => { setCustom(c => c.filter(x => x.k !== spec.k)); setWired(w => { const n = Object.assign({}, w); delete n[spec.k]; return n; }); }}/>
+              onDelete={() => discardCustom(spec.k)}/>
           ))}
           {onPage.length === 0 && (
             <div style={{ padding: '14px 11px', borderRadius: PM.rad.md, border: `1px dashed ${PM.line}`, fontFamily: PM.serif, fontStyle: 'italic', fontSize: 13.5, color: PM.inkSoft }}>
@@ -603,12 +742,23 @@ function NodeInspector({ node }) {
       </div>
 
       <div>
+        {(persistence.pending.size > 0 || persistence.errors.size > 0 || persistence.runError || persistence.result) && (
+          <div role={persistence.errors.size || persistence.runError ? 'alert' : 'status'} style={{ fontFamily: PM.sans, fontSize: 12, lineHeight: 1.5, marginBottom: 9, color: persistence.errors.size || persistence.runError ? PM.err : PM.inkSoft }}>
+            {persistence.pending.size > 0 && <div>Saving {persistence.pending.size} parameter(s)…</div>}
+            {Array.from(persistence.errors, ([key, error]) => <div key={key}>{key}: not saved — {error}</div>)}
+            {persistence.errors.size > 0 && <button onClick={() => {
+              for (const key of Array.from(persistence.errors.keys())) set(key, rec.vals[key]);
+            }} style={pmBtn()}>Retry unsaved edits</button>}
+            {persistence.runError && <div>{persistence.runError}</div>}
+            {persistence.result && <div>{persistence.result}</div>}
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0 9px' }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: dirty.length ? PM.warn : PM.ok }}/>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: dirty.length || !ran || persistence.runError || persistence.errors.size || persistence.pending.size ? PM.warn : PM.ok }}/>
           <span style={{ flex: 1, fontFamily: PM.mono, fontSize: 10, color: dirty.length ? PM.warn : PM.inkSoft, lineHeight: 1.5 }}>
             {dirty.length
               ? 'Output is stale · ' + dirty.join(', ') + ' changed since the last run'
-              : (ran ? 'Output current · ran ' + ran + (ran === 1 ? ' time' : ' times') + ' this session' : 'Output current')
+              : (ran && !persistence.runError && !persistence.errors.size && !persistence.pending.size ? 'Last successful run · ' + ran + (ran === 1 ? ' time' : ' times') + ' this session' : 'Output has not been verified for these inputs')
                 + (overridden ? ' · ' + overridden + ' off default' : '')}
           </span>
         </div>
@@ -621,25 +771,38 @@ function NodeInspector({ node }) {
             <button onClick={() => setConfirmDel(false)} style={pmBtn()}>Cancel</button>
             <button onClick={async (e) => {
               const b = e.currentTarget;
+              if (b.disabled) return;
+              b.disabled = true;
               b.textContent = 'removing…';
               try {
+                if (node.isWire) {
+                  if (!node.wireRoot) throw new Error('The connection has no graph identity.');
+                  if (window.ARCHHUB_STUDIO_AUTHORITY) await window.ARCHHUB_STUDIO_AUTHORITY.remove(node.wireRoot);
+                  else if (window.ARCHHUB_EXISTING_WORKSHOP) await window.ARCHHUB_EXISTING_WORKSHOP.disconnectTopology(node.wireRoot);
+                  else throw new Error('Connection removal is unavailable in this view.');
+                  setConfirmDel(false);
+                  return;
+                }
                 await window.ARCHHUB_RETRACT(node.id);
                 window.location.reload();
               } catch (error) {
+                persistence.runError = error.message || 'The connection or node could not be removed.';
+                persistence.result = '';
+                pmNotify(persistence);
                 b.textContent = 'refused';
                 setTimeout(() => { b.textContent = 'Delete'; }, 4000);
-              }
+              } finally { b.disabled = false; }
             }} style={Object.assign({}, pmBtn(), { color: PM.err, borderColor: PM.err })}>Delete</button>
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 5 }}>
-            <button onClick={() => { setRan(r => r + 1); setCooked(vals); }} style={{
+            <button onClick={runGraph} disabled={pmGraphRunning} title="Executes all connected and unconnected nodes on this graph, including configured external operations, after parameter saves finish." style={{
               flex: 1, minWidth: 0, minHeight: 34, padding: '7px 10px', borderRadius: PM.rad.sm, border: 0,
               background: dirty.length ? PM.accent : PM.bg,
               color: dirty.length ? (PM.onFill || '#180f08') : PM.inkSoft,
               boxShadow: dirty.length ? 'none' : `inset 0 0 0 1px ${PM.line}`,
               fontFamily: PM.sans, fontSize: 12.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>↻ Rerun{dirty.length ? ' · ' + dirty.length : ''}</button>
+            }}>{pmGraphRunning ? 'Running graph…' : '↻ Run graph'}</button>
             <button style={pmIcon()} title={node.isWire ? 'Save this connection\u2019s rules as a reusable skill' : 'Save these parameters as a reusable skill'}>◈</button>
             <button style={pmIcon()} title="Fork the graph from here, keeping everything upstream">⑂</button>
             <button onClick={() => setConfirmDel(true)} style={pmIcon()} title={node.isWire ? 'Delete this connection…' : 'Delete node…'}>⌫</button>

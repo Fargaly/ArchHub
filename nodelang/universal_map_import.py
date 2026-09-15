@@ -15,7 +15,7 @@ from typing import Mapping
 from urllib.parse import quote
 
 from .cell_protocols import CellBatch, read_relation
-from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
+from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, ids_with_prefix
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,9 +322,8 @@ def project_grand_map_cells(
     cross_relations: list[str] = []
     all_refs_by_owner: dict[str, list[PropertyRef]] = {}
     for relation_root in sorted(
-        root for root in snapshot.cells
-        if root.startswith("gm:property:")
-        and ":incidence:" not in root
+        root for root in ids_with_prefix(snapshot.cells, "gm:property:")
+        if ":incidence:" not in root
         and ":chain:" not in root
     ):
         owner_root, reference = property_ref(relation_root)

@@ -371,8 +371,14 @@ def evaluate_logic(
     primitive_facts: PrimitiveFactProvider,
     budget: int = 100_000,
     max_proofs: int = 2,
+    snapshot_only_primitives: bool = False,
 ) -> tuple[LogicProof, ...]:
-    """Evaluate one fully grounded query and return canonical top-rule proofs."""
+    """Evaluate one grounded query, isolating external facts by default.
+
+    Only a trusted caller whose primitive facts depend exclusively on this
+    immutable snapshot may opt into sharing reachability across evaluations.
+    Authenticated context, clock or other external inputs must retain the default.
+    """
     if not arguments or any(type(value) is not str for value in arguments):
         raise InvalidCell("logic query arguments must be grounded identities")
     if budget < 1 or max_proofs < 1:
@@ -486,7 +492,7 @@ def evaluate_logic(
             )
         return result
 
-    edge_memo = _reach_memo_for(snapshot)
+    edge_memo = _reach_memo_for(snapshot) if snapshot_only_primitives else {}
 
     def edge_children(plan: _TransitiveClosurePlan, node: str) -> tuple[str, ...]:
         """The nodes one edge away from `node`, in solver order.
@@ -499,7 +505,7 @@ def evaluate_logic(
         path by the same goal, so the yielded proof is byte-identical to
         an unmemoized walk.
         """
-        key = (plan.edge_predicate, node)
+        key = (program_root, plan.edge_predicate, node)
         held = edge_memo.get(key)
         if held is not None:
             return held
@@ -586,6 +592,7 @@ def evaluate_logic(
         goal: tuple[_Value, ...],
         trace: _Trace,
         stack: frozenset[tuple[str, tuple[str | None, ...]]],
+        selected_rule: LogicRule | None = None,
     ) -> Iterator[_Trace]:
         meter.spend()
         signature = (predicate, resolved(goal, trace.bindings))
@@ -637,7 +644,7 @@ def evaluate_logic(
                 trace.steps,
                 tuple(dict.fromkeys((*trace.read_roots, *fact.evidence_roots))),
             )
-        for rule in by_predicate.get(predicate, ()):
+        for rule in ((selected_rule,) if selected_rule is not None else by_predicate.get(predicate, ())):
             meter.spend()
             if len(rule.head.terms) != len(goal):
                 continue
@@ -661,25 +668,23 @@ def evaluate_logic(
                     (*solved.steps, (frame, rule.root_id, ())),
                     solved.read_roots,
                 )
-        if grounded and not yielded:
+        # Top-level branches temporarily restrict this predicate to one rule.
+        # Failure there says nothing about the remaining alternative rules.
+        if grounded and not yielded and predicate != predicate_root:
             failed_ground_goals.add(signature)
 
     proofs: list[LogicProof] = []
     top_rules = by_predicate.get(predicate_root, ())
     for top_rule in top_rules:
+        # Lower goals can also depend on the temporarily selected alternative.
+        failed_ground_goals.clear()
         initial = _Trace(MappingProxyType({}), (), ())
         selected: _Trace | None = None
-        # Restrict this branch to the selected top rule without changing the
-        # graph-held program seen by all recursive goals.
-        original = by_predicate[predicate_root]
-        by_predicate[predicate_root] = (top_rule,)
-        try:
-            selected = next(
-                solve_goal(predicate_root, tuple(arguments), initial, frozenset()),
-                None,
-            )
-        finally:
-            by_predicate[predicate_root] = original
+        # Select only the entry rule. Recursive goals retain all alternatives.
+        selected = next(
+            solve_goal(predicate_root, tuple(arguments), initial, frozenset(), top_rule),
+            None,
+        )
         if selected is None:
             continue
         top_frame = next(

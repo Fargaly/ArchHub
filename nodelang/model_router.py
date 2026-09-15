@@ -19,10 +19,18 @@ OpenRouter and LM Studio (LM Studio serves it verbatim); Ollama has its own
 from __future__ import annotations
 
 import json
+import importlib.util
+import base64
+import hmac
+import http.client
 import os
+import stat
 import sys
+import tempfile
+import threading
 import urllib.error
 import urllib.request
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
@@ -76,6 +84,10 @@ _DISCOVER = object()
 class ModelRouteRefused(InvalidCell):
     """One short sentence about why no answer came, fit to show a person."""
 
+    def __init__(self, message, *, reason_code="response_refused"):
+        super().__init__(message)
+        self.reason_code = reason_code
+
 
 @dataclass(frozen=True)
 class ModelRoute:
@@ -88,6 +100,14 @@ class ModelRoute:
     needs_key: bool
 
 
+def _legacy_free_route(route: object) -> bool:
+    text = str(route or "").strip()
+    parts = text.split("/")
+    return (len(parts) == 2 and all(parts) and text.endswith(":free")
+            and not any(char.isspace() for char in text)
+            and not any(text.startswith(prefix) for prefix in _FAMILY_PREFIXES))
+
+
 def resolve_model_route(
     route: object, *, cloud_base_url: Optional[str] = None
 ) -> ModelRoute:
@@ -97,6 +117,8 @@ def resolve_model_route(
         raise ModelRouteRefused(
             "No model was chosen: pick one in the model picker, then ask again."
         )
+    if text == "openrouter/free":
+        return _destination("openrouter", text, cloud_base_url)
     for prefix, family in _FAMILY_PREFIXES.items():
         if text.startswith(prefix):
             model = text[len(prefix):].strip("/").strip()
@@ -106,10 +128,9 @@ def resolve_model_route(
                     % (text, _PROVIDER_NAMES[family])
                 )
             return _destination(family, model, cloud_base_url)
-    # A bare "vendor/model" is exactly what an OpenRouter id looks like, and
-    # exactly what the picker's BYO rows carry.
-    parts = [part for part in text.split("/") if part.strip()]
-    if len(parts) == 2 and "/" in text:
+    # Existing sealed Workshop requests use this explicitly free OpenRouter
+    # spelling. Preserve their identity; route_chat always enforces zero price.
+    if _legacy_free_route(text):
         return _destination("openrouter", text, cloud_base_url)
     raise ModelRouteRefused(
         "The model route %r names no provider this app can reach: use "
@@ -138,26 +159,241 @@ def _default_cloud_base() -> str:
     return DEFAULT_BASE
 
 
-def founder_secrets_key(name: str) -> str:
-    """The founder's own secrets store, when the production sibling is here.
+_CREDENTIAL_LOCK = threading.RLock()
+_CREDENTIAL_FILE_LIMIT = 1024 * 1024
+_CREDENTIAL_DPAPI_MARK = b"ARCHHUB-DPAPI-1:"
+_CREDENTIAL_ERRORS = {
+    "invalid_credential": "Enter a raw OpenRouter key of 1 to 8192 ASCII characters without whitespace. Credential aliases are not supported here.",
+    "secure_store_unavailable": "The Windows-protected credential store is unavailable. No save was confirmed.",
+    "secure_store_invalid": "The existing credential store is not readable Windows-protected data. It was not replaced.",
+    "secure_store_changed": "The credential store changed during saving. Refresh its status before retrying.",
+    "save_not_admitted": "Credential saving is no longer authorized. Sign in again before retrying.",
+    "save_unconfirmed": "The credential save could not be confirmed. Check provider status before retrying.",
+    "invalid_social_credential": "Enter a social- vault entry name, linkedin or meta, its operator-declared account id and a raw ASCII token. Credential aliases are not supported here.",
+    "social_entry_collision": "That vault entry already holds a credential that is not a social account record. It was not replaced.",
+    "social_account_changed": "That vault entry is declared for another provider account. Enroll the new account under a new name.",
+    "invalid_social_revocation": "Name a social- vault entry, linkedin or meta, and its declared account id to remove it locally.",
+    "removal_not_admitted": "Credential removal is no longer authorized. Sign in again before retrying.",
+    "removal_unconfirmed": "The credential removal could not be confirmed. Check its status before retrying.",
+    "secure_store_busy": "Another ArchHub process is changing the credential store. Nothing was changed; retry shortly.",
+}
 
-    A colleague's install has no sibling repository at all, so this is a
-    source that is allowed to be absent, never an import that can fail a turn.
-    """
-    configured = os.environ.get("ARCHHUB_PRODUCTION_ROOT")
-    production = (
-        Path(configured)
-        if configured
-        else Path(__file__).resolve().parents[2] / "12.PRODUCTION"
-    )
-    if not production.is_dir():
-        return ""
-    if str(production) not in sys.path:
-        sys.path.insert(0, str(production))
+
+class ProviderCredentialError(InvalidCell):
+    """A fixed public error; storage/provider exception text must never escape."""
+
+    def __init__(self, reason_code):
+        self.reason_code = reason_code
+        super().__init__(_CREDENTIAL_ERRORS[reason_code])
+
+
+def _application_secrets_store():
+    """Load credential code belonging to this application source or installation."""
+    module_path = Path(__file__).resolve().parents[1] / "app" / "secrets_store.py"
+    if not module_path.is_file():
+        raise ProviderCredentialError("secure_store_unavailable")
+    # Do not select another installed application's code or a cached `app`
+    # package. The credential bytes still belong to the current Windows user.
+    spec = importlib.util.spec_from_file_location("_archhub_application_secrets", module_path)
+    if spec is None or spec.loader is None:
+        raise ProviderCredentialError("secure_store_unavailable")
+    store = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(store)
+    return store
+
+
+_CREDENTIAL_LOCK_MODULE = None
+
+
+def _application_credential_lock():
+    """This application's credential_lock.py beside its secrets_store.py, loaded once."""
+    global _CREDENTIAL_LOCK_MODULE
+    with _CREDENTIAL_LOCK:
+        if _CREDENTIAL_LOCK_MODULE is None:
+            module_path = Path(__file__).resolve().parents[1] / "app" / "credential_lock.py"
+            spec = importlib.util.spec_from_file_location("_archhub_credential_lock", module_path)
+            if spec is None or spec.loader is None:
+                raise ProviderCredentialError("secure_store_unavailable")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _CREDENTIAL_LOCK_MODULE = module
+        return _CREDENTIAL_LOCK_MODULE
+
+
+def _credential_file_bytes(path):
+    """Bounded physical read; reject redirects before touching credential bytes."""
+    for ancestor in (path, *path.parents):
+        try:
+            info = ancestor.lstat()
+        except FileNotFoundError:
+            # A fresh profile has no directory yet. Reads remain read-only;
+            # still inspect every existing ancestor for redirected custody.
+            continue
+        if stat.S_ISLNK(info.st_mode) or (
+            getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            raise ProviderCredentialError("secure_store_invalid")
     try:
-        from app import secrets_store  # noqa: PLC0415
+        with path.open("rb") as stream:
+            raw = stream.read(_CREDENTIAL_FILE_LIMIT + 1)
+    except FileNotFoundError:
+        return None
+    if len(raw) > _CREDENTIAL_FILE_LIMIT:
+        raise ProviderCredentialError("secure_store_invalid")
+    return raw
 
-        return str(secrets_store.load_api_key(name) or "")
+
+def _credential_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ProviderCredentialError("secure_store_invalid")
+        result[key] = value
+    return result
+
+
+def _protected_credential_entries(store, raw):
+    if raw is None:
+        return {}
+    if not raw.startswith(_CREDENTIAL_DPAPI_MARK):
+        raise ProviderCredentialError("secure_store_invalid")
+    try:
+        encrypted = base64.b64decode(raw[len(_CREDENTIAL_DPAPI_MARK):], validate=True)
+        plain = store._dpapi(encrypted, protect=False)
+        if len(plain) > _CREDENTIAL_FILE_LIMIT:
+            raise ValueError
+        entries = json.loads(plain.decode("utf-8"), object_pairs_hook=_credential_pairs)
+        if type(entries) is not dict or any(type(key) is not str or type(value) is not str for key, value in entries.items()):
+            raise ValueError
+        return entries
+    except Exception:
+        raise ProviderCredentialError("secure_store_invalid") from None
+
+
+def _mutate_protected_entries(mutate, *, before_replace=None, not_admitted="save_not_admitted",
+                              unconfirmed="save_unconfirmed"):
+    """The one protected secrets.dat mutation protocol; True when the file was replaced.
+
+    mutate(entries) edits the decrypted entries in place and returns True to
+    write them or False to leave the store untouched; it refuses by raising
+    ProviderCredentialError. The protocol holds _CREDENTIAL_LOCK and the file's
+    cross-process named mutex (app/credential_lock.py), uses this
+    application's own secrets.dat and its existing DPAPI primitive, bounds the
+    read and the payload to 1 MiB, stages an fsync'd task-owned temporary,
+    refuses an observed outside change, runs the trusted owner's callback
+    immediately before replacement, and confirms the replaced bytes. A failure
+    after replacement began is reported unconfirmed; only the temporary is ever
+    removed, never the destination or another writer's file.
+    """
+    if before_replace is not None and not callable(before_replace):
+        raise TypeError("before_replace must be callable")
+    if os.name != "nt":
+        raise ProviderCredentialError("secure_store_unavailable")
+    temporary = None
+    replacement_attempted = False
+    try:
+        with _CREDENTIAL_LOCK, ExitStack() as exclusive:
+            store = _application_secrets_store()
+            path = Path(store.SECRETS_FILE)
+            if not path.is_absolute() or path.name != "secrets.dat" or path.parent != Path(store.APP_DIR):
+                raise ProviderCredentialError("secure_store_unavailable")
+            exclusive.enter_context(_application_credential_lock().exclusive(
+                path, wait_milliseconds=0,
+                busy=lambda: ProviderCredentialError("secure_store_busy")))
+            original = _credential_file_bytes(path)
+            entries = _protected_credential_entries(store, original)
+            if not mutate(entries):
+                return False
+            plain = json.dumps(entries, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            if len(plain) > _CREDENTIAL_FILE_LIMIT:
+                raise ProviderCredentialError("secure_store_invalid")
+            encrypted = store._dpapi(plain, protect=True)
+            payload = _CREDENTIAL_DPAPI_MARK + base64.b64encode(encrypted)
+            if len(payload) > _CREDENTIAL_FILE_LIMIT:
+                raise ProviderCredentialError("secure_store_invalid")
+            # The app owner lock serializes admitted requests; this lock also
+            # serializes direct calls in the process. Refuse observed outside
+            # changes rather than overwriting a newer set of credentials.
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent,
+                    prefix=".archhub-secrets-", suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if _credential_file_bytes(path) != original:
+                raise ProviderCredentialError("secure_store_changed")
+            if before_replace is not None:
+                try:
+                    before_replace()
+                except Exception:
+                    raise ProviderCredentialError(not_admitted) from None
+            replacement_attempted = True
+            os.replace(temporary, path)
+            temporary = None
+            observed = _credential_file_bytes(path)
+            if observed is None or not hmac.compare_digest(observed, payload):
+                raise ProviderCredentialError(unconfirmed)
+        return True
+    except ProviderCredentialError:
+        if replacement_attempted:
+            raise ProviderCredentialError(unconfirmed) from None
+        raise
+    except Exception:
+        raise ProviderCredentialError(
+            unconfirmed if replacement_attempted else "secure_store_unavailable"
+        ) from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                # At worst an encrypted, task-owned temporary remains. Never
+                # remove the destination or another writer's file on failure.
+                pass
+
+
+def save_provider_key(body, *, before_replace=None):
+    """Physical save only; caller holds current browser/owner/policy admission.
+
+    Use the existing store's DPAPI primitive, not a user-configurable keyring
+    backend that might store plaintext. Only secrets.dat changes; no graph,
+    settings registry, credential alias, provider call, or worker is created.
+    The trusted owner's callback rechecks admission immediately before replacing
+    the protected file; it is never taken from the request body.
+    """
+    if before_replace is not None and not callable(before_replace):
+        raise TypeError("before_replace must be callable")
+    if type(body) is not dict or set(body) != {"provider", "key"}:
+        raise ProviderCredentialError("invalid_credential")
+    key = body["key"]
+    if type(body["provider"]) is not str or body["provider"] != "openrouter" or type(key) is not str or not 1 <= len(key) <= 8192 or (
+        not key.isascii() or any(not 33 <= ord(char) <= 126 for char in key)
+        or "://" in key or key.lower().startswith("inline:")
+    ):
+        raise ProviderCredentialError("invalid_credential")
+    def put(entries):
+        entries["openrouter"] = key
+        return True
+
+    _mutate_protected_entries(put, before_replace=before_replace)
+    return {"ok": True, "provider": "openrouter", "state": "keyed", "source": "secrets store"}
+
+
+def founder_secrets_key(name: str) -> str:
+    """Read the selected runtime's protected entry before legacy key discovery."""
+    if isinstance(name, str) and name.startswith("social-"):
+        return ""
+    try:
+        with _CREDENTIAL_LOCK:
+            store = _application_secrets_store()
+            raw = _credential_file_bytes(Path(store.SECRETS_FILE))
+            if raw is not None and raw.startswith(_CREDENTIAL_DPAPI_MARK):
+                protected = _protected_credential_entries(store, raw).get(name)
+                if protected:
+                    return protected
+            return str(store.load_api_key(name) or "")
     except Exception:
         return ""
 
@@ -232,45 +468,6 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
                      "state": "running" if probe("127.0.0.1", port) else "not running",
                      "source": "127.0.0.1:%d" % port, "sets": ""})
     return rows
-
-
-# The order the router tries when the founder has picked nothing. His own
-# pick always wins; this is only what a machine with no pick can reach.
-# Keyed cloud providers first because they answer anything, then a local
-# runtime that happens to be up.
-_ROUTER_FALLBACK_ORDER = ("openrouter", "cloud", "lmstudio", "ollama")
-_ROUTER_FALLBACK_MODELS = {
-    "openrouter": "openrouter/anthropic/claude-sonnet-4.5",
-    "cloud": "cloud/auto",
-    "lmstudio": "lmstudio/local-model",
-    "ollama": "ollama/llama3",
-}
-
-
-def first_reachable_route(
-    *, environ=None, secrets_loader=None, cloud_session=None, local_probe=None
-) -> Optional[str]:
-    """A route this machine can actually reach right now, or None.
-
-    The composer refused with "No model chosen" on every restart because the
-    founder's pick lived only in memory, so his chat answered nothing at all
-    (2026-09-07). This is not a hidden default in the composer -- the thing
-    he had removed. It is the ROUTER answering the only question it is for:
-    of the providers THIS machine really has, which one can answer. It
-    invents nothing: a provider with no key and a runtime that is not up are
-    both skipped, and with none reachable the refusal still stands.
-    """
-    reachable = {
-        row["id"]: row for row in provider_rows(
-            environ=environ, secrets_loader=secrets_loader,
-            cloud_session=cloud_session, local_probe=local_probe,
-        )
-        if row.get("state") in ("keyed", "running")
-    }
-    for family in _ROUTER_FALLBACK_ORDER:
-        if family in reachable:
-            return _ROUTER_FALLBACK_MODELS[family]
-    return None
 
 
 def default_cloud_session() -> Optional[dict]:
@@ -382,21 +579,78 @@ def _host_of(url: str) -> str:
     return rest.split("/", 1)[0]
 
 
-def _payload_from_event_stream(raw: bytes) -> dict:
+def _read_bounded_response(answer, limit: int) -> bytes:
+    """Bound retained body bytes; socket timeout remains an I/O timeout only."""
+    raw = bytearray()
+    headers = getattr(answer, "headers", None)
+    declared = headers.get("Content-Length") if headers is not None else None
+    expected = None
+    if declared is not None:
+        if type(declared) is not str or not declared.isascii() or not declared.isdigit() or len(declared) > 20:
+            raise ModelRouteRefused("The response length was invalid.", reason_code="response_incomplete")
+        expected = int(declared)
+        if expected > limit:
+            raise ModelRouteRefused("The response exceeded its byte limit.", reason_code="response_too_large")
+    read = getattr(answer, "read1", None)
+    if not callable(read):
+        read = answer.read
+    try:
+        while True:
+            remaining = limit - len(raw)
+            size = min(16 * 1024, remaining + 1)
+            chunk = read(size)
+            if type(chunk) is not bytes:
+                raise ModelRouteRefused("The response body was not readable.", reason_code="response_incomplete")
+            if len(chunk) > remaining or len(chunk) > size:
+                raise ModelRouteRefused("The response exceeded its byte limit.", reason_code="response_too_large")
+            if not chunk:
+                if expected is not None and len(raw) != expected:
+                    raise ModelRouteRefused("The response body did not complete.", reason_code="response_incomplete")
+                return bytes(raw)
+            raw.extend(chunk)
+    except ModelRouteRefused:
+        raise
+    except TimeoutError:
+        failure = ("The response body timed out.", "response_timeout")
+    except urllib.error.URLError as error:
+        failure = (("The response body timed out.", "response_timeout")
+                   if isinstance(error.reason, TimeoutError)
+                   else ("The response body was interrupted.", "response_incomplete"))
+    except (http.client.HTTPException, OSError):
+        failure = ("The response body was interrupted.", "response_incomplete")
+    # Raise outside the handler: IncompleteRead.partial and provider exception
+    # text must not remain in the propagated exception's cause or context.
+    raise ModelRouteRefused(failure[0], reason_code=failure[1])
+
+
+def _payload_from_event_stream(raw: bytes, *, require_complete: bool = False) -> dict:
     """One OpenAI-shaped payload assembled from an SSE chat stream."""
     pieces: list[str] = []
     finish = None
-    for line in raw.decode("utf-8", errors="replace").splitlines():
+    metadata = {}
+    complete = False
+    for line in raw.decode("utf-8", errors="strict" if require_complete else "replace").splitlines():
         line = line.strip()
         if not line.startswith("data:"):
             continue
         body = line[5:].strip()
-        if not body or body == "[DONE]":
+        if require_complete and complete:
+            raise ModelRouteRefused("The response stream has trailing events.", reason_code="response_incomplete")
+        if body == "[DONE]":
+            complete = True
+            continue
+        if not body:
             continue
         try:
             event = json.loads(body)
         except ValueError:
+            if require_complete:
+                raise ModelRouteRefused("The response stream contains an incomplete event.", reason_code="response_incomplete")
             continue
+        if isinstance(event, Mapping):
+            for name in ("model", "usage"):
+                if name in event:
+                    metadata[name] = event[name]
         choices = event.get("choices") if isinstance(event, Mapping) else None
         if not isinstance(choices, (list, tuple)) or not choices:
             continue
@@ -408,7 +662,9 @@ def _payload_from_event_stream(raw: bytes) -> dict:
             pieces.append(text)
         if first.get("finish_reason"):
             finish = first["finish_reason"]
-    return {"choices": [{"message": {"role": "assistant", "content": "".join(pieces)}, "finish_reason": finish}]}
+    if require_complete and (not complete or type(finish) is not str or not finish):
+        raise ModelRouteRefused("The response stream did not complete.", reason_code="response_incomplete")
+    return {**metadata, "choices": [{"message": {"role": "assistant", "content": "".join(pieces)}, "finish_reason": finish}]}
 
 
 def route_chat(
@@ -422,15 +678,52 @@ def route_chat(
     environ: Optional[Mapping[str, str]] = None,
     secrets_loader: Optional[Callable[[str], str]] = None,
     cloud_session: object = _DISCOVER,
+    free_only: bool = False,
+    reasoning_effort: Optional[str] = None,
+    response_byte_limit: Optional[int] = None,
 ) -> dict:
-    """Send these messages to the provider this route names, and read its answer."""
-    session = (
-        default_cloud_session() if cloud_session is _DISCOVER else cloud_session
-    )
-    base = None
-    if isinstance(session, Mapping):
-        base = str(session.get("base_url") or "") or None
-    destination = resolve_model_route(route, cloud_base_url=base)
+    """Send these messages to the provider this route names, and read its answer.
+
+    response_byte_limit opts into bounded body reads and complete-response
+    checks. It does not turn timeout into an absolute elapsed-time deadline.
+    """
+    if type(free_only) is not bool:
+        raise ModelRouteRefused("free_only must be true or false.")
+    free_only = free_only or _legacy_free_route(route)
+    if response_byte_limit is not None and (
+        type(response_byte_limit) is not int or not 1 <= response_byte_limit <= 1024 * 1024
+    ):
+        raise ModelRouteRefused("The response byte limit is invalid.")
+    if free_only:
+        # Refuse an incompatible route before looking up any credentials.
+        session = None
+        destination = resolve_model_route(route)
+        parts = destination.model.split("/")
+        explicit_free = (
+            len(parts) == 2 and all(parts)
+            and not any(char.isspace() for char in destination.model)
+            and destination.model.endswith(":free")
+        )
+        if destination.family != "openrouter" or not (
+            destination.model == "openrouter/free" or explicit_free
+        ):
+            raise ModelRouteRefused(
+                "Free-only requests require openrouter/free or vendor/model:free."
+            )
+    else:
+        session = (
+            default_cloud_session() if cloud_session is _DISCOVER else cloud_session
+        )
+        base = None
+        if isinstance(session, Mapping):
+            base = str(session.get("base_url") or "") or None
+        destination = resolve_model_route(route, cloud_base_url=base)
+    if reasoning_effort is not None and (
+        type(reasoning_effort) is not str
+        or reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}
+        or destination.family != "openrouter"
+    ):
+        raise ModelRouteRefused("This reasoning effort requires a supported OpenRouter route.")
     rows = _checked_messages(messages)
     headers = {"Content-Type": "application/json"}
     key_source = "not required"
@@ -442,28 +735,44 @@ def route_chat(
             cloud_session=session if isinstance(session, Mapping) else None,
         )
         headers["Authorization"] = "Bearer " + key
+    body = _body(destination, rows, max_tokens, temperature)
+    if reasoning_effort is not None:
+        body["reasoning"] = {"effort": reasoning_effort}
+    if free_only:
+        body["provider"] = {
+            "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0},
+            "allow_fallbacks": False,
+        }
     request = urllib.request.Request(
         destination.url,
-        data=json.dumps(
-            _body(destination, rows, max_tokens, temperature)
-        ).encode("utf-8"),
+        data=json.dumps(body).encode("utf-8"),
         method="POST",
         headers=headers,
     )
     send = urllib.request.urlopen if opener is None else opener
     try:
         with send(request, timeout=timeout) as answer:
-            raw = answer.read()
+            raw = answer.read() if response_byte_limit is None else _read_bounded_response(answer, response_byte_limit)
             headers = getattr(answer, "headers", None)
             kind = str(headers.get("Content-Type", "") if headers is not None else "")
             if "text/event-stream" in kind.casefold() or raw.lstrip().startswith(b"data:"):
                 # The founder's cloud always streams (proxy.py: Server-Sent
                 # Events); a reader that expected one JSON document saw the
                 # cloud family as never answering (audit 2026-09-06).
-                payload = _payload_from_event_stream(raw)
+                payload = _payload_from_event_stream(raw, require_complete=response_byte_limit is not None)
             else:
                 payload = json.loads(raw.decode("utf-8"))
+    except ModelRouteRefused:
+        raise
     except urllib.error.HTTPError as refused:
+        if response_byte_limit is not None:
+            # A complete HTTP refusal is known; an oversized/interrupted body
+            # stays uncertain. Never expose provider body text in this path.
+            try:
+                _read_bounded_response(refused, min(response_byte_limit, 4096))
+            finally:
+                refused.close()
+            raise ModelRouteRefused("The provider refused the request: HTTP %s." % refused.code) from refused
         detail = ""
         try:
             detail = refused.read().decode("utf-8", errors="replace").strip()[:240]
@@ -474,22 +783,56 @@ def route_chat(
             "model." % (destination.provider, refused.code, (": " + detail) if detail else "")
         ) from refused
     except (urllib.error.URLError, OSError) as unreachable:
+        if response_byte_limit is not None:
+            timed_out = isinstance(unreachable, TimeoutError) or isinstance(
+                getattr(unreachable, "reason", None), TimeoutError)
+            raise ModelRouteRefused("The provider request did not return a response.",
+                reason_code="dispatch_timeout" if timed_out else "dispatch_transport_uncertain") from unreachable
         raise ModelRouteRefused(
             "%s is not answering at %s. Start it, or pick another model."
             % (destination.provider, _host_of(destination.url))
         ) from unreachable
     except ValueError as unreadable:
+        if response_byte_limit is not None:
+            raise ModelRouteRefused("The response was not complete JSON.", reason_code="response_incomplete") from unreadable
         raise ModelRouteRefused(
             "%s did not answer with JSON." % destination.provider
         ) from unreadable
+    choices = payload.get("choices") if isinstance(payload, Mapping) else None
+    first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+    if response_byte_limit is not None and (
+        not isinstance(first, Mapping) or type(first.get("finish_reason")) is not str or not first["finish_reason"]
+    ):
+        raise ModelRouteRefused("The response has no completion marker.", reason_code="response_incomplete")
+    message = first.get("message") if isinstance(first, Mapping) else None
+    if (isinstance(message, Mapping) and not message.get("content")
+            and first.get("finish_reason") == "length"):
+        raise ModelRouteRefused(
+            "The model used its output budget before returning an answer.",
+            reason_code="output_truncated")
+    text = _answer_text(destination, payload)
+    if not text.strip():
+        raise ModelRouteRefused("The model returned an empty answer.", reason_code="empty_answer")
+    usage = payload.get("usage") if isinstance(payload, Mapping) else None
+    if not isinstance(usage, Mapping):
+        usage = None
+    if free_only and usage is not None and "cost" in usage:
+        cost = usage["cost"]
+        # Strict type plus equality rejects booleans, NaN and infinities too.
+        if type(cost) not in (int, float) or cost != 0:
+            raise ModelRouteRefused("The free-only request reported an invalid or nonzero cost.",
+                reason_code="invalid_cost")
     return {
         "ok": True,
-        "text": _answer_text(destination, payload),
+        "text": text,
         "family": destination.family,
         "model": destination.model,
+        "actual_model": payload.get("model") if isinstance(payload, Mapping) else None,
         "url": destination.url,
         "provider": destination.provider,
         "key_source": key_source,
+        "usage": usage,
+        "finish_reason": first.get("finish_reason") if isinstance(first, Mapping) else None,
     }
 
 
@@ -498,6 +841,7 @@ __all__ = [
     "LM_STUDIO_CHAT",
     "ModelRoute",
     "ModelRouteRefused",
+    "ProviderCredentialError",
     "OLLAMA_CHAT",
     "OPENROUTER_CHAT",
     "default_cloud_session",
@@ -505,4 +849,129 @@ __all__ = [
     "founder_secrets_key",
     "resolve_model_route",
     "route_chat",
+    "save_provider_key",
 ]
+
+
+def protected_credential_entry(name: str) -> str:
+    """One entry of this runtime's DPAPI-protected secrets.dat and nothing else.
+
+    No environment variable, keyring backend, credential alias or legacy
+    obfuscated file is consulted, and no provider_meta breadcrumb is written.
+    """
+    if type(name) is not str or not name:
+        raise ProviderCredentialError("secure_store_unavailable")
+    with _CREDENTIAL_LOCK:
+        store = _application_secrets_store()
+        path = Path(store.SECRETS_FILE)
+        if path.name != "secrets.dat" or path.parent != Path(store.APP_DIR):
+            raise ProviderCredentialError("secure_store_invalid")
+        raw = _credential_file_bytes(path)
+        value = _protected_credential_entries(store, raw).get(name)
+    if type(value) is not str or not value:
+        raise ProviderCredentialError("secure_store_unavailable")
+    return value
+
+
+_SOCIAL_CREDENTIAL_FORMAT = "archhub-social-credential-1"
+_SOCIAL_ENTRY_PREFIX = "social-"
+
+
+def _social_record(value):
+    """The social account record held in one protected value, or None if it is not one."""
+    try:
+        record = json.loads(value, object_pairs_hook=_credential_pairs)
+    except Exception:
+        return None
+    if (type(record) is not dict or set(record) != {"format", "provider", "account_id", "token"}
+            or record["format"] != _SOCIAL_CREDENTIAL_FORMAT
+            or any(type(item) is not str for item in record.values())):
+        return None
+    return record
+
+
+def save_social_credential(body, *, before_replace=None):
+    """Enroll one operator-declared social account record in the protected store.
+
+    The physical protocol is save_provider_key's: the existing DPAPI primitive on
+    this runtime's secrets.dat, _CREDENTIAL_LOCK, refusal of an observed outside
+    change, the trusted owner's before_replace recheck immediately before
+    replacement, and confirmation afterwards. The account id is declared by the
+    enrolling operator; nothing here asks the provider, so the record is never
+    provider-verified identity. A name already holding a non-social credential
+    is refused, and an existing record is replaced only for the same provider
+    account (token rotation). No graph, settings index, alias or worker changes.
+    """
+    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _VAULT_ENTRY
+
+    if before_replace is not None and not callable(before_replace):
+        raise TypeError("before_replace must be callable")
+    if type(body) is not dict or set(body) != {"vault_entry", "provider", "account_id", "token"}:
+        raise ProviderCredentialError("invalid_social_credential")
+    name, provider, account_id, token = body["vault_entry"], body["provider"], body["account_id"], body["token"]
+    if (type(name) is not str or not name.startswith(_SOCIAL_ENTRY_PREFIX) or not _VAULT_ENTRY.fullmatch(name)
+            or type(provider) is not str or provider not in ("linkedin", "meta")
+            or type(account_id) is not str
+            or not (_LINKEDIN_PERSON if provider == "linkedin" else _GRAPH_ID).fullmatch(account_id)
+            or type(token) is not str or not 1 <= len(token) <= 16384
+            or any(not 33 <= ord(char) <= 126 for char in token)
+            or "://" in token or token.lower().startswith("inline:")):
+        raise ProviderCredentialError("invalid_social_credential")
+    value = json.dumps({"format": _SOCIAL_CREDENTIAL_FORMAT, "provider": provider,
+                        "account_id": account_id, "token": token},
+                       separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+    def put(entries):
+        if name in entries:
+            existing = _social_record(entries[name])
+            if existing is None:
+                raise ProviderCredentialError("social_entry_collision")
+            if (existing["provider"], existing["account_id"]) != (provider, account_id):
+                raise ProviderCredentialError("social_account_changed")
+        entries[name] = value
+        return True
+
+    _mutate_protected_entries(put, before_replace=before_replace)
+    return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
+            "account_binding": "operator-declared", "state": "enrolled", "source": "secrets store"}
+
+
+def revoke_social_credential(body, *, before_replace=None):
+    """Remove one operator-declared social account record from local protected custody.
+
+    Local removal only: the provider token is not revoked at LinkedIn or Meta and
+    nothing is sent anywhere, so the result always reports
+    provider_token_revoked False. The request names the exact provider account;
+    a stored record for another account, or a name holding a non-social value,
+    is refused. A missing entry is an idempotent no-op: no rewrite and no owner
+    callback. The same protected mutation protocol as saves preserves every
+    other entry, and the owner's callback rechecks admission before replacement.
+    """
+    from .social_connectors import _GRAPH_ID, _LINKEDIN_PERSON, _VAULT_ENTRY
+
+    if before_replace is not None and not callable(before_replace):
+        raise TypeError("before_replace must be callable")
+    if type(body) is not dict or set(body) != {"vault_entry", "provider", "account_id"}:
+        raise ProviderCredentialError("invalid_social_revocation")
+    name, provider, account_id = body["vault_entry"], body["provider"], body["account_id"]
+    if (type(name) is not str or not name.startswith(_SOCIAL_ENTRY_PREFIX) or not _VAULT_ENTRY.fullmatch(name)
+            or type(provider) is not str or provider not in ("linkedin", "meta")
+            or type(account_id) is not str
+            or not (_LINKEDIN_PERSON if provider == "linkedin" else _GRAPH_ID).fullmatch(account_id)):
+        raise ProviderCredentialError("invalid_social_revocation")
+
+    def remove(entries):
+        if name not in entries:
+            return False
+        existing = _social_record(entries[name])
+        if existing is None:
+            raise ProviderCredentialError("social_entry_collision")
+        if (existing["provider"], existing["account_id"]) != (provider, account_id):
+            raise ProviderCredentialError("social_account_changed")
+        entries.pop(name)
+        return True
+
+    removed = _mutate_protected_entries(remove, before_replace=before_replace,
+                                        not_admitted="removal_not_admitted", unconfirmed="removal_unconfirmed")
+    return {"ok": True, "vault_entry": name, "provider": provider, "account_id": account_id,
+            "state": "removed" if removed else "absent", "provider_token_revoked": False,
+            "source": "secrets store"}

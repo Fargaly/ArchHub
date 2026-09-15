@@ -22,13 +22,93 @@
 <div id="studio-boot">CONNECTING TO THE GRAPH&hellip;</div>
 <script src="/studio/vendor/react.js"></script>
 <script src="/studio/vendor/react-dom.js"></script>
-<script src="/studio/vendor/babel.js"></script>
+<script src="/studio/studio-authority.js"></script>
 <script>
+window.ARCHHUB_AUTHORITY = /*__ARCHHUB_AUTHORITY__*/ null;
 window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
 (async () => {
   const boot = document.getElementById('studio-boot');
   const fail = why => { boot.textContent = 'REFUSED: ' + why; };
+  let studioMount;
+  function mountStudio() {
+    // One freshness check per page, after the real graph bootstrap. No runtime
+    // compiler, polling, or automatic rebuild; npm run build:studio is explicit.
+    if (studioMount) return studioMount;
+    studioMount = (async () => {
+      const names = ['tokens.jsx','design-canvas.jsx','shared-data.jsx',
+        'studio-suite.jsx','param-types.jsx','studio-params.jsx',
+        'studio-mobile.jsx','studio-account.jsx','studio-lm.jsx','mount.jsx'];
+      const refusal = message => { throw new Error(message + ' Run npm run build:studio, or install a complete release.'); };
+      if (!window.crypto?.subtle) refusal('Studio build verification is unavailable.');
+      const asset = async (name, limit) => {
+        const response = await fetch('/studio/' + name, {cache:'no-store', redirect:'error'});
+        if (!response.ok || !response.body) refusal('Studio build asset is missing: ' + name + '.');
+        const reader = response.body.getReader(), chunks = [];
+        let length = 0;
+        try {
+          for (;;) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            length += value.byteLength;
+            if (length > limit) { await reader.cancel(); refusal('Studio build asset exceeds its bound.'); }
+            chunks.push(value);
+          }
+        } finally { reader.releaseLock(); }
+        const bytes = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        return bytes;
+      };
+      let manifest;
+      const manifestBytes = await asset('compiled/manifest.json', 32768);
+      try { manifest = JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(manifestBytes)); }
+      catch (_) { refusal('Studio build manifest is unreadable.'); }
+      if (!manifest || manifest.format !== 1 || !Array.isArray(manifest.files) || manifest.files.length !== names.length) {
+        refusal('Studio build manifest is invalid.');
+      }
+      let sourceBytes = 0, outputBytes = 0;
+      for (let index = 0; index < names.length; index += 1) {
+        const file = manifest.files[index];
+        if (!file || file.source !== names[index] || file.output !== names[index].replace(/\.jsx$/, '.js') ||
+            !/^[a-f0-9]{64}$/.test(file.source_sha256) || !/^[a-f0-9]{64}$/.test(file.sha256) ||
+            !Number.isSafeInteger(file.source_bytes) || file.source_bytes < 0 || file.source_bytes > 524288 ||
+            !Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > 2097152) {
+          refusal('Studio build file metadata is invalid.');
+        }
+        const expectedIntegrity = 'sha256-' + btoa(file.sha256.match(/../g).map(byte => String.fromCharCode(parseInt(byte, 16))).join(''));
+        if (file.integrity !== expectedIntegrity) refusal('Studio compiled integrity metadata is invalid.');
+        sourceBytes += file.source_bytes; outputBytes += file.bytes;
+      }
+      if (sourceBytes > 2097152 || outputBytes > 4194304) refusal('Studio build exceeds its aggregate bound.');
+      // Read/hash the ten fixed sources sequentially. Never fetch vendored Babel.
+      // This detects stale source-mode builds without Node on an installed app.
+      for (const file of manifest.files) {
+        const bytes = await asset(file.source, 524288);
+        const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+          byte => byte.toString(16).padStart(2, '0')).join('');
+        if (bytes.byteLength !== file.source_bytes || hash !== file.source_sha256) refusal('Studio build is stale: ' + file.source + '.');
+      }
+      for (const file of manifest.files) {
+        await new Promise((resolve, reject) => {
+          const tag = document.createElement('script');
+          tag.src = '/studio/compiled/' + file.output + '?sha256=' + file.sha256;
+          tag.integrity = file.integrity; tag.crossOrigin = 'anonymous'; tag.async = false;
+          tag.onload = resolve;
+          tag.onerror = () => reject(new Error('Studio compiled asset is missing or corrupt: ' + file.output + '. Run npm run build:studio, or install a complete release.'));
+          document.body.appendChild(tag);
+        });
+      }
+      boot.remove();
+    })();
+    return studioMount;
+  }
   try {
+    if (window.ARCHHUB_AUTHORITY) {
+      const authority = await window.ArchHubStudioAuthority.boot(window.ARCHHUB_AUTHORITY);
+      window.ARCHHUB_THEME = authority.getSnapshot()?.canvas?.configuration?.theme ?? null;
+      await mountStudio();
+      return;
+    }
     let session = window.ARCHHUB_BOOT;
     if (!session) {
       const minted = await fetch('/api/universal/session', {
@@ -44,22 +124,45 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       'X-ArchHub-CSRF':session.csrf,
       'X-ArchHub-Session':session.token,
     });
-    const jget = async p => (await fetch(p, {headers:H()})).json();
+    const jget = async p => {
+      const r = await fetch(p, {headers:H()});
+      const d = await r.json();
+      if (!r.ok || d.ok === false) {
+        const error = new Error(d.error || 'read refused');
+        error.status = r.status;
+        throw error;
+      }
+      if (d.workshop_scope) window.ARCHHUB_EXISTING_WORKSHOP?.setCanvas(d.workshop_scope);
+      return d;
+    };
     const jpost = async (p, b) => {
       const r = await fetch(p, {method:'POST', headers:H(), body:JSON.stringify(b || {})});
       const d = await r.json();
-      if (!r.ok || d.ok === false) throw new Error(d.error || 'refused');
+      if (!r.ok || d.ok === false) {
+        const error = new Error(d.error || 'refused');
+        error.status = r.status;
+        throw error;
+      }
+      try {
+        if (d.workshop_scope) window.ARCHHUB_EXISTING_WORKSHOP?.setCanvas(d.workshop_scope);
+      } catch (_) { d.projection_warning = 'Action accepted; refresh the canvas to update its Workshop scope.'; }
       return d;
     };
-    window.ARCHHUB_AGENT = async (prompt, model) =>
-      (await jpost('/api/universal/agent', {prompt, model})).answer || 'done';
-    window.ARCHHUB_RUN = async () => {
-      const result = await jpost('/api/universal/run-graph', {});
-      window.ARCHHUB_LAST_RUN = result;
-      return result;
+    window.ARCHHUB_AGENT = async (prompt, model, node) =>
+      (await jpost('/api/universal/agent', {prompt, model,
+        ...(node !== undefined ? {node} : {})})).answer || 'done';
+    let graphRunPromise = null;
+    window.ARCHHUB_RUN = () => {
+      if (graphRunPromise) return Promise.reject(new Error('The graph is already running. Wait for it to finish, then run again.'));
+      graphRunPromise = jpost('/api/universal/run-graph', {}).then(result => {
+        window.ARCHHUB_LAST_RUN = result;
+        return result;
+      }).finally(() => { graphRunPromise = null; });
+      return graphRunPromise;
     };
     window.ARCHHUB_SET_PROP = (relation, value) =>
       jpost('/api/universal/set-property', {relation, value});
+    window.ARCHHUB_GET_CANVAS = () => jget('/api/universal/canvas');
     // The first edit of a connection parameter the wire has never held
     // declares it on the wire's own root; after that it is an ordinary
     // property and set-property carries it.
@@ -140,12 +243,44 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       prompt: {type:'text', help:'What to recall from the brain'},
     };
     const canvas = await jget('/api/universal/canvas');
+    // Read the bound view's theme before tokens and dependent modules evaluate.
+    window.ARCHHUB_THEME = canvas.configuration?.theme ?? null;
+    // Release updates use this authenticated transport even on canvases without a Workshop.
+    if (typeof window.ArchHubExistingWorkshop?.create !== 'function') {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = '/studio/studio-existing-workshop.js';
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Studio update and Workshop transport could not be loaded.'));
+        document.head.appendChild(script);
+      });
+    }
+    window.ARCHHUB_EXISTING_WORKSHOP = window.ArchHubExistingWorkshop.create({get:jget, post:jpost,
+      projectCanvas:projectStudioCanvas});
+    window.ARCHHUB_EXISTING_WORKSHOP.setThemeCanvas(canvas);
+    if (canvas.workshop_scope) {
+      window.ARCHHUB_EXISTING_WORKSHOP.setCanvas(canvas.workshop_scope);
+    }
     let hosts = [], connectors = [];
-    try {
+    window.ARCHHUB_LOAD_HOSTS = async () => {
       const scan = await jget('/api/universal/hosts');
-      hosts = scan.hosts || [];
-      connectors = scan.connectors || [];
-    } catch (e) {}
+      return {hosts:scan.hosts || [], connectors:scan.connectors || []};
+    };
+    window.ARCHHUB_LOAD_MEMORY = async () => {
+      const held = (await jpost('/api/universal/brain-export', {limit:500})).facts || {};
+      const out = [];
+      for (const folder of (held.folders || [])) {
+        for (const fact of (folder.facts || [])) {
+          if (fact.archived) continue;
+          out.push({id:String(fact.id), text:String(fact.desc || fact.name || fact.body || '').slice(0,240),
+            src:String(folder.label || fact.kind || '')});
+        }
+      }
+      return out;
+    };
+    window.ARCHHUB_LOAD_SKILLS = async () =>
+      (await jpost('/api/universal/skills', {want:'catalogue'})).result || [];
+    function projectStudioCanvas(canvas) {
     const CATS = e =>
       e.startsWith('vision.') || e.startsWith('cad.') ? 'read'
       : e.startsWith('lines.') ? 'annotate'
@@ -163,48 +298,53 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       'baboom.status': {in:'any', out:'rows'},
       'baboom.presence': {in:'any', out:'rows'},
     };
-    const nodes = []; const idset = new Set();
+    const nodes = [];
     for (const n of (canvas.nodes || [])) {
       const params = Object.fromEntries((n.params || []).map(r => [r.label, r.value]));
       const engine = String(n.engine || params.engine || '');
-      if (!engine) continue;
       const types = PORT_TYPES[engine] || {in:'any', out:'any'};
       const ins = [], outs = [];
       for (const p of (n.ports || [])) {
         if (p.side === 'target') {
-          ins.push({id:p.id, label:p.name || '', t:types.in});
+          ins.push({...p, label:p.name || '', t:p.value_type || types.in});
         } else if (p.side === 'source') {
-          outs.push({id:p.id, label:p.name || '', t:types.out});
+          outs.push({...p, label:p.name || '', t:p.value_type || types.out});
         }
       }
       nodes.push({
-        id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine,
-        x:Number(n.x) || 200, y:Number(n.y) || 200, w:210, h:110,
+        id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
+        x:Number.isFinite(n.x) ? n.x : 200, y:Number.isFinite(n.y) ? n.y : 200,
+        w:210, h:Math.max(110, 54 + Math.max(ins.length, outs.length) * 19),
         ins, outs, messages:[], live:true,
         params:(n.params || [])
           .filter(r => r.label !== 'engine' && r.label !== 'status')
           .map(r => ({
             k:r.label, v:r.value, rel:r.relation,
+            editable:r.editable !== false && !!r.relation, owner:n.id,
             ...(PARAM_SPECS[r.label] || {type:'text'}),
           })),
         ports:{ins:ins.map(x => ({id:x.id, t:x.t})),
                outs:outs.map(x => ({id:x.id, t:x.t}))},
         status: n.status || params.status || '',
       });
-      idset.add(n.id);
     }
+    const nodeIndex = new Map(nodes.map(node => [node.id, node]));
     const wires = [];
     for (const w of (canvas.wires || [])) {
-      if (!idset.has(w.source) || !idset.has(w.target)) continue;
-      const s = nodes.find(n => n.id === w.source);
-      const t = nodes.find(n => n.id === w.target);
+      const sourcePort = nodeIndex.get(w.source)?.outs.find(port => port.id === w.source_interface);
       // A wire is a node: it brings its own governed parameters across,
       // in the same {k, v, rel} shape a node's carry, so the inspector
       // writes a connection's condition back to the graph exactly as it
       // writes a node's.
-      wires.push({id:String(w.id || ''), from:[w.source, s?.outs[0]?.id], to:[w.target, t?.ins[0]?.id], t:(s?.outs[0]?.t) || 'any',
+      // Keep missing interfaces missing; the renderer reports them instead of inventing a first port.
+      wires.push({...w, id:String(w.id || ''), from:[w.source, w.source_interface],
+        to:[w.target, w.target_interface], t:sourcePort?.t || '',
         params:(w.params || []).map(r => ({k:r.label, v:r.value, rel:r.relation}))});
     }
+    return {nodes, wires};
+    }
+    window.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(canvas);
+    const {nodes, wires} = window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph;
     window.ARCHHUB_LIVE = {
       sessions: [{
         id:'graph', title:'ArchHub Operating Graph', state:'running',
@@ -214,39 +354,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
           + (canvas.wires || []).length + ' wires',
       }],
       hosts, connectors, graph:{nodes, wires},
-      // What the brain actually remembers, for the Memory panel: real facts,
-      // flattened from the daemon folders. Eight fixture lines used to sit there.
-      memory:(await (async () => {
-        try {
-          const held = (await jpost('/api/universal/brain-export', {limit: 500})).facts || {};
-          const out = [];
-          for (const folder of (held.folders || [])) {
-            for (const f of (folder.facts || [])) {
-              if (f.archived) continue;
-              out.push({id:String(f.id), text:String(f.desc || f.name || f.body || '').slice(0, 240),
-                        src:String(folder.label || f.kind || '')});
-            }
-          }
-          return out;
-        } catch (e) { return []; }
-      })()),
-      skills:(await (async () => {
-        try {
-          return (await jpost('/api/universal/skills', {want:'catalogue'})).result || [];
-        } catch (e) { return []; }
-      })()),
+      // Optional catalogues load when their panels open, never before Studio.
+      memory:[], skills:[],
     };
-    for (const f of ['tokens.jsx','design-canvas.jsx','shared-data.jsx',
-                     'studio-suite.jsx','param-types.jsx','studio-params.jsx',
-                     'studio-mobile.jsx','studio-account.jsx','studio-lm.jsx','mount.jsx']) {
-      const tag = document.createElement('script');
-      tag.type = 'text/babel';
-      tag.src = '/studio/' + f;
-      tag.async = false;
-      document.body.appendChild(tag);
-    }
-    Babel.transformScriptTags();
-    boot.remove();
+    await mountStudio();
   } catch (error) {
     fail(error?.message || String(error));
   }

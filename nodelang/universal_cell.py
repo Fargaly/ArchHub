@@ -8,14 +8,17 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections import OrderedDict
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 import hashlib
 import hmac
+from itertools import groupby
 import os
 from pathlib import Path
 import sqlite3
 from collections.abc import MutableMapping
 from types import MappingProxyType
+import sys
 import threading
 import time
 from typing import Callable, Iterable, Iterator, Mapping, Protocol
@@ -52,6 +55,34 @@ class Snapshot:
 
     revision: int
     cells: Mapping[str, Cell]
+
+    @contextmanager
+    def read_scope(self):
+        """Batch pure point reads without changing this immutable snapshot.
+
+        The scope takes only the journal I/O lock. Callers must not acquire
+        store/owner locks or mutate the graph inside it.
+        """
+        if isinstance(self.cells, _LazyHeadCellMap):
+            with self.cells._reader.read_scope():
+                yield self
+        else:
+            yield self
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotTransition:
+    """Current physical snapshot with an optional proven predecessor delta.
+
+    None means proof unavailable; an empty tuple means the supplied revision
+    and digest match the current head. Cache ownership still requires store
+    identity to be checked by the caller.
+    This disposable receipt carries no semantic authority or persisted state.
+    """
+
+    snapshot: Snapshot
+    chain_digest: str
+    changed: tuple[Cell, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,8 +310,8 @@ class _LazyHeadCellMap(Mapping[str, Cell]):
     reader with a persistent overlay trie, so a published revision stays
     an immutable value while costing one small update.
 
-    ponytail: cache is unbounded per store. It only ever holds cells that
-    were actually asked for; cap it if a session ever walks the whole graph.
+    The reader pins the opening revision and bounds its positive/negative
+    caches; an eviction cannot expose later committed bytes to this base.
     """
 
     __slots__ = (
@@ -483,156 +514,292 @@ class _LoadingHeadMap(MutableMapping):
 
 
 class _HeadRowReader:
-    """One journal connection answering head reads, remembering what it read."""
+    """Revision-pinned journal reads with bounded positive and negative LRUs.
 
-    __slots__ = ("_connection", "_cache", "_missing", "_lock")
+    Eviction is safe because misses read immutable history at base_revision,
+    never the mutable current_cells table. Later writes belong to the overlay.
+    """
+    MAX_CACHE_ENTRIES = 65536
+    MAX_CACHE_BYTES = 64 * 1024 * 1024
+    MAX_MISSING_ENTRIES = 2048
+    MAX_MISSING_BYTES = 256 * 1024
+    BATCH_SIZE = 128
+    MAX_REGION_CELLS = 8192
+    MAX_REGION_DEPTH = 8
+    _POINT_SQL = (
+        "SELECT link0, link1, atom FROM cell_versions "
+        "WHERE cell_id = ? AND revision <= ? ORDER BY revision DESC LIMIT 1"
+    )
+    _CURRENT_POINT_SQL = (
+        "SELECT link0, link1, atom, revision FROM current_cells WHERE cell_id = ?"
+    )
 
-    def __init__(self, connection, lock=None) -> None:
-        # The connection is shared with the writer (check_same_thread=False);
-        # a lazy read from another thread while append() runs is SQLITE_MISUSE
-        # ("bad parameter or other API misuse") and a None row mid-chain
-        # ("relation chain contains a dangling cell"). One lock, both sides.
+    def __init__(self, connection, lock=None, *, base_revision=None) -> None:
         self._connection = connection
         self._lock = lock if lock is not None else threading.RLock()
-        self._cache: dict[str, Cell] = {}
-        self._missing: set[str] = set()
-
-    def read(self, cell_id: str) -> "Cell | None":
-        held = self._cache.get(cell_id)
-        if held is not None:
-            return held
-        if cell_id in self._missing:
-            return None
         with self._lock:
-            row = self._connection.execute(
-                "SELECT link0, link1, atom FROM current_cells WHERE cell_id = ?",
-                (cell_id,),
-            ).fetchone()
-        if row is None:
-            self._missing.add(cell_id)
-            return None
-        cell = Cell(cell_id, str(row[0]), str(row[1]), bytes(row[2]))
-        self._cache[cell_id] = cell
-        return cell
+            if base_revision is None:
+                base_revision = connection.execute("SELECT MAX(revision) FROM revisions").fetchone()[0]
+        if type(base_revision) is not int or base_revision < 0:
+            raise InvalidCell("head reader requires a nonnegative base revision")
+        self._base_revision = base_revision
+        self._cache = OrderedDict()
+        self._cache_costs = {}
+        self._cache_bytes = 0
+        self._missing = OrderedDict()
+        self._missing_bytes = 0
 
-    def prefetch(self, cell_ids) -> None:
-        """Read many head rows in one statement.
+    @staticmethod
+    def _cell_cost(key, cell):
+        # Count incoming lookup key independently from Cell.id, even if shared.
+        # Entry allowance covers accounting-map entries and integer overhead;
+        # container allocations themselves are added below.
+        return (sys.getsizeof(key) + sys.getsizeof(cell)
+                + sum(sys.getsizeof(value) for value in (cell.id, cell.link0, cell.link1, cell.atom))
+                + 192)
 
-        A walk that asks for half a million cells one query at a time
-        spends its life in sqlite call overhead, not in sqlite.
-        """
-        wanted = [
-            cell_id for cell_id in cell_ids
-            if cell_id not in self._cache and cell_id not in self._missing
-        ]
-        for start in range(0, len(wanted), 800):
-            batch = wanted[start:start + 800]
-            with self._lock:
-                with self._lock:
-                    rows = self._connection.execute(
-                        "SELECT cell_id, link0, link1, atom FROM current_cells "
-                        "WHERE cell_id IN (%s)" % ",".join("?" * len(batch)),
-                        batch,
-                    ).fetchall()
+    def _positive_size(self):
+        return self._cache_bytes + sys.getsizeof(self._cache) + sys.getsizeof(self._cache_costs)
+
+    def _negative_size(self):
+        return self._missing_bytes + sys.getsizeof(self._missing)
+
+    def _remember(self, key, cell):
+        self._forget_missing(key)
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return
+        cost = self._cell_cost(key, cell)
+        if cost + 1024 > self.MAX_CACHE_BYTES:
+            return  # A requested large atom may be returned, never retained here.
+        self._cache[key] = cell
+        self._cache_costs[key] = cost
+        self._cache_bytes += cost
+        while self._cache and (len(self._cache) > self.MAX_CACHE_ENTRIES or self._positive_size() > self.MAX_CACHE_BYTES):
+            oldest, _ = self._cache.popitem(last=False)
+            self._cache_bytes -= self._cache_costs.pop(oldest)
+        if not self._cache:
+            self._cache = OrderedDict()
+            self._cache_costs = {}
+
+    def _forget_missing(self, key):
+        prior = self._missing.pop(key, None)
+        if prior is not None:
+            self._missing_bytes -= prior
+
+    def _remember_missing(self, key):
+        if key in self._missing:
+            self._missing.move_to_end(key)
+            return
+        cost = sys.getsizeof(key) + 96
+        if cost + 512 > self.MAX_MISSING_BYTES:
+            return
+        self._missing[key] = cost
+        self._missing_bytes += cost
+        while self._missing and (len(self._missing) > self.MAX_MISSING_ENTRIES or self._negative_size() > self.MAX_MISSING_BYTES):
+            _, amount = self._missing.popitem(last=False)
+            self._missing_bytes -= amount
+        if not self._missing:
+            self._missing = OrderedDict()
+
+    def cache_stats(self):
+        with self._lock:
+            return {"base_revision": self._base_revision, "positive_entries": len(self._cache),
+                    "positive_bytes": self._positive_size(), "negative_entries": len(self._missing),
+                    "negative_bytes": self._negative_size()}
+
+    @contextmanager
+    def read_scope(self):
+        """Use one read transaction for a bounded, pure graph traversal."""
+        with self._lock:
+            try:
+                owns_transaction = not self._connection.in_transaction
+            except sqlite3.ProgrammingError:
+                # A closed reader can still satisfy a fully cached traversal,
+                # as before batching. Cache misses keep their original error;
+                # never reopen the connection or catch errors from the walk.
+                yield
+                return
+            try:
+                # An interrupted BEGIN can open SQLite's transaction before it
+                # raises. This scope owns that transaction and must release it.
+                if owns_transaction:
+                    self._connection.execute("BEGIN")
+                yield
+                if owns_transaction:
+                    self._connection.commit()
+            except BaseException as error:
+                if owns_transaction:
+                    try:
+                        self._connection.rollback()
+                    except Exception as cleanup_error:
+                        error.add_note("Read transaction cleanup failed: " + type(cleanup_error).__name__)
+                raise
+
+    def read(self, cell_id):
+        with self._lock:
+            cell = self._cache.get(cell_id)
+            if cell is not None:
+                self._cache.move_to_end(cell_id)
+                return cell
+            if cell_id in self._missing:
+                self._missing.move_to_end(cell_id)
+                return None
+            # Most requested IDs have not changed since this reader opened.
+            # Use their compact head index; only newer/missing heads require
+            # historical lookup. An old snapshot never accepts newer bytes.
+            head = self._connection.execute(self._CURRENT_POINT_SQL, (cell_id,)).fetchone()
+            row = head[:3] if head is not None and int(head[3]) <= self._base_revision else (
+                self._connection.execute(self._POINT_SQL, (cell_id, self._base_revision)).fetchone()
+            )
+            if row is None:
+                self._remember_missing(cell_id)
+                return None
+            cell = Cell(cell_id, str(row[0]), str(row[1]), bytes(row[2]))
+            self._remember(cell_id, cell)
+            return cell
+
+    def _prefetch_batch(self, batch):
+        with self._lock:
+            wanted = list(dict.fromkeys(key for key in batch if key not in self._cache and key not in self._missing))
+            if not wanted:
+                return
+            placeholders = ",".join("(?)" for _ in wanted)
+            sql = (
+                "WITH requested(cell_id) AS (VALUES " + placeholders + ") "
+                "SELECT v.cell_id, v.link0, v.link1, v.atom FROM requested AS r "
+                "JOIN cell_versions AS v ON v.cell_id = r.cell_id AND v.revision = "
+                "(SELECT MAX(newer.revision) FROM cell_versions AS newer "
+                "WHERE newer.cell_id = r.cell_id AND newer.revision <= ?)"
+            )
+            cursor = self._connection.execute(sql, (*wanted, self._base_revision))
             seen = set()
-            for cell_id, link0, link1, atom in rows:
-                key = str(cell_id)
-                seen.add(key)
-                self._cache[key] = Cell(
-                    key, str(link0), str(link1), bytes(atom)
-                )
-            for cell_id in batch:
-                if cell_id not in seen:
-                    self._missing.add(cell_id)
-
-    def prefetch_region(
-        self, root_id: str, limit: int = 400_000, depth: int = 8
-    ) -> int:
-        """Warm one root's neighbourhood, one level per statement.
-
-        Following links one query at a time is a round trip per cell, so
-        the walk belongs in sqlite. Unbounded, though, that walk IS the
-        whole graph -- every cell links to the ones it names -- and
-        warming the map root reached 5.79 million cells and cost 25.2s of
-        every scope entry to serve a screen that reads a few thousand.
-
-        A level at a time, rather than one recursive statement: a
-        recursive CTE carrying a depth column cannot fold the same cell
-        reached at two depths into one row, so it returns a cell once per
-        path and fills the row cap with duplicates. Each level here is one
-        statement over the ids that level actually names, and a cell
-        already held is never asked for again.
-        """
-        held = self._cache
-        frontier = [str(root_id)]
-        seen: set[str] = set()
-        found = 0
-        for _level in range(max(0, int(depth)) + 1):
-            wanted = [
-                cell_id for cell_id in dict.fromkeys(frontier)
-                if cell_id not in seen
-            ]
-            if not wanted or found >= limit:
-                break
-            seen.update(wanted)
-            following: list[str] = []
-            for start in range(0, len(wanted), 500):
-                selected = wanted[start:start + 500]
-                placeholders = ",".join("?" for _ in selected)
-                rows = self._connection.execute(
-                    "SELECT cell_id, link0, link1, atom FROM current_cells "
-                    "WHERE cell_id IN (" + placeholders + ")",
-                    tuple(selected),
-                ).fetchall()
-                for cell_id, link0, link1, atom in rows:
+            try:
+                # One row at a time: large atom sizes do not multiply by batch.
+                for cell_id, link0, link1, atom in cursor:
                     key = str(cell_id)
-                    if key not in held:
-                        held[key] = Cell(
-                            key, str(link0), str(link1), bytes(atom)
-                        )
-                    found += 1
-                    following.append(str(link0))
-                    following.append(str(link1))
-                if found >= limit:
-                    break
-            frontier = following
+                    seen.add(key)
+                    self._remember(key, Cell(key, str(link0), str(link1), bytes(atom)))
+            finally:
+                cursor.close()
+            for key in wanted:
+                if key not in seen:
+                    self._remember_missing(key)
+
+    def prefetch(self, cell_ids):
+        batch = []
+        for key in cell_ids:
+            batch.append(key)
+            if len(batch) == self.BATCH_SIZE:
+                self._prefetch_batch(batch)
+                batch.clear()
+        if batch:
+            self._prefetch_batch(batch)
+
+    def prefetch_region(self, root_id, limit=8192, depth=8):
+        limit = min(self.MAX_REGION_CELLS, max(0, int(limit)))
+        depth = min(self.MAX_REGION_DEPTH, max(0, int(depth)))
+        if not limit:
+            return 0
+        frontier = [(str(root_id), 0)]
+        queued = {str(root_id)}
+        found = 0
+        offset = 0
+        while offset < len(frontier):
+            key, level = frontier[offset]
+            offset += 1
+            cell = self.read(key)
+            if cell is None:
+                continue
+            found += 1
+            if level < depth:
+                for target in (cell.link0, cell.link1):
+                    if target not in queued and len(queued) < limit:
+                        queued.add(target)
+                        frontier.append((target, level + 1))
         return found
 
-    def forget(self, cell_id: str) -> None:
-        self._missing.discard(cell_id)
-
-    def stream_ids(self) -> Iterator[str]:
-        for (cell_id,) in self._connection.execute(
-            "SELECT cell_id FROM current_cells"
-        ):
-            yield str(cell_id)
-
-    def stream_ids_with_prefix(self, prefix: str) -> Iterator[str]:
-        """Head ids that start with `prefix`: one range on the primary key."""
+    def forget(self, cell_id):
+        # New commits live in the overlay; this pinned base remains unchanged.
         with self._lock:
-            rows = self._connection.execute(
-                "SELECT cell_id FROM current_cells WHERE cell_id >= ? AND cell_id < ? ORDER BY cell_id",
-                (prefix, prefix[:-1] + chr(ord(prefix[-1]) + 1) if prefix else "￿"),
-            ).fetchall()
-        for (cell_id,) in rows:
-            yield str(cell_id)
+            self._forget_missing(cell_id)
 
-    def stream_cells_with_link0(self, link0: str) -> Iterator["Cell"]:
-        """Head cells whose link0 is `link0`: one scan in sqlite, not in Python."""
+    @staticmethod
+    def _prefix_upper(prefix):
+        upper = None
+        for index in range(len(prefix) - 1, -1, -1):
+            if ord(prefix[index]) < 0x10FFFF:
+                upper = prefix[:index] + chr(ord(prefix[index]) + 1)
+                break
+        return upper
+
+    def _id_windows(self, prefix="", link0=None):
+        """Bounded keyset windows over current IDs, never history enumeration.
+
+        Cell identities remain durable; changed candidates are individually
+        resolved against pinned history. No cursor/lock survives a yielded row.
+        """
+        upper = self._prefix_upper(prefix)
+        last = None
+        while True:
+            # Keep exactly one lower bound. SQLite may otherwise seek the
+            # prefix and filter every previous page again before applying last.
+            clauses = ["cell_id >= ?" if last is None else "cell_id > ?"]
+            params = [prefix if last is None else last]
+            if upper is not None:
+                clauses.append("cell_id < ?")
+                params.append(upper)
+            if link0 is not None:
+                clauses.append("((revision <= ? AND link0 = ?) OR revision > ?)")
+                params.extend((self._base_revision, link0, self._base_revision))
+            sql = ("SELECT cell_id, revision FROM current_cells WHERE "
+                   + " AND ".join(clauses) + " ORDER BY cell_id LIMIT ?")
+            params.append(self.BATCH_SIZE)
+            with self._lock:
+                cursor = self._connection.execute(sql, params)
+                try:
+                    rows = cursor.fetchmany(self.BATCH_SIZE)
+                finally:
+                    cursor.close()
+            if not rows:
+                return
+            last = str(rows[-1][0])
+            yield from rows
+
+    def stream_ids(self):
+        yield from self.stream_ids_with_prefix("")
+
+    def stream_ids_with_prefix(self, prefix):
+        for cell_id, revision in self._id_windows(prefix):
+            if int(revision) <= self._base_revision:
+                yield str(cell_id)
+                continue
+            with self._lock:
+                exists = self._connection.execute(
+                    "SELECT 1 FROM cell_versions WHERE cell_id = ? AND revision <= ? LIMIT 1",
+                    (cell_id, self._base_revision),
+                ).fetchone()
+            if exists is not None:
+                yield str(cell_id)
+
+    def stream_cells_with_link0(self, link0):
+        for cell_id, _revision in self._id_windows(link0=link0):
+            cell = self.read(str(cell_id))
+            if cell is not None and cell.link0 == link0:
+                yield cell
+
+    def count(self):
         with self._lock:
-            rows = self._connection.execute(
-                "SELECT cell_id, link0, link1, atom FROM current_cells WHERE link0 = ?",
-                (link0,),
-            ).fetchall()
-        for cell_id, l0, l1, atom in rows:
-            cell = Cell(str(cell_id), str(l0), str(l1), bytes(atom))
-            self._cache[cell.id] = cell
-            yield cell
-
-    def count(self) -> int:
-        return int(self._connection.execute(
-            "SELECT COUNT(*) FROM current_cells"
-        ).fetchone()[0])
+            unchanged = self._connection.execute(
+                "SELECT COUNT(*) FROM current_cells WHERE revision <= ?",
+                (self._base_revision,),
+            ).fetchone()[0]
+            changed = self._connection.execute(
+                "SELECT COUNT(*) FROM current_cells AS c WHERE c.revision > ? "
+                "AND EXISTS (SELECT 1 FROM cell_versions AS v WHERE v.cell_id = c.cell_id AND v.revision <= ?)",
+                (self._base_revision, self._base_revision),
+            ).fetchone()[0]
+            return int(unchanged) + int(changed)
 
 
 def ids_with_prefix(cells: Mapping[str, Cell], prefix: str) -> Iterator[str]:
@@ -789,6 +956,19 @@ def revision_chain_digest_step(
         by_id[cell.id] = cell
     if not by_id:
         raise InvalidCell("Cell revision contains no changed Cells")
+    return _ordered_revision_chain_digest_step(
+        previous, revision, (by_id[cell_id] for cell_id in sorted(by_id))
+    )
+
+
+def _ordered_revision_chain_digest_step(
+    previous: bytes, revision: int, changed: Iterable[Cell]
+) -> bytes:
+    """Hash canonical ordered Cells without retaining a whole revision."""
+    if not isinstance(previous, bytes) or len(previous) != 32:
+        raise InvalidCell("Cell revision digest predecessor is invalid")
+    if type(revision) is not int or revision < 0:
+        raise InvalidCell("Cell revision digest number is invalid")
     digest = hashlib.sha256()
     domain = b"ArchHub/universal-cell-revision-chain/v1"
     digest.update(len(domain).to_bytes(8, "big"))
@@ -797,8 +977,12 @@ def revision_chain_digest_step(
     raw_revision = str(revision).encode("ascii")
     digest.update(len(raw_revision).to_bytes(8, "big"))
     digest.update(raw_revision)
-    for cell_id in sorted(by_id):
-        cell = by_id[cell_id]
+    last_id = None
+    for cell in changed:
+        _validate_cell(cell)
+        if last_id is not None and cell.id <= last_id:
+            raise InvalidCell("Cell revision identities are duplicate or unordered")
+        last_id = cell.id
         for raw in (
             cell.id.encode("utf-8"),
             cell.link0.encode("utf-8"),
@@ -807,6 +991,8 @@ def revision_chain_digest_step(
         ):
             digest.update(len(raw).to_bytes(8, "big"))
             digest.update(raw)
+    if last_id is None:
+        raise InvalidCell("Cell revision contains no changed Cells")
     return digest.digest()
 
 
@@ -962,6 +1148,21 @@ class _SqliteJournal:
                 "CREATE INDEX IF NOT EXISTS "
                 "idx_cell_versions_cell_revision "
                 "ON cell_versions(cell_id, revision DESC)"
+            )
+            # current_cells is declared with a TEXT PRIMARY KEY and nothing
+            # else, so COUNT(*) and any full id sweep had to walk the table
+            # itself -- every row, atom blobs and all. Measured on the
+            # founder's graph: COUNT(*) FROM cell_versions is 0.05s over
+            # 4,062,840 rows because it counts through a compact index,
+            # while COUNT(*) FROM current_cells is 11.43s over 3,961,947.
+            # Same question, 200x apart, and the difference was one index.
+            # revision is a small INTEGER, so this covering index is what
+            # every count and id sweep of the head is answered from now
+            # (2026-09-08).
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS "
+                "idx_current_cells_revision "
+                "ON current_cells(revision)"
             )
             # A chain checkpoint records the revision-chain digest at one
             # revision together with how many version rows lie at or before
@@ -1154,9 +1355,7 @@ class _SqliteJournal:
             raise
 
     def _load_head_in_transaction(self) -> LoadedJournalHead:
-        """Stream and validate history while retaining only the current graph."""
-        current: dict[str, Cell] = {}
-        current_revisions: dict[str, int] = {}
+        """Validate streamed history and its index without retaining replayed Cells."""
         revision_count, first_revision, latest = self._connection.execute(
             "SELECT COUNT(*), MIN(revision), MAX(revision) FROM revisions"
         ).fetchone()
@@ -1172,7 +1371,6 @@ class _SqliteJournal:
 
         previous = b"\x00" * 32
         active_revision = -1
-        changed: list[Cell] = []
         resume_after = -1
         checkpoint = self._accelerators().execute(
             "SELECT revision, chain_digest, prefix_rows FROM chain_checkpoints "
@@ -1198,7 +1396,7 @@ class _SqliteJournal:
             # accepted-proof fingerprint the authority layer keeps.
             genesis_rows = self._connection.execute(
                 "SELECT cell_id, link0, link1, atom FROM cell_versions "
-                "WHERE revision = 0"
+                "WHERE revision = 0 LIMIT 2"
             ).fetchall()
             genesis_honest = [
                 (str(c), str(l0), str(l1), bytes(a))
@@ -1217,86 +1415,96 @@ class _SqliteJournal:
                 previous = bytes(checkpoint_digest)
                 active_revision = int(checkpoint_revision)
                 resume_after = int(checkpoint_revision)
-                # The current cells at or before the checkpoint come from
-                # the index the journal already keeps; only what changed
-                # after the checkpoint is replayed as versions.
-                # Every head row, not only those whose NEWEST version lies
-                # at or before the checkpoint: a cell revised after the
-                # checkpoint still existed at it, and a cell in the replayed
-                # suffix may link to it before the suffix reaches its newest
-                # version. Filtering by revision dropped exactly those cells
-                # and a later removal's chain repair failed the dangling
-                # check ("durable revision 1037 has dangling incidence") --
-                # the graph would not load. The replay below re-applies the
-                # suffix over the head rows; the chain digest is computed
-                # from the streamed rows themselves, so the proof is unchanged.
-                # The head is read on demand from this same connection.
-                # Materialising it cost 46s of sqlite and 20s of object
-                # construction on every open, to answer questions about a
-                # few hundred cells.
-                reader = _HeadRowReader(self._connection, self._io_lock)
-                lazy_head = _LazyHeadCellMap(reader, None, None, 0)
-                current = _LoadingHeadMap(lazy_head)
 
-        def accept_revision() -> None:
-            nonlocal previous
-            if not changed:
-                raise InvalidCell(
-                    "durable revision %s has no changed Cells"
-                    % active_revision
-                )
-            if active_revision == 0 and changed != [
-                Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
-            ]:
-                raise InvalidCell("durable Cell genesis revision is invalid")
-            for cell in changed:
-                current[cell.id] = cell
-                current_revisions[cell.id] = active_revision
-            for cell in changed:
-                if cell.link0 not in current or cell.link1 not in current:
+        def revision_cells(row_revision, revision_rows):
+            seen = False
+            for _, cell_id, link0, link1, atom, has_link0, has_link1 in revision_rows:
+                cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+                _validate_cell(cell)
+                if row_revision == 0 and (
+                    seen or cell != Cell(NULL_CELL_ID, NULL_CELL_ID, NULL_CELL_ID, b"")
+                ):
+                    raise InvalidCell("durable Cell genesis revision is invalid")
+                if not has_link0 or not has_link1:
                     raise InvalidCell(
-                        "durable revision %s has dangling incidence"
-                        % active_revision
+                        "durable revision %s has dangling incidence" % row_revision
                     )
-            previous = revision_chain_digest_step(
-                previous,
-                active_revision,
-                changed,
-            )
+                seen = True
+                yield cell
 
+        # Both incidence checks use (cell_id, revision DESC). Same-revision
+        # endpoints exist in this transaction even if their rows stream later;
+        # an endpoint created only in a future revision is not admissible.
+        # The primary key supplies canonical order without a temporary sort.
         rows = self._connection.execute(
-            "SELECT revision, cell_id, link0, link1, atom "
-            "FROM cell_versions WHERE revision > ? ORDER BY revision, cell_id",
+            "SELECT version.revision, version.cell_id, version.link0, version.link1, version.atom, "
+            "EXISTS(SELECT 1 FROM cell_versions AS endpoint "
+            "WHERE endpoint.cell_id=version.link0 AND endpoint.revision<=version.revision), "
+            "EXISTS(SELECT 1 FROM cell_versions AS endpoint "
+            "WHERE endpoint.cell_id=version.link1 AND endpoint.revision<=version.revision) "
+            "FROM cell_versions AS version WHERE version.revision > ? "
+            "ORDER BY version.revision, version.cell_id COLLATE BINARY",
             (resume_after,),
         )
-        streamed_any = False
-        for row_revision, cell_id, link0, link1, atom in rows:
-            if type(row_revision) is not int:
-                raise InvalidCell("durable Cell revision is invalid")
-            if row_revision != active_revision:
-                # A revision is accepted only once its rows were streamed
-                # HERE; the checkpoint revision itself was accepted by the
-                # load that recorded it and contributes no rows now.
-                if active_revision >= 0 and streamed_any:
-                    accept_revision()
-                streamed_any = True
+        with closing(rows):
+            for row_revision, revision_rows in groupby(rows, key=lambda row: row[0]):
+                if type(row_revision) is not int:
+                    raise InvalidCell("durable Cell revision is invalid")
                 if row_revision != active_revision + 1:
                     raise InvalidCell(
                         "durable Cell revision history is discontinuous"
                     )
                 active_revision = row_revision
-                changed = []
-            cell = Cell(str(cell_id), str(link0), str(link1), bytes(atom))
-            _validate_cell(cell)
-            changed.append(cell)
-        if active_revision >= 0 and streamed_any and changed:
-            accept_revision()
+                previous = _ordered_revision_chain_digest_step(
+                    previous, active_revision, revision_cells(row_revision, revision_rows)
+                )
         if active_revision != latest:
             raise InvalidCell("durable Cell journal has no complete head")
-        # Record what this load proved, so the next open resumes here.
-        # Written inside the same transaction as the load's reads: a
-        # checkpoint at the head just verified is exactly the fact the
-        # verification established.
+
+        # A suffix range scan plus indexed newer-version probes selects each
+        # touched identity's exact latest version. Compare one row at a time;
+        # no replay population, identity set, or expected/indexed head survives.
+        # With no checkpoint this is the complete canonical head audit.
+        audit_rows = self._connection.execute(
+            "SELECT version.cell_id, version.revision, version.link0, version.link1, version.atom, "
+            "indexed.cell_id, indexed.revision, indexed.link0, indexed.link1, indexed.atom "
+            "FROM cell_versions AS version LEFT JOIN current_cells AS indexed "
+            "ON indexed.cell_id=version.cell_id "
+            "WHERE version.revision > ? AND NOT EXISTS("
+            "SELECT 1 FROM cell_versions AS newer "
+            "WHERE newer.cell_id=version.cell_id AND newer.revision>version.revision)",
+            (resume_after,),
+        )
+        with closing(audit_rows):
+            for row in audit_rows:
+                if row[5] is None or type(row[6]) is not int or (
+                    row[1], str(row[2]), str(row[3]), bytes(row[4])
+                ) != (
+                    row[6], str(row[7]), str(row[8]), bytes(row[9])
+                ):
+                    raise InvalidCell("durable current Cell index is inconsistent")
+
+        # The expected-row audit detects missing, stale, and corrupt rows. Its
+        # converse detects invented index identities/versions. A cold load
+        # checks all index rows; a resumed load retains the trusted-prefix
+        # boundary and checks only rows claiming a newer physical revision.
+        # Neither query groups, sorts, nor compares a head count to itself.
+        extra_sql = "SELECT 1 FROM current_cells AS indexed WHERE "
+        extra_args = ()
+        if resume_after >= 0:
+            extra_sql += "indexed.revision > ? AND "
+            extra_args = (resume_after,)
+        extra_sql += (
+            "NOT EXISTS(SELECT 1 FROM cell_versions AS version "
+            "WHERE version.cell_id=indexed.cell_id AND version.revision=indexed.revision) LIMIT 1"
+        )
+        with closing(self._connection.execute(extra_sql, extra_args)) as extra_rows:
+            if extra_rows.fetchone() is not None:
+                raise InvalidCell("durable current Cell index is inconsistent")
+
+        # Publish only the proof that all revision and index checks completed.
+        # A refused load must not leave a newer checkpoint that could make its
+        # next attempt trust the very suffix whose validation just failed.
         if latest > resume_after:
             self._accelerators().execute(
                 "INSERT OR REPLACE INTO chain_checkpoints"
@@ -1309,87 +1517,10 @@ class _SqliteJournal:
                     ).fetchone()[0]),
                 ),
             )
-
-        # The index audit proves current_cells == the replayed head. On a
-        # checkpoint-resumed load the prefix of `current` was READ from
-        # current_cells, so comparing it back is a table proving itself
-        # -- 5.27M rows re-read and re-hashed on every open for nothing.
-        # Only rows the streamed suffix touched can disagree; audit those,
-        # plus the count, which catches a row the suffix never mentioned
-        # but the index invented or lost.
-        if resume_after < 0:
-            audit_ids = None
-        else:
-            audit_ids = {
-                cell_id for cell_id, revision in current_revisions.items()
-                if revision > resume_after
-            }
-        if audit_ids is None:
-            indexed = {
-                str(cell_id): (
-                    int(revision),
-                    str(link0),
-                    str(link1),
-                    bytes(atom),
-                )
-                for cell_id, revision, link0, link1, atom
-                in self._connection.execute(
-                    "SELECT cell_id, revision, link0, link1, atom "
-                    "FROM current_cells ORDER BY cell_id"
-                )
-            }
-            expected = {
-                cell_id: (
-                    current_revisions[cell_id],
-                    cell.link0,
-                    cell.link1,
-                    cell.atom,
-                )
-                for cell_id, cell in current.items()
-            }
-            if indexed != expected:
-                raise InvalidCell("durable current Cell index is inconsistent")
-        else:
-            indexed_count = int(self._connection.execute(
-                "SELECT COUNT(*) FROM current_cells"
-            ).fetchone()[0])
-            if indexed_count != len(current):
-                raise InvalidCell("durable current Cell index is inconsistent")
-            indexed_suffix = {}
-            for cell_id in audit_ids:
-                row = self._connection.execute(
-                    "SELECT revision, link0, link1, atom FROM current_cells "
-                    "WHERE cell_id = ?",
-                    (cell_id,),
-                ).fetchone()
-                if row is not None:
-                    indexed_suffix[cell_id] = (
-                        int(row[0]), str(row[1]), str(row[2]), bytes(row[3]),
-                    )
-            expected_suffix = {
-                cell_id: (
-                    current_revisions[cell_id],
-                    current[cell_id].link0,
-                    current[cell_id].link1,
-                    current[cell_id].atom,
-                )
-                for cell_id in audit_ids
-            }
-            if indexed_suffix != expected_suffix:
-                raise InvalidCell("durable current Cell index is inconsistent")
+        reader = _HeadRowReader(self._connection, self._io_lock, base_revision=latest)
         history = _SqliteHistoryReader(self, latest, previous.hex())
         return LoadedJournalHead(
-            # A proxy AROUND the lazy head is not the lazy head: every
-            # consumer that asks "is this read on demand?" is answered no
-            # and falls back to reading the whole graph. One step of a
-            # head audit lifted 5.79 million rows into a trie for the sake
-            # of two hundred and ninety-one changed cells -- 115.5s of the
-            # 121s open. The loading map is already immutable once
-            # published; the store publishes it.
-            cells=(
-                current if isinstance(current, _LoadingHeadMap)
-                else MappingProxyType(current)
-            ),
+            cells=_LazyHeadCellMap(reader, None, None, 0),
             revision=latest,
             revision_chain_digest=previous.hex(),
             history=history,
@@ -2039,36 +2170,23 @@ class _SqliteHistoryReader:
             return self._head_digest
         previous = b"\x00" * 32
         active_revision = -1
-        changed: list[Cell] = []
         rows = self._journal._connection.execute(
             "SELECT revision, cell_id, link0, link1, atom "
-            "FROM cell_versions WHERE revision<=? ORDER BY revision, cell_id",
+            "FROM cell_versions WHERE revision<=? ORDER BY revision, cell_id COLLATE BINARY",
             (target,),
         )
-        for row_revision, cell_id, link0, link1, atom in rows:
-            row_revision = int(row_revision)
-            if row_revision != active_revision:
-                if active_revision >= 0:
-                    previous = revision_chain_digest_step(
-                        previous,
-                        active_revision,
-                        changed,
-                    )
+        with closing(rows):
+            for row_revision, revision_rows in groupby(rows, key=lambda row: row[0]):
+                row_revision = int(row_revision)
                 if row_revision != active_revision + 1:
-                    raise InvalidCell(
-                        "durable Cell revision history is discontinuous"
-                    )
+                    raise InvalidCell("durable Cell revision history is discontinuous")
                 active_revision = row_revision
-                changed = []
-            changed.append(
-                Cell(str(cell_id), str(link0), str(link1), bytes(atom))
-            )
-        if active_revision >= 0:
-            previous = revision_chain_digest_step(
-                previous,
-                active_revision,
-                changed,
-            )
+                previous = _ordered_revision_chain_digest_step(
+                    previous,
+                    active_revision,
+                    (Cell(str(cell_id), str(link0), str(link1), bytes(atom))
+                        for _, cell_id, link0, link1, atom in revision_rows),
+                )
         if active_revision != target:
             raise InvalidCell("unknown revision %r" % target)
         return previous.hex()
@@ -2469,6 +2587,12 @@ class CellStore:
     # which is however many revisions the last session committed.
     _STEP_BACK_LIMIT = 256
     _COPY_ON_COMMIT_CELL_LIMIT = 100_000
+    # The SQLite head must not retain every Cell written since process boot.
+    # Rebase after 8 MiB of conservatively accounted writes or 8192 overlay
+    # entries. This bounds the current overlay between commits, not caller-held
+    # snapshots, a single in-flight transaction, or the separate reader LRUs.
+    _SQLITE_HEAD_OVERLAY_MAX_BYTES = 8 * 1024 * 1024
+    _SQLITE_HEAD_OVERLAY_MAX_CELLS = 8192
 
     def __init__(
         self,
@@ -2487,6 +2611,8 @@ class CellStore:
             )
         self._lock = threading.RLock()
         self._journal: CellJournal | None = journal
+        self._stable_snapshot_depth = 0
+        self._closed = False
         self._history_reader: CellHistoryReader | None = None
         if self._journal is None and database_path is not None:
             self._journal = _SqliteJournal(database_path, fault_injector)
@@ -2532,6 +2658,7 @@ class CellStore:
         )
         self._historical_snapshots: OrderedDict[int, Snapshot] = OrderedDict()
         self._dense_snapshot_cache: Snapshot | None = None
+        self._sqlite_head_overlay_bytes = 0
         self._cell_history_index: dict[str, tuple[tuple[int, Cell], ...]] | None = None
         # revision -> additive set accumulator of the whole graph at that
         # revision (see cell_set_digest). Seeded by one full pass the first
@@ -2553,9 +2680,12 @@ class CellStore:
 
     def close(self) -> None:
         with self._lock:
+            if self._stable_snapshot_depth:
+                raise InvalidCell("cannot close during a stable snapshot")
             if self._journal is not None:
                 self._journal.close()
                 self._journal = None
+            self._closed = True
 
     @property
     def database_path(self) -> str | None:
@@ -2628,6 +2758,7 @@ class CellStore:
             raise InvalidCell("durable Cell authority moved backwards")
         self._cells = cells
         self._revision = revision
+        self._sqlite_head_overlay_bytes = 0
         self._versions = versions
         self._changes = changes
         self._history_reader = history_reader
@@ -2679,6 +2810,8 @@ class CellStore:
     def refresh(self) -> int:
         """Adopt the latest accepted revision from a shared authority."""
         with self._lock:
+            if self._stable_snapshot_depth:
+                raise InvalidCell("cannot refresh during a stable snapshot")
             if self._journal is None:
                 return self._revision
             self._adopt_journal_state(self._load_journal_state())
@@ -2748,6 +2881,65 @@ class CellStore:
     def snapshot(self) -> Snapshot:
         with self._lock:
             return Snapshot(self._revision, self._cells)
+
+    @contextmanager
+    def stable_snapshot(self, *, expected_revision: int | None = None):
+        """Hold an unchanged local head during a bounded external operation.
+
+        This writes no graph revision. Shared journals need a backend-specific
+        transaction boundary and are refused, even when a runtime fence exists.
+        Callers must acquire any authentication broker lock before this guard;
+        no graph mutation, provider call or owner-lock callback belongs inside.
+        """
+        with self._lock:
+            if self._closed:
+                raise InvalidCell("stable snapshot store is closed")
+            if self._journal is not None and (
+                    self._journal.shared_writers or not self._journal.exclusive_owner):
+                raise InvalidCell("stable snapshot requires exclusive graph ownership")
+            if expected_revision is not None and expected_revision != self._revision:
+                raise Conflict("stable snapshot revision changed")
+            self._stable_snapshot_depth += 1
+            try:
+                yield Snapshot(self._revision, self._cells)
+            finally:
+                self._stable_snapshot_depth -= 1
+
+    def snapshot_transition(
+        self,
+        *,
+        previous_revision: int | None = None,
+        previous_digest: str | None = None,
+    ) -> SnapshotTransition:
+        """Capture a head and prove at most one physical revision of change.
+
+        Never request an old digest: a durable history reader may replay the
+        whole prefix for that operation. Unknown/gapped predecessors instead
+        return no proof, so a disposable projection must rebuild.
+        """
+        with self._lock:
+            snapshot = Snapshot(self._revision, self._cells)
+            digest = self.revision_chain_digest()
+            changed = None
+            if (type(previous_revision) is int and previous_revision >= 0
+                    and type(previous_digest) is str):
+                try:
+                    predecessor = bytes.fromhex(previous_digest)
+                except ValueError:
+                    predecessor = b""
+                if len(predecessor) != 32 or len(previous_digest) != 64:
+                    return SnapshotTransition(snapshot, digest, None)
+                if previous_revision == self._revision:
+                    if hmac.compare_digest(predecessor.hex(), digest):
+                        changed = ()
+                elif previous_revision == self._revision - 1:
+                    delta = self._changed_at(self._revision)
+                    calculated = revision_chain_digest_step(
+                        predecessor, self._revision, delta
+                    ).hex()
+                    if hmac.compare_digest(calculated, digest):
+                        changed = delta
+            return SnapshotTransition(snapshot, digest, changed)
 
     def dense_snapshot(self) -> Snapshot:
         """Return the current revision in its bounded immutable read mapping.
@@ -3070,6 +3262,10 @@ class CellStore:
         listeners: tuple[Callable[[CommitEvent], None], ...]
         event: CommitEvent
         with self._lock:
+            if self._closed:
+                raise InvalidCell("cannot commit to a closed store")
+            if self._stable_snapshot_depth:
+                raise InvalidCell("cannot commit during a stable snapshot")
             if expected_revision != self._revision:
                 raise Conflict(
                     "expected revision %s, current revision is %s"
@@ -3133,7 +3329,47 @@ class CellStore:
                     ),
                     delta.values(),
                 )
-            if isinstance(base, _LazyHeadCellMap):
+            next_overlay_bytes = self._sqlite_head_overlay_bytes
+            sqlite_head = (
+                type(self._journal) is _SqliteJournal
+                and isinstance(base, _LazyHeadCellMap)
+                and base._reader._connection is self._journal._connection
+                and not base._removed
+            )
+            if sqlite_head:
+                # Count just this write, conservatively keeping replaced
+                # overlay versions in the estimate until the next rebase.
+                next_overlay_bytes += sum(
+                    _HeadRowReader._cell_cost(key, cell)
+                    for key, cell in delta.items()
+                )
+                overlay_count = len(base._overlay) + sum(
+                    key not in base._overlay for key in delta
+                )
+                rebase = (
+                    next_overlay_bytes >= self._SQLITE_HEAD_OVERLAY_MAX_BYTES
+                    or overlay_count >= self._SQLITE_HEAD_OVERLAY_MAX_CELLS
+                )
+            else:
+                rebase = False
+            if rebase:
+                # Allocate the next map before the fallible append, but do not
+                # read or publish it until SQLite confirms durability below.
+                # Its reader is distinct: changing the old reader's revision
+                # would expose new bytes after an older snapshot's cache evicts.
+                # Preserve a known cardinality without scanning the whole head.
+                base_count = (
+                    None if base._base_count is None else
+                    base._base_count + base._created_count + len(created)
+                )
+                published = _LazyHeadCellMap(
+                    _HeadRowReader(self._journal._connection,
+                                   self._journal._io_lock,
+                                   base_revision=next_revision),
+                    base_count=base_count,
+                )
+                next_overlay_bytes = 0
+            elif isinstance(base, _LazyHeadCellMap):
                 published = base.with_delta(delta)
             elif len(base) <= self._COPY_ON_COMMIT_CELL_LIMIT:
                 candidate = dict(base)
@@ -3158,6 +3394,7 @@ class CellStore:
                     raise
             self._cells = published
             self._revision = next_revision
+            self._sqlite_head_overlay_bytes = next_overlay_bytes
             self._dense_snapshot_cache = None
             if next_accumulator is not None:
                 self._remember_set_accumulator(next_revision, next_accumulator)

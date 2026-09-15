@@ -1,4 +1,8 @@
-"""Provider-bound MCP stdio adapter for the clean coordination host."""
+"""Coordination tools; default stdio attaches to the installed application's Workshop.
+
+The explicit legacy client remains only for consumers awaiting migration. Failure
+to attach to the application must never start a substitute graph owner.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Mapping
+from typing import Mapping, TYPE_CHECKING
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
@@ -23,6 +27,9 @@ from .clean_coordination_host import (
 )
 from .runtime_caller_capability import WindowsDpapiCallerKeyStore
 from .universal_cell import InvalidCell
+
+if TYPE_CHECKING:
+    from .installed_workshop_coordination import InstalledWorkshopCoordinationClient
 
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8474/coordination"
@@ -143,7 +150,10 @@ class LocalCoordinationClient:
         *,
         endpoint: str = DEFAULT_ENDPOINT,
         key_store: WindowsDpapiCallerKeyStore | None = None,
+        start_if_missing: bool = True,
     ) -> None:
+        if type(start_if_missing) is not bool:
+            raise ValueError("start_if_missing must be a boolean")
         parsed = urlsplit(endpoint)
         if (
             parsed.scheme != "http"
@@ -157,7 +167,13 @@ class LocalCoordinationClient:
             raise InvalidCell("local coordination endpoint is not admitted")
         self.identity = identity.normalized()
         self.endpoint = endpoint
-        ensure_local_coordination_host(endpoint)
+        if start_if_missing:
+            ensure_local_coordination_host(endpoint)
+        elif not _host_is_healthy(endpoint):
+            # An attaching client must never replace a temporarily unavailable
+            # owner or start background work. Later request failure also closes
+            # normally; call() contains no host-start or request retry path.
+            raise RuntimeError("clean coordination host is unavailable")
         self.key_store = key_store or WindowsDpapiCallerKeyStore(
             WindowsDpapiCallerKeyStore.default_path()
         )
@@ -202,19 +218,35 @@ class LocalCoordinationClient:
             raise RuntimeError(str(detail)) from exc
         except (URLError, TimeoutError, UnicodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("clean coordination host is unavailable") from exc
+        if (method in {"execute_workshop_task", "run_workshop_task"} and type(payload) is dict and
+                payload.get("ok") is False and
+                payload.get("message_root") == (parameters or {}).get("message_root") and
+                type(payload.get("error")) is str):
+            if payload.get("outcome") == "uncertain":
+                return payload
+            if (payload.get("outcome") == "failed" and
+                    all(type(payload.get(key)) is str and payload[key] for key in ("receipt", "effect")) and
+                    type(payload.get("accepted_revision")) is int and payload["accepted_revision"] >= 0 and
+                    type(payload.get("replayed")) is bool):
+                return payload
         if type(payload) is not dict or payload.get("ok") is not True:
             raise RuntimeError("clean coordination response is invalid")
         return payload
 
 
 def build_server(
-    client: LocalCoordinationClient | None = None,
+    client: LocalCoordinationClient | InstalledWorkshopCoordinationClient | None = None,
     *,
     environment: Mapping[str, str] | None = None,
 ) -> FastMCP:
-    control = client or LocalCoordinationClient(
-        identity_from_environment(environment)
-    )
+    if client is None:
+        # Lazy imports avoid the shared-tool registration cycle. native_agent_mcp
+        # calls this factory with its explicitly bound client, so it cannot fall
+        # back to LocalCoordinationClient or start a second graph owner.
+        from .native_agent_mcp import build_server as build_installed_server
+        from .native_agent_session import NativeAgentSession
+        return build_installed_server(session=NativeAgentSession(environment=environment))
+    control = client
     mcp = FastMCP("archhub-clean-agent-coordination")
 
     @mcp.tool(name="coordination.register_session")
@@ -269,12 +301,14 @@ def build_server(
         message: str,
         idempotency_key: str | None = None,
         reply_to: str | None = None,
+        execution_root: str | None = None,
     ) -> dict[str, object]:
         return control.call("followup_task", {
             "target": target,
             "message": message,
             "idempotency_key": idempotency_key or str(uuid.uuid4()),
             "reply_to": reply_to,
+            "execution_root": execution_root,
         })
 
     @mcp.tool(name="coordination.interrupt_agent")
@@ -314,6 +348,113 @@ def build_server(
             "message_root": message_root,
             "idempotency_key": idempotency_key or str(uuid.uuid4()),
         })
+
+    @mcp.tool(name="coordination.claim_workshop_message")
+    def claim_workshop_message(
+        message_root: str,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        """Claim a connected task once; this does not grant tool execution.
+
+        Preserve the key for reconciliation. A consumed claim must not be
+        retried as fresh work after an uncertain result.
+        """
+        return control.call("claim_workshop_message", {
+            "message_root": message_root,
+            "idempotency_key": idempotency_key,
+        })
+
+    @mcp.tool(name="coordination.attach_agent")
+    def attach_agent(target: str, idempotency_key: str) -> dict[str, object]:
+        """Attach an enrolled session through existing source and Workshop policy.
+
+        A replayed receipt is historical, not proof of current membership.
+        """
+        return control.call("attach_agent", {"target": target, "idempotency_key": idempotency_key})
+
+    @mcp.tool(name="coordination.execute_workshop_task")
+    def execute_workshop_task(message_root: str) -> dict[str, object]:
+        """Execute the node wired to this worker's read task using its saved inputs.
+
+        The runtime must supply an adapter. Repeating the same task retains
+        its execution identity; uncertain results require reconciliation.
+        """
+        return control.call("execute_workshop_task", {"message_root":message_root})
+
+    @mcp.tool(name="coordination.publish_workshop_result")
+    def publish_workshop_result(message_root: str) -> dict[str, object]:
+        """Publish this task's receipted outcome as a reply without re-executing it."""
+        return control.call("publish_workshop_result", {"message_root":message_root})
+
+    @mcp.tool(name="coordination.run_workshop_task")
+    def run_workshop_task(message_root: str, idempotency_key: str) -> dict[str, object]:
+        """Claim one targeted task, execute its connected node, and publish the result.
+
+        Use one stable claim UUID. A repeated claim never starts another call.
+        If interrupted, reconcile with execute_workshop_task or
+        publish_workshop_result; never replace the task to retry an uncertain effect.
+        Published results still need independent review.
+        """
+        return control.call("run_workshop_task", {
+            "message_root":message_root, "idempotency_key":idempotency_key})
+
+    @mcp.tool(name="coordination.detach_agent")
+    def detach_agent(target: str, idempotency_key: str) -> dict[str, object]:
+        """Remove Workshop membership while preserving enrollment and history."""
+        return control.call("detach_agent", {"target": target, "idempotency_key": idempotency_key})
+
+    # Keep ordinary content positions separate from clean graph revisions and
+    # message Cells. This backend holds an existing process-local capability;
+    # constructing the interface never enrolls another installed session.
+    from .installed_workshop_coordination import InstalledWorkshopCoordinationClient
+    if isinstance(control, InstalledWorkshopCoordinationClient):
+        for name in (
+            "send_message", "revise_instance", "followup_task", "interrupt_agent", "wait_agent",
+            "mark_message_read", "claim_workshop_message", "attach_agent",
+            "execute_workshop_task", "publish_workshop_result", "run_workshop_task", "detach_agent",
+        ):
+            mcp.remove_tool("coordination." + name)
+
+        @mcp.tool(name="coordination.send_message")
+        def send_installed_message(
+            target: str,
+            message: str,
+            idempotency_key: str,
+            reply_to: str | None = None,
+        ) -> dict[str, object]:
+            """Send with one caller-held key; reuse that key after a lost reply."""
+            if not idempotency_key.strip():
+                raise ValueError("a nonempty caller idempotency_key is required")
+            return control.call("send_message", {
+                "target": target, "message": message,
+                "idempotency_key": idempotency_key, "reply_to": reply_to,
+            })
+
+        @mcp.tool(name="coordination.read_messages")
+        def read_messages(limit: int = 50, before: int | None = None) -> dict[str, object]:
+            """Read an admitted ordinary-message page; before is a message sequence."""
+            return control.call("read_messages", {"limit": limit, "before": before})
+
+        @mcp.tool(name="coordination.read_message")
+        def read_message(message_id: str, sequence: int) -> dict[str, object]:
+            """Read and verify one exact ordinary message at its saved sequence."""
+            return control.call("read_message", {"message_id": message_id, "sequence": sequence})
+
+        @mcp.tool(name="coordination.acknowledge_message")
+        def acknowledge_message(message_id: str, sequence: int, idempotency_key: str) -> dict[str, object]:
+            """Submit an explicit acknowledgement reply; this does not claim completion."""
+            return control.call("acknowledge_message", {
+                "message_id": message_id, "sequence": sequence, "idempotency_key": idempotency_key,
+            })
+
+        @mcp.tool(name="coordination.claim_work")
+        def claim_work(work_root: str) -> dict[str, object]:
+            """Claim an exact Governed Work node; a message ID is not a Work root.
+
+            A claim grants no execution authority. Reconcile an uncertain reply
+            against Work state before making another claim.
+            """
+            return control.call("claim_work", {"work_root": work_root})
 
     return mcp
 

@@ -8,12 +8,14 @@ responsible for resolving graph-declared routes, authorization, and mutation.
 from __future__ import annotations
 
 from collections import deque
+from contextvars import ContextVar
 import ctypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import math
 from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client
 import os
@@ -21,6 +23,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import sys
 import threading
 import time
 from typing import Callable, Mapping, Protocol
@@ -75,6 +78,194 @@ BABOOM_NATIVE_REPORT_SUMMARY = (
 
 class MachineTransportError(RuntimeError):
     """The runtime descriptor, pipe authentication, or request is invalid."""
+
+
+class MachineResponseError(MachineTransportError):
+    """An authenticated bound error response arrived; effects remain unknown."""
+    response_received = True
+
+
+class MachineContinuationNotEnrolled(MachineTransportError):
+    """Exact owner-held refusal receipt proves this continuation issued no capability."""
+
+
+class MachineEffectOutcomeUnknown(MachineTransportError):
+    """A route failed after durable changes; its response is not a refusal proof."""
+
+
+@dataclass(frozen=True, slots=True)
+class MachinePipePeer:
+    """Owner-local OS observation; never a request field or graph permission."""
+    pid: int
+    created_at: float
+    executable: str = ""
+    argv: tuple[str, ...] = ()
+    cwd: str = ""
+
+
+def _observe_machine_process(pid):
+    """OS observation only; never accept process metadata from the request."""
+    try:
+        import psutil
+    except ImportError:
+        # Launch metadata is optional for the minimal OS pipe-peer identity.
+        # Browser/desktop admission still requires a complete observation.
+        return None
+    try:
+        process = psutil.Process(pid)
+        created = process.create_time()
+        argv = tuple(process.cmdline())
+        if (not argv or len(argv) > 128 or any(type(arg) is not str for arg in argv)
+                or sum(len(arg) for arg in argv) > 16384):
+            return None
+        peer = MachinePipePeer(pid, created, str(Path(process.exe()).resolve()),
+                               argv, str(Path(process.cwd()).resolve()))
+        if psutil.Process(pid).create_time() != created:
+            return None
+        return peer
+    except (psutil.Error, OSError, ValueError):
+        return None
+
+
+def _desktop_launch_is_admitted(peer, *, product_root=None, python_executable=None):
+    """Trusted launch shape, not a human-gesture or same-user isolation proof."""
+    if (type(peer) is not MachinePipePeer or not peer.executable or not peer.argv or not peer.cwd
+            or type(peer.argv) is not tuple or any(type(arg) is not str for arg in peer.argv)):
+        return False
+    root = Path(product_root) if product_root is not None else (
+        Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parents[1])
+    def canonical(path):
+        return os.path.normcase(str(Path(path).resolve()))
+    executable = canonical(peer.executable)
+    args = peer.argv[1:]
+    if executable == canonical(root / "ArchHub.exe"):
+        return args == ("--desktop-worker",)
+    python = python_executable if python_executable is not None else sys.executable
+    trusted_python = {canonical(root / ".venv/Scripts/python.exe"),
+                      canonical(root / ".venv/Scripts/pythonw.exe")}
+    interpreter_paths = [Path(python)]
+    if python_executable is None:
+        interpreter_paths.append(Path(getattr(sys, "_base_executable", sys.executable)))
+    for interpreter in interpreter_paths:
+        if interpreter.name.casefold() in {"python.exe", "pythonw.exe"}:
+            # Windows venv redirectors can report the base interpreter image
+            # while argv[0] names the venv. Never trust argv[0] as image proof.
+            trusted_python.update(canonical(interpreter.with_name(name))
+                                  for name in ("python.exe", "pythonw.exe"))
+        elif interpreter.name.casefold() in {"python", "python3"}:
+            trusted_python.add(canonical(interpreter))
+    if executable not in trusted_python:
+        return False
+    if len(args) == 1 and Path(args[0]).is_absolute():
+        return canonical(args[0]) == canonical(root / "launch_archhub_test.py")
+    if len(args) == 3 and args[:2] == ("-E", "-s") and Path(args[2]).is_absolute():
+        # Exact installed VBS launch. Forwarded Qt/plugin or Python options are
+        # not application arguments and do not gain Desktop mint authority.
+        return canonical(args[2]) == canonical(root / "launch_archhub_test.py")
+    return args == ("-m", "nodelang.desktop") and canonical(peer.cwd) == canonical(root)
+
+
+def desktop_pipe_peer_is_current(peer):
+    if type(peer) is not MachinePipePeer or not _desktop_launch_is_admitted(peer):
+        return False
+    return _observe_machine_process(peer.pid) == peer
+
+
+def current_process_is_desktop_launch():
+    peer = _observe_machine_process(os.getpid())
+    return peer is not None and desktop_pipe_peer_is_current(peer)
+
+
+def peer_matches_process(peer, pid, created_at):
+    """Compare owner-local enrollment metadata with a retained OS identity.
+
+    This checks identity only, not liveness or descendant custody. Callers must
+    establish both separately. The absolute 10-microsecond allowance covers
+    binary64 FILETIME epoch-conversion rounding; it is not a relative tolerance
+    or permission lifetime. Malformed or unsupported timestamps fail closed.
+    """
+    if (type(peer) is not dict or set(peer) != {"pid", "created_at"}
+            or type(pid) is not int or not 0 < pid <= 0xffffffff
+            or type(peer["pid"]) is not int or peer["pid"] != pid):
+        return False
+    observed = peer["created_at"]
+    # Bound before arithmetic/conversion, also excluding bool, NaN and infinity.
+    if any(type(value) not in (int, float) or not 0 < value < 2 ** 32
+           for value in (observed, created_at)):
+        return False
+    return abs(observed - created_at) <= 0.00001
+
+
+_VERIFIED_PIPE_PEER = ContextVar("verified_machine_pipe_peer", default=None)
+
+
+def _verified_machine_pipe_peer(request):
+    held = _VERIFIED_PIPE_PEER.get()
+    if held is None or held[0] is not request:
+        return None
+    return held[1]
+
+
+def _read_windows_pipe_peer(connection):
+    """Observe the accepted endpoint, retaining no process handle or credential.
+
+    Unsupported/denied observations remain absent for legacy requests. An
+    app-owned launcher must require this evidence and match its own retained
+    descendant identity; a UUID lookup alone is not physical custody.
+    """
+    if os.name != "nt":
+        return None
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    peer_pid = kernel.GetNamedPipeClientProcessId
+    peer_pid.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.ULONG))
+    peer_pid.restype = wintypes.BOOL
+    open_process = kernel.OpenProcess
+    open_process.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    open_process.restype = wintypes.HANDLE
+    process_times = kernel.GetProcessTimes
+    process_times.argtypes = (wintypes.HANDLE, *(ctypes.POINTER(wintypes.FILETIME),) * 4)
+    process_times.restype = wintypes.BOOL
+    wait = kernel.WaitForSingleObject
+    wait.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    wait.restype = wintypes.DWORD
+    close = kernel.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    close.restype = wintypes.BOOL
+    handle = None
+    try:
+        pipe = connection.fileno()
+        pid = wintypes.ULONG()
+        if not peer_pid(pipe, ctypes.byref(pid)) or pid.value <= 0:
+            return None
+        # QUERY_LIMITED_INFORMATION and SYNCHRONIZE; no mutation rights.
+        handle = open_process(0x00101000, False, pid.value)
+        if not handle:
+            return None
+        created, exited, kernel_time, user_time = (wintypes.FILETIME() for _ in range(4))
+        if not process_times(handle, ctypes.byref(created), ctypes.byref(exited),
+                             ctypes.byref(kernel_time), ctypes.byref(user_time)):
+            return None
+        ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+        created_at = (ticks - 116444736000000000) / 10000000.0
+        repeated = wintypes.ULONG()
+        if (created_at <= 0 or created_at > time.time()
+                or wait(handle, 0) != 258
+                or not peer_pid(pipe, ctypes.byref(repeated)) or repeated.value != pid.value):
+            return None
+        observed = _observe_machine_process(pid.value)
+        if (observed is not None and peer_matches_process(
+                {"pid": pid.value, "created_at": created_at}, observed.pid, observed.created_at)):
+            return observed
+        # Other machine operations still use the existing minimal PID custody;
+        # founder browser minting requires complete launch metadata below.
+        return MachinePipePeer(pid.value, created_at)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    finally:
+        if handle:
+            close(handle)
 
 
 def validate_baboom_native_frame_payload(
@@ -295,7 +486,7 @@ class _SecureWindowsPipeListener:
             raise
         return handle
 
-    def accept(self):
+    def accept(self, timeout_seconds=None):
         import _winapi
         from multiprocessing.connection import INFINITE, PipeConnection
 
@@ -309,14 +500,19 @@ class _SecureWindowsPipeListener:
                 raise
         else:
             try:
-                _winapi.WaitForMultipleObjects(
-                    [overlapped.event], False, INFINITE
+                waited = _winapi.WaitForMultipleObjects(
+                    [overlapped.event], False,
+                    INFINITE if timeout_seconds is None else max(1, int(timeout_seconds * 1000))
                 )
+                if waited == _winapi.WAIT_TIMEOUT:
+                    overlapped.cancel()
+                    raise TimeoutError("named pipe accept deadline exceeded")
             except Exception:
                 overlapped.cancel()
+                overlapped.GetOverlappedResult(True)
                 _winapi.CloseHandle(handle)
                 raise
-            finally:
+            else:
                 _transferred, error = overlapped.GetOverlappedResult(True)
                 if error:
                     _winapi.CloseHandle(handle)
@@ -345,11 +541,27 @@ class _AuthenticatedSecurePipeListener:
     def security_sddl(self) -> str:
         return self._listener.security_sddl
 
-    def accept(self):
-        connection = self._listener.accept()
+    def accept(self, timeout_seconds=None, authentication_timeout_seconds=None):
+        connection = (self._listener.accept() if timeout_seconds is None else
+                      self._listener.accept(timeout_seconds=timeout_seconds))
         try:
-            self._deliver_challenge(connection, self._authkey)
-            self._answer_challenge(connection, self._authkey)
+            challenge_connection = connection
+            if authentication_timeout_seconds is not None:
+                deadline = time.monotonic() + authentication_timeout_seconds
+
+                class BoundedChallenge:
+                    def send_bytes(self, value):
+                        return connection.send_bytes(value)
+
+                    def recv_bytes(self, maxlength=None):
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not connection.poll(remaining):
+                            raise TimeoutError("named pipe authentication deadline exceeded")
+                        return connection.recv_bytes(maxlength)
+
+                challenge_connection = BoundedChallenge()
+            self._deliver_challenge(challenge_connection, self._authkey)
+            self._answer_challenge(challenge_connection, self._authkey)
             return connection
         except Exception:
             connection.close()
@@ -1287,7 +1499,17 @@ class UniversalRuntimeTransport:
             )
             request_id = str(request["request_id"])
             self._remember(request_id)
-            result = dict(self.dispatch(request))
+            try:
+                peer = _read_windows_pipe_peer(connection)
+            except Exception:
+                # Optional physical observation cannot weaken or replace the
+                # existing signed request admission. Native launch requires it.
+                peer = None
+            peer_context = _VERIFIED_PIPE_PEER.set((request, peer))
+            try:
+                result = dict(self.dispatch(request))
+            finally:
+                _VERIFIED_PIPE_PEER.reset(peer_context)
             response = {
                 "ok": True,
                 "runtime_id": self.runtime_id,
@@ -1301,14 +1523,24 @@ class UniversalRuntimeTransport:
                 "request_id": request_id,
                 "error": str(exc),
             }
-        raw = _canonical(response)
+            if isinstance(exc, MachineEffectOutcomeUnknown):
+                response['effect_outcome'] = 'unknown'
+        try:
+            raw = _canonical(response)
+        except (TypeError, ValueError, UnicodeError):
+            response = {"ok": False, "runtime_id": self.runtime_id,
+                "request_id": request_id, "error": "machine response serialization failed",
+                "effect_outcome": "unknown"}
+            raw = _canonical(response)
         if len(raw) > _MAX_MESSAGE_BYTES:
-            raw = _canonical({
+            response = {
                 "ok": False,
                 "runtime_id": self.runtime_id,
                 "request_id": request_id,
                 "error": "machine response exceeds its size limit",
-            })
+                "effect_outcome": "unknown",
+            }
+            raw = _canonical(response)
         try:
             connection.send_bytes(raw)
         except (BrokenPipeError, EOFError, OSError):
@@ -1452,6 +1684,8 @@ class UniversalRuntimeClient:
         self,
         descriptor_path: str | os.PathLike[str],
         key_provider: ExportableSigningKeyProvider,
+        *,
+        cancellation_event: threading.Event | None = None,
     ) -> None:
         self.descriptor_path = Path(descriptor_path).expanduser().resolve()
         self.key_provider = key_provider
@@ -1461,22 +1695,52 @@ class UniversalRuntimeClient:
         self._agent_session_capability_id = ""
         self._agent_session_access = "full"
         self._runtime_presence_expires_at = 0.0
+        self._continuation_request = None
         self._request_lock = threading.RLock()
+        self._cancellation_event = cancellation_event
+        self._pinned_runtime_descriptor: RuntimeDescriptor | None = None
+
+    def pin_runtime_descriptor(self, descriptor: RuntimeDescriptor) -> None:
+        """Keep this client on one owner; replacement requires a new binding.
+
+        The descriptor is verified again inside the actual request path. A
+        preliminary read alone cannot prevent a descriptor swap before dispatch.
+        """
+        if type(descriptor) is not RuntimeDescriptor or descriptor.status != "active":
+            raise MachineTransportError("an active runtime descriptor is required")
+        with self._request_lock:
+            if self._pinned_runtime_descriptor not in (None, descriptor):
+                raise MachineTransportError("runtime client is already pinned to another owner")
+            self._pinned_runtime_descriptor = descriptor
+
+    def _check_cancelled(self) -> None:
+        if self._cancellation_event is not None and self._cancellation_event.is_set():
+            raise MachineTransportError("universal runtime request cancelled")
 
     def bind_agent_session(
         self,
         *,
         runtime: str,
         external_session_id: str,
+        expected_agent_session: str | None = None,
         device_credential_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
     ) -> dict[str, object]:
         """Enroll and retain one process-local graph Agent Session capability."""
         if self.agent_session_root or self._agent_session_token:
             raise MachineTransportError("runtime client already has an Agent Session")
+        if self._continuation_request is not None:
+            raise MachineTransportError("native continuation outcome requires its retained status; no enrollment retry")
         body: dict[str, object] = {
             "runtime": runtime,
             "external_session_id": external_session_id,
         }
+        if expected_agent_session is not None:
+            if type(expected_agent_session) is not str or not re.fullmatch(
+                    r"app:agent-session:runtime:[a-f0-9]{32}", expected_agent_session):
+                raise MachineTransportError("conditional enrollment requires an exact existing actor")
+            body["expected_agent_session"] = expected_agent_session
+            body["continuation_id"] = f"{int(time.time()):08x}"+secrets.token_hex(12)
+            self._continuation_request = dict(body)
         if device_credential_provider is not None:
             challenge = self.request(
                 "POST",
@@ -1488,11 +1752,16 @@ class UniversalRuntimeClient:
                 raise MachineTransportError("runtime device credential is invalid")
             body["device_credential"] = credential
         result = self.request("POST", "/api/universal/agent-session", body)
+        return self._accept_agent_session_result(result, expected_agent_session)
+
+    def _accept_agent_session_result(self, result, expected_agent_session=None):
         root = result.get("agent_session")
         token = result.get("session_token")
         expires_at = result.get("expires_at")
         if (
             type(root) is not str
+            or (expected_agent_session is not None and
+                (root != expected_agent_session or result.get("continued") is not True))
             or not root.startswith("app:agent-session:runtime:")
             or type(token) is not str
             or len(token) < 32
@@ -1511,6 +1780,74 @@ class UniversalRuntimeClient:
     def agent_session_access(self) -> str:
         """Expose the volatile capability class without inventing graph state."""
         return self._agent_session_access
+
+    def reconcile_agent_session(self, *, runtime, external_session_id, expected_agent_session, projection=None, cursor=None):
+        """Inspect existing custody without enrollment, renewal or state reset."""
+        with self._request_lock:
+            if self.agent_session_root or self._agent_session_token:
+                raise MachineTransportError("native reconciliation requires an unbound inspection client")
+            if projection not in (None, "effects"):
+                raise MachineTransportError("Native reconciliation projection is invalid")
+            body = {
+                "runtime":runtime, "external_session_id":external_session_id,
+                "expected_agent_session":expected_agent_session}
+            if projection is not None:
+                body["projection"] = projection
+            if cursor is not None:
+                if projection != "effects" or type(cursor) is not str or re.fullmatch(r"[0-9a-f]{32}", cursor) is None:
+                    raise MachineTransportError("Native effects cursor is invalid")
+                body["cursor"] = cursor
+            result = self.request("POST", "/api/universal/agent-session-reconcile", body)
+            if (result.get("agent_session") != expected_agent_session
+                    or result.get("runtime") != runtime
+                    or result.get("binding_status") not in {"absent","retained","expired"}
+                    or result.get("historical_attempt_outcome") != "unknown"
+                    or result.get("continuation_authorized") is not False
+                    or "session_token" in result or "capability" in result):
+                raise MachineTransportError("native reconciliation response is invalid")
+            if projection == "effects":
+                effects = result.get("effects")
+                if (type(effects) is not dict or effects.get("projection") != "effects"
+                        or effects.get("agent_session") != expected_agent_session
+                        or effects.get("revision") != result.get("revision")
+                        or effects.get("settlement_performed") is not False
+                        or effects.get("disclosure") not in {"minimal", "bound-peer"}
+                        or type(effects.get("pending_permits")) is not list
+                        or len(effects["pending_permits"]) > 16 or type(effects.get("truncated")) is not bool
+                        or len(json.dumps(result, ensure_ascii=True).encode("utf-8")) > 65536):
+                    raise MachineTransportError("native effects inspection response is invalid")
+                next_cursor = effects.get('next_cursor')
+                receipts = effects.get('receipt_references')
+                if (type(receipts) is not list or len(receipts) + len(effects['pending_permits']) > 16
+                        or (next_cursor is not None and (type(next_cursor) is not str
+                            or re.fullmatch('[a-f0-9]{32}', next_cursor) is None))
+                        or effects['truncated'] != (next_cursor is not None)
+                        or (effects['disclosure'] == 'bound-peer' and result.get('binding_matches_caller') is not True)
+                        or any(key.startswith('_') for key in effects)):
+                    raise MachineTransportError('Native effects continuation or custody is invalid')
+                if effects['disclosure'] == 'minimal' and (receipts or any(
+                        type(row) is not dict or set(row) != {'permit','state','issued_at','expires_at'}
+                        for row in effects['pending_permits'])):
+                    raise MachineTransportError('Native effects minimal disclosure is invalid')
+            return result
+
+    def recover_agent_session_continuation(self):
+        """Read the retained attempt once per explicit call; never mint again."""
+        with self._request_lock:
+            if self.agent_session_root or self._agent_session_token or self._continuation_request is None:
+                raise MachineTransportError("native continuation has no uncertain retained attempt")
+            held = self._continuation_request
+            response = self.request("POST", "/api/universal/agent-session-continuation-status", dict(held))
+            if (type(response) is dict and set(response) == {'continuation_id','agent_session','outcome'}
+                    and response['continuation_id'] == held['continuation_id']
+                    and response['agent_session'] == held['expected_agent_session']
+                    and response['outcome'] == 'not-enrolled'):
+                raise MachineContinuationNotEnrolled('Exact native continuation was refused before enrollment')
+            if (response.get("continuation_id") != held["continuation_id"]
+                    or response.get("agent_session") != held["expected_agent_session"]
+                    or response.get("outcome") != "confirmed" or type(response.get("result")) is not dict):
+                raise MachineTransportError("native continuation outcome remains unavailable; no enrollment retry")
+            return self._accept_agent_session_result(response["result"],held["expected_agent_session"])
 
     def resume_agent_session(
         self,
@@ -1593,6 +1930,84 @@ class UniversalRuntimeClient:
             self._agent_session_token = token
             self._agent_session_expires_at = float(expires_at)
             return result
+
+    def release_agent_session(self, release_id, *, recover=False):
+        """Release once; a lost response is recovered by an exact read only.
+
+        Retain the old token in this client for bounded server receipt proof.
+        Never renew it or use it for ordinary operations after this attempt.
+        """
+        with self._request_lock:
+            if (not self.agent_session_root or not self._agent_session_token
+                    or type(release_id) is not str or not re.fullmatch(r"[0-9a-f]{32}", release_id)):
+                raise MachineTransportError("native release identity is invalid")
+            held = getattr(self, "_agent_session_release_id", None)
+            if held is not None and held != release_id:
+                raise MachineTransportError("native release request changed")
+            if recover and held is None:
+                raise MachineTransportError("native release has no retained attempt")
+            if held is not None and not recover:
+                raise MachineTransportError("native release requires read-only recovery")
+            if not recover and self._agent_session_access != "full":
+                raise MachineTransportError("native release requires full owner")
+            self._agent_session_release_id = release_id
+            self._agent_session_access = "release-uncertain"
+            path = "/api/universal/agent-session-release-status" if recover else "/api/universal/agent-session-release"
+            result = self._request_once("POST", path, {"release_id": release_id})
+            if (recover and result.get("released") is False and result.get("retained") is True
+                    and result.get("release_id") == release_id
+                    and result.get("agent_session") == self.agent_session_root):
+                self._agent_session_access = "full"
+                self._agent_session_release_id = None
+                return result
+            if (result.get("released") is not True or result.get("release_id") != release_id
+                    or result.get("agent_session") != self.agent_session_root):
+                raise MachineTransportError("native release response does not match owner")
+            self._agent_session_access = "released"
+            return result
+
+    def _session_link_request(self, body, *, timeout_seconds):
+        """Use this already-bound client; never enroll or borrow another caller."""
+        with self._request_lock:
+            if (not self.agent_session_root or not self._agent_session_token
+                    or self._agent_session_access != "full"):
+                raise MachineTransportError("Session Link requires a fully bound Agent Session")
+            return self.request("POST", "/api/universal/agent-session-link", body,
+                                response_timeout_seconds=timeout_seconds)
+
+    def session_link_scope(self) -> dict[str, object]:
+        result = self._session_link_request({"phase": "scope"}, timeout_seconds=10)
+        fields = ("instance_id", "destination_fingerprint")
+        if any(type(result.get(key)) is not str
+               or not re.fullmatch(r"[0-9a-f]{64}", result[key]) for key in fields):
+            raise MachineTransportError("Session Link scope response is invalid")
+        return {key: result[key] for key in fields}
+
+    def attach_session_link(self, capability) -> dict[str, object]:
+        """Transfer the host grant only inside the existing authenticated request."""
+        if type(capability) is not dict or type(capability.get("instance_id")) is not str:
+            raise MachineTransportError("Session Link attachment is invalid")
+        result = self._session_link_request(
+            {"phase": "attach", "capability": dict(capability)}, timeout_seconds=35)
+        if (result.get("attached") is not True
+                or result.get("instance_id") != capability["instance_id"]
+                or type(result.get("expires_at")) not in (int, float)
+                or not math.isfinite(result["expires_at"])):
+            raise MachineTransportError("Session Link attachment response is invalid")
+        # Even an unexpected server field cannot echo the bearer capability.
+        return {key: result[key] for key in ("attached", "instance_id", "expires_at")}
+
+    def detach_session_link(self) -> dict[str, object]:
+        result = self._session_link_request({"phase": "detach"}, timeout_seconds=20)
+        if result.get("status") not in {"ok", "uncertain"}:
+            raise MachineTransportError("Session Link detach response is invalid")
+        clean = {"status": result["status"]}
+        for key in ("detached", "revoked", "local_call_joined", "worker_stopped"):
+            if key in result:
+                if type(result[key]) is not bool:
+                    raise MachineTransportError("Session Link detach response is invalid")
+                clean[key] = result[key]
+        return clean
 
     def renew_runtime_presence(self) -> dict[str, object]:
         """Refresh this device-proofed session's graph-held presence lease."""
@@ -1755,7 +2170,13 @@ class UniversalRuntimeClient:
             or attention["blocked_obligations"] < 0
             or type(attention["active_focus"]) is not bool
             or not isinstance(workshop, dict)
-            or set(workshop) != {"entry_count", "category_counts"}
+            or set(workshop) not in (
+                {"entry_count", "category_counts"},
+                {"entry_count", "category_counts", "category_counts_complete"},
+            )
+            or type(workshop.get("category_counts_complete", True)) is not bool
+            or (workshop.get("category_counts_complete") is False
+                and workshop.get("category_counts") != {})
             or type(workshop["entry_count"]) is not int
             or workshop["entry_count"] < 0
             or not isinstance(workshop["category_counts"], dict)
@@ -2496,6 +2917,154 @@ class UniversalRuntimeClient:
             raise MachineTransportError("current Work response is invalid")
         return {"root": work["root"], "title": work["title"]}
 
+    def current_claimed_work_detail(self) -> dict[str, object]:
+        """Read this session's claimed Work interfaces and exact claim metadata.
+
+        Preserve the snapshot revision for consumers. This read is not an
+        approved execution plan and does not include review/complete Work.
+        The response wait is ten seconds; renewal and pipe connection setup
+        remain outside a strict wall-clock deadline.
+        """
+        return self._current_work_projection("detail", frozenset({"claimed"}))
+
+    def work_release_recovery(self, work_root: str, claim_binding: str, after_revision: int) -> dict[str, object]:
+        """Inspect exact original-claim history; false remains unresolved."""
+        if not self.agent_session_root:
+            raise MachineTransportError("Work release recovery requires a bound runtime Agent Session")
+        result = self.request("GET", "/api/universal/work-current", {
+            "projection": "release-recovery", "work_root": work_root,
+            "claim_binding": claim_binding, "after_revision": after_revision,
+        }, response_timeout_seconds=10.0)
+        if (type(result) is not dict or set(result) != {"projection", "work_root", "agent_session",
+                "claim_binding", "revision", "after_revision", "released", "history_root", "receipt_reconstructed"}
+                or result["projection"] != "release-recovery" or result["work_root"] != work_root
+                or result["agent_session"] != self.agent_session_root or result["claim_binding"] != claim_binding
+                or result["after_revision"] != after_revision or type(result["revision"]) is not int
+                or type(after_revision) is not int or result["revision"] < after_revision
+                or type(result["released"]) is not bool or result["receipt_reconstructed"] is not False
+                or (result["released"] and (type(result["history_root"]) is not str or not result["history_root"]))
+                or (not result["released"] and result["history_root"] is not None)):
+            raise MachineTransportError("Work release recovery projection is invalid")
+        return result
+
+    def selected_work_configuration(self, work_root, *, revision_id=None):
+        result = self.request('GET', '/api/universal/work-current',
+            {'projection':'selected-configuration', 'work_root':work_root,
+             **({'revision_id':revision_id} if revision_id is not None else {})}, response_timeout_seconds=15.0)
+        if (type(result) is not dict or result.get('agent_session') != self.agent_session_root
+                or result.get('projection') != 'selected-configuration'
+                or type(result.get('work')) is not dict or result['work'].get('root') != work_root
+                or type(result['work'].get('configuration')) is not dict
+                or type(result.get('revision')) is not int
+                or result['work']['configuration'].get('revision') != result['revision']):
+            raise MachineTransportError('Selected Work configuration response is invalid')
+        return result
+
+    def configure_selected_work(self, proposal, *, reconcile=False):
+        result = self.request('POST', '/api/universal/work-configuration',
+            {**proposal, 'phase':'reconcile' if reconcile else 'stage'}, response_timeout_seconds=20.0)
+        if (type(result) is not dict or result.get('agent_session') != self.agent_session_root
+                or result.get('work_root') != proposal['work_root']
+                or result.get('revision_id') != proposal['revision_id']
+                or type(result.get('revision')) is not int
+                or result['revision'] < proposal['expected_revision']
+                or result.get('execution_authorized') is not False
+                or result.get('projection') != ('configuration-recovery' if reconcile else 'configuration-result')):
+            raise MachineTransportError('Native Work configuration outcome is uncertain')
+        if reconcile:
+            if (type(result.get('applied')) is not bool or type(result.get('staged')) is not bool
+                    or type(result.get('not_staged')) is not bool
+                    or result['staged'] and result['not_staged']
+                    or result.get('receipt_reconstructed') is not False):
+                raise MachineTransportError('Native Work configuration recovery is invalid')
+        elif (type(result.get('configuration')) is not dict
+                or result['configuration'].get('staged') is not True
+                or type(result['configuration'].get('applied')) is not bool
+                or result['configuration'].get('revision_id') != proposal['revision_id']
+                or result['configuration'].get('revision') != result['revision']):
+            raise MachineTransportError('Native Work configuration application is unconfirmed')
+        return result
+
+    def current_work_configuration(self) -> dict[str, object]:
+        """Read bounded configuration of this authenticated session's current Work."""
+        if not self.agent_session_root:
+            raise MachineTransportError("Work configuration requires a bound runtime Agent Session")
+        result = self.request("GET", "/api/universal/work-current", {"projection": "configuration"},
+                              response_timeout_seconds=10.0)
+        if (type(result) is not dict or set(result) != {"agent_session", "work", "projection", "revision"}
+                or result["agent_session"] != self.agent_session_root or result["projection"] != "configuration"
+                or type(result["revision"]) is not int or result["revision"] < 0
+                or len(json.dumps(result, ensure_ascii=True).encode("utf-8")) > 65536):
+            raise MachineTransportError("Work configuration envelope is invalid")
+        work = result["work"]
+        if work is not None:
+            if (type(work) is not dict or set(work) != {"root", "configuration"}
+                    or type(work["root"]) is not str or not work["root"].startswith("assembly-instance:")
+                    or len(work["root"].encode("utf-8")) > 512 or type(work["configuration"]) is not dict):
+                raise MachineTransportError("Work configuration identity is invalid")
+            config = work["configuration"]
+            if (config.get("revision") != result["revision"] or config.get("state") != "claimed"
+                    or config.get("editable") is not False or type(config.get("fields")) is not dict
+                    or set(config["fields"]) != {"inputs", "requirements", "cde-container"}):
+                raise MachineTransportError("Work configuration projection is invalid")
+        return result
+
+    def current_work_assignment(self) -> dict[str, object]:
+        """Read one pending assignment (claimed/review/blocked), never approval.
+
+        Null means no pending assignment, not completion proof. The response
+        wait is ten seconds; renewal/connection setup has no absolute deadline.
+        """
+        return self._current_work_projection("assignment", frozenset({"claimed", "review", "blocked"}))
+
+    def _current_work_projection(self, projection: str, states: frozenset[str]) -> dict[str, object]:
+        if not self.agent_session_root:
+            raise MachineTransportError("current Work " + projection + " requires a bound runtime Agent Session")
+        result = self.request("GET", "/api/universal/work-current", {"projection": projection},
+                              response_timeout_seconds=10.0)
+        if (type(result) is not dict
+                or set(result) != {"agent_session", "revision", "projection", "work"}
+                or result["agent_session"] != self.agent_session_root
+                or result["projection"] != projection
+                or type(result["revision"]) is not int or result["revision"] < 0):
+            raise MachineTransportError("current Work " + projection + " envelope is invalid")
+        work = result["work"]
+        if work is None:
+            return result
+        def root(value):
+            return type(value) is str and bool(value.strip()) and len(value.encode("utf-8")) <= 512
+        if (type(work) is not dict or not root(work.get("root"))
+                or not work["root"].startswith("assembly-instance:")
+                or work.get("claimant_session") != self.agent_session_root
+                or not root(work.get("claimant_agent_body")) or not root(work.get("claim_binding"))
+                or type(work.get("interfaces")) not in (list, tuple)
+                or not 0 < len(work["interfaces"]) <= 256
+                or type(work.get("operational")) is not dict
+                or type(work["operational"].get("current_state_label")) is not str
+                or work["operational"]["current_state_label"].casefold() not in states):
+            raise MachineTransportError("current Work " + projection + " claim is invalid")
+        names, roots = set(), set()
+        for interface in work["interfaces"]:
+            if (type(interface) is not dict or interface.get("owner") != work["root"]
+                    or not root(interface.get("id")) or not root(interface.get("target"))
+                    or not root(interface.get("name")) or type(interface.get("value")) is not str
+                    or interface["id"] in roots or interface["name"] in names):
+                raise MachineTransportError("current Work " + projection + " interface is invalid")
+            roots.add(interface["id"])
+            names.add(interface["name"])
+        if projection == "assignment":
+            requirements = work.get("requirements")
+            interfaces = [item for item in work["interfaces"] if item["name"] == "requirements"]
+            if (type(requirements) is not dict
+                    or set(requirements) != {"interface", "target", "wired", "value"}
+                    or len(interfaces) != 1
+                    or requirements["interface"] != interfaces[0]["id"]
+                    or requirements["target"] != interfaces[0]["target"]
+                    or type(requirements["wired"]) is not bool
+                    or (not requirements["wired"] and requirements["value"] is not None)):
+                raise MachineTransportError("current Work assignment requirements are invalid")
+        return result
+
     def issue_cde_write_permit(
         self,
         *,
@@ -2504,8 +3073,12 @@ class UniversalRuntimeClient:
         content_digest: str,
         request_id: str,
         nonce: str,
+        response_timeout_seconds: float | None = None,
     ) -> dict[str, object]:
-        """Request one short-lived permit derived from this session's Work."""
+        """Request one short-lived permit derived from this session's Work.
+
+        Optional timeout bounds the response wait, not renewal or connection.
+        """
         if not self.agent_session_root:
             raise MachineTransportError(
                 "CDE write permit requires a bound runtime Agent Session"
@@ -2523,6 +3096,14 @@ class UniversalRuntimeClient:
             raise MachineTransportError(
                 "CDE write permit content digest is invalid"
             )
+        timeout_options = {}
+        if response_timeout_seconds is not None:
+            if (not isinstance(response_timeout_seconds, (int, float))
+                    or isinstance(response_timeout_seconds, bool)
+                    or not 0 < response_timeout_seconds <= _default_machine_response_timeout(
+                        "POST", "/api/universal/cde-write-permit")):
+                raise MachineTransportError("universal runtime response timeout is invalid")
+            timeout_options["response_timeout_seconds"] = float(response_timeout_seconds)
         result = self.request(
             "POST",
             "/api/universal/cde-write-permit",
@@ -2533,6 +3114,7 @@ class UniversalRuntimeClient:
                 "request_id": request_id,
                 "nonce": nonce,
             },
+            **timeout_options,
         )
         expected = {
             "permit", "agent_session", "work", "claim_binding",
@@ -2578,8 +3160,12 @@ class UniversalRuntimeClient:
         path: str,
         content_digest: str,
         request_id: str,
+        response_timeout_seconds: float | None = None,
     ) -> dict[str, object]:
-        """Record one exact write result against its graph-held permit."""
+        """Record one exact write result against its graph-held permit.
+
+        Optional timeout bounds the response wait, not renewal or connection.
+        """
         if not self.agent_session_root:
             raise MachineTransportError(
                 "CDE write receipt requires a bound runtime Agent Session"
@@ -2597,6 +3183,14 @@ class UniversalRuntimeClient:
             raise MachineTransportError(
                 "CDE write receipt content digest is invalid"
             )
+        timeout_options = {}
+        if response_timeout_seconds is not None:
+            if (not isinstance(response_timeout_seconds, (int, float))
+                    or isinstance(response_timeout_seconds, bool)
+                    or not 0 < response_timeout_seconds <= _default_machine_response_timeout(
+                        "POST", "/api/universal/cde-write-receipt")):
+                raise MachineTransportError("universal runtime response timeout is invalid")
+            timeout_options["response_timeout_seconds"] = float(response_timeout_seconds)
         result = self.request(
             "POST",
             "/api/universal/cde-write-receipt",
@@ -2607,6 +3201,7 @@ class UniversalRuntimeClient:
                 "content_digest": content_digest,
                 "request_id": request_id,
             },
+            **timeout_options,
         )
         expected = {
             "receipt", "permit", "kind", "receipt_digest",
@@ -2638,7 +3233,7 @@ class UniversalRuntimeClient:
             )
         return result
 
-    def claim_work(self, work_root: str) -> dict[str, object]:
+    def claim_work(self, work_root: str, *, expected_revision: int | None = None) -> dict[str, object]:
         """Claim one exact open governed Work under this Agent Session."""
         if not self.agent_session_root:
             raise MachineTransportError(
@@ -2646,9 +3241,12 @@ class UniversalRuntimeClient:
             )
         if type(work_root) is not str or not work_root:
             raise MachineTransportError("exact work claim target is invalid")
-        return self.request(
-            "POST", "/api/universal/work-claim", {"root": work_root}
-        )
+        body = {"root":work_root}
+        if expected_revision is not None:
+            if type(expected_revision) is not int or expected_revision < 0:
+                raise MachineTransportError("exact work claim revision is invalid")
+            body["expected_revision"] = expected_revision
+        return self.request("POST", "/api/universal/work-claim", body)
 
     def recover_work_claim(
         self,
@@ -2656,6 +3254,8 @@ class UniversalRuntimeClient:
         evidence: str,
         *,
         projection: str = "status",
+        expected_claimant: str | None = None,
+        expected_revision: int | None = None,
     ) -> dict[str, object]:
         """Recover and claim work abandoned by a stale runtime capability."""
         if not self.agent_session_root:
@@ -2671,6 +3271,11 @@ class UniversalRuntimeClient:
                 "stale work claim recovery projection is invalid"
             )
         body: dict[str, object] = {"root": work_root, "evidence": evidence}
+        if expected_claimant is not None or expected_revision is not None:
+            if (type(expected_claimant) is not str or not expected_claimant
+                    or type(expected_revision) is not int or expected_revision < 0):
+                raise MachineTransportError("stale work claim recovery admission is invalid")
+            body.update(expected_claimant=expected_claimant, expected_revision=expected_revision)
         if projection == "index":
             body["projection"] = "index"
         return self.request(
@@ -2712,6 +3317,7 @@ class UniversalRuntimeClient:
         work_root: str,
         *,
         projection: str = "status",
+        expected_revision: int | None = None,
     ) -> dict[str, object]:
         if not self.agent_session_root:
             raise MachineTransportError(
@@ -2720,6 +3326,10 @@ class UniversalRuntimeClient:
         if projection not in {"status", "index"}:
             raise MachineTransportError("work court projection is invalid")
         body: dict[str, object] = {"root": work_root}
+        if expected_revision is not None:
+            if type(expected_revision) is not int or expected_revision < 0:
+                raise MachineTransportError("work court expected revision is invalid")
+            body["expected_revision"] = expected_revision
         if projection == "index":
             body["projection"] = "index"
         return self.request(
@@ -2768,7 +3378,11 @@ class UniversalRuntimeClient:
         lets non-authoritative projections such as BABOOM's context lens fail
         fast instead of inheriting the long court/work timeout.
         """
+        self._check_cancelled()
         with self._request_lock:
+            self._check_cancelled()
+            if self._agent_session_access in {"release-uncertain", "released"}:
+                raise MachineTransportError("native owner released or release uncertain; use exact release recovery")
             if (
                 self.agent_session_root
                 and self._agent_session_access == "full"
@@ -2793,9 +3407,12 @@ class UniversalRuntimeClient:
         request_id: str | None = None,
         response_timeout_seconds: float | None = None,
     ) -> dict[str, object]:
+        self._check_cancelled()
         descriptor = _read_descriptor(self.descriptor_path, self.key_provider)
         if descriptor.status != "active":
             raise MachineTransportError("universal runtime is not active")
+        if self._pinned_runtime_descriptor is not None and descriptor != self._pinned_runtime_descriptor:
+            raise MachineTransportError("universal runtime owner changed; reconnect through admitted enrollment")
         material = self.key_provider.resolve(
             descriptor.key_id, descriptor.key_version
         )
@@ -2837,6 +3454,7 @@ class UniversalRuntimeClient:
         except (EOFError, OSError) as exc:
             raise MachineTransportError("universal runtime pipe is unavailable") from exc
         try:
+            self._check_cancelled()
             connection.send_bytes(raw)
             default_timeout = _default_machine_response_timeout(method, path)
             if response_timeout_seconds is None:
@@ -2849,8 +3467,19 @@ class UniversalRuntimeClient:
                 raise MachineTransportError("universal runtime response timeout is invalid")
             else:
                 response_timeout = float(response_timeout_seconds)
-            if not connection.poll(response_timeout):
-                raise MachineTransportError("universal runtime did not respond")
+            if self._cancellation_event is None:
+                if not connection.poll(response_timeout):
+                    raise MachineTransportError("universal runtime did not respond")
+            else:
+                deadline = time.monotonic() + response_timeout
+                while True:
+                    self._check_cancelled()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise MachineTransportError("universal runtime did not respond")
+                    if connection.poll(min(0.1, remaining)):
+                        self._check_cancelled()
+                        break
             response = json.loads(
                 connection.recv_bytes(_MAX_MESSAGE_BYTES).decode("utf-8")
             )
@@ -2866,8 +3495,12 @@ class UniversalRuntimeClient:
             or response["request_id"] != identity
         ):
             raise MachineTransportError("universal runtime response binding failed")
+        if response["ok"] is False:
+            if response.get("effect_outcome") == "unknown":
+                raise MachineTransportError(str(response.get("error") or "request outcome unknown"))
+            raise MachineResponseError(str(response.get("error") or "request denied"))
         if response["ok"] is not True:
-            raise MachineTransportError(str(response.get("error") or "request denied"))
+            raise MachineTransportError("universal runtime response status is invalid")
         result = response.get("result")
         if type(result) is not dict:
             raise MachineTransportError("universal runtime result is invalid")
@@ -2879,6 +3512,7 @@ __all__ = [
     "BABOOM_NATIVE_REPORT_KIND",
     "BABOOM_NATIVE_REPORT_SUMMARY",
     "MachineTransportError",
+    "MachineResponseError",
     "RuntimeDescriptor",
     "UniversalRuntimeClient",
     "UniversalRuntimeTransport",

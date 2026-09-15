@@ -9,12 +9,14 @@ existing graph path.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import os
 import shutil
 import subprocess
 import threading
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +100,23 @@ class EnvironmentOpenRouterCredentialResolver:
     def openrouter_api_key(self) -> str | None:
         value = os.environ.get("OPENROUTER_API_KEY")
         return value if value else None
+
+
+class ApplicationOpenRouterCredentialResolver:
+    """Explicit opt-in to this OS user's existing application credential store.
+
+    The owning entry point must select this resolver; a generic broker does not
+    gain access to application credentials merely by being constructed.
+    """
+
+    def openrouter_api_key(self) -> str | None:
+        from .model_router import ModelRouteRefused, discover_key
+
+        try:
+            key, _source = discover_key("openrouter")
+        except ModelRouteRefused:
+            return None
+        return key or None
 
 
 class LocalModelExecutionHost:
@@ -225,6 +244,26 @@ class LocalModelExecutionHost:
         try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 body = response.read(_MAX_OUTPUT_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            # Never retain provider error bodies or headers: they may echo input
+            # or credentials. The status alone distinguishes actionable failures.
+            code = {
+                401: "provider_authentication_failed",
+                402: "provider_credits_required",
+                403: "provider_access_denied",
+                429: "provider_rate_limited",
+            }.get(exc.code, "provider_http_error")
+            try:
+                exc.close()
+            except Exception:
+                pass  # Cleanup failure must not replace the sanitized status.
+            return HostProcessResult(False, error_code=code)
+        except TimeoutError:
+            return HostProcessResult(False, error_code="provider_timeout")
+        except urllib.error.URLError as exc:
+            return HostProcessResult(False, error_code=(
+                "provider_timeout" if isinstance(exc.reason, TimeoutError)
+                else "provider_unavailable"))
         except Exception:
             return HostProcessResult(False, error_code="provider_unavailable")
         if len(body) > _MAX_OUTPUT_BYTES:
@@ -302,8 +341,10 @@ def _extract_provider_text(provider: str, raw: bytes) -> str | None:
     return text
 
 
-def _parse_review_payload(provider: str, raw: bytes) -> dict[str, object] | None:
-    text = _extract_provider_text(provider, raw)
+def _parse_review_payload(
+    provider: str, raw: bytes, *, decoded_text: str | None = None,
+) -> dict[str, object] | None:
+    text = decoded_text if decoded_text is not None else _extract_provider_text(provider, raw)
     if text is None:
         return None
     try:
@@ -358,12 +399,15 @@ class ModelExecutionBroker:
         credential_resolver: OpenRouterCredentialResolver | None = None,
         executables: Mapping[str, str] | None = None,
         timeout_seconds: float = 300.0,
+        max_output_tokens: int = 1200,
     ) -> None:
         root = Path(workspace_root).resolve()
         if not root.is_dir():
             raise ValueError("model broker workspace root is unavailable")
         if type(timeout_seconds) not in (int, float) or not 1.0 <= float(timeout_seconds) <= 900.0:
             raise ValueError("model broker timeout is invalid")
+        if type(max_output_tokens) is not int or not 1 <= max_output_tokens <= 4096:
+            raise ValueError("model broker output token budget is invalid")
         self._workspace_root = root
         self._host = host or LocalModelExecutionHost()
         self._credential_resolver = (
@@ -371,6 +415,7 @@ class ModelExecutionBroker:
         )
         self._executables = dict(executables or {})
         self._timeout_seconds = float(timeout_seconds)
+        self._max_output_tokens = max_output_tokens
 
     def _executable(self, location: str) -> str | None:
         configured = self._executables.get(location)
@@ -456,8 +501,15 @@ class ModelExecutionBroker:
         model: str,
         data_class: str,
         task: str,
+        free_only: bool = False,
+        reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> ModelExecutionResult:
         """Run one graph-authorized provider attempt without storing its output."""
+        if type(free_only) is not bool:
+            return _failed(b"", "invalid_invocation")
+        if max_output_tokens is not None and (type(max_output_tokens) is not int or not 1 <= max_output_tokens <= 4096):
+            return _failed(b"", "invalid_invocation")
         try:
             provider = _bounded_text(provider, "provider", 80)
             location = _bounded_text(location, "provider location", 160)
@@ -469,11 +521,20 @@ class ModelExecutionBroker:
             return _failed(b"", "data_class_denied")
         if data_class == _LOCAL_ONLY_DATA_CLASS and location != "local-http:ollama":
             return _failed(b"", "data_class_denied")
+        if (free_only or reasoning_effort is not None) and (provider, location) != ("openrouter", "network:openrouter"):
+            return _failed(b"", "provider_binding_denied")
         prompt = (
             task
-            + "\n\nReturn only one JSON object with summary, next_actions, risks, and uncertainty."
+            + '\n\nReturn ONLY one JSON object with exactly these fields: '
+            '"summary": a nonempty string of at most 1200 UTF-8 bytes; '
+            '"next_actions": an array of 1 to 8 nonempty strings, each at most 280 UTF-8 bytes; '
+            '"risks": an array of 0 to 4 nonempty strings, each at most 280 UTF-8 bytes '
+            '(use [] when there are no risks); '
+            '"uncertainty": a finite JSON number between 0 and 1. '
+            'No Markdown fences, other fields, or text outside the JSON object.'
         ).encode("utf-8")
         result: HostProcessResult
+        decoded_text = None
         if location == "local-cli:codex" and provider == "gpt":
             executable = self._executable(location)
             if not executable:
@@ -516,23 +577,69 @@ class ModelExecutionBroker:
                 timeout_seconds=self._timeout_seconds,
             )
         elif location == "network:openrouter" and provider == "openrouter":
-            key = self._credential_resolver.openrouter_api_key()
-            if not key:
-                return _failed(b"", "provider_unavailable")
-            result = self._host.post_json(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": "Bearer " + key,
-                    "Content-Type": "application/json",
-                },
-                payload={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt.decode("utf-8")}],
-                    "temperature": 0.0,
-                    "max_tokens": 1200,
-                },
-                timeout_seconds=self._timeout_seconds,
-            )
+            from .model_router import OPENROUTER_CHAT, ModelRouteRefused, resolve_model_route, route_chat
+
+            try:
+                destination = resolve_model_route(model)
+            except ModelRouteRefused:
+                return _failed(b"", "provider_binding_denied")
+            if destination.family != "openrouter" or destination.url != OPENROUTER_CHAT:
+                return _failed(b"", "provider_binding_denied")
+            captured: list[HostProcessResult] = []
+            credential_requested = False
+
+            def credential(_name):
+                nonlocal credential_requested
+                credential_requested = True
+                return self._credential_resolver.openrouter_api_key() or ""
+
+            def send(request, timeout):
+                if request.full_url != OPENROUTER_CHAT:
+                    raise ModelRouteRefused("Provider binding changed.")
+                payload = json.loads(request.data)
+                payload["response_format"] = {"type":"json_schema", "json_schema":{
+                    "name":"workshop_review", "strict":True, "schema":{
+                        "type":"object", "additionalProperties":False,
+                        "required":sorted(_REVIEW_FIELDS), "properties":{
+                            "summary":{"type":"string", "minLength":1, "maxLength":1200},
+                            "next_actions":{"type":"array", "minItems":1, "maxItems":8,
+                                "items":{"type":"string", "minLength":1, "maxLength":280}},
+                            "risks":{"type":"array", "maxItems":4,
+                                "items":{"type":"string", "minLength":1, "maxLength":280}},
+                            "uncertainty":{"type":"number", "minimum":0, "maximum":1},
+                        }}}}
+                payload.setdefault("provider", {})["require_parameters"] = True
+                answer = self._host.post_json(
+                    request.full_url, headers=dict(request.header_items()),
+                    payload=payload, timeout_seconds=timeout,
+                )
+                if len(answer.stdout) > _MAX_OUTPUT_BYTES:
+                    answer = HostProcessResult(False, answer.stdout[:_MAX_OUTPUT_BYTES],
+                                               answer.error_code or "output_too_large")
+                captured.append(answer)
+                if not answer.ok:
+                    raise urllib.error.URLError("Provider request failed.")
+                return io.BytesIO(answer.stdout)
+
+            try:
+                routed = route_chat(
+                    model, [{"role": "user", "content": prompt.decode("utf-8")}],
+                    free_only=free_only or destination.model == "openrouter/free"
+                    or destination.model.endswith(":free"),
+                    max_tokens=self._max_output_tokens if max_output_tokens is None else max_output_tokens,
+                    temperature=0.0, timeout=self._timeout_seconds,
+                    reasoning_effort=reasoning_effort,
+                    opener=send, environ={}, secrets_loader=credential, cloud_session=None,
+                )
+            except ModelRouteRefused:
+                if captured:
+                    failed = captured[-1]
+                    return _failed(failed.stdout, failed.error_code or "invalid_model_output")
+                return _failed(b"", "provider_unavailable" if credential_requested else "provider_binding_denied")
+            result = captured[-1]
+            if routed.get("finish_reason") == "length":
+                return _failed(result.stdout, "incomplete_model_output")
+            decoded_text = routed["text"]
         elif location == "local-http:ollama" and provider == "local":
             result = self._host.post_json(
                 "http://127.0.0.1:11434/api/generate",
@@ -550,7 +657,7 @@ class ModelExecutionBroker:
         raw = result.stdout[:_MAX_OUTPUT_BYTES]
         if not result.ok:
             return _failed(raw, result.error_code or "provider_failed")
-        proposal = _parse_review_payload(provider, raw)
+        proposal = _parse_review_payload(provider, raw, decoded_text=decoded_text)
         if proposal is None:
             return _failed(raw, "invalid_model_output")
         return ModelExecutionResult(
@@ -563,6 +670,7 @@ class ModelExecutionBroker:
 
 
 __all__ = [
+    "ApplicationOpenRouterCredentialResolver",
     "EnvironmentOpenRouterCredentialResolver",
     "HostProcessResult",
     "LocalModelExecutionHost",

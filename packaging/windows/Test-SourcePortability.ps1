@@ -6,10 +6,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $SourceRoot).Path
-$extensions = @(".py", ".json", ".toml", ".yaml", ".yml", ".ini", ".cfg")
+$extensions = @(".py", ".json", ".toml", ".yaml", ".yml", ".ini", ".cfg",
+    ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx")
 $patterns = @(
-    '(?i)[A-Z]:\\Users\\[^\\]+\\',
-    '(?i)[A-Z]:\\[^\r\n"'']*\\(?:20\.CLIENTS|30\.KNOWLEDGE|60\.PERSONAL)\\'
+    '(?i)[A-Z]:[\\/]Users[\\/][^\\/]+[\\/]',
+    '(?i)[A-Z]:[\\/][^\r\n"'']*[\\/](?:20\.CLIENTS|30\.KNOWLEDGE|60\.PERSONAL)[\\/]'
 )
 $violations = @()
 

@@ -12,7 +12,7 @@
 (() => {
 const T = window.AH;
 
-const PM_TYPES = {
+const PM_TYPES = window.ArchHubTheme.derive((T) => ({
   number:   { label: 'Number',     glyph: '#',  col: T.warn,     wire: false, def: 0 },
   toggle:   { label: 'Toggle',     glyph: '◐',  col: T.purple,   wire: false, def: false },
   text:     { label: 'Text',       glyph: 'T',  col: T.inkSoft,  wire: false, def: '' },
@@ -23,15 +23,15 @@ const PM_TYPES = {
   dims:     { label: 'Annotation', glyph: '↔',  col: T.ok,       wire: true },
   file:     { label: 'File',       glyph: '⎘',  col: T.ok,       wire: true },
   any:      { label: 'Any',        glyph: '✳',  col: T.inkMuted, wire: true },
-};
+}));
 
 // canvas wire-type names → the registry, so a wire on the map and a socket in a panel agree
-const PM_WIRE = {
+const PM_WIRE = window.ArchHubTheme.derive((T) => ({
   view: T.cyan, selection: T.cyan, walls: T.accent, doors: T.accent, sheets: T.accent,
   intent: T.purple, prediction: T.purple, trace: T.inkSoft, dims: T.ok, file: T.ok,
   any: T.inkSoft, number: T.warn, text: T.inkSoft, string: T.inkSoft,
   boolean: T.purple, exec: T.accent,
-};
+}));
 
 // the cockpit's older type names → registry names
 const PM_ALIAS = { string: 'text', boolean: 'toggle', color: 'colour', trigger: 'any' };

@@ -172,6 +172,42 @@ def last_pipeline_run() -> dict[str, object]:
     return dict(_LAST_RUN)
 
 
+def _pipeline_port_name(node, interface_root, side, wire_root):
+    """Resolve an executable endpoint through its graph-declared interface."""
+    ports = node.get("ports") or ()
+    matches = [port for port in ports if port.get("id") == interface_root]
+    if not interface_root or len(matches) != 1:
+        raise InvalidCell("wire %s has no unique %s interface binding" % (wire_root, side))
+    port = matches[0]
+    name = port.get("name")
+    if (
+        port.get("owner") != node["id"] or port.get("side") != side
+        or port.get("mode") != "connection" or port.get("derived") or not port.get("name_root")
+        or type(name) is not str or not name.strip()
+    ):
+        raise InvalidCell("wire %s has no executable %s interface contract" % (wire_root, side))
+    if sum(1 for candidate in ports
+           if candidate.get("side") == side and candidate.get("name") == name) != 1:
+        raise InvalidCell("wire %s has an ambiguous %s interface name" % (wire_root, side))
+    return name
+
+
+def _pipeline_wire_enabled(wire):
+    parameters = {row["label"]: str(row.get("value", ""))
+                  for row in wire.get("params", ()) if row.get("label")}
+    enabled = parameters.get("enabled", "true").strip().lower()
+    if enabled not in ("true", "false"):
+        raise InvalidCell("wire %s has an invalid enabled value" % wire["id"])
+    if enabled == "false":
+        return False
+    # These inspector settings are persisted but have no released evaluator
+    # binding yet. Refuse a requested behavior instead of silently ignoring it.
+    for name, default in _WIRE_PARAMETERS:
+        if name != "enabled" and parameters.get(name, default) != default:
+            raise InvalidCell("wire %s requests unsupported %s behavior" % (wire["id"], name))
+    return True
+
+
 def run_universal_pipeline(
     store,
     registry,
@@ -206,12 +242,18 @@ def run_universal_pipeline(
         }
         stem_nodes.append(StemNode(root, engine, parameters))
     engine_roots = {node.root_id for node in stem_nodes}
+    projected_nodes = {str(node["id"]): node for node in projection.get("nodes", ())}
     stem_wires = []
     for wire in projection.get("wires", ()):
         source = str(wire.get("source") or "")
         target = str(wire.get("target") or "")
         if source in engine_roots and target in engine_roots:
-            stem_wires.append(StemWire(source, "out", target, "in"))
+            if not _pipeline_wire_enabled(wire):
+                continue
+            stem_wires.append(StemWire(
+                source, _pipeline_port_name(projected_nodes[source], wire.get("source_interface"), "source", wire["id"]),
+                target, _pipeline_port_name(projected_nodes[target], wire.get("target_interface"), "target", wire["id"]),
+            ))
     evaluation = evaluate_stem_graph(
         stem_nodes, stem_wires, None,
         {**_graph_engines(store, registry), **dict(effect_engines)},
@@ -532,6 +574,17 @@ def create_engine_node(
         label = str(label).strip()
         if label and label != "engine":
             values[label] = str(value)
+    # The engine catalogue owns declared defaults for every placement surface.
+    # Persist them as ordinary editable graph properties; UI cards need no copy.
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    catalogue_items = [item for item in LIBRARY_ITEM_ENGINES.values()
+                       if item.get("engine") == engine]
+    # Shared engines can have different item-specific defaults. An engine name
+    # alone cannot choose between them; preserve explicit caller parameters.
+    if len(catalogue_items) == 1:
+        for label, value in catalogue_items[0].get("params", {}).items():
+            if label != "engine":
+                values.setdefault(label, str(value))
     for label, value in values.items():
         _persist(lambda label=label, value=value: create_universal_property(
             store, registry, root, label, value, authentication_context=authentication_context,

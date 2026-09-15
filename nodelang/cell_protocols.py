@@ -58,18 +58,180 @@ _RELATION_PROJECTION_BATCH_SEALS: ContextVar[
     dict[int, tuple[tuple["RelationProjectionReuse", ...], str]] | None
 ] = ContextVar("relation_projection_batch_seals", default=None)
 
+# Graph restore re-walks the same relations many times on one revision
+# (boot-profile.log 2026-09-14: restore 80.2%, read_relation 79.7% of samples).
+# Its reuse is retained under a hard ceiling. Eviction only forgets reuse: a
+# miss re-walks and re-validates the chain exactly as it would with no scope.
+RESTORE_RELATION_PROJECTION_MAX_BYTES = 32 * 1024 * 1024
+RESTORE_RELATION_PROJECTION_MAX_ENTRIES = 8192
+_BOUNDED_PROJECTION_MAX_SEALS = 256
+
+
+def _projection_retained_cost(entry) -> int:
+    """Conservative retained size of one reuse entry and everything it holds.
+
+    Strings and Cells shared with other holders are counted again here, so
+    the sum over-estimates what eviction frees and never under-estimates it.
+    """
+    import sys
+
+    size = (sys.getsizeof(entry) + sys.getsizeof(entry.members)
+            + sys.getsizeof(entry.source_cells) + 256)
+    for member in entry.members:
+        size += (sys.getsizeof(member) + sys.getsizeof(member.incidence_id)
+                 + sys.getsizeof(member.role_id) + sys.getsizeof(member.participant_id))
+    for cell in entry.source_cells:
+        size += (sys.getsizeof(cell) + sys.getsizeof(cell.id) + sys.getsizeof(cell.link0)
+                 + sys.getsizeof(cell.link1) + sys.getsizeof(cell.atom))
+    return size
+
+
+class _BoundedRelationProjectionCache(dict):
+    """Request-local relation reuse with a retained-byte and entry ceiling.
+
+    Only the newest two revisions are retained, which is the reuse window
+    seed_relation_projections accepts across one commit. Older, oversized or
+    overflowing entries are dropped or refused, least recently used first.
+    read_relation then re-walks and re-validates; nothing semantic changes.
+    """
+
+    def __init__(self, max_bytes: int, max_entries: int) -> None:
+        super().__init__()
+        if (type(max_bytes) is not int or max_bytes < 1
+                or type(max_entries) is not int or max_entries < 1):
+            raise InvalidCell("bounded relation projection budget is invalid")
+        self.max_bytes = max_bytes
+        self.max_entries = max_entries
+        self.retained_bytes = 0
+        self.peak_bytes = 0
+        self.peak_entries = 0
+        self.evicted = 0
+        self.refused = 0
+        self.newest_revision = None
+        self._costs = {}
+
+    def _drop(self, key) -> None:
+        dict.__delitem__(self, key)
+        self.retained_bytes -= self._costs.pop(key)
+
+    def __getitem__(self, key):
+        value = dict.__getitem__(self, key)
+        dict.__delitem__(self, key)
+        dict.__setitem__(self, key, value)
+        return value
+
+    def get(self, key, default=None):
+        return self[key] if dict.__contains__(self, key) else default
+
+    def __setitem__(self, key, entry) -> None:
+        import sys
+
+        revision = key[0]
+        if self.newest_revision is None or revision > self.newest_revision:
+            self.newest_revision = revision
+            for stale in [held for held in dict.keys(self) if held[0] < revision - 1]:
+                self._drop(stale)
+                self.evicted += 1
+        elif revision < self.newest_revision - 1:
+            self.refused += 1
+            return
+        if dict.__contains__(self, key):
+            self._drop(key)
+        cost = _projection_retained_cost(entry) + sys.getsizeof(key) + sys.getsizeof(key[2])
+        if cost > self.max_bytes:
+            self.refused += 1
+            return
+        dict.__setitem__(self, key, entry)
+        self._costs[key] = cost
+        self.retained_bytes += cost
+        while len(self) > self.max_entries or self.retained_bytes > self.max_bytes:
+            self._drop(next(iter(dict.keys(self))))
+            self.evicted += 1
+        self.peak_bytes = max(self.peak_bytes, self.retained_bytes)
+        self.peak_entries = max(self.peak_entries, len(self))
+
+    def __delitem__(self, key) -> None:
+        self._drop(key)
+
+    def _unaccounted(self, *args, **kwargs):
+        raise InvalidCell("bounded relation projection cache admits only accounted access")
+
+    pop = popitem = setdefault = update = clear = _unaccounted
+
+
+class _BoundedProjectionSeals(dict):
+    """Batch seals under their own byte and count ceiling.
+
+    A dropped seal only makes seed_relation_projections recompute the batch
+    fingerprint, which is its existing fallback; identity is still checked.
+    """
+
+    def __init__(self, max_bytes: int, max_entries: int) -> None:
+        super().__init__()
+        if (type(max_bytes) is not int or max_bytes < 1
+                or type(max_entries) is not int or max_entries < 1):
+            raise InvalidCell("bounded relation projection seal budget is invalid")
+        self.max_bytes = max_bytes
+        self.max_entries = max_entries
+        self.retained_bytes = 0
+        self.peak_bytes = 0
+        self.evicted = 0
+        self.refused = 0
+        self._costs = {}
+
+    def _drop(self, key) -> None:
+        dict.__delitem__(self, key)
+        self.retained_bytes -= self._costs.pop(key)
+
+    def __setitem__(self, key, sealed) -> None:
+        import sys
+
+        if dict.__contains__(self, key):
+            self._drop(key)
+        entries, _fingerprint = sealed
+        cost = (sys.getsizeof(sealed) + sys.getsizeof(entries) + 256
+                + sum(_projection_retained_cost(entry) for entry in entries))
+        if cost > self.max_bytes:
+            self.refused += 1
+            return
+        dict.__setitem__(self, key, sealed)
+        self._costs[key] = cost
+        self.retained_bytes += cost
+        while len(self) > self.max_entries or self.retained_bytes > self.max_bytes:
+            self._drop(next(iter(dict.keys(self))))
+            self.evicted += 1
+        self.peak_bytes = max(self.peak_bytes, self.retained_bytes)
+
+    def __delitem__(self, key) -> None:
+        self._drop(key)
+
+    def _unaccounted(self, *args, **kwargs):
+        raise InvalidCell("bounded relation projection seals admit only accounted access")
+
+    pop = popitem = setdefault = update = clear = _unaccounted
+
 
 @contextmanager
-def relation_projection_scope():
-    """Reuse relation walks only inside one interpreter request."""
+def relation_projection_scope(*, max_retained_bytes=None, max_entries=None):
+    """Reuse relation walks only inside one interpreter request.
+
+    With max_retained_bytes and max_entries the reuse and its batch seals are
+    bounded; without them the request cache behaves exactly as before. A
+    nested scope always joins the outer request's cache and seals unchanged.
+    """
     existing = _RELATION_PROJECTION_CACHE.get()
     if existing is not None:
         if _RELATION_PROJECTION_BATCH_SEALS.get() is None:
             raise InvalidCell("relation projection request scope is incomplete")
         yield
         return
-    cache_token = _RELATION_PROJECTION_CACHE.set({})
-    seal_token = _RELATION_PROJECTION_BATCH_SEALS.set({})
+    if max_retained_bytes is None and max_entries is None:
+        cache, seals = {}, {}
+    else:
+        cache = _BoundedRelationProjectionCache(max_retained_bytes, max_entries)
+        seals = _BoundedProjectionSeals(max(1, max_retained_bytes // 4), _BOUNDED_PROJECTION_MAX_SEALS)
+    cache_token = (_RELATION_PROJECTION_CACHE).set(cache)
+    seal_token = (_RELATION_PROJECTION_BATCH_SEALS).set(seals)
     try:
         yield
     finally:
@@ -84,6 +246,31 @@ def with_relation_projection_scope(function):
         with relation_projection_scope():
             return function(*args, **kwargs)
     return wrapped
+
+
+def with_restore_relation_projection_scope(function):
+    """Run graph restore with bounded relation reuse: fast boot, capped RAM."""
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with relation_projection_scope(
+                max_retained_bytes=RESTORE_RELATION_PROJECTION_MAX_BYTES,
+                max_entries=RESTORE_RELATION_PROJECTION_MAX_ENTRIES):
+            return function(*args, **kwargs)
+    return wrapped
+
+
+def relation_projection_retention():
+    """Counters of the current bounded scope, or None when it is unbounded or absent."""
+    cache = _RELATION_PROJECTION_CACHE.get()
+    seals = _RELATION_PROJECTION_BATCH_SEALS.get()
+    if not isinstance(cache, _BoundedRelationProjectionCache):
+        return None
+    return {"entries": len(cache), "retained_bytes": cache.retained_bytes,
+            "peak_bytes": cache.peak_bytes, "peak_entries": cache.peak_entries,
+            "evicted": cache.evicted, "refused": cache.refused,
+            "max_bytes": cache.max_bytes, "max_entries": cache.max_entries,
+            "seal_retained_bytes": seals.retained_bytes, "seal_peak_bytes": seals.peak_bytes,
+            "seal_max_bytes": seals.max_bytes, "seal_max_entries": seals.max_entries}
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,11 +406,19 @@ def read_relation(
     relation_root: str,
     *,
     budget: int = 10_000,
+    retain_projection: bool = True,
 ) -> tuple[RelationMember, ...]:
-    """Project one root through the reusable relation-chain protocol."""
+    """Project a relation, optionally retaining its request-local proof.
+
+    One-pass discovery can disable retention so visiting many independent
+    relations does not retain every member and source Cell until request end.
+    Validation and the traversal budget apply in either mode.
+    """
     if budget < 1:
         raise MatchBudgetExceeded("relation projection budget must be positive")
-    cache = _RELATION_PROJECTION_CACHE.get()
+    if type(retain_projection) is not bool:
+        raise TypeError("relation projection retention must be boolean")
+    cache = _RELATION_PROJECTION_CACHE.get() if retain_projection else None
     cache_key = (snapshot.revision, id(snapshot.cells), relation_root)
     if cache is not None and cache_key in cache:
         cached = cache[cache_key]
@@ -232,6 +427,12 @@ def read_relation(
                 "relation projection exceeded %s chain cells" % budget
             )
         return cached.members
+    with snapshot.read_scope():
+        return _read_relation_walk(snapshot, relation_root, budget, cache, cache_key)
+
+
+def _read_relation_walk(snapshot, relation_root, budget, cache, cache_key):
+    """Walk one relation inside its snapshot's physical read scope."""
     if relation_root not in snapshot.cells:
         raise InvalidCell("relation root is missing")
 
@@ -252,7 +453,8 @@ def read_relation(
         chain = snapshot.cells.get(cursor)
         if chain is None:
             raise InvalidCell("relation chain contains a dangling cell")
-        source_cells.append(chain)
+        if cache is not None:
+            source_cells.append(chain)
         if chain.link0 == NULL_CELL_ID:
             if chain.link1 != NULL_CELL_ID:
                 raise InvalidCell("empty relation root has a non-empty tail")
@@ -260,7 +462,8 @@ def read_relation(
         incidence = snapshot.cells.get(chain.link0)
         if incidence is None:
             raise InvalidCell("relation incidence is missing")
-        source_cells.append(incidence)
+        if cache is not None:
+            source_cells.append(incidence)
         if (
             incidence.link0 not in snapshot.cells
             or incidence.link1 not in snapshot.cells
@@ -999,6 +1202,10 @@ __all__ = [
     "seed_relation_projections",
     "relation_projection_scope",
     "with_relation_projection_scope",
+    "with_restore_relation_projection_scope",
+    "relation_projection_retention",
+    "RESTORE_RELATION_PROJECTION_MAX_BYTES",
+    "RESTORE_RELATION_PROJECTION_MAX_ENTRIES",
     "rewire_incidence",
     "append_relation_member",
     "prepare_append_relation_member",

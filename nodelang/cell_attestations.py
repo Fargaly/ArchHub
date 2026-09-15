@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import math
 import secrets
 import threading
 import time
@@ -535,6 +536,43 @@ class CourtAttestationBroker:
         return evidence_root
 
     def verify(
+        self, snapshot: Snapshot, protocol: AttestationProtocol, evidence_root: str,
+        *, expected_court_root: str, expected_subject_name: str,
+        expected_subject_digest: str, expected_parameters: Mapping[str, str],
+        expected_result: str = "pass", max_age_seconds: float = 900.0,
+    ) -> Mapping[str, object]:
+        """Verify fresh evidence for admission of an action."""
+        if (isinstance(max_age_seconds, bool)
+                or not isinstance(max_age_seconds, (int, float))
+                or not math.isfinite(max_age_seconds) or max_age_seconds <= 0):
+            raise ValueError("fresh evidence requires a finite positive age limit")
+        return self._verify_evidence(snapshot, protocol, evidence_root,
+            expected_court_root=expected_court_root,
+            expected_subject_name=expected_subject_name,
+            expected_subject_digest=expected_subject_digest,
+            expected_parameters=expected_parameters, expected_result=expected_result,
+            max_age_seconds=max_age_seconds)
+
+    def verify_recorded_evidence(
+        self, snapshot: Snapshot, protocol: AttestationProtocol, evidence_root: str,
+        *, expected_court_root: str, expected_subject_name: str,
+        expected_subject_digest: str, expected_parameters: Mapping[str, str],
+        expected_result: str = "pass",
+    ) -> Mapping[str, object]:
+        """Verify a signed historical record, not permission for a new action.
+
+        The caller must independently verify current authority/state. Signatures,
+        admitted court and exact bindings still apply; age alone cannot undo an
+        already recorded acquisition or transition. Future-dated records fail.
+        """
+        return self._verify_evidence(snapshot, protocol, evidence_root,
+            expected_court_root=expected_court_root,
+            expected_subject_name=expected_subject_name,
+            expected_subject_digest=expected_subject_digest,
+            expected_parameters=expected_parameters, expected_result=expected_result,
+            max_age_seconds=None)
+
+    def _verify_evidence(
         self,
         snapshot: Snapshot,
         protocol: AttestationProtocol,
@@ -545,7 +583,7 @@ class CourtAttestationBroker:
         expected_subject_digest: str,
         expected_parameters: Mapping[str, str],
         expected_result: str = "pass",
-        max_age_seconds: float = 900.0,
+        max_age_seconds: float | None,
     ) -> Mapping[str, object]:
         if expected_result not in {"pass", "fail"}:
             raise ValueError("expected court result must be pass or fail")
@@ -590,6 +628,7 @@ class CourtAttestationBroker:
             issued_at = datetime.fromisoformat(
                 _atom(snapshot, evidence.issued_at_root)
             )
+            finished_at = datetime.fromisoformat(predicate["finishedAt"])
         except (KeyError, TypeError, ValueError) as exc:
             raise CourtEvidenceDenied("attestation statement is incomplete") from exc
         expected_statement = (
@@ -619,8 +658,13 @@ class CourtAttestationBroker:
         )
         if not expected_statement:
             raise CourtEvidenceDenied("attestation does not match exact promotion")
-        age = datetime.now(timezone.utc).timestamp() - issued_at.timestamp()
-        if age < -5 or age > max_age_seconds:
+        if (issued_at.tzinfo is None or issued_at.utcoffset() is None
+                or finished_at.tzinfo is None or finished_at.utcoffset() is None):
+            raise CourtEvidenceDenied("attestation timestamp must include its timezone")
+        if issued_at != finished_at:
+            raise CourtEvidenceDenied("attestation timestamp does not match signed statement")
+        age = datetime.now(timezone.utc).timestamp() - finished_at.timestamp()
+        if age < -5 or (max_age_seconds is not None and age > max_age_seconds):
             raise CourtEvidenceDenied("attestation is stale")
         return MappingProxyType(statement)
 

@@ -9,15 +9,15 @@ Each engine returns the honest zero with a reason when the host is not there
 """
 from __future__ import annotations
 
+import ctypes
 import json
+import ntpath
 import os
 import socket
 import subprocess
+import threading
 import time
 
-# The app is windowless (pythonw): a child console would POP UP on the founder's desktop
-# at every probe. Every spawn in this module carries this flag; a court asserts it.
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -54,18 +54,100 @@ def _http(url: str, body: Mapping[str, object] | None = None, headers: Mapping[s
         return {"raw": text}
 
 
+class ProcessEnumerationUnavailable(RuntimeError):
+    """A complete host-presence observation could not be obtained."""
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_uint32), ("cntUsage", ctypes.c_uint32),
+        ("th32ProcessID", ctypes.c_uint32), ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", ctypes.c_uint32), ("cntThreads", ctypes.c_uint32),
+        ("th32ParentProcessID", ctypes.c_uint32), ("pcPriClassBase", ctypes.c_int32),
+        ("dwFlags", ctypes.c_uint32), ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+def _process_snapshot_api():
+    kernel = ctypes.WinDLL("Kernel32.dll", use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = (ctypes.c_uint32, ctypes.c_uint32)
+    kernel.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    for name in ("Process32FirstW", "Process32NextW"):
+        function = getattr(kernel, name)
+        function.argtypes = (ctypes.c_void_p, ctypes.POINTER(_PROCESSENTRY32W))
+        function.restype = ctypes.c_int
+    kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel.CloseHandle.restype = ctypes.c_int
+    return kernel
+
+
+def _windows_process_names() -> frozenset[str]:
+    """Fresh, bounded presence hints; never process identity or authority."""
+    try:
+        kernel = _process_snapshot_api()
+        handle = kernel.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+    except (OSError, AttributeError) as error:
+        raise ProcessEnumerationUnavailable("Windows process observation is unavailable") from error
+    if handle in (None, 0, ctypes.c_void_p(-1).value):
+        raise ProcessEnumerationUnavailable("Windows process snapshot could not be opened")
+    try:
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        names = set()
+        available = kernel.Process32FirstW(handle, ctypes.byref(entry))
+        if not available:
+            if ctypes.get_last_error() == 18:  # ERROR_NO_MORE_FILES
+                return frozenset()
+            raise ProcessEnumerationUnavailable("Windows process snapshot could not be read")
+        for index in range(8192):
+            name = ntpath.basename(entry.szExeFile).casefold()
+            if not name:
+                raise ProcessEnumerationUnavailable("Windows process snapshot contains an invalid name")
+            names.add(name)
+            if index == 8191:
+                # Do not read an extra entry merely to distinguish the cap
+                # from a complete enumeration. Exhaustion remains unknown.
+                raise ProcessEnumerationUnavailable("Windows process snapshot exceeds its entry budget")
+            if not kernel.Process32NextW(handle, ctypes.byref(entry)):
+                if ctypes.get_last_error() == 18:
+                    return frozenset(names)
+                raise ProcessEnumerationUnavailable("Windows process snapshot ended incompletely")
+    except OSError as error:
+        raise ProcessEnumerationUnavailable("Windows process observation failed") from error
+    finally:
+        if not kernel.CloseHandle(handle):
+            raise ProcessEnumerationUnavailable("Windows process snapshot could not be closed")
+
+
 def _running(names: tuple[str, ...]) -> bool:
     if os.name != "nt":
         return False
-    try:
-        listing = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=8, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW).stdout.casefold()
-    except Exception:
-        return False
-    return any(name.casefold() in listing for name in names)
+    observed = _windows_process_names()
+    return any(ntpath.basename(name).casefold() in observed for name in names)
 
 
 def _installed(paths: tuple[str, ...]) -> bool:
     return any(Path(path).exists() for path in paths)
+
+
+# COM proxies belong to their creating apartment. Only an explicit open_host
+# retains this handle; passive discovery must never CoCreate an application.
+_outlook_session = threading.local()
+
+
+def _outlook_application():
+    """Reuse an explicitly opened Outlook on this thread, or attach via ROT."""
+    app = getattr(_outlook_session, "application", None)
+    if app is not None:
+        try:
+            app.Version  # Reject disconnected proxies after Outlook closes.
+            return app
+        except Exception:
+            _outlook_session.application = None
+    import pythoncom  # type: ignore
+    import win32com.client as client  # type: ignore
+    pythoncom.CoInitialize()
+    return client.GetActiveObject("Outlook.Application")
 
 
 def _com_alive(prog_id: str) -> bool:
@@ -73,6 +155,9 @@ def _com_alive(prog_id: str) -> bool:
     if os.name != "nt":
         return False
     try:
+        if prog_id == "Outlook.Application":
+            _outlook_application()
+            return True
         import pythoncom  # type: ignore
         import win32com.client as client  # type: ignore
         pythoncom.CoInitialize()
@@ -126,6 +211,12 @@ def probe_host_rows() -> list[dict]:
     rows.append({"id": "outlook", "name": "Outlook", "drive": "outlook.inbox",
                  "state": "connected" if outlook_open else ("installed" if _installed((r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE",)) else "absent"),
                  "detail": "open · inbox readable" if outlook_open else "installed · open Outlook and the inbox reads answer"})
+    rows.append({"id": "outlook-new", "name": "Outlook (New / Microsoft Graph)",
+                 "drive": "outlook.graph.inbox", "state": "installed",
+                 "detail": "sign in explicitly; select the connected mailbox before reading; requires PowerShell 7 and Microsoft Graph Authentication 2.39.0"})
+    rows.append({"id": "outlook-imap", "name": "Company mail (Yahoo / Turbify IMAP)",
+                 "drive": "outlook.imap.inbox", "state": "needs-sign-in",
+                 "detail": "direct read-only mailbox access; connect with company email and an app password; status verifies the exact account"})
     token = _notion_token()
     rows.append({"id": "notion", "name": "Notion", "drive": "notion.search",
                  "state": "connected" if token else "needs-key",
@@ -230,11 +321,19 @@ def office_read(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 def outlook_inbox(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Newest inbox items from the OPEN Outlook; never launches it."""
+    transport = str(params.get("transport") or "classic").casefold()
+    if transport == "graph":
+        from .outlook_graph import inbox
+        return inbox(params, feeds)
+    if transport == "imap":
+        from .outlook_imap import inbox
+        return inbox(params, feeds)
+    if transport != "classic":
+        return _honest("Unsupported Outlook transport; select classic, graph or imap")
     count = max(1, min(int(params.get("count") or 20), 200))
     if not _com_alive("Outlook.Application"):
         return _honest("Outlook is not open")
-    import win32com.client as client  # type: ignore
-    app = client.GetActiveObject("Outlook.Application")
+    app = _outlook_application()
     items = app.GetNamespace("MAPI").GetDefaultFolder(6).Items
     items.Sort("[ReceivedTime]", True)
     rows = []
@@ -288,10 +387,18 @@ def connector_rows(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": rows}, "%d host(s)" % len(rows)
 
 
+from .outlook_graph import inbox as _graph_inbox, status as _graph_status, categories as _graph_categories, categorize as _graph_categorize
+from .outlook_imap import inbox as _imap_inbox, status as _imap_status, message as _imap_message
+
+
 ENGINES = {
     "max.exec": max_exec, "rhino.exec": rhino_exec, "blender.exec": blender_exec,
     "office.read": office_read, "outlook.inbox": outlook_inbox, "notion.search": notion_search,
     "dropbox.list": dropbox_list, "connector.rows": connector_rows,
+    "outlook.graph.inbox": _graph_inbox, "outlook.graph.status": _graph_status,
+    "outlook.graph.categories": _graph_categories, "outlook.graph.categorize": _graph_categorize,
+    "outlook.imap.inbox": _imap_inbox, "outlook.imap.status": _imap_status,
+    "outlook.imap.message": _imap_message,
 }
 
 __all__ = ["ENGINES", "probe_host_rows", "probe_catalogue_rows"]
@@ -340,6 +447,12 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
     plainly. Nothing here pretends: the state reported is the next probe's.
     """
     host = str(host or "").strip().casefold()
+    if host == "outlook-imap":
+        from .outlook_imap import open_sign_in
+        return {"host": host, **open_sign_in()}
+    if host == "outlook-new":
+        from .outlook_graph import invoke
+        return {"host": host, **invoke("connect", {})}
     popen = popen or subprocess.Popen
     com_alive = com_alive or _com_alive
     if host in _OFFICE_PROGIDS:
@@ -356,6 +469,7 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
             collection, keep = _OFFICE_KEEPALIVE[host]
             if host == "outlook":
                 app.Session.GetDefaultFolder(6).Display()  # the inbox window keeps Outlook running
+                _outlook_session.application = app
             else:
                 app.Visible = True
                 if keep:
@@ -366,6 +480,8 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
             del app
         except Exception as exc:
             return {"ok": False, "host": host, "error": "%s: %s" % (type(exc).__name__, exc)}
+        if host == "outlook" and com_alive(progid):
+            return {"ok": True, "host": host, "action": "opened, session retained on this thread", "state": "connected"}
         deadline = time.monotonic() + float(wait_s)
         while time.monotonic() < deadline:
             if com_alive(progid):
@@ -379,7 +495,12 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
             return {"ok": False, "host": host, "error": "Rhino is not installed"}
         if not script.is_file():
             return {"ok": False, "host": host, "error": "the Rhino bridge script did not ship (%s)" % script}
-        if _running(("Rhino.exe",)):
+        try:
+            running = _running(("Rhino.exe",))
+        except ProcessEnumerationUnavailable:
+            return {"ok": False, "host": host,
+                    "error": "Rhino process status is unavailable; no application was launched"}
+        if running:
             return {"ok": False, "host": host, "state": "running",
                     "error": 'Rhino is already open without the bridge; in Rhino run: _-RunPythonScript "%s"' % script}
         popen([exe, "/nosplash", '/runscript=_-RunPythonScript "%s"' % script], close_fds=True,
@@ -392,7 +513,12 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
             return {"ok": False, "host": host, "error": "Blender is not installed"}
         if not addon.is_file():
             return {"ok": False, "host": host, "error": "the Blender add-on did not ship (%s)" % addon}
-        if _running(("blender.exe",)):
+        try:
+            running = _running(("blender.exe",))
+        except ProcessEnumerationUnavailable:
+            return {"ok": False, "host": host,
+                    "error": "Blender process status is unavailable; no application was launched"}
+        if running:
             return {"ok": False, "host": host, "state": "running",
                     "error": "Blender is already open without the add-on; enable ArchHub MCP Bridge in Edit > Preferences > Add-ons (%s)" % addon.parent}
         boot = "import sys; sys.path.insert(0, %r); import archhub_mcp; archhub_mcp.register()" % str(addon.parent.parent)

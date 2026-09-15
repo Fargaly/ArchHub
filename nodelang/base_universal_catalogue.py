@@ -123,7 +123,7 @@ BASE_CATALOGUE: tuple[dict, ...] = (
      "parameters": {}, "interfaces": {"a": _in("list", required=True), "b": _in("list", required=True), "items_out": _out("list")}, "engine": "shape.concat"},
     # AI — the one master with an action picker
     {"name": "AI", "category": "AI", "description": "Ask a model: converse, think, see, match, embed.",
-     "parameters": {"action": _choice(("converse", "think", "vision", "match", "embed"), "think"), "model": _text("provider-selected"), "prompt": _text("", multiline=True)},
+     "parameters": {"action": _choice(("converse", "think", "vision", "match", "embed"), "think"), "model": _text(""), "prompt": _text("", multiline=True)},
      "interfaces": {"context": _in("any", multiple=True), "response": _out("completion"), "intent": _out("intent")}, "engine": "ai.master"},
     # NOTE / REROUTE / SKILL
     {"name": "Note", "category": "Note", "description": "Words on the canvas. Nothing flows through.",

@@ -8,6 +8,7 @@ says "authenticated" or "released" cannot mint either authority.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -385,6 +386,16 @@ class AuthenticationBroker:
         with self._lock:
             if type(handle) is AuthenticationContext:
                 self._entries.pop(handle, None)
+
+    @contextmanager
+    def live_context(self, handle: object):
+        """Serialize revocation across a bounded admitted operation.
+
+        Acquire this before a graph-store guard, matching commit_authenticated.
+        The operation must re-resolve expiry immediately before its commit.
+        """
+        with self._lock:
+            yield self.resolve(handle)
 
     def commit_authenticated(
         self,

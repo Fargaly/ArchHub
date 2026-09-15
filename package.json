@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:studio": "node --max-old-space-size=192 packaging/compile_studio.cjs",
+    "check:studio": "node --max-old-space-size=192 packaging/compile_studio.cjs --check",
     "generate:icons": "node packaging/generate_lucide_icon_source.mjs",
     "test:interaction": "python -m pytest tests_replica/test_universal_ui_interactions.py -q -p no:cacheprovider --timeout=300"
   },

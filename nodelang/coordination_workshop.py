@@ -18,6 +18,9 @@ from .unified_authority import (
     promote_definition,
     published_definition_named,
     read_contained_scope,
+    read_scope_level,
+    find_receipt,
+    digest,
     revise_instance,
 )
 from .universal_cell import InvalidCell
@@ -55,6 +58,7 @@ class CoordinationMessageProjection:
     state: str
     created_revision: int
     current_revision: int
+    execution_root: str | None = None
 
 
 def _subcommand(operation_id: str, label: str) -> str:
@@ -151,6 +155,8 @@ def install_workshop_catalogue(
                         "steward",
                         "red-court",
                         "task-graph",
+                        "visible-plan",
+                        "progress-report",
                     ],
                     "distinct_targets": [["builder", "verifier"]],
                 },
@@ -204,7 +210,7 @@ def install_workshop_catalogue(
                 },
                 "working": {
                     "from": ["assigned"],
-                    "required_connections": ["assignee"],
+                    "required_connections": ["assignee", "progress-report"],
                     "caller_matches_connection": "assignee",
                 },
                 "input-required": {
@@ -444,15 +450,39 @@ def create_coordination_message(
     operation_id: str,
     caller: CallerCommandCapability,
     reply_to_root: str | None = None,
+    execution_root: str | None = None,
+    _reply_task_binding: tuple[str, str, str | None] | None = None,
+    _delivery_guard=None,
 ) -> CommandResult:
     """Create, wire, and send one authenticated Workshop message assembly."""
+    workshop = composition_root(authority, "Workshop", caller=caller)
+    if execution_root is not None and (category != "followup" or
+            type(execution_root) is not str or not execution_root):
+        raise InvalidCell("execution connection requires a targeted followup")
+    def participant_revision():
+        level = read_scope_level(authority, workshop, scope_root=workshop,
+            caller=caller, budget=20_000)
+        if not {caller.session_root, recipient_root} <= set(level.composition_roots):
+            raise InvalidCell("Workshop message participants are detached")
+        if execution_root is not None and execution_root not in {
+                *level.composition_roots, *level.instances}:
+            raise InvalidCell("Workshop execution node is detached")
+        return level.revision
+    participant_revision()
     message = create_workshop_instance(
         authority,
         catalogue.message_definition,
         {"body": body, "category": category},
+        scope_root=workshop,
         caller=caller,
         command_id=_subcommand(operation_id, "message:create"),
     )
+    if message.replayed:
+        delivered = [item for item in read_coordination_messages(authority, catalogue,
+            caller=caller, recipient_root=recipient_root) if item.root_id == message.root_id]
+        if delivered and (delivered[0].execution_root != execution_root or
+                delivered[0].reply_to_root != reply_to_root):
+            raise InvalidCell("delivered message connections cannot change on retry")
     connect_workshop_instance(
         authority,
         message.root_id,
@@ -478,14 +508,63 @@ def create_coordination_message(
             caller=caller,
             command_id=_subcommand(operation_id, "message:reply-to"),
         )
+    if execution_root is not None:
+        connect_workshop_instance(authority, message.root_id, "execution", execution_root,
+            caller=caller, command_id=_subcommand(operation_id, "message:execution"))
+    assembled = read_contained_scope(authority, message.root_id, scope_root=workshop, caller=caller)
+    expected_connections = {"sender":caller.session_root, "recipient":recipient_root}
+    if reply_to_root is not None:
+        expected_connections["reply-to"] = reply_to_root
+    if execution_root is not None:
+        expected_connections["execution"] = execution_root
+    actual_connections = {}
+    for relation in assembled.relations.values():
+        if ("source", message.root_id) not in relation.participants:
+            continue
+        name = relation.properties.get("connection")
+        if name not in {"sender", "recipient", "reply-to", "execution"}:
+            continue
+        targets = [target for role, target in relation.participants if role == "target"]
+        if name in actual_connections or len(targets) != 1:
+            raise InvalidCell("message assembly connections are ambiguous")
+        actual_connections[name] = targets[0]
+    if actual_connections != expected_connections:
+        raise InvalidCell("message assembly connections do not match the request")
+    final_revision = participant_revision()
+    if final_revision != assembled.revision:
+        raise InvalidCell("message assembly changed before sending")
+    if _reply_task_binding is not None:
+        tasks = [item for item in read_coordination_messages(authority, catalogue,
+            caller=caller) if item.root_id == reply_to_root]
+        if (len(tasks) != 1 or tasks[0].category != "followup" or
+                tasks[0].state not in {"read", "acted"} or
+                (tasks[0].sender_root, tasks[0].recipient_root, tasks[0].execution_root)
+                != _reply_task_binding or tasks[0].current_revision != final_revision):
+            raise InvalidCell("Workshop task changed before result delivery")
+    if _delivery_guard is not None:
+        # In-process browser admission, never accepted from a tool/HTTP body.
+        # It must validate against this exact base; it grants no graph rights.
+        _delivery_guard(authority, caller.session_root, final_revision)
+        if authority.store.revision != final_revision:
+            raise InvalidCell("Workshop changed during delivery admission")
+    send_command = _subcommand(operation_id, "message:send")
+    prior = find_receipt(authority, authority.store.snapshot(), caller.actor_root,
+        caller.session_root, send_command)
+    if prior is not None:
+        # Revision is part of the signed transition request. A retry must use
+        # its original base, not the revision advanced by the completed send.
+        request = {"intent":"revise-instance", "instance":message.root_id,
+            "changes":{"state":"sent"}, "scope":workshop}
+        original_base = prior.result_revision - 1
+        if prior.request_digest == digest({**request, "expected_revision":original_base}):
+            final_revision = original_base
+        elif prior.request_digest == digest(request):
+            final_revision = None  # Receipts created before guarded sending.
+        else:
+            raise InvalidCell("message send receipt does not match the assembly")
     return transition_workshop_instance(
-        authority,
-        message.root_id,
-        "state",
-        "sent",
-        caller=caller,
-        command_id=_subcommand(operation_id, "message:send"),
-    )
+        authority, message.root_id, "state", "sent", workshop_scope=workshop,
+        caller=caller, command_id=send_command, expected_revision=final_revision)
 
 
 def read_coordination_messages(
@@ -511,6 +590,16 @@ def read_coordination_messages(
     for root, instance in projection.instances.items():
         if instance.get("definition") != catalogue.message_definition:
             continue
+        values = instance.get("values")
+        if not isinstance(values, Mapping) or any(
+            type(values.get(name)) is not str
+            for name in ("state", "category", "body")
+        ):
+            raise InvalidCell("coordination message values are invalid")
+        # Assembly spans signed commits. A draft may legitimately be missing
+        # sender/recipient links after interruption; it is not inbox delivery.
+        if values["state"] in {"draft", "cancelled"}:
+            continue
         connections: dict[str, str] = {}
         for relation in projection.relations.values():
             if ("source", root) not in relation.participants:
@@ -531,12 +620,6 @@ def read_coordination_messages(
         created_revision = authority.store.cell_created_revision(root)
         if created_revision <= after_revision:
             continue
-        values = instance.get("values")
-        if not isinstance(values, Mapping) or any(
-            type(values.get(name)) is not str
-            for name in ("state", "category", "body")
-        ):
-            raise InvalidCell("coordination message values are invalid")
         output.append(CoordinationMessageProjection(
             root,
             connections["sender"],
@@ -547,6 +630,7 @@ def read_coordination_messages(
             str(values["state"]),
             created_revision,
             projection.revision,
+            connections.get("execution"),
         ))
     return tuple(sorted(output, key=lambda item: (item.created_revision, item.root_id)))
 
@@ -558,6 +642,7 @@ def transition_coordination_message(
     *,
     caller: CallerCommandCapability,
     command_id: str,
+    expected_revision: int | None = None,
 ) -> CommandResult:
     return transition_workshop_instance(
         authority,
@@ -566,6 +651,7 @@ def transition_coordination_message(
         state,
         caller=caller,
         command_id=command_id,
+        expected_revision=expected_revision,
     )
 
 
@@ -578,6 +664,7 @@ def transition_workshop_instance(
     workshop_scope: str | None = None,
     caller: CallerCommandCapability,
     command_id: str,
+    expected_revision: int | None = None,
 ) -> CommandResult:
     scope = workshop_scope or composition_root(
         authority, "Workshop", caller=caller
@@ -589,6 +676,7 @@ def transition_workshop_instance(
         scope_root=scope,
         caller=caller,
         command_id=command_id,
+        expected_revision=expected_revision,
     )
 
 

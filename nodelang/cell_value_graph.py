@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import islice
 import math
 from types import MappingProxyType
 from typing import Mapping
@@ -50,6 +51,15 @@ class PreparedValueGraph:
     """One validated value graph, ready to join an enclosing atomic commit."""
 
     root_id: str
+    create: tuple[Cell, ...]
+    replace: tuple[Cell, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedValueGraphs:
+    """A validated batch with one combined value-root registration patch."""
+
+    root_ids: tuple[str, ...]
     create: tuple[Cell, ...]
     replace: tuple[Cell, ...]
 
@@ -135,6 +145,41 @@ def _scalar_variant(value: object) -> tuple[str, bytes]:
     if type(value) is bytes:
         return "bytes", value
     raise InvalidCell("value-graph scalar type is not admitted")
+
+
+def value_graph_values_equal(left: object, right: object) -> bool:
+    """Compare values by the released encoding's variants, including scalar types."""
+    def signature(value: object, depth: int, remaining: list[int]):
+        remaining[0] -= 1
+        if depth > MAX_DEPTH or remaining[0] < 0:
+            raise InvalidCell("value-graph comparison exceeds its budget")
+        if type(value) is dict:
+            if len(value) > remaining[0]:
+                raise InvalidCell("value-graph comparison exceeds its budget")
+            if any(type(key) is not str for key in value):
+                raise InvalidCell("value-graph object keys must be text")
+            if any(
+                len(key) > MAX_SCALAR_BYTES
+                or len(_scalar_variant(key)[1]) > MAX_SCALAR_BYTES
+                for key in value
+            ):
+                raise InvalidCell("value-graph object key exceeds its inline byte budget")
+            return ("object", tuple(
+                (key, signature(value[key], depth + 1, remaining))
+                for key in sorted(value)
+            ))
+        if type(value) in (list, tuple):
+            if len(value) > remaining[0]:
+                raise InvalidCell("value-graph comparison exceeds its budget")
+            return ("array", tuple(
+                signature(item, depth + 1, remaining) for item in value
+            ))
+        variant, atom = _scalar_variant(value)
+        if len(atom) > MAX_SCALAR_BYTES:
+            raise InvalidCell("value-graph scalar exceeds its inline byte budget")
+        return variant, atom
+
+    return signature(left, 0, [MAX_VALUE_NODES]) == signature(right, 0, [MAX_VALUE_NODES])
 
 
 class _Builder:
@@ -267,20 +312,23 @@ def prepare_value_graph(
     )
 
 
-def build_value_graphs(
-    store: CellStore,
+def prepare_value_graphs(
+    snapshot: Snapshot,
     protocol: ValueGraphProtocol,
     values_by_root: Mapping[str, object],
-) -> tuple[tuple[str, ...], int]:
-    """Commit deterministic structured values and register all roots together."""
+) -> PreparedValueGraphs:
+    """Prepare all values and their registration for one enclosing commit."""
+    if not isinstance(values_by_root, Mapping):
+        raise InvalidCell("value-graph batch requires a mapping")
     if not values_by_root:
         raise InvalidCell("value-graph batch requires at least one root")
-    roots = tuple(values_by_root)
+    roots = tuple(islice(values_by_root, MAX_VALUE_NODES + 1))
+    if len(roots) > MAX_VALUE_NODES:
+        raise InvalidCell("value-graph batch exceeds its root budget")
     if any(type(root_id) is not str or not root_id for root_id in roots):
         raise InvalidCell("value-graph root identity is invalid")
     if len(roots) != len(set(roots)):
         raise InvalidCell("value-graph batch contains duplicate roots")
-    snapshot = store.snapshot()
     if any(root_id in snapshot.cells for root_id in roots):
         raise InvalidCell("value-graph root already exists")
     builder = _Builder(protocol)
@@ -297,15 +345,28 @@ def build_value_graphs(
         ),
         budget=100_000,
     )
+    return PreparedValueGraphs(
+        root_ids=roots,
+        create=tuple((*builder.cells.values(), *patch.create)),
+        replace=tuple(patch.replace),
+    )
+
+
+def build_value_graphs(
+    store: CellStore,
+    protocol: ValueGraphProtocol,
+    values_by_root: Mapping[str, object],
+) -> tuple[tuple[str, ...], int]:
+    """Commit deterministic structured values and register all roots together."""
+    snapshot = store.snapshot()
+    prepared = prepare_value_graphs(snapshot, protocol, values_by_root)
     revision = store.commit(
-        snapshot.revision,
-        create=(*builder.cells.values(), *patch.create),
-        replace=patch.replace,
+        snapshot.revision, create=prepared.create, replace=prepared.replace,
     )
     committed = store.snapshot()
-    for root_id in roots:
+    for root_id in prepared.root_ids:
         read_value_graph(committed, protocol, root_id)
-    return roots, revision
+    return prepared.root_ids, revision
 
 
 def _one(members, role_id: str, label: str) -> str:
@@ -315,6 +376,25 @@ def _one(members, role_id: str, label: str) -> str:
     if len(roots) != 1:
         raise InvalidCell("value-graph requires one %s" % label)
     return roots[0]
+
+
+def value_graph_registration_count(
+    snapshot: Snapshot,
+    protocol: ValueGraphProtocol,
+    root_id: str,
+) -> int:
+    """How many times this root is registered: 0, 1, or a drift.
+
+    read_value_graph refuses anything but exactly 1, which is right for a
+    read. A CALLER holding a reference to a payload that never landed needs
+    to tell "not there yet" apart from "there twice" without catching an
+    exception that says neither (2026-09-08).
+    """
+    return tuple(
+        member.participant_id
+        for member in read_relation(snapshot, protocol.root_id, budget=100_000)
+        if member.role_id == protocol.role("value-member")
+    ).count(root_id)
 
 
 def read_value_graph(
@@ -435,10 +515,72 @@ def read_value_graph(
     return read(root_id, 0)
 
 
+def project_value_text_fields(
+    snapshot: Snapshot,
+    protocol: ValueGraphProtocol,
+    root_id: str,
+    *,
+    max_fields: int = 32,
+) -> tuple[tuple[str, str], ...]:
+    """Return labels and existing text-value terminals for a registered graph.
+
+    Keys and indexes describe paths; they are never editable fields. Validation
+    and projection use the same immutable snapshot, and no partial result is
+    returned when the field or label budget is exceeded.
+    """
+    if type(max_fields) is not int or not 1 <= max_fields <= 32:
+        raise InvalidCell("value-graph text field limit must be between 1 and 32")
+    read_value_graph(snapshot, protocol, root_id)
+    fields: list[tuple[str, str]] = []
+    structural_content: set[str] = set()
+
+    def content_root(root: str) -> str:
+        members = read_relation(snapshot, root, budget=64)
+        return _one(members, protocol.role("content"), "content")
+
+    def visit(root: str, path: tuple[str, ...]) -> None:
+        members = read_relation(snapshot, root, budget=MAX_VALUE_NODES)
+        variant = _one(members, protocol.role("variant"), "variant")
+        if variant == protocol.variant("text"):
+            if len(fields) >= max_fields:
+                raise InvalidCell("value-graph exceeds its text field budget")
+            label = " / ".join(path) if path else "Value"
+            if len(label.encode("utf-8")) > MAX_SCALAR_BYTES:
+                raise InvalidCell("value-graph text field label exceeds its byte budget")
+            fields.append((label, _one(members, protocol.role("content"), "content")))
+            return
+        if variant not in {protocol.variant("object"), protocol.variant("array")}:
+            return
+        entries = []
+        for member in members:
+            if member.role_id != protocol.role("entry-member"):
+                continue
+            entry = read_relation(snapshot, member.participant_id, budget=64)
+            index_content = content_root(_one(entry, protocol.role("index"), "entry index"))
+            structural_content.add(index_content)
+            index = int(snapshot.cells[index_content].atom.decode("ascii"))
+            if variant == protocol.variant("object"):
+                key_content = content_root(_one(entry, protocol.role("key"), "entry key"))
+                structural_content.add(key_content)
+                label = snapshot.cells[key_content].atom.decode("utf-8")
+                if not label:
+                    label = '""'
+            else:
+                label = str(index + 1)
+            entries.append((index, label, _one(entry, protocol.role("value"), "entry value")))
+        for _index, label, value_root in sorted(entries, key=lambda item: item[0]):
+            visit(value_root, (*path, label))
+
+    visit(root_id, ())
+    if any(root in structural_content for _label, root in fields):
+        raise InvalidCell("value-graph text value aliases a key or index")
+    return tuple(fields)
+
+
 __all__ = [
     "MAX_DEPTH", "MAX_SCALAR_BYTES", "MAX_VALUE_NODES", "ROLE_NAMES",
-    "VARIANT_NAMES", "PreparedValueGraph", "ValueGraphProtocol",
+    "VARIANT_NAMES", "PreparedValueGraph", "PreparedValueGraphs", "ValueGraphProtocol",
     "bootstrap_value_graph_protocol",
     "build_value_graph", "build_value_graphs", "project_value_graph_protocol",
-    "prepare_value_graph", "read_value_graph",
+    "prepare_value_graph", "prepare_value_graphs", "read_value_graph", "project_value_text_fields",
 ]

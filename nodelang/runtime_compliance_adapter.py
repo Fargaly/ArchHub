@@ -6,9 +6,6 @@ authority for admitting write-capable Work.
 """
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
 from .cell_attestations import CourtInvocation, CourtResult
 
 
@@ -29,17 +26,8 @@ def run_physical_runtime_compliance_court(
     failed = {name: False for name in RUNTIME_COMPLIANCE_CHECKS}
     runtime = invocation.external_parameters.get("runtime", "")
     try:
-        brain_source = (
-            Path(__file__).resolve().parents[2]
-            / "12.PRODUCTION"
-            / "personal-brain-mcp"
-            / "src"
-        )
-        if not brain_source.is_dir():
-            raise RuntimeError("Brain physical adapter source is unavailable")
-        source = str(brain_source)
-        if source not in sys.path:
-            sys.path.insert(0, source)
+        # The observer must be in the admitted application package. Missing
+        # dependencies fail closed; never reach into another source checkout.
         from personal_brain.hook_coverage import observe_runtime_compliance
 
         observation = observe_runtime_compliance(runtime)

@@ -1,17 +1,18 @@
-"""The agent composer: intent in, signed graph gestures out.
+"""Translate intent into editable graph changes without executing model effects.
 
-The application was built for this: every mechanism the agent uses is an
-existing governed entry point (instantiate, gesture, group, property edit).
-The model proposes; the graph's own authorities dispose. Nothing here can do
-anything a founder's click could not.
+Draft edits use the existing governed authoring operations. Execution needs the
+separate user review and permission path; model output cannot approve itself.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
+from contextlib import nullcontext
 from typing import Mapping
 
-from .model_router import first_reachable_route, route_chat
+from .model_router import ModelRouteRefused, route_chat
 from .universal_cell import InvalidCell
 
 # There is no built-in default model. One was hidden here for months
@@ -20,41 +21,104 @@ from .universal_cell import InvalidCell
 # DECLARED (ARCHHUB_AGENT_MODEL) or it does not exist; without one and without
 # a pick, the composer says what to pick instead of guessing.
 _DEFAULT_MODEL = os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+_NO_AGENT_NODE = object()
 NO_MODEL_CHOSEN = (
     "No model chosen. Pick one in the studio header (the picker), or set "
-    "ARCHHUB_AGENT_MODEL to a route such as openrouter/anthropic/claude-sonnet-4.5."
+    "ARCHHUB_AGENT_MODEL to a route such as openrouter/free."
 )
 
 _SYSTEM = """You operate the ArchHub node canvas. Reply with ONE JSON object:
 {"actions":[...], "answer":"<one short sentence to the founder>"}
 Each action is one of:
- {"op":"place","definition":"<catalogue name>","x":<num>,"y":<num>,"title":"<optional name>"}
- {"op":"select","roots":["<node id>", ...]}
- {"op":"group"}
+ {"op":"place","definition":"<catalogue name>","ref":"<local name>","x":<num>,"y":<num>,"title":"<optional name>","parameters":{"<declared interface name>":"<text>"}}
+ {"op":"work","ref":"<local name>","title":"<review task>","description":"<self-contained review input and requested outcome>","criteria":[{"criterion":"<observable result>","verification":"<how to check it>"}],"x":<num>,"y":<num>}
+ {"op":"select","roots":[<node reference>, ...]}
+ {"op":"group","ref":"<optional local name>"}
  {"op":"ungroup"}
- {"op":"set_property","root":"<node id>","label":"<label>","value":"<text>"}
- {"op":"wire","source":"<node id>","target":"<node id>"}
- {"op":"run"}
- {"op":"open","root":"<openable node id>"}
-Only use node ids and definition names that appear in the context. Answer in
+ {"op":"set_property","root":<node reference>,"label":"<label>","value":"<text>"}
+ {"op":"wire","source":<node reference>,"target":<node reference>,"source_port":"<declared name>","target_port":"<declared name>"}
+ {"op":"open","root":<openable node reference>}
+A node reference is an existing node id from the context or {"ref":"local name"}
+declared by an earlier place/work/group action in THIS reply. Use unique local names
+(letter followed by up to 63 letters, digits, underscores or hyphens). Never guess
+the ids of nodes you are about to create. For example, place with ref "reader",
+then wire source {"ref":"reader"} to another previously declared reference.
+Use only declared connection ports. Port names may be omitted only when that
+side has one port. Missing or ambiguous ports need user refinement, not invented
+generic inputs or outputs. Only use definition names in the context. Answer in
 the founder's language. If the request needs no canvas change, return
-{"actions":[],"answer":"..."}."""
+{"actions":[],"answer":"..."}.
+Return at most 12 actions. These actions prepare an editable workflow; they do
+not execute it. Never claim that effects ran. Execution follows user review and
+approval through the separate execution controls."""
+
+_SYSTEM += """
+For a requested text review, analysis or planning task, use work: it creates
+registered Work with an editable, wired requirements node that the Workshop can
+prepare for model review. Include the actual input and requested result in its
+description and explicit acceptance criteria with verification methods. Do not
+use a generic catalogue card as a substitute for registered Work. Work is not an
+implementation of arbitrary CAD, filesystem or other tools; do not claim those
+operations exist or ran. If the needed input or intent is unclear, ask for it
+instead of preparing execution. The user still reviews and approves the draft.
+"""
+
+_DRAFT_OPERATIONS = frozenset({
+    "place", "work", "select", "group", "ungroup", "set_property", "wire", "open", "run",
+})
 
 
 def chosen_model_route(model: object) -> str:
-    """Which model answers this turn: his pick, else what is reachable.
-
-    His pick lived only in memory, so every restart left the composer with
-    nothing and his chat answered nothing at all (2026-09-07). His own pick
-    always wins. Only with none does the ROUTER -- not this module -- say
-    what this machine can actually reach, skipping a provider with no key
-    and a runtime that is down. A machine that can reach nothing refuses.
-    """
+    """Use the selected binding or an explicitly configured default, never an inferred provider."""
     chosen = (str(model or "")).strip() or _DEFAULT_MODEL
     if not chosen:
-        chosen = first_reachable_route() or ""
-    if not chosen:
         raise InvalidCell(NO_MODEL_CHOSEN)
+    return chosen
+
+
+def resolve_node_model_route(
+    store, registry, projection, node_root, *, model=None, authentication_context=None,
+) -> str:
+    """Resolve one visible model capability from its authoritative property Cells.
+
+    Canvas ``params`` is a four-row display summary. Read the same viewer's
+    complete property scope so display truncation cannot choose a provider.
+    This helper accepts only an internal projection made for this context;
+    callers must hold their mutation lock across projection and resolution.
+    """
+    from .library_engines import LIBRARY_ITEM_ENGINES
+    from .universal_application import (
+        _property_index, _session_canvas_roots, _text, _view_session_for_context,
+    )
+
+    if type(node_root) is not str or not node_root.strip():
+        raise InvalidCell("agent node must be a visible graph node identity")
+    nodes = [node for node in projection.get("nodes", ()) if node.get("id") == node_root]
+    if len(nodes) != 1:
+        raise InvalidCell("agent node is not visible in this canvas scope")
+    snapshot = store.snapshot()
+    if projection.get("revision") != snapshot.revision:
+        raise InvalidCell("canvas changed while resolving the agent node model")
+    view, _ = _view_session_for_context(registry, authentication_context)
+    visible, _, property_roots = _session_canvas_roots(snapshot, registry, view)
+    if node_root not in visible:
+        raise InvalidCell("agent node is not visible in this canvas scope")
+    rows = _property_index(snapshot, registry, property_roots).get(node_root, ())
+    engines = [row for row in rows if _text(snapshot, row.label_root) == "engine"]
+    model_engines = {entry["engine"] for entry in LIBRARY_ITEM_ENGINES.values()
+                     if "model" in entry.get("params", {})}
+    if (len(engines) != 1 or _text(snapshot, engines[0].value_root) not in model_engines):
+        raise InvalidCell("agent node does not declare a supported model capability")
+    models = [row for row in rows if _text(snapshot, row.label_root) == "model"]
+    if len(models) != 1:
+        raise InvalidCell("agent node requires one unambiguous graph model parameter")
+    chosen = _text(snapshot, models[0].value_root).strip()
+    if not chosen or chosen == "provider-selected":
+        raise InvalidCell("No model chosen for this agent node. Set its model parameter first.")
+    if model is not None and (type(model) is not str or model.strip() != chosen):
+        raise InvalidCell("requested model differs from the agent node model; update its parameter first")
+    if store.revision != snapshot.revision:
+        raise InvalidCell("canvas changed while resolving the agent node model")
     return chosen
 
 
@@ -65,28 +129,40 @@ def _chat(prompt: str, context_block: str, model: str) -> str:
     was answered by OpenRouter under another name. The router refuses instead
     of substituting, and its refusal is one sentence fit to show a person.
     """
-    answer = route_chat(
-        model,
-        [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user",
-             "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
-        ],
-        max_tokens=900,
-        temperature=0,
-    )
-    return str(answer["text"])
+    try:
+        answer = route_chat(
+            model,
+            [
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user",
+                 "content": context_block + chr(10) + chr(10) + "FOUNDER: " + prompt},
+            ],
+            max_tokens=900,
+            temperature=0,
+            free_only=model == "openrouter/free" or model.endswith(":free"),
+        )
+        return str(answer["text"])
+    except ModelRouteRefused:
+        raise
+    except Exception:
+        raise ModelRouteRefused("The model provider did not answer. Try again when it is available.") from None
 
 
 def _canvas_context(projection: Mapping[str, object]) -> str:
     nodes = [
         {"id": node["id"], "label": node.get("label", ""),
          "x": node.get("x"), "y": node.get("y"),
-         "openable": bool(node.get("openable"))}
+         "openable": bool(node.get("openable")),
+         "ports": [
+             {"name": port.get("name"), "side": port.get("side")}
+             for port in node.get("ports", ())
+             if port.get("owner") == node["id"]
+             and port.get("mode") == "connection" and not port.get("derived")
+         ]}
         for node in projection.get("nodes", ())
     ]
     catalog = [
-        str(item.get("name", ""))
+        {"name": str(item["name"]), "description": str(item.get("description", ""))[:240]}
         for item in projection.get("catalog", ())
         if item.get("name")
     ]
@@ -105,19 +181,165 @@ def _canvas_context(projection: Mapping[str, object]) -> str:
     }, ensure_ascii=False)
 
 
+def _validate_draft_references(actions, projection):
+    """Reject malformed/forward references before any draft mutation."""
+    known = {str(node["id"]) for node in projection.get("nodes", ())}
+    declared: set[str] = set()
+    for action in actions:
+        op = action["op"]
+        if op in {"place", "work"}:
+            for coordinate in ("x", "y"):
+                if coordinate in action and (type(action[coordinate]) not in (int, float)
+                        or not math.isfinite(action[coordinate])):
+                    raise InvalidCell("draft position must be finite")
+        if op == "work":
+            criteria = action.get("criteria")
+            if (any(type(action.get(key)) is not str or not action[key].strip()
+                    for key in ("title", "description"))
+                    or type(criteria) is not list or not 1 <= len(criteria) <= 8
+                    or any(type(row) is not dict or set(row) != {"criterion", "verification"}
+                           or any(type(value) is not str or not value.strip() for value in row.values())
+                           for row in criteria)):
+                raise InvalidCell("review Work needs input, outcome and verifiable acceptance criteria")
+        if op == "place" and "parameters" in action:
+            parameters = action["parameters"]
+            if (type(parameters) is not dict or any(
+                    type(key) is not str or not key or type(value) is not str
+                    for key, value in parameters.items())):
+                raise InvalidCell("draft parameters must map declared interface names to text")
+        values = []
+        if op == "select":
+            values = action.get("roots", [])
+            if type(values) is not list or not values:
+                raise InvalidCell("draft selection needs a non-empty list of node references")
+        elif op == "wire":
+            values = [action.get("source"), action.get("target")]
+            for key in ("source_port", "target_port"):
+                if key in action and (type(action[key]) is not str or not action[key].strip()):
+                    raise InvalidCell("draft port name must be non-empty text")
+        elif op in {"set_property", "open"}:
+            if "root" in action or op == "open":
+                values = [action.get("root")]
+        for value in values:
+            if type(value) is str and value in known:
+                continue
+            if (type(value) is dict and set(value) == {"ref"}
+                    and type(value["ref"]) is str and value["ref"] in declared):
+                continue
+            raise InvalidCell("draft node reference is unknown or precedes its creation")
+        if "ref" in action:
+            name = action["ref"]
+            if (op not in {"place", "work", "group"} or type(name) is not str
+                    or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name) is None
+                    or name in declared):
+                raise InvalidCell("draft creation reference must be a unique local name")
+            declared.add(name)
+
+
+def _draft_node(value, references, node_ids):
+    root = references.get(value["ref"]) if type(value) is dict else value
+    if type(root) is not str or root not in node_ids:
+        raise InvalidCell("draft dependency was not created; dependent action was not applied")
+    return root
+
+
+def _draft_port(node, side, name):
+    """Select a declared port; connection authorization remains in the writer."""
+    from .universal_pipeline import _pipeline_port_name
+
+    candidates = [port for port in node.get("ports", ())
+                  if port.get("owner") == node["id"] and port.get("side") == side
+                  and port.get("mode") == "connection" and not port.get("derived")
+                  and (name is None or port.get("name") == name)]
+    if len(candidates) != 1:
+        raise InvalidCell("draft wire needs one declared %s port; choose its name" % side)
+    interface = candidates[0].get("id")
+    _pipeline_port_name(node, interface, side, "draft")
+    return interface
+
+
 def run_agent_composer(
     store,
     registry,
     prompt: str,
     *,
     model: str | None = None,
+    node_root: object = _NO_AGENT_NODE,
     effect_engines: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
+    mutation_lock=None,
+    revalidate=None,
 ) -> dict[str, object]:
-    """One agent turn: read the canvas, ask the model, apply its actions."""
+    """Read and edit under the caller's lock; wait for the model outside it.
+
+    ``effect_engines`` remains accepted for existing callers but is never invoked.
+    Callers must not hold an outer mutation lock across this function.
+    """
+    from .universal_application import project_universal_canvas
+
+    if type(prompt) is not str or not prompt.strip():
+        raise InvalidCell("agent prompt must be a non-empty string")
+    lock = mutation_lock if mutation_lock is not None else nullcontext()
+    with lock:
+        if revalidate is not None:
+            revalidate()
+        source_revision = store.revision
+        projection = project_universal_canvas(
+            store, registry, authentication_context=authentication_context
+        )
+        if node_root is not _NO_AGENT_NODE:
+            chosen = resolve_node_model_route(store, registry, projection, node_root,
+                model=model, authentication_context=authentication_context)
+        if store.revision != source_revision:
+            raise InvalidCell("canvas changed while preparing the agent context")
+        context_block = _canvas_context(projection)
+    if node_root is _NO_AGENT_NODE:
+        chosen = chosen_model_route(model)
+    raw = _chat(prompt.strip(), context_block, chosen)
+    try:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text[text.index("{"):text.rindex("}") + 1]
+        plan = json.loads(text)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise InvalidCell("agent reply was not the admitted JSON shape") from exc
+    if type(plan) is not dict or type(plan.get("answer", "")) is not str:
+        raise InvalidCell("agent reply must contain a draft action list and text answer")
+    actions = plan.get("actions", [])
+    if type(actions) is not list or len(actions) > 12:
+        raise InvalidCell("agent draft must contain at most 12 actions")
+    if any(
+        type(action) is not dict
+        or type(action.get("op")) is not str
+        or action["op"] not in _DRAFT_OPERATIONS
+        for action in actions
+    ):
+        raise InvalidCell("agent draft contains an unsupported action")
+    _validate_draft_references(actions, projection)
+    with lock:
+        if revalidate is not None:
+            revalidate()
+        if node_root is not _NO_AGENT_NODE:
+            current_projection = project_universal_canvas(
+                store, registry, authentication_context=authentication_context
+            )
+            resolve_node_model_route(store, registry, current_projection, node_root,
+                model=chosen, authentication_context=authentication_context)
+        if actions and store.revision != source_revision:
+            raise InvalidCell("canvas changed during planning; refresh the draft before applying")
+        return _apply_draft_actions(
+            store, registry, projection, plan, actions,
+            authentication_context=authentication_context,
+        )
+
+
+def _apply_draft_actions(
+    store, registry, projection, plan, actions, *, authentication_context,
+) -> dict[str, object]:
     from .universal_application import (  # noqa: PLC0415
         apply_universal_canvas_gesture,
         connect_universal_roots,
+        create_universal_governed_work,
         edit_universal_property,
         group_universal_selection,
         instantiate_universal_definition,
@@ -125,42 +347,53 @@ def run_agent_composer(
         ungroup_universal_composition,
         _set_universal_scope_execution,
     )
-    if type(prompt) is not str or not prompt.strip():
-        raise InvalidCell("agent prompt must be a non-empty string")
-    projection = project_universal_canvas(
-        store, registry, authentication_context=authentication_context
-    )
-    context_block = _canvas_context(projection)
-    # The picker is a ROUTER: the model the founder chose is the model that
-    # answers, at that model's own endpoint. Only its absence falls back to
-    # the default, and a provider that cannot be reached says so rather than
-    # being quietly replaced by another one.
-    chosen = chosen_model_route(model)
-    raw = _chat(prompt.strip(), context_block, chosen)
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text[text.index("{"):text.rindex("}") + 1]
-    try:
-        plan = json.loads(text)
-    except ValueError as exc:
-        raise InvalidCell(
-            "agent reply was not the admitted JSON shape"
-        ) from exc
-    actions = plan.get("actions") or ()
     applied: list[dict[str, object]] = []
+    execution_requested = False
+    references: dict[str, str] = {}
     node_ids = {str(node["id"]) for node in projection.get("nodes", ())}
     catalogue = {
         str(item.get("name", "")): str(item.get("id", ""))
         for item in projection.get("catalog", ())
     }
-    for action in tuple(actions)[:12]:
+    for action in actions:
         op = action.get("op")
-        if op == "place":
+        # Never drop a failed dependency and proceed with a different selection.
+        # A partial draft remains visible for repair, but later actions stop.
+        try:
+            if op == "select":
+                resolved = {"roots": [_draft_node(value, references, node_ids)
+                                      for value in action["roots"]]}
+            elif op == "wire":
+                resolved = {key: _draft_node(action[key], references, node_ids)
+                            for key in ("source", "target")}
+            elif op in {"set_property", "open"} and "root" in action:
+                resolved = {"root": _draft_node(action["root"], references, node_ids)}
+            else:
+                resolved = {}
+        except InvalidCell as refusal:
+            applied.append({"op": op, "ok": False, "why": str(refusal)})
+            break
+        action = {**action, **resolved}
+        if op == "work":
+            root, membership_wire, _revision = create_universal_governed_work(
+                store, registry, title=action["title"], description=action["description"],
+                x=float(action.get("x", 600)), y=float(action.get("y", 300)),
+                structured_references={"requirements": {
+                    "acceptance_criteria": action["criteria"],
+                }},
+                authentication_context=authentication_context,
+            )
+            node_ids.add(root)
+            if "ref" in action:
+                references[action["ref"]] = root
+            applied.append({"op": op, "ok": True, "root": root,
+                            "membership_wire": membership_wire})
+        elif op == "place":
             definition_root = catalogue.get(str(action.get("definition")))
             if not definition_root:
                 applied.append({"op": op, "ok": False,
                                 "why": "definition not in catalogue"})
-                continue
+                break
             title = action.get("title")
             root, _revision = instantiate_universal_definition(
                 store, registry, definition_root,
@@ -170,16 +403,19 @@ def run_agent_composer(
                     str(title) if isinstance(title, str) and title.strip()
                     else None
                 ),
+                interface_values=action.get("parameters", {}),
                 authentication_context=authentication_context,
             )
             node_ids.add(root)
+            if "ref" in action:
+                references[action["ref"]] = root
             applied.append({"op": op, "ok": True, "root": root})
         elif op == "select":
-            roots = [r for r in action.get("roots", ()) if r in node_ids]
+            roots = action["roots"]
             if not roots:
                 applied.append({"op": op, "ok": False,
                                 "why": "no known roots"})
-                continue
+                break
             apply_universal_canvas_gesture(
                 store, registry, roots=roots, focus_root=roots[-1],
                 authentication_context=authentication_context,
@@ -191,6 +427,8 @@ def run_agent_composer(
                 authentication_context=authentication_context,
             )
             node_ids.add(root)
+            if "ref" in action:
+                references[action["ref"]] = root
             applied.append({"op": op, "ok": True, "root": root})
         elif op == "ungroup":
             fresh = project_universal_canvas(
@@ -225,7 +463,7 @@ def run_agent_composer(
             if row is None:
                 applied.append({"op": op, "ok": False,
                                 "why": "no editable property by that label"})
-                continue
+                break
             edit_universal_property(
                 store, registry, str(row["relation"]),
                 str(action.get("value", "")),
@@ -239,49 +477,39 @@ def run_agent_composer(
             if source not in node_ids or target not in node_ids:
                 applied.append({"op": op, "ok": False,
                                 "why": "unknown endpoint"})
-                continue
+                break
             try:
-                from .universal_pipeline import (
-                    _ensure_pipeline_node_interfaces,
+                fresh = project_universal_canvas(
+                    store, registry, authentication_context=authentication_context,
                 )
-                for endpoint in (source, target):
-                    _ensure_pipeline_node_interfaces(
-                        store, registry, endpoint
-                    )
-                connect_universal_roots(
+                visible = {str(node["id"]): node for node in fresh.get("nodes", ())}
+                if source not in visible or target not in visible:
+                    raise InvalidCell("draft wire endpoint is outside the active canvas")
+                source_interface = _draft_port(visible[source], "source", action.get("source_port"))
+                target_interface = _draft_port(visible[target], "target", action.get("target_port"))
+                wire, _revision = connect_universal_roots(
                     store, registry, source, target,
-                    source_interface=(
-                        "app:pipeline-interface:%s:source"
-                        % source.rsplit(":", 1)[-1]
-                    ),
-                    target_interface=(
-                        "app:pipeline-interface:%s:target"
-                        % target.rsplit(":", 1)[-1]
-                    ),
+                    source_interface=source_interface,
+                    target_interface=target_interface,
                     authentication_context=authentication_context,
                 )
-                applied.append({"op": op, "ok": True})
+                applied.append({"op": op, "ok": True, "root": wire,
+                                "source": source, "target": target,
+                                "source_interface": source_interface,
+                                "target_interface": target_interface})
             except InvalidCell as refusal:
                 applied.append({"op": op, "ok": False,
                                 "why": str(refusal)[:120]})
+                break
         elif op == "run":
-            from .universal_pipeline import run_universal_pipeline
-            outcome = run_universal_pipeline(
-                store, registry,
-                effect_engines=dict(effect_engines or {}),
-                authentication_context=authentication_context,
-            )
-            applied.append({
-                "op": op, "ok": True,
-                "ran": outcome["ran"],
-                "answers": list(outcome["display"].values())[:6],
-            })
+            # A model asking to run is not the user's approval of its translation.
+            execution_requested = True
         elif op == "open":
             root = str(action.get("root", ""))
             if root not in node_ids:
                 applied.append({"op": op, "ok": False,
                                 "why": "unknown root"})
-                continue
+                break
             _set_universal_scope_execution(
                 store, registry, root,
                 authentication_context=authentication_context,
@@ -290,9 +518,23 @@ def run_agent_composer(
         else:
             applied.append({"op": str(op), "ok": False,
                             "why": "unknown op"})
+    issues = [str(item["why"]) for item in applied if not item.get("ok")]
+    answer = str(plan.get("answer", ""))
+    if issues:
+        answer = "Draft needs attention: " + "; ".join(issues)
+    elif applied:
+        answer = "Draft updated on the canvas. Review its nodes, connections and parameters."
+    if execution_requested:
+        answer = (
+            (answer + " " if applied else "")
+            + "Execution is pending. Review and edit the workflow before approving it."
+        )
     return {
         "ok": True,
-        "answer": str(plan.get("answer", "")),
+        "answer": answer,
+        "execution_requested": execution_requested,
+        "draft_complete": not issues,
         "applied": applied,
+        "references": references,
         "revision": store.revision,
     }

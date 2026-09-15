@@ -89,6 +89,24 @@ class ChangeTransaction:
 
 
 @dataclass(frozen=True, slots=True)
+class _ChangeTransactionHeader:
+    """Presentation metadata; never an executable or fully audited change."""
+    root_id: str
+    actor_root: str
+    session_root: str
+    operation_root: str
+    authority_root: str | None
+    scope_roots: tuple[str, ...]
+    interface_root: str | None
+    base_revision: int
+    result_revision: int
+    timestamp: str
+    change_count: int
+    undo_of: str | None
+    redo_of: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ChangeCommit:
     root_id: str
     revision: int
@@ -279,6 +297,18 @@ def read_change_transaction(
     *,
     budget: int = 10_000,
 ) -> ChangeTransaction:
+    return _read_change_transaction(snapshot, protocol, transaction_root, budget=budget)
+
+
+def _read_change_transaction_header(snapshot, protocol, transaction_root, *, budget):
+    return _read_change_transaction(
+        snapshot, protocol, transaction_root, budget=budget, summary_only=True
+    )
+
+
+def _read_change_transaction(
+    snapshot, protocol, transaction_root, *, budget, summary_only=False,
+):
     if project_change_history_protocol(
         snapshot, protocol.root_id, budget=min(budget, 256)
     ) != protocol:
@@ -343,6 +373,15 @@ def read_change_transaction(
     )
     if not change_roots or len(change_roots) > budget:
         raise InvalidCell("change transaction has an invalid change count")
+    if summary_only:
+        if len(change_roots) != len(set(change_roots)):
+            raise InvalidCell("change transaction repeats a change")
+        return _ChangeTransactionHeader(
+            transaction_root, actor_root, session_root, operation_root,
+            authority_root, scope_roots, interface_root, base_revision,
+            result_revision, _terminal_text(snapshot, timestamp_root, "timestamp"),
+            len(change_roots), undo_of, redo_of,
+        )
     changes: list[CellChange] = []
     targets: set[str] = set()
     for change_root in change_roots:
@@ -417,13 +456,50 @@ def history_state(
     *,
     budget: int = 10_000,
 ) -> HistoryState:
+    return _history_state_and_transactions(
+        snapshot, protocol, history_root, budget=budget
+    )[0]
+
+
+def _history_state_and_transactions(
+    snapshot: Snapshot,
+    protocol: ChangeHistoryProtocol,
+    history_root: str,
+    *,
+    budget: int = 10_000,
+) -> tuple[HistoryState, dict[str, ChangeTransaction]]:
+    """Return the state with the exact transactions validated to derive it."""
+    return _read_history_projection(
+        snapshot, protocol, history_root, budget, read_change_transaction
+    )
+
+
+def _history_summary(
+    snapshot: Snapshot,
+    protocol: ChangeHistoryProtocol,
+    history_root: str,
+    *,
+    budget: int = 10_000,
+) -> tuple[HistoryState, dict[str, _ChangeTransactionHeader]]:
+    """Describe history candidates without materializing historical Cell images.
+
+    Header and compensation order are validated here. Full change-body checks
+    remain in history_state/read_change_transaction and every undo/redo path.
+    This summary grants no execution authority and retains no projection cache.
+    """
+    return _read_history_projection(
+        snapshot, protocol, history_root, budget, _read_change_transaction_header
+    )
+
+
+def _read_history_projection(snapshot, protocol, history_root, budget, reader):
     applied: list[str] = []
     redo: list[str] = []
-    transactions: dict[str, ChangeTransaction] = {}
+    transactions = {}
     for root in _history_transaction_roots(
         snapshot, protocol, history_root, budget=budget
     ):
-        transaction = read_change_transaction(
+        transaction = reader(
             snapshot, protocol, root, budget=budget
         )
         transactions[root] = transaction
@@ -447,12 +523,13 @@ def history_state(
         else:
             applied.append(root)
             redo.clear()
-    return HistoryState(
+    state = HistoryState(
         applied[-1] if applied else None,
         redo[-1] if redo else None,
         tuple(applied),
         tuple(redo),
     )
+    return state, transactions
 
 
 def commit_tracked_change(

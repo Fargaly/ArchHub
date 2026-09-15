@@ -632,8 +632,14 @@ def grant_permission(
     request_root: str,
     consent_broker: UserConsentBroker,
     consent_handle: object,
+    *,
+    expected_revision: int | None = None,
 ) -> bytes:
     snapshot = store.snapshot()
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision != snapshot.revision
+    ):
+        raise InvalidCell("permission changed since review; refresh before approving")
     catalog = verify_adapter_catalog(snapshot, protocol, catalog_root)
     permission = read_permission(snapshot, protocol, request_root)
     if permission.lifecycle_root != protocol.states["requested"]:

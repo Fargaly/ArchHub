@@ -13,6 +13,7 @@ from .application_machine_transport import (
     MachineTransportError,
     UniversalRuntimeClient,
     default_runtime_descriptor_path,
+    current_process_is_desktop_launch,
     inspect_runtime_descriptor,
     recover_stale_runtime_descriptor,
     stopped_runtime_restart_database,
@@ -28,6 +29,40 @@ from .runtime_gateway import GatewayError, RuntimeGateway
 
 def runtime_lock_path():
     return default_state_path().with_name('desktop.lock')
+
+
+def create_workshop_transport(state_directory):
+    """Compose the packaged transport without starting a worker or another owner."""
+    from .session_link_transport import SessionLinkTransport
+
+    if getattr(sys, 'frozen', False):
+        node_executable = None  # Transport resolves the bundled runtime only.
+    else:
+        declared = os.environ.get('SESSION_LINK_NODE')
+        bundled = Path(__file__).resolve().parents[1] / 'runtime' / 'node.exe'
+        if declared:
+            node_executable = declared
+        elif bundled.is_file():
+            node_executable = bundled
+        else:
+            # Source-only callers must explicitly supply their installed toolchain.
+            return None
+    return SessionLinkTransport(
+        node_executable=node_executable,
+        state_dir=Path(state_directory).resolve() / 'session-link',
+        # Starting ArchHub from an agent shell does not attach that agent.
+        # Product dispatch receives host authority only through attach_host.
+        env={'CODEX_APP_TOOLS_PIPE_PATH': '', 'CODEX_THREAD_ID': ''},
+    )
+
+
+def create_social_execution_arguments():
+    """One physical host/custody composition for both desktop entry points."""
+    from .social_http_host import SocialHttpHost
+    from .social_custody import social_credential, social_account_binding_verifier
+
+    return {'social_execution_host': SocialHttpHost(social_credential),
+            'social_account_binding_verifier': social_account_binding_verifier}
 
 
 class DesktopRuntime:
@@ -147,7 +182,19 @@ class DesktopRuntime:
     def _new_server(self):
         if self._server_kwargs is None:
             raise RuntimeError("desktop runtime is attached to an external host")
-        return ApplicationServer(**self._server_kwargs)
+        arguments = dict(self._server_kwargs)
+        state_file = (arguments.get('universal_state_path') or
+                      arguments.get('state_path') or default_state_path())
+        transport = create_workshop_transport(Path(state_file).resolve().parent)
+        if transport is not None:
+            arguments['session_link_transport'] = transport
+        try:
+            arguments.update(create_social_execution_arguments())
+            return ApplicationServer(**arguments)
+        except BaseException:
+            if transport is not None:
+                transport.close()
+            raise
 
     def _verify_gateway_activation(self, backend):
         candidate = self._activation_candidate
@@ -189,6 +236,8 @@ class DesktopRuntime:
             return False
 
     def _attach_machine_authority(self):
+        if not current_process_is_desktop_launch():
+            return False
         try:
             client = UniversalRuntimeClient(
                 default_runtime_descriptor_path(),

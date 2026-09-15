@@ -7,6 +7,7 @@ command intent, audit evidence, and product labels are separate graph data.
 from __future__ import annotations
 
 import base64
+from collections import ChainMap
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -27,6 +28,7 @@ from .cell_logic import (
     evaluate_logic,
 )
 from .cell_protocols import (
+    _relation_chain_ids,
     RelationMember,
     prepare_append_relation_members,
     prepare_remove_relation_members,
@@ -1051,17 +1053,51 @@ def _stored_head_record_digest(
     return _digest({"payload": dict(payload), "signature": values["signature"]})
 
 
-def _commit_signed_change(
+@dataclass(frozen=True, slots=True)
+class _SignedChangePlan:
+    base_revision: int
+    create: tuple[Cell, ...]
+    replace: tuple[Cell, ...]
+    normalized_digest: str
+    blank_atom_roots: frozenset[str]
+
+
+def _prepare_signed_change(
     authority: UnifiedAuthority,
     snapshot: Snapshot,
     *,
     create: Iterable[Cell],
     replace_cells: Iterable[Cell],
     head_root: str | None = None,
-) -> int:
+) -> _SignedChangePlan:
+    """Sign an immutable candidate patch without publishing any graph changes."""
     created = tuple(create)
     replaced = tuple(replace_cells)
-    current = _current_head_member(authority, snapshot)
+    traversal = snapshot
+    new_index = authority.manifest.head_index_root not in snapshot.cells
+    if new_index:
+        created_by_id = {cell.id: cell for cell in created}
+        replaced_by_id = {cell.id: cell for cell in replaced}
+        if (len(created_by_id) != len(created) or
+                len(replaced_by_id) != len(replaced) or
+                any(root in snapshot.cells for root in created_by_id) or
+                any(root not in snapshot.cells for root in replaced_by_id) or
+                authority.manifest.head_index_root not in created_by_id):
+            raise InvalidCell("new authority head index patch is invalid")
+        traversal = Snapshot(snapshot.revision, MappingProxyType(ChainMap(
+            created_by_id, replaced_by_id, snapshot.cells,
+        )))
+        projection = validate_composition(authority, traversal,
+            authority.manifest.head_index_root)
+        if projection.protocol_root != authority.shape("head-index"):
+            raise InvalidCell("new authority head index has the wrong protocol")
+        if (any(root not in created_by_id for root in _relation_chain_ids(
+                traversal, authority.manifest.head_index_root, budget=10_000)) or
+                any(member.incidence_id not in created_by_id for member in projection.members)):
+            raise InvalidCell("new authority head index aliases existing structure")
+    current = _current_head_member(authority, traversal)
+    if new_index and current is not None:
+        raise InvalidCell("new authority head index must not supply a predecessor")
     parent_head = current.participant_id if current is not None else None
     parent_digest = (
         _stored_head_record_digest(authority, snapshot, parent_head)
@@ -1070,7 +1106,8 @@ def _commit_signed_change(
     )
     revision = snapshot.revision + 1
     head_root = _new_id() if head_root is None else head_root
-    if not _is_opaque_id(head_root) or head_root in snapshot.cells:
+    if (not _is_opaque_id(head_root) or head_root in snapshot.cells or
+            any(cell.id == head_root for cell in created)):
         raise InvalidCell("authority head identity is invalid")
     head_cells: list[Cell] = []
     head_members: list[tuple[str, str]] = [
@@ -1110,7 +1147,7 @@ def _commit_signed_change(
     ))
     if current is None:
         index_patch = _append_relation_member(
-            snapshot,
+            traversal,
             authority.manifest.head_index_root,
             authority.role("current-head"),
             head_root,
@@ -1123,6 +1160,13 @@ def _commit_signed_change(
         ))
     all_create = (*created, *head_cells, *index_patch.create)
     all_replace = (*replaced, *index_patch.replace)
+    if new_index:
+        # Appending to a not-yet-published index revises its new tail/root.
+        # Publish those final Cells as creates in the same atomic transaction.
+        folded = {cell.id: cell for cell in index_patch.replace
+            if cell.id in created_by_id}
+        all_create = tuple(folded.get(cell.id, cell) for cell in all_create)
+        all_replace = tuple(cell for cell in all_replace if cell.id not in folded)
     normalized_digest = _committed_head_digest(
         authority,
         snapshot,
@@ -1155,10 +1199,26 @@ def _commit_signed_change(
         else cell
         for cell in all_create
     )
+    return _SignedChangePlan(
+        snapshot.revision, final_create, all_replace, normalized_digest,
+        frozenset((payload_roots["snapshot-digest"], payload_roots["signature"])),
+    )
+
+
+def _commit_signed_change(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    *,
+    create: Iterable[Cell],
+    replace_cells: Iterable[Cell],
+    head_root: str | None = None,
+) -> int:
+    plan = _prepare_signed_change(authority, snapshot, create=create,
+        replace_cells=replace_cells, head_root=head_root)
     committed_revision = authority.store.commit(
-        snapshot.revision,
-        create=final_create,
-        replace=all_replace,
+        plan.base_revision,
+        create=plan.create,
+        replace=plan.replace,
     )
     # The digest this head signs was just computed over exactly the cells
     # the commit published (the two filled payload atoms are blanked on
@@ -1169,14 +1229,12 @@ def _commit_signed_change(
     # itself, so it can never answer for a snapshot that no longer exists;
     # everything else about head verification still runs for real.
     committed = authority.store.snapshot()
-    if committed.revision == revision:
-        blank = frozenset((
-            payload_roots["snapshot-digest"], payload_roots["signature"],
-        ))
+    if committed.revision == plan.base_revision + 1:
+        blank = plan.blank_atom_roots
         key = (id(committed.cells), committed.revision, blank)
         if len(_SNAPSHOT_DIGEST_CACHE) >= 8:
             _SNAPSHOT_DIGEST_CACHE.pop(next(iter(_SNAPSHOT_DIGEST_CACHE)))
-        _SNAPSHOT_DIGEST_CACHE[key] = (committed.cells, normalized_digest)
+        _SNAPSHOT_DIGEST_CACHE[key] = (committed.cells, plan.normalized_digest)
     return committed_revision
 
 
@@ -1399,51 +1457,25 @@ def verify_exact_authority_head(
     )
 
 
-def create_unified_authority(
-    store: CellStore,
-    key_provider: SigningKeyProvider,
-    *,
-    key_id: str,
-    application_label: str,
-    principal_label: str,
-    bootstrap_session_label: str,
-    bootstrap_session_public_key: bytes,
-    composition_labels: Iterable[str],
-) -> UnifiedAuthority:
-    """Create and sign one clean authority from an empty Universal Cell store."""
-    snapshot = store.snapshot()
-    if snapshot.revision != 0 or set(snapshot.cells) != {NULL_CELL_ID}:
-        raise InvalidCell("clean authority creation requires an empty Cell store")
-    labels = tuple(label.strip() for label in composition_labels)
-    try:
-        Ed25519PublicKey.from_public_bytes(bytes(bootstrap_session_public_key))
-    except (TypeError, ValueError) as exc:
-        raise InvalidCell("bootstrap session public key is invalid") from exc
-    if (
-        not application_label.strip()
-        or not principal_label.strip()
-        or not bootstrap_session_label.strip()
-        or any(not label for label in labels)
-        or len(set(labels)) != len(labels)
-    ):
-        raise InvalidCell("bootstrap labels are missing or duplicated")
+@dataclass(frozen=True, slots=True)
+class _AuthorityVocabularyPlan:
+    roles: Mapping[str, str]
+    states: Mapping[str, str]
+    predicates: Mapping[str, str]
+    codec_root: str
+    shapes: Mapping[str, str]
+    cells: tuple[Cell, ...]
 
+
+def _prepare_authority_vocabulary(protocol_root: str) -> _AuthorityVocabularyPlan:
+    """Prepare structural protocol Cells only: no policy, owner, commit or activation."""
+    if not _is_opaque_id(protocol_root):
+        raise InvalidCell("new authority protocol identity is invalid")
     role_ids = {name: _new_id() for name in ROLE_NAMES}
     state_ids = {name: _new_id() for name in LIFECYCLE_NAMES}
     predicate_ids = {name: _new_id() for name in LOGIC_PREDICATE_NAMES}
     codec_root = _new_id()
     shape_ids = {name: _new_id() for name in SHAPE_NAMES}
-    roots = {
-        "application": _new_id(),
-        "protocol": _new_id(),
-        "policy": _new_id(),
-        "catalogue": _new_id(),
-        "constitution": _new_id(),
-        "history": _new_id(),
-        "head_index": _new_id(),
-        "principal": _new_id(),
-        "bootstrap_session": _new_id(),
-    }
     cells: list[Cell] = []
     cells.extend(_plain_value(root, "role/" + name) for name, root in role_ids.items())
     cells.extend(_plain_value(root, "state/" + name) for name, root in state_ids.items())
@@ -1609,7 +1641,7 @@ def create_unified_authority(
     )
     cells.extend(protocol_label_cells)
     cells.extend(_typed_relation_cells(
-        roots["protocol"],
+        protocol_root,
         role_ids["conforms-to"],
         shape_ids["composition"],
         (
@@ -1621,6 +1653,57 @@ def create_unified_authority(
             *((role_ids["protocol-definition"], root) for root in shape_ids.values()),
         ),
     ))
+
+    return _AuthorityVocabularyPlan(
+        MappingProxyType(role_ids), MappingProxyType(state_ids),
+        MappingProxyType(predicate_ids), codec_root, MappingProxyType(shape_ids), tuple(cells),
+    )
+
+
+def create_unified_authority(
+    store: CellStore,
+    key_provider: SigningKeyProvider,
+    *,
+    key_id: str,
+    application_label: str,
+    principal_label: str,
+    bootstrap_session_label: str,
+    bootstrap_session_public_key: bytes,
+    composition_labels: Iterable[str],
+) -> UnifiedAuthority:
+    """Create and sign one clean authority from an empty Universal Cell store."""
+    snapshot = store.snapshot()
+    if snapshot.revision != 0 or set(snapshot.cells) != {NULL_CELL_ID}:
+        raise InvalidCell("clean authority creation requires an empty Cell store")
+    labels = tuple(label.strip() for label in composition_labels)
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes(bootstrap_session_public_key))
+    except (TypeError, ValueError) as exc:
+        raise InvalidCell("bootstrap session public key is invalid") from exc
+    if (
+        not application_label.strip()
+        or not principal_label.strip()
+        or not bootstrap_session_label.strip()
+        or any(not label for label in labels)
+        or len(set(labels)) != len(labels)
+    ):
+        raise InvalidCell("bootstrap labels are missing or duplicated")
+
+    roots = {
+        "application": _new_id(),
+        "protocol": _new_id(),
+        "policy": _new_id(),
+        "catalogue": _new_id(),
+        "constitution": _new_id(),
+        "history": _new_id(),
+        "head_index": _new_id(),
+        "principal": _new_id(),
+        "bootstrap_session": _new_id(),
+    }
+    vocabulary = _prepare_authority_vocabulary(roots["protocol"])
+    role_ids, state_ids, predicate_ids = vocabulary.roles, vocabulary.states, vocabulary.predicates
+    codec_root, shape_ids = vocabulary.codec_root, vocabulary.shapes
+    cells = list(vocabulary.cells)
 
     def labelled_relation(root_id: str, label: str, extra=()) -> tuple[Cell, ...]:
         label_root, label_cells = _build_value(
@@ -2718,7 +2801,7 @@ def _validate_composition_scope(
         raise InvalidCell("scope is not an openable composition")
 
 
-_DEFINITION_CACHE: dict[tuple[int, str, str, str], tuple[object, object]] = {}
+_DEFINITION_CACHE: dict[tuple[int, str, str], tuple[object, object]] = {}
 
 
 def read_definition(
@@ -2727,30 +2810,8 @@ def read_definition(
     *,
     caller: CallerCommandCapability,
 ) -> DefinitionProjection:
-    """Read one definition, authorized, as of now.
-
-    A canvas asks for the same definitions again and again -- once for the
-    library row, once for the node made from it, once for whether it may be
-    placed -- and each ask re-authorized and re-walked the same unchanged
-    cells. A definition cannot change while the graph does not, so the
-    answer is remembered against the exact cell mapping it was read from
-    and against the caller it was authorized for. A different caller asks
-    again, because the authorization is theirs and not the graph's.
-    """
+    """Read the current catalogue revision with current caller authority."""
     snapshot = authority.store.snapshot()
-    key = (
-        id(snapshot.cells),
-        definition_root,
-        getattr(caller, "actor_root", ""),
-        getattr(caller, "session_root", ""),
-    )
-    held = _DEFINITION_CACHE.get(key)
-    if held is not None:
-        cells, projection = held
-        # Identity, not equality: an id can be reused once its object is
-        # gone, so the mapping itself has to still be the same object.
-        if cells is snapshot.cells:
-            return projection
     _authorize_semantic_read(
         authority,
         snapshot,
@@ -2760,6 +2821,24 @@ def read_definition(
         budget=COMMAND_BUDGET,
     )
     revision_root = _definition_revision_root(authority, snapshot, definition_root)
+    return _project_definition_revision(
+        authority, snapshot, definition_root, revision_root
+    )
+
+
+def _project_definition_revision(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    definition_root: str,
+    revision_root: str,
+) -> DefinitionProjection:
+    """Decode exact graph content after its caller has established access."""
+    key = (id(snapshot.cells), definition_root, revision_root)
+    held = _DEFINITION_CACHE.get(key)
+    if held is not None:
+        cells, projection = held
+        if cells is snapshot.cells:
+            return projection
     revision = validate_composition(authority, snapshot, revision_root)
     if revision.protocol_root != authority.shape("definition-revision"):
         raise InvalidCell("definition revision has the wrong structural protocol")
@@ -2831,6 +2910,79 @@ def read_definition(
         _DEFINITION_CACHE.clear()
     _DEFINITION_CACHE[key] = (snapshot.cells, projection)
     return projection
+
+
+def _definition_for_instance(
+    authority: UnifiedAuthority,
+    snapshot: Snapshot,
+    instance_root: str,
+    *,
+    caller: CallerCommandCapability,
+    authorization_snapshot: Snapshot | None = None,
+) -> DefinitionProjection:
+    """Follow an admitted instance's exact revision through its own lineage."""
+    instance = _project_instance(authority, snapshot, instance_root)
+    definition_root = instance["definition"]
+    revision_root = instance["definition_revision"]
+    _authorize_semantic_read(
+        authority,
+        snapshot if authorization_snapshot is None else authorization_snapshot,
+        caller,
+        object_root=definition_root,
+        scope_root=authority.manifest.catalogue_root,
+        budget=COMMAND_BUDGET,
+    )
+    current = _definition_revision_root(authority, snapshot, definition_root)
+    visited: set[str] = set()
+    remaining = COMMAND_BUDGET
+    while current:
+        if current in visited:
+            raise InvalidCell("definition revision lineage is cyclic")
+        visited.add(current)
+        revision = validate_composition(authority, snapshot, current)
+        if revision.protocol_root != authority.shape("definition-revision"):
+            raise InvalidCell("definition revision lineage has the wrong protocol")
+        remaining -= 1 + len(revision.members)
+        if remaining < 0:
+            raise InvalidCell("definition revision lineage exceeds the read budget")
+        if current == revision_root:
+            return _project_definition_revision(
+                authority, snapshot, definition_root, revision_root
+            )
+        previous = [member.participant_id for member in revision.members
+                    if member.role_id == authority.role("previous-revision")]
+        if len(previous) > 1:
+            raise InvalidCell("definition revision lineage is ambiguous")
+        current = previous[0] if previous else None
+    raise InvalidCell("instance definition revision does not belong to its definition")
+
+
+def read_instance_definition(
+    authority: UnifiedAuthority,
+    instance_root: str,
+    *,
+    scope_root: str,
+    caller: CallerCommandCapability,
+    at_revision: int | None = None,
+) -> DefinitionProjection:
+    """Read the instance's pinned contract, preserving current access checks."""
+    current = authority.store.snapshot()
+    _authorize_semantic_read(
+        authority, current, caller,
+        object_root=instance_root, scope_root=scope_root, budget=COMMAND_BUDGET,
+    )
+    if at_revision is not None and (type(at_revision) is not int or at_revision < 0):
+        raise InvalidCell("instance definition read revision is invalid")
+    snapshot = (
+        current if at_revision is None or at_revision == current.revision
+        else authority.store.at(at_revision)
+    )
+    if snapshot.revision != current.revision:
+        _verify_exact_snapshot_head(authority, snapshot)
+    return _definition_for_instance(
+        authority, snapshot, instance_root, caller=caller,
+        authorization_snapshot=current,
+    )
 
 
 def _caller_key_fingerprint(public_key: bytes) -> str:
@@ -3079,6 +3231,7 @@ def _matching_policy_proofs(
         primitive_facts=_policy_primitive_facts(authority, snapshot),
         budget=budget,
         max_proofs=2,
+        snapshot_only_primitives=True,
     )
 
 
@@ -3843,63 +3996,65 @@ def _commit_with_receipt(
     policy_proof: LogicProof | None,
     decision: str = "allow",
 ) -> CommandResult:
-    if (decision == "allow") != (policy_proof is not None):
-        raise InvalidCell("receipt decision and graph policy proof disagree")
-    if decision not in {"allow", "deny"}:
-        raise InvalidCell("receipt decision is invalid")
-    try:
-        expires = datetime.fromisoformat(
-            authenticated.expires_at.replace("Z", "+00:00")
-        )
-    except ValueError as exc:
-        raise InvalidCell("authenticated request expiry is invalid") from exc
+    return _commit_with_receipts(authority, snapshot,
+        resource_create=resource_create, resource_replace=resource_replace,
+        obligations=((authenticated, policy_proof, decision),), result_root=result_root)
+
+
+def _commit_with_receipts(
+    authority, snapshot, *, resource_create, resource_replace, obligations, result_root,
+) -> CommandResult:
+    """Commit all independently signed obligations at one head; return the first receipt."""
+    if not obligations:
+        raise InvalidCell("compound command has no authorization obligations")
+    requests = [item[0] for item in obligations]
+    primary = requests[0]
+    if (len({request.command_id for request in requests}) != len(requests) or
+            any(request.base_revision != snapshot.revision or
+                request.actor_root != primary.actor_root or
+                request.session_root != primary.session_root or
+                request.request_digest != primary.request_digest for request in requests)):
+        raise InvalidCell("compound command obligations do not share an exact request boundary")
     accepted = _utc_now()
-    if expires.tzinfo is None or accepted >= expires:
-        raise InvalidCell("authenticated request expired before commit")
+    for request, proof, decision in obligations:
+        if decision not in {"allow", "deny"} or (decision == "allow") != (proof is not None):
+            raise InvalidCell("receipt decision and graph policy proof disagree")
+        if len(obligations) > 1 and decision != "allow":
+            raise InvalidCell("compound mutation requires all obligations to be allowed")
+        try:
+            expires = datetime.fromisoformat(request.expires_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise InvalidCell("authenticated request expiry is invalid") from exc
+        if expires.tzinfo is None or accepted >= expires:
+            raise InvalidCell("authenticated request expired before commit")
     accepted_at = accepted.isoformat(timespec="microseconds").replace("+00:00", "Z")
     result_revision = snapshot.revision + 1
     head_root = _new_id()
-    receipt_root = _new_id()
-    policy_proof_root: str | None = None
-    policy_proof_cells: tuple[Cell, ...] = ()
-    if policy_proof is not None:
-        policy_proof_root, policy_proof_cells = _build_logic_proof(
-            authority,
-            policy_proof,
-            base_revision=snapshot.revision,
+    metadata = []
+    receipt_roots = []
+    for request, proof, decision in obligations:
+        receipt_root = _new_id()
+        receipt_roots.append(receipt_root)
+        proof_root, proof_cells = (None, ()) if proof is None else _build_logic_proof(
+            authority, proof, base_revision=snapshot.revision)
+        command_root, command_cells = _build_command(authority, request,
+            policy_proof_root=proof_root, receipt_root=receipt_root)
+        built_receipt_root, receipt_cells = _build_receipt(
+            authority, receipt_root=receipt_root, command_root=command_root,
+            head_root=head_root, result_revision=result_revision, result_root=result_root,
+            decision=decision, accepted_at=accepted_at,
         )
-    command_root, command_cells = _build_command(
-        authority,
-        authenticated,
-        policy_proof_root=policy_proof_root,
-        receipt_root=receipt_root,
-    )
-    built_receipt_root, receipt_cells = _build_receipt(
-        authority,
-        receipt_root=receipt_root,
-        command_root=command_root,
-        head_root=head_root,
-        result_revision=result_revision,
-        result_root=result_root,
-        decision=decision,
-        accepted_at=accepted_at,
-    )
-    if built_receipt_root != receipt_root:
-        raise InvalidCell("receipt identity allocation is inconsistent")
-    history_patch = _append_relation_member(
-        snapshot,
-        authority.manifest.history_root,
-        authority.role("receipt"),
-        receipt_root,
-    )
+        if built_receipt_root != receipt_root:
+            raise InvalidCell("receipt identity allocation is inconsistent")
+        metadata.extend((*proof_cells, *command_cells, *receipt_cells))
+    history_patch = _append_relation_members(snapshot, authority.manifest.history_root,
+        tuple((authority.role("receipt"), root) for root in receipt_roots))
     revision = _commit_signed_change(
         authority,
         snapshot,
         create=(
             *resource_create,
-            *policy_proof_cells,
-            *command_cells,
-            *receipt_cells,
+            *metadata,
             *history_patch.create,
         ),
         replace_cells=(*resource_replace, *history_patch.replace),
@@ -3910,8 +4065,8 @@ def _commit_with_receipt(
         revision,
         False,
         len(resource_create),
-        len(policy_proof_cells) + len(command_cells) + len(receipt_cells) + len(history_patch.create),
-        receipt_root,
+        len(metadata) + len(history_patch.create),
+        receipt_roots[0],
     )
 
 
@@ -4813,6 +4968,91 @@ def add_composition_member(
         result_root=composition_root_id,
         policy_proof=policy_proof,
     )
+
+
+def attach_composition_from_scope(
+    authority: UnifiedAuthority, source_scope_root: str, destination_scope_root: str,
+    composition_root_id: str, *, caller: CallerCommandCapability, command_id: str,
+    expected_revision: int | None = None,
+) -> CommandResult:
+    """Reference a sibling composition with both scopes' signed permissions.
+
+    The primary receipt authorizes destination membership; its deterministic
+    companion authorizes the source reference. Both are committed atomically.
+    """
+    if not _is_opaque_id(command_id):
+        raise InvalidCell("attachment command identity is invalid")
+    source_command = str(uuid.uuid5(uuid.NAMESPACE_URL, "archhub:attachment-source:v1:" + command_id))
+    snapshot = authority.store.snapshot()
+    if expected_revision is not None and (type(expected_revision) is not int or
+            expected_revision != snapshot.revision):
+        raise InvalidCell("attachment admission revision is stale")
+    request_digest = _digest({"intent":"attach-composition-from-scope",
+        "source":source_scope_root, "destination":destination_scope_root,
+        "composition":composition_root_id})
+    destination_auth, destination_proof = _validate_command_participants(
+        authority, snapshot, caller, command_id, intent="attach-composition-destination",
+        request_digest=request_digest, object_root=destination_scope_root,
+        scope_root=destination_scope_root, budget=COMMAND_BUDGET)
+    source_auth, source_proof = _validate_command_participants(
+        authority, snapshot, caller, source_command, intent="attach-composition-source",
+        request_digest=request_digest, object_root=composition_root_id,
+        scope_root=source_scope_root, budget=COMMAND_BUDGET)
+    receipts = tuple(_find_receipt(authority, snapshot, caller.actor_root,
+        caller.session_root, root) for root in (command_id, source_command))
+    if any(receipt is not None for receipt in receipts):
+        if any(receipt is None for receipt in receipts):
+            raise InvalidCell("attachment receipt pair is incomplete")
+        destination_receipt, source_receipt = receipts
+        for receipt, authentication in zip(receipts, (destination_auth, source_auth)):
+            command = _command_projection(authority, snapshot, authentication.command_id)
+            if (receipt.request_digest != request_digest or receipt.decision != "allow" or
+                    receipt.result_root != composition_root_id or
+                    command.intent != authentication.intent or
+                    command.scope_root != authentication.scope_root or
+                    command.object_root != authentication.object_root):
+                raise InvalidCell("attachment receipt does not match its scope obligations")
+        if destination_receipt.result_revision != source_receipt.result_revision:
+            raise InvalidCell("attachment receipts were not committed together")
+        return CommandResult(composition_root_id, destination_receipt.result_revision,
+            True, 0, 0, destination_receipt.root_id)
+    _validate_composition_scope(authority, snapshot, source_scope_root)
+    _validate_composition_scope(authority, snapshot, destination_scope_root)
+    target = validate_composition(authority, snapshot, composition_root_id)
+    if target.protocol_root not in {authority.shape("composition"), authority.shape("instance")}:
+        raise InvalidCell("attachment target is not an application composition")
+    remaining = 20_000
+    def children(root):
+        nonlocal remaining
+        if remaining < 1:
+            raise InvalidCell("attachment containment check exceeded its budget")
+        members = read_relation(snapshot, root, budget=remaining, retain_projection=False)
+        # Charge every incidence, including non-composition roles, plus a root
+        # step. This conservatively covers an optional empty chain terminator.
+        remaining -= len(members) + 1
+        if remaining < 0:
+            raise InvalidCell("attachment containment check exceeded its budget")
+        return tuple(member.participant_id for member in members
+            if member.role_id == authority.role("composition"))
+    if composition_root_id not in children(source_scope_root):
+        raise InvalidCell("attachment target is not held by the declared source")
+    if composition_root_id in children(destination_scope_root):
+        raise InvalidCell("the composition is already a member of this scope")
+    pending, seen = [composition_root_id], {composition_root_id}
+    while pending:
+        current = pending.pop()
+        if current == destination_scope_root:
+            raise InvalidCell("attachment would create a containment cycle")
+        for child in children(current):
+            if child not in seen:
+                seen.add(child)
+                pending.append(child)
+    patch = _append_relation_member(snapshot, destination_scope_root,
+        authority.role("composition"), composition_root_id)
+    return _commit_with_receipts(authority, snapshot, resource_create=tuple(patch.create),
+        resource_replace=tuple(patch.replace), result_root=composition_root_id,
+        obligations=((destination_auth, destination_proof, "allow"),
+                     (source_auth, source_proof, "allow")))
 
 
 def ungroup_composition(
@@ -6011,15 +6251,31 @@ def instantiate_definition(
     scope_root: str,
     caller: CallerCommandCapability,
     command_id: str,
+    expected_revision: int | None = None,
+    expected_definition_revision: str | None = None,
 ) -> CommandResult:
     """Create one sparse instance; released definition content remains shared."""
     normalized = _normalized_mapping(overrides)
-    request_digest = _digest({
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise InvalidCell("instance creation base is invalid")
+    if expected_definition_revision is not None and (
+        type(expected_definition_revision) is not str
+        or not expected_definition_revision.strip()
+    ):
+        raise InvalidCell("selected definition revision is invalid")
+    request = {
         "intent": "instantiate-definition",
         "definition": definition_root,
         "overrides": normalized,
         "scope": scope_root,
-    })
+    }
+    if expected_revision is not None:
+        request["expected_revision"] = expected_revision
+    if expected_definition_revision is not None:
+        request["expected_definition_revision"] = expected_definition_revision
+    request_digest = _digest(request)
     snapshot = authority.store.snapshot()
     authenticated, policy_proof = _validate_command_participants(
         authority,
@@ -6050,6 +6306,8 @@ def instantiate_definition(
             0,
             existing.root_id,
         )
+    if expected_revision is not None and snapshot.revision != expected_revision:
+        raise InvalidCell("instance creation base is stale")
     if definition_root not in snapshot.cells or scope_root not in snapshot.cells:
         raise InvalidCell("definition or scope is missing")
     _validate_composition_scope(authority, snapshot, scope_root)
@@ -6062,8 +6320,18 @@ def instantiate_definition(
         for member in catalogue_members
     ):
         raise InvalidCell("definition is not admitted by the graph catalogue")
-    definition_projection = read_definition(
-        authority, definition_root, caller=caller
+    _authorize_semantic_read(
+        authority, snapshot, caller, object_root=definition_root,
+        scope_root=authority.manifest.catalogue_root, budget=COMMAND_BUDGET,
+    )
+    definition_revision = _definition_revision_root(
+        authority, snapshot, definition_root
+    )
+    if (expected_definition_revision is not None
+            and definition_revision != expected_definition_revision):
+        raise InvalidCell("the selected definition changed; refresh the library")
+    definition_projection = _project_definition_revision(
+        authority, snapshot, definition_root, definition_revision
     )
     if definition_projection.lifecycle != "published":
         raise InvalidCell("only a published definition revision may be instantiated")
@@ -6071,9 +6339,6 @@ def instantiate_definition(
     undeclared = set(normalized) - mutable_names
     if undeclared:
         raise InvalidCell("instance override targets an undeclared mutable parameter")
-    definition_revision = _definition_revision_root(
-        authority, snapshot, definition_root
-    )
     instance_root = _new_id()
     cells: list[Cell] = []
     members: list[tuple[str, str]] = [
@@ -6306,15 +6571,9 @@ def revise_instance(
     instance = validate_composition(authority, snapshot, instance_root)
     if instance.protocol_root != authority.shape("instance"):
         raise InvalidCell("instance revision target has the wrong protocol")
-    definition_root = _single_member(
-        snapshot, instance_root, authority.role("definition")
+    definition = _definition_for_instance(
+        authority, snapshot, instance_root, caller=caller
     )
-    definition_revision = _single_member(
-        snapshot, instance_root, authority.role("definition-revision")
-    )
-    definition = read_definition(authority, definition_root, caller=caller)
-    if definition.revision_root != definition_revision:
-        raise InvalidCell("instance definition revision is no longer current")
     mutable = definition.contracts["parameters"]
     if set(normalized) - set(mutable):
         raise InvalidCell("instance revision targets an undeclared parameter")
@@ -7118,7 +7377,7 @@ def read_scope_level(
         None if at_revision == revision else at_revision
     )
     memo_key = (
-        container_root, scope_root, caller.actor_root, normalized_at
+        container_root, scope_root, caller.actor_root, normalized_at, budget
     )
     held = entry[1].get(memo_key)
     if held is not None:
@@ -7462,6 +7721,7 @@ __all__ = [
     "reachable_roots",
     "read_definition",
     "read_instance",
+    "read_instance_definition",
     "read_contained_scope",
     "read_scope_level",
     "read_relation_node",

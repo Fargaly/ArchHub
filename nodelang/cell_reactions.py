@@ -360,6 +360,7 @@ class ReactionEngine:
         self.reaction = reaction
         self.fingerprint_budget = fingerprint_budget
         self._drain_lock = threading.RLock()
+        self._lifecycle_lock = threading.RLock()
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -574,39 +575,56 @@ class ReactionEngine:
 
     def start(self) -> None:
         """Start one hidden daemon worker; no terminal or process is spawned."""
-        if self._thread is not None:
-            return
-        self._stop.clear()
-        self._unsubscribe = self.store.subscribe(lambda event: self._wake.set())
+        with self._lifecycle_lock:
+            if self._thread is not None:
+                return
+            if self._unsubscribe is not None:
+                raise RuntimeError("Reaction startup cleanup must finish before restart")
+            self._stop.clear()
+            self._unsubscribe = self.store.subscribe(lambda event: self._wake.set())
 
-        def run() -> None:
-            self._wake.set()
-            while not self._stop.is_set():
-                self._wake.wait(0.5)
-                self._wake.clear()
-                if self._stop.is_set():
-                    break
-                try:
-                    self.drain()
-                except Exception as exc:
-                    self._failures.append("%s: %s" % (type(exc).__name__, exc))
-                    if len(self._failures) > 100:
-                        del self._failures[:-100]
+            def run() -> None:
+                self._wake.set()
+                while not self._stop.is_set():
+                    if not self._wake.wait(0.5):
+                        continue
+                    self._wake.clear()
+                    if self._stop.is_set():
+                        break
+                    try:
+                        self.drain()
+                    except Exception as exc:
+                        self._failures.append("%s: %s" % (type(exc).__name__, exc))
+                        if len(self._failures) > 100:
+                            del self._failures[:-100]
 
-        self._thread = threading.Thread(
-            target=run, name="archhub-cell-reactions", daemon=True
-        )
-        self._thread.start()
+            try:
+                self._thread = threading.Thread(
+                    target=run, name="archhub-cell-reactions", daemon=True
+                )
+                self._thread.start()
+            except BaseException as error:
+                if self._thread is None or not self._thread.is_alive():
+                    self._thread = None
+                    try:
+                        self._unsubscribe()
+                        self._unsubscribe = None
+                    except Exception as cleanup_error:
+                        error.add_note("Reaction subscription cleanup failed: " + type(cleanup_error).__name__)
+                raise
 
     def stop(self) -> None:
-        self._stop.set()
-        self._wake.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
-        if self._unsubscribe is not None:
-            self._unsubscribe()
-            self._unsubscribe = None
+        with self._lifecycle_lock:
+            self._stop.set()
+            self._wake.set()
+            if self._thread is not None:
+                self._thread.join(timeout=5)
+                if self._thread.is_alive():
+                    raise RuntimeError("Reaction worker has not stopped; retain its owner handle")
+                self._thread = None
+            if self._unsubscribe is not None:
+                self._unsubscribe()
+                self._unsubscribe = None
 
     def failures(self) -> tuple[str, ...]:
         return tuple(self._failures)

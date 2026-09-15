@@ -98,17 +98,25 @@ def evaluate_stem_graph(
     """Every declared output's value, walked from constants to results."""
     by_root = {node.root_id: node for node in nodes}
     incoming: dict[str, dict[str, tuple[str, str]]] = {}
+    conflicts: dict[str, set[str]] = {}
     for wire in wires:
         if wire.source not in by_root or wire.target not in by_root:
             continue
-        incoming.setdefault(wire.target, {})[wire.target_interface] = (
-            wire.source, wire.source_interface
-        )
+        feeds = incoming.setdefault(wire.target, {})
+        if wire.target_interface in feeds:
+            conflicts.setdefault(wire.target, set()).add(wire.target_interface)
+        else:
+            feeds[wire.target_interface] = (wire.source, wire.source_interface)
 
     outputs: dict[str, dict[str, object]] = {}
     display: dict[str, str] = {}
     results: dict[str, object] = {}
-    pending: dict[str, str] = {}
+    # A scalar input has no implicit last-writer or list-reduction rule.
+    # Reject ambiguity before invoking any engine on the affected node.
+    pending: dict[str, str] = {
+        root: "multiple connections on input(s): " + ", ".join(sorted(names))
+        for root, names in conflicts.items()
+    }
     visiting: set[str] = set()
 
     def resolve(root: str) -> dict[str, object] | None:

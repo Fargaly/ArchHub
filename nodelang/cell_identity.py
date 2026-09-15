@@ -453,6 +453,18 @@ class RelationshipAuthorityBroker:
         reference = self._key_provider.current_reference(self._key_id)
         return reference.key_id, reference.version
 
+    def authorize_adoption(self, *args, **kwargs):
+        """Sign only a fresh, exact adoption statement admitted by existing policy."""
+        from dataclasses import replace
+        from .authority_adoption import _prepare_adoption_statement, _payload, _fresh, _verify_successor_binding
+        statement = _prepare_adoption_statement(self, *args, **kwargs)
+        signature = self._key_provider.sign(
+            statement.key_id, statement.key_version, _payload(statement))
+        store = args[0] if args else kwargs["store"]
+        _fresh(store, statement)
+        _verify_successor_binding(statement, kwargs["successor_key_provider"], kwargs["successor_key_id"])
+        return replace(statement, signature=signature)
+
     def authorize_signature(
         self,
         handle: object,

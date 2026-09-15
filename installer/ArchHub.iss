@@ -16,8 +16,21 @@
 ; Every build has its own identity even though the beta ships under one label:
 ; the launcher compares BUILD_ID with the latest release to update quietly.
 #ifndef BuildId
-#define BuildId GetDateTimeString('yyyymmdd-hhnnss', '', '')
+#error Build with installer/build_release.ps1: BuildId is required.
 #endif
+#ifndef RequirementsSha256
+#error Build with installer/build_release.ps1: RequirementsSha256 is required.
+#endif
+#ifndef BuildMetadataPath
+#error Build with installer/build_release.ps1: BuildMetadataPath is required.
+#endif
+#ifndef NodeRuntimePath
+#error Build with installer/build_release.ps1: pinned NodeRuntimePath is required.
+#endif
+#ifndef NodeLicensePath
+#error Build with installer/build_release.ps1: NodeLicensePath is required.
+#endif
+#define PayloadExcludes "__pycache__\*,*.pyc,*.pyo,.env,.env.*,*.sqlite3,*.sqlite3-*,*.db,*.db-*,*.key,*.pem"
 #define AppPublisher "Fargaly"
 ; Every shortcut opens ArchHub.vbs: it resolves the installed pythonw itself
 ; (a bare pythonw fails wherever Python was installed without Add-to-PATH)
@@ -42,9 +55,14 @@ DisableProgramGroupPage=yes
 OutputDir=..\dist
 OutputBaseFilename=ArchHub-Setup-{#AppVersion}
 Compression=lzma2/max
+CompressionThreads=1
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
+; ArchHub owns its explicit update handoff. Restart Manager must not close
+; or restart other applications when this installer runs silently.
+CloseApplications=no
+RestartApplications=no
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
 
@@ -55,26 +73,47 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Flags: recursesubdirs ignoreversion
+Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion
+Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
+Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Excludes: "{#PayloadExcludes}"; Flags: recursesubdirs ignoreversion
 Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
-; The personal brain daemon (:8473) every user gets; the launcher starts it when none answers.
-Source: "..\..\12.PRODUCTION\personal-brain-mcp\src\personal_brain\*"; DestDir: "{app}\personal_brain"; Flags: recursesubdirs ignoreversion
-Source: "..\..\12.PRODUCTION\payload\rhino\archhub_mcp.py"; DestDir: "{app}\bridges\rhino"; Flags: ignoreversion
-Source: "..\..\12.PRODUCTION\payload\blender\archhub_mcp\*"; DestDir: "{app}\bridges\blender\archhub_mcp"; Flags: recursesubdirs ignoreversion
+; Generated once for this exact build; pairs with BUILD_ID after installation.
+Source: "{#BuildMetadataPath}"; DestDir: "{app}"; DestName: "BUILD_METADATA.json"; Flags: ignoreversion
+; Public credential-store code only. Every user's protected data stays local.
+Source: "..\app\secrets_store.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\credential_lock.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\app\__init__.py"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "..\packaging\windows\licenses\ArchHub-components-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
+; Read-only physical observer closure; no Brain server or background launcher.
+Source: "..\personal_brain\__init__.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
+Source: "..\personal_brain\hook_coverage.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
+Source: "..\personal_brain\installer.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
+Source: "..\personal_brain\ambient_policy.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
+Source: "..\bridges\rhino\archhub_mcp.py"; DestDir: "{app}\bridges\rhino"; Flags: ignoreversion
+Source: "..\bridges\blender\archhub_mcp\__init__.py"; DestDir: "{app}\bridges\blender\archhub_mcp"; Flags: ignoreversion
 Source: "..\colleague_setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion
-; Replaces the previous launcher of the same name, so every shortcut a
-; colleague already has opens the new application. The old app\ tree is
-; left in place: it still hosts the brain MCP server on :8473.
+; Replaces the previous launcher of the same name. Existing user state and
+; old installation files are not recursively deleted by this package.
 Source: "ArchHub.vbs"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\12.PRODUCTION\app\assets\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
-; The skill library travels with the application: a colleague machine has
-; no ~/.claude or ~/.codex, and a catalogue that only scanned those reported
-; 0 skills everywhere but the founder desk. Snapshotted at build time from
-; the machine that builds the installer.
-Source: "{#GetEnv("USERPROFILE")}\.claude\skills\*"; DestDir: "{app}\skills\claude"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
-Source: "{#GetEnv("USERPROFILE")}\.codex\skills\*"; DestDir: "{app}\skills\codex"; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
+Source: "..\archhub.ico"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+; Retired launchers target app/main.py; supported shortcuts use ArchHub.vbs.
+Type: files; Name: "{app}\ArchHub.cmd"
+Type: files; Name: "{app}\ArchHub-silent.cmd"
+; Superseded installer helpers recreate those retired app/main.py launchers.
+; The supported package owns setup and shortcuts directly; no directory sweep.
+Type: files; Name: "{app}\installer\install_gui.ps1"
+Type: files; Name: "{app}\installer\make_shortcuts.ps1"
+Type: files; Name: "{app}\installer\setup.iss"
+; Exact retired implementation only. Keep the current connector owner,
+; credentials, databases and unrelated installed files intact on upgrade.
+Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.py"
+Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.pyc"
+Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.pyo"
+Type: files; Name: "{app}\nodelang\__pycache__\cell_baboom_connector_execution.*.pyc"
 
 [Icons]
 Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"
@@ -173,10 +212,26 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ReadyPath: String;
+  ReadyIdentity: AnsiString;
 begin
-  { The installed build's identity, read by the quiet updater. }
+  { Match the private-environment receipt schema used by colleague_setup.py.
+    Preserve a same-build receipt; invalidate older setup BEFORE replacing
+    application files. The launcher independently validates the environment. }
+  if CurStep = ssInstall then
+  begin
+    ReadyPath := ExpandConstant('{app}\.archhub-ready');
+    if FileExists(ReadyPath) then
+      if (not LoadStringFromFile(ReadyPath, ReadyIdentity)) or
+         (Trim(String(ReadyIdentity)) <> 'venv-v1:{#BuildId}:{#RequirementsSha256}') then
+        if not DeleteFile(ReadyPath) then
+          RaiseException('The previous ArchHub setup marker could not be reset. Close ArchHub and retry setup.');
+  end;
+  { The installed build's identity, read by setup and the quiet updater. }
   if CurStep = ssPostInstall then
-    SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False);
+    if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
+      RaiseException('The ArchHub build identity could not be saved. Run setup again.');
 end;
 
 { A colleague without Python is not sent away: the setup fetches the
@@ -187,7 +242,11 @@ const
   PythonUrl = 'https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe';
   PythonFile = 'python-3.14.7-amd64.exe';
   PythonSha256 = '9d9eb2709ef81bf5cd30db3c2096bdbc4ea10087c22e62f27d356b36f6ae9649';
-  PythonArgs = '/quiet InstallAllUsers=0 PrependPath=0 Include_launcher=0 Include_test=0 Shortcuts=0';
+  { CPython's WiX/Burn bootstrapper honors /norestart. The outer Inno
+    restart controls do not propagate into this prerequisite process.
+    Sources: github.com/wixtoolset/wix3/blob/develop/src/burn/engine/core.cpp
+    and github.com/python/cpython/blob/3.14/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp }
+  PythonArgs = '/quiet /norestart InstallAllUsers=0 PrependPath=0 Include_launcher=0 Include_test=0 Shortcuts=0';
 
 var
   PythonPage: TDownloadWizardPage;
@@ -235,7 +294,27 @@ begin
     SuppressibleMsgBox('The Python installer would not start.', mbCriticalError, MB_OK, IDOK);
     exit;
   end;
-  if (Code <> 0) and (Code <> 3010) then
+  { CPython returns Windows ERROR_SUCCESS_REBOOT_REQUIRED (3010) or
+    ERROR_SUCCESS_REBOOT_INITIATED (1641), not proof of a usable runtime.
+    See learn.microsoft.com/en-us/windows/win32/msi/error-codes.
+    Never request an outer restart or continue installation on either result. }
+  if Code = 3010 then
+  begin
+    Log('Python prerequisite requires a restart (3010); ArchHub installation cannot continue yet.');
+    SuppressibleMsgBox('Python requires a Windows restart to finish installation. ArchHub setup will not continue yet.' + #13#10 +
+      'Save your work and restart Windows when you choose, then run this setup again.',
+      mbInformation, MB_OK, IDOK);
+    exit;
+  end;
+  if Code = 1641 then
+  begin
+    Log('Python prerequisite reported restart initiated (1641) despite /norestart; stopping ArchHub installation.');
+    SuppressibleMsgBox('The Python installer reported that a Windows restart was initiated despite restart suppression.' + #13#10 +
+      'ArchHub setup will not continue. Check the system state before running setup again.',
+      mbCriticalError, MB_OK, IDOK);
+    exit;
+  end;
+  if Code <> 0 then
   begin
     SuppressibleMsgBox('The Python installer ended with code ' + IntToStr(Code) + '.', mbCriticalError, MB_OK, IDOK);
     exit;

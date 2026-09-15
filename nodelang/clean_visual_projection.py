@@ -28,7 +28,7 @@ def _scope_panel_rows(
 
     Panels are compositions the graph holds, named by the scope's one
     applicability relation. The relation is reached forwards -- definition to
-    current revision to evidence -- never by searching for something that
+    pinned revision to evidence -- never by searching for something that
     points back. A scope whose revisions carry no applicability projects no
     panels: absence of the declaration is absence of the tabs, not a cue to
     invent Python defaults.
@@ -37,19 +37,11 @@ def _scope_panel_rows(
     seen: set[str] = set()
     rows: list[dict[str, object]] = []
     for node in lens["nodes"]:
-        definition_root = node.get("definition_root")
-        if type(definition_root) is not str or definition_root in seen:
+        revision_root = node.get("definition_revision_root")
+        if type(revision_root) is not str or not revision_root or revision_root in seen:
             continue
-        seen.add(definition_root)
-        try:
-            current = next(
-                member.participant_id
-                for member in relation_members(snapshot, definition_root)
-                if member.role_id == authority.role("current-revision")
-            )
-        except (StopIteration, Exception):
-            continue
-        for member in relation_members(snapshot, current):
+        seen.add(revision_root)
+        for member in relation_members(snapshot, revision_root):
             if member.role_id != authority.role("evidence"):
                 continue
             try:
@@ -250,6 +242,8 @@ def _catalog_projection(
             "id": item["id"],
             "name": item["name"],
             "version": item["version"],
+            "revision_root": item.get("revision_root"),
+            "defaults": item.get("defaults") or {},
             "kind": item["kind"],
             "parameters": item["parameters"],
             # Both readers of this field render a count: the graph-held
@@ -492,7 +486,7 @@ def _focus_is_composition(lens: Mapping[str, object]) -> bool:
 
 def _focus_declares_operation(
     lens: Mapping[str, object],
-    declared_by_definition: Mapping[str, Mapping[str, object]] | None = None,
+    declared_by_revision: Mapping[tuple[str, str], Mapping[str, object]] | None = None,
 ) -> bool:
     """Whether the focused node runs: a host operation, or a stem engine.
 
@@ -509,8 +503,8 @@ def _focus_declares_operation(
         operation = item.get("operation")
         if type(operation) is str and operation.strip():
             return True
-        declared = (declared_by_definition or {}).get(
-            item.get("definition_root") or ""
+        declared = (declared_by_revision or {}).get(
+            (item.get("definition_root") or "", item.get("definition_revision_root") or "")
         )
         return bool((declared or {}).get("engine"))
     return False
@@ -801,10 +795,10 @@ def _project_clean_visual_canvas_unscoped(
     selected_root = lens.get("selected_root")
     selected_roots = tuple(lens.get("selected_roots") or ())
     nodes: list[dict[str, object]] = []
-    # What each definition declares, by root: category (for the card's
-    # colour + head) and its interface contract (for declared sockets).
-    declared_by_definition = {
-        entry["root_id"]: {
+    # Existing nodes carry their effective revisions independently of the
+    # current catalogue offered for new placement.
+    declared_by_revision = {
+        (entry["root_id"], entry["revision_root"]): {
             "category": (
                 str(entry["presentation"].get("category")).strip()
                 if isinstance(entry.get("presentation"), dict)
@@ -830,8 +824,9 @@ def _project_clean_visual_canvas_unscoped(
                 if isinstance(entry.get("parameters"), dict)
                 else {}
             ),
+            "defaults": entry.get("defaults") or {},
         }
-        for entry in lens["catalogue"]
+        for entry in lens.get("effective_definitions", ())
     }
     # (card, relation, end) -> the socket on that card. Filled while the
     # cards are built, read when the wires are.
@@ -964,16 +959,16 @@ def _project_clean_visual_canvas_unscoped(
                 port["relation_root"],
                 _port_side(port["participant_role"]),
             )] = port_projection["id"]
-        declared = declared_by_definition.get(
-            item.get("definition_root") or "", None
+        declared = declared_by_revision.get(
+            (item.get("definition_root") or "", item.get("definition_revision_root") or ""),
+            None,
         )
         node["category"] = (declared or {}).get("category") or ""
         node["engine"] = (declared or {}).get("engine")
+        node["definition_revision_root"] = item.get("definition_revision_root")
         node["parameter_defaults"] = {
-            str(name): (
-                spec.get("default") if isinstance(spec, dict) else spec
-            )
-            for name, spec in ((declared or {}).get("parameters") or {}).items()
+            str(name): ((declared or {}).get("defaults") or {}).get(name)
+            for name in ((declared or {}).get("parameters") or {})
         }
         # Declared sockets: the typed ports the definition promises, drawn
         # unwired so a node reads and wires like a node (1.4's grammar).
@@ -1091,7 +1086,7 @@ def _project_clean_visual_canvas_unscoped(
             # the definition it was made from rather than guessed from its
             # name: a node that DOES something says so in its rules.
             "focus-is-operation": _focus_declares_operation(
-                lens, declared_by_definition
+                lens, declared_by_revision
             ),
             # Whether the last canvas act can be taken back. This was
             # hardcoded False, so the graph's Undo control could never
@@ -1168,6 +1163,8 @@ def _project_clean_visual_canvas_unscoped(
             "id": item["root_id"],
             "name": item["name"],
             "version": item["version"],
+            "revision_root": item["revision_root"],
+            "defaults": item.get("defaults") or {},
             "kind": item["lifecycle"],
             "parameters": item["parameters"],
             "interfaces": item["interfaces"],

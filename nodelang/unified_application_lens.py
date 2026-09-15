@@ -18,6 +18,7 @@ from .unified_authority import (
     composition_root,
     _project_instance,
     read_definition,
+    read_instance_definition,
     read_scope_level,
     read_view_session_state,
     relation_members,
@@ -94,6 +95,7 @@ class LensNode:
     # A canvas holds nodes that describe something and nodes that DO
     # something, and only the node itself can say which it is.
     operation: str | None = None
+    definition_revision_root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,8 @@ class LensCatalogueItem:
     interfaces: Mapping[str, object]
     presentation: Mapping[str, object]
     rules: Mapping[str, object]
+    revision_root: str | None = None
+    defaults: Mapping[str, object] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +134,7 @@ class UnifiedScopeLens:
     # the recorded defaults; the lens never invents a viewport of its own.
     viewport: Mapping[str, object] = MappingProxyType({})
     design_tokens: Mapping[str, object] = MappingProxyType({})
+    effective_definitions: tuple[LensCatalogueItem, ...] = ()
 
 
 def _text_tuple(value: object, label: str) -> tuple[str, ...]:
@@ -152,6 +157,8 @@ def _definition_item(definition: DefinitionProjection) -> LensCatalogueItem:
         MappingProxyType(dict(definition.contracts["interfaces"])),
         MappingProxyType(dict(definition.contracts["presentation"])),
         MappingProxyType(dict(definition.contracts.get("rules") or {})),
+        definition.revision_root,
+        MappingProxyType(dict(definition.contracts["defaults"])),
     )
 
 
@@ -164,6 +171,7 @@ def _interface_binding(
     caller,
     relation_root: str,
     participant_role: str,
+    definition: DefinitionProjection | None = None,
 ) -> dict[str, object]:
     """Name the interface a socket is declared by, and what it declares.
 
@@ -193,7 +201,11 @@ def _interface_binding(
     definition_root = instance.get("definition")
     if type(definition_root) is not str:
         return fallback
-    definition = read_definition(authority, definition_root, caller=caller)
+    if definition is None:
+        definition = read_instance_definition(
+            authority, owner_root, scope_root=level.root_id, caller=caller,
+            at_revision=snapshot.revision,
+        )
     interfaces = definition.contracts.get("interfaces") or {}
     declared = interfaces.get(connection)
     if not isinstance(declared, Mapping):
@@ -381,6 +393,13 @@ def project_unified_scope(
         caller=caller,
         at_revision=snapshot.revision,
     )
+    definitions_by_instance = {
+        root: read_instance_definition(
+            authority, root, scope_root=scope_root, caller=caller,
+            at_revision=snapshot.revision,
+        )
+        for root in level.instances
+    }
     selected_root: str | None = None
     selected_roots: tuple[str, ...] = ()
     if view_root is not None:
@@ -481,16 +500,23 @@ def project_unified_scope(
         for role, root in relation.participants:
             if root not in ports:
                 continue
+            endpoint_connection = {
+                "source": relation.properties.get("source_interface"),
+                "target": relation.properties.get("target_interface"),
+            }.get(role)
+            if type(endpoint_connection) is not str or not endpoint_connection:
+                endpoint_connection = connection
             _i0 = _lens_time.perf_counter()
             interface = _interface_binding(
-                authority, snapshot, level, root, connection, caller,
+                authority, snapshot, level, root, endpoint_connection, caller,
                 relation.root_id, role,
+                definition=definitions_by_instance.get(root),
             )
             _interface_cost += _lens_time.perf_counter() - _i0
             ports[root].append(LensPort(
                 relation.root_id,
                 role,
-                connection,
+                endpoint_connection,
                 tuple(item for item in participant_roots if item != root),
                 interface.get("interface_root"),
                 interface.get("direction"),
@@ -554,7 +580,7 @@ def project_unified_scope(
         values = instance.get("values")
         if type(definition_root) is not str or not isinstance(values, Mapping):
             raise InvalidCell("instance lens projection is invalid")
-        definition = read_definition(authority, definition_root, caller=caller)
+        definition = definitions_by_instance[root]
         presentation = definition.contracts["presentation"]
         presentation_root = definition.contract_roots.get("presentation")
         presentation_identities = (
@@ -608,6 +634,7 @@ def project_unified_scope(
                 if isinstance(rules.get("operation"), str)
                 else None
             ),
+            definition_revision_root=definition.revision_root,
         ))
     _p3 = _lens_time.perf_counter()
     viewport, design_tokens = (
@@ -637,6 +664,13 @@ def project_unified_scope(
         _catalogue_timed(authority, caller, _p0, _p1, _p2, _p3),
         MappingProxyType(viewport),
         MappingProxyType(design_tokens),
+        effective_definitions=tuple(
+            _definition_item(definition)
+            for _, definition in sorted({
+                (definition.root_id, definition.revision_root): definition
+                for definition in definitions_by_instance.values()
+            }.items())
+        ),
     )
 
 
@@ -661,7 +695,10 @@ def _scope_title(authority, snapshot, scope_root, label, caller):
     values = instance.get("values")
     if type(definition_root) is not str or not isinstance(values, Mapping):
         return None
-    definition = read_definition(authority, definition_root, caller=caller)
+    definition = read_instance_definition(
+        authority, scope_root, scope_root=scope_root, caller=caller,
+        at_revision=snapshot.revision,
+    )
     presentation = definition.contracts["presentation"]
     declared = presentation.get("label", definition.name)
     if type(declared) is not str or not declared.strip():

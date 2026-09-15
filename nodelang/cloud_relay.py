@@ -135,6 +135,39 @@ class CloudRelay:
         self.answered = 0
         self._map_digest = ""
         self._map_pushed_at = 0.0
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._lifecycle_lock = threading.Lock()
+
+    def start(self) -> "CloudRelay":
+        """Start the one worker whose lifetime this relay owns."""
+        with self._lifecycle_lock:
+            if self._stop.is_set() or self._thread is not None:
+                raise RuntimeError("cloud relay cannot be started again")
+            self._thread = threading.Thread(
+                target=self.run_forever, name="archhub-cloud-relay", daemon=True,
+            )
+            self._thread.start()
+        return self
+
+    def request_stop(self) -> None:
+        self._stop.set()
+
+    def close(self, *, timeout_seconds: float = 6.0) -> None:
+        """Return only once the owned worker can no longer touch its graph."""
+        timeout = float(timeout_seconds)
+        if not 0 <= timeout <= 30:
+            raise ValueError("cloud relay shutdown timeout must be within 30 seconds")
+        self.request_stop()
+        with self._lifecycle_lock:
+            worker = self._thread
+        if worker is None:
+            return
+        if worker is threading.current_thread():
+            raise RuntimeError("cloud relay cannot join its own worker")
+        worker.join(timeout=timeout)
+        if worker.is_alive():
+            raise TimeoutError("cloud relay worker is still active; graph close is unsafe")
 
     def _request(self, path: str, body: Optional[bytes], *, method: str = "POST") -> dict:
         request = urllib.request.Request(
@@ -173,14 +206,18 @@ class CloudRelay:
 
     def push_map(self, *, force: bool = False, min_interval: float = 60.0) -> Optional[dict]:
         """Re-publish the live projection when it changed (or on demand)."""
-        if self.map_script is None:
+        if self._stop.is_set() or self.map_script is None:
             return None
         now = time.monotonic()
         if not force and now - self._map_pushed_at < min_interval:
             return None
         script = self.map_script()
+        if self._stop.is_set():
+            return None
         body = script.split("window.ATLAS_MAP = ", 1)[1].rsplit("; window.ATLAS_LIVE", 1)[0]
         body = self._with_control(body)
+        if self._stop.is_set():
+            return None
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         self._map_pushed_at = now
         if not force and digest == self._map_digest:
@@ -203,12 +240,16 @@ class CloudRelay:
         except ValueError:
             return body
         control: dict[str, object] = {"agents": [], "work_summary": "", "work_items": [], "hosts": []}
+        if self._stop.is_set():
+            return body
         try:
             agents = self.respond("agents")
             answer = agents.get("response") if isinstance(agents.get("response"), Mapping) else agents
             control["agents"] = list(((answer.get("data") or {}).get("agents") or []))[:24]
         except Exception:
             pass
+        if self._stop.is_set():
+            return body
         try:
             work = self.respond("show governed work")
             answer = work.get("response") if isinstance(work.get("response"), Mapping) else work
@@ -226,6 +267,8 @@ class CloudRelay:
                 ]
         except Exception:
             pass
+        if self._stop.is_set():
+            return body
         try:
             rows = self.hosts() if callable(self.hosts) else []
             control["hosts"] = [
@@ -240,11 +283,13 @@ class CloudRelay:
         return body
 
     def run_forever(self, *, interval: float = 4.0, stop: Optional[threading.Event] = None) -> None:
-        stop = stop or threading.Event()
-        while not stop.is_set():
+        stop = stop or self._stop
+        while not self._stop.is_set() and not stop.is_set():
             try:
                 worked = self.poll_once()
                 self.last_error = ""
+                if self._stop.is_set() or stop.is_set():
+                    break
                 if worked is not None:
                     continue  # drain the queue before sleeping
                 self.push_map()
@@ -274,8 +319,7 @@ def start_cloud_relay(
         base_url=session["base_url"], token=session["token"],
         respond=respond, execute=execute, map_script=map_script, hosts=hosts,
     )
-    threading.Thread(target=relay.run_forever, name="archhub-cloud-relay", daemon=True).start()
-    return relay
+    return relay.start()
 
 
 __all__ = [

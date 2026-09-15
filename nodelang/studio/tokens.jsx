@@ -1,9 +1,7 @@
-// tokens.jsx — ARCHHUB single source of truth for design tokens. (rev)
+// tokens.jsx — Studio projection of the current view's graph theme.
 // ────────────────────────────────────────────────────────────────────────
-// Every surface (Brand Book, Studio canvas, Brain, Self-Heal, Website) derives
-// its local palette from window.AH. DO NOT hardcode surface hexes anywhere else.
-// Change a value here once and all five apps update. This file replaces the old
-// per-file copies (BB / LM / DL / ST / C) that were hand-synced and drifting.
+// The static palette is the boot fallback. Personal Settings in the graph owns
+// saved appearance; this module holds no persistence or cross-view selection.
 //
 // Two key conventions exist downstream:
 //   • long keys  (bgPanel, bgSoft, bgHover …) → BB, LM, DL, ST, critique-C
@@ -93,8 +91,63 @@ window.AH = {
   rowH: { comfortable:32, compact:26, cozy:22 },
 };
 
+window.ArchHubTheme = (() => {
+  const keys = Object.freeze([
+    'bg_deep', 'bg', 'bg_panel', 'bg_soft', 'bg_hover', 'bg_raised', 'bg_ink', 'bg_canvas',
+    'ink', 'ink_soft', 'ink_muted', 'ink_dim', 'on_fill', 'line', 'line_soft', 'line_hair',
+    'accent', 'accent_soft', 'accent_dim', 'accent_hi', 'accent_press',
+    'ok', 'warn', 'err', 'cyan', 'purple', 'blue',
+    'l_bg', 'l_bg_panel', 'l_bg_soft', 'l_ink', 'l_ink_soft', 'l_ink_muted', 'l_line', 'l_accent',
+  ]);
+  const listeners = new Set(), derived = [];
+  let epoch = 0, source = 'not-read';
+  const tokenKey = key => {
+    const light = key.startsWith('l_');
+    const base = light ? key.slice(2) : key;
+    return (light ? 'l_' : '') + base.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+  };
+  const validate = theme => {
+    if (!theme || typeof theme !== 'object' || Array.isArray(theme) ||
+        Object.keys(theme).length !== keys.length || keys.some(key =>
+          !Object.prototype.hasOwnProperty.call(theme, key) ||
+          typeof theme[key] !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(theme[key]))) {
+      throw new Error('Personal Settings did not return a complete colour theme.');
+    }
+    return Object.fromEntries(keys.map(key => [tokenKey(key), theme[key]]));
+  };
+  const apply = theme => {
+    const values = validate(theme); // Reject the whole document before changing any token.
+    const changed = Object.keys(values).some(key => window.AH[key] !== values[key]);
+    if (!changed && source === 'graph') { window.ARCHHUB_THEME_ERROR = ''; return false; }
+    const next = {...window.AH, ...values};
+    // Build every dependent projection first; a failed builder cannot partially apply.
+    const updates = derived.map(({target, build}) => ({target, values:build(next)}));
+    Object.assign(window.AH, values);
+    for (const update of updates) Object.assign(update.target, update.values);
+    source = 'graph';
+    window.ARCHHUB_THEME_ERROR = '';
+    epoch += 1;
+    for (const notify of listeners) { try { notify(); } catch (_) {} }
+    return true;
+  };
+  const derive = build => {
+    const target = build(window.AH);
+    derived.push({target, build});
+    return target;
+  };
+  const store = Object.freeze({keys, validate, apply, derive, get source() { return source; },
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+    getEpoch: () => epoch});
+  window.ARCHHUB_THEME_ERROR = '';
+  if (window.ARCHHUB_THEME != null) {
+    try { apply(window.ARCHHUB_THEME); }
+    catch (error) { source = 'rejected'; window.ARCHHUB_THEME_ERROR = error.message; }
+  }
+  return store;
+})();
+
 // Convenience: short-key projection (brain / self-heal style) so those files can
-// do `const C = window.AHShort` if they prefer. Kept in sync automatically.
+// do `const C = window.AHShort` if they prefer. This legacy projection is boot-only.
 window.AHShort = (() => {
   const A = window.AH;
   return {

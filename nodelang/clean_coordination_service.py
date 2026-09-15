@@ -20,6 +20,7 @@ from .clean_coordination_host import (
     SignedCoordinationRequest,
 )
 from .runtime_caller_capability import WindowsDpapiCallerKeyStore
+from .runtime_activity import RuntimeClosing
 from .clean_boot_surface import BootSurface
 from .unified_authority_runtime import default_runtime_root, open_current_authority
 from .universal_cell import DatabaseOwnerConflict, InvalidCell
@@ -103,6 +104,9 @@ class CleanCoordinationRequestHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(size).decode("utf-8"))
             request = SignedCoordinationRequest.from_payload(payload)
             result = self.server.coordination_host.dispatch(request)
+        except RuntimeClosing as exc:
+            self._write(503, {"ok":False, "error":str(exc)})
+            return
         except (InvalidCell, UnicodeError, json.JSONDecodeError) as exc:
             self._write(400, {"ok": False, "error": str(exc)})
             return
@@ -254,12 +258,25 @@ def _build_canvas_server(location, host: str, port: int):
     # this map is a host this runtime cannot reach at all.
     from .clean_office_adapter import invoke as reach_office
     from .clean_revit_adapter import invoke as reach_revit
+    from .clean_model_adapter import CleanModelAdapter
+    from .model_execution_broker import ModelExecutionBroker, ApplicationOpenRouterCredentialResolver
+    from pathlib import Path as ModelWorkspacePath
+
+    # This owner explicitly admits the model boundary and its encrypted
+    # application credential resolver. The signed host catalogue/command path
+    # still has to admit model.review before any request reaches the adapter.
+    reach_model = CleanModelAdapter(ModelExecutionBroker(
+        workspace_root=ModelWorkspacePath(__file__).resolve().parents[1],
+        credential_resolver=ApplicationOpenRouterCredentialResolver(),
+        timeout_seconds=30.0,
+    ))
 
     adapters = {
         "revit": reach_revit,
         "word": reach_office,
         "excel": reach_office,
         "powerpoint": reach_office,
+        "model": reach_model,
     }
 
     def reach_host(op_id, arguments):
@@ -297,6 +314,35 @@ def _build_canvas_server(location, host: str, port: int):
     except OSError:
         pass
     return server
+
+
+def _close_owner(service, location, canvas, *, coordination_started, report):
+    """Retain store ownership until both surfaces' admitted work is idle."""
+    errors = []
+    service.coordination_host.begin_shutdown()
+    actions = []
+    if canvas is not None:
+        actions.append(("canvas close", canvas.close))
+    if coordination_started:
+        actions.append(("coordination shutdown", service.shutdown))
+    actions.append(("coordination socket close", service.server_close))
+    for name, action in actions:
+        try:
+            action()
+        except Exception as exc:
+            errors.append("%s: %s" % (name, exc))
+    while not service.coordination_host.activity.wait_for_idle(30.0):
+        try:
+            report("shutdown incomplete: waiting for admitted work; graph store remains open")
+        except Exception:
+            pass  # Reporting failure cannot authorize closing an active store.
+    location.authority.store.close()
+    for error in errors:
+        try:
+            report("cleanup error: " + error)
+        except Exception:
+            pass
+    return errors
 
 
 def main() -> int:
@@ -466,11 +512,15 @@ def main() -> int:
         try:
             canvas = _build_canvas_server(
                 location, args.host, args.canvas_port
-            ).start()
+            )
+            service.coordination_host.bind_host_invoker(
+                canvas.clean_authority, canvas.clean_host_invoker)
+            canvas.activity = service.coordination_host.activity
+            canvas.bind_workshop_owner(service.coordination_host)
+            canvas.start()
         except Exception as exc:
             _say("FAILED cannot stand the canvas surface: %s" % exc)
-            service.server_close()
-            location.authority.store.close()
+            _close_owner(service, location, canvas, coordination_started=False, report=_say)
             return 77
         _mark("stand the canvas surface", opened_at)
         total = time.monotonic() - started_at
@@ -580,11 +630,9 @@ def main() -> int:
     except KeyboardInterrupt:
         exit_code = 130
     finally:
-        if canvas is not None:
-            canvas.close()
-        service.shutdown()
-        service.server_close()
-        location.authority.store.close()
+        errors = _close_owner(service, location, canvas, coordination_started=True, report=_say)
+        if errors and exit_code == 0:
+            exit_code = 79
     return exit_code
 
 

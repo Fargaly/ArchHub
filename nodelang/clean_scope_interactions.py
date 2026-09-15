@@ -1098,7 +1098,8 @@ def submit_clean_scope_interaction(
     `read_snapshot` is the snapshot the interaction is READ from. When the
     bindings are derived rather than persisted, the interaction cells live
     only in an overlay the server holds; the commit itself still runs
-    against the graph's own snapshot and writes only its receipt.
+    against the graph's own snapshot and records the view's accepted focus
+    together with its receipt.
     """
     snapshot = authority.store.snapshot()
     # An exact retry of a command that already succeeded must return its
@@ -1242,11 +1243,28 @@ def submit_clean_scope_interaction(
     now = datetime.now(timezone.utc).timestamp()
     if issued_at > now + 5 or expires_at <= now:
         raise InvalidCell("scope interaction browser session is expired")
+    from .cell_attention import (
+        open_attention_protocol, prepare_accepted_focus_transition,
+    )
+
+    # Navigation and subsequent actions must resolve the same graph-held
+    # view location. Holding the scope itself clears visible child selection;
+    # the lens exposes only selected cards/wires that belong to that scope.
+    # The admitted interaction, session consent and receipt govern this one
+    # atomic transition; no second scope store or follow-up write is needed.
+    focus = prepare_accepted_focus_transition(
+        snapshot, open_attention_protocol(snapshot), focus_id=new_id(),
+        actor_root=authenticated.actor_root, session_root=authenticated.session_root,
+        scope_root=target_scope, selected_roots=(target_scope,), primary_root=target_scope,
+        origin="user", reason_roots=(browser_session_root,), attention_roots=(),
+        authority_root=browser.root_id, consent_evidence_root=browser_session_root,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
     return commit_with_receipt(
         authority,
         snapshot,
-        resource_create=(),
-        resource_replace=(),
+        resource_create=focus.create,
+        resource_replace=focus.replace,
         authenticated=authenticated,
         result_root=target_scope,
         policy_proof=policy_proof,

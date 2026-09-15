@@ -163,6 +163,7 @@ from .cell_change_history import (
     bootstrap_change_history_protocol,
     commit_tracked_change,
     history_state,
+    _history_summary,
     read_change_transaction,
     redo_last_change,
     undo_last_change,
@@ -237,7 +238,7 @@ from .cell_deliberation import (
     compose_deliberation_space,
     evaluate_deliberation_gate,
     extend_deliberation_space,
-    list_deliberation_entries,
+    _recent_entries_from_validated_space,
     list_recent_deliberation_entries,
     open_deliberation_protocol,
     prepare_deliberation_entry,
@@ -537,6 +538,7 @@ from .cell_presenter import (
 from .cell_protocols import (
     CellBatch,
     PropertyProjection,
+    RelationMember,
     RelationProjectionReuse,
     capture_relation_projections,
     compose_relation_cells,
@@ -552,6 +554,7 @@ from .cell_protocols import (
     set_property_atom,
     seed_relation_projections,
     with_relation_projection_scope,
+    with_restore_relation_projection_scope,
 )
 from .cell_reactions import prepare_reaction_instance_registration
 from .cell_standard_library import (
@@ -973,13 +976,22 @@ class DesktopAuthenticationSession:
         self._context = None
         self._lock = threading.RLock()
 
-    def context(self):
-        """Return a live context, renewing only from this trusted session."""
+    def context(self, *, minimum_validity_seconds: float = 0.0):
+        """Return process trust, optionally renewing before its deadline.
+
+        An overlapping old handle remains valid for its original lifetime so
+        already admitted requests can finish. Browser cookies cannot call this.
+        """
+        minimum = float(minimum_validity_seconds)
+        if (not math.isfinite(minimum) or minimum < 0
+                or minimum >= self.lifetime_seconds):
+            raise ValueError("minimum validity must be within the session lifetime")
         with self._lock:
             if self._context is not None:
                 try:
-                    self.broker.resolve(self._context)
-                    return self._context
+                    identity = self.broker.resolve(self._context)
+                    if identity.expires_at - time.time() > minimum:
+                        return self._context
                 except AuthorizationDenied:
                     self._context = None
             self._context = self.broker.mint_authenticated_context(
@@ -1528,6 +1540,51 @@ _BABOOM_CONNECTOR_ADAPTER_SPECS = (
         ("internal-metadata",),
         "teams.open_meeting",
     ),
+    (
+        "workshop-project-repair",
+        "app:adapter:connector:workshop-project-repair:v1",
+        "Workshop public-input repair artifact using a free OpenRouter model",
+        "create-project-repair-artifact",
+        "local:workshop-project-host",
+        ("public-text",),
+        "workshop.project.repair",
+    ),
+) + tuple(
+    # One released provider per admitted social Work operation; the name matches
+    # existing_workshop_social_execution.social_provider_name.
+    (
+        "social-" + operation.replace(".", "-").replace("_", "-"),
+        "app:adapter:connector:social-%s:v1" % operation.replace(".", "-").replace("_", "-"),
+        description,
+        action,
+        location,
+        (data_class,),
+        operation,
+    )
+    for operation, description, action, location, data_class in (
+        ("linkedin.profile", "LinkedIn member identity reader", "read-member-identity",
+         "network:api.linkedin.com", "internal-metadata"),
+        ("linkedin.post", "LinkedIn member post publisher", "publish-member-post",
+         "network:api.linkedin.com", "public-text"),
+        ("linkedin.comment", "LinkedIn member comment publisher", "publish-member-comment",
+         "network:api.linkedin.com", "public-text"),
+        ("facebook.pages", "Facebook managed Pages reader", "read-managed-pages",
+         "network:graph.facebook.com", "internal-metadata"),
+        ("facebook.feed", "Facebook Page feed reader", "read-page-feed",
+         "network:graph.facebook.com", "internal-text"),
+        ("facebook.comments", "Facebook comment reader", "read-object-comments",
+         "network:graph.facebook.com", "internal-text"),
+        ("facebook.page_post", "Facebook Page post publisher", "publish-page-post",
+         "network:graph.facebook.com", "public-text"),
+        ("facebook.comment", "Facebook Page comment publisher", "publish-page-comment",
+         "network:graph.facebook.com", "public-text"),
+        ("instagram.account", "Instagram linked account reader", "read-linked-instagram-account",
+         "network:graph.facebook.com", "internal-metadata"),
+        ("instagram.comments", "Instagram comment reader", "read-media-comments",
+         "network:graph.facebook.com", "internal-text"),
+        ("instagram.reply", "Instagram comment reply publisher", "publish-comment-reply",
+         "network:graph.facebook.com", "public-text"),
+    )
 )
 _MCP_BROKER_PROTOCOL_PREFIX = "app:mcp-broker:v1"
 _MCP_BROKER_ADAPTER_SPECS = (
@@ -2162,7 +2219,7 @@ def _ensure_node_library_sections(
         *(section_root + ":label" for section_root, _label, _members in specs),
     }
     snapshot = store.snapshot()
-    present = required_roots.intersection(snapshot.cells)
+    present = {root for root in required_roots if root in snapshot.cells}
     if present and present != required_roots:
         raise InvalidCell("node library section migration is incomplete")
     icon_root = ensure_archhub_icon_catalog(store).icon_roots["plus"]
@@ -2195,7 +2252,7 @@ def _ensure_node_library_sections(
             _NODE_LIBRARY_NOT_FAVOURITE_ROOT,
             *_NODE_LIBRARY_ENTRY_ROLE_ROOTS.values(),
         }
-        support_present = support_roots.intersection(snapshot.cells)
+        support_present = {root for root in support_roots if root in snapshot.cells}
         if support_present and support_present != support_roots:
             raise InvalidCell("node library entry metadata migration is incomplete")
         batch = CellBatch(store)
@@ -3304,6 +3361,8 @@ _PROPERTIES_PANEL_SPECS = (
 )
 
 _APPLICATION_HTTP_ROUTE_SPECS = (
+    ("GET", "/api/universal/visibility-recovery", "read"),
+    ("POST", "/api/universal/visibility-recovery", "execute"),
     ("GET", "/api/state", "read"),
     ("GET", "/api/universal/health", "read"),
     # The remote gateway owns this descriptor endpoint.  Its graph route keeps
@@ -3315,6 +3374,8 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("GET", "/api/universal/grand-map-work", "read"),
     ("GET", "/api/universal/roma-tree", "read"),
     ("GET", "/api/universal/workshop", "read"),
+    ("GET", "/api/universal/workshop-model-approval", "read"),
+    ("GET", "/api/universal/workshop-native", "read"),
     ("GET", "/api/universal/workshop-assignments", "read"),
     ("GET", "/api/universal/deliberation", "read"),
     ("GET", "/api/universal/attention", "read"),
@@ -3366,7 +3427,12 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/agent-session-challenge", "inspect"),
     ("POST", "/api/universal/agent-session", "create"),
     ("POST", "/api/universal/agent-session-resume", "execute"),
+    ("POST", "/api/universal/agent-session-reconcile", "read"),
+    ("POST", "/api/universal/agent-session-continuation-status", "read"),
     ("POST", "/api/universal/agent-session-renew", "execute"),
+    ("POST", "/api/universal/agent-session-release", "execute"),
+    ("POST", "/api/universal/agent-session-release-status", "read"),
+    ("POST", "/api/universal/agent-session-link", "execute"),
     ("POST", "/api/universal/baboom-command", "read"),
     ("POST", "/api/universal/baboom-command-response", "read"),
     ("POST", "/api/universal/baboom-command-execute", "create"),
@@ -3378,6 +3444,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/model-delegation-approve", "execute"),
     ("POST", "/api/universal/model-delegation-grant", "execute"),
     ("POST", "/api/universal/model-delegation-execute", "execute"),
+    ("POST", "/api/universal/model-result-publish", "create"),
     ("POST", "/api/universal/model-delegation-receipt", "execute"),
     ("POST", "/api/universal/model-delegation-recover", "execute"),
     ("POST", "/api/universal/model-delegation-resume", "execute"),
@@ -3390,6 +3457,16 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/connector-delegation", "execute"),
     ("POST", "/api/universal/connector-delegation-approve", "execute"),
     ("POST", "/api/universal/connector-delegation-grant", "execute"),
+    ("POST", "/api/universal/project-work-prepare", "execute"),
+    ("POST", "/api/universal/project-work-execute", "execute"),
+    ("POST", "/api/universal/social-work-prepare", "execute"),
+    ("POST", "/api/universal/social-work-execute", "execute"),
+    ("POST", "/api/universal/work-artifact", "execute"),
+    ("GET", "/api/universal/application-update", "read"),
+    ("POST", "/api/universal/application-update", "manage-policy"),
+    ("POST", "/api/universal/provider-key", "manage-policy"),
+    ("POST", "/api/universal/social-credential", "manage-policy"),
+    ("POST", "/api/universal/social-credential-remove", "manage-policy"),
     ("POST", "/api/universal/connector-delegation-receipt", "execute"),
     ("POST", "/api/universal/connector-delegation-recover", "execute"),
     ("POST", "/api/universal/connector-delegation-resume", "execute"),
@@ -3405,6 +3482,8 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/work-claim-transfer-claim", "execute"),
     ("POST", "/api/universal/work-claim-transfer-cancel", "edit"),
     ("POST", "/api/universal/workshop", "create"),
+    ("POST", "/api/universal/workshop-model-approval", "execute"),
+    ("POST", "/api/universal/workshop-native", "execute"),
     ("POST", "/api/universal/workshop-assignment", "create"),
     ("POST", "/api/universal/deliberation", "create"),
     ("POST", "/api/universal/assembly", "create"),
@@ -3415,6 +3494,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/cde-write-permit", "execute"),
     ("POST", "/api/universal/cde-write-receipt", "execute"),
     ("POST", "/api/universal/work-transition", "execute"),
+    ("POST", "/api/universal/work-configuration", "edit"),
     ("POST", "/api/universal/work-court", "execute"),
     ("POST", "/api/universal/work-court-recover", "execute"),
     ("POST", "/api/universal/runtime-handoff", "execute"),
@@ -3453,6 +3533,10 @@ _BABOOM_CAPABILITY_ROUTE_KEYS = frozenset({
     ("POST", "/api/universal/agent-session"),
     ("POST", "/api/universal/agent-session-challenge"),
     ("POST", "/api/universal/agent-session-renew"),
+    ("POST", "/api/universal/agent-session-release"),
+    ("POST", "/api/universal/agent-session-release-status"),
+    ("POST", "/api/universal/agent-session-reconcile"),
+    ("POST", "/api/universal/agent-session-continuation-status"),
     ("POST", "/api/universal/baboom-command"),
     ("POST", "/api/universal/baboom-command-execute"),
     ("POST", "/api/universal/baboom-activity"),
@@ -3461,6 +3545,11 @@ _BABOOM_CAPABILITY_ROUTE_KEYS = frozenset({
     ("POST", "/api/universal/connector-delegation"),
     ("POST", "/api/universal/connector-delegation-approve"),
     ("POST", "/api/universal/connector-delegation-grant"),
+    ("POST", "/api/universal/project-work-prepare"),
+    ("POST", "/api/universal/project-work-execute"),
+    ("POST", "/api/universal/social-work-prepare"),
+    ("POST", "/api/universal/social-work-execute"),
+    ("POST", "/api/universal/work-artifact"),
     ("POST", "/api/universal/connector-delegation-receipt"),
     ("POST", "/api/universal/connector-delegation-recover"),
     ("POST", "/api/universal/connector-delegation-resume"),
@@ -3473,6 +3562,7 @@ _BABOOM_CAPABILITY_ROUTE_KEYS = frozenset({
     ("POST", "/api/universal/model-delegation-approve"),
     ("POST", "/api/universal/model-delegation-grant"),
     ("POST", "/api/universal/model-delegation-execute"),
+    ("POST", "/api/universal/model-result-publish"),
     ("POST", "/api/universal/model-delegation-receipt"),
     ("POST", "/api/universal/model-delegation-recover"),
     ("POST", "/api/universal/model-delegation-resume"),
@@ -6486,7 +6576,8 @@ def _ensure_design_system_property_indexes(
             )
             if member.role_id == roles["visible"]
         )
-        contained = set(assigned)
+        assigned_set = set(assigned)
+        contained = set(assigned_set)
         pending = list(assigned)
         while pending:
             root_id = pending.pop()
@@ -6499,7 +6590,7 @@ def _ensure_design_system_property_indexes(
             # its own scope and reaches a lens only by entering it.
             # Descending here swept nested receipt titles into every
             # view's lens -- exactly what nesting them was for.
-            if root_id not in set(assigned) and any(
+            if root_id not in assigned_set and any(
                 member.role_id == roles["seed"]
                 and member.participant_id == _COMPOSITION_MARKER_ROOT
                 for member in nested
@@ -6529,14 +6620,10 @@ def _ensure_design_system_property_indexes(
         if relation_root not in snapshot.cells:
             raise InvalidCell("Design System property index is missing")
         members = read_relation(snapshot, relation_root, budget=100_000)
-        counts = {
-            property_root: sum(
-                member.role_id == member_role
-                and member.participant_id == property_root
-                for member in members
-            )
-            for property_root in requested_properties
-        }
+        counts = dict.fromkeys(requested_properties, 0)
+        for member in members:
+            if member.role_id == member_role and member.participant_id in counts:
+                counts[member.participant_id] += 1
         if any(count > 1 for count in counts.values()):
             raise InvalidCell("Design System title index is duplicated")
         missing = tuple(
@@ -7637,8 +7724,13 @@ def _ensure_application_workshop_workbench(
             member.participant_id for member in members
             if member.role_id == roles["scope"]
         )
-        if scopes != internal_scope_roots:
+        if (scopes[:len(internal_scope_roots)] != internal_scope_roots
+                or len(set(scopes)) != len(scopes)):
             raise InvalidCell("Workshop Workbench internal scope drifted")
+        # Additional conversation scopes are user graph state. Their current
+        # content binding, participants and policy are admitted when catalogued
+        # or opened; startup must not eagerly decode every retained conversation.
+        # The fixed internal authority prefix remains unchanged and unique.
         allowed = {
             roles["seed"], roles["authority"], roles["scope"],
             roles["member"], roles["relation"], roles["property"],
@@ -9151,6 +9243,7 @@ _HARNESS_AGENT_RUNTIMES = (
     ("codex", "Codex"),
     ("claude", "Claude"),
     ("gemini", "Gemini"),
+    ("opencode", "OpenCode"),
 )
 
 
@@ -9598,12 +9691,12 @@ def resolve_universal_baboom_utterance(
                 spoken, re.IGNORECASE | re.DOTALL,
             )
             open_host = re.fullmatch(
-                r"(?:open|launch|start|connect)\s+(excel|word|powerpoint|outlook|rhino|blender|max|3ds\s*max)(?:\s+(?:with|and)\s+.*)?",
+                r"(?:open|launch|start|connect)\s+(excel|word|powerpoint|company\s+email|outlook-imap|new\s+outlook|outlook-new|outlook|rhino|blender|max|3ds\s*max)(?:\s+(?:with|and)\s+.*)?",
                 spoken, re.IGNORECASE,
             )
             if open_host:
                 name = open_host.group(1).casefold().replace(" ", "")
-                intent, payload = "open-host", ("max" if name in ("max", "3dsmax") else name)
+                intent, payload = "open-host", ("max" if name in ("max", "3dsmax") else "outlook-imap" if name == "companyemail" else "outlook-new" if name == "newoutlook" else name)
             elif task:
                 intent, payload = "assign-task", task.group(1).strip()
             elif take_on:
@@ -9788,6 +9881,8 @@ def respond_universal_baboom_utterance(
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
     staged_update: Mapping[str, object] | None = None,
+    content_service=None,
+    read_guard=None,
 ) -> dict[str, object]:
     """Resolve one founder utterance to a graph-backed, non-chat response.
 
@@ -9797,6 +9892,10 @@ def respond_universal_baboom_utterance(
     call, and provider selection remains a proposal until the normal Cognition
     approval path is used.
     """
+    content_read_options = {"content_service": content_service, "read_guard": read_guard,
+        "read_route": ("POST", "/api/universal/baboom-command-response")}
+    context_read_options = {**content_read_options,
+        "workshop_agent_session_root": registry.agent_body.session.root_id}
     command = resolve_universal_baboom_utterance(
         store,
         registry,
@@ -9811,6 +9910,7 @@ def respond_universal_baboom_utterance(
             "data": project_universal_baboom_context(
                 store, registry, authentication_context=authentication_context,
                 brain_state=brain_state, hosts=hosts,
+                **context_read_options,
             ),
         }
     elif intent == "steward-briefing":
@@ -9820,6 +9920,7 @@ def respond_universal_baboom_utterance(
             "data": project_universal_founder_baboom_steward_briefing(
                 store, registry, authentication_context=authentication_context,
                 brain_state=brain_state, hosts=hosts,
+                **content_read_options,
             ),
         }
     elif intent == "attention-briefing":
@@ -9832,7 +9933,8 @@ def respond_universal_baboom_utterance(
         response = {
             "kind": "workshop-report",
             "summary": "Latest bounded founder-local Workshop entries.",
-            "data": project_universal_founder_workshop_report(store, registry),
+            "data": project_universal_founder_workshop_report(store, registry,
+                authentication_context=authentication_context, **content_read_options),
         }
     elif intent == "model-council-report":
         report = project_universal_founder_model_council_report(
@@ -9960,7 +10062,7 @@ def respond_universal_baboom_utterance(
             "data": {"host": host, "requires": "explicit execute"},
         }
     elif intent == "brain-health":
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update, **context_read_options)
         brain = lens.get("brain") or {}
         response = {
             "kind": "brain-health",
@@ -9976,7 +10078,7 @@ def respond_universal_baboom_utterance(
             ),
         }
     elif intent in {"check-meetings", "meeting-brief", "open-meeting", "start-meeting-notes", "stop-meeting-notes"}:
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update, **context_read_options)
         notes = lens.get("meeting_notes") or {}
         response = {
             "kind": "meeting-notes",
@@ -9984,7 +10086,7 @@ def respond_universal_baboom_utterance(
             "data": {"meeting_notes": notes, "route": "/api/universal/baboom-meeting-notes"},
         }
     elif intent == "restart-to-update":
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update, **context_read_options)
         staged = lens.get("update") or {}
         response = {
             "kind": "update-ready" if staged.get("build_id") else "update-none",
@@ -9992,7 +10094,7 @@ def respond_universal_baboom_utterance(
             "data": {"update": staged, "restart": bool(staged.get("build_id"))},
         }
     elif intent == "archhub-map":
-        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update)
+        lens = project_universal_baboom_context(store, registry, authentication_context=authentication_context, brain_state=brain_state, hosts=hosts, staged_update=staged_update, **context_read_options)
         response = {
             "kind": "archhub-map",
             "summary": "The cockpit is the live map of this graph; open /founder on the cloud.",
@@ -10011,6 +10113,8 @@ def respond_universal_baboom_utterance(
     ) else None
     if revision is not None and revision != command["revision"]:
         raise InvalidCell("BABOOM command response changed during projection")
+    if read_guard is not None:
+        read_guard()
     return {"command": command, "response": response}
 
 
@@ -14116,6 +14220,15 @@ def _is_application_view_session(
     set is invalid instead of being silently treated as another region type.
     """
     members = read_relation(snapshot, session_root, budget=100_000)
+    return _members_are_application_view_session(members, roles, authority)
+
+
+def _members_are_application_view_session(
+    members: tuple[RelationMember, ...],
+    roles: Mapping[str, str],
+    authority: ApplicationAuthorization,
+) -> bool:
+    """Classify an already-read relation without walking it a second time."""
     if _one_for_role(members, authority.session_owner_role_root) is None:
         return False
     lens_roots = tuple(
@@ -14172,8 +14285,8 @@ def _migrate_canvas_current_level(
             )
         except InvalidCell:
             continue
-        if not _is_application_view_session(
-            snapshot, roles, authorization, session_root
+        if not _members_are_application_view_session(
+            session_members, roles, authorization
         ):
             continue
         subject_root = _one_for_role(
@@ -14254,8 +14367,9 @@ def _migrate_canvas_current_level(
                 )
                 mutations += 1
 
-            current_members = read_relation(
-                store.snapshot(), lens_root, budget=100_000
+            current_members = (
+                read_relation(store.snapshot(), lens_root, budget=100_000)
+                if removable else lens_members
             )
             remaining_targets = tuple(
                 member.participant_id for member in current_members
@@ -14279,9 +14393,8 @@ def _migrate_canvas_current_level(
                     )
                     mutations += 1
 
-            current_members = read_relation(
-                store.snapshot(), lens_root, budget=100_000
-            )
+            # Focus rewiring cannot change selected/available membership.
+            # Reuse the post-removal members instead of walking the lens again.
             selectable = tuple(
                 member for member in current_members
                 if member.role_id in (roles["selected"], roles["available"])
@@ -14625,6 +14738,7 @@ def _migrate_brain_control_receipts_into_brain_scope(
     return len(receipt_members)
 
 
+@with_restore_relation_projection_scope
 def restore_universal_application(
     map_path: str | Path,
     store: CellStore,
@@ -15985,8 +16099,8 @@ def restore_universal_application(
             )
         except InvalidCell:
             continue
-        if _is_application_view_session(
-            snapshot, roles, authorization, candidate
+        if _members_are_application_view_session(
+            candidate_members, roles, authorization
         ):
             session_roots.append(candidate)
     session_roots = tuple(session_roots)
@@ -17347,24 +17461,55 @@ def _migrate_legacy_canvas_scope_interfaces(
     )
     if not roots or not relation_roots:
         return ()
-    needs_migration = False
+    endpoints = []
     for relation_root in relation_roots:
         members = read_relation(snapshot, relation_root, budget=256)
+        if not any(member.role_id in {roles["source"], roles["target"]}
+                   for member in members):
+            continue
         for side in ("source", "target"):
-            endpoint = next((
+            matches = tuple(
                 member for member in members
                 if member.role_id == roles[side]
-            ), None)
-            if endpoint is None:
-                continue
-            if _project_canvas_interface(
-                snapshot, protocol, endpoint.participant_id
-            ) is None:
-                needs_migration = True
-                break
-        if needs_migration:
-            break
-    if not needs_migration:
+            )
+            if len(matches) != 1:
+                raise InvalidCell("canvas relation endpoint is missing or ambiguous")
+            endpoints.append((side, matches[0]))
+    unresolved = {
+        endpoint.participant_id for _, endpoint in endpoints
+        if _project_canvas_interface(
+            snapshot, protocol, endpoint.participant_id
+        ) is None
+    }
+    declared_owners: dict[str, str] = {}
+    if unresolved:
+        # Assembly interfaces expose data targets, not visual source/target
+        # presentation atoms. Their exact owning membership is already the
+        # canvas endpoint contract; reopening must not replace their wires.
+        for owner_root in dict.fromkeys(roots):
+            for member in read_relation(
+                snapshot, owner_root, budget=_SCOPE_MEMBER_LIMIT,
+                retain_projection=False,
+            ):
+                interface_root = member.participant_id
+                if (
+                    member.role_id != protocol.role("interface")
+                    or interface_root not in unresolved
+                ):
+                    continue
+                if interface_root in declared_owners:
+                    raise InvalidCell("canvas interface owner is ambiguous")
+                interface = read_relation(snapshot, interface_root, budget=256)
+                for role in ("interface-target", "interface-contract",
+                             "interface-presentation"):
+                    target = _one_for_role(interface, protocol.role(role))
+                    if target is None or target not in snapshot.cells:
+                        raise InvalidCell("declared canvas interface is invalid")
+                declared_owners[interface_root] = owner_root
+    direct_owners = unresolved - declared_owners.keys()
+    if not direct_owners.issubset(roots):
+        raise InvalidCell("canvas endpoint has no declared interface owner")
+    if not direct_owners:
         return ()
     _ensure_canvas_domain_interfaces(
         store,
@@ -17373,12 +17518,21 @@ def _migrate_legacy_canvas_scope_interfaces(
         application_root,
         roots,
         relation_roots,
+        declared_interface_owners=declared_owners,
     )
     migrated = store.snapshot()
+    previous_endpoints = {
+        endpoint.incidence_id: endpoint.participant_id
+        for _, endpoint in endpoints
+    }
     migrated_interfaces: list[str] = []
     for relation_root in relation_roots:
         for member in read_relation(migrated, relation_root, budget=256):
             if member.role_id not in {roles["source"], roles["target"]}:
+                continue
+            if member.participant_id in declared_owners:
+                if previous_endpoints.get(member.incidence_id) != member.participant_id:
+                    raise InvalidCell("declared canvas interface changed during migration")
                 continue
             if _project_canvas_interface(
                 migrated, protocol, member.participant_id
@@ -17386,7 +17540,8 @@ def _migrate_legacy_canvas_scope_interfaces(
                 raise InvalidCell(
                     "legacy canvas endpoint migration did not produce an interface"
                 )
-            migrated_interfaces.append(member.participant_id)
+            if previous_endpoints.get(member.incidence_id) != member.participant_id:
+                migrated_interfaces.append(member.participant_id)
     return tuple(dict.fromkeys(migrated_interfaces))
 
 
@@ -17725,6 +17880,8 @@ def _ensure_canvas_domain_interfaces(
     application_root: str,
     domain_roots: tuple[str, ...],
     relation_roots: tuple[str, ...],
+    *,
+    declared_interface_owners: Mapping[str, str] | None = None,
 ) -> None:
     """Migrate generic domain dots to exact relation-incidence interfaces.
 
@@ -17770,6 +17927,17 @@ def _ensure_canvas_domain_interfaces(
         for domain_root in domain_roots
         for side in ("source", "target")
     }
+    # Both endpoint discovery and existing-interface validation read this same
+    # immutable snapshot. Retain their projections only for this preparation.
+    interface_projections = {}
+
+    def projected_interface(root):
+        if root not in interface_projections:
+            interface_projections[root] = _project_canvas_interface(
+                snapshot, protocol, root
+            )
+        return interface_projections[root]
+
     interfaces: list[tuple[str, str, str, str, str, str, str | None]] = []
     for relation_root in relation_roots:
         members = read_relation(snapshot, relation_root, budget=256)
@@ -17783,18 +17951,15 @@ def _ensure_canvas_domain_interfaces(
             continue
         source_member, target_member = source_members[0], target_members[0]
 
-        def projected_of(member):
-            return _project_canvas_interface(
-                snapshot, protocol, member.participant_id
-            )
-
-        source_projected = projected_of(source_member)
-        target_projected = projected_of(target_member)
+        source_projected = projected_interface(source_member.participant_id)
+        target_projected = projected_interface(target_member.participant_id)
 
         def owner_of(member, projected) -> str:
             return (
                 str(projected["owner"]) if projected
-                else member.participant_id
+                else (declared_interface_owners or {}).get(
+                    member.participant_id, member.participant_id
+                )
             )
 
         source_owner = owner_of(source_member, source_projected)
@@ -17807,6 +17972,8 @@ def _ensure_canvas_domain_interfaces(
             ("target", target_member, target_projected,
              target_owner, source_owner),
         ):
+            if member.participant_id in (declared_interface_owners or {}):
+                continue
             # RETAIN what is already an interface. This migrator exists to
             # turn a retired generic domain dot into an exact per-incidence
             # interface, and it read every endpoint as a dot: owner_of()
@@ -17825,9 +17992,33 @@ def _ensure_canvas_domain_interfaces(
             # migration path was missing it. A projection with the WRONG
             # side is left to migrate as before; refusing mid-boot the way
             # the composer does would take the application down instead.
-            if projected is not None and projected["side"] == side:
-                continue
             legacy_root = _domain_canvas_interface_root(owner_root, side)
+            # ...but a RETIRED generic dot is exactly what this migrator
+            # exists to replace, and it projects as an interface like any
+            # other. Retaining it on that basis kept the legacy root in
+            # place and left previous_roots empty, so the exact interface
+            # never recorded what it succeeded
+            # (test_generic_canvas_interface_reopens_as_connected_exact_history).
+            # Retain a real interface; migrate the dot.
+            # ...but only what the FOUNDER made. Every shape this migrator
+            # is meant to replace projects as an interface too -- the v1
+            # generic dot app:canvas-interface:<owner>:<side> and the v3
+            # boundary app:canvas-interface:domain-boundary:<owner>:<side>:v3
+            # both answer _project_canvas_interface with the right side. A
+            # first attempt excluded only the v1 dot and still skipped the
+            # boundaries, so they stopped recording the root they succeeded
+            # and test_generic_canvas_interface_reopens_as_connected_exact_history
+            # went red. Every graph-minted canvas interface is named under
+            # "app:canvas-interface:"; an interface a person authored is not
+            # (the founder's own sockets are relation-candidate:<uuid>).
+            # That prefix is the whole distinction: retain what was
+            # authored, migrate what was minted.
+            if (
+                projected is not None
+                and projected["side"] == side
+                and not member.participant_id.startswith("app:canvas-interface:")
+            ):
+                continue
             interfaces.append((
                 _relation_canvas_interface_root(relation_root, side),
                 side, owner_root, peer_root, member.incidence_id,
@@ -17848,9 +18039,7 @@ def _ensure_canvas_domain_interfaces(
         )
         add(Cell(name_root, NULL_CELL_ID, NULL_CELL_ID, name.encode("utf-8")))
         if interface_root in snapshot.cells:
-            projected = _project_canvas_interface(
-                snapshot, protocol, interface_root
-            )
+            projected = projected_interface(interface_root)
             if (
                 projected is None
                 or projected["owner"] != owner_root
@@ -17885,6 +18074,7 @@ def _ensure_canvas_domain_interfaces(
         for cell in composed.cells:
             add(cell)
 
+    interface_projections.clear()
     application_members = read_relation(
         snapshot, application_root, budget=100_000
     )
@@ -19329,9 +19519,10 @@ def _ensure_view_visibility_scope_projection(
         # the one member role left frozen. Order is not load-bearing here:
         # this index answers membership, and both readers below take it as
         # a set.
+        indexed_relation_ids = set(indexed_relations)
         unindexed_relations = tuple(
             root for root in canonical_relations
-            if root not in set(indexed_relations)
+            if root not in indexed_relation_ids
         )
         if unindexed_relations:
             relation_growth = prepare_append_relation_members(
@@ -19390,9 +19581,10 @@ def _ensure_view_visibility_scope_projection(
         # the refusal was permanent from that moment. Growth is indexed;
         # what the index holds and the scope no longer has is still drift,
         # and the subset check below still says so.
+        indexed_property_ids = set(indexed_properties)
         unindexed = tuple(
             root for root in canonical_properties
-            if root not in set(indexed_properties)
+            if root not in indexed_property_ids
         )
         if unindexed:
             growth = prepare_append_relation_members(
@@ -19930,6 +20122,7 @@ def _canvas_scope_for_assigned(
     registry: UniversalApplicationRegistry,
     assigned: tuple[str, ...],
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Resolve the assigned canvas level without traversing node contents."""
     all_roots, all_relations, all_properties = _canvas_roots(
         snapshot, registry
     )
@@ -19939,23 +20132,6 @@ def _canvas_scope_for_assigned(
     if any(root not in available for root in assigned):
         raise InvalidCell("view visibility references a root outside the canvas")
     allowed = set(assigned)
-    contained = set(allowed)
-    pending = list(allowed)
-    while pending:
-        root = pending.pop()
-        try:
-            members = read_relation(snapshot, root, budget=100_000)
-        except InvalidCell:
-            continue
-        for member in members:
-            if (
-                member.role_id == registry.roles["member"]
-                and member.participant_id not in contained
-            ):
-                contained.add(member.participant_id)
-                pending.append(member.participant_id)
-        if len(contained) > 100_000:
-            raise InvalidCell("view visibility containment exceeds its budget")
     relations = []
     interface_cache = _CANVAS_INTERFACE_PROJECTION_CACHE.get()
     if interface_cache is None:
@@ -20404,7 +20580,7 @@ def _scope_label(
         for member in members:
             role_name = _scope_role_name(snapshot, member.role_id)
             by_role.setdefault(role_name, []).append(member.participant_id)
-        for preferred_role in ("label", "name", "text", "class", "tag"):
+        for preferred_role in ("space-title", "label", "name", "text", "class", "tag"):
             candidates = by_role.get(preferred_role, ())
             if len(candidates) != 1:
                 continue
@@ -20868,7 +21044,9 @@ def _instance_projection(
                 })
         interfaces.append({
             "id": interface_root,
+            "owner": root_id,
             "name": _text(snapshot, name_root) if name_root else "interface",
+            "name_root": name_root,
             "target": target,
             "value": _text(snapshot, target),
             "target_incidence": target_member.incidence_id,
@@ -21861,31 +22039,17 @@ def _project_session_action_history(
     registry: UniversalApplicationRegistry,
     view_session: ApplicationViewSession,
 ) -> dict[str, object]:
-    """Project the session's inspectable transactions without exposing IDs by default."""
-    state = history_state(
+    """Summarize history for display; execution independently audits full changes."""
+    state, transactions = _history_summary(
         snapshot,
         registry.change_history_protocol,
         view_session.action_history_root,
     )
-    members = read_relation(
-        snapshot, view_session.action_history_root, budget=100_000
-    )
-    if any(
-        member.role_id != registry.change_history_protocol.role("transaction")
-        for member in members
-    ):
-        raise InvalidCell("action history contains a non-transaction member")
     route_keys = {
         root: key for key, root in registry.application_http_route_roots.items()
     }
-    transactions = {
-        member.participant_id: read_change_transaction(
-            snapshot,
-            registry.change_history_protocol,
-            member.participant_id,
-        )
-        for member in members
-    }
+    applied_roots = set(state.applied_roots)
+    redo_roots = set(state.redo_roots)
     rows = []
     for transaction_root in reversed(tuple(transactions)):
         transaction = transactions[transaction_root]
@@ -21899,9 +22063,9 @@ def _project_session_action_history(
             state_label = "undo"
         elif transaction.redo_of is not None:
             state_label = "redo"
-        elif transaction.root_id in state.applied_roots:
+        elif transaction.root_id in applied_roots:
             state_label = "applied"
-        elif transaction.root_id in state.redo_roots:
+        elif transaction.root_id in redo_roots:
             state_label = "undone"
         else:
             raise InvalidCell("action history transaction has no derived state")
@@ -21911,7 +22075,7 @@ def _project_session_action_history(
             "route": route,
             "state": state_label,
             "timestamp": transaction.timestamp,
-            "change_count": len(transaction.changes),
+            "change_count": transaction.change_count,
             "capability": (
                 _text(snapshot, transaction.authority_root)
                 if transaction.authority_root is not None else "legacy"
@@ -27611,15 +27775,15 @@ def _register_universal_governed_work(
     return relation_root
 
 
-def _expose_universal_value_graphs(
-    store: CellStore,
+def _prepare_universal_value_graph_exposure(
+    snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
     specifications: tuple[tuple[str, str, float, float], ...],
     *,
     mutation_route: str = "/api/universal/interaction",
     authentication_context: object | None,
-) -> tuple[dict[str, str], int]:
-    """Expose a bounded value-graph batch through one transaction per layer."""
+):
+    """Prepare existing visibility authority without publishing or recording it."""
     if (
         type(specifications) is not tuple
         or not specifications
@@ -27642,7 +27806,6 @@ def _expose_universal_value_graphs(
             or type(y) not in (int, float)
         ):
             raise InvalidCell("value graph exposure has invalid values")
-    snapshot = store.snapshot()
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
@@ -27654,6 +27817,40 @@ def _expose_universal_value_graphs(
     )
     if any(registered.count(root_id) != 1 for root_id in roots):
         raise InvalidCell("visible value graphs must be registered exactly once")
+    active_scope_root = _read_view_scope_trail(snapshot, registry, view_session)[-1]
+    _require_application_authorization(
+        snapshot, registry, "edit", active_scope_root,
+        authentication_context=context,
+    )
+    # Exposure is a fresh publication, not an append-based retry. Recovery of
+    # a signed visible draft completes only its missing interface elsewhere.
+    requested_roots = frozenset(roots)
+    structural_rows = {relation: read_relation(snapshot, relation, budget=100_000)
+        for relation in {registry.canvas_root, registry.application_root,
+                         registry.map.domains["brain"], active_scope_root,
+                         view_session.visibility_root, view_session.properties_lens_root}}
+    for relation, role in ((registry.canvas_root, registry.roles["member"]),
+            (registry.application_root, registry.roles["member"]),
+            (registry.map.domains["brain"], registry.roles["member"]),
+            (active_scope_root, registry.roles["member"]),
+            (view_session.visibility_root, registry.roles["visible"])):
+        if any(row.role_id == role and row.participant_id in requested_roots
+               for row in structural_rows[relation]):
+            raise InvalidCell("value graph already has structural exposure; do not expose it again")
+    existing_properties = {row.participant_id
+        for relation, role in ((registry.canvas_root, registry.roles["property"]),
+                               (active_scope_root, registry.roles["property"]),
+                               (view_session.properties_lens_root, registry.roles["scope"]))
+        for row in structural_rows[relation] if row.role_id == role}
+    if len(existing_properties) > 10_000:
+        raise InvalidCell("value exposure property inventory exceeds its bound")
+    for property_root in existing_properties:
+        if any(row.role_id == registry.roles["owner"] and row.participant_id in requested_roots
+               for row in read_relation(snapshot, property_root, budget=8)):
+            raise InvalidCell("value graph already owns exposure properties; do not expose it again")
+    exposure_create, exposure_replace = _prepare_active_top_scope_exposure_extensions(
+        snapshot, registry, view_session, roots, active_scope_root,
+    )
     canvas_members = []
     lens_members = []
     property_cells = []
@@ -27675,6 +27872,58 @@ def _expose_universal_value_graphs(
                 (registry.roles["scope"], reference.relation_root)
             )
             property_cells.extend(cells)
+    authority = registry.authorization
+    broker = authority.relationship_broker
+    administrator_root = authority.broker.resolve(context).subject_root
+    read_root = authority.protocol.actions["read"]
+    prepared_grants = []
+    projection_grants = []
+    for root_id in roots:
+        grant_specifications = (
+            dict(relationship_id=_resource_audience_binding_root(root_id),
+                source_root=root_id, target_root=authority.audience_root, kind="audience-binding",
+                scope_root=authority.classification_root,
+                reason="resource is classified and released to this audience",
+                evidence_roots=(registry.standard_library.lifecycle_protocol.states["wip"],
+                                view_session.subject_root, root_id)),
+            dict(relationship_id=_projection_grant_root(view_session.subject_root, root_id),
+                source_root=authority.resource_reader_principal_root, target_root=view_session.subject_root,
+                kind="delegation", scope_root=root_id,
+                reason="subject receives this resource through the authorized view",
+                evidence_roots=(view_session.visibility_root,)),
+        )
+        for grant_spec in grant_specifications:
+            grant_root = grant_spec["relationship_id"]
+            if grant_root in snapshot.cells:
+                relationship = verify_authority_relationship(snapshot, authority.identity_protocol, broker, grant_root)
+                expiry = (float(_text(snapshot, relationship.expires_at_root))
+                          if relationship.expires_at_root is not None else None)
+                if (relationship.source_root != grant_spec["source_root"]
+                        or relationship.target_root != grant_spec["target_root"]
+                        or relationship.kind_root != authority.identity_protocol.kinds[grant_spec["kind"]]
+                        or relationship.tenant_root != authority.tenant_root
+                        or relationship.scope_root != grant_spec["scope_root"]
+                        or relationship.action_roots != (read_root,)
+                        or relationship.state_root != authority.identity_protocol.states["active"]
+                        or expiry is not None and (not math.isfinite(expiry) or expiry <= time.time())
+                        or (grant_spec["kind"] == "audience-binding"
+                            and relationship.evidence_roots != grant_spec["evidence_roots"])
+                        or (grant_spec["kind"] == "delegation"
+                            and view_session.visibility_root not in relationship.evidence_roots)):
+                    raise InvalidCell("existing value exposure grant has the wrong authority")
+            else:
+                prepared_grants.append(prepare_authority_relationship_grant(
+                    snapshot, authority.identity_protocol, broker,
+                    broker.mint_from_trusted_administrator(administrator_root),
+                    tenant_root=authority.tenant_root, administrator_root=administrator_root,
+                    action_roots=(read_root,), **grant_spec))
+            if grant_spec["kind"] == "delegation":
+                projection_grants.append(grant_root)
+    session_members = read_relation(snapshot, view_session.root_id, budget=100_000)
+    for grant_root in projection_grants:
+        if sum(member.role_id == registry.roles["relation"] and member.participant_id == grant_root
+               for member in session_members) > 1:
+            raise InvalidCell("value exposure projection grant registration is duplicated")
     requested = (
         (
             registry.canvas_root,
@@ -27696,62 +27945,82 @@ def _expose_universal_value_graphs(
             registry.map.domains["brain"],
             tuple((registry.roles["member"], root_id) for root_id in roots),
         ),
+        (
+            authority.identity_protocol.root_id,
+            tuple((authority.identity_protocol.role("relationship-member"), grant.root_id)
+                  for grant in prepared_grants),
+        ),
+        (
+            view_session.root_id,
+            tuple((registry.roles["relation"], grant_root) for grant_root in projection_grants
+                  if not any(member.role_id == registry.roles["relation"] and member.participant_id == grant_root
+                             for member in session_members)),
+        ),
     )
+    # The value and its parameter rows belong beside the Work in the active
+    # scope. Root-canvas membership alone cannot expose them inside Workshop.
+    requested_by_root: dict[str, list[tuple[str, str]]] = {}
+    for relation_root, members in (*requested, (active_scope_root, tuple(canvas_members))):
+        held = requested_by_root.setdefault(relation_root, [])
+        held.extend(member for member in members if member not in held)
     patches = tuple(
         prepare_append_relation_members(
-            snapshot, relation_root, members, budget=100_000
+            snapshot, relation_root, tuple(members), budget=100_000
         )
-        for relation_root, members in requested
+        for relation_root, members in requested_by_root.items()
     )
-    replacements = {}
+    replacements = {cell.id: cell for cell in exposure_replace}
     for patch in patches:
         for cell in patch.replace:
             if cell.id in replacements and replacements[cell.id] != cell:
                 raise InvalidCell("value graph visibility patches conflict")
             replacements[cell.id] = cell
-    store.commit(
-        snapshot.revision,
-        create=(
-            *property_cells,
-            *(cell for patch in patches for cell in patch.create),
-        ),
-        replace=tuple(replacements.values()),
-    )
-    administrator_root = registry.authorization.broker.resolve(
-        context
-    ).subject_root
-    _issue_resource_audience_bindings(
-        store,
-        registry.authorization,
-        resource_roots=roots,
-        lifecycle_root=registry.standard_library.lifecycle_protocol.states["wip"],
-        owner_root=view_session.subject_root,
-        administrator_root=administrator_root,
-        release_roots={root_id: root_id for root_id in roots},
-    )
-    projection_grants = _issue_view_projection_grants(
-        store,
-        registry.authorization,
-        subject_root=view_session.subject_root,
-        visibility_root=view_session.visibility_root,
-        target_roots=roots,
-        administrator_root=administrator_root,
-    )
-    grant_snapshot = store.snapshot()
-    session_patch = prepare_append_relation_members(
-        grant_snapshot,
-        view_session.root_id,
-        (
-            (registry.roles["relation"], root)
-            for root in projection_grants
-        ),
-        budget=100_000,
-    )
-    store.commit(
-        grant_snapshot.revision,
-        create=session_patch.create,
-        replace=session_patch.replace,
-    )
+    if authority.broker.resolve(context).subject_root != administrator_root:
+        raise AuthorizationDenied("value exposure administrator changed")
+    _require_application_authorization(snapshot, registry, "edit", active_scope_root,
+        authentication_context=context)
+    created_cells = (*property_cells, *exposure_create,
+        *(cell for grant in prepared_grants for cell in grant.cells),
+        *(cell for patch in patches for cell in patch.create))
+    replaced_cells = tuple(replacements.values())
+    return view_session, context, tuple(prepared_grants), created_cells, replaced_cells
+
+
+def _expose_universal_value_graphs(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    specifications: tuple[tuple[str, str, float, float], ...],
+    *,
+    mutation_route: str = "/api/universal/interaction",
+    authentication_context: object | None,
+) -> tuple[dict[str, str], int]:
+    """Publish visibility with its signed authority, then add real interfaces."""
+    snapshot = store.snapshot()
+    _view, context, prepared_grants, created_cells, replaced_cells = (
+        _prepare_universal_value_graph_exposure(snapshot, registry, specifications,
+            mutation_route=mutation_route, authentication_context=authentication_context))
+    broker = registry.authorization.relationship_broker
+    roots = tuple(row[0] for row in specifications)
+    try:
+        store.commit(snapshot.revision, create=created_cells, replace=replaced_cells)
+        for grant in prepared_grants:
+            broker.record_generation(grant.root_id, grant.generation)
+    except BaseException:
+        # The journal may have accepted the exact patch before acknowledgement
+        # or generation recording failed. Restore only these already-signed
+        # generations after comparing every prepared Cell, never unknown data.
+        try:
+            durable = store.snapshot()
+            if (durable.revision > snapshot.revision and all(
+                    durable.cells.get(cell.id) == cell for cell in (*created_cells, *replaced_cells))):
+                for grant in prepared_grants:
+                    if not broker.verify_generation(grant.root_id, grant.generation):
+                        broker.restore_generation(grant.root_id, grant.generation)
+        except Exception:
+            # Conflicting generations or uncertain durable state remain refused;
+            # preserve the original failure and never replay the exposure.
+            pass
+        raise
     interface_roots, revision = create_universal_interfaces(
         store,
         registry,
@@ -27992,6 +28261,36 @@ def begin_universal_runtime_agent_session(
         property_refs.append(reference)
         property_cells.extend(cells)
     snapshot = store.snapshot()
+    # A session body may exist after an interrupted enrollment, but it must
+    # never enter a view before its audience and projection grants exist.
+    authority = registry.authorization
+    relationship_broker = authority.relationship_broker
+    read_root = authority.protocol.actions["read"]
+    administrator_root = identity.subject_root
+    audience_grant = prepare_authority_relationship_grant(
+        snapshot, authority.identity_protocol, relationship_broker,
+        relationship_broker.mint_from_trusted_administrator(administrator_root),
+        relationship_id=_resource_audience_binding_root(session_root),
+        source_root=session_root, target_root=authority.audience_root,
+        kind="audience-binding", tenant_root=authority.tenant_root,
+        scope_root=authority.classification_root, action_roots=(read_root,),
+        administrator_root=administrator_root,
+        reason="resource is classified and released to this audience",
+        evidence_roots=(registry.standard_library.lifecycle_protocol.states["wip"],
+                        identity.subject_root, session_root),
+    )
+    projection_grant = prepare_authority_relationship_grant(
+        snapshot, authority.identity_protocol, relationship_broker,
+        relationship_broker.mint_from_trusted_administrator(administrator_root),
+        relationship_id=_projection_grant_root(identity.subject_root, session_root),
+        source_root=authority.resource_reader_principal_root,
+        target_root=identity.subject_root, kind="delegation",
+        tenant_root=authority.tenant_root, scope_root=session_root,
+        action_roots=(read_root,), administrator_root=administrator_root,
+        reason="subject receives this resource through the authorized view",
+        evidence_roots=(view_session.visibility_root,),
+    )
+    grants = (audience_grant, projection_grant)
     requested = (
         (
             registry.canvas_root,
@@ -28027,6 +28326,12 @@ def begin_universal_runtime_agent_session(
             ((registry.roles["member"], session_root),),
         ),
     )
+    requested += (
+        (authority.identity_protocol.root_id, tuple(
+            (authority.identity_protocol.role("relationship-member"), grant.root_id)
+            for grant in grants)),
+        (view_session.root_id, ((registry.roles["relation"], projection_grant.root_id),)),
+    )
     patches = tuple(
         prepare_append_relation_members(
             snapshot, relation_root, members, budget=100_000
@@ -28039,48 +28344,17 @@ def begin_universal_runtime_agent_session(
             if cell.id in replacements and replacements[cell.id] != cell:
                 raise InvalidCell("runtime Agent Session patches conflict")
             replacements[cell.id] = cell
-    store.commit(
+    revision = store.commit(
         snapshot.revision,
         create=(
             *property_cells,
+            *(cell for grant in grants for cell in grant.cells),
             *(cell for patch in patches for cell in patch.create),
         ),
         replace=tuple(replacements.values()),
     )
-    _issue_resource_audience_bindings(
-        store,
-        registry.authorization,
-        resource_roots=(session_root,),
-        lifecycle_root=(
-            registry.standard_library.lifecycle_protocol.states["wip"]
-        ),
-        owner_root=identity.subject_root,
-        administrator_root=identity.subject_root,
-        release_roots={session_root: session_root},
-    )
-    projection_grants = _issue_view_projection_grants(
-        store,
-        registry.authorization,
-        subject_root=identity.subject_root,
-        visibility_root=view_session.visibility_root,
-        target_roots=(session_root,),
-        administrator_root=identity.subject_root,
-    )
-    grant_snapshot = store.snapshot()
-    session_patch = prepare_append_relation_members(
-        grant_snapshot,
-        view_session.root_id,
-        (
-            (registry.roles["relation"], root)
-            for root in projection_grants
-        ),
-        budget=100_000,
-    )
-    revision = store.commit(
-        grant_snapshot.revision,
-        create=session_patch.create,
-        replace=session_patch.replace,
-    )
+    for grant in grants:
+        relationship_broker.record_generation(grant.root_id, grant.generation)
     return read_agent_session(
         store.snapshot(),
         protocol,
@@ -28150,8 +28424,8 @@ def create_universal_governed_work(
         y=y,
         authentication_context=authentication_context,
         mutation_route="/api/universal/work",
-        interface_values=scalar_values if compact_references else None,
-        title_override=title.strip() if compact_references else None,
+        interface_values=scalar_values,
+        title_override=title.strip(),
         activate_view=select_created,
     )
     membership_wire = _register_universal_governed_work(
@@ -28162,33 +28436,6 @@ def create_universal_governed_work(
     if assembly is None:
         raise InvalidCell("new Governed Work assembly is not projectable")
     interfaces = {item["name"]: item for item in assembly["interfaces"]}
-    if not compact_references:
-        for name, value in scalar_values.items():
-            edit_universal_interface_value(
-                store,
-                registry,
-                instance_root,
-                str(interfaces[name]["id"]),
-                value,
-                mutation_route="/api/universal/work",
-                authentication_context=authentication_context,
-            )
-
-        view_session, _ = _view_session_for_context(
-            registry, authentication_context
-        )
-        title_property = _presentation_source_property(
-            store.snapshot(), registry, view_session, instance_root, "title"
-        )
-        edit_universal_property(
-            store,
-            registry,
-            title_property.relation_root,
-            title.strip(),
-            mutation_route="/api/universal/work",
-            authentication_context=authentication_context,
-        )
-
     structured_source_interfaces = {}
     structured_value_roots = {}
     exposure_specifications = []
@@ -28258,6 +28505,24 @@ def create_universal_governed_work(
             )
         return instance_root, membership_wire, store.revision
 
+    def admit_created_reference(current, admitted_registry, target, endpoint):
+        from .workshop_project_revision import _is_unwired, work_custody_snapshot
+
+        if admitted_registry is not registry or target != instance_root:
+            raise InvalidCell("creation reference belongs to another Work")
+        if not any(m.role_id == registry.roles["member"] and m.participant_id == instance_root
+                   for m in read_relation(current, registry.governed_work_registry_root, budget=100_000)):
+            raise InvalidCell("creation reference Work is not registered")
+        custody = work_custody_snapshot(current, registry, instance_root)
+        if custody["state"] != "open" or custody["claimant"]:
+            raise InvalidCell("creation references require an OPEN unclaimed Work")
+        current_assembly = _instance_projection(current, registry, instance_root)
+        port = next((p for p in current_assembly["interfaces"] if p["id"] == endpoint), None)
+        original = next((p for p in interfaces.values() if p["id"] == endpoint), None)
+        if (port is None or original is None or port["target"] != original["target"]
+                or not _is_unwired(current.cells.get(port["target"]))):
+            raise InvalidCell("creation references require their original unwired target")
+
     for name, source_root in references.items():
         source_interface = structured_source_interfaces.get(name)
         if (
@@ -28268,11 +28533,12 @@ def create_universal_governed_work(
             source_interface = _governed_work_scope_source_interface(
                 store.snapshot(), registry, source_root
             )
-        connect_universal_roots(
+        _connect_universal_roots(
             store,
             registry,
             source_root,
             instance_root,
+            admit_target=admit_created_reference,
             source_interface=source_interface,
             target_interface=str(interfaces[name]["id"]),
             mutation_route="/api/universal/work",
@@ -28757,7 +29023,12 @@ def _deterministic_baboom_work_plan(
     description: str,
     priority: int,
 ) -> dict[str, object]:
-    """Compose a bounded, non-executing first draft from claimed Work only."""
+    """Compose a bounded, non-executing first draft from claimed Work only.
+
+    The BABOOM kind/source strings identify the existing v2 format, not the
+    requesting runtime. Keep its bytes and fingerprint compatible with saved
+    drafts; caller identity remains the authenticated graph claim.
+    """
     title = _bounded_baboom_plan_text(title, "title", 512)
     if type(priority) is not int:
         raise InvalidCell("BABOOM Work priority must be an integer")
@@ -28877,13 +29148,13 @@ def draft_universal_baboom_work_plan(
     draft that later model-backed cognition may review or supersede through its
     own Proposal protocol.
     """
-    session, _, work = _baboom_execution_work_context(
+    session, _, work = _runtime_work_planning_context(
         store,
         registry,
         agent_session_root=agent_session_root,
         work_root=work_root,
         authentication_context=authentication_context,
-        purpose="BABOOM Work planning",
+        purpose="Work planning",
     )
     interfaces = work.get("interfaces")
     if not isinstance(interfaces, Mapping):
@@ -28981,14 +29252,14 @@ def read_universal_baboom_work_plan(
     work_root: str,
     authentication_context: object | None = None,
 ) -> tuple[str | None, Mapping[str, object] | None, int]:
-    """Read the bounded plan attached to BABOOM's exact claimed Work only."""
-    _session, _entry, work = _baboom_execution_work_context(
+    """Read the bounded plan attached to the runtime's exact claimed Work."""
+    _session, _entry, work = _runtime_work_planning_context(
         store,
         registry,
         agent_session_root=agent_session_root,
         work_root=work_root,
         authentication_context=authentication_context,
-        purpose="BABOOM Work plan read",
+        purpose="Work plan read",
     )
     snapshot = store.snapshot()
     plan_root = _governed_work_interface_target(
@@ -29644,6 +29915,7 @@ def initiate_universal_baboom_work_claim_transfer(
     confirmation_digest: str,
     expires_at: float,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> dict[str, object]:
     """Release one claimed Work into an exact target-custody reservation."""
     if (
@@ -29833,6 +30105,7 @@ def initiate_universal_baboom_work_claim_transfer(
         agent_session_root=agent_session_root,
         additional_context_roots=(transfer.root_id,),
         authentication_context=context,
+        content_service=content_service,
     )
     released = read_work_claim_transfer(
         store.snapshot(), registry.work_claim_transfer_protocol, transfer.root_id
@@ -29933,6 +30206,7 @@ def claim_universal_baboom_work_claim_transfer(
     transfer_key: str,
     compliance_observation_root: str | None = None,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> dict[str, object]:
     """Claim one incoming transfer through ordinary governed-Work semantics."""
     if type(transfer_key) is not str or not re.fullmatch(r"[0-9a-f]{64}", transfer_key):
@@ -29961,6 +30235,7 @@ def claim_universal_baboom_work_claim_transfer(
         work_root=transfer.work_root,
         compliance_observation_root=compliance_observation_root,
         authentication_context=authentication_context,
+        content_service=content_service,
     )
 
 
@@ -30730,13 +31005,17 @@ def attest_universal_runtime_compliance(
         raise AuthorizationDenied(
             "runtime compliance request is outside the active identity"
         )
+    from .native_workshop_compliance import evidence_contract
+    court_root, court_parameters = evidence_contract(
+        store.snapshot(), registry, session.root_id, parameters
+    )
     evidence_root = registry.attestation_broker.run(
         store,
         registry.attestation_protocol,
-        registry.runtime_compliance_court_root,
+        court_root,
         subject_name=session.root_id,
         subject_content=subject_content,
-        external_parameters=parameters,
+        external_parameters=court_parameters,
     )
     snapshot = store.snapshot()
     evidence = read_court_attestation(
@@ -30750,10 +31029,10 @@ def attest_universal_runtime_compliance(
         snapshot,
         registry.attestation_protocol,
         evidence_root,
-        expected_court_root=registry.runtime_compliance_court_root,
+        expected_court_root=court_root,
         expected_subject_name=session.root_id,
         expected_subject_digest=hashlib.sha256(subject_content).hexdigest(),
-        expected_parameters=parameters,
+        expected_parameters=court_parameters,
         expected_result="pass" if passed else "fail",
         max_age_seconds=_RUNTIME_COMPLIANCE_LIFETIME_SECONDS,
     )
@@ -30815,17 +31094,25 @@ def require_universal_runtime_compliance(
         expected_policy_root=entry.policy_root,
         now=time.time(),
     )
+    from .native_workshop_compliance import evidence_contract
+    court_root, court_parameters = evidence_contract(
+        store.snapshot(), registry, session.root_id, parameters
+    )
     registry.attestation_broker.verify(
         snapshot,
         registry.attestation_protocol,
         observation.evidence_root,
-        expected_court_root=registry.runtime_compliance_court_root,
+        expected_court_root=court_root,
         expected_subject_name=session.root_id,
         expected_subject_digest=hashlib.sha256(subject_content).hexdigest(),
-        expected_parameters=parameters,
+        expected_parameters=court_parameters,
         expected_result="pass",
         max_age_seconds=_RUNTIME_COMPLIANCE_LIFETIME_SECONDS,
     )
+    from .native_workshop_compliance import COURT, require_current_native_custody
+    if court_root == COURT:
+        require_current_native_custody(registry, subject_name=session.root_id,
+            subject_content=subject_content, parameters=court_parameters)
     return observation
 
 
@@ -31541,6 +31828,14 @@ def assign_universal_workshop_work(
     )
 
 
+def _require_workshop_message_source(snapshot, registry, actor_root, context):
+    """Keep an internal actor delegation bound to its original live caller."""
+    identity = registry.authorization.broker.resolve(context)
+    session = _runtime_agent_session(snapshot, registry, actor_root)
+    if identity.subject_root != session.subject_root:
+        raise AuthorizationDenied("Workshop message source belongs to another owner")
+
+
 def append_universal_workshop_entry(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -31549,32 +31844,64 @@ def append_universal_workshop_entry(
     category_root: str,
     content: str,
     idempotency_key: str,
-    created_at: str,
+    created_at: str | None,
     recipient_roots: Iterable[str] = (),
     reference_roots: Iterable[str] = (),
     reply_to_root: str | None = None,
     evidence_roots: Iterable[str] = (),
     authentication_context: object | None = None,
+    expected_revision: int | None = None,
+    content_service=None,
+    source_authentication_context=None,
 ):
-    """Append Workshop evidence and its visible graph wiring atomically.
+    """Append through the admitted content binding or the pre-cutover ledger.
 
-    The deliberation entry remains the source record.  For every governed
-    Work it references, this composition also makes the entry and its evidence
-    visible in the Workbench and creates explicit source/target relation Cells.
+    Ordinary content uses the exact application owner's service and creates no
+    graph message or wiring. Unbound legacy spaces retain their prior behavior
+    until all consumers and migration are ready for one governed cutover.
     """
     snapshot = store.snapshot()
+    if expected_revision is not None and snapshot.revision != expected_revision:
+        raise AuthorizationDenied("Workshop admission changed; refresh to continue")
+    space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)
+    if space.content_store_root is not None:
+        from .conversation_content import ConversationMessageProjection
+        if content_service is None or not content_service.belongs_to(store, registry):
+            raise InvalidCell("ordinary Workshop messages require the current owner content service")
+        result = content_service.append_authenticated(space_root=space.root_id,
+            actor_root=actor_root, category_root=category_root, content=content,
+            idempotency_key=idempotency_key, created_at=created_at,
+            recipient_roots=recipient_roots, reference_roots=reference_roots,
+            reply_to_root=reply_to_root, evidence_roots=evidence_roots,
+            authentication_context=authentication_context, expected_revision=snapshot.revision,
+            source_authentication_context=source_authentication_context)
+        return ConversationMessageProjection.from_result(result)
     context = _active_authentication_context(
         registry.authorization, authentication_context
     )
+    def authorize_message_commit():
+        registry.authorization.broker.resolve(context)
+        if source_authentication_context is not None:
+            _require_workshop_message_source(snapshot, registry, actor_root,
+                source_authentication_context)
+
+    def commit_message(*, create, replace):
+        with registry.authorization.broker.live_context(context):
+            authorize_message_commit()
+            return store.commit(snapshot.revision, create=create, replace=replace,
+                precommit_guard=authorize_message_commit)
+
+    authorize_message_commit()
     prepared = prepare_deliberation_entry(
         snapshot,
         registry.deliberation_protocol,
+        lookup_store=store,
         space_root=registry.workshop_root,
         actor_root=actor_root,
         category_root=category_root,
         content=content,
         idempotency_key=idempotency_key,
-        created_at=created_at,
+        created_at=_utc_now_text() if created_at is None else created_at,
         authorization_protocol=registry.authorization.protocol,
         authentication_broker=registry.authorization.broker,
         authentication_context=context,
@@ -31584,6 +31911,7 @@ def append_universal_workshop_entry(
         evidence_roots=evidence_roots,
     )
     if prepared.existing_entry is not None:
+        authorize_message_commit()
         return prepared.existing_entry
 
     references = tuple(dict.fromkeys(reference_roots))
@@ -31597,8 +31925,7 @@ def append_universal_workshop_entry(
     }
     work_roots = tuple(root for root in references if root in registered_work)
     if not work_roots:
-        store.commit(
-            snapshot.revision,
+        commit_message(
             create=prepared.create,
             replace=prepared.replace,
         )
@@ -31790,8 +32117,7 @@ def append_universal_workshop_entry(
         if prior is not None and prior != cell:
             raise InvalidCell("Workshop entry graph patches conflict")
         replacements[cell.id] = cell
-    store.commit(
-        snapshot.revision,
+    commit_message(
         create=created,
         replace=tuple(replacements.values()),
     )
@@ -31807,7 +32133,14 @@ def _require_workshop_assignment_claim_gate(
     work_root: str,
     agent_session_root: str,
 ) -> None:
-    """Require assigned work to satisfy the graph-held coordination gate."""
+    """Enforce assignment ownership before reserving Work for inspection/drafting.
+
+    A claim is not permission to execute the resulting workflow. Requiring
+    transcript plan/research entries here prevented an agent from claiming
+    the Work needed by the actual plan-drafting operation. Intent, criteria
+    and reviewed behavior belong at affected execution admission; the model,
+    connector and CDE permission checks remain separate.
+    """
     assignments = tuple(
         _read_workshop_assignment(snapshot, registry, root)
         for root in _workshop_assignment_roots(snapshot, registry)
@@ -31820,17 +32153,6 @@ def _require_workshop_assignment_claim_gate(
     ):
         raise AuthorizationDenied(
             "governed Work is assigned to a different Workshop participant"
-        )
-    gate = evaluate_deliberation_gate(
-        snapshot,
-        registry.deliberation_protocol,
-        registry.workshop_root,
-        phase_root=registry.workshop_phase_roots["coordinate"],
-        reference_root=work_root,
-    )
-    if not gate.allowed:
-        raise AuthorizationDenied(
-            "assigned Workshop Work lacks the required plan and source-backed research"
         )
 
 
@@ -32001,6 +32323,7 @@ def transition_universal_governed_work(
     evidence_payload: str = "",
     additional_context_roots: tuple[str, ...] = (),
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[str, int]:
     """Apply the agent-admitted work transitions with graph-derived ownership."""
     event = event.strip().lower() if type(event) is str else ""
@@ -32132,6 +32455,7 @@ def transition_universal_governed_work(
     contexts = (
         view_session.root_id,
         agent_session_root,
+        work_root,
         *additional_context_roots,
     )
     binding_create: tuple[Cell, ...] = ()
@@ -32230,31 +32554,17 @@ def transition_universal_governed_work(
             additional_create=additional_create,
             additional_replace=tuple(additional_replace_by_id.values()),
         )
-        # Say it in the Workshop. An evidence-free transition -- which is
-        # every CLAIM and every RELEASE -- returned from this branch before
-        # ever reaching the record, so the two events that say who picked a
-        # piece of work up and who put it down were the exact two the founder
-        # could not see (audit, 2026-09-07).
-        said = record_workshop_work_event(
+        # The transition and claimant binding are already committed. Its
+        # ordinary notification cannot grant authority or reverse that result.
+        record_workshop_work_event(
             store,
             registry,
             agent_session_root=agent_session_root,
             work_root=work_root,
-            event=_WORK_EVENT_SAID.get(event, event),
+            history_root=history_root,
             authentication_context=authentication_context,
+            content_service=content_service,
         )
-        if event == "claim" and said is None:
-            # THE WORKSHOP IS THE ROOM. An agent that cannot say in it that
-            # it is taking this work does not take the work: that is what
-            # "every agent works through the Workshop" has to mean, or the
-            # room is a log nobody is obliged to write to.
-            #
-            # Only the claim is gated. Release, block, resume and submit stay
-            # possible whatever the Workshop does, so a silent room can never
-            # trap work in an agent that is trying to let go of it.
-            raise AuthorizationDenied(
-                "governed Work is claimed in the Workshop or not at all"
-            )
         return history_root, revision
     if additional_create:
         raise InvalidCell("governed work claim binding requires an evidence-free claim")
@@ -32288,8 +32598,9 @@ def transition_universal_governed_work(
         registry,
         agent_session_root=agent_session_root,
         work_root=work_root,
-        event=_WORK_EVENT_SAID.get(event, event),
+        history_root=history_root,
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     return history_root, revision
 
@@ -32359,25 +32670,19 @@ def _attach_connector_authority_roots(
     )
 
 
-def _baboom_execution_work_context(
+def _claimed_runtime_work_projection(
     store: CellStore,
     registry: UniversalApplicationRegistry,
+    snapshot: Snapshot,
+    session: AgentSessionProjection,
+    entry: AgentBodyCatalogEntry,
     *,
-    agent_session_root: str,
     work_root: str,
     authentication_context: object | None,
-    required_state: str = "claimed",
-    purpose: str = "model delegation",
+    required_state: str,
+    purpose: str,
 ) -> tuple[AgentSessionProjection, AgentBodyCatalogEntry, Mapping[str, object]]:
-    if required_state not in {"claimed", "blocked"} or not purpose:
-        raise InvalidCell("BABOOM execution Work context is invalid")
-    snapshot = store.snapshot()
-    session = _runtime_agent_session(snapshot, registry, agent_session_root)
-    entry = _agent_body_catalog_entry_for_session(snapshot, registry, session)
-    if entry.runtime != "baboom-execution":
-        raise AuthorizationDenied(
-            "BABOOM execution requires the receipt-bound action capability"
-        )
+    """Shared identity and exact claim checks; callers admit runtime capability."""
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
@@ -32402,9 +32707,57 @@ def _baboom_execution_work_context(
     )
     matches = tuple(item for item in items if item["root"] == work_root)
     if len(matches) != 1:
-        raise InvalidCell("BABOOM execution Work projection is missing or ambiguous")
+        raise InvalidCell("claimed Work projection is missing or ambiguous")
     return session, entry, matches[0]
 
+
+def _baboom_execution_work_context(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    work_root: str,
+    authentication_context: object | None,
+    required_state: str = "claimed",
+    purpose: str = "model delegation",
+) -> tuple[AgentSessionProjection, AgentBodyCatalogEntry, Mapping[str, object]]:
+    if required_state not in {"claimed", "blocked"} or not purpose:
+        raise InvalidCell("BABOOM execution Work context is invalid")
+    snapshot = store.snapshot()
+    session = _runtime_agent_session(snapshot, registry, agent_session_root)
+    entry = _agent_body_catalog_entry_for_session(snapshot, registry, session)
+    if entry.runtime != "baboom-execution":
+        raise AuthorizationDenied(
+            "BABOOM execution requires the receipt-bound action capability"
+        )
+    return _claimed_runtime_work_projection(
+        store, registry, snapshot, session, entry,
+        work_root=work_root, authentication_context=authentication_context,
+        required_state=required_state, purpose=purpose,
+    )
+
+def _runtime_work_planning_context(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    work_root: str,
+    authentication_context: object | None,
+    purpose: str,
+) -> tuple[AgentSessionProjection, AgentBodyCatalogEntry, Mapping[str, object]]:
+    """Admit only draft planning for an active catalogue-bound Work owner."""
+    snapshot = store.snapshot()
+    session = _runtime_agent_session(snapshot, registry, agent_session_root)
+    entry = _agent_body_catalog_entry_for_session(snapshot, registry, session)
+    if not {"claim", "submit"}.issubset(entry.work_events):
+        raise AuthorizationDenied(
+            "runtime Agent Body does not admit governed Work planning"
+        )
+    return _claimed_runtime_work_projection(
+        store, registry, snapshot, session, entry,
+        work_root=work_root, authentication_context=authentication_context,
+        required_state="claimed", purpose=purpose,
+    )
 
 def _active_baboom_meeting_note_consent_for_execution(
     snapshot: Snapshot,
@@ -32851,7 +33204,9 @@ def _baboom_workshop_coordination_payload(
     claimed_work_root: str,
     work_input_digest: str,
     authentication_context: object | None,
-) -> dict[str, object]:
+    agent_session_root: str,
+    content_service=None,
+) -> tuple[dict[str, object], dict[str, object] | None]:
     """Project the model-safe shared Workshop view from one graph snapshot.
 
     This is deliberately a bounded lens, never raw Workshop/Work export or a
@@ -32862,7 +33217,34 @@ def _baboom_workshop_coordination_payload(
     status = project_universal_governed_work_status(
         store, registry, authentication_context=authentication_context
     )
-    workshop = project_universal_founder_workshop_report(store, registry)
+    content_report = None
+    source_snapshot = store.snapshot()
+    space = read_deliberation_space(source_snapshot, registry.deliberation_protocol, registry.workshop_root)
+    if space.content_store_root is None:
+        workshop = project_universal_founder_workshop_report(store, registry)
+    else:
+        if content_service is None or not content_service.belongs_to(store, registry):
+            raise InvalidCell("ordinary Workshop context requires the current owner content service")
+        page = content_service.page_for_runtime_context(agent_session_root=agent_session_root,
+            authentication_context=authentication_context, expected_revision=source_snapshot.revision,
+            limit=_FOUNDER_WORKSHOP_REPORT_LIMIT)
+        categories = {root: name for name, root in registry.workshop_category_roots.items()}
+        projected, protected = _project_workshop_report_entries((
+            (message["sequence"], message["category"], message["content"], message["created_at"])
+            for message in page["messages"]), categories)
+        content_report = {"count": page["total"], "protected": protected,
+            "truncated": page["has_older"], "entries": projected}
+        # Seal references and exact source content identity, never message text.
+        # The global high-water is deliberately excluded: a hidden-only append
+        # must not reveal activity or invalidate this session's permitted input.
+        selected_digest = hashlib.sha256(json.dumps(page["messages"], sort_keys=True,
+            separators=(",", ":"), ensure_ascii=True).encode("ascii")).hexdigest()
+        workshop = {"revision": page["graph_revision"], "storage": "conversation-content",
+            "instance": page["instance_id"], "conversation": page["conversation"],
+            "principal": agent_session_root, "count": page["total"],
+            "truncated": page["has_older"], "content_digest": selected_digest,
+            "selection": [{"id": message["id"], "sequence": message["sequence"]}
+                for message in page["messages"]]}
     attention = project_universal_founder_attention_briefing(store, registry)
     snapshot = store.snapshot()
     revision = status.get("revision")
@@ -32962,7 +33344,7 @@ def _baboom_workshop_coordination_payload(
     workshop_entries = workshop.get("entries")
     attention_obligations = attention.get("obligations")
     if (
-        not isinstance(workshop_entries, list)
+        (content_report is None and not isinstance(workshop_entries, list))
         or not isinstance(attention_obligations, list)
     ):
         raise InvalidCell("BABOOM coordination safe projections are malformed")
@@ -32996,7 +33378,7 @@ def _baboom_workshop_coordination_payload(
             review_count=peer_review_count,
             reviews_truncated=reviews_truncated,
         ),
-        "workshop": {
+        "workshop": {key: value for key, value in workshop.items() if key != "revision"} if content_report is not None else {
             "count": workshop.get("count"),
             "protected": workshop.get("protected"),
             "truncated": workshop.get("truncated"),
@@ -33032,7 +33414,7 @@ def _baboom_workshop_coordination_payload(
         "source_revision": revision,
         "source_digest": digest,
         **source,
-    }
+    }, content_report
 
 
 def _baboom_coordination_brief_root(value: Mapping[str, object]) -> str:
@@ -33260,6 +33642,7 @@ def prepare_universal_baboom_model_cognition_request(
     data_class: str = "internal-text",
     shadow_observation: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[CognitionRequestProjection, int]:
     """Seal one review-only model-planning request for claimed Work.
 
@@ -33297,12 +33680,14 @@ def prepare_universal_baboom_model_cognition_request(
     if plan_root is None or plan is None:
         raise InvalidCell("BABOOM Work plan is required before model cognition")
     task, work_input_digest = _baboom_model_task_material(work)
-    coordination_brief = _baboom_workshop_coordination_payload(
+    coordination_brief, _content_report = _baboom_workshop_coordination_payload(
         store,
         registry,
         claimed_work_root=work_root,
         work_input_digest=work_input_digest,
         authentication_context=authentication_context,
+        agent_session_root=session.root_id,
+        content_service=content_service,
     )
     coordination_root = _ensure_baboom_workshop_coordination_brief(
         store, coordination_brief
@@ -33889,6 +34274,7 @@ def _read_baboom_bound_cognition_input(
     provider: str,
     model: str,
     authentication_context: object | None,
+    content_service=None,
     _verify_current_payload: bool = True,
 ) -> tuple[
     CognitionRequestProjection, str, object, AgentSessionProjection, object,
@@ -33988,12 +34374,14 @@ def _read_baboom_bound_cognition_input(
     if plan_root is None or plan is None:
         raise InvalidCell("BABOOM Work plan is required before model delegation")
     expected_task, work_input_digest = _baboom_model_task_material(work)
-    expected_coordination = _baboom_workshop_coordination_payload(
+    expected_coordination, content_report = _baboom_workshop_coordination_payload(
         store,
         registry,
         claimed_work_root=work_root,
         work_input_digest=work_input_digest,
         authentication_context=authentication_context,
+        agent_session_root=execution_session.root_id,
+        content_service=content_service,
     )
     work_capsules = 0
     coordination_brief: dict[str, object] | None = None
@@ -34074,6 +34462,10 @@ def _read_baboom_bound_cognition_input(
         raise InvalidCell("BABOOM Cognition request context is ambiguous")
     immutable_plan = dict(plan)
     immutable_plan.pop("live_activity", None)
+    if content_report is not None:
+        # Only the provider's transient input gets permitted message text. The
+        # sealed graph brief above retains references and a verified digest.
+        coordination_brief = {**coordination_brief, "workshop": content_report}
     task = (
         expected_task
         + "\n\nRequired Work plan (graph-held, read-only):\n"
@@ -34177,6 +34569,7 @@ def record_universal_baboom_cognition_proposal(
     output_bytes: int,
     proposal_payload: Mapping[str, object],
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ProposalProjection, int]:
     """Record a bounded review Proposal for one approved model attempt.
 
@@ -34237,6 +34630,7 @@ def record_universal_baboom_cognition_proposal(
             provider=provider,
             model=delegation.model,
             authentication_context=authentication_context,
+            content_service=content_service,
         )
     )
     if delegation.cognition_request_root != request.root_id:
@@ -34940,8 +35334,21 @@ def issue_universal_baboom_connector_execution_grant(
         if consent is not None
         else float(expires_at)
     )
+    grant_expires_at = min(grant_expires_at, delegation.expires_at)
     if grant_expires_at <= time.time():
         raise AuthorizationDenied("connector grant expires before it can be issued")
+    from . import existing_workshop_social_execution as social_execution
+
+    reserve = None
+    reserved_roots: list[str] = []
+    if social_execution.social_reservation_required(registry, provider):
+        def reserve(reservation_snapshot):
+            create, replace, roots = social_execution.social_attempt_reservation(
+                reservation_snapshot, registry, delegation=delegation, provider=provider,
+                grant_id=grant_id,
+            )
+            reserved_roots[:] = roots
+            return create, replace
     grant = create_connector_execution_grant(
         store,
         registry.baboom_connector_execution_protocol,
@@ -34951,8 +35358,9 @@ def issue_universal_baboom_connector_execution_grant(
         session_root=agent_session_root,
         expires_at=grant_expires_at,
         token_digest=token_digest,
+        reserve=reserve,
     )
-    _attach_connector_authority_roots(store, registry, (grant.root_id,))
+    _attach_connector_authority_roots(store, registry, (grant.root_id, *reserved_roots))
     return delegation, grant.expires_at, store.revision
 
 
@@ -34968,6 +35376,7 @@ def settle_universal_baboom_connector_execution(
     outcome: str,
     error_code: str = "",
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ConnectorExecutionReceiptProjection, str, int]:
     """Record a redacted connector receipt and submit only a successful Work."""
     delegation = authorize_universal_baboom_connector_execution(
@@ -34995,6 +35404,11 @@ def settle_universal_baboom_connector_execution(
         registry.adapter_protocol,
         delegation.provider_root,
     )
+    from . import existing_workshop_social_execution as social_execution
+    if social_execution.social_provider_operation(registry, provider) is not None:
+        raise AuthorizationDenied(
+            "social connector outcomes are recorded only by the social execution path"
+        )
     receipt = create_connector_execution_receipt(
         store,
         registry.baboom_connector_execution_protocol,
@@ -35039,6 +35453,7 @@ def settle_universal_baboom_connector_execution(
         evidence_payload=evidence,
         additional_context_roots=(delegation.root_id, receipt.root_id),
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     return receipt, history_root, revision
 
@@ -35055,6 +35470,7 @@ def request_universal_baboom_model_execution(
     cognition_request_root: str,
     lifetime_seconds: float = 300.0,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ModelDelegationProjection, str, int]:
     """Create an explicit one-use model delegation for the caller's Work."""
     if (
@@ -35104,6 +35520,7 @@ def request_universal_baboom_model_execution(
             provider=provider.strip(),
             model=model,
             authentication_context=authentication_context,
+            content_service=content_service,
         )
     )
     input_digest = request.input_digest
@@ -35204,6 +35621,7 @@ def authorize_universal_baboom_model_execution(
     agent_session_root: str,
     delegation_root: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ModelDelegationProjection, str]:
     """Recheck the exact released adapter grant before issuing a live token."""
     delegation = read_model_delegation(
@@ -35247,6 +35665,7 @@ def authorize_universal_baboom_model_execution(
                 provider=provider,
                 model=delegation.model,
                 authentication_context=authentication_context,
+                content_service=content_service,
             )
         )
         input_digest = request.input_digest
@@ -35287,6 +35706,7 @@ def prepare_universal_baboom_model_execution_invocation(
     delegation_root: str,
     grant_root: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[dict[str, str], str]:
     """Materialize one graph-authorized provider call without invoking it.
 
@@ -35300,6 +35720,7 @@ def prepare_universal_baboom_model_execution_invocation(
         agent_session_root=agent_session_root,
         delegation_root=delegation_root,
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     snapshot = store.snapshot()
     grant = read_model_execution_grant(
@@ -35352,6 +35773,7 @@ def issue_universal_baboom_model_execution_grant(
     token_digest: str,
     expires_at: float,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ModelDelegationProjection, str, int]:
     """Persist a one-use grant digest after the adapter permission recheck."""
     delegation, task = authorize_universal_baboom_model_execution(
@@ -35360,6 +35782,7 @@ def issue_universal_baboom_model_execution_grant(
         agent_session_root=agent_session_root,
         delegation_root=delegation_root,
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     grant = create_model_execution_grant(
         store,
@@ -35387,6 +35810,7 @@ def settle_universal_baboom_model_execution(
     outcome: str,
     error_code: str = "",
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ModelExecutionReceiptProjection, str, int]:
     """Record one provider outcome and retain Cognition Work for peer review.
 
@@ -35395,6 +35819,7 @@ def settle_universal_baboom_model_execution(
     receive the sealed shared brief with the preceding bounded review. A normal
     governed-Work transition remains the only way to advance the Work itself.
     """
+    from .conversation_content import ConversationContentUnavailable
     snapshot = store.snapshot()
     delegation = read_model_delegation(
         snapshot,
@@ -35425,8 +35850,9 @@ def settle_universal_baboom_model_execution(
                 agent_session_root=agent_session_root,
                 delegation_root=delegation_root,
                 authentication_context=authentication_context,
+                content_service=content_service,
             )
-        except AuthorizationDenied:
+        except (AuthorizationDenied, ConversationContentUnavailable):
             authorized = None
         else:
             if authorized.root_id != delegation.root_id:
@@ -35484,6 +35910,7 @@ def settle_universal_baboom_model_execution(
         evidence_payload=evidence,
         additional_context_roots=(delegation.root_id, receipt.root_id),
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     return receipt, history_root, revision
 
@@ -35628,6 +36055,7 @@ def recover_universal_baboom_model_execution_failure(
     agent_session_root: str,
     receipt_root: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ModelExecutionReceiptProjection, str, int]:
     """Block a claimed BABOOM Work only from one unconsumed failed receipt."""
     receipt, delegation, session = _failed_baboom_model_execution_recovery_context(
@@ -35656,6 +36084,7 @@ def recover_universal_baboom_model_execution_failure(
         ),
         additional_context_roots=(delegation.root_id, receipt.root_id),
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     return receipt, history_root, revision
 
@@ -35667,6 +36096,7 @@ def resume_universal_baboom_model_execution_failure(
     agent_session_root: str,
     receipt_root: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ModelExecutionReceiptProjection, str, int]:
     """Resume a blocked BABOOM Work only from its exact failed-receipt block."""
     receipt, delegation, session = _failed_baboom_model_execution_recovery_context(
@@ -35698,6 +36128,7 @@ def resume_universal_baboom_model_execution_failure(
         ),
         additional_context_roots=(delegation.root_id, receipt.root_id),
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     return receipt, history_root, revision
 
@@ -35811,6 +36242,7 @@ def recover_universal_baboom_connector_execution_failure(
     agent_session_root: str,
     receipt_root: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ConnectorExecutionReceiptProjection, str, int]:
     """Block claimed Work after one failed connector receipt.
 
@@ -35843,6 +36275,7 @@ def recover_universal_baboom_connector_execution_failure(
         ),
         additional_context_roots=(delegation.root_id, receipt.root_id),
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     return receipt, history_root, revision
 
@@ -35854,6 +36287,7 @@ def resume_universal_baboom_connector_execution_failure(
     agent_session_root: str,
     receipt_root: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ConnectorExecutionReceiptProjection, str, int]:
     """Resume exact blocked Work so a fresh connector request can be made."""
     receipt, delegation, session = _failed_baboom_connector_execution_recovery_context(
@@ -35885,6 +36319,7 @@ def resume_universal_baboom_connector_execution_failure(
         ),
         additional_context_roots=(delegation.root_id, receipt.root_id),
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     return receipt, history_root, revision
 
@@ -36097,6 +36532,7 @@ def adjudicate_universal_governed_work(
     workspace_root: str | Path,
     compact_status: bool = False,
     authentication_context: object | None = None,
+    artifact_review_verifier=None,
 ) -> dict[str, object]:
     """Rerun one submitted work gate in the independent application court."""
     snapshot = store.snapshot()
@@ -36175,6 +36611,33 @@ def adjudicate_universal_governed_work(
     if artifact.issuer_root != claimant:
         raise InvalidCell("artifact proof was not issued by the claimant")
     artifact_digest = hashlib.sha256(artifact.payload).hexdigest()
+    independent_review = None
+    if "artifact_reviewers" in structured["requirements"]:
+        reviewers = structured["requirements"]["artifact_reviewers"]
+        if (type(reviewers) is not list or not reviewers
+                or any(type(root) is not str or not root for root in reviewers)
+                or not callable(artifact_review_verifier)):
+            raise InvalidCell("Work requires an available independent artifact review verifier")
+        try:
+            submitted = json.loads(artifact.payload)
+            review_refs = submitted["artifact_review"]
+        except (ValueError, TypeError, KeyError) as exc:
+            raise InvalidCell("Work submission must identify its artifact publication and review") from exc
+        if (type(review_refs) is not dict or set(review_refs) != {"publication", "review"}
+                or any(type(value) is not str or not value for value in review_refs.values())):
+            raise InvalidCell("Work artifact review references are invalid")
+        review_arguments = dict(context=context, work_root=work_root,
+            publication_root=review_refs["publication"], review_root=review_refs["review"])
+        independent_review = artifact_review_verifier(**review_arguments)
+        if (type(independent_review) is not dict
+                or set(independent_review) != {"publication", "review", "artifact_digest",
+                                               "publisher", "reviewer", "material_digest"}
+                or independent_review["publisher"] != claimant
+                or independent_review["reviewer"] == claimant
+                or independent_review["reviewer"] not in reviewers
+                or independent_review["publication"] != review_refs["publication"]
+                or independent_review["review"] != review_refs["review"]):
+            raise InvalidCell("Independent artifact review binding is invalid")
     resolved_workspace = Path(workspace_root).expanduser().resolve()
     workspace_digest = hashlib.sha256(
         str(resolved_workspace).casefold().encode("utf-8")
@@ -36188,6 +36651,8 @@ def adjudicate_universal_governed_work(
         "requirements": structured["requirements"],
         "cde": structured["cde-container"],
     }
+    if independent_review is not None:
+        subject_document["independent_artifact_review"] = independent_review
     try:
         subject_content = json.dumps(
             subject_document,
@@ -36232,6 +36697,9 @@ def adjudicate_universal_governed_work(
         expected_result=outcome,
     )
 
+    if independent_review is not None:
+        if artifact_review_verifier(**review_arguments) != independent_review:
+            raise InvalidCell("Independent artifact review changed during court execution")
     event = "accept" if passed else "return"
     candidates = []
     for transition_root in machine.transition_roots:
@@ -36563,6 +37031,11 @@ def project_universal_baboom_context(
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
     staged_update: Mapping[str, object] | None = None,
+    content_service=None,
+    workshop_agent_session_root: str | None = None,
+    read_guard=None,
+    read_route=("GET", "/api/universal/baboom-context"),
+    _workshop_read=None,
 ) -> dict[str, object]:
     """Return the narrow shared-application lens admitted to BABOOM voice.
 
@@ -36578,21 +37051,53 @@ def project_universal_baboom_context(
     work = _baboom_work_counts_from_index(work_index)
 
     snapshot = store.snapshot()
-    entries = list_deliberation_entries(
-        snapshot,
-        registry.deliberation_protocol,
-        registry.workshop_root,
-    )
+    space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)
     category_by_root = {
         root: name for name, root in registry.workshop_category_roots.items()
     }
     category_counts = {
         name: 0 for name in registry.workshop_category_roots
     }
-    for entry in entries:
-        name = category_by_root.get(entry.category_root)
-        if name is not None:
-            category_counts[name] += 1
+    category_counts_complete = True
+    if space.content_store_root is not None:
+        if (content_service is None or not content_service.belongs_to(store, registry)
+                or not workshop_agent_session_root):
+            raise InvalidCell("ordinary BABOOM counts require their owner and explicit reader")
+        if _workshop_read is not None:
+            counts = content_service.validate_projection_read(_workshop_read,
+                store=store, registry=registry, agent_session_root=workshop_agent_session_root,
+                authentication_context=authentication_context, expected_revision=snapshot.revision)
+        elif workshop_agent_session_root == registry.agent_body.session.root_id:
+            counts = content_service.counts_for_founder_context(
+                authentication_context=authentication_context, expected_revision=snapshot.revision,
+                read_guard=read_guard, route=read_route)
+        else:
+            counts = content_service.counts_for_runtime_context(
+                agent_session_root=workshop_agent_session_root,
+                authentication_context=authentication_context, expected_revision=snapshot.revision,
+                read_guard=read_guard, route=read_route)
+        entry_count = counts["total"]
+        for root, count in counts["categories"].items():
+            name = category_by_root.get(root)
+            if name is None:
+                raise InvalidCell("Workshop entry category is not released")
+            category_counts[name] = count
+    else:
+        entry_count = len(space.entry_roots)
+        # Legacy membership supplies the exact total without decoding bodies.
+        # Large transcripts have no category index. Report that breakdown as
+        # unavailable until ordinary storage is activated, never as zero or
+        # sampled totals. A native frame must not materialize the transcript.
+        if entry_count > 100:
+            category_counts = {}
+            category_counts_complete = False
+        else:
+            entries = _recent_entries_from_validated_space(
+                snapshot, registry.deliberation_protocol, space, limit=100)
+            for entry in entries:
+                name = category_by_root.get(entry.category_root)
+                if name is not None:
+                    category_counts[name] += 1
 
     attention = {"open_obligations": 0, "blocked_obligations": 0}
     for obligation in list_obligations(snapshot, registry.attention_protocol):
@@ -36796,6 +37301,12 @@ def project_universal_baboom_context(
     # not show that it reflects the graph at all (founder, 2026-09-06).
     from .universal_pipeline import last_pipeline_run
     canvas_view = last_pipeline_run()
+    if space.content_store_root is not None:
+        if store.revision != snapshot.revision:
+            raise InvalidCell("BABOOM content context changed during projection")
+        registry.authorization.broker.resolve(authentication_context)
+        if read_guard is not None:
+            read_guard()
     return {
         "cell_native": True,
         "context_lens": _BABOOM_CONTEXT_LENS_VERSION,
@@ -36808,8 +37319,9 @@ def project_universal_baboom_context(
         "revision": snapshot.revision,
         "work": work,
         "workshop": {
-            "entry_count": len(entries),
+            "entry_count": entry_count,
             "category_counts": category_counts,
+            "category_counts_complete": category_counts_complete,
         },
         "attention": attention,
         "presence": presence,
@@ -36831,6 +37343,11 @@ def project_universal_baboom_companion_directive(
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
     staged_update: Mapping[str, object] | None = None,
+    content_service=None,
+    workshop_agent_session_root: str | None = None,
+    read_guard=None,
+    read_route=("GET", "/api/universal/baboom-presence"),
+    _workshop_read=None,
 ) -> dict[str, object]:
     """Project one content-free desktop directive from the Universal graph.
 
@@ -36849,6 +37366,9 @@ def project_universal_baboom_companion_directive(
         brain_state=brain_state,
         hosts=hosts,
         staged_update=staged_update,
+        content_service=content_service,
+        workshop_agent_session_root=workshop_agent_session_root,
+        read_guard=read_guard, read_route=read_route, _workshop_read=_workshop_read,
     )
     work = context["work"]
     attention = context["attention"]
@@ -37010,6 +37530,8 @@ def project_universal_baboom_companion_directive(
             ensure_ascii=True,
         ).encode("ascii")
     ).hexdigest()
+    if read_guard is not None:
+        read_guard()
     return {
         "projection": _BABOOM_COMPANION_DIRECTIVE_VERSION,
         "revision": context["revision"],
@@ -37340,13 +37862,32 @@ def project_universal_founder_baboom_steward_briefing(
     brain_state: Mapping[str, object] | None = None,
     hosts: Sequence[Mapping[str, object]] | None = None,
     staged_update: Mapping[str, object] | None = None,
+    content_service=None,
+    read_guard=None,
+    read_route=("GET", "/api/universal/baboom-steward-briefing"),
+    _workshop_read=None,
 ) -> dict[str, object]:
-    """Return BABOOM's complete founder-local proactive briefing from Cells.
+    """Return BABOOM's founder briefing from graph state and indexed content.
 
     The caller must hold the application mutation lock while invoking this
-    function. That keeps every nested projection on the same graph revision;
-    the desktop Steward only transports and renders the resulting lens.
+    function. Nested graph projections retain one revision; ordinary counts
+    and report entries come from one database snapshot. The desktop only
+    transports and renders this admitted lens.
     """
+    snapshot = store.snapshot()
+    space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)
+    if space.content_store_root is not None and _workshop_read is None:
+        if content_service is None or not content_service.belongs_to(store, registry):
+            raise InvalidCell("ordinary Steward briefing requires its current owner")
+        return content_service.project_for_founder_context(
+            authentication_context=authentication_context, expected_revision=snapshot.revision,
+            read_guard=read_guard, route=read_route, include_categories=True,
+            limit=_FOUNDER_WORKSHOP_REPORT_LIMIT,
+            project=lambda page: project_universal_founder_baboom_steward_briefing(
+                store, registry, authentication_context=authentication_context,
+                work_index=work_index, brain_state=brain_state, hosts=hosts, staged_update=staged_update,
+                content_service=content_service, read_guard=read_guard, read_route=read_route,
+                _workshop_read=page))
     if work_index is None:
         work_index = project_universal_governed_work_index(
             store, registry, authentication_context=authentication_context
@@ -37354,11 +37895,15 @@ def project_universal_founder_baboom_steward_briefing(
     context = project_universal_baboom_context(
         store, registry, authentication_context=authentication_context,
         work_index=work_index, brain_state=brain_state, hosts=hosts, staged_update=staged_update,
+        content_service=content_service, workshop_agent_session_root=registry.agent_body.session.root_id,
+        read_guard=read_guard, read_route=read_route, _workshop_read=_workshop_read,
     )
     governed_work = project_universal_founder_governed_work_report(
         store, registry, authentication_context=authentication_context
     )
-    workshop = project_universal_founder_workshop_report(store, registry)
+    workshop = project_universal_founder_workshop_report(store, registry,
+        authentication_context=authentication_context, content_service=content_service,
+        read_guard=read_guard, read_route=read_route, _workshop_read=_workshop_read)
     attention = project_universal_founder_attention_briefing(store, registry)
     revision = context["revision"]
     if any(
@@ -37376,11 +37921,39 @@ def project_universal_founder_baboom_steward_briefing(
     }
 
 
+def _project_workshop_report_entries(selected, categories):
+    """Redact an already audience-filtered bounded message selection."""
+    projected: list[dict[str, object]] = []
+    protected = 0
+    for sequence, category_root, content, created_at in selected:
+        category = categories.get(category_root)
+        if category is None:
+            raise InvalidCell("Workshop entry category is not released")
+        text = " ".join(content.split())
+        is_protected = bool(not text or _FOUNDER_WORKSHOP_PROTECTED_TEXT.search(text))
+        if is_protected:
+            text = "[protected Workshop entry]"
+            protected += 1
+        else:
+            text = _FOUNDER_WORKSHOP_PATH_TEXT.sub("[path]", text)
+            if len(text) > _FOUNDER_WORKSHOP_REPORT_TEXT_LIMIT:
+                text = text[:_FOUNDER_WORKSHOP_REPORT_TEXT_LIMIT - 3].rstrip() + "..."
+        projected.append({"sequence": sequence, "kind": category, "text": text,
+            "created_at": created_at, "protected": is_protected})
+    return projected, protected
+
+
 def project_universal_founder_workshop_report(
     store: CellStore,
     registry: UniversalApplicationRegistry,
+    *,
+    authentication_context: object | None = None,
+    content_service=None,
+    read_guard=None,
+    read_route=("GET", "/api/universal/workshop"),
+    _workshop_read=None,
 ) -> dict[str, object]:
-    """Project a bounded, founder-local Workshop view from deliberation Cells.
+    """Project a bounded founder-local report from admitted Workshop content.
 
     Unlike the content-free BABOOM context lens, this explicit report is for a
     founder-local surface. It intentionally excludes graph identity and routing
@@ -37397,6 +37970,31 @@ def project_universal_founder_workshop_report(
         registry.deliberation_protocol,
         registry.workshop_root,
     )
+    if space.content_store_root is not None:
+        if content_service is None or not content_service.belongs_to(store, registry):
+            raise InvalidCell("ordinary Workshop report requires its current owner")
+        categories = {root: name for name, root in registry.workshop_category_roots.items()}
+
+        def project(page):
+            projected, protected = _project_workshop_report_entries((
+                (row["sequence"], row["category"], row["content"], row["created_at"])
+                for row in page["messages"]), categories)
+            return {"projection": "founder-local-workshop-report", "revision": page["graph_revision"],
+                "count": page["total"], "protected": protected,
+                "truncated": page["total"] > len(projected), "entries": projected}
+
+        if _workshop_read is not None:
+            page = content_service.validate_projection_read(_workshop_read,
+                store=store, registry=registry,
+                agent_session_root=registry.agent_body.session.root_id,
+                authentication_context=authentication_context, expected_revision=snapshot.revision)
+            result = project({**page, "messages": page["messages"][-_FOUNDER_WORKSHOP_REPORT_LIMIT:]})
+            if read_guard is not None:
+                read_guard()
+            return result
+        return content_service.project_for_founder_context(
+            authentication_context=authentication_context, expected_revision=snapshot.revision,
+            project=project, limit=_FOUNDER_WORKSHOP_REPORT_LIMIT, read_guard=read_guard, route=read_route)
     entry_count = len(space.entry_roots)
     selected = list_recent_deliberation_entries(
         snapshot,
@@ -37407,30 +38005,9 @@ def project_universal_founder_workshop_report(
     categories = {
         root: name for name, root in registry.workshop_category_roots.items()
     }
-    projected: list[dict[str, object]] = []
-    protected = 0
-    for entry in selected:
-        category = categories.get(entry.category_root)
-        if category is None:
-            raise InvalidCell("Workshop entry category is not released")
-        text = " ".join(entry.content.split())
-        is_protected = bool(
-            not text or _FOUNDER_WORKSHOP_PROTECTED_TEXT.search(text)
-        )
-        if is_protected:
-            text = "[protected Workshop entry]"
-            protected += 1
-        else:
-            text = _FOUNDER_WORKSHOP_PATH_TEXT.sub("[path]", text)
-            if len(text) > _FOUNDER_WORKSHOP_REPORT_TEXT_LIMIT:
-                text = text[:_FOUNDER_WORKSHOP_REPORT_TEXT_LIMIT - 3].rstrip() + "..."
-        projected.append({
-            "sequence": entry.sequence,
-            "kind": category,
-            "text": text,
-            "created_at": entry.created_at,
-            "protected": is_protected,
-        })
+    projected, protected = _project_workshop_report_entries((
+        (entry.sequence, entry.category_root, entry.content, entry.created_at)
+        for entry in selected), categories)
     return {
         "projection": "founder-local-workshop-report",
         "revision": snapshot.revision,
@@ -37751,6 +38328,41 @@ def read_universal_current_claimed_work(
     bounded projection lets every runtime re-derive its current claim instead
     of treating process memory, a prompt, or a local file as task authority.
     """
+    return _read_universal_current_bound_work(
+        store, registry, agent_session_root=agent_session_root,
+        authentication_context=authentication_context, states=frozenset({"claimed"}),
+    )
+
+
+def read_universal_current_work_assignment(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    authentication_context: object | None = None,
+) -> tuple[Mapping[str, object] | None, int]:
+    """Read one current pending claim in claimed, review or blocked state.
+
+    Null means no pending assignment, not proof that any Work completed.
+    This does not broaden claimed-only CDE or execution admission.
+    """
+    return _read_universal_current_bound_work(
+        store, registry, agent_session_root=agent_session_root,
+        authentication_context=authentication_context,
+        states=frozenset({"claimed", "review", "blocked"}),
+        include_requirements=True,
+    )
+
+
+def _read_universal_current_bound_work(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    agent_session_root: str,
+    authentication_context: object | None,
+    states: frozenset[str],
+    include_requirements: bool = False,
+) -> tuple[Mapping[str, object] | None, int]:
     snapshot = store.snapshot()
     session = _runtime_agent_session(snapshot, registry, agent_session_root)
     view_session, context = _view_session_for_context(
@@ -37788,7 +38400,7 @@ def read_universal_current_claimed_work(
             registry.standard_library.state_machine_protocol,
             work_root,
         )
-        if _text(snapshot, machine.current_state_root).casefold() != "claimed":
+        if _text(snapshot, machine.current_state_root).casefold() not in states:
             continue
         work = _instance_projection(snapshot, registry, work_root)
         if work is None:
@@ -37806,6 +38418,21 @@ def read_universal_current_claimed_work(
         )
     if not owned:
         return None, snapshot.revision
+    if include_requirements:
+        interfaces = [item for item in owned[0]["interfaces"] if item["name"] == "requirements"]
+        if len(interfaces) != 1:
+            raise InvalidCell("pending Work requirements interface is missing or ambiguous")
+        interface = interfaces[0]
+        target = interface["target"]
+        cell = snapshot.cells.get(target)
+        if cell is None:
+            raise InvalidCell("pending Work requirements target is missing")
+        unwired = (cell.link0 == NULL_CELL_ID and cell.link1 == NULL_CELL_ID
+                   and cell.atom == b"unwired")
+        owned[0]["requirements"] = {
+            "interface": interface["id"], "target": target, "wired": not unwired,
+            "value": None if unwired else read_value_graph(snapshot, registry.value_graph_protocol, target),
+        }
     return owned[0], snapshot.revision
 
 
@@ -37925,6 +38552,7 @@ def claim_next_universal_governed_work(
     agent_session_root: str,
     compliance_observation_root: str | None = None,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> dict[str, object]:
     """Atomically choose and claim the graph's highest-priority open work."""
     require_universal_runtime_compliance(
@@ -37989,6 +38617,7 @@ def claim_next_universal_governed_work(
         "claim",
         agent_session_root=agent_session_root,
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     changed = project_universal_governed_work_status(
         store, registry, authentication_context=authentication_context
@@ -38011,48 +38640,8 @@ def _utc_now_text() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _agent_session_runtime_label(
-    store: CellStore,
-    registry: UniversalApplicationRegistry,
-    agent_session_root: str,
-) -> str:
-    """Which runtime this session is -- codex, claude, baboom -- or a session.
-
-    The founder reads the Workshop to see WHO did what, so a line that says
-    only "a session" is worth nothing to him. Never invents a name: an
-    unreadable session is called what it is.
-    """
-    try:
-        session = read_agent_session(
-            store.snapshot(),
-            registry.agent_body.protocol,
-            registry.authorization.protocol,
-            agent_session_root,
-        )
-    except Exception:
-        return "an agent"
-    runtime = str(getattr(session, "runtime", "") or "").strip()
-    return runtime or "an agent"
 
 
-def _work_title_for_workshop(
-    store: CellStore,
-    registry: UniversalApplicationRegistry,
-    work_root: str,
-    *,
-    authentication_context: object | None = None,
-) -> str:
-    """The Work as the founder named it, or its root when it cannot be read."""
-    try:
-        status = project_universal_governed_work_status(
-            store, registry, authentication_context=authentication_context
-        )
-        for item in status["items"]:
-            if item["root"] == work_root:
-                return str(item.get("title") or work_root)[:120]
-    except Exception:
-        pass
-    return work_root
 
 
 # How each Work event reads in a sentence a person is meant to read.
@@ -38071,54 +38660,60 @@ def record_workshop_work_event(
     *,
     agent_session_root: str,
     work_root: str,
-    event: str,
-    detail: str = "",
+    history_root: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> str | None:
-    """Say in the Workshop that an agent did something to this Work.
+    """Publish an internal committed-transition notice, never authorize Work.
 
-    The Workshop was written from exactly one place -- the founder typing
-    into it -- so nothing an agent did ever appeared there and there was no
-    room for several agents to work one project together (2026-09-07). Every
-    governed Work event now lands here, naming the runtime that did it, so
-    the Workshop is the one place the founder reads to see all of them.
-
-    Best effort by design: a Work claim must not fail because the record of
-    it could not be written. The claim is the authority; this is its account.
+    Callers pass the exact receipt returned by the transition, not an external
+    request field. Read that bounded receipt without replaying machine history.
+    Notification failure cannot reverse or falsely fail the committed state.
     """
-    runtime = _agent_session_runtime_label(
-        store, registry, agent_session_root
-    )
-    said = "%s %s %s" % (runtime, event, _work_title_for_workshop(
-        store, registry, work_root,
-        authentication_context=authentication_context,
-    ))
-    if detail:
-        said = said + " -- " + detail
     try:
-        entry = append_universal_workshop_entry(
-            store,
-            registry,
-            # The entry actor is the AUTHENTICATED SUBJECT, not the session:
-            # prepare_deliberation_entry refuses an entry whose actor is not
-            # the subject that signed the request, which is why every agent
-            # write to the Workshop failed silently (2026-09-07). Who did it
-            # is not lost -- the runtime is named in the line itself.
-            actor_root=registry.authorization.subject_root,
-            category_root=registry.workshop_category_roots["note"],
-            content=said[:400],
-            idempotency_key="work-event:%s:%s:%s" % (
-                work_root, event, agent_session_root,
-            ),
-            created_at=_utc_now_text(),
-            reference_roots=(work_root,),
-            authentication_context=authentication_context,
-        )
+        from .cell_state_machine import _read_transition_event
+        from .conversation_content import workshop_message_identity
+        if authentication_context is None:
+            raise AuthorizationDenied("Work notice requires its authenticated caller")
+        snapshot = store.snapshot()
+        _require_workshop_message_source(snapshot, registry, agent_session_root,
+            authentication_context)
+        _require_application_authorization(snapshot, registry, "read", work_root,
+            authentication_context=authentication_context)
+        protocol = registry.standard_library.state_machine_protocol
+        receipt = _read_transition_event(snapshot, protocol, history_root)
+        if receipt.actor_root != agent_session_root or work_root not in receipt.context_roots:
+            raise InvalidCell("Work notice receipt belongs to another Work or actor")
+        machine = read_instance_state_machine(snapshot, registry.assembly_protocol, protocol, work_root)
+        admitted = [read_transition(snapshot, protocol, root) for root in machine.transition_roots]
+        if not any(item.event_root == receipt.event_root
+                and item.from_state_root == receipt.from_state_root
+                and item.to_state_root == receipt.to_state_root for item in admitted):
+            raise InvalidCell("Work notice event is not declared by this Work")
+        event = _text(snapshot, receipt.event_root).casefold()
+        if event not in _WORK_EVENT_SAID:
+            raise InvalidCell("Work notice event is outside its admitted vocabulary")
+        # Mutable titles cannot be part of a retry payload. The existing actor
+        # and Work references let each authorized view resolve its own labels.
+        said = "%s Work %s." % (_WORK_EVENT_SAID[event].capitalize(), work_root)
+        created_at = datetime.fromtimestamp(float(_text(snapshot, receipt.timestamp_root)),
+            timezone.utc).isoformat().replace("+00:00", "Z")
+        identity = registry.authorization.broker.resolve(authentication_context)
+        actor_context = registry.authorization.broker.mint_authenticated_context(agent_session_root,
+            principal_roots=(), tenant_root=identity.tenant_root, assurance_root=identity.assurance_root,
+            lifetime_seconds=60.0)
+        try:
+            entry = append_universal_workshop_entry(store, registry,
+                actor_root=agent_session_root, category_root=registry.workshop_category_roots["note"],
+                content=said, idempotency_key="work-event:" + history_root, created_at=created_at,
+                reference_roots=(work_root, history_root), authentication_context=actor_context,
+                source_authentication_context=authentication_context,
+                content_service=content_service, expected_revision=snapshot.revision)
+        finally:
+            registry.authorization.broker.revoke(actor_context)
+        return workshop_message_identity(entry)["root"]
     except Exception:
         return None
-    return getattr(entry, "root_id", None) or (
-        entry.get("root") if isinstance(entry, Mapping) else None
-    )
 
 
 def claim_universal_governed_work(
@@ -38129,6 +38724,7 @@ def claim_universal_governed_work(
     work_root: str,
     compliance_observation_root: str | None = None,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> dict[str, object]:
     """Claim one exact open Work without selecting another queue item."""
     if type(work_root) is not str or not work_root:
@@ -38184,6 +38780,7 @@ def claim_universal_governed_work(
         "claim",
         agent_session_root=agent_session_root,
         authentication_context=authentication_context,
+        content_service=content_service,
     )
     changed = project_universal_governed_work_status(
         store, registry, authentication_context=authentication_context
@@ -39060,12 +39657,50 @@ def promote_universal_resource_lifecycle(
     return lifecycle_patch.revision_root, evidence_root, committed_revision
 
 
+def _refuse_raw_work_configuration(snapshot, registry, owner_root, interface_root):
+    """Keep existing Work configuration ports under their admitted owner."""
+    from .workshop_project_revision import _CONFIGURABLE
+
+    assembly = _instance_projection(snapshot, registry, owner_root)
+    if assembly is None or assembly["definition"] != (
+        registry.standard_library.governed_domains.definitions[
+            "governed-work"].definition_root
+    ):
+        return
+    if any(port["id"] == interface_root and port["name"] in _CONFIGURABLE
+           for port in assembly["interfaces"]):
+        raise InvalidCell("Governed Work configuration requires its admitted configuration workflow")
+
+
 def connect_universal_roots(
     store: CellStore,
     registry: UniversalApplicationRegistry,
     source_root: str,
     target_root: str,
     *,
+    source_interface: str | None = None,
+    target_interface: str | None = None,
+    mutation_route: str = "/api/universal/interaction",
+    authentication_context: object | None = None,
+    leased_projection: Mapping[str, object] | None = None,
+) -> tuple[str, int]:
+    """Connect existing nodes without replacing governed Work configuration."""
+    return _connect_universal_roots(
+        store, registry, source_root, target_root,
+        admit_target=_refuse_raw_work_configuration,
+        source_interface=source_interface, target_interface=target_interface,
+        mutation_route=mutation_route, authentication_context=authentication_context,
+        leased_projection=leased_projection,
+    )
+
+
+def _connect_universal_roots(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    source_root: str,
+    target_root: str,
+    *,
+    admit_target,
     source_interface: str | None = None,
     target_interface: str | None = None,
     mutation_route: str = "/api/universal/interaction",
@@ -39238,6 +39873,7 @@ def connect_universal_roots(
         target_endpoint = interface["id"]
         target_binding_incidence = interface["target_incidence"]
         target_contract = interface["contract_root"]
+    admit_target(snapshot, registry, target_root, target_endpoint)
     if _is_derived_composition_interface(
         snapshot, registry, target_endpoint
     ):
@@ -39543,6 +40179,7 @@ def disconnect_universal_connection(
         resource_usage={"max-relations": (len(relation_roots), 0)},
     )
 
+    _refuse_raw_work_configuration(snapshot, registry, target_owner, target_member.participant_id)
     canvas_members = read_relation(
         snapshot, registry.canvas_root, budget=100_000
     )
@@ -39746,6 +40383,7 @@ def edit_universal_interface_value(
         or not interface["editable"]
     ):
         raise InvalidCell("interface does not expose an owned scalar value")
+    _refuse_raw_work_configuration(snapshot, registry, instance_root, interface_root)
     encoded = value.encode("utf-8")
     _authorize(
         snapshot,
@@ -40278,6 +40916,19 @@ def _prepare_active_top_scope_exposure_extension(
     parent_root: str,
 ) -> tuple[tuple[Cell, ...], tuple[Cell, ...]]:
     """Advance the active personal scope exposure without rewriting history."""
+    return _prepare_active_top_scope_exposure_extensions(
+        snapshot, registry, view_session, (pending_root,), parent_root,
+    )
+
+
+def _prepare_active_top_scope_exposure_extensions(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    pending_roots: tuple[str, ...],
+    parent_root: str,
+) -> tuple[tuple[Cell, ...], tuple[Cell, ...]]:
+    """Extend one active exposure once for an already validated resource batch."""
     active = _view_scope_exposures(
         snapshot,
         registry,
@@ -40286,13 +40937,13 @@ def _prepare_active_top_scope_exposure_extension(
     if active is None:
         return (), ()
     _previous_root, visible_roots = active
-    if pending_root in visible_roots:
+    if len(set(pending_roots)) != len(pending_roots) or any(root in visible_roots for root in pending_roots):
         raise InvalidCell("pending root already exists in the active exposure")
     entry_root = "app:scope-exposure:%s" % uuid.uuid4().hex
     exposure = _composition_exposure_cells(
         registry,
         parent_root,
-        (*visible_roots, pending_root),
+        (*visible_roots, *pending_roots),
         entry_root=entry_root,
     )
     _previous, registry_create, registry_replace = (
@@ -47912,6 +48563,190 @@ def set_universal_viewport(
     )
 
 
+def _project_revision_compensation_authorizations(store, snapshot, registry, original):
+    """Recover compound obligations from immutable change images and prior evidence.
+
+    The applied marker may be unregistered by undo. Its historical result image
+    identifies separately registered evidence that predates the binding commit.
+    Evidence supplies no authority: its obligations must match the actual patch.
+    A founder requirements revision is also bound to the OPEN lifecycle and the
+    exact custody it was saved under; undo and redo refuse once either changed.
+    """
+    from .cell_value_graph import read_value_graph
+    from .workshop_project_revision import (
+        prepare_project_revision_bindings, work_custody_snapshot)
+
+    native_route = registry.application_http_route_roots.get(
+        "POST /api/universal/workshop-native")
+    if original.operation_root != native_route:
+        return ()
+    markers = []
+    for change in original.changes:
+        match = re.fullmatch(
+            r"(.+):(project-revision|requirements-revision|work-configuration):([a-f0-9]{32}):applied",
+            change.target_root)
+        if match and change.before is None:
+            markers.append((change.target_root, match.group(1), {
+                "project-revision": "project", "requirements-revision": "requirements",
+                "work-configuration": "configuration"}[match.group(2)]))
+    if not markers:
+        return ()
+    if len(markers) != 1:
+        raise InvalidCell("compound revision compensation has ambiguous evidence")
+    marker_root, work, kind = markers[0]
+    fields = ("inputs", "requirements") if kind == "project" else ("requirements",)
+    evidence_kind = {"project": "workshop-project-revision-authorization-v1",
+                     "requirements": "workshop-requirements-revision-authorization-v1",
+                     "configuration": "workshop-work-configuration-authorization-v1"}[kind]
+    evidence_root = marker_root[:-len(":applied")] + ":authorization"
+    before = store.at(original.base_revision)
+    result = store.at(original.result_revision)
+    marker = read_value_graph(result, registry.value_graph_protocol, marker_root)
+    if (type(marker) is not dict or marker.get("state") != "applied"
+            or marker.get("authorization_root") != evidence_root
+            or marker.get("work") != work or marker.get("view") != original.session_root
+            or marker.get("owner") != original.actor_root
+            or original.scope_roots != (work,)
+            or original.authority_root != registry.composer_protocol.command("catalog.configure")):
+        raise InvalidCell("compound revision compensation identity differs from its change")
+    evidence = read_value_graph(before, registry.value_graph_protocol, evidence_root)
+    if read_value_graph(snapshot, registry.value_graph_protocol, evidence_root) != evidence:
+        raise InvalidCell("compound revision compensation evidence changed")
+    evidence_keys = {"kind", "work", "view", "owner", "authorizations"}
+    if kind == "requirements":
+        evidence_keys.add("custody")
+    elif kind == "configuration":
+        evidence_keys.update(("custody", "fields", "first_bindings", "purpose"))
+    if (type(evidence) is not dict or set(evidence) != evidence_keys
+            or evidence["kind"] != evidence_kind
+            or evidence["work"] != work or evidence["view"] != original.session_root
+            or evidence["owner"] != original.actor_root):
+        raise InvalidCell("compound revision compensation evidence is invalid")
+    first_bindings, material = (), None
+    if kind == "configuration":
+        recorded_fields, recorded_first = evidence["fields"], evidence["first_bindings"]
+        order = ("inputs", "requirements", "cde-container")
+        if (type(recorded_fields) is not list or not recorded_fields
+                or recorded_fields != [name for name in order if name in recorded_fields]
+                or type(recorded_first) is not list
+                or any(name not in recorded_fields for name in recorded_first)
+                or marker.get("fields") != recorded_fields
+                or marker.get("first_bindings") != recorded_first):
+            raise InvalidCell("work configuration compensation fields are invalid")
+        fields, first_bindings, material = tuple(recorded_fields), tuple(recorded_first), "values"
+    if kind in ("requirements", "configuration"):
+        recorded_custody = evidence["custody"]
+        if (type(recorded_custody) is not dict or recorded_custody.get("state") != "open"
+                or recorded_custody.get("claimant") or marker.get("custody") != recorded_custody):
+            raise InvalidCell("requirements revision compensation custody evidence is invalid")
+        if work_custody_snapshot(snapshot, registry, work) != recorded_custody:
+            raise InvalidCell("Work lifecycle or custody changed since this requirements revision; "
+                              "it cannot be undone or redone")
+    changes = {change.target_root: change for change in original.changes}
+    ports = {name: _governed_work_interface(before, registry, work, name)
+             for name in fields}
+    revised = {}
+    for name, port in ports.items():
+        change = changes.get(port["target_incidence"])
+        if change is None or change.before != before.cells[port["target_incidence"]]:
+            raise InvalidCell("compound revision compensation lacks both Work bindings"
+                              if kind == "project" else
+                              "requirements revision compensation lacks its Work binding")
+        revised[name] = change.after.link1
+    if kind == "requirements":
+        # Undo restores the before-image and redo the after-image. Revalidate
+        # that restored gate against the CURRENT CDE and workspace on disk.
+        from .existing_workshop_project_revision import (
+            completion_court_workspace_root, validate_requirements_gate)
+        binding_change = changes[ports["requirements"]["target_incidence"]]
+        live_target = _governed_work_interface_target(snapshot, registry, work, "requirements")
+        if live_target == binding_change.after.link1:
+            restored_root = binding_change.before.link1
+        elif live_target == binding_change.before.link1:
+            restored_root = binding_change.after.link1
+        else:
+            raise InvalidCell("requirements revision compensation target drifted")
+        restored = read_value_graph(snapshot, registry.value_graph_protocol, restored_root)
+        validate_requirements_gate(snapshot, registry, work,
+            restored.get("gate") if type(restored) is dict else None,
+            completion_court_workspace_root(registry), None)
+    elif kind == "configuration":
+        # Revalidate the complete configuration undo or redo would restore
+        # against the CURRENT workspace and CDE on disk (general purpose).
+        from .existing_workshop_project_revision import (
+            completion_court_workspace_root, validate_work_configuration)
+        restored = {}
+        for name in ("inputs", "requirements", "cde-container"):
+            restored_root = _governed_work_interface_target(snapshot, registry, work, name)
+            if name in fields:
+                binding_change = changes[ports[name]["target_incidence"]]
+                if restored_root == binding_change.after.link1:
+                    restored_root = binding_change.before.link1
+                elif restored_root == binding_change.before.link1:
+                    restored_root = binding_change.after.link1
+                else:
+                    raise InvalidCell("work configuration compensation target drifted")
+            restored_cell = snapshot.cells.get(restored_root)
+            restored[name] = (None if restored_cell is not None and restored_cell.link0 == NULL_CELL_ID
+                              and restored_cell.link1 == NULL_CELL_ID and restored_cell.atom == b"unwired"
+                              else read_value_graph(snapshot, registry.value_graph_protocol, restored_root))
+        validate_work_configuration(snapshot, registry, work, purpose="general", current=restored,
+            proposed={}, workspace_root=completion_court_workspace_root(registry), context=None)
+    wires = tuple(member.participant_id for member in read_relation(
+        before, registry.canvas_root, budget=100_000, retain_projection=False)
+        if member.role_id == registry.roles["relation"])
+    if len(wires) > 2048:
+        raise InvalidCell("compound revision compensation exceeds its wire bound")
+    from .workshop_project_revision import _incoming_wires
+    incoming = _incoming_wires(before, registry, ports, wires, lambda: None)
+    sources = {}
+    reverse = set()
+    for name, rows in incoming.items():
+        if not rows:
+            continue
+        source = rows[0][1]
+        change = changes.get(source.incidence_id)
+        if change is None or change.before != before.cells[source.incidence_id]:
+            raise InvalidCell("compound revision compensation lacks its visible wire")
+        sources[name] = change.after.link1
+        reverse.add(("catalog.connect", source.incidence_id, change.before.link1))
+    prepared = prepare_project_revision_bindings(before, registry, work_root=work,
+        revised_roots=revised, source_interfaces=sources,
+        visible_roots=tuple(dict.fromkeys((work, *(port["target"] for port in ports.values()),
+                                          *revised.values()))),
+        visible_relation_roots=wires, expected_revision=before.revision, fields=fields,
+        first_bindings=first_bindings, material=material)
+    expected = {(row.command_name, row.object_root, row.interface_root)
+                for row in prepared.authorizations} | reverse
+    for cell in prepared.replace:
+        if changes[cell.id].after != cell:
+            raise InvalidCell("compound revision compensation patch changed")
+    # Only the value-root registration tail may accompany the binding patch.
+    tail = registry.value_graph_protocol.root_id
+    for _ in range(100_000):
+        if before.cells[tail].link1 == NULL_CELL_ID:
+            break
+        tail = before.cells[tail].link1
+    else:
+        raise InvalidCell("compound revision value registration exceeds its bound")
+    replacement_ids = {change.target_root for change in original.changes if change.before is not None}
+    if replacement_ids != {tail, *(cell.id for cell in prepared.replace)}:
+        raise InvalidCell("compound revision compensation contains unrelated replacements")
+    rows = evidence["authorizations"]
+    low, high = {"project": (2, 6), "requirements": (1, 3)}.get(kind, (1, 3 * len(fields)))
+    if type(rows) is not list or not low <= len(rows) <= high:
+        raise InvalidCell("compound revision compensation obligations are invalid")
+    recorded = []
+    for row in rows:
+        if (type(row) is not dict or set(row) != {"command_name", "object_root", "interface_root"}
+                or any(type(row[key]) is not str or not row[key] for key in row)):
+            raise InvalidCell("compound revision compensation obligation is malformed")
+        recorded.append((row["command_name"], row["object_root"], row["interface_root"]))
+    if len(set(recorded)) != len(recorded) or set(recorded) != expected:
+        raise InvalidCell("compound revision compensation obligations differ from its bindings")
+    return tuple(sorted(expected))
+
+
 @with_catalog_verification_scope
 def _authorize_universal_compensation(
     store: CellStore,
@@ -47959,6 +48794,10 @@ def _authorize_universal_compensation(
     ), None)
     if command_name is None:
         raise InvalidCell("change compensation authority is not recognized")
+    for command, object_root, interface_root in _project_revision_compensation_authorizations(
+            store, snapshot, registry, original):
+        _authorize(snapshot, registry, command, object_root=object_root,
+            interface_root=interface_root, authentication_context=context)
     for scope_root in original.scope_roots:
         _authorize(
             snapshot,
@@ -48349,6 +49188,7 @@ def apply_universal_canvas_gesture(
     consent_evidence_root: str | None = None,
     authentication_context: object | None = None,
     leased_projection: Mapping[str, object] | None = None,
+    expected_scope: str | None = None,
 ) -> int:
     """Publish one complete local canvas gesture in one Store revision."""
     snapshot = store.dense_snapshot()
@@ -48564,47 +49404,105 @@ def apply_universal_canvas_gesture(
         selection_transition = _PreparedSelectionTransition("", (), ())
 
     if positions:
-        _, _, property_roots = _session_canvas_roots(
+        position_visible, _, property_roots, position_trail = _session_canvas_roots(
             snapshot,
             registry,
             view_session,
             authority_snapshot=authority_snapshot,
+            include_trail=True,
         )
+        if expected_scope is not None and (not position_trail or expected_scope != position_trail[-1]):
+            raise InvalidCell("canvas scope changed before layout save")
+        if not isinstance(positions, Mapping) or any(root not in position_visible for root in positions):
+            raise InvalidCell("canvas positions include a node outside the active lens")
         property_index = _property_index(snapshot, registry, property_roots)
+        lens_positions = None
         created_position_cells: list[Cell] = []
+        created_position_roots: list[str] = []
+        created_position_owners: dict[str, str] = {}
+        indexed_position_roots: list[str] = []
         for root_id, point in positions.items():
             position_rows = _rows_by_label(
                 snapshot, property_index.get(root_id, ())
             )
-            if (
-                "position_x" not in position_rows
-                or "position_y" not in position_rows
-            ):
-                # A card the founder can see and grab MUST be movable. A
-                # root can be visible here while its position properties
-                # belong to another level's index (an instance placed in one
-                # scope, dragged in another) -- refusing then froze the card
-                # in place with a message blaming the founder. The first
-                # move at this level IS the position fact: state it the way
-                # placement does, as ordinary property relations.
-                for name, key in (("position_x", "x"), ("position_y", "y")):
-                    value = float(point[key])
-                    if not math.isfinite(value):
-                        raise InvalidCell("canvas position must be finite")
-                    _reference, cells = _compose_property(
-                        registry, root_id, name, value
-                    )
-                    created_position_cells.extend(cells)
-                continue
             for name, key in (("position_x", "x"), ("position_y", "y")):
                 value = float(point[key])
                 if not math.isfinite(value):
                     raise InvalidCell("canvas position must be finite")
+                if name not in position_rows:
+                    if lens_positions is None:
+                        lens_property_roots = tuple(member.participant_id for member in read_relation(
+                            snapshot, view_session.properties_lens_root, budget=100_000)
+                            if member.role_id == registry.roles["scope"])
+                        lens_positions = _property_index(snapshot, registry, lens_property_roots)
+                    existing = _rows_by_label(snapshot, lens_positions.get(root_id, ())).get(name)
+                    if existing is not None:
+                        position_rows[name] = existing
+                        indexed_position_roots.append(existing.relation_root)
+                if name not in position_rows:
+                    reference, cells = _compose_property(registry, root_id, name, value)
+                    created_position_cells.extend(cells)
+                    created_position_roots.append(reference.relation_root)
+                    created_position_owners[reference.relation_root] = root_id
+                    indexed_position_roots.append(reference.relation_root)
+                    continue
                 value_root = position_rows[name].value_root
                 current = snapshot.cells[value_root]
                 replacements[value_root] = Cell(
                     current.id, current.link0, current.link1, _atom(value)
                 )
+        if indexed_position_roots:
+            # A first position must be visible on the next projection, including
+            # the top scope whose property index is explicitly materialized.
+            index_root = (view_session.visibility_root if position_trail[-1] == registry.canvas_root
+                          else position_trail[-1])
+            patch = prepare_append_relation_members(snapshot, index_root,
+                tuple((registry.roles["property"], root) for root in indexed_position_roots), budget=100_000)
+            created_position_cells.extend(patch.create)
+            for cell in patch.replace:
+                if cell.id in replacements and replacements[cell.id] != cell:
+                    raise InvalidCell("canvas position index changes conflict")
+                replacements[cell.id] = cell
+        if created_position_roots:
+            if position_trail[-1] == registry.canvas_root:
+                patch = prepare_append_relation_members(snapshot, registry.canvas_root,
+                    tuple((registry.roles["property"], root) for root in created_position_roots), budget=100_000)
+                created_position_cells.extend(patch.create)
+                for cell in patch.replace:
+                    if cell.id in replacements and replacements[cell.id] != cell:
+                        raise InvalidCell("canvas canonical position index changes conflict")
+                    replacements[cell.id] = cell
+            patch = prepare_append_relation_members(snapshot, view_session.properties_lens_root,
+                tuple((registry.roles["scope"], root) for root in created_position_roots), budget=100_000)
+            created_position_cells.extend(patch.create)
+            for cell in patch.replace:
+                if cell.id in replacements and replacements[cell.id] != cell:
+                    raise InvalidCell("canvas Properties lens changes conflict")
+                replacements[cell.id] = cell
+            # A shared coordinate must remain readable in other already-admitted
+            # views of the same instance. This adds no node visibility or grant.
+            for candidate in registry.view_sessions.values():
+                if candidate.root_id == view_session.root_id:
+                    continue
+                current_visible, _, _ = _session_canvas_roots(snapshot, registry, candidate,
+                    authority_snapshot=authority_snapshot)
+                assigned = _visibility_scope_projection(snapshot, registry, candidate)[0]
+                admitted = set(current_visible) | set(assigned)
+                refs = tuple(root for root, owner in created_position_owners.items() if owner in admitted)
+                if not refs:
+                    continue
+                indexes = [(candidate.properties_lens_root, registry.roles["scope"], refs)]
+                top_refs = tuple(root for root in refs if created_position_owners[root] in assigned)
+                if top_refs:
+                    indexes.append((candidate.visibility_root, registry.roles["property"], top_refs))
+                for index, role, roots_to_add in indexes:
+                    patch = prepare_append_relation_members(snapshot, index,
+                        tuple((role, root) for root in roots_to_add), budget=100_000)
+                    created_position_cells.extend(patch.create)
+                    for cell in patch.replace:
+                        if cell.id in replacements and replacements[cell.id] != cell:
+                            raise InvalidCell("shared canvas position index changes conflict")
+                        replacements[cell.id] = cell
 
     if viewport is not None:
         values = {
@@ -48623,7 +49521,7 @@ def apply_universal_canvas_gesture(
                 current.id, current.link0, current.link1, _atom(value)
             )
 
-    if not replacements and not selection_transition.create:
+    if not replacements and not selection_transition.create and not (positions and created_position_cells):
         return snapshot.revision
     if positions:
         return _commit_universal_user_change(
@@ -48749,6 +49647,11 @@ def rewire_universal_connection(
     )
     if other_owner not in visible_roots or other_interface is None:
         raise InvalidCell("opposite connection endpoint is not a visible interface")
+    if side == "target":
+        _refuse_raw_work_configuration(snapshot, registry, previous_owner, member.participant_id)
+        _refuse_raw_work_configuration(snapshot, registry, owner, normalized)
+    else:
+        _refuse_raw_work_configuration(snapshot, registry, other_owner, other_members[0].participant_id)
     candidate_contract = _interface_contract_root(
         snapshot, registry.assembly_protocol, normalized
     )

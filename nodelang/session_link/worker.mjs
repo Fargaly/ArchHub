@@ -19,13 +19,15 @@ input.on('line',async line=>{
    emit({event:'result',status:'ok',...result});
   }else
   if(r.operation==='discover'){
-   const all=await catalog();
-   const recipients=['claude','codex','opencode','antigravity','antigravity-ide'].flatMap(app=>(all[app]||[]).map(s=>({...s,app})));
-   emit({event:'result',status:'ok',recipients,providers:all.adapterStatus||{}});
+   let snapshots=0;
+   const projection=all=>{const rows=['claude','codex','opencode','antigravity','antigravity-ide'].flatMap(app=>(all[app]||[]).map(s=>({...s,app})));return {status:'ok',recipients:rows.slice(0,128),providers:all.adapterStatus||{},complete_apps:rows.length>128?[]:all.complete_apps||[],truncated:rows.length>128};};
+   const all=await catalog({apps:r.apps,onProgress:all=>{if(snapshots++<16)emit({event:'discovery_snapshot',...projection(all)});}});
+   emit({event:'result',...projection(all)});
   }else if(r.operation==='request'){
    const e=r.recipient;
    if(!e||typeof e.id!=='string'||typeof e.app!=='string')throw new Error('Invalid recipient');
    const reply=await ask(e.app,e.selector||e.id,r.text,r.permission_mode||'prompting',{expected:e,onDispatch:()=>{dispatched=true;emit({event:'dispatch_attempted'});}});
+   if(reply.status==='held'){emit({event:'result',status:'held',dispatch_attempted:dispatched,delivery_status:reply.delivery_status,delivery_reason:reply.delivery_reason});return;}
    if(typeof reply.text!=='string'||reply.text.length>32000)throw new Error('Reply text limit');
    emit({event:'result',status:'replied',dispatch_attempted:dispatched,recipient:e,reply,work_authority:false,execution_verified:false});
   }else throw new Error('Invalid operation');

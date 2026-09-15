@@ -36,6 +36,15 @@ const projectsDir = () => path.join(homeDir(), ".claude", "projects");
  * listens for peer messages on a local socket or Windows named pipe. Messages are newline-delimited
  * JSON; the wrapper element is what Claude renders in its chat surface.
  */
+export function publicDeliveryReceipt(receipt) {
+  const delivery_status=['held','refused','rejected','denied','expired','dropped'].includes(receipt?.status)?receipt.status:'held';
+  let delivery_reason=typeof receipt?.reason==='string'?receipt.reason.replace(/[\x00-\x1f\x7f]/g,' ').trim().slice(0,512):'';
+  // A diagnostic is text, never an auth envelope or transport address.
+  if(/(?:uds:|\\\\[.?]\\pipe\\|["']?(?:token|authorization)["']?\s*[:=]|bearer\s)/i.test(delivery_reason))
+    delivery_reason='Recipient reason contained private transport details and was omitted.';
+  return {delivery_status,delivery_reason};
+}
+
 export function buildFrame({ text, fromSocket, priority = "next", permissionMode }) {
   const msgId = crypto.randomUUID();
   const from = `uds:${fromSocket.replace(/[^A-Za-z0-9:_/.\-]/gu, (character) => Array.from(Buffer.from(character), (byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`).join(""))}`;
@@ -744,7 +753,7 @@ export class PeerEndpoint {
       });
       const poll = msgId ? globalThis.setInterval(() => {
         const receipt = this.deliveryReceipts.get(msgId);
-        if (receipt?.fromSocket === fromSocket && ["held", "refused", "denied", "expired", "dropped"].includes(receipt.status)) { finish(null); return; }
+        if (receipt?.fromSocket === fromSocket && ["held", "refused", "rejected", "denied", "expired", "dropped"].includes(receipt.status)) { finish(null); return; }
       }, 250) : null;
     });
   }

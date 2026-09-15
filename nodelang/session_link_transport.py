@@ -17,6 +17,15 @@ import time
 import uuid
 
 
+def public_delivery_reason(value):
+    """Bound only the reported reason; never expose a raw receipt envelope."""
+    import re
+    text=''.join(' ' if ord(c)<32 or ord(c)==127 else c for c in value).strip()[:512] if type(value) is str else ''
+    if re.search(r"(?:uds:|\\\\[.?]\\pipe\\|[\"']?(?:token|authorization)[\"']?\s*[:=]|bearer\s)",text,re.I):
+        return 'Recipient reason contained private transport details and was omitted.'
+    return text
+
+
 class _OwnedProcessJob:
     """Windows job closes owned helper descendants; existing host apps are outside."""
     def __init__(self, process):
@@ -179,9 +188,15 @@ class SessionLinkTransport:
             raise ValueError("timeout must be finite and within (0, 210] seconds")
         return float(value)
 
-    def discover(self, timeout_seconds=20):
+    def discover(self, timeout_seconds=20, *, apps=None):
         """Return exact host descriptors; an unavailable provider is not invented."""
-        return self._call({"operation": "discover"}, self._budget(timeout_seconds), None)
+        payload={"operation":"discover"}
+        if apps is not None:
+            if (type(apps) not in (tuple,list) or not 1 <= len(apps) <= 5
+                    or any(app not in {"claude","codex","opencode","antigravity","antigravity-ide"} for app in apps)):
+                raise ValueError("Invalid discovery app scope")
+            payload["apps"]=list(dict.fromkeys(apps))
+        return self._call(payload, self._budget(timeout_seconds), None)
 
     def request(self, recipient, text, timeout_seconds=180, cancel_event=None,
                 *, permission_mode="prompting"):
@@ -291,6 +306,12 @@ class SessionLinkTransport:
                 elif time.monotonic() >= deadline:
                     stop_reason = "timeout"
                 if stop_reason:
+                    if payload['operation']=='discover':
+                        # No native message was sent. Close this one owned helper
+                        # tree immediately; a blocked inventory must not add grace time.
+                        job.close()
+                        if proc.poll() is None:proc.kill()
+                        break
                     try:
                         readers.append(self._cancel_worker(proc))
                         proc.wait(timeout=2)
@@ -302,15 +323,34 @@ class SessionLinkTransport:
             for thread in readers:
                 thread.join(timeout=1)
             if stop_reason:
+                if stop_reason=='timeout' and payload['operation']=='discover':
+                    try:
+                        # A killed writer may leave an incomplete final line.
+                        frames=[json.loads(line) for line in bytes(output).split(b'\n')[:-1]]
+                        snapshots=[row for row in frames if type(row) is dict and row.get('event')=='discovery_snapshot']
+                        if snapshots:
+                            partial=snapshots[-1]
+                            if (partial.get('status')!='ok' or type(partial.get('recipients')) is not list
+                                    or len(partial['recipients'])>128 or type(partial.get('complete_apps')) is not list):
+                                raise ValueError('invalid partial discovery')
+                            return {**partial,**base,'event':'result','status':'ok','partial':True,
+                                    'reason':'discovery_budget','worker_stopped':proc.poll() is not None}
+                    except (ValueError,UnicodeError,TypeError):pass
                 return {**base, "status": "cancelled_wait" if stop_reason == "cancelled_wait" else "uncertain",
                         "reason": stop_reason, "worker_stopped": proc.poll() is not None}
             try:
                 frames = [json.loads(line) for line in output.decode("utf8").splitlines()]
                 results = [r for r in frames if isinstance(r, dict) and r.get("event") == "result"]
                 if len(results) != 1 or results[0].get("status") not in {
-                        "ok", "replied", "not_sent", "uncertain", "cancelled_wait"}:
+                        "ok", "replied", "held", "not_sent", "uncertain", "cancelled_wait"}:
                     raise ValueError("bad result")
                 result = results[0]
+                if result['status']=='held':
+                    code=result.get('delivery_status')
+                    result={'event':'result','status':'held',
+                        'dispatch_attempted':result.get('dispatch_attempted') is True,
+                        'delivery_status':code if code in {'held','refused','rejected','denied','expired','dropped'} else 'held',
+                        'delivery_reason':public_delivery_reason(result.get('delivery_reason'))}
                 if payload["operation"] == "request" and result["status"] == "replied":
                     if result.get("recipient") != payload["recipient"] or not isinstance(result.get("reply", {}).get("text"), str):
                         raise ValueError("reply recipient mismatch")

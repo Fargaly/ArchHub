@@ -163,6 +163,33 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_SET_PROP = (relation, value) =>
       jpost('/api/universal/set-property', {relation, value});
     window.ARCHHUB_GET_CANVAS = () => jget('/api/universal/canvas');
+    window.ARCHHUB_GRAPH_CREATE = title => jpost('/api/universal/graph-create', {title});
+    window.ARCHHUB_GRAPH_OPEN = root => jpost('/api/universal/graph-open', {root});
+    window.ARCHHUB_SCOPE_OPEN = async targets => {
+      const path = Array.isArray(targets) ? targets : [targets];
+      if (!path.length || path.length > 32 || path.some(root => typeof root !== 'string' || !root) ||
+          new Set(path).size !== path.length) throw new Error('The requested graph path is invalid.');
+      let projection = await jget('/api/universal/canvas');
+      const enter = async root => {
+        const matches = (projection.interaction_projection?.bindings || []).filter(row => row.control === root);
+        if (matches.length !== 1) throw new Error('This graph scope is not available to open.');
+        const binding = matches[0];
+        await jpost('/api/universal/interaction', {interaction:binding.interaction, control:root,
+          event:binding.event, revision:projection.revision});
+        projection = await jget('/api/universal/canvas');
+      };
+      if (projection.scope?.current === path[path.length - 1]) return projection;
+      const root = projection.scope?.trail?.[0]?.root;
+      if (!root) throw new Error('The current graph path is unavailable.');
+      if (projection.scope.current !== root) await enter(root);
+      for (const target of path) {
+        if (projection.scope.current === target) continue;
+        if (!(projection.nodes || []).some(row => row.id === target && row.openable === true))
+          throw new Error('The requested scope is outside this view.');
+        await enter(target);
+      }
+      return projection;
+    };
     // The first edit of a connection parameter the wire has never held
     // declares it on the wire's own root; after that it is an ordinary
     // property and set-property carries it.
@@ -345,14 +372,10 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     }
     window.ARCHHUB_EXISTING_WORKSHOP.setTopologyCanvas(canvas);
     const {nodes, wires} = window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().topology.graph;
+    const graphIndex = await jget('/api/universal/graphs');
     window.ARCHHUB_LIVE = {
-      sessions: [{
-        id:'graph', title:'ArchHub Operating Graph', state:'running',
-        host:'archhub', file:'universal graph · rev ' + (canvas.revision ?? '?'),
-        model:'sonnet 4.5', when:'now',
-        last:(canvas.nodes || []).length + ' nodes · '
-          + (canvas.wires || []).length + ' wires',
-      }],
+      sessions: graphIndex.graphs,
+      currentGraph: graphIndex.current_graph,
       hosts, connectors, graph:{nodes, wires},
       // Optional catalogues load when their panels open, never before Studio.
       memory:[], skills:[],

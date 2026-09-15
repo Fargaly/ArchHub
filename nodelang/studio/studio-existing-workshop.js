@@ -299,6 +299,11 @@
               !revision(result.revision) || result.revision < canvas.revision ||
               (previous && result.revision < previous.revision)) fail('Workshop history is stale or belongs to another scope.');
           const content = result.storage === 'conversation-content';
+          const modelAgent = result.model_agent ?? null;
+          if (modelAgent !== null && (!text(modelAgent.root) || modelAgent.root.length > 512 ||
+              !text(modelAgent.model) || modelAgent.model.length > 512 ||
+              !/^[a-f0-9]{64}$/.test(modelAgent.binding_digest))) fail('The conversation model binding is invalid.');
+          const modelChanged = JSON.stringify(previous?.model_agent ?? null) !== JSON.stringify(modelAgent);
           if (content && (!text(result.content_cursor) || result.page_before !== before || (result.feed || 'all') !== feed)) {
             fail('Workshop history returned an invalid page.');
           }
@@ -312,11 +317,12 @@
                 fail('Workshop participant status is invalid.');
               }
               if (JSON.stringify(previous.participants) === JSON.stringify(result.participants) &&
-                  result.revision === previous.revision) return previous;
-              workshop = {...previous, revision:result.revision, participants:result.participants}; publish(); return workshop;
+                  result.revision === previous.revision && !modelChanged) return previous;
+              workshop = {...previous, revision:result.revision, participants:result.participants,
+                model_agent:modelAgent}; publish(); return workshop;
             }
-            if (result.revision !== previous.revision) {
-              workshop = {...previous, revision:result.revision}; publish(); return workshop;
+            if (result.revision !== previous.revision || modelChanged) {
+              workshop = {...previous, revision:result.revision, model_agent:modelAgent}; publish(); return workshop;
             }
             return previous;
           }
@@ -333,7 +339,7 @@
             fail('Workshop history is invalid.');
           }
           if (content) pageTarget = {...pageTarget, storage:'conversation-content'};
-          workshop = {...result, error:''}; publish(); return workshop;
+          workshop = {...result, model_agent:modelAgent, error:''}; publish(); return workshop;
         } catch (error) {
           if (!isCurrent()) return null;
           workshop = {root, scope_root:stamp.scope, messages:[], participants:[],
@@ -525,6 +531,199 @@
     };
     const api = {
       openConversationEditor,
+      async startSession(details) {
+        if (!details || typeof details.prompt !== 'string' || !details.prompt.trim() || details.prompt.length > 12000 ||
+            (!!details.model === !!details.native) || details.model && !text(details.model) ||
+            details.native && (!text(details.native.app) || !text(details.native.session_id))) {
+          fail('Write a request and choose one agent or model.');
+        }
+        const viewIdentity = () => JSON.stringify([canvas?.graph_id,
+          topologyCanvas?.authorization?.subject, topologyCanvas?.authorization?.session]);
+        const identity = viewIdentity(), graph = canvas?.graph_id;
+        if (!text(graph) || !text(topologyCanvas?.authorization?.subject) || !text(topologyCanvas?.authorization?.session)) {
+          fail('Wait for the application connection before starting a session.');
+        }
+        const body = {action:'start-session',prompt:details.prompt.trim(),
+          ...(details.native ? {native:{app:details.native.app,session_id:details.native.session_id}} : {model:details.model})};
+        const pendingKey = await hash(JSON.stringify({kind:'start-session',identity,body}));
+        if (!/^[a-f0-9]{64}$/.test(pendingKey) || viewIdentity() !== identity) fail('Your application connection changed.');
+        if (sends.has(pendingKey)) return sends.get(pendingKey);
+        const saved = records();
+        if (!saved[pendingKey] && Object.keys(saved).length >= 32) fail('Reconcile pending operations before starting more sessions.');
+        const id = saved[pendingKey] || uuid();
+        if (!text(id) || id.length > 128) fail('Session request identity is invalid.');
+        saved[pendingKey] = id; pendingStorage.setItem(storageName, JSON.stringify(saved));
+        const operation = (async () => {
+          const result = await post('/api/universal/workshop', {...body,idempotency_key:id});
+          if (result?.ok !== true || !text(result.title) || result.graph_id !== graph || result.idempotency_key !== id ||
+              !text(result.root) || !text(result.message_id) || !revision(result.revision) ||
+              !Array.isArray(result.scope_path) || !result.scope_path.length || result.scope_path.some(root => !text(root))) {
+            fail('Session creation is unconfirmed. Your request identity is retained; do not start a duplicate.');
+          }
+          let warning = '';
+          const deliveryState = result.delivery?.state;
+          const settled = details.native
+            ? text(result.contact) && ['replied','started','delivered','received'].includes(deliveryState)
+            : deliveryState === 'replied' && text(result.delivery.node) && text(result.delivery.reply_message_id);
+          if (!settled) warning = deliveryState === 'not_sent' && result.delivery.provider_not_called === true
+            ? 'Session saved. ' + (typeof result.delivery.message === 'string'
+              ? result.delivery.message.slice(0,2000) : 'The model was not called. Check its connection before retrying.')
+            : 'Session saved. The agent reply is not confirmed; review the delivery outcome before retrying.';
+          try {
+            const remaining = records();
+            if (settled && remaining[pendingKey] === id) delete remaining[pendingKey];
+            pendingStorage.setItem(storageName, JSON.stringify(remaining));
+          } catch (_) { warning = [warning,'Session saved; pending request storage needs reconciliation.'].filter(Boolean).join(' '); }
+          return {...result,accepted:true,warning,navigation_current:viewIdentity() === identity};
+        })();
+        sends.set(pendingKey, operation);
+        try { return await operation; } finally { if (sends.get(pendingKey) === operation) sends.delete(pendingKey); }
+      },
+      async nativeAgents(root = null, apps = ['claude','codex','opencode','antigravity','antigravity-ide']) {
+        const allowed = ['claude','codex','opencode','antigravity','antigravity-ide'];
+        if (!Array.isArray(apps) || !apps.length || apps.length > 5 || apps.some(app => !allowed.includes(app))) {
+          fail('Choose a supported agent environment.');
+        }
+        const stamp = root ? stampFor(root) : null;
+        const query = new URLSearchParams({apps:apps.join(',')});
+        if (stamp) { query.set('root', root); query.set('scope', stamp.scope); }
+        const result = await get('/api/universal/native-agents?' + query);
+        if (stamp && !current(stamp, root)) fail('The conversation changed during discovery.');
+        if (!result || !['ok','unavailable'].includes(result.status) || !Array.isArray(result.rows) ||
+            result.rows.length > 64 || result.rows.some(row => !allowed.includes(row.app) ||
+              !text(row.session_id) || typeof row.title !== 'string' || typeof row.connected !== 'boolean')) {
+          fail('Native agent discovery returned an invalid result.');
+        }
+        return result;
+      },
+      async bindNativeContact(selection, node = null) {
+        if (!selection || !text(selection.app) || !text(selection.session_id) || node !== null && !text(node)) {
+          fail('Choose one live native session.');
+        }
+        const viewIdentity = () => JSON.stringify([canvas?.graph_id, canvas?.root,
+          (topologyCanvas || canvas)?.authorization?.subject, (topologyCanvas || canvas)?.authorization?.session]);
+        const identity = viewIdentity();
+        const fresh = await api.nativeAgents(null, [selection.app]);
+        const matches = fresh.rows.filter(row => row.app === selection.app && row.session_id === selection.session_id);
+        if (fresh.status !== 'ok' || matches.length !== 1 || !matches[0].connected || matches[0].selectable === false) {
+          fail('That native session is no longer uniquely available. Refresh the agent list.');
+        }
+        if (!text(fresh.workshop?.root) || !text(fresh.workshop?.scope) || !revision(fresh.revision)) {
+          fail('The application did not return its Workshop connection.');
+        }
+        if (identity !== viewIdentity()) fail('The graph changed before connecting.');
+        const result = await post('/api/universal/native-contact', {action:'bind',
+          root:fresh.workshop.root, scope:fresh.workshop.scope, node,
+          app:selection.app, session_id:selection.session_id, revision:fresh.revision});
+        if (!result?.ok || !text(result.contact) || !/^[a-f0-9]{64}$/.test(result.binding_digest) ||
+            result.app !== selection.app || result.session_id !== selection.session_id ||
+            result.root !== fresh.workshop.root || result.scope !== fresh.workshop.scope || !revision(result.revision)) {
+          fail('The connection result is unconfirmed. Inspect the graph before connecting again.');
+        }
+        // Keep the accepted receipt even when the user has moved to another view.
+        return {...result, navigation_current:identity === viewIdentity()};
+      },
+      async sendNativeContact(root, contact, message, editor = null) {
+        const stamp = stampFor(root), held = workshop;
+        if (!held || held.root !== root || held.error || !text(held.owner) || !text(held.view) || held.can_send !== true ||
+            !contact || !text(contact.root) || !/^[a-f0-9]{64}$/.test(contact.binding_digest) ||
+            !text(message?.trim()) || message.length > 12000) fail('Refresh the conversation and its connected agent before sending.');
+        if (editor && (!editorHandles.has(editor) || editor.root !== root)) fail('Message editor belongs to another conversation.');
+        const body = {action:'send', root, scope:stamp.scope, contact:contact.root,
+          binding_digest:contact.binding_digest, text:message.trim()};
+        const pendingKey = await hash(JSON.stringify({graph:stamp.graph, owner:held.owner, view:held.view, body}));
+        if (!/^[a-f0-9]{64}$/.test(pendingKey) || !current(stamp, root) || workshop !== held) {
+          fail('The conversation changed before sending.');
+        }
+        if (sends.has(pendingKey)) return sends.get(pendingKey);
+        const saved = records();
+        if (!saved[pendingKey] && Object.keys(saved).length >= 32) fail('Reconcile pending messages before sending more.');
+        const id = saved[pendingKey] || uuid();
+        if (!text(id) || id.length > 128) fail('Message identity is invalid.');
+        saved[pendingKey] = id; pendingStorage.setItem(storageName, JSON.stringify(saved));
+        const operation = (async () => {
+          const staged = editor ? await editor.stageMessage(id) : null;
+          if (!current(stamp, root)) fail('The conversation changed before sending.');
+          const result = await post('/api/universal/native-contact', {...body,idempotency_key:id});
+          if (!result?.ok || result.root !== root || result.contact !== contact.root ||
+              !text(result.message_id) || result.idempotency_key !== id || !revision(result.revision)) {
+            fail('The message result is unconfirmed. Its pending identity has been retained.');
+          }
+          let warning = '';
+          if (editor) {
+            try { await editor.savedMessage(result.message_id, staged); }
+            catch (_) { warning = 'Message saved; draft protection needs reconciliation.'; }
+          }
+          try {
+            const remaining = records();
+            if (remaining[pendingKey] === id) delete remaining[pendingKey];
+            pendingStorage.setItem(storageName, JSON.stringify(remaining));
+          } catch (_) { warning = 'Message saved; pending recovery could not be updated.'; }
+          workshopNotice = warning || (result.delivery?.state === 'started'
+            ? 'Message saved and delivery started. The agent reply will appear here.'
+            : 'Message saved. Check its delivery outcome in this conversation.');
+          if (current(stamp, root)) await api.refreshWorkshop(root).catch(() => {});
+          publish();
+          return {...result,accepted:true};
+        })();
+        sends.set(pendingKey, operation);
+        try { return await operation; } finally { if (sends.get(pendingKey) === operation) sends.delete(pendingKey); }
+      },
+      async sendModelConversation(root, agent, message, editor = null) {
+        const stamp = stampFor(root), held = workshop;
+        if (!held || held.root !== root || held.error || !text(held.owner) || !text(held.view) || held.can_send !== true ||
+            !agent || !text(agent.root) || !text(agent.model) || !/^[a-f0-9]{64}$/.test(agent.binding_digest) ||
+            held.model_agent?.root !== agent.root || held.model_agent.model !== agent.model ||
+            held.model_agent.binding_digest !== agent.binding_digest || !text(message?.trim()) || message.length > 12000) {
+          fail('Refresh this conversation and its model node before sending.');
+        }
+        if (editor && (!editorHandles.has(editor) || editor.root !== root)) fail('Message editor belongs to another conversation.');
+        const body = {action:'send-model', root, scope:stamp.scope, node:agent.root,
+          binding_digest:agent.binding_digest, prompt:message.trim()};
+        const pendingKey = await hash(JSON.stringify({graph:stamp.graph, owner:held.owner, view:held.view, body}));
+        if (!/^[a-f0-9]{64}$/.test(pendingKey) || !current(stamp, root) || workshop !== held) fail('The conversation changed before sending.');
+        if (sends.has(pendingKey)) return sends.get(pendingKey);
+        const saved = records();
+        if (!saved[pendingKey] && Object.keys(saved).length >= 32) fail('Reconcile pending messages before sending more.');
+        const id = saved[pendingKey] || uuid();
+        if (!text(id) || id.length > 128) fail('Message identity is invalid.');
+        saved[pendingKey] = id; pendingStorage.setItem(storageName, JSON.stringify(saved));
+        const operation = (async () => {
+          const staged = editor ? await editor.stageMessage(id) : null;
+          if (!current(stamp, root)) fail('The conversation changed before sending.');
+          const result = await post('/api/universal/workshop', {...body,idempotency_key:id});
+          if (result?.ok !== true || result.graph_id !== stamp.graph || result.root !== root ||
+              result.scope_root !== stamp.scope || result.node !== agent.root || result.binding_digest !== agent.binding_digest ||
+              !text(result.message_id) || result.idempotency_key !== id || !revision(result.revision) ||
+              !['replied','not_sent','failed','already_recorded','unknown'].includes(result.delivery?.state) ||
+              (result.delivery.state === 'replied' && !text(result.delivery.reply_message_id))) {
+            fail('The model result is unconfirmed. Its pending identity is retained.');
+          }
+          if (result.delivery.state !== 'replied') {
+            if (current(stamp, root)) await api.refreshWorkshop(root).catch(() => {});
+            fail(result.delivery.state === 'not_sent' && result.delivery.provider_not_called === true
+              ? (result.delivery.message || 'Your message is saved. The model was not called; resolve its connection and retry.')
+              : 'Your message is saved, but no model reply is confirmed. Retry only to reconcile this same request.');
+          }
+          let warning = '';
+          if (editor) {
+            try { await editor.savedMessage(result.message_id, staged); }
+            catch (_) { warning = 'Reply saved; draft protection needs reconciliation.'; }
+          }
+          try {
+            const remaining = records();
+            if (remaining[pendingKey] === id) delete remaining[pendingKey];
+            pendingStorage.setItem(storageName, JSON.stringify(remaining));
+          } catch (_) { warning = 'Reply saved; pending recovery could not be updated.'; }
+          if (current(stamp, root)) {
+            workshopNotice = warning;
+            await api.refreshWorkshop(root).catch(() => {}); publish();
+          }
+          return {...result,accepted:true,warning};
+        })();
+        sends.set(pendingKey, operation);
+        try { return await operation; } finally { if (sends.get(pendingKey) === operation) sends.delete(pendingKey); }
+      },
       async reviewConversationPages(root, after = null) {
         const stamp = stampFor(root);
         if (after !== null && (!text(after) || after.length > 512)) fail('Storage review cursor is invalid.');

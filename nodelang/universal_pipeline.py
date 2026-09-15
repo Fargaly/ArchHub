@@ -543,6 +543,7 @@ def create_engine_node(
     x: float = 240.0,
     y: float = 200.0,
     properties=None,
+    instance_token: str | None = None,
     authentication_context: object | None = None,
 ):
     """Create ONE engine-backed node on the graph, the way the seed does.
@@ -565,10 +566,6 @@ def create_engine_node(
     ) or (str(catalogue[0]["id"]) if catalogue else None)
     if definition_root is None:
         raise ValueError("no released definition is available to place")
-    root, _revision = _persist(lambda: instantiate_universal_definition(
-        store, registry, definition_root, x=float(x), y=float(y),
-        title_override=title, authentication_context=authentication_context,
-    ), store=store)
     values = {"engine": engine}
     for label, value in dict(properties or {}).items():
         label = str(label).strip()
@@ -585,10 +582,34 @@ def create_engine_node(
         for label, value in catalogue_items[0].get("params", {}).items():
             if label != "engine":
                 values.setdefault(label, str(value))
-    for label, value in values.items():
-        _persist(lambda label=label, value=value: create_universal_property(
-            store, registry, root, label, value, authentication_context=authentication_context,
+    root = None if instance_token is None else "assembly-instance:" + instance_token
+    if root is not None and root in store.snapshot().cells:
+        from .universal_application import select_universal_root, _property_index, _view_session_for_context
+        if root not in {row["id"] for row in projection.get("nodes", ())}:
+            raise InvalidCell("The reserved Agent node is outside the admitted canvas")
+        snapshot = store.snapshot()
+        view, _ = _view_session_for_context(registry, authentication_context)
+        lens_roots = tuple(member.participant_id for member in read_relation(
+            snapshot, view.properties_lens_root, budget=100_000)
+            if member.role_id == registry.roles["scope"])
+        properties = _property_index(snapshot, registry, lens_roots).get(root, ())
+        for label, value in {"definition":definition_root, **values}.items():
+            rows = [row for row in properties if _text(snapshot, row.label_root) == label]
+            if len(rows) != 1 or _text(snapshot, rows[0].value_root) != value:
+                raise InvalidCell("The reserved Agent node parameters changed; review its binding")
+        select_universal_root(store, registry, root, authentication_context=authentication_context)
+    else:
+        options = {} if instance_token is None else {
+            "instance_token":instance_token, "initial_properties":values}
+        root, _revision = _persist(lambda: instantiate_universal_definition(
+            store, registry, definition_root, x=float(x), y=float(y),
+            title_override=title, authentication_context=authentication_context, **options,
         ), store=store)
+        if instance_token is None:
+            for label, value in values.items():
+                _persist(lambda label=label, value=value: create_universal_property(
+                    store, registry, root, label, value, authentication_context=authentication_context,
+                ), store=store)
     _persist(lambda: _ensure_pipeline_node_interfaces(store, registry, root), store=store)
     return {"ok": True, "root": root, "engine": engine, "title": title}
 

@@ -851,6 +851,17 @@ class ConversationHistoryStore(ConversationPageProtection):
                                    (conversation_id, message_id, *args)).fetchone()
             return self._message(row) if row is not None else None
 
+    def get_by_idempotency(self, conversation_id, idempotency_key, *, principal, read_all=False):
+        """Read one admitted operation receipt through its existing unique index."""
+        _text(idempotency_key, "idempotency key")
+        audience, args = self._audience(principal, read_all)
+        with self._transaction():
+            self._head(conversation_id)
+            row = self._db.execute("SELECT m.* FROM messages m WHERE m.conversation_id=? "
+                "AND m.idempotency_key=? AND " + audience,
+                (conversation_id, idempotency_key, *args)).fetchone()
+            return self._message(row) if row is not None else None
+
     def search(self, conversation_id, query, *, principal, read_all=False, limit=20, max_bytes=262144):
         self._limits(limit, max_bytes)
         _text(query, "search query", 2048)

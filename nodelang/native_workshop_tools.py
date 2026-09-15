@@ -82,6 +82,13 @@ class _SelectedWork:
     @contextmanager
     def effect(self, operation, states):
         with self._effect_lock:
+            if self.pending is not None:
+                _refuse('A Work response is unresolved; use work_reconcile before another effect')
+            guard=getattr(self.control,'resume_guard',None)
+            if guard is not None:
+                recovered=guard.recover()
+                if recovered.get('status')!='owner_restored':
+                    _refuse('Native resume required: '+str(recovered.get('reason')))
             with self.control.bound_client() as client:
                 if self.pending is not None:
                     _refuse('A Work response is unresolved; use work_reconcile before another effect')

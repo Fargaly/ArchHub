@@ -3369,6 +3369,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     # the physical gateway generation inside the same Cloud Route authority.
     ("GET", "/api/universal/remote-runtime", "read"),
     ("GET", "/api/universal/canvas", "read"),
+    ("GET", "/api/universal/graphs", "read"),
     ("GET", "/api/universal/work", "read"),
     ("GET", "/api/universal/work-current", "read"),
     ("GET", "/api/universal/grand-map-work", "read"),
@@ -3409,6 +3410,8 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/brain-forget", "edit"),
     ("POST", "/api/universal/brain-edit", "edit"),
     ("POST", "/api/universal/node-create", "edit"),
+    ("POST", "/api/universal/graph-create", "edit"),
+    ("POST", "/api/universal/graph-open", "inspect"),
     ("POST", "/api/universal/brain-export", "read"),
     ("POST", "/api/universal/skills", "read"),
     ("POST", "/api/universal/login", "edit"),
@@ -3416,6 +3419,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/account-tier", "edit"),
     ("GET", "/api/universal/hosts", "read"),
     ("GET", "/api/universal/models", "read"),
+    ("GET", "/api/universal/native-agents", "read"),
     ("GET", "/api/universal/providers", "read"),
     ("GET", "/api/universal/cloud-session", "read"),
     ("GET", "/api/universal/cloud-signin", "read"),
@@ -3482,6 +3486,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/work-claim-transfer-claim", "execute"),
     ("POST", "/api/universal/work-claim-transfer-cancel", "edit"),
     ("POST", "/api/universal/workshop", "create"),
+    ("POST", "/api/universal/native-contact", "create"),
     ("POST", "/api/universal/workshop-model-approval", "execute"),
     ("POST", "/api/universal/workshop-native", "execute"),
     ("POST", "/api/universal/workshop-assignment", "create"),
@@ -20407,8 +20412,10 @@ def _nested_canvas_scope(
 
     # Relations such as a wire or property have no structural-member role. In
     # that case their direct participants are the visible next level.
-    roots = tuple(dict.fromkeys(structural or direct_participants))
-    if not roots:
+    roots = tuple(dict.fromkeys(
+        structural if is_composition else structural or direct_participants
+    ))
+    if not roots and not is_composition:
         raise InvalidCell("canvas scope has no visible direct participants")
     root_set = set(roots)
 
@@ -27483,10 +27490,25 @@ def instantiate_universal_definition(
     activate_view: bool = True,
     mutation_route: str = "/api/universal/instantiate",
     leased_scope_root: str | None = None,
+    instance_token: str | None = None,
+    initial_properties: Mapping[str, str] | None = None,
 ) -> tuple[str, int]:
     """Instantiate, place, expose, and select one catalogue assembly."""
     if not math.isfinite(x) or not math.isfinite(y):
         raise InvalidCell("assembly position must be finite")
+    if instance_token is not None and (
+        type(instance_token) is not str or re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", instance_token) is None
+    ):
+        raise InvalidCell("assembly instance token is invalid")
+    initial_properties = dict(initial_properties or {})
+    if initial_properties and instance_token is None:
+        raise InvalidCell("atomic initial properties require an explicit instance token")
+    if any(type(label) is not str or not label or label != label.strip()
+           or len(label.encode("utf-8")) > 512 or type(value) is not str
+           or len(value.encode("utf-8")) > 65_536
+           or label in {"title", "position_x", "position_y", "color", "definition", "version"}
+           for label, value in initial_properties.items()):
+        raise InvalidCell("assembly initial properties are invalid")
     interface_values = dict(interface_values or {})
     if any(
         type(name) is not str
@@ -27522,7 +27544,7 @@ def instantiate_universal_definition(
                 0,
                 sum(
                     len(value.encode("utf-8"))
-                    for value in interface_values.values()
+                    for value in (*interface_values.values(), *initial_properties.values())
                 ),
             ),
         },
@@ -27532,6 +27554,7 @@ def instantiate_universal_definition(
         registry.assembly_protocol,
         registry.standard_library.catalog_root,
         definition_root,
+        token=instance_token,
     )
     definition = read_definition(
         snapshot, registry.assembly_protocol, definition_root
@@ -27586,6 +27609,7 @@ def instantiate_universal_definition(
         ("definition", definition_root, True),
         ("version", _text(snapshot, definition.version_root), True),
     )
+    property_specs = (*property_specs, *((label, value, False) for label, value in initial_properties.items()))
     property_refs: list[PropertyRef] = []
     property_cells: list[Cell] = []
     for key, value, read_only in property_specs:
@@ -41189,13 +41213,14 @@ def _canvas_interface_owner_in(
 @_with_canvas_interface_projection_scope
 @with_relation_projection_scope
 @with_catalog_verification_scope
-def group_universal_selection(
+def _compose_universal_selection(
     store: CellStore,
     registry: UniversalApplicationRegistry,
     *,
     title: str = "Composition",
     projected_canvas: Mapping[str, object] | None = None,
     authentication_context: object | None = None,
+    empty: bool = False,
 ) -> tuple[str, int]:
     """Fold the current selection into one personal WIP composition."""
     title = title.strip()
@@ -41217,11 +41242,11 @@ def group_universal_selection(
         for wire in projection.get("wires", ())
         if isinstance(wire, Mapping) and type(wire.get("id")) is str
     ))
-    selected = tuple(
+    selected = () if empty else tuple(
         root for root in visible_roots
         if root in set(projection.get("selection", ()))
     )
-    if len(selected) < 2:
+    if not empty and len(selected) < 2:
         raise InvalidCell("group requires at least two selected roots")
     _authorize(
         snapshot,
@@ -41270,12 +41295,12 @@ def group_universal_selection(
         ("title", title, False),
         (
             "position_x",
-            sum(point[0] for point in positions) / len(positions),
+            sum(point[0] for point in positions) / len(positions) if positions else 240.0,
             False,
         ),
         (
             "position_y",
-            sum(point[1] for point in positions) / len(positions),
+            sum(point[1] for point in positions) / len(positions) if positions else 200.0,
             False,
         ),
         (
@@ -41321,6 +41346,8 @@ def group_universal_selection(
                 inserted = True
         else:
             after_roots.append(root_id)
+    if not inserted:
+        after_roots.append(composition_root)
     exposure = _composition_exposure_cells(
         registry, parent_root, tuple(after_roots), entry_root=entry_root
     )
@@ -41702,6 +41729,21 @@ def group_universal_selection(
             relationship_broker, patch, revision
         )
     return composition_root, revision
+
+
+def group_universal_selection(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    title: str = "Composition",
+    projected_canvas: Mapping[str, object] | None = None,
+    authentication_context: object | None = None,
+) -> tuple[str, int]:
+    """Fold two or more selected roots through the composition owner."""
+    return _compose_universal_selection(
+        store, registry, title=title, projected_canvas=projected_canvas,
+        authentication_context=authentication_context,
+    )
 
 
 @_with_canvas_interface_projection_scope
@@ -42245,7 +42287,7 @@ def _set_universal_scope_execution(
             registry,
             view_session,
             (),
-            next_roots[0],
+            next_roots[0] if next_roots else target_root,
             reason_root=_FOCUS_REASON_SCOPE,
             scope_root=target_root,
         )

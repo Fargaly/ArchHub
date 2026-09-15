@@ -23,7 +23,7 @@ _MAX_CONFIG_BYTES = 32 * 1024
 TASK_SOURCE_FILES = ('__init__.py', 'native_agent_mcp.py', 'native_agent_session.py',
     'native_workshop_tools.py', 'native_agent_hooks.py', 'clean_coordination_mcp.py',
     'installed_workshop_coordination.py', 'application_machine_transport.py',
-    'cell_secret_keys.py')
+    'cell_secret_keys.py', 'native_resume_guard.py', 'native_session_resume.py')
 _MAX_SOURCE_BYTES = 2 * 1024 * 1024
 _SYSTEM = (
     "You are an agent in the ArchHub Workshop. Your assigned graph Work is the "
@@ -230,7 +230,8 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
     for key in ("ARCHHUB_NATIVE_WORKSHOP_OWNER", "ARCHHUB_AGENT_RUNTIME",
                 "ARCHHUB_EXTERNAL_SESSION_ID", "ARCHHUB_COORDINATION_VENDOR",
                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CODEX_THREAD_ID",
-                "GEMINI_SESSION_ID", "PYTHONPATH", "PYTHONHOME"):
+                "GEMINI_SESSION_ID", "PYTHONPATH", "PYTHONHOME",
+                "SESSION_LINK_REQUIRED_CONNECTIONS"):
         inherited.pop(key, None)
     inherited["PYTHONDONTWRITEBYTECODE"] = "1"
     inherited["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
@@ -274,7 +275,7 @@ def prepare_claude_workshop_profile(*, install_root, state_root, python_executab
                 stream.write(raw)
             files[str(filename)] = hashlib.sha256(raw).hexdigest()
             identities[str(filename)] = _identity(filename)
-        argv = (str(native), "--print", "--verbose", "--no-session-persistence", "--session-id", session,
+        argv = (str(native), "--print", "--verbose", "--session-id", session,
                 "--input-format", "stream-json", "--output-format", "stream-json",
                 "--model", model, "--max-turns", str(max_turns), "--setting-sources=",
                 "--settings", str(cwd / "settings.json"), "--strict-mcp-config",

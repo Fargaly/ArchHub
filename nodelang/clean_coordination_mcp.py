@@ -460,7 +460,20 @@ def build_server(
 
 
 def main() -> None:
-    build_server().run(transport="stdio")
+    import argparse
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--expected-actor',help='Exact existing actor: expose dormant recovery tools without bootstrap')
+    args=parser.parse_args()
+    if args.expected_actor:
+        from .native_agent_session import NativeAgentSession
+        from .native_agent_mcp import build_recovery_server
+        # The supplied ID is only a constraint. Existing native identity and
+        # signed reconciliation must establish custody before any continuation.
+        owner=NativeAgentSession(expected_agent_session=args.expected_actor)
+        server,_activate=build_recovery_server(owner)
+        server.run(transport='stdio')
+    else:
+        build_server().run(transport="stdio")
 
 
 if __name__ == "__main__":

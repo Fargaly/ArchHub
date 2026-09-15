@@ -4168,6 +4168,46 @@ class NativeRecipientRelay:
                                  "reason": "relay_record_refused"})
         return rows
 
+    def request_contact(self, *, space_root, message_id, sender_root, contact_root,
+                        endpoint, revalidate, text):
+        """Relay one stored user message to an admitted external contact.
+
+        The browser-owned graph contact is an address, never a native execution
+        actor. Its trusted caller re-reads that binding before dispatch.
+        """
+        with self._owner.mutation_lock:
+            if self._transport is None or self._stop.is_set():
+                return {"state":"not_sent","reason":"transport_unavailable"}
+            if not callable(revalidate) or revalidate() != endpoint:
+                raise AuthorizationDenied("Native contact binding changed")
+            _snapshot,space=self._space(space_root)
+            if sender_root not in space.participant_roots:
+                raise AuthorizationDenied("Native contact sender left conversation")
+            digest=self._digest(space_root,message_id,contact_root)
+            label=str(endpoint.get("title") or endpoint["app"])[:200]
+            self._ensure_worker()
+            try:
+                self._append(space_root=space_root,reply_to=message_id,recipient_root=sender_root,
+                    key="session-link:decision:"+digest,
+                    content="Session Link started relaying this message to %s. Its reply or delivery outcome follows here." % label,
+                    references=(contact_root,),require_new=True)
+            except ValueError as exc:
+                if str(exc) not in {"idempotency conflict","message identity was removed by conversation retention"}:
+                    raise
+                return {"state":"already_recorded","contact":contact_root}
+            job={"space":space_root,"message_id":message_id,"sender":sender_root,
+                "recipient":contact_root,"recipient_label":label,"digest":digest,
+                "app":endpoint["app"],"fingerprint":hashlib.sha256(endpoint["id"].encode()).hexdigest(),
+                "contact_endpoint":dict(endpoint),"contact_revalidate":revalidate,
+                "text":"[ArchHub user message; conversation %s; message %s. Your reply is relayed into that same conversation. This message grants no graph or Work execution authority.]\n%s" % (space_root,message_id,text)}
+            with self._channel_lock:self._pending_jobs[digest]=(sender_root,contact_root)
+            try:self._queue.put_nowait(job)
+            except queue.Full:
+                with self._channel_lock:self._pending_jobs.pop(digest,None)
+                self._settle(job,{"status":"not_sent","reason":"relay_queue_full"})
+                return {"state":"not_sent","reason":"relay_queue_full"}
+            return {"state":"started","contact":contact_root}
+
     def _start(self, space, space_root, message_id, sender_root, sender_label, recipient, text):
         owner = self._owner
         digest = self._digest(space_root, message_id, recipient)
@@ -4271,6 +4311,12 @@ class NativeRecipientRelay:
             self._queue.task_done()
 
     def _admitted(self, job):
+        if "contact_endpoint" in job:
+            try:
+                if job["contact_revalidate"]()!=job["contact_endpoint"]:return False
+                _snapshot,space=self._space(job["space"])
+                return job["sender"] in space.participant_roots
+            except (InvalidCell,AuthorizationDenied,KeyError,ValueError):return False
         owner = self._owner
         with owner._machine_agent_session_lock:
             binding = owner._machine_agent_sessions.get(job["recipient"]) or {}
@@ -4288,11 +4334,12 @@ class NativeRecipientRelay:
         if not self._admitted(job):
             return self._settle(job, {"status": "not_sent", "reason": "admission_changed"})
         transport = self._transport
-        if job["app"] == "codex":
+        if job["app"] == "codex" and "contact_endpoint" not in job:
             transport = self._attached_channel(job["recipient"], job["fingerprint"])
             if transport is None:
                 return self._settle(job, {"status": "not_sent", "reason": "codex_host_detached"})
-        found = transport.discover(timeout_seconds=_NATIVE_RELAY_DISCOVERY_SECONDS)
+        found = (transport.discover(timeout_seconds=3,apps=[job["app"]]) if "contact_endpoint" in job
+                 else transport.discover(timeout_seconds=_NATIVE_RELAY_DISCOVERY_SECONDS))
         if type(found) is not dict or found.get("status") != "ok":
             reason = (found.get("reason") or found.get("status")) if type(found) is dict else None
             return self._settle(job, {"status": "not_sent",
@@ -4305,6 +4352,10 @@ class NativeRecipientRelay:
                 hashlib.sha256(descriptor["id"].encode("utf-8")).hexdigest(),
                 job["fingerprint"])
         ]
+        if "contact_endpoint" in job:
+            held=job["contact_endpoint"]
+            matches=[row for row in matches if all(row.get(key)==held.get(key)
+                for key in ("app","id","pid","port","socket","cwd","runtimeId"))]
         if len(matches) != 1:
             return self._settle(job, {"status": "not_sent",
                                       "reason": "recipient_not_exactly_one_live_session"})
@@ -4334,6 +4385,13 @@ class NativeRecipientRelay:
                 except InvalidCell as exc:
                     content = header + ("The reply arrived, but this Workshop refused to "
                                         "store its text (%s)." % exc)
+        elif status == "held":
+            from .session_link_transport import public_delivery_reason
+            reported=public_delivery_reason(outcome.get('delivery_reason'))
+            code=outcome.get('delivery_status')
+            code=code if code in {'held','refused','rejected','denied','expired','dropped'} else 'held'
+            content = ("The native recipient held or refused the message to %s (reported status: %s). %s The message is not resent automatically."
+                % (label,code,("Reported reason: "+reported) if reported else "No reason was provided."))
         elif status == "not_sent":
             content = ("Session Link did not relay this message to %s (%s). Nothing was "
                        "requested of the recipient; the message stays in this conversation."
@@ -4430,7 +4488,8 @@ class NativeRecipientRelay:
                       revoked=ok and revocation.get("revoked") is True)
         return result
 
-    def attach_channel(self, session_root, capability, *, instance_id, fingerprint, still_admitted):
+    def attach_channel(self, session_root, capability, *, instance_id, fingerprint, still_admitted,
+                       native_custody=None):
         """Give one bound Codex Agent Session its own attached transport channel.
 
         The capability is validated locally and kept only inside the channel;
@@ -4488,7 +4547,8 @@ class NativeRecipientRelay:
                     raise AuthorizationDenied("Session Link attachment was stopped before it was published")
                 self._channels[session_root] = {"transport": channel, "instance_id": instance_id,
                                                 "fingerprint": fingerprint, "retiring": False,
-                                                "expires_at": capability["expires_at"]}
+                                                "expires_at": capability["expires_at"],
+                                                "native_custody": dict(native_custody or {})}
                 self._attaching.pop(session_root, None)
         except BaseException:
             if channel is not None and not self._retire(channel)["local_call_joined"]:
@@ -4849,6 +4909,20 @@ class ApplicationServer:
             Path(universal_state_path).expanduser().resolve()
             if universal_state_path is not None else None
         )
+        from .conversation_content import (
+            ApplicationConversationContent, fresh_content_bootstrap_pending,
+            preflight_fresh_content_path, read_fresh_content_bootstrap,
+            record_fresh_content_bootstrap, require_fresh_bootstrap_custody,
+        )
+        content_path = conversation_history_path
+        if content_path is None and self.universal_state_path is not None:
+            content_path = str(self.universal_state_path) + '.conversations.sqlite3'
+        new_file_backed_graph = bool(universal_store is None
+            and self.universal_state_path is not None
+            and not os.path.lexists(self.universal_state_path))
+        if new_file_backed_graph:
+            # Refuse unknown content custody before CellStore creates a graph.
+            preflight_fresh_content_path(self.universal_state_path, content_path)
         self.universal_checkpoint_guard = None
         self.universal_checkpoint_signing_authority = None
         self.universal_checkpoint_protection = None
@@ -4939,6 +5013,16 @@ class ApplicationServer:
                         signing_authority=signing_authority,
                     )
                 try:
+                    bootstrap = read_fresh_content_bootstrap(universal_store.snapshot())
+                    if persisted_application and bootstrap is not None and bootstrap['state'] == 'pending':
+                        require_fresh_bootstrap_custody(universal_store, bootstrap, content_path)
+                    if not persisted_application:
+                        if bootstrap is not None or not new_file_backed_graph:
+                            raise InvalidCell('fresh conversation recovery required: incomplete or unmarked existing graph; application construction cannot resume')
+                        # The same graph records intent before any kernel build
+                        # commit, so a later constructor cannot mistake a failed
+                        # first boot for an ordinary restored legacy instance.
+                        record_fresh_content_bootstrap(universal_store, content_path)
                     # Existing bytes and the selected external authority are
                     # checked before restore-time migrations are allowed to
                     # publish a successor revision. The checkpoint is not
@@ -5077,11 +5161,11 @@ class ApplicationServer:
             self.universal_store, self.universal_registry,
         )
         self.mutation_lock = threading.RLock()
-        from .conversation_content import ApplicationConversationContent
         content_path = conversation_history_path
         if content_path is None and self.universal_store.database_path is not None:
             content_path = self.universal_store.database_path + '.conversations.sqlite3'
         self.conversation_content = ApplicationConversationContent(self, content_path)
+        self._fresh_content_bootstrap = False
         # The reused Session Link transport is optional; absent, sends are unchanged.
         self.native_recipient_relay = NativeRecipientRelay(self, session_link_transport)
         self._composer_planning_slot = threading.BoundedSemaphore(1)
@@ -5115,6 +5199,9 @@ class ApplicationServer:
         self.cde_write_signing_provider = None
         self.cde_write_signing_descriptor_root = None
         try:
+            if owns_universal_store and self.universal_store.database_path is not None:
+                self._fresh_content_bootstrap = fresh_content_bootstrap_pending(
+                    self.universal_store, self.universal_registry, content_path)
             self._runtime_fence_release = _take_universal_runtime_fence(
                 self.universal_store,
                 self.universal_registry.application_root,
@@ -5136,7 +5223,10 @@ class ApplicationServer:
                         self.cde_write_signing_provider,
                     )
                 )
+            if self._fresh_content_bootstrap:
+                self.conversation_content.initialize_fresh_workshop()
         except Exception:
+            self.conversation_content.close()
             if self._runtime_fence_release is not None:
                 self._runtime_fence_release()
                 self._runtime_fence_release = None
@@ -5367,6 +5457,28 @@ class ApplicationServer:
                                      + str(exc),
                         })
                         return
+                if parsed.path == '/api/universal/native-agents':
+                    try:
+                        binding,session_token=self._browser_session_binding()
+                        owner.require_universal_http_route('GET',parsed.path,authentication_context=binding.context)
+                        query=parse_qs(parsed.query,keep_blank_values=True)
+                        if set(query)-{'apps','root','scope'} or any(len(v)!=1 for v in query.values()) or (('root' in query)!=('scope' in query)):
+                            raise InvalidCell('Native discovery query is invalid')
+                        from .native_contact import discover_native_agents,project_native_contacts
+                        result=discover_native_agents(owner,apps=query.get('apps',['claude'])[0].split(','))
+                        from .native_contact import workshop_metadata
+                        result['workshop']=workshop_metadata(owner,binding.context)
+                        result['revision']=owner.universal_store.revision
+                        if 'root' in query:
+                            result['contacts']=project_native_contacts(owner,binding,root=query['root'][0],scope=query['scope'][0],discovery=result)
+                        if owner._resolve_browser_session(session_token)!=binding:raise AuthorizationDenied('Native discovery browser changed')
+                        owner.require_universal_http_route('GET',parsed.path,authentication_context=binding.context,revalidate=True)
+                        self._json(200,{'ok':True,**result})
+                    except AuthorizationDenied:
+                        self._json(403,{'ok':False,'error':'Native discovery is outside this browser authority'})
+                    except (InvalidCell,ValueError,TypeError):
+                        self._json(400,{'ok':False,'error':'Native discovery request is invalid'})
+                    return
                 if parsed.path in {'/api/universal/providers', '/api/universal/models'}:
                     try:
                         binding, session_token = self._browser_session_binding()
@@ -5734,6 +5846,15 @@ class ApplicationServer:
                             'ok': True,
                             **owner.project_interaction_canvas(binding),
                         }
+                    self._json(200, payload)
+                    return
+                if parsed.path == '/api/universal/graphs':
+                    if not self._universal_route('GET', parsed.path, binding):
+                        return
+                    from .universal_graphs import project_graph_index
+                    with owner.mutation_lock:
+                        payload = project_graph_index(owner.universal_store,
+                            owner.universal_registry, authentication_context=binding.context)
                     self._json(200, payload)
                     return
                 if parsed.path == '/api/universal/application-update':
@@ -6211,7 +6332,34 @@ class ApplicationServer:
                             payload = approve_browser_workshop_model(owner, binding, body)
                         self._json(200, payload)
                         return
+                    if self.path == '/api/universal/native-contact':
+                        from .native_contact import bind_native_contact,send_native_contact
+                        if type(body) is not dict or body.get('action') not in {'bind','send'}:
+                            raise InvalidCell('Native contact action is invalid')
+                        def contact_guard():
+                            if owner._resolve_browser_session(_session_token)!=binding:
+                                raise AuthorizationDenied('Native contact browser changed')
+                            owner.require_universal_http_route('POST','/api/universal/native-contact',
+                                authentication_context=binding.context,revalidate=True)
+                        action=body['action'];arguments={key:value for key,value in body.items() if key!='action'}
+                        function=bind_native_contact if action=='bind' else send_native_contact
+                        self._json(200,function(owner,binding,arguments,browser_guard=contact_guard))
+                        return
                     if self.path == '/api/universal/workshop':
+                        if type(body) is dict and body.get('action') in {'start-session', 'send-model'}:
+                            from .workshop_session_start import start_workshop_session, send_workshop_model_message
+                            def session_start_guard():
+                                current, current_token = self._browser_session_binding(unsafe=True)
+                                if current != binding or current_token != _session_token:
+                                    raise AuthorizationDenied('Session start browser changed')
+                                _revalidate_composer_context(owner, binding.context, self.path)
+                            with _composer_planning(owner):
+                                function = start_workshop_session if body['action'] == 'start-session' else send_workshop_model_message
+                                payload = function(owner, binding,
+                                    {key:value for key,value in body.items() if key != 'action'},
+                                    browser_guard=session_start_guard)
+                            self._json(200, payload)
+                            return
                         from .workshop_page_lifecycle import PAGE_ACTIONS, perform_browser_page_action
                         if type(body) is dict and type(body.get('action')) is str and body['action'] in PAGE_ACTIONS:
                             def page_guard():
@@ -7121,6 +7269,22 @@ class ApplicationServer:
                                 # In place: the old text is replaced, never duplicated.
                                 _brain_call('brain.edit_fact', {'fragment_id': fact_id, 'text': said})
                                 self._json(200, {'ok': True})
+                                return
+                            elif self.path in ('/api/universal/graph-create', '/api/universal/graph-open'):
+                                from .universal_graphs import create_graph, open_graph
+                                if self.path == '/api/universal/graph-create':
+                                    if set(body) != {'title'}:
+                                        raise InvalidCell('graph creation requires only a title')
+                                    payload = create_graph(owner.universal_store,
+                                        owner.universal_registry, body['title'],
+                                        authentication_context=binding.context)
+                                else:
+                                    if set(body) != {'root'}:
+                                        raise InvalidCell('graph opening requires only a root')
+                                    payload = open_graph(owner.universal_store,
+                                        owner.universal_registry, body['root'],
+                                        authentication_context=binding.context)
+                                self._json(200, payload)
                                 return
                             elif self.path == '/api/universal/node-create':
                                 from .universal_pipeline import create_engine_node
@@ -8946,6 +9110,7 @@ class ApplicationServer:
         catalog_entry_root: str,
         custody_root: str | None,
         external_session_fingerprint: str,
+        prune_expired: bool = True,
     ) -> bool:
         """Keep a second process from taking over the same live capability."""
         now = time.time()
@@ -8954,10 +9119,12 @@ class ApplicationServer:
                 root for root, binding in self._machine_agent_sessions.items()
                 if now >= float(binding["expires_at"])
             )
-            for root in stale:
-                self._machine_agent_sessions.pop(root, None)
+            if prune_expired:
+                for root in stale:
+                    self._machine_agent_sessions.pop(root, None)
             return any(
-                binding.get("runtime") == runtime
+                float(binding["expires_at"]) > now
+                and binding.get("runtime") == runtime
                 and binding.get("catalog_entry") == catalog_entry_root
                 and binding.get("device_custody") == custody_root
                 and binding.get("external_session_fingerprint")
@@ -9463,28 +9630,57 @@ class ApplicationServer:
                     custody_root=custody_root)
                 if conditional_session is None or conditional_session.root_id != conditional_actor:
                     raise AuthorizationDenied("conditional native enrollment identity mismatched; no capability issued")
+                from .native_enrollment_reconciliation import record_pre_enrollment_refusal
+                peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
+                peer = (peer_context[2] if peer_context is not None and peer_context[0] is self
+                    and peer_context[1].get("body") is body else None)
+
+                def refuse_continuation(reason):
+                    record_pre_enrollment_refusal(self, body, peer)
+                    raise AuthorizationDenied(reason)
+
                 from .native_session_release import _has_pending_permit
                 if (self._machine_agent_active_requests.get(conditional_actor,0)
                         or _has_pending_permit(self.universal_store.snapshot(),
                             self.universal_registry.cde_write_authority_protocol,conditional_actor)):
-                    from .native_enrollment_reconciliation import record_pre_enrollment_refusal
-                    peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
-                    peer = (peer_context[2] if peer_context is not None and peer_context[0] is self
-                        and peer_context[1].get("body") is body else None)
-                    record_pre_enrollment_refusal(self, body, peer)
-                    raise AuthorizationDenied("conditional native enrollment requires effect reconciliation")
+                    refuse_continuation("conditional native enrollment requires effect reconciliation")
                 relay = self.native_recipient_relay
                 if relay is not None:
                     with relay._channel_lock:
-                        if (conditional_actor in relay._channels or conditional_actor in relay._attaching
-                                or any(conditional_actor in peers for peers in relay._pending_jobs.values())):
-                            raise AuthorizationDenied("conditional native enrollment requires attachment settlement")
+                        entry_held = relay._channels.get(conditional_actor)
+                        old_binding = self._machine_agent_sessions.get(conditional_actor) or {}
+                        # A quiet channel belongs to this actor and application,
+                        # not its rotating native token. Retain it only for the
+                        # exact original OS process after native lease expiry.
+                        # This neither renews its grant nor touches its transport.
+                        # Expired bindings may already have been pruned. Only
+                        # custody captured by the admitted attachment may stand
+                        # in for that absent record; caller claims never do.
+                        custody = old_binding or (entry_held or {}).get("native_custody") or {}
+                        same_process = (type(peer) is MachinePipePeer
+                            and custody.get("enrollment_peer") == {
+                                "pid": peer.pid, "created_at": peer.created_at})
+                        old_expiry = custody.get("expires_at")
+                        retain_channel = (entry_held is not None and same_process
+                            and type(old_expiry) in (int, float) and math.isfinite(old_expiry)
+                            and old_expiry <= time.time()
+                            and custody.get("runtime") == runtime
+                            and custody.get("external_session_fingerprint") == fingerprint
+                            and entry_held.get("fingerprint") == fingerprint
+                            and entry_held.get("retiring") is False)
+                        if (relay._stop.is_set() or conditional_actor in relay._attaching
+                                or any(conditional_actor in peers for peers in relay._pending_jobs.values())
+                                or entry_held is not None and not retain_channel):
+                            refuse_continuation("conditional native enrollment requires attachment settlement")
             if self._machine_agent_identity_is_currently_bound(
+                prune_expired=conditional_actor is None,
                 runtime=runtime,
                 catalog_entry_root=entry.root_id,
                 custody_root=custody_root,
                 external_session_fingerprint=fingerprint,
             ):
+                if conditional_actor is not None:
+                    refuse_continuation("runtime Agent Session identity is already bound; renew it instead")
                 raise AuthorizationDenied(
                     "runtime Agent Session identity is already bound; renew it instead"
                 )
@@ -9680,7 +9876,9 @@ class ApplicationServer:
                 raise AuthorizationDenied("Session Link attachment admission changed")
 
         return relay.attach_channel(session_root, body["capability"], instance_id=instance_id,
-                                    fingerprint=fingerprint, still_admitted=still_admitted)
+                                    fingerprint=fingerprint, still_admitted=still_admitted,
+                                    native_custody={key: binding.get(key) for key in (
+                                        "enrollment_peer", "runtime", "external_session_fingerprint", "expires_at")})
 
     def _verify_work_artifact_review(self, **arguments):
         from .native_workshop_execution import verify_existing_session_artifact_review

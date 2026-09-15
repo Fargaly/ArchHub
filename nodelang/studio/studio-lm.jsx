@@ -127,6 +127,7 @@ const LM_HOST_META = window.ArchHubTheme.derive((LM) => ({
   autocad:{name:'AutoCAD',col:LM.err},  outlook:{name:'Outlook',col:LM.blue},
 }));
 const LM_STATE_META = window.ArchHubTheme.derive((LM) => ({
+  idle:     { label:'saved',       col:LM.inkMuted },
   running:  { label:'running',     col:LM.accent, pulse:true },
   done:     { label:'done',        col:LM.ok },
   review:   { label:'needs review',col:LM.warn },
@@ -395,9 +396,10 @@ const LM_LIBRARY = [
 const StudioLM = () => {
   React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
   useCatalogueVersion();
-  const [openId, setOpenId] = React.useState(LM_SESSIONS[0]?.id || null);
-  const [openTabs, setOpenTabs] = React.useState(LM_SESSIONS.slice(0, 3).map(s => s.id));
+  const [openId, setOpenId] = React.useState(window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id || null);
+  const [openTabs, setOpenTabs] = React.useState(() => [window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id].filter(Boolean));
   const [model, setModel] = React.useState({ name:'Choose a model', route:'', routed:'', vendor:'No provider selected', tag:'', ctx:'', col:LM.inkMuted, latency:null });
+  const [homeNative, setHomeNative] = React.useState(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   React.useEffect(() => {
     const controller = new AbortController();
@@ -517,15 +519,62 @@ const StudioLM = () => {
       transcript:workshopState.workshop,
     } : null;
 
+  const nativeConnection = React.useRef(null);
+  const connectNativeSession = async row => {
+    const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+    if (!owner?.bindNativeContact || !window.ARCHHUB_SCOPE_OPEN) {
+      throw new Error('Native agent connections are unavailable in this application view.');
+    }
+    const viewIdentity = () => {
+      const snapshot = owner.getSnapshot();
+      const authorization = (snapshot?.topology?.canvas || snapshot?.canvas)?.authorization;
+      return JSON.stringify([snapshot?.canvas?.graph_id, snapshot?.canvas?.root,
+        authorization?.subject, authorization?.session]);
+    };
+    const startedView = viewIdentity();
+    const graph = owner.getSnapshot()?.canvas?.graph_id;
+    const identity = JSON.stringify([startedView, row.app, row.session_id]);
+    let connected = nativeConnection.current?.identity === identity ? nativeConnection.current.result : null;
+    let navigationCurrent = true;
+    if (!connected) {
+      connected = await owner.bindNativeContact(row);
+      navigationCurrent = connected.navigation_current !== false;
+      // Once saved, a retry only opens the existing connection.
+      nativeConnection.current = {identity,result:connected};
+    }
+    try {
+      if (!navigationCurrent || viewIdentity() !== startedView) {
+        throw new Error('Your graph or access changed while connecting; your current view was kept.');
+      }
+      window.sessionStorage.setItem('archhub.native-contact.selection.v1', JSON.stringify({
+        graph, root:connected.root, contact:connected.contact}));
+      if (!Array.isArray(connected.scope_path) || connected.scope_path.at(-1) !== connected.scope) {
+        throw new Error('The application did not return its Workshop navigation path.');
+      }
+      if (viewIdentity() !== startedView) throw new Error('Your current view changed.');
+      await window.ARCHHUB_SCOPE_OPEN(connected.scope_path);
+      window.location.reload();
+    } catch (error) {
+      throw new Error('The agent connection is saved. Its Workshop could not open: ' + (error?.message || 'refresh the graph list'));
+    }
+  };
+
   // open a session — also pin as a tab if not already open
-  const openSession = (id) => {
+  const openSession = async (id) => {
+    if (id && window.ARCHHUB_GRAPH_OPEN) {
+      try {
+        await window.ARCHHUB_GRAPH_OPEN(id);
+        window.location.reload();
+      } catch (error) { window.alert(error?.message || 'Graph opening was refused.'); }
+      return;
+    }
     if (id && !openTabs.includes(id)) setOpenTabs(t => [...t, id]);
     setOpenId(id);
   };
   const closeTab = (id) => {
     setOpenTabs(t => {
       const next = t.filter(x => x !== id);
-      if (openId === id) setOpenId(next[next.length - 1] || null);
+      if (openId === id) setOpenId(null);
       return next;
     });
   };
@@ -600,7 +649,7 @@ const StudioLM = () => {
       {session
         ? <Workspace
             session={session} model={displayedModel}
-            openTabs={openTabs} setOpenId={setOpenId} closeTab={closeTab}
+            openTabs={openTabs} setOpenId={openSession} closeTab={closeTab}
             setPickerOpen={setPickerOpen}
             setSettingsOpen={openSettings}
             setLibraryOpen={setLibraryOpen}
@@ -608,11 +657,46 @@ const StudioLM = () => {
             userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary}
             view={workspaceView} updateView={updateWorkspaceView}
             onHome={() => setOpenId(null)}/>
-        : <Home onOpen={openSession} model={model} setPickerOpen={setPickerOpen}/>}
+        : <Home onOpen={openSession} model={model} native={homeNative} setPickerOpen={setPickerOpen}
+            onStarted={async (result, continueInView = () => true) => {
+              const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+              const identity = () => {
+                const state = owner.getSnapshot();
+                const auth = (state.topology?.canvas || state.canvas)?.authorization;
+                return JSON.stringify([state.canvas?.graph_id,auth?.subject,auth?.session]);
+              };
+              const startedIdentity = identity();
+              const guard = () => {
+                if (!continueInView() || identity() !== startedIdentity) {
+                  throw new Error('Your session is saved. Your current view was kept because your connection changed.');
+                }
+              };
+              guard();
+              await window.ARCHHUB_SCOPE_OPEN(result.scope_path);
+              guard();
+              await owner.refreshTopologyCanvas();
+              guard();
+              const snapshot = owner.getSnapshot();
+              const authorization = (snapshot.topology?.canvas || snapshot.canvas)?.authorization;
+              if (snapshot.canvas?.graph_id !== result.graph_id ||
+                  !snapshot.workshops?.some(row => row.root === result.root)) {
+                throw new Error('Your session is saved. Refresh the Workshop to open it.');
+              }
+              setOpenTabs(tabs => tabs.includes(result.graph_id) ? tabs : [...tabs, result.graph_id]);
+              setWorkspaceSelection({mode:'chat', conversationRoot:result.root,
+                target:result.contact ? 'contact:' + result.contact : result.delivery?.node ? 'model:' + result.delivery.node : '',
+                notice:result.warning || '', pending:false,
+                scope:JSON.stringify([result.graph_id, snapshot.canvas.graph_id, snapshot.canvas.root,
+                  authorization?.subject || '', authorization?.session || ''])});
+              setOpenId(result.graph_id);
+            }}/>}
       <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs} account={account}/>
-      {pickerOpen && <ModelPicker setModel={m => modelTarget
+      {pickerOpen && <ModelPicker setModel={m => !session
+        ? (setHomeNative(null), setModel(m)) : modelTarget
         ? window.pmPersistValue(modelTarget, 'model', modelRoute(m))
-        : setModel(m)} onClose={() => setPickerOpen(false)} model={displayedModel}/>}
+        : window.ARCHHUB_STUDIO_AUTHORITY ? Promise.reject(new Error('Select an AI node on the canvas to set its model.'))
+        : setModel(m)} onClose={() => setPickerOpen(false)} model={displayedModel}
+        onNativeSelect={window.ARCHHUB_EXISTING_WORKSHOP ? (!session ? row => setHomeNative(row) : connectNativeSession) : undefined}/>}
       {/* Every ask box in the app reads the current choice from here, so a
           box that was not handed a model still asks the model the founder
           picked instead of falling through to a server default. */}
@@ -717,7 +801,7 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, 
   }}>
     <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
       workshopActive={!!workshopContext}/>
-    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen}/>}
+    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome}/>}
     {panel === 'nodes' && (workshopContext ?
       <WorkshopAgentsPanel key={JSON.stringify([openId, workshopContext.graphId, workshopContext.scopeRoot,
         workshopContext.descriptor.root])} context={workshopContext} target={workshopTarget} onSelect={onWorkshopTarget}/> :
@@ -784,7 +868,7 @@ const RailIcon = ({ active, onClick, title, children }) => (
   </button>
 );
 
-const ChatsPanel = ({ openId, onOpen }) => (
+const ChatsPanel = ({ openId, onOpen, onNew }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     {/* Panel header */}
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
@@ -793,7 +877,7 @@ const ChatsPanel = ({ openId, onOpen }) => (
       <button title="More" style={panelIconBtn()}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
       </button>
-      <button title="New chat" style={panelIconBtn()}>
+      <button title="New graph" onClick={onNew} style={panelIconBtn()}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
       </button>
     </div>
@@ -1249,8 +1333,67 @@ const kbd = () => ({
 });
 
 // ──────────────────────── HOME ────────────────────────
-const Home = ({ onOpen, model, setPickerOpen }) => {
+const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
   const [filter, onFilter] = React.useState('all');
+  const [draft, setDraft] = React.useState('');
+  const [starting, setStarting] = React.useState(false);
+  const [startError, setStartError] = React.useState('');
+  const startBusy = React.useRef(false), acceptedSession = React.useRef(null);
+  const homeMounted = React.useRef(true);
+  React.useEffect(() => {homeMounted.current = true; return () => {homeMounted.current = false;};}, []);
+  const startSession = async event => {
+    event.preventDefault();
+    if (!draft.trim() || startBusy.current) return;
+    if (!native && !modelRoute(model)) { setPickerOpen(true); return; }
+    startBusy.current = true; setStarting(true); setStartError('');
+    try {
+      const owner = window.ARCHHUB_EXISTING_WORKSHOP;
+      if (!owner?.startSession) throw new Error('Session creation is unavailable in this application view.');
+      const details = {prompt:draft.trim(), ...(native ? {native:{app:native.app,session_id:native.session_id}} : {model:modelRoute(model)})};
+      const viewIdentity = () => {
+        const snapshot = owner.getSnapshot();
+        const authorization = (snapshot?.topology?.canvas || snapshot?.canvas)?.authorization;
+        return JSON.stringify([snapshot?.canvas?.graph_id,authorization?.subject,authorization?.session]);
+      };
+      const startedView = viewIdentity();
+      const identity = JSON.stringify([startedView,details]);
+      let result = acceptedSession.current?.identity === identity ? acceptedSession.current.result : null;
+      let navigationCurrent = true;
+      if (!result) {
+        result = await owner.startSession(details);
+        navigationCurrent = result.navigation_current !== false;
+        acceptedSession.current = {identity,result};
+      }
+      if (!homeMounted.current) return;
+      if (!navigationCurrent || viewIdentity() !== startedView) throw new Error('The session is saved in your previous workspace. Your current view was kept.');
+      await onStarted(result, () => homeMounted.current && viewIdentity() === startedView);
+      setDraft('');
+    } catch (error) {
+      setStartError(error?.message || 'The session could not be confirmed. Your text is still here.');
+    } finally { startBusy.current = false; setStarting(false); }
+  };
+
+  const [title, setTitle] = React.useState('');
+  const [creating, setCreating] = React.useState(false);
+  const [createError, setCreateError] = React.useState('');
+  const submitted = React.useRef(false);
+  const createGraph = async event => {
+    event.preventDefault();
+    if (submitted.current || !title.trim()) return;
+    submitted.current = true;
+    setCreating(true); setCreateError('');
+    try {
+      if (!window.ARCHHUB_GRAPH_CREATE) throw new Error('Graph creation is unavailable in this view.');
+      await window.ARCHHUB_GRAPH_CREATE(title.trim());
+      window.location.reload();
+    } catch (error) {
+      // A lost receipt may follow a successful write. Re-open the saved
+      // graph list before another creation; never automatically replay it.
+      setCreateError((error?.message || 'Graph creation was not confirmed.') +
+        ' Refresh the graph list before creating again.');
+      setCreating(false);
+    }
+  };
   const shown = filter === 'all'
     ? LM_SESSIONS
     : LM_SESSIONS.filter(s => (s.state || 'idle') === filter);
@@ -1259,35 +1402,54 @@ const Home = ({ onOpen, model, setPickerOpen }) => {
     gridColumn:'2', gridRow:'1', overflow:'auto', minHeight:0,
     padding:'30px 44px 36px', display:'flex', flexDirection:'column',
   }}>
-    <ModelStrip model={model} setPickerOpen={setPickerOpen}/>
-    <div style={{
+    <ModelStrip model={native ? {...model,name:native.title || native.app,vendor:native.app} : model} setPickerOpen={setPickerOpen}/>
+    <form onSubmit={startSession} style={{background:LM.bgPanel, border:`1px solid ${LM.line}`,
+      borderRadius:LM.rad.xl, padding:'16px 18px', marginBottom:16, marginTop:14}}>
+      <textarea aria-label="Start a new session" placeholder="Start a new session…"
+        value={draft} onChange={event => setDraft(event.target.value)} disabled={starting}
+        onKeyDown={event => {if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing) startSession(event);}}
+        rows={2} maxLength={12000} style={{width:'100%',boxSizing:'border-box',resize:'vertical',
+          background:'transparent',border:0,color:LM.ink,fontFamily:LM.serif,fontSize:24,lineHeight:1.4}}/>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginTop:10}}>
+        <span style={{flex:1,fontSize:12,color:LM.inkMuted}}>
+          {native ? native.app + ' · ' + (native.title || 'Connected session') : modelRoute(model) || 'Choose an agent or model above'}
+        </span>
+        <button type="submit" disabled={starting || !draft.trim()} style={{padding:'9px 16px',
+          border:0,borderRadius:7,background:LM.accent,color:(window.AH && window.AH.onFill) || '#180f08',cursor:'pointer'}}>
+          {starting ? 'Starting…' : '→ Send'}
+        </button>
+      </div>
+      {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
+    </form>
+    <details style={{marginBottom:24}}>
+      <summary style={{fontSize:12,color:LM.inkSoft,cursor:'pointer'}}>New blank graph</summary>
+    <form onSubmit={createGraph} style={{
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
       padding:'16px 18px', marginBottom:36, marginTop:14,
     }}>
       <div style={{ display:'flex', alignItems:'flex-end', gap:14 }}>
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontFamily:LM.serif, fontSize:24, fontStyle:'italic', color:LM.inkSoft, letterSpacing:'-0.01em', padding:'2px 0' }}>
-            Start a new session…
-          </div>
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:10 }}>
-            <Chip mono>/ node</Chip>
-            <Chip mono>@ skill</Chip>
-            <Chip mono>#  host</Chip>
-            <Chip>+ attach</Chip>
-          </div>
+          <input aria-label="New graph name" placeholder="Name your new graph…" value={title}
+            onChange={event => setTitle(event.target.value)} disabled={submitted.current} maxLength={80}
+            style={{width:'100%', boxSizing:'border-box', background:'transparent', border:0,
+              fontFamily:LM.serif, fontSize:24, color:LM.ink, padding:'2px 0'}}/>
+          <p style={{color:LM.inkMuted, margin:'10px 0 0'}}>Start with a blank graph, then add nodes from the library.</p>
         </div>
-        <button style={{
+        <button type="submit" disabled={submitted.current || !title.trim()} style={{
           padding:'9px 16px 9px 14px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08',
           border:0, borderRadius:7, fontFamily:LM.sans, fontSize:13, fontWeight:500,
           cursor:'pointer', display:'inline-flex', alignItems:'center', gap:7,
         }}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={(window.AH && window.AH.onFill) || "#180f08"} strokeWidth="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          Send
+          {creating ? 'Creating…' : 'Create graph'}
         </button>
       </div>
-    </div>
+      {createError && <p role="alert" style={{color:LM.warn}}>{createError}
+        {' '}<button type="button" onClick={() => window.location.reload()}>Refresh graphs</button></p>}
+    </form>
+    </details>
     <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
-      <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
+      <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Graphs</h2>
       <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
         {shown.length} · CLICK TO OPEN
       </span>
@@ -2063,6 +2225,52 @@ const WorkshopConversation = ({descriptor, target, setTarget}) => {
     return () => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visibility); };
   }, [authority, descriptor.root, nativeAvailable, nativeTarget]);
   const participants = transcript?.participants || [];
+  const [nativeContacts, setNativeContacts] = React.useState([]);
+  const [contactError, setContactError] = React.useState('');
+  const [contactsLoading, setContactsLoading] = React.useState(false);
+  const contactRead = React.useRef(0), currentTarget = React.useRef(target);
+  currentTarget.current = target;
+  const refreshContacts = React.useCallback(async () => {
+    if (!existing || !authority.nativeAgents) return;
+    const request = ++contactRead.current;
+    setContactsLoading(true); setContactError('');
+    try {
+      const result = await authority.nativeAgents(descriptor.root);
+      if (request !== contactRead.current || !mounted.current) return;
+      if (!Array.isArray(result.contacts) || result.contacts.length > 64 || result.contacts.some(row =>
+          !workshopSelectionId(row.root) || typeof row.label !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(row.binding_digest) || ![true,false,null].includes(row.connected))) {
+        throw new Error('The saved agent connections could not be read.');
+      }
+      setNativeContacts(result.contacts);
+      if (result.status !== 'ok') setContactError('Saved connections loaded; live agent availability could not be checked.');
+      try {
+        const choice = JSON.parse(window.sessionStorage.getItem('archhub.native-contact.selection.v1') || 'null');
+        if (!currentTarget.current && choice?.graph === state?.canvas?.graph_id && choice.root === descriptor.root &&
+            result.contacts.some(row => row.root === choice.contact)) {
+          setTarget('contact:' + choice.contact);
+          window.sessionStorage.removeItem('archhub.native-contact.selection.v1');
+        }
+      } catch (_) { /* Selection storage is presentation only. */ }
+    } catch (error) {
+      if (request === contactRead.current && mounted.current) setContactError(error?.message || 'Agent connections are unavailable.');
+    } finally {
+      if (request === contactRead.current && mounted.current) setContactsLoading(false);
+    }
+  }, [authority, existing, descriptor.root, state?.canvas?.graph_id]);
+  React.useEffect(() => {
+    refreshContacts();
+    return () => { contactRead.current += 1; };
+  }, [refreshContacts]);
+  const contactTarget = nativeContacts.find(row => 'contact:' + row.root === target) || null;
+  const modelAgent = existing ? transcript?.model_agent : null;
+  const modelTarget = modelAgent && target === 'model:' + modelAgent.root ? modelAgent : null;
+  const defaultRecipient = React.useRef(null);
+  React.useEffect(() => {
+    if (!modelAgent || defaultRecipient.current === descriptor.root) return;
+    defaultRecipient.current = descriptor.root;
+    if (!target) setTarget('model:' + modelAgent.root);
+  }, [descriptor.root, modelAgent?.root, target]);
   const names = new Map(participants.map(row => [row.root, row.label]));
   const messages = transcript?.messages || [];
   const messagePageIdentity = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root,
@@ -2087,8 +2295,18 @@ const WorkshopConversation = ({descriptor, target, setTarget}) => {
     const details = action === 'send' ? {target, message:draft.trim(), ...(execution ? {execution_root:execution} : {})} : {};
     busyRef.current = true; setBusy(true); setActionError('');
     try {
-      await authority.workshopAction(descriptor.root, action, null, details,
-        protectedEditors ? editors.current.message : null);
+      if (action === 'send' && target.startsWith('contact:')) {
+        if (!contactTarget || contactTarget.connected === false) throw new Error('Refresh this agent connection before sending.');
+        await authority.sendNativeContact(descriptor.root, contactTarget, draft.trim(),
+          protectedEditors ? editors.current.message : null);
+      } else if (action === 'send' && target.startsWith('model:')) {
+        if (!modelTarget) throw new Error('Refresh this conversation and its model node before sending.');
+        await authority.sendModelConversation(descriptor.root, modelTarget, draft.trim(),
+          protectedEditors ? editors.current.message : null);
+      } else {
+        await authority.workshopAction(descriptor.root, action, null, details,
+          protectedEditors ? editors.current.message : null);
+      }
       if (action === 'send' && mounted.current) setDraft('');
     } catch (error) { setActionError(error.message || 'The action could not be confirmed. Retry to reconcile it.'); }
     finally { busyRef.current = false; if (mounted.current) setBusy(false); }
@@ -2183,9 +2401,18 @@ const WorkshopConversation = ({descriptor, target, setTarget}) => {
           {busy ? 'Joining…' : 'Join Workshop'}</button> : <>
           <select aria-label="Recipient" value={target} disabled={busy} onChange={e => setTarget(e.target.value)}>
             <option value="">Choose a participant</option>
+            {modelAgent && <option value={'model:' + modelAgent.root}>Agent · {modelAgent.model}</option>}
+            {nativeContacts.length > 0 && <optgroup label="Connected agent environments">
+              {nativeContacts.map(row => <option key={row.root} value={'contact:' + row.root}>
+                {row.label} · {row.connected === true ? row.app : row.connected === false ? 'offline' : 'availability unknown'}
+              </option>)}
+            </optgroup>}
             {participants.filter(row => row.attached && row.root !== transcript.self).map(row =>
               <option key={row.root} value={row.root}>{row.label}</option>)}
           </select>
+          {existing && authority.nativeAgents && <button disabled={busy || contactsLoading}
+            aria-label="Refresh agent connections" title="Refresh agent connections" onClick={refreshContacts}>↻</button>}
+          {contactError && <p role="status">{contactError}</p>}
           {!existing && <select aria-label="Connected task node" value={execution} disabled={busy} onChange={e => setExecution(e.target.value)}>
             <option value="">Message only</option>
             {(transcript.execution_nodes || []).map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
@@ -2193,7 +2420,9 @@ const WorkshopConversation = ({descriptor, target, setTarget}) => {
           <textarea aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !editorsReady}
             onChange={e => {protectDraft('message'); setDraft(e.target.value);}} placeholder="Message or task instructions"
             style={{display:'block', width:'100%', margin:'8px 0', minHeight:64}}/>
-          <button disabled={busy || !editorsReady || !target || !draft.trim()} onClick={() => act('send')}>
+          <button disabled={busy || !editorsReady || !target || !draft.trim() ||
+            (target.startsWith('contact:') && (!contactTarget || contactTarget.connected === false)) ||
+            (target.startsWith('model:') && !modelTarget)} onClick={() => act('send')}>
             {busy ? 'Sending…' : execution ? 'Assign task' : 'Send'}</button>
         </>}
       </div>
@@ -5726,7 +5955,7 @@ const SettingsHosts = withLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS, ({ store
 ));
 
 // ──────────────────────── MODEL PICKER ────────────────────────
-const ModelPicker = ({ setModel, onClose, model }) => {
+const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
   // The list is read LIVE from the app (/api/universal/models: the founder's
   // cloud, OpenRouter with real prices, LM Studio / Ollama on this machine);
   // only discovered rows are selectable. `routed` is what the router reads: a CLOUD row must
@@ -5736,6 +5965,17 @@ const ModelPicker = ({ setModel, onClose, model }) => {
   const [selectionError, setSelectionError] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [q, setQ] = React.useState('');
+  const [native, setNative] = React.useState(null);
+  const [nativeError, setNativeError] = React.useState('');
+  const [discovery, setDiscovery] = React.useState(0);
+  const chooseNative = async row => {
+    if (saving || row.kind !== 'native-session' || row.connected !== true ||
+        row.selectable === false || row.reason === 'ambiguous_endpoint' || !onNativeSelect) return;
+    setSaving(true); setSelectionError('');
+    try { await onNativeSelect(row); onClose(); }
+    catch (error) { setSelectionError(error?.message || 'The native session could not be selected.'); }
+    finally { setSaving(false); }
+  };
   const choose = async value => {
     if (saving) return;
     setSaving(true); setSelectionError('');
@@ -5744,12 +5984,20 @@ const ModelPicker = ({ setModel, onClose, model }) => {
     finally { setSaving(false); }
   };
   React.useEffect(() => {
+    const controller = new AbortController();
+    setCatalogueError(''); setNativeError('');
     const s = window.__archhubSession || {};
-    fetch('/api/universal/models', { headers: { 'X-ArchHub-Session': s.token || '', 'X-ArchHub-CSRF': s.csrf || '' } })
+    const headers = { 'X-ArchHub-Session': s.token || '', 'X-ArchHub-CSRF': s.csrf || '' };
+    fetch('/api/universal/models', { signal:controller.signal, headers })
       .then(r => { if (!r.ok) throw new Error('Catalogue unavailable'); return r.json(); })
-      .then(d => { if (!d || !Array.isArray(d.groups)) throw new Error('Invalid catalogue'); setLive(d); })
-      .catch(() => setCatalogueError('Model discovery is unavailable. Check the provider connection and reopen this picker.'));
-  }, []);
+      .then(d => { if (!d || d.ok === false || !Array.isArray(d.groups)) throw new Error('Invalid catalogue'); setLive(d); })
+      .catch(() => { if (!controller.signal.aborted) setCatalogueError('Model discovery is unavailable. Check the provider connection and refresh.'); });
+    if (onNativeSelect) fetch('/api/universal/native-agents?apps=claude,codex,opencode,antigravity,antigravity-ide', { signal:controller.signal, headers })
+      .then(r => { if (!r.ok) throw new Error('Native discovery unavailable'); return r.json(); })
+      .then(d => { if (!d || d.ok === false || !Array.isArray(d.rows)) throw new Error('Invalid native discovery'); setNative(d); })
+      .catch(() => { if (!controller.signal.aborted) setNativeError('Native session discovery is unavailable. Start the client and refresh.'); });
+    return () => controller.abort();
+  }, [discovery, !!onNativeSelect]);
   return (
     <div onClick={onClose} style={{
       position:'absolute', inset:0, background:'rgba(0,0,0,.55)',
@@ -5766,12 +6014,42 @@ const ModelPicker = ({ setModel, onClose, model }) => {
           }}/>
           <span style={{ fontFamily:LM.mono, fontSize:9, color: live ? LM.ok : LM.inkMuted, letterSpacing:'0.12em' }}>{live ? ('LIVE · ' + live.count) : 'DISCOVERING'}</span>
           <kbd style={kbd()}>esc</kbd>
+          <button type="button" disabled={saving} onClick={() => {setLive(null); setNative(null); setDiscovery(value => value + 1);}}
+            style={{background:'transparent',border:0,color:LM.inkSoft,cursor:'pointer'}}>Refresh</button>
           <button disabled={saving} onClick={() => choose({name:'Choose a model', route:'', routed:''})}
             title="Clear this model selection" aria-label="Clear this model selection"
             style={{background:'transparent',border:0,color:LM.inkSoft,cursor:'pointer'}}>×</button>
         </div>
         <div className="ah-scroll" style={{ maxHeight:420, overflow:'auto', padding:'6px 8px 10px' }}>
           {selectionError && <p role="alert" style={{padding:12,color:LM.err}}>{selectionError}</p>}
+          {onNativeSelect && <div style={{padding:'8px 10px', borderBottom:`1px solid ${LM.line}`}}>
+            <div style={{fontFamily:LM.mono,fontSize:10,color:LM.inkMuted}}>NATIVE AGENT SESSIONS</div>
+            {nativeError && <p role="status">{nativeError}</p>}
+            {!native && !nativeError && <p role="status">Discovering open agent sessions…</p>}
+            {native?.status === 'unavailable' && <p role="status">Native session discovery is unavailable. Open your client and refresh.</p>}
+            {(Array.isArray(native?.readiness) ? native.readiness : []).map(row =>
+              <p key={row.app} style={{fontSize:11,color:LM.inkMuted}}>
+                {row.app}: {row.state === 'executable-discovered' ? 'Command-line client found' : 'Command-line client not detected'}.
+                {row.state === 'executable-discovered' && !(native.rows || []).some(session => session.app === row.app && session.connected === true)
+                  ? ' No open session was discovered.' : ''}
+              </p>)}
+            {native?.status === 'ok' && !(native.rows || []).some(row => row.kind === 'native-session') &&
+              <p role="status">No open agent sessions were found. Open a session in your installed client, then refresh.</p>}
+            {(native?.rows || []).filter(row => row.kind === 'native-session' && (!q ||
+              [row.app,row.title,row.workspace].join(' ').toLowerCase().includes(q.toLowerCase()))).map(row =>
+              <button type="button" key={JSON.stringify([row.app,row.session_id])}
+                disabled={saving || row.connected !== true || row.selectable === false || row.reason === 'ambiguous_endpoint'} onClick={() => chooseNative(row)}
+                style={{display:'block',width:'100%',textAlign:'left',padding:'9px 10px',marginTop:5,
+                  color:LM.ink,background:LM.bgSoft,border:`1px solid ${LM.line}`,borderRadius:LM.rad.md,
+                  cursor:row.connected === true ? 'pointer' : 'default'}}>
+                <span>{row.app} · {row.title || 'Untitled session'}</span>
+                <small style={{display:'block',color:LM.inkMuted,marginTop:4}}>
+                  {row.reason === 'ambiguous_endpoint' ? 'Multiple endpoints found; select one in the client' :
+                    row.connected === true && row.selectable !== false ? 'Open session · connect to this graph' : 'Session unavailable'}
+                  {row.workspace ? ' · ' + row.workspace : ''}
+                </small>
+              </button>)}
+          </div>}
           {saving && <p role="status" style={{padding:12}}>Saving model selection…</p>}
           {!live && <p role="status" style={{padding:12}}>{catalogueError || 'Discovering models from connected providers…'}</p>}
           {live && !live.groups.some(group => group.items?.length) && <p role="status" style={{padding:12}}>

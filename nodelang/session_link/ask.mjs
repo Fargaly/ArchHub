@@ -4,7 +4,7 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {PeerEndpoint,listClaudeSessions} from './vendor/src/peer-protocol.mjs';
+import {PeerEndpoint,listClaudeSessions,publicDeliveryReceipt} from './vendor/src/peer-protocol.mjs';
 import {sendExtra} from './extra-apps.mjs';
 import {postCodex} from './native.mjs';
 import {catalog} from './bridge.mjs';
@@ -19,7 +19,7 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
  validate(text);
  if(!['claude','codex','opencode','antigravity','antigravity-ide'].includes(app))throw new Error('Unsupported target app');
  if(!['prompting','bypass'].includes(permissionMode))throw new Error('Invalid sender permission mode');
- const all=await catalog();
+ const all=await catalog({apps:[app]});
  const matches=(all[app]||[]).filter(s=>s.id===session||s.selector===session||s.title===session);
  if(matches.length!==1)throw new Error('Target must resolve to exactly one live session; use its exact ID');
  const target=matches[0];
@@ -38,12 +38,7 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
  // Attach rejection handling before sending so timeouts never become unhandled.
  reply.catch(()=>{});
  try{
-  if(app==='claude'){
-   peer.onMessage(record=>{
-    const live=listClaudeSessions().find(s=>s.sessionId===target.id);
-    if(live&&record.fromSocket===live.socket&&record.msgId&&record.text?.length<=32000)resolveReply({id:record.msgId,text:record.text});
-   });
-  }else{
+  if(app==='codex'){
    server=net.createServer(socket=>{let data='',handled=false;socket.setEncoding('utf8');socket.setTimeout(10000,()=>socket.destroy());socket.on('error',()=>{});socket.on('data',chunk=>{
     if(handled)return;data+=chunk;if(data.length>70000){socket.destroy();return;}if(!data.includes('\n'))return;handled=true;
     try{const r=JSON.parse(data.slice(0,data.indexOf('\n')));if(r.token!==peer.peerToken||r.session!==target.id)throw new Error('Wrong request/session authentication');validate(r.text);socket.end(JSON.stringify({ok:true})+'\n');resolveReply({id,text:r.text});}catch(e){socket.end(JSON.stringify({ok:false,error:e.message})+'\n');}
@@ -51,10 +46,15 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
    await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(control,resolve);});
    fs.writeFileSync(file,JSON.stringify({control,keyPath:peer.keyPath,target:target.id,pid:process.pid}));
   }
-  timer=setTimeout(()=>rejectReply(new Error('No reply confirmed in 180 seconds. The prompt may have arrived; do not resend automatically.')),180000);
+  if(app==='codex')timer=setTimeout(()=>rejectReply(new Error('No reply confirmed in 180 seconds. The prompt may have arrived; do not resend automatically.')),180000);
   if(app==='claude'){
    const live=listClaudeSessions().find(s=>s.sessionId===target.id);if(!live)throw new Error('Claude went offline before send');
-   onDispatch();await peer.send(live.socket,`[Session Link request ${id}. Reply using native SendMessage to peer ${peer.name}. The requesting agent is waiting for the reply. Respect your existing execution permissions.]\n${text}`);
+   const outcome=await peer.sendAndWait(live.socket,`[Session Link request ${id}. Reply using native SendMessage to peer ${peer.name}. The requesting agent is waiting for the reply. Respect your existing execution permissions.]\n${text}`,{timeoutMs:180000,permissionMode,beforeSend:onDispatch});
+   const delivery=outcome.delivery;
+   if(delivery && ['held','refused','rejected','denied','expired','dropped'].includes(delivery.status))
+    return {status:'held',id:outcome.msgId,...publicDeliveryReceipt(delivery)};
+   if(!outcome.reply)throw new Error('No reply confirmed in 180 seconds; delivery remains uncertain; do not resend');
+   return {id:outcome.reply.msgId,text:outcome.reply.text};
   }else{
    onDispatch();await postCodex(target.id,`[Session Link request ${id}. An existing terminal agent is waiting. After preparing your response, write it to a UTF-8 file inside your permitted workspace, then run PowerShell: & ${psQuote(path.join(root,'session-link.ps1'))} answer ${id} --state-dir ${psQuote(stateDir())} --file 'ABSOLUTE_RESPONSE_FILE'. This returns your response to the caller. Respect your current permissions.]\n${text}`);
   }

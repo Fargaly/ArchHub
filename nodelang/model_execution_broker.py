@@ -435,12 +435,11 @@ class ModelExecutionBroker:
                 return resolved
         return None
 
-    def model_provider_readiness(self) -> dict[str, dict[str, object]]:
-        """Return transient host readiness without invoking a model or persisting state."""
-
+    def local_cli_readiness(self) -> dict[str, dict[str, object]]:
+        """Discover installed clients without credentials, HTTP, or process launch."""
         readiness: dict[str, dict[str, object]] = {}
         for provider, location in (
-            ("gpt", "local-cli:codex"),
+            ("codex", "local-cli:codex"),
             ("claude", "local-cli:claude"),
             ("gemini", "local-cli:gemini"),
         ):
@@ -451,6 +450,12 @@ class ModelExecutionBroker:
                 "evidence": "local executable discovery only",
                 "execution_authority": "requires graph request, approval, and one-use grant",
             }
+        return readiness
+
+    def model_provider_readiness(self) -> dict[str, dict[str, object]]:
+        """Return transient host readiness without invoking a model or persisting state."""
+        readiness = self.local_cli_readiness()
+        readiness["gpt"] = readiness.pop("codex")
 
         readiness["openrouter"] = {
             "location": "network:openrouter",

@@ -681,6 +681,7 @@ def route_chat(
     free_only: bool = False,
     reasoning_effort: Optional[str] = None,
     response_byte_limit: Optional[int] = None,
+    before_dispatch: Optional[Callable] = None,
 ) -> dict:
     """Send these messages to the provider this route names, and read its answer.
 
@@ -689,6 +690,8 @@ def route_chat(
     """
     if type(free_only) is not bool:
         raise ModelRouteRefused("free_only must be true or false.")
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise ModelRouteRefused("The request dispatch guard is invalid.")
     free_only = free_only or _legacy_free_route(route)
     if response_byte_limit is not None and (
         type(response_byte_limit) is not int or not 1 <= response_byte_limit <= 1024 * 1024
@@ -750,6 +753,8 @@ def route_chat(
         headers=headers,
     )
     send = urllib.request.urlopen if opener is None else opener
+    if before_dispatch is not None:
+        before_dispatch()
     try:
         with send(request, timeout=timeout) as answer:
             raw = answer.read() if response_byte_limit is None else _read_bounded_response(answer, response_byte_limit)

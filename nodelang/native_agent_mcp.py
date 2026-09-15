@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
+from mcp.server.fastmcp import Context
 
 from .application_machine_transport import MachineTransportError
 from .clean_coordination_mcp import build_server as build_coordination_server
@@ -21,6 +22,10 @@ class _OwnedWorkshopClient(InstalledWorkshopCoordinationClient):
         self._native_owner = owner
         self._native_client = client
         self._native_generation = getattr(owner, "generation", None)
+        from .native_resume_guard import NativeResumeGuard
+        self.resume_guard=(NativeResumeGuard(owner) if (
+            getattr(owner, '_expected_agent_session', None) or
+            getattr(owner, '_environment', {}).get('SESSION_LINK_REQUIRED_CONNECTIONS')) else None)
         super().__init__(client)
 
     @contextmanager
@@ -222,6 +227,62 @@ def build_server(*, session=None, workshop_task: str | None = None):
     return server
 
 
+def build_recovery_server(owner, *, workshop_task=None):
+    """Keep recovery tools available until the same owner is ready for tools."""
+    from mcp.server.fastmcp import FastMCP
+    from .native_resume_guard import NativeResumeGuard
+    server=FastMCP('ArchHub native recovery')
+    guard=NativeResumeGuard(owner)
+    activated=False
+
+    def activate():
+        nonlocal activated
+        if activated:
+            return {'status':'tools_available','work_admission_required':True}
+        try:
+            restored=guard.recover()
+            if restored.get('status')!='owner_restored':
+                return restored
+            tools=build_server(session=owner,workshop_task=workshop_task)
+            for tool in tools._tool_manager.list_tools():
+                if tool.name not in {'native.owner_status','native.owner_recover','native.connection_recover','native.owner_inspect_effects'}:
+                    server.add_tool(tool.fn,name=tool.name,description=tool.description,
+                                    annotations=tool.annotations)
+            activated=True
+            return {'status':'tools_available','work_admission_required':True}
+        except Exception:
+            return {'status':'recovery_required','reason':'existing_owner_recovery_unconfirmed',
+                    'work_admission_required':True}
+
+    @server.tool(name='native.owner_status')
+    def recovery_status():
+        return {'owner':owner.owner_status(),'tools_available':activated,'work_admission_required':True}
+
+    @server.tool(name='native.owner_inspect_effects')
+    def recovery_inspect_effects(expected_owner: str, cursor: str | None = None):
+        """Inspect exact original-actor evidence before activation; never enroll or replay."""
+        return owner.inspect_enrollment(expected_owner=expected_owner,projection='effects',
+            **({'cursor':cursor} if cursor is not None else {}))
+
+    @server.tool(name='native.resume_recover')
+    async def recovery_retry(ctx: Context):
+        result=activate()
+        if activated:
+            await ctx.session.send_tool_list_changed()
+        return result
+
+    @server.tool(name='native.owner_recover')
+    def exact_rebind_recovery(expected_failed_owner: str, expected_current_owner: str):
+        return owner.recover_rebind_owner(expected_failed_owner=expected_failed_owner,
+                                         expected_current_owner=expected_current_owner)
+
+    @server.tool(name='native.connection_recover')
+    def exact_connection_recovery(expected_owner: str):
+        return owner.recover_connection(expected_owner=expected_owner)
+
+    return server,activate
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
@@ -229,14 +290,17 @@ def main():
         help='Restrict this MCP server to one configured Work and ordinary Workshop tools')
     parser.add_argument('--stop-hook-ipc',action='store_true',
         help='Host read-only Stop IPC inside this same native owner process')
+    parser.add_argument('--expected-actor',help='Original graph actor from the admitted existing task binding')
     args = parser.parse_args()
-    from .native_session_resume import resume_existing_links
-    resumed=resume_existing_links()
-    if resumed.get('status')=='recovery_required':
-        import sys
-        print('Session Link resume requires reconciliation; no messages were replayed.',file=sys.stderr)
-    owner=NativeAgentSession()
-    server=build_server(session=owner,workshop_task=args.workshop_task)
+    if args.expected_actor:
+        owner=NativeAgentSession(expected_agent_session=args.expected_actor)
+        server,activate=build_recovery_server(owner,workshop_task=args.workshop_task)
+        activate()
+    else:
+        # Existing app-admitted fresh bootstrap precedes Work assignment and
+        # has no original actor or Session Link binding yet.
+        owner=NativeAgentSession()
+        server=build_server(session=owner,workshop_task=args.workshop_task)
     hook=None
     try:
         if args.stop_hook_ipc:

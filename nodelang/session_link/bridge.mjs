@@ -46,20 +46,65 @@ export async function delegateInstance(config,instanceId,ttlSeconds=300){
  if(status.id!==config.id||status.pid!==config.pid||status.codex!==config.codex)throw new Error('Selected connection changed');
  return await rpc(config,{operation:'delegate-instance',instance_id:instanceId,ttl_seconds:ttlSeconds});
 }
-export async function catalog(){
+export async function catalog({apps,onProgress}={}){
+  if(apps!==undefined && (!Array.isArray(apps)||!apps.length||apps.length>5||
+    apps.some(app=>!['claude','codex','opencode','antigravity','antigravity-ide'].includes(app))))
+    throw new Error('Invalid discovery app scope');
+  if(onProgress){
+    const selected=apps||['claude','codex','opencode','antigravity','antigravity-ide'];
+    const all={claude:[],codex:[],opencode:[],antigravity:[],'antigravity-ide':[],adapterStatus:{},complete_apps:[]};
+    if(selected.includes('claude')){all.claude=claudes();all.complete_apps.push('claude');}
+    onProgress(all);
+    const merge=(scope,value)=>{for(const app of scope)if(Array.isArray(value[app]))all[app]=value[app];for(const app of scope)if(value.adapterStatus?.[app])all.adapterStatus[app]=value.adapterStatus[app];onProgress(all);};
+    const agApps=selected.filter(app=>app.startsWith('antigravity'));
+    // All reads reuse this worker. The one process inventory is asynchronous so
+    // completed native socket reads can publish before a slow provider finishes.
+    await Promise.allSettled([
+      ...(selected.includes('codex')?[catalog({apps:['codex']}).then(value=>merge(['codex'],value))]:[]),
+      ...selected.filter(app=>app==='opencode').map(app=>discoverExtra({apps:[app],onProgress:value=>merge([app],value)}).then(value=>merge([app],value))),
+      ...(agApps.length?[discoverExtra({apps:agApps,onProgress:value=>merge(agApps,value)}).then(value=>merge(agApps,value))]:[])
+    ]);
+    return all;
+  }
+  if(apps && !apps.includes('codex'))return {...await discoverExtra({apps}),
+    claude:apps.includes('claude')?claudes():[],codex:[]};
   if(hasAttachment()){
     let codex=[];let status='unavailable';
     try{const r=await attachmentCall('attachment-status');codex=[r.recipient];status='attached';}catch{}
-    const extra=await discoverExtra();return {...extra,claude:claudes(),codex,adapterStatus:{...extra.adapterStatus,codex:{status}}};
+    const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex,adapterStatus:{...extra.adapterStatus,codex:{status}}};
   }
-  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){const r=decode(await nativeCall('list_threads',{limit:50}));return {...await discoverExtra(),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex'}))};}
-  if(process.env.SESSION_LINK_PRODUCT_WORKER==='1')return {...await discoverExtra(),claude:claudes(),codex:[]};
+  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){const r=decode(await nativeCall('list_threads',{limit:50}));return {...await discoverExtra({apps}),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex'}))};}
+  if(process.env.SESSION_LINK_PRODUCT_WORKER==='1')return {...await discoverExtra({apps}),claude:claudes(),codex:[]};
   for(const config of configs().filter(c=>alive(c.pid))){try{return await rpc(config,{operation:'list'});}catch{}}
-  return {...await discoverExtra(),claude:claudes(),codex:[]};
+  return {...await discoverExtra({apps}),claude:claudes(),codex:[]};
 }
-async function connect(request,{onSpawn=()=>{}}={}){
+// Scoped read-only discovery for startup. Never enumerate unrelated providers.
+async function resumeCatalog(bindings){
+ const apps=[...new Set(bindings.map(b=>b.claude.app||'claude'))];
+ let codex=[];
+ if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){
+  const r=decode(await nativeCall('list_threads',{limit:50}));
+  codex=[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex')
+   .map(t=>({id:t.id,cwd:t.cwd,app:'codex'}));
+ }else{
+  // Only the exact saved bridges may provide their app context. Older live
+  // bridges lack this read-only operation; do not fall back to broad discovery.
+  let supplied;
+  for(const b of bindings){
+   const file=path.join(dir,b.id+'.runtime.json');
+   if(!fs.existsSync(file))continue;
+   const config=read(file);if(!alive(config.pid))continue;
+   try{supplied=await rpc(config,{operation:'resume-catalog',apps},{timeoutMs:1500});break;}catch{}
+  }
+  if(!supplied)throw new Error('required_endpoint_discovery_unavailable');
+  return supplied;
+ }
+ const extra=apps.some(app=>app!=='claude')?await discoverExtra({apps:apps.filter(app=>app!=='claude')}):{};
+ return {...extra,codex,...(apps.includes('claude')?{claude:listClaudeSessions().map(s=>({id:s.sessionId,cwd:s.cwd,app:'claude'}))}:{})};
+}
+async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
   if(request.permissionMode&&!['prompting','bypass'].includes(request.permissionMode))throw new Error('Permission mode must be prompting or bypass');
-  const all=await catalog(),app=request.app||'claude',c=exact(all[app]||[],request.claude,app),x=exact(all.codex,request.codex,'Codex');
+  const all=observedCatalog||await catalog(),app=request.app||'claude',c=exact(all[app]||[],request.claude,app),x=exact(all.codex,request.codex,'Codex');
   const id=idFor(c.id,x.id),runtime=path.join(dir,id+'.runtime.json'),binding=path.join(dir,id+'.binding.json');
   if(fs.existsSync(runtime)){const old=read(runtime);if(request.permissionMode&&fs.existsSync(binding)&&read(binding).permissionMode!==request.permissionMode)throw new Error('Existing connection has a different sender permission mode; connect does not change it. Reconcile pending delivery before explicit reconnect.');try{return await rpc(old,{operation:'status'});}catch{if(alive(old.pid))throw new Error('Existing bridge process is unreachable; stop it before reconnecting');}}
   if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID){
@@ -74,7 +119,7 @@ async function connect(request,{onSpawn=()=>{}}={}){
   for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,100));if(fs.existsSync(runtime)){try{return await rpc(read(runtime),{operation:'status'});}catch{}}}
   throw new Error('Bridge startup unconfirmed; inspect connection stderr before retrying');
 }
-async function resume(id){
+async function resume(id,{discover}={}){
  if(!/^[a-f0-9]{16}$/.test(id||''))throw new Error('Exact saved connection ID required');
  const saved=read(path.join(dir,id+'.binding.json'));
  if(saved.id!==id||idFor(saved.claude?.id,saved.codex?.id)!==id)throw new Error('Saved connection identity mismatch');
@@ -97,7 +142,7 @@ async function resume(id){
     const observed=await rpc(current,{operation:'status'},{timeoutMs:1500});
     if(confirmsSavedChild(saved,previous,current,observed)){
      if(!alive(previous.pid))fs.rmSync(lock,{force:true});
-     return {id,status:'already_connected',connection:observed,dispatch_attempted:false,work_recovery_required:true};
+     return {id,status:'recovery_required',reason:'late_child_confirmed_resume_again_to_observe_endpoints',dispatch_attempted:false,work_recovery_required:true};
     }
    }
    if(previous.id===id && Number.isInteger(previous.pid) && previous.pid>0 && !alive(previous.pid) &&
@@ -110,8 +155,10 @@ async function resume(id){
  let confirmed=false,spawned=false;
  try{
   fs.writeFileSync(fd,JSON.stringify({pid:process.pid,id,spawned:false}));
-  const result=await resumeSaved(saved,{discover:catalog,currentExecutor:process.env.CODEX_THREAD_ID,
-   connect:request=>connect(request,{onSpawn:childPid=>{
+  let localDiscovery;
+  const observed=discover||(()=>localDiscovery||(localDiscovery=resumeCatalog([saved])));
+  const result=await resumeSaved(saved,{discover:observed,currentExecutor:process.env.CODEX_THREAD_ID,
+   connect:async request=>connect(request,{observedCatalog:await observed(),onSpawn:childPid=>{
     spawned=true;fs.writeFileSync(lock,JSON.stringify({pid:process.pid,id,spawned:true,childPid}));
    }}),probe:async()=>{
    const file=path.join(dir,id+'.runtime.json');if(!fs.existsSync(file))return {status:'offline'};
@@ -171,6 +218,14 @@ async function serve(binding){
           result={...attachments.issue(r.instance_id,r.ttl_seconds),control,pid:process.pid};
         }
         else if(r.operation==='post-codex'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>34000)throw new Error('Invalid text');const all=await catalog();exact(all.codex,r.threadId,'Codex');rate();await nativeCall('send_message_to_thread',{threadId:r.threadId,prompt:r.text},b.executor);result={submitted:true};}
+        else if(r.operation==='resume-catalog'){
+          if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)
+            throw new Error('required_endpoint_discovery_unavailable');
+          if(!Array.isArray(r.apps)||!r.apps.length||r.apps.length>5||
+            r.apps.some(app=>!['claude','opencode','antigravity','antigravity-ide'].includes(app)))
+            throw new Error('Invalid resume discovery scope');
+          result=await resumeCatalog(r.apps.map(app=>({id:b.id,claude:{app}})));
+        }
         else if(r.operation==='list')result=await catalog();
         else if(r.operation==='connect')result=await connect(r);
         else if(r.operation==='reply'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');rate();await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[Local shell relay for ${b.claude.app}: ${b.claude.title}; link ${b.id}; caller agent identity not independently verified]\n${r.text}`},b.executor);forwarded++;result={delivered:true};}
@@ -203,10 +258,31 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
  if(cmd==='serve'){await serve(argv[1]);}
  else if(cmd==='resume'){
   if(argv[1]==='--current'){
-   const current=process.env.CODEX_THREAD_ID||process.env.CLAUDE_CODE_SESSION_ID||process.env.CLAUDE_SESSION_ID;
+   const runtime=process.env.ARCHHUB_AGENT_RUNTIME || (process.env.CODEX_THREAD_ID?'codex':
+    (process.env.CLAUDE_CODE_SESSION_ID||process.env.CLAUDE_SESSION_ID)?'claude':
+    process.env.OPENCODE_SESSION_ID?'opencode':undefined);
+   if(!['codex','claude','opencode','antigravity','antigravity-ide'].includes(runtime))
+    throw new Error('Current native runtime unavailable; no guessed resume');
+   const current=runtime==='codex'?process.env.CODEX_THREAD_ID:
+    runtime==='claude'?(process.env.CLAUDE_CODE_SESSION_ID||process.env.CLAUDE_SESSION_ID||process.env.ARCHHUB_EXTERNAL_SESSION_ID):
+    runtime==='opencode'?(process.env.OPENCODE_SESSION_ID||process.env.ARCHHUB_EXTERNAL_SESSION_ID):
+    process.env.ARCHHUB_EXTERNAL_SESSION_ID;
    if(!current)throw new Error('Current native session identity unavailable; no guessed resume');
-   const ids=fs.readdirSync(dir).filter(f=>f.endsWith('.binding.json')).filter(f=>{const b=read(path.join(dir,f));return b.codex?.id===current||b.claude?.id===current;}).map(f=>f.slice(0,-13));
-   result=[];for(const id of ids)result.push(await resume(id));
+   let ids=fs.readdirSync(dir).filter(f=>f.endsWith('.binding.json')).filter(f=>{
+    const b=read(path.join(dir,f));
+    return runtime==='codex'?b.codex?.id===current:
+     (b.claude?.app||'claude')===runtime && b.claude?.id===current;
+   }).map(f=>f.slice(0,-13));
+   if(option('connections')){
+    const required=option('connections').split(',');
+    if(!required.length||required.length>16||new Set(required).size!==required.length||
+       required.some(id=>!/^[a-f0-9]{16}$/.test(id)||!ids.includes(id)))throw new Error('Required connection is not bound to this exact session');
+    ids=required;
+   }
+   const bindings=ids.map(id=>read(path.join(dir,id+'.binding.json')));
+   let observed;
+   const discover=()=>observed||(observed=resumeCatalog(bindings));
+   result=[];for(const id of ids)result.push(await resume(id,{discover}));
   }else result=await resume(argv[1]);
  }
  else if(cmd==='list')result=await catalog();

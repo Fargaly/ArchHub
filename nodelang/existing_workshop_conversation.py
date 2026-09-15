@@ -96,15 +96,18 @@ def read_browser_workshop(owner, binding, *, root, scope, after=None, session_to
     connections = connections_reader() if callable(connections_reader) else {}
     snapshot, space = _admit(owner, binding, root, scope, allow_child=True)
     if getattr(space, "content_store_root", None) is not None:
-        return _read_ordinary_browser_workshop(owner, binding, root=root, scope=scope,
+        from .workshop_session_start import project_workshop_model_agent
+        model_agent = project_workshop_model_agent(owner, binding, root, scope)
+        result = _read_ordinary_browser_workshop(owner, binding, root=root, scope=scope,
             expected_revision=snapshot.revision, session_token=session_token,
             content_after=content_after, before=before, connections=connections, feed=feed)
+        return {**result, "model_agent":model_agent}
     if feed != 'all':
         raise InvalidCell('Workshop feed selection requires ordinary indexed history')
     if content_after is not None or before is not None:
         raise InvalidCell("This Workshop does not support ordinary message positions")
     registry, authority = owner.universal_registry, owner.universal_registry.authorization
-    header = {"ok":True, "graph_id":registry.application_root, "root":root,
+    header = {"ok":True, "model_agent":None, "graph_id":registry.application_root, "root":root,
         "scope_root":scope, "revision":snapshot.revision,
         "participants": _workshop_participant_rows(owner, snapshot, space, connections)}
     if after is not None and str(snapshot.revision) == after:

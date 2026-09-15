@@ -2,20 +2,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import crypto from 'node:crypto';
-import {execFileSync} from 'node:child_process';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {stateDir} from './paths.mjs';
 const root=stateDir();
 const ps=path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
-let cachedAt=0,cached=[];
-function agProcesses(){
+const execute=promisify(execFile);
+let cachedAt=0,cached=[],pendingProcesses;
+async function agProcesses(){
  if(Date.now()-cachedAt<5000)return cached;
+ if(pendingProcesses)return pendingProcesses;
  const script=`$p=Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'language_server.exe' -or $_.Name -eq 'language_server_windows_x64.exe' }; $rows=@(); foreach($x in $p){ if($x.ExecutablePath -notmatch '\\\\Programs\\\\Antigravity(?: IDE)?\\\\'){continue};$m=[regex]::Match($x.CommandLine,'--csrf_token[= ]+([^ ]+)');if(-not $m.Success){continue};$ports=@(Get-NetTCPConnection -State Listen -OwningProcess $x.ProcessId -ErrorAction SilentlyContinue | Where-Object LocalAddress -eq '127.0.0.1' | Select-Object -ExpandProperty LocalPort);$rows+=@{pid=$x.ProcessId;app=$(if($x.ExecutablePath -match 'Antigravity IDE'){'antigravity-ide'}else{'antigravity'});token=$m.Groups[1].Value;ports=$ports} }; ConvertTo-Json -InputObject @($rows) -Depth 4 -Compress`;
  // Authentication travels only through this child-process capture into memory.
- cached=JSON.parse(execFileSync(ps,['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:15000,encoding:'utf8'}));cachedAt=Date.now();return cached;
+ pendingProcesses=execute(ps,['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:15000,encoding:'utf8'})
+  .then(({stdout})=>{cached=JSON.parse(stdout);cachedAt=Date.now();return cached;});
+ try{return await pendingProcesses;}finally{pendingProcesses=undefined;}
 }
 export async function agCall(endpoint,method,body={}){
- const processInfo=agProcesses().find(p=>p.pid===endpoint.pid&&p.app===endpoint.app&&p.ports.includes(endpoint.port));
+ const processInfo=(await agProcesses()).find(p=>p.pid===endpoint.pid&&p.app===endpoint.app&&p.ports.includes(endpoint.port));
  if(!processInfo)throw new Error('Antigravity process or endpoint changed; reconnect');
  const res=await fetch(`http://127.0.0.1:${endpoint.port}/exa.language_server_pb.LanguageServerService/${method}`,{method:'POST',headers:{'Content-Type':'application/json','Connect-Protocol-Version':'1','x-codeium-csrf-token':processInfo.token},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
  if(!res.ok)throw new Error(`${endpoint.app} ${method}: HTTP ${res.status}; no automatic retry`);
@@ -27,11 +32,11 @@ export async function pluginRpc(request,runtimeId){
  const token=JSON.parse(fs.readFileSync(cfg.keyPath,'utf8')).peerToken;
  return new Promise((resolve,reject)=>{const s=net.connect(cfg.control);let data='';s.setEncoding('utf8');const timer=setTimeout(()=>{s.destroy();reject(new Error('OpenCode timeout; delivery may be uncertain'));},180000);s.on('error',e=>{clearTimeout(timer);reject(e);});s.on('connect',()=>s.write(JSON.stringify({...request,token})+'\n'));s.on('data',c=>{data+=c;if(data.length>2000000){s.destroy();clearTimeout(timer);reject(new Error('Oversized OpenCode response'));return;}if(data.includes('\n')){clearTimeout(timer);s.destroy();try{const r=JSON.parse(data);r.ok?resolve(r.result):reject(new Error(r.error));}catch(e){reject(e);}}});});
 }
-export async function discoverExtra(){
+export async function discoverExtra({apps=['opencode','antigravity','antigravity-ide'],onProgress=()=>{}}={}){
  const result={opencode:[],antigravity:[],'antigravity-ide':[],adapterStatus:{}};
  result.adapterStatus.opencode='plugin not active; reload OpenCode and open a workspace';
- try{for(const name of fs.readdirSync(path.join(root,'opencode-runtimes')).filter(n=>/^\d+\.json$/.test(n))){try{result.opencode.push(...await pluginRpc({operation:'list'},Number(name.slice(0,-5))));result.adapterStatus.opencode='live';}catch{}}}catch{}
- try{for(const p of agProcesses()){
+ if(apps.includes('opencode'))try{for(const name of fs.readdirSync(path.join(root,'opencode-runtimes')).filter(n=>/^\d+\.json$/.test(n))){try{result.opencode.push(...await pluginRpc({operation:'list'},Number(name.slice(0,-5))));result.adapterStatus.opencode='live';onProgress(result);}catch{}}}catch{}
+ if(apps.some(app=>['antigravity','antigravity-ide'].includes(app)))try{for(const p of (await agProcesses()).filter(p=>apps.includes(p.app))){
    let found=false;
    for(const port of p.ports){try{const e={app:p.app,pid:p.pid,port};let r=await agCall(e,'GetAllCascadeTrajectories');
      if(p.app==='antigravity-ide'&&!Object.keys(r.trajectorySummaries||{}).length){
@@ -45,6 +50,7 @@ export async function discoverExtra(){
      for(const [id,v] of Object.entries(r.trajectorySummaries))result[p.app].push({...e,id,selector:id+'@'+p.pid,title:v.summary||id,status:v.status});found=true;break;
    }catch{}}
    result.adapterStatus[p.app]=found?'live discovery':'no sessions returned';
+   onProgress(result);
  }}catch{result.adapterStatus.antigravity='discovery unavailable';}
  return result;
 }

@@ -8,7 +8,9 @@ first, then activate its graph patch atomically. Legacy adoption is separate.
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import os
 import sqlite3
+import stat
 import uuid
 
 from .cell_deliberation import (
@@ -25,6 +27,114 @@ from .universal_cell import InvalidCell
 CONTROL_BUDGET = MAX_PARTICIPANTS + MAX_CATEGORIES + MAX_REQUIREMENTS + 64 + 32
 APPLICATION_BINDING_BUDGET = 100_000
 CONTENT_VERSION = "1"
+FRESH_CONTENT_BOOTSTRAP_ROOT = "app:conversation-content-bootstrap"
+
+
+def _content_artifacts(path):
+    return tuple(Path(str(path) + suffix) for suffix in ("", "-wal", "-journal", "-shm"))
+
+
+def preflight_fresh_content_path(graph_path, content_path):
+    """Refuse existing content custody before creating a new graph authority."""
+    graph, content = Path(graph_path).resolve(), Path(content_path).resolve()
+    if content in _content_artifacts(graph) or graph in _content_artifacts(content):
+        raise InvalidCell("fresh conversation recovery required: graph and content paths overlap")
+    if any(os.path.lexists(path) for path in _content_artifacts(content)):
+        raise InvalidCell("fresh conversation recovery required: content file or SQLite sidecar already exists")
+
+
+def _physical_file_id(path):
+    physical = os.stat(path, follow_symlinks=False)
+    if not stat.S_ISREG(physical.st_mode) or not physical.st_ino or physical.st_nlink != 1:
+        raise InvalidCell("fresh conversation recovery required: uncertain physical file custody")
+    return [physical.st_dev, physical.st_ino]
+
+
+def _bootstrap_cell(value):
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > 16_384:
+        raise InvalidCell("fresh conversation bootstrap custody exceeds its bound")
+    return _terminal(FRESH_CONTENT_BOOTSTRAP_ROOT, encoded)
+
+
+def read_fresh_content_bootstrap(snapshot):
+    """Read bounded graph metadata, never infer freshness from an empty history."""
+    if FRESH_CONTENT_BOOTSTRAP_ROOT not in snapshot.cells:
+        return None
+    try:
+        raw = _text(snapshot, FRESH_CONTENT_BOOTSTRAP_ROOT, "fresh content bootstrap")
+        if len(raw.encode("utf-8")) > 16_384:
+            raise ValueError("oversized bootstrap")
+        value = json.loads(raw)
+        common = {"version", "state", "bootstrap_id"}
+        fields = ({"graph_path", "content_path", "authority", "graph_file_id"}
+            if value.get("state") == "pending" else {"binding_root", "instance_id"})
+        if (set(value) != common | fields or type(value["version"]) is not int
+                or value["version"] != 1 or value["state"] not in ("pending", "bound")):
+            raise ValueError("invalid bootstrap fields")
+        if uuid.UUID(value["bootstrap_id"]).hex != value["bootstrap_id"]:
+            raise ValueError("invalid bootstrap identity")
+        if value["state"] == "pending":
+            if any(type(value[key]) is not str or not value[key] or len(value[key]) > 4096
+                    for key in ("graph_path", "content_path", "authority")):
+                raise ValueError("invalid bootstrap custody")
+            physical = value["graph_file_id"]
+            if type(physical) is not list or len(physical) != 2 or any(type(n) is not int or n < 0 for n in physical) or not physical[1]:
+                raise ValueError("invalid bootstrap file identity")
+        elif (uuid.UUID(value["instance_id"]).hex != value["instance_id"]
+                or value["binding_root"] != "conversation-content:" + uuid.UUID(value["binding_root"].removeprefix("conversation-content:")).hex):
+            raise ValueError("invalid bootstrap binding")
+        return value
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise InvalidCell("fresh conversation recovery required: invalid graph bootstrap intent") from exc
+
+
+def record_fresh_content_bootstrap(store, content_path):
+    """Reserve first-boot intent in the new graph before building its application."""
+    from .universal_cell import NULL_CELL_ID
+    snapshot = store.snapshot()
+    if store.database_path is None or snapshot.revision != 0 or set(snapshot.cells) != {NULL_CELL_ID}:
+        raise InvalidCell("fresh conversation recovery required: graph is not a new empty authority")
+    preflight_fresh_content_path(store.database_path, content_path)
+    value = dict(version=1, state="pending", bootstrap_id=uuid.uuid4().hex,
+        graph_path=str(Path(store.database_path).resolve()), content_path=str(Path(content_path).resolve()),
+        authority=store.authority_identity, graph_file_id=_physical_file_id(store.database_path))
+    store.commit(snapshot.revision, create=(_bootstrap_cell(value),))
+
+
+def _require_empty_bootstrap(snapshot, registry):
+    space = read_deliberation_space(snapshot, registry.deliberation_protocol,
+        registry.workshop_root, budget=CONTROL_BUDGET)
+    members = read_relation(snapshot, registry.application_root, budget=APPLICATION_BINDING_BUDGET)
+    instance = _optional(members, registry.deliberation_protocol.role("scope-content-instance"), "application content instance")
+    if space.content_store_root is not None or space.entry_roots or instance is not None:
+        raise InvalidCell("fresh conversation recovery required: pending graph is not empty and unbound")
+
+
+def fresh_content_bootstrap_pending(store, registry, content_path):
+    snapshot = store.snapshot()
+    value = read_fresh_content_bootstrap(snapshot)
+    if value is None:
+        return False  # Unmarked historical instances retain governed legacy migration.
+    if value["state"] == "bound":
+        binding = read_content_binding(snapshot, registry.deliberation_protocol,
+            application_root=registry.application_root, space_root=registry.workshop_root)
+        if (binding.root_id, binding.instance_id) != (value["binding_root"], value["instance_id"]):
+            raise InvalidCell("fresh conversation recovery required: settled binding changed")
+        return False
+    require_fresh_bootstrap_custody(store, value, content_path)
+    _require_empty_bootstrap(snapshot, registry)
+    return True
+
+
+def require_fresh_bootstrap_custody(store, value, content_path):
+    if (store.database_path is None or content_path is None
+            or value["graph_path"] != str(Path(store.database_path).resolve())
+            or value["content_path"] != str(Path(content_path).resolve())
+            or value["authority"] != store.authority_identity
+            or value["graph_file_id"] != _physical_file_id(store.database_path)):
+        raise InvalidCell("fresh conversation recovery required: bootstrap path or graph custody changed")
+    preflight_fresh_content_path(store.database_path, content_path)
 
 
 class ConversationContentUnavailable(InvalidCell):
@@ -221,6 +331,91 @@ class ApplicationConversationContent:
 
     def belongs_to(self, store, registry):
         return self._owner.universal_store is store and self._owner.universal_registry is registry
+
+    def initialize_fresh_workshop(self):
+        """Finish this graph's recorded, still-empty first-boot initialization.
+
+        Existing applications, legacy entries, unknown files and missing adopted
+        history require their existing recovery/migration path, never this hook.
+        """
+        from .conversation_history import ConversationHistoryStore
+        from .conversation_migration_activation import _reserve, _restore_locking_mode
+        from .universal_application import _require_application_authorization
+        owner = self._owner
+        with owner.mutation_lock:
+            self._require_live_owner()
+            if getattr(owner, "_fresh_content_bootstrap", False) is not True:
+                raise InvalidCell("fresh conversation initialization requires a newly created application")
+            if self._path is None or self._history is not None:
+                raise InvalidCell("fresh conversation initialization requires an unused content path")
+            registry, store = owner.universal_registry, owner.universal_store
+            if not fresh_content_bootstrap_pending(store, registry, self._path):
+                raise InvalidCell("fresh conversation initialization requires a pending graph intent")
+            authority = registry.authorization
+            context = authority.session.context()
+            history = None
+            reservation = None
+            intent = read_fresh_content_bootstrap(store.snapshot())
+            try:
+                with authority.broker.live_context(context):
+                    snapshot = store.snapshot()
+                    _require_empty_bootstrap(snapshot, registry)
+                    for root in (registry.application_root, registry.workshop_root):
+                        _require_application_authorization(snapshot, registry, "edit", root,
+                            authentication_context=context,
+                            resource_lineage_roots=(registry.application_root,))
+                    prepared = prepare_empty_content_binding(snapshot, registry.deliberation_protocol,
+                        application_root=registry.application_root, space_root=registry.workshop_root)
+                    # Reserve the owner-selected path exclusively. A preexisting
+                    # database is never opened as a candidate for fresh adoption.
+                    preflight_fresh_content_path(store.database_path, self._path)
+                    with self._path.open("xb") as reserved:
+                        identity = os.fstat(reserved.fileno())
+                        reservation = [identity.st_dev, identity.st_ino]
+                        if reservation != _physical_file_id(self._path):
+                            raise InvalidCell("fresh conversation recovery required: reservation custody changed")
+                    history = ConversationHistoryStore(self._path, instance_id=prepared.binding.instance_id)
+                    lock_mode = _reserve(history)
+                    history.ensure_conversation(registry.workshop_root)
+                    history.initialize_retention()
+                    self._require_live_owner()
+                    if reservation != _physical_file_id(self._path):
+                        raise InvalidCell("fresh conversation recovery required: reserved content file changed")
+                    settled = dict(version=1, state="bound", bootstrap_id=intent["bootstrap_id"],
+                        binding_root=prepared.binding.root_id, instance_id=prepared.binding.instance_id)
+                    authority.broker.commit_authenticated(context, store, prepared.expected_revision,
+                        create=prepared.create, replace=prepared.replace + (_bootstrap_cell(settled),))
+                    _restore_locking_mode(history, lock_mode)
+                    self._adopt_activation_history(history)
+                    history = None
+            except BaseException:
+                if reservation is not None:
+                    # A raised commit can have published. Refresh the durable
+                    # authority before considering removal of our own file.
+                    # Unknown outcomes or custody retain every byte for recovery.
+                    try:
+                        store.refresh()
+                        recovered = store.snapshot()
+                        if read_fresh_content_bootstrap(recovered) != intent:
+                            raise InvalidCell("binding outcome is no longer the pending intent")
+                        _require_empty_bootstrap(recovered, registry)
+                        if history is not None:
+                            history.close()
+                            history = None
+                        if reservation != _physical_file_id(self._path):
+                            raise InvalidCell("reserved file custody changed")
+                        if any(os.path.lexists(path) for path in _content_artifacts(self._path)[1:]):
+                            raise InvalidCell("reserved content has unresolved SQLite sidecars")
+                        self._path.unlink()
+                    except BaseException as recovery_error:
+                        self._activation_unresolved = True
+                        raise InvalidCell("fresh conversation recovery required: reserved content retained; "
+                            "binding outcome or physical custody could not be proven absent") from recovery_error
+                raise
+            finally:
+                owner._fresh_content_bootstrap = False
+                if history is not None:
+                    history.close()
 
     def _require_live_owner(self, *, allow_activation_recovery=False):
         from .cell_authorization import AuthorizationDenied

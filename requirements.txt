@@ -43,3 +43,6 @@ pywin32==311; sys_platform == "win32"
 # Native desktop admission reads process executable, arguments and working directory.
 # Ship this dependency; minimal pipe PID custody alone cannot admit the desktop.
 psutil==7.2.2
+# Read existing Windows Credential Locker entries through the same backend used
+# by the application credential store; setup must not silently omit this reader.
+keyring==25.7.0

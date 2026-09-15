@@ -45,6 +45,7 @@ PACKAGES = (
     ("ezdxf", "ezdxf"),
     ("numpy", "numpy"),
     ("psutil", "psutil"),
+    ("keyring", "keyring"),
 )
 
 

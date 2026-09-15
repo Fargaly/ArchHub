@@ -20,7 +20,7 @@ $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
 $selectedRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $selectedInputs = @(
-    'nodelang', 'launch_archhub_test.py', 'colleague_setup.py',
+    'nodelang', 'nodelang/outlook_graph.ps1', 'launch_archhub_test.py', 'colleague_setup.py',
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'package.json', 'packaging/compile_studio.cjs',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
@@ -114,6 +114,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'personal_brain/installer.py', 'personal_brain/ambient_policy.py',
             'bridges/rhino/archhub_mcp.py', 'bridges/blender/archhub_mcp/__init__.py',
             'nodelang/session_link/vendor/LICENSE', 'nodelang/session_link/vendor/PROVENANCE.md',
+            'nodelang/outlook_graph.ps1',
             'nodelang/session_link/README.md', 'nodelang/session_link/session-link.ps1',
             'nodelang/assets/LUCIDE-1.25.0-LICENSE.txt',
             'nodelang/assets/lucide-icons-1.25.0.json', 'nodelang/data/public_runtime_map.json',
@@ -191,6 +192,7 @@ function Read-CandidateManifest([string]$Path) {
         'selected/package.json', 'selected/packaging/compile_studio.cjs',
         'selected/packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
         'selected/nodelang/session_link_transport.py',
+        'selected/nodelang/outlook_graph.ps1',
         'selected/nodelang/session_link/worker.mjs', 'selected/nodelang/session_link/ask.mjs',
         'selected/nodelang/session_link/bridge.mjs', 'selected/nodelang/session_link/native.mjs',
         'selected/nodelang/session_link/extra-apps.mjs', 'selected/nodelang/session_link/paths.mjs',

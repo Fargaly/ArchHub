@@ -13,7 +13,7 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 
-OPERATIONS = frozenset({"status", "connect", "inbox", "disconnect", "categories", "categorize"})
+OPERATIONS = frozenset({"prerequisites", "status", "connect", "inbox", "disconnect", "categories", "categorize"})
 SCRIPT = Path(__file__).with_name("outlook_graph.ps1")
 
 
@@ -58,8 +58,10 @@ def invoke(operation: str, params: Mapping[str, object]) -> dict:
             return _failure("invalid-apply", "Apply must be a boolean; preview is the default")
         request["apply"] = apply
     executable = shutil.which("pwsh")
-    if not executable or not SCRIPT.is_file():
-        return _failure("dependency-missing", "PowerShell 7 and the shipped Graph transport are required")
+    if not SCRIPT.is_file():
+        return _failure("dependency-missing", "ArchHub's Microsoft Graph transport is missing; repair the ArchHub installation")
+    if not executable:
+        return _failure("dependency-missing", "PowerShell 7 is required for Microsoft Graph; install it before connecting this mailbox")
     if operation == "connect":
         category_access = params.get("category_access", False)
         if not isinstance(category_access, bool):
@@ -82,7 +84,7 @@ def invoke(operation: str, params: Mapping[str, object]) -> dict:
         completed = subprocess.run(
             [executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(SCRIPT)],
             input=json.dumps(request), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=180 if operation == "connect" else 30,
+            encoding="utf-8", errors="replace", timeout=5 if operation == "prerequisites" else 30,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.TimeoutExpired:

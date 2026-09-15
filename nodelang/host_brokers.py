@@ -211,9 +211,15 @@ def probe_host_rows() -> list[dict]:
     rows.append({"id": "outlook", "name": "Outlook", "drive": "outlook.inbox",
                  "state": "connected" if outlook_open else ("installed" if _installed((r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE",)) else "absent"),
                  "detail": "open · inbox readable" if outlook_open else "installed · open Outlook and the inbox reads answer"})
+    from .outlook_graph import invoke as graph_invoke
+    graph_prerequisites = graph_invoke("prerequisites", {})
+    graph_ready = (graph_prerequisites.get("ok") is True
+                   and graph_prerequisites.get("state") == "prerequisites-ready")
     rows.append({"id": "outlook-new", "name": "Outlook (New / Microsoft Graph)",
-                 "drive": "outlook.graph.inbox", "state": "installed",
-                 "detail": "sign in explicitly; select the connected mailbox before reading; requires PowerShell 7 and Microsoft Graph Authentication 2.39.0"})
+                 "drive": "outlook.graph.inbox",
+                 "state": "prerequisites-ready" if graph_ready else graph_prerequisites.get("state", "unavailable"),
+                 "detail": ("PowerShell and Microsoft Graph SDK prerequisites are available; authentication has not been checked"
+                            if graph_ready else graph_prerequisites.get("reason", "Microsoft Graph prerequisite check is unavailable"))})
     rows.append({"id": "outlook-imap", "name": "Company mail (Yahoo / Turbify IMAP)",
                  "drive": "outlook.imap.inbox", "state": "needs-sign-in",
                  "detail": "direct read-only mailbox access; connect with company email and an app password; status verifies the exact account"})

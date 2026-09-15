@@ -872,6 +872,19 @@ window.activateWindow()
 baboom_host = None
 baboom_window = None
 _baboom_stop = threading.Event()
+def _stop_baboom_for_user():
+    _baboom_stop.set()
+    host = baboom_host or _baboom_attachment.pending_host
+    if host is not None:
+        host.request_stop()
+    if baboom_window is not None and not baboom_window._stopped:
+        baboom_window.stop_baboom()
+    print("  BABOOM     : stopped accepting requests; in-flight operations may finish", flush=True)
+
+
+if '_menu' in globals():
+    _menu.addSeparator()
+    _menu.addAction("Stop BABOOM for this launch", lambda: _stop_baboom_for_user())
 from PyQt6.QtCore import (
     QObject as _BaboomObject, QTimer as _BaboomTimer, Qt as _BaboomQt,
     pyqtSignal as _baboom_signal, pyqtSlot as _baboom_slot,
@@ -912,7 +925,7 @@ class _BaboomAttachment(_BaboomObject):
         try:
             from nodelang.baboom_native_runtime import create_baboom_native_projection
             companion = create_baboom_native_projection(
-                host, position_path=state_dir / "baboom-position.json"
+                host, position_path=state_dir / "baboom-position.json", on_stop=_stop_baboom_for_user
             )
             controller = getattr(companion, "controller", None)
             try:

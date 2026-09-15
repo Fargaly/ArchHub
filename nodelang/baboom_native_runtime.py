@@ -66,6 +66,7 @@ def create_baboom_native_projection(
     *,
     atlas_path: Path | None = None,
     position_path: Path | None = None,
+    on_stop: Callable[[], None] | None = None,
 ) -> Any:
     """Build the existing companion on the caller's Qt GUI thread."""
     from PyQt6.QtCore import QThread
@@ -78,7 +79,7 @@ def create_baboom_native_projection(
     atlas: BaboomSpriteAtlas = inspect_baboom_sprite_atlas_v2(selected_path)
     controller = BaboomNativeCompanionController(host, atlas)
     return create_baboom_native_companion_window(
-        controller, position_path=position_path
+        controller, position_path=position_path, on_stop=on_stop
     )
 
 

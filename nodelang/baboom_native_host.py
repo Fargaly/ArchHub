@@ -176,6 +176,7 @@ class BaboomNativeHost:
         with self._lock:
             if not self._connected or not self._transport.agent_session_root:
                 raise RuntimeError("BABOOM native host is not explicitly connected")
+        self._require_not_stopped()
         lease = self._transport.renew_runtime_presence()
         expires_at = lease.get("expires_at")
         if (
@@ -184,7 +185,9 @@ class BaboomNativeHost:
             or type(expires_at) not in (int, float)
         ):
             raise RuntimeError("BABOOM native host presence response is invalid")
+        self._require_not_stopped()
         self._record_foreground_activity()
+        self._require_not_stopped()
         raw_frame = self._transport.baboom_native_frame(
             response_timeout_seconds=response_timeout_seconds
         )
@@ -205,6 +208,7 @@ class BaboomNativeHost:
             or type(directive.get("compact_message")) is not str
         ):
             raise RuntimeError("BABOOM native frame response is invalid")
+        self._require_not_stopped()
         signal_root = self._record_actionable_signal(context)
         snapshot = BaboomNativeSnapshot(
             revision=revision,
@@ -265,6 +269,7 @@ class BaboomNativeHost:
         """Stop only this host thread; graph presence expires naturally."""
         if type(timeout_seconds) not in (int, float) or timeout_seconds <= 0:
             raise ValueError("BABOOM native host stop timeout is invalid")
+        self.request_stop()
         with self._lock:
             thread = self._thread
             self._stop.set()
@@ -274,6 +279,18 @@ class BaboomNativeHost:
             if self._thread is thread and (thread is None or not thread.is_alive()):
                 self._thread = None
 
+    def request_stop(self) -> None:
+        """Prevent new requests without blocking the UI on an in-flight request.
+
+        An already dispatched operation is not cancelled or replayed. The host
+        thread exits after that request returns; graph presence then expires.
+        """
+        self._stop.set()
+
+    def _require_not_stopped(self) -> None:
+        if self._stop.is_set():
+            raise RuntimeError("BABOOM is stopped; no new request was sent")
+
     def resolve_input(self, utterance: str) -> Mapping[str, object]:
         """Resolve typed input through the graph-held command catalog only.
 
@@ -281,6 +298,7 @@ class BaboomNativeHost:
         graph-declared proposed intent and must use the separate approval and
         receipt path for any consequential action.
         """
+        self._require_not_stopped()
         if type(utterance) is not str or not utterance.strip() or len(utterance) > 4_000:
             raise ValueError("BABOOM native input is invalid")
         with self._lock:
@@ -299,6 +317,7 @@ class BaboomNativeHost:
 
     def respond_input(self, utterance: str) -> Mapping[str, object]:
         """Read the bounded graph-backed detail for one founder request."""
+        self._require_not_stopped()
         if type(utterance) is not str or not utterance.strip() or len(utterance) > 4_000:
             raise ValueError("BABOOM native input is invalid")
         with self._lock:
@@ -326,6 +345,7 @@ class BaboomNativeHost:
         engine on the graph or speak to an agent through the coordination host.
         Nothing runs without the founder pressing the confirm control first.
         """
+        self._require_not_stopped()
         if type(utterance) is not str or not utterance.strip() or len(utterance) > 4_000:
             raise ValueError("BABOOM native input is invalid")
         with self._lock:

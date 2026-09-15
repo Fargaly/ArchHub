@@ -379,6 +379,8 @@ class BaboomNativeCompanionController:
             occupied=self._occupied_rectangles(),
             animation_tick=self._animation_tick,
         )
+        if self.host_silent_seconds > _FRAME_GRACE_SECONDS:
+            frame = replace(frame, brain_state="unknown", action="", action_label="")
         # A companion that recomputes its home every 750ms WANDERS: the
         # founder's foreground windows change, the placement search
         # answers differently, and the sprite hops around the desktop.
@@ -570,6 +572,9 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     said. It is built from the snapshot alone, never invented: a count that
     is missing is left out, not made up.
     """
+    silent = context.get("host_silent_seconds") if isinstance(context, Mapping) else None
+    if isinstance(silent, (int, float)) and silent > _FRAME_GRACE_SECONDS:
+        return ("host silent %dm; live state unavailable" % int(silent // 60), None)
     parts: list[str] = []
     # Priority order: what the founder is in front of, then the canvas, the
     # brain, agents, the current work. The box holds two lines; lower parts
@@ -614,7 +619,7 @@ def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, 
     stale = isinstance(silent, (int, float)) and silent >= 120
     if stale:
         parts.insert(0, "host silent %dm" % int(silent // 60))
-    line = " · ".join(parts) if parts else "watching the graph"
+    line = " · ".join(parts) if parts else "No application state reported yet"
     while len(line) > FACE_MAX_CHARS and len(parts) > 1:
         parts.pop()
         line = " · ".join(parts)
@@ -627,6 +632,7 @@ def create_baboom_native_companion_window(
     on_response: Callable[[Mapping[str, object]], None] | None = None,
     voice_input: BaboomVoiceInput | None = None,
     position_path: Path | None = None,
+    on_stop: Callable[[], None] | None = None,
 ) -> Any:
     """Create, but never show or start, the one transparent companion window."""
     if type(controller) is not BaboomNativeCompanionController:
@@ -660,6 +666,8 @@ def create_baboom_native_companion_window(
 
         def __init__(self) -> None:
             super().__init__()
+            self._dismissed = False
+            self._stopped = False
             self._atlas = QImage(str(controller._atlas.path))
             if self._atlas.isNull():
                 raise ValueError("BABOOM native atlas cannot be loaded")
@@ -767,6 +775,9 @@ def create_baboom_native_companion_window(
 
         def start_projection(self) -> None:
             """Start paint and bounded projection checks; never start the host."""
+            if self._stopped:
+                return
+            self._dismissed = False
             self._projection_timer.start()
             self._animation_timer.start()
             self.refresh()
@@ -774,6 +785,23 @@ def create_baboom_native_companion_window(
         def stop_projection(self) -> None:
             self._projection_timer.stop()
             self._animation_timer.stop()
+
+        def hide_until_next_launch(self) -> None:
+            """Dismiss the projection without claiming to stop the host."""
+            self._dismissed = True
+            self.stop_projection()
+            if self._voice_cancel is not None:
+                self._voice_cancel.set()
+            self.hide()
+
+        def stop_baboom(self) -> None:
+            # Stop admission first. Already-dispatched actions may still finish.
+            controller._host.request_stop()
+            self._stopped = True
+            self._pending_task_utterance = None
+            self.hide_until_next_launch()
+            if on_stop is not None:
+                on_stop()
 
         def _screen_rect(self) -> Rect | None:
             # The screen the WINDOW happens to sit on is the wrong
@@ -877,6 +905,8 @@ def create_baboom_native_companion_window(
             self.update()
 
         def refresh(self) -> None:
+            if self._dismissed or self._stopped:
+                return
             if self._dragged:
                 # A drag in progress owns the geometry; the 750ms
                 # projection must not fight the founder's hand.
@@ -897,7 +927,13 @@ def create_baboom_native_companion_window(
                 self._transient_report = None
                 self._transient_revision = None
                 self._interaction_requested = False
-            report = self._transient_report or frame.report
+            stale = controller.host_silent_seconds > _FRAME_GRACE_SECONDS
+            report = ("Live state unavailable; waiting for a fresh application response."
+                      if stale else self._transient_report or frame.report)
+            if stale:
+                self._pending_task_utterance = None
+                self._confirm.hide()
+                self._face_offer = None
             if report is None and self._interaction_requested:
                 report = "Reply or assign a task"
             self._face_showing = False
@@ -1229,6 +1265,8 @@ def create_baboom_native_companion_window(
             # turned that into "ArchHub could not open" (2026-09-06).
             snapshot = controller.latest_snapshot
             context = dict(getattr(snapshot, "context", {}) or {}) if snapshot is not None else {}
+            if snapshot is None or time.time() > snapshot.frame_expires_at + _FRAME_GRACE_SECONDS:
+                context = {}
             menu = QMenu(self)
             # This window is styled "background:transparent;border:0;" so the
             # sprite has no rectangle behind it, and Qt cascades that into
@@ -1256,8 +1294,10 @@ def create_baboom_native_companion_window(
             w.addAction("Show governed work", lambda: self._say("show governed work"))
             w.addAction("Show my plan", lambda: self._say("show my plan"))
             w.addAction("Claim next work", lambda: self._say("claim next work"))
-            agents = (context.get("agents") or {}).get("working") or []
-            a = menu.addMenu("Agents: %d working" % len(agents))
+            agents = (context.get("agents") or {}).get("working")
+            a = menu.addMenu("Agents: %d working" % len(agents) if isinstance(agents, (list, tuple))
+                             else "Agents: state unavailable")
+            agents = agents if isinstance(agents, (list, tuple)) else []
             for row in agents[:8]:
                 a.addAction("%s on: %s" % (row.get("agent"), row.get("title")), lambda: self._say("show governed work"))
             a.addAction("Who is online", lambda: self._say("agents"))
@@ -1290,7 +1330,8 @@ def create_baboom_native_companion_window(
             else:
                 menu.addAction("Check for updates", lambda: self._say("restart-to-update"))
             menu.addAction("Open the cockpit", self._open_cockpit)
-            menu.addAction("Hide BABOOM until next launch", self.hide)
+            menu.addAction("Hide BABOOM until next launch (keeps running)", self.hide_until_next_launch)
+            menu.addAction("Stop BABOOM for this launch", self.stop_baboom)
             # Hold the companion still while the menu is open. refresh()
             # runs every 750ms and moves, reshapes and repaints this window,
             # which is WindowStaysOnTopHint: each submenu popup opened on
@@ -1301,8 +1342,9 @@ def create_baboom_native_companion_window(
             try:
                 menu.exec(event.globalPos())
             finally:
-                self._projection_timer.start()
-                self._animation_timer.start()
+                if not self._dismissed and not self._stopped:
+                    self._projection_timer.start()
+                    self._animation_timer.start()
 
         def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             if event.button() == Qt.MouseButton.LeftButton:
@@ -1396,6 +1438,8 @@ def create_baboom_native_companion_window(
             ).start()
 
         def _apply_voice(self, result: Mapping[str, object]) -> None:
+            if self._dismissed or self._stopped:
+                return
             self._voice_cancel = None
             self._talk.setEnabled(True)
             self._talk.setText("Talk")
@@ -1415,6 +1459,8 @@ def create_baboom_native_companion_window(
             self.refresh()
 
         def _apply_response(self, result: Mapping[str, object]) -> None:
+            if self._dismissed or self._stopped:
+                return
             command = result.get("command")
             response = result.get("response")
             self._pending_task_utterance = None
@@ -1485,6 +1531,8 @@ def create_baboom_native_companion_window(
             ).start()
 
         def _apply_execution(self, result: Mapping[str, object]) -> None:
+            if self._dismissed or self._stopped:
+                return
             created = result.get("created")
             summary = result.get("summary")
             if isinstance(summary, str) and summary.strip() and created is None:

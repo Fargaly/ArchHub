@@ -1,6 +1,6 @@
-// studio-suite.jsx — 7 deliverables, dark Studio theme throughout.
+// studio-suite.jsx — Studio deliverables, dark Studio theme throughout.
 // 1) UIKit  2) Onboarding  3) Landing  4) SkillJson  5) MobileCompanion
-// 6) Pricing  7) SelfHealInspector
+// 7) SelfHealInspector  — 6) Pricing removed: the app states no price of its own.
 
 // tokens.jsx — single source of truth (+ suite-specific extras)
 const ST = { ...window.AH, accent2:window.AH.warn, selBg:'#241914' };
@@ -476,7 +476,7 @@ const StudioLanding = () => (
           <span key={n} style={{ fontSize:13, color:ST.inkSoft, cursor:'pointer' }}>{n}</span>
         ))}
       </div>
-      <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, letterSpacing:'0.06em' }}>v0.27.0 · MIT</span>
+      <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, letterSpacing:'0.06em' }}>MIT</span>
       <button style={btnSecondary()}>Sign in</button>
       <button style={btnPrimary()}>Download</button>
     </div>
@@ -558,15 +558,6 @@ const StudioLanding = () => (
       </div>
     </div>
 
-    {/* Pricing strip */}
-    <div style={{ padding:'56px 64px', borderBottom:`1px solid ${ST.lineSoft}` }}>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:14 }}>
-        <PriceCard tier="Free" price="$0" copy="Up to 3 saved Skills · local Ollama or BYO key · single device. Forever free." cta="Download"/>
-        <PriceCard tier="Pro" price="$39" hi copy="Unlimited Skills · cloud sync · 5-device · BYO key · email support." cta="Start Pro"/>
-        <PriceCard tier="Studio" price="$79" copy="Pro + ArchHub Cloud Relay · firm-shared library · cost dashboard · SSO." cta="Talk to us"/>
-      </div>
-    </div>
-
     {/* Footer */}
     <div style={{ padding:'40px 64px 56px', display:'grid', gridTemplateColumns:'1.4fr 1fr 1fr 1fr', gap:ST.sp['2xl'] }}>
       <div>
@@ -584,18 +575,6 @@ const StudioLanding = () => (
         </div>
       ))}
     </div>
-  </div>
-);
-const PriceCard = ({ tier, price, copy, cta, hi }) => (
-  <div style={{ background:hi?ST.accentSoft:ST.bgPanel, border:`1px solid ${hi?ST.accent:ST.line}`, borderRadius:ST.rad.xl, padding:20, position:'relative' }}>
-    {hi && <span style={{ position:'absolute', top:-9, right:14, padding:'2px 7px', background:ST.accent, color:((window.AH && window.AH.onFill) || '#180f08'), fontFamily:ST.mono, fontSize:9.5, borderRadius:ST.rad.xs, letterSpacing:'0.08em' }}>RECOMMENDED</span>}
-    <div style={{ fontFamily:ST.mono, fontSize:11, color:hi?ST.accent:ST.inkMuted, letterSpacing:'0.14em' }}>{tier.toUpperCase()}</div>
-    <div style={{ display:'flex', alignItems:'baseline', gap:6, marginTop:ST.sp.sm }}>
-      <span style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.03em' }}>{price}</span>
-      <span style={{ fontFamily:ST.mono, fontSize:11, color:hi?ST.inkSoft:ST.inkMuted }}>/seat/mo</span>
-    </div>
-    <div style={{ fontSize:13, color:ST.inkSoft, lineHeight:1.55, margin:'12px 0 16px', minHeight:60 }}>{copy}</div>
-    <button style={{...btnPrimary(), width:'100%', justifyContent:'center', background:hi?ST.accent:'transparent', border:hi?0:`1px solid ${ST.line}`, color:hi?((window.AH && window.AH.onFill) || '#180f08'):ST.ink}}>{cta}</button>
   </div>
 );
 
@@ -716,98 +695,6 @@ const colorJson = (line) => {
 // 5 · MOBILE COMPANION — moved to studio-mobile.jsx (a device you operate, not three
 // stills). Deleted here rather than left shadowed: it loaded first and lost, silently.
 
-// ═══════════════════════ 6 · PRICING DIALOG ═══════════════════════
-const StudioPricing = () => (
-  <div style={{ background:ST.bgDeep, height:'100%', display:'grid', placeItems:'center', padding:ST.sp['3xl'] }}>
-    <div style={{ width:'100%', maxWidth:1100, background:ST.bg, border:`1px solid ${ST.line}`, borderRadius:14, overflow:'hidden', boxShadow:'0 40px 120px rgba(0,0,0,.7)' }}>
-      <div style={{ padding:'28px 36px 20px', borderBottom:`1px solid ${ST.line}`, display:'flex', alignItems:'flex-end', gap:18 }}>
-        <Mark size={42}/>
-        <div style={{ flex:1 }}>
-          <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>UPGRADE · v0.27.0</div>
-          <div style={{ fontFamily:ST.serif, fontSize:36, letterSpacing:'-0.02em' }}>Pick a plan that fits.</div>
-          <div style={{ fontFamily:ST.serif, fontStyle:'italic', fontSize:15, color:ST.inkSoft, marginTop:2 }}>Annual saves 2 months. Pause anytime. No surprise fees.</div>
-        </div>
-        <button style={{ background:'transparent', border:0, color:ST.inkSoft, fontSize:22, cursor:'pointer' }}>×</button>
-      </div>
-
-      <div style={{ padding:'28px 36px', display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:14 }}>
-        <PlanCard
-          tier="Free" price="$0" sub="Forever"
-          features={[
-            ['Up to 3 saved Skills', true],
-            ['Local Ollama only', true],
-            ['Single device', true],
-            ['Community support', true],
-            ['Cloud sync', false],
-            ['Cloud relay (BYO key replacement)', false],
-            ['Firm-shared library', false],
-          ]}
-          cta="Current plan" disabled
-        />
-        <PlanCard
-          tier="Pro" price="$39" sub="per seat / mo" hi recommended="Most architects"
-          features={[
-            ['Unlimited saved Skills', true],
-            ['BYO API keys', true],
-            ['5-device sync', true],
-            ['Cloud sync via private GitHub', true],
-            ['Email support', true],
-            ['Cloud relay', false],
-            ['Firm-shared library', false],
-          ]}
-          cta="Upgrade to Pro"
-        />
-        <PlanCard
-          tier="Studio" price="$79" sub="per seat / mo"
-          features={[
-            ['Everything in Pro', true],
-            ['ArchHub Cloud Relay', true],
-            ['Firm-shared Skill library', true],
-            ['Cost & usage dashboard', true],
-            ['Priority Skills (monthly)', true],
-            ['Phone + email support', true],
-            ['SSO', true],
-          ]}
-          cta="Talk to us"
-        />
-      </div>
-
-      <div style={{ padding:'18px 36px 28px', borderTop:`1px solid ${ST.line}`, display:'flex', alignItems:'center', gap:14 }}>
-        <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, letterSpacing:'0.06em', flex:1 }}>
-          ✓ MIT desktop · ✓ BYO key on every tier · ✓ no credit card on Free · ✓ pause or downgrade anytime
-        </span>
-        <button style={{ ...btnSecondary(), fontFamily:ST.mono, fontSize:11 }}>View full feature matrix →</button>
-      </div>
-    </div>
-  </div>
-);
-const PlanCard = ({ tier, price, sub, features, cta, hi, disabled, recommended }) => (
-  <div style={{ background:hi?ST.accentSoft:ST.bgPanel, border:`1.5px solid ${hi?ST.accent:ST.line}`, borderRadius:ST.rad.xl, padding:22, position:'relative', display:'flex', flexDirection:'column' }}>
-    {recommended && <span style={{ position:'absolute', top:-11, left:'50%', transform:'translateX(-50%)', padding:'3px 10px', background:ST.accent, color:((window.AH && window.AH.onFill) || '#180f08'), fontFamily:ST.mono, fontSize:9.5, borderRadius:ST.rad.xs, letterSpacing:'0.1em' }}>{recommended.toUpperCase()}</span>}
-    <div style={{ fontFamily:ST.mono, fontSize:11, color:hi?ST.accent:ST.inkMuted, letterSpacing:'0.14em' }}>{tier.toUpperCase()}</div>
-    <div style={{ display:'flex', alignItems:'baseline', gap:6, marginTop:6 }}>
-      <span style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.03em', lineHeight:1 }}>{price}</span>
-      <span style={{ fontFamily:ST.mono, fontSize:11, color:hi?ST.inkSoft:ST.inkMuted }}>{sub}</span>
-    </div>
-    <div style={{ height:1, background:hi?`${ST.accent}33`:ST.lineSoft, margin:'16px 0' }}/>
-    <div style={{ flex:1, display:'flex', flexDirection:'column', gap:7 }}>
-      {features.map(([f, on]) => (
-        <div key={f} style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, fontSize:13, color:on?ST.ink:(hi?ST.inkSoft:ST.inkMuted), opacity:on?1:0.62 }}>
-          <span style={{ color:on?ST.ok:(hi?ST.inkSoft:ST.inkMuted), fontFamily:ST.mono, width:14, textAlign:'center' }}>{on?'✓':'·'}</span>
-          {f}
-        </div>
-      ))}
-    </div>
-    <button disabled={disabled} style={{
-      ...btnPrimary(), width:'100%', justifyContent:'center', marginTop:18,
-      background: disabled?ST.bg:hi?ST.accent:'transparent',
-      color: disabled?ST.inkMuted:hi?((window.AH && window.AH.onFill) || '#180f08'):ST.ink,
-      border: hi?0:`1px solid ${ST.line}`,
-      cursor: disabled?'default':'pointer', opacity: disabled?0.6:1,
-    }}>{cta}</button>
-  </div>
-);
-
 // ═══════════════════════ 7 · SELF-HEAL INSPECTOR ═══════════════════════
 const StudioSelfHeal = () => {
   const checks = [
@@ -906,5 +793,4 @@ window.StudioUIKit = StudioUIKit;
 window.StudioOnboarding = StudioOnboarding;
 window.StudioLanding = StudioLanding;
 window.StudioSkillJson = StudioSkillJson;
-window.StudioPricing = StudioPricing;
 window.StudioSelfHeal = StudioSelfHeal;

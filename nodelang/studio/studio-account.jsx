@@ -25,11 +25,11 @@ const smallBtn = (primary) => ({
 const AC_SEED = {
   signedIn: false,
   email: '', name: '', firm: '', discipline: '', seat: 'Architect',
-  plan: 'studio',                    // solo | studio | practice
+  plan: '',                          // whatever tier the graph answers with; never assumed here
   billing: 'monthly',
   created: null,
   brain: { local: true, path: '~/ArchHub/brain', size: 0, facts: 0, synced: null },
-  usage: { spend: 0, cap: 120, ops: 0, opsCap: 5000, runs: 0, since: 'this cycle' },
+  usage: { spend: 0, cap: null, ops: 0, opsCap: null, runs: 0, since: 'this cycle' },
   hostsSeen: [],
 };
 
@@ -46,15 +46,6 @@ const acLoad = () => {
   } catch (e) { return AC_SEED; }
 };
 const acSave = (a) => { try { localStorage.setItem(ACLS, JSON.stringify(a)); } catch (e) {} };
-
-const AC_PLANS = [
-  { id: 'solo', name: 'Solo', price: 24, cap: 40, ops: 1500, seats: 1,
-    line: 'One seat, one host, your own keys.' },
-  { id: 'studio', name: 'Studio', price: 68, cap: 120, ops: 5000, seats: 5,
-    line: 'Five seats, every host, shared skills.' },
-  { id: 'practice', name: 'Practice', price: 210, cap: 500, ops: 25000, seats: 25,
-    line: 'Firm-wide brain, SSO, audit export.' },
-];
 
 // ─────────────────────────────────────────────────────────────
 // BOOT — the loading screen. A title block that fills in, not a spinner: each line is a
@@ -280,14 +271,12 @@ function SignUp({ onDone, onCancel, plan }) {
   ][step];
 
   const finish = () => {
-    const p = AC_PLANS.find(x => x.id === a.plan) || AC_PLANS[1];
     const facts = 3 + (a.firm ? 1 : 0) + (a.discipline ? 1 : 0) + hosts.length;
     const rec = Object.assign({}, a, {
       signedIn: true,
       created: new Date().toISOString().slice(0, 10),
       hostsSeen: hosts,
       brain: Object.assign({}, a.brain, { facts, size: +(facts * 0.4).toFixed(1), synced: 'just now' }),
-      usage: Object.assign({}, a.usage, { cap: p.cap, opsCap: p.ops }),
     });
     acSave(rec);
     // The account is a GRAPH record, not just localStorage: land it and
@@ -429,7 +418,7 @@ function SignUp({ onDone, onCancel, plan }) {
             {step === 0 ? 'Cancel' : '← Back'}
           </button>
           <span style={{ flex: 1, fontFamily: AC.mono, fontSize: 9.5, color: AC.inkMuted, letterSpacing: '0.1em' }}>
-            STEP {step + 1} / 4 · {(AC_PLANS.find(p => p.id === a.plan) || AC_PLANS[1]).name.toUpperCase()} PLAN
+            STEP {step + 1} / 4
           </span>
           <button disabled={!canNext} onClick={step === 3 ? finish : () => setStep(s => s + 1)}
             style={Object.assign({}, smallBtn(true), { padding: '7px 16px', opacity: canNext ? 1 : 0.4, cursor: canNext ? 'pointer' : 'not-allowed' })}>
@@ -446,8 +435,11 @@ function SignUp({ onDone, onCancel, plan }) {
 // what you're on, what you've spent against your own cap, and where the brain lives.
 // ─────────────────────────────────────────────────────────────
 const acMeter = (label, val, max, unit, col) => {
-  const pct = Math.min(100, Math.round((val / max) * 100));
-  const hot = pct >= 80;
+  // A cap nobody granted is not a number the app may state. Until the graph answers one
+  // or the user sets one, the meter says "not available" instead of a plan-table figure.
+  const known = typeof max === 'number' && max > 0;
+  const pct = known ? Math.min(100, Math.round((val / max) * 100)) : 0;
+  const hot = known && pct >= 80;
   return (
     <div key={label} style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 5 }}>
@@ -457,15 +449,19 @@ const acMeter = (label, val, max, unit, col) => {
           {unit === '$' ? '$' : ''}{val.toLocaleString()}
         </span>
         <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkSoft }}>
-          / {unit === '$' ? '$' : ''}{max.toLocaleString()}{unit !== '$' ? ' ' + unit : ''}
+          {known ? `/ ${unit === '$' ? '$' : ''}${max.toLocaleString()}${unit !== '$' ? ' ' + unit : ''}` : 'not available'}
         </span>
       </div>
-      <div style={{ height: 5, background: AC.lineSoft, borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{ width: pct + '%', height: '100%', background: hot ? AC.warn : col || AC.accent, transition: 'width .3s' }}/>
-      </div>
-      <div style={{ fontFamily: AC.mono, fontSize: 9.5, color: hot ? AC.warn : AC.inkMuted, marginTop: 4, letterSpacing: '0.06em' }}>
-        {pct}% USED{hot ? ' · APPROACHING YOUR CAP' : ''}
-      </div>
+      {known && (
+        <div style={{ height: 5, background: AC.lineSoft, borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ width: pct + '%', height: '100%', background: hot ? AC.warn : col || AC.accent, transition: 'width .3s' }}/>
+        </div>
+      )}
+      {known && (
+        <div style={{ fontFamily: AC.mono, fontSize: 9.5, color: hot ? AC.warn : AC.inkMuted, marginTop: 4, letterSpacing: '0.06em' }}>
+          {pct}% USED{hot ? ' · APPROACHING YOUR CAP' : ''}
+        </div>
+      )}
     </div>
   );
 };
@@ -526,7 +522,6 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
   // states someone's plan and spend, so it must not render a stale one.
   const live = acLoad();
   const a = (account && account.signedIn) || !live.signedIn ? (account || live) : live;
-  const plan = AC_PLANS.find(p => p.id === a.plan) || AC_PLANS[1];
   const u = a.usage;
   const patchA = (patch) => { const next = Object.assign({}, a, patch); acSave(next); setAccount && setAccount(next); };
   return (
@@ -584,31 +579,17 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
         <span style={{ fontFamily: AC.mono, fontSize: 9.5, color: AC.inkMuted }}>runs stop at the cap</span>
       </div>
 
-      {/* plan */}
-      <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', marginBottom: 9 }}>SUBSCRIPTION</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 10 }}>
-        {AC_PLANS.map(p => {
-          const on = p.id === a.plan;
-          return (
-            <button key={p.id} onClick={() => patchA({ plan: p.id, usage: Object.assign({}, u, { cap: p.cap, opsCap: p.ops }) })}
-              style={{
-                textAlign: 'left', padding: '11px 12px', cursor: 'pointer', borderRadius: AC.rad.md,
-                border: `1px solid ${on ? AC.accent : AC.line}`, background: on ? AC.accentSoft : AC.bg,
-                color: AC.ink, fontFamily: AC.sans,
-              }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-                <span style={{ fontFamily: AC.serif, fontSize: 22, lineHeight: 1 }}>${p.price}</span>
-                <span style={{ fontFamily: AC.mono, fontSize: 9.5, color: AC.inkSoft }}>/mo</span>
-              </div>
-              <div style={{ fontSize: 12.5, fontWeight: 500, marginTop: 5 }}>{p.name}{on ? ' · current' : ''}</div>
-              <div style={{ fontSize: 11, color: AC.inkSoft, marginTop: 3, lineHeight: 1.45 }}>{p.line}</div>
-              <div style={{ fontFamily: AC.mono, fontSize: 9.5, color: AC.inkMuted, marginTop: 6 }}>
-                ${p.cap} cap · {(p.ops / 1000)}k ops · {p.seats} seat{p.seats > 1 ? 's' : ''}
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      {/* plan — the tier the graph answered with (ARCHHUB_LOGIN above and in CloudSignIn). No
+          tier, no claim: this panel never names a plan the account was not granted, and
+          it carries no price — the offer is a graph record, not a literal in the app. */}
+      {a.graphTier && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', marginBottom: 9 }}>SUBSCRIPTION</div>
+          <div style={{ padding: '11px 12px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, fontSize: 12.5, fontWeight: 500 }}>
+            {String(a.graphTier)}
+          </div>
+        </div>
+      )}
 
       {/* brain access — the one thing the user was explicit about: NOT on a git remote */}
       <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', margin: '18px 0 9px' }}>BRAIN ACCESS</div>
@@ -636,4 +617,4 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
   );
 }
 
-Object.assign(window, { AppBoot, SignUp, SettingsAccount, acLoad, acSave, AC_PLANS, AC_SEED });
+Object.assign(window, { AppBoot, SignUp, SettingsAccount, acLoad, acSave, AC_SEED });

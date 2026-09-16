@@ -927,7 +927,7 @@ const ChatsPanel = ({ openId, onOpen, onNew }) => (
       background:LM.bgSoft, border:`1px solid ${LM.line}`,
       display:'flex', alignItems:'center', gap:9,
     }}>
-      <div style={{ width:22, height:22, borderRadius:'50%', background:'#d8c5a8', display:'grid', placeItems:'center', fontSize:11, color:'#5a4a2a', fontWeight:700 }}>F</div>
+      <div style={{ width:22, height:22, borderRadius:'50%', background:LM.userAv, display:'grid', placeItems:'center', fontSize:11, color:LM.onUserAv, fontWeight:700 }}>F</div>
       <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
         <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
         <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
@@ -1142,7 +1142,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
         background:LM.bgSoft, border:`1px solid ${LM.line}`,
         display:'flex', alignItems:'center', gap:9,
       }}>
-        <div style={{ width:22, height:22, borderRadius:'50%', background:'#d8c5a8', display:'grid', placeItems:'center', fontSize:11, color:'#5a4a2a', fontWeight:700 }}>F</div>
+        <div style={{ width:22, height:22, borderRadius:'50%', background:LM.userAv, display:'grid', placeItems:'center', fontSize:11, color:LM.onUserAv, fontWeight:700 }}>F</div>
         <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
           <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
           <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
@@ -1557,7 +1557,7 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
       {mode === 'chat' ? (
         workshop ? <WorkshopConversation key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} descriptor={workshop} target={target}
-          setTarget={target => updateView({target})}/> : <>
+          setTarget={target => updateView({target})} setMode={setMode}/> : <>
           {window.ARCHHUB_LIVE || window.ARCHHUB_STUDIO_AUTHORITY
             ? <p role="status" style={{padding:24, color:LM.inkSoft}}>
                 Choose a Workshop conversation, or select a node with a model on the canvas.</p>
@@ -1657,7 +1657,50 @@ const WorkshopReview = ({text}) => {
   </div>;
 };
 
-const WorkshopConversation = ({descriptor, target, setTarget}) => {
+// ── Workshop layout presets (design studio-workshop.jsx:384, 524-531, 554-569, 275-330) on the
+// real snapshot only. "Conversation" is the transcript already drawn. "Task board" and
+// "Chat + live graph" draw only what a projection holds: one native Work status
+// (state.nativeWork, studio-existing-workshop.js publish()) and the topology nodes projected by
+// projectStudioCanvas in studio.html (id / title / sub / status). No task list, approval gate,
+// progress, agent roster, tool-call count or activity log has a binding, so each of those is an
+// explicit absent state rather than a sample (the design's seeded roster, run figures, flow and
+// task cards are not ported).
+const WORKSHOP_LAYOUTS = [['conversation', '≡', 'Conversation'], ['board', '▤', 'Task board'], ['graph', '⌗', 'Chat + live graph']];
+const WorkshopLayoutStrip = ({layout, setLayout}) => (
+  <div role="group" aria-label="Workshop layout" style={{display:'flex', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, overflow:'hidden'}}>
+    {WORKSHOP_LAYOUTS.map(([key, glyph, label]) => (
+      <button key={key} type="button" onClick={() => setLayout(key)} title={label} aria-label={label} aria-pressed={layout === key}
+        style={{width:28, height:22, border:0, borderRadius:0, padding:0, cursor:'pointer', fontFamily:LM.mono, fontSize:12,
+          background:layout === key ? LM.ink : 'transparent', color:layout === key ? LM.bg : LM.inkSoft}}>{glyph}</button>
+    ))}
+  </div>
+);
+const WorkshopLayoutPane = ({layout, native, nodes, target, setMode}) => {
+  if (layout === 'board') return <section aria-label="Workshop task board" style={{marginBottom:24}}>
+    <h3 style={{fontSize:14, marginTop:0}}>Task board</h3>
+    <p role="status" style={{fontSize:12, color:LM.inkSoft, lineHeight:1.5}}>
+      Not available in this connection. This Workshop projects one native Work at a time{native?.state ? ` (state: ${native.state})` : ''};
+      no task-list projection exists, so nothing is grouped or counted here.
+    </p>
+  </section>;
+  if (layout !== 'graph') return null;
+  const all = Array.isArray(nodes) ? nodes : [], shown = all.slice(0, 64);
+  return <section aria-label="Workshop live graph" style={{marginBottom:24}}>
+    <h3 style={{fontSize:14, marginTop:0}}>Live graph · {all.length} projected node{all.length === 1 ? '' : 's'}</h3>
+    {!shown.length ? <p role="status" style={{fontSize:12, color:LM.inkSoft}}>No topology projection is held for this scope.</p> :
+      shown.map(node => <div key={node.id} data-node={node.id} aria-current={target === node.id ? 'true' : undefined}
+        style={{padding:'6px 8px', marginBottom:6, background:LM.bg, borderRadius:LM.rad.md, overflowWrap:'anywhere',
+          border:`1px solid ${target === node.id ? LM.accent : LM.line}`}}>
+        <div style={{fontSize:12.5, fontWeight:500}}>{node.title || node.id}</div>
+        <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{node.sub || ''}{node.status ? ` · ${node.status}` : ''}</div>
+      </div>)}
+    {all.length > shown.length && <p style={{fontSize:11, color:LM.inkMuted}}>{all.length - shown.length} more on the Canvas.</p>}
+    {typeof setMode === 'function' && <button type="button" onClick={() => setMode('canvas')} style={{marginTop:6, background:LM.bgPanel,
+      color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'7px 9px', font:'inherit', cursor:'pointer'}}>⌗ Open as nodes</button>}
+  </section>;
+};
+
+const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
   const state = useWorkshopProjection();
   const authority = window.ARCHHUB_STUDIO_AUTHORITY || window.ARCHHUB_EXISTING_WORKSHOP;
   const existing = !window.ARCHHUB_STUDIO_AUTHORITY;
@@ -1672,6 +1715,7 @@ const WorkshopConversation = ({descriptor, target, setTarget}) => {
   const messageScroll = React.useRef(null), latestJump = React.useRef(false);
   if (!messageScroll.current) messageScroll.current = createWorkshopMessageScroll(setAwayFromLatest);
   const [draft, setDraft] = React.useState('');
+  const [layout, setLayout] = React.useState('conversation'); // conversation · board · graph (design studio-workshop.jsx:384)
   const [messageTextSize, setMessageTextSize] = React.useState(16);
   const [execution, setExecution] = React.useState('');
   const [busy, setBusy] = React.useState(false);
@@ -2332,6 +2376,7 @@ const WorkshopConversation = ({descriptor, target, setTarget}) => {
       <div style={{padding:'16px 24px', borderBottom:`1px solid ${LM.line}`}}>
         <div style={{display:'flex', gap:12, alignItems:'center', justifyContent:'space-between', flexWrap:'wrap'}}>
           <div style={{fontFamily:LM.serif, fontSize:22, overflowWrap:'anywhere'}}>{descriptor.label}</div>
+          <WorkshopLayoutStrip layout={layout} setLayout={setLayout}/>
           {content && typeof authority.showWorkshopFeed === 'function' &&
             <select aria-label="Workshop feed" value={feed} disabled={busy || paging}
               title="Notes and replies, routine tool activity, or the complete history"
@@ -2429,6 +2474,8 @@ const WorkshopConversation = ({descriptor, target, setTarget}) => {
     </section>
     <aside aria-label="Workshop participants" className="ah-scroll" style={{gridColumn:'2', gridRow:'2',
       background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`, padding:16, overflow:'auto'}}>
+      {/* Layout presets B/C (design studio-workshop.jsx:554-569, 275-330) on the real snapshot only. */}
+      <WorkshopLayoutPane layout={layout} native={native} nodes={projectedWorkNodes} target={nativeTarget} setMode={setMode}/>
       {nativeAvailable && <section aria-label="Native Workshop review" style={{marginBottom:24}}>
         <h3 style={{fontSize:14, marginTop:0}}>Work on a project</h3>
         <button disabled={busy} onClick={() => nativeAct('refresh')}>Read operation status</button>
@@ -2853,9 +2900,9 @@ const ChatView = ({ session, model, setMode }) => {
             <div key={i} style={{ display:'flex', gap:14, marginBottom:24 }}>
               <div style={{
                 width:30, height:30, borderRadius: m.me ? '50%' : LM.rad.md, flexShrink:0,
-                background: m.me ? '#d8c5a8' : LM.accent,
+                background: m.me ? LM.userAv : LM.accent,
                 display:'grid', placeItems:'center',
-                color: m.me ? '#5a4a2a' : ((window.AH && window.AH.onFill) || '#180f08'), fontFamily:LM.sans, fontSize:13, fontWeight:700,
+                color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'), fontFamily:LM.sans, fontSize:13, fontWeight:700,
               }}>{m.me ? 'F' : 'C'}</div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
@@ -3315,6 +3362,29 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
   </div>;
 };
 
+// ── Chat · Workshop · Canvas (design studio-lm.jsx:270-272, 1136-1143). "Workshop" is not a
+// fourth mode here: it is Chat with a conversation root from the real Workshop scope
+// (window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().workshops, fed by canvas.workshop_scope).
+// The segment selects the held room, else the general room, else the first; Chat clears the
+// root; no room in scope disables the segment and says so. Nothing about agents, tasks or
+// progress is inferred from the choice.
+const workshopModeRoom = (workshops, conversationRoot) => conversationRoot ||
+  workshops.find(row => row?.is_general === true && row.root)?.root || workshops.find(row => row?.root)?.root || '';
+const workshopModeSegments = ({mode, conversationRoot = '', workshops = []}) => {
+  const room = workshopModeRoom(workshops, conversationRoot);
+  const active = mode === 'chat' ? (conversationRoot ? 'workshop' : 'chat') : mode;
+  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas']].map(([key, label]) => ({
+    key, label, active:active === key, disabled:key === 'workshop' && !room,
+    title:key === 'workshop' && !room ? 'No Workshop conversation in this scope' : undefined,
+  }));
+};
+const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot}) => {
+  if (key === 'canvas' || typeof setConversationRoot !== 'function') return setMode(key === 'canvas' ? 'canvas' : 'chat');
+  const room = key === 'workshop' ? workshopModeRoom(workshops, conversationRoot) : '';
+  if (key === 'workshop' && !room) return;
+  if (mode !== 'chat' || room !== conversationRoot) setConversationRoot(room);
+};
+
 // Workspace header uses workspace tabs and one compact conversation menu.
 const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, setSettingsOpen, onHome,
   workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '' }) => (
@@ -3356,13 +3426,14 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
         <option value="">Conversation</option>
         {workshops.map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
       </select>)}
-      {[['chat',conversationRoot ? 'Workshop' : 'Chat'],['canvas','Canvas']].map(([k,l]) => (
-        <button key={k} onClick={() => setMode(k)} style={{
-          padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:'pointer',
-          background: mode===k ? LM.accentDim : 'transparent',
-          color: mode===k ? LM.accent : LM.inkSoft,
-          fontFamily:LM.sans, fontSize:11.5, fontWeight: mode===k ? 500 : 400,
-        }}>{l}</button>
+      {workshopModeSegments({mode, conversationRoot, workshops}).map(segment => (
+        <button key={segment.key} type="button" disabled={segment.disabled} title={segment.title} aria-pressed={segment.active}
+          onClick={() => chooseWorkshopMode(segment.key, {mode, conversationRoot, workshops, setMode, setConversationRoot})} style={{
+          padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:segment.disabled ? 'default' : 'pointer',
+          background:segment.active ? LM.accentDim : 'transparent', opacity:segment.disabled ? .5 : 1,
+          color:segment.active ? LM.accent : LM.inkSoft,
+          fontFamily:LM.sans, fontSize:11.5, fontWeight:segment.active ? 500 : 400,
+        }}>{segment.label}</button>
       ))}
     </div>
 
@@ -4498,8 +4569,8 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
             <div key={i} style={{ display:'flex', gap:7 }}>
               <div style={{
                 width:18, height:18, borderRadius: m.me ? '50%' : 4, flexShrink:0,
-                background: m.me ? '#d8c5a8' : LM.accent,
-                color: m.me ? '#5a4a2a' : ((window.AH && window.AH.onFill) || '#180f08'),
+                background: m.me ? LM.userAv : LM.accent,
+                color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'),
                 display:'grid', placeItems:'center', fontSize:10, fontWeight:700,
               }}>{m.who}</div>
               <div style={{ flex:1, minWidth:0 }}>
@@ -4551,8 +4622,8 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
           <div key={i} style={{ display:'flex', gap:LM.sp.sm }}>
             <div style={{
               width:18, height:18, borderRadius: m.me ? '50%' : 4,
-              background: m.me ? '#d8c5a8' : LM.accent,
-              color: m.me ? '#5a4a2a' : ((window.AH && window.AH.onFill) || '#180f08'),
+              background: m.me ? LM.userAv : LM.accent,
+              color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'),
               display:'grid', placeItems:'center', fontSize:10, fontWeight:700, flexShrink:0,
             }}>{m.who}</div>
             <div style={{ flex:1, minWidth:0 }}>
@@ -5143,8 +5214,8 @@ const ChatTurn = ({ m, isLast }) => {
     <div style={{ display:'flex', gap:10 }}>
       <div style={{
         width:24, height:24, borderRadius: m.me ? '50%' : 5, flexShrink:0,
-        background: m.me ? '#d8c5a8' : LM.accent,
-        color: m.me ? '#5a4a2a' : ((window.AH && window.AH.onFill) || '#180f08'),
+        background: m.me ? LM.userAv : LM.accent,
+        color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'),
         display:'grid', placeItems:'center', fontSize:12, fontWeight:700,
       }}>{m.who}</div>
       <div style={{ flex:1, minWidth:0 }}>
@@ -5254,17 +5325,19 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
   React.useEffect(() => { try { localStorage.setItem(SET_LS, JSON.stringify(store)); } catch (e) {} }, [store]);
   const patch = (k, v) => setStore(st => Object.assign({}, st, typeof k === 'object' ? k : { [k]: v }));
   const tabs = [
-    ['account',     'Account',     `${(AC_PLANS.find(p => p.id === (account || {}).plan) || AC_PLANS[1]).name} · ${((account || {}).usage || {}).spend || 0}`],
+    ['account',     'Account',     (account || {}).graphTier || null],
     ['memory',      'Memory',      `${LM_MEMORY.length - (store.forgotten || []).length} facts`],
+    ['brain',       'Brain',       'not available'],
+    ['team',        'Team',        'not available'],
     ['profile',     'Profile',     'Architect'],
     ['permissions', 'Permissions', (() => { const v = LM_PERMISSIONS.map(p => permMode(store, p)); return `${v.filter(x => x === 'auto').length} auto · ${v.filter(x => x === 'ask').length} ask`; })()],
     ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(store, h) !== 'off').length} live`],
     ['providers',   'Providers',   'keys on this machine'],
-    ['models',      'Models',      'Sonnet 4.5'],
+    ['models',      'Models',      null],
     ['theme',       'Theme',       personalTheme?.configuration?.state || window.ArchHubTheme.source],
     ['baboom',      'BABOOM',      personalTheme?.configuration?.baboom_startup?.value || null],
     ['shortcuts',   'Shortcuts',   null],
-    ['storage',     'Storage',     '2.3 GB'],
+    ['storage',     'Storage',     null],
     ['about',       'About',       'build and updates'],
   ];
   return (
@@ -5304,6 +5377,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
+          {tab === 'brain'       && <SettingsNotAvailable title="Brain" what="strata, lakes, gates and per-fact classes" hint="Memory holds the facts this app has loaded."/>}
+          {tab === 'team'        && <SettingsNotAvailable title="Team" what="a firm roster, seats, roles or invite tokens"/>}
           {tab === 'profile'     && <SettingsProfile/>}
           {tab === 'permissions' && <SettingsPermissions store={store} patch={patch}/>}
           {tab === 'hosts'       && <SettingsHosts store={store} patch={patch}/>}
@@ -5325,6 +5400,18 @@ const SHead = ({ title, sub }) => (
   <div style={{ marginBottom:14 }}>
     <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em' }}>{title}</div>
     {sub && <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3, lineHeight:1.5 }}>{sub}</div>}
+  </div>
+);
+
+// ── Absent state for tabs the design fills from seeded modules (design studio-lm.jsx:2443-2444,
+// 2519-2725 Brain via brain-model.jsx; 2731-2791 Team roster/seats/invite token). No binding in
+// studio.html projects either, so the tab says so instead of drawing a sample.
+const SettingsNotAvailable = ({ title, what, hint }) => (
+  <div>
+    <SHead title={title} sub="Not available in this connection."/>
+    <p role="status" style={{ fontSize:13, color:LM.inkSoft, lineHeight:1.6, margin:0 }}>
+      No data path projects {what} for this view. Nothing is shown rather than a sample.{hint ? ' ' + hint : ''}
+    </p>
   </div>
 );
 

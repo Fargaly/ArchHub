@@ -51,6 +51,11 @@ window.AH = {
   accentPress:'#a04832',
   // ── functional ──
   ok:    '#7ec18e',
+  // USER AVATAR pair (design tokens.jsx:56-61): the human's own mark in conversations.
+  // Defined HERE because studio-lm.jsx drew it inline in six places; onUserAv is the ink on it.
+  // Static in window.AH only — not in ArchHubTheme.keys, so a graph theme cannot recolour it.
+  userAv:   '#d8c5a8',
+  onUserAv: '#5a4a2a',
   warn:  '#e5b25a',
   err:   '#e6705f',
   cyan:  '#5fb3b3',

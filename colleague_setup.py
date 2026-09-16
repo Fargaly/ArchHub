@@ -157,8 +157,12 @@ def prepare_environment(root: Path, check_only=False):
     if "--owned-environment" in sys.argv:
         raise ValueError("ArchHub environment identity mismatch")
     args = ["--owned-environment"] + (["--check-ready"] if check_only else [])
+    # The child gets this file as it was opened, not root / "colleague_setup.py":
+    # root is resolved, and resolving collapses a junction at or above the
+    # install, so the child could never see the redirect that registration
+    # refuses. os.path.abspath normalises without following links.
     return subprocess.run([str(owned / "Scripts/python.exe"), "-E", "-s",
-                           str(root / "colleague_setup.py"), *args],
+                           os.path.abspath(__file__), *args],
                           env=clean_environment()).returncode
 
 
@@ -375,7 +379,11 @@ def _assistant_integration(root: Path, identity: str) -> None:
                 answer = input("  Connect ArchHub tools to Claude Code for this Windows user?"
                                " It adds one entry to your Claude Code MCP list and"
                                " changes nothing else. [y/N] ")
-            except EOFError:
+            except (EOFError, KeyboardInterrupt):
+                # No answer is not a no: the choice stays not_asked and the
+                # next run asks again. KeyboardInterrupt is not an Exception,
+                # so letting it out would end setup after .archhub-ready was
+                # written, and the window would say nothing was marked ready.
                 answer = None
             if answer is not None:
                 choice = "accepted" if answer.strip().lower() in ("y", "yes") else "declined"
@@ -486,7 +494,10 @@ def main():
     # Offered once the build is ready. A failure here is one line on this
     # screen, never an application that does not open.
     try:
-        _assistant_integration(root, identity)
+        # As opened, not `root`: root is resolved, and resolving collapses a
+        # junction or symlink at or above the install, so registration could
+        # never see the reparse point it refuses. abspath does not follow links.
+        _assistant_integration(Path(os.path.abspath(__file__)).parent, identity)
     except Exception as exc:  # noqa: BLE001 - the application must still open
         print("  assistant  : not connected (%s)" % type(exc).__name__)
     # The installer owns the shortcuts (Start menu + Desktop, both opening

@@ -43,7 +43,9 @@ Optional:
 """
 from __future__ import annotations
 
+import json
 import os
+import time
 from pathlib import Path
 
 import httpx  # used by openrouter_free_models() runtime enumeration
@@ -451,6 +453,107 @@ def _data_dir() -> Path:
 
 
 DATA_DIR = _data_dir()
+
+# The cockpit is owned by TWO founder addresses: the desktop signs in with one
+# and the cloud account was created with the other. A gate that knows only one
+# of them locked the founder out of the cockpit - every /founder/map-state push
+# returned 403 from 2026-09-13 onward.
+DEFAULT_FOUNDER_EMAILS = (
+    "ahmed.fargaly98@gmail.com",
+    "ahmedfargale@gmail.com",
+)
+
+
+def founder_emails() -> frozenset:
+    """Every address that owns this cockpit, lower-cased and trimmed.
+
+    FOUNDER_EMAILS (comma-separated) wins; then FOUNDER_EMAIL, for the
+    deployments that already set one address; then both defaults. Read at
+    call time so a deploy can change it without a re-import.
+    """
+    listed = [p.strip().lower()
+              for p in (os.environ.get("FOUNDER_EMAILS") or "").split(",")
+              if p.strip()]
+    if listed:
+        return frozenset(listed)
+    single = (os.environ.get("FOUNDER_EMAIL") or "").strip().lower()
+    if single:
+        return frozenset({single})
+    return frozenset(DEFAULT_FOUNDER_EMAILS)
+
+
+# ---------------------------------------------------------------------------
+# The published offer
+# ---------------------------------------------------------------------------
+# The application publishes its one offer record inside the map push; this
+# backend only relays it and authors no availability or label of its own, so
+# the cloud can never announce an offer the product does not hold. With no
+# push, no offer block, or a malformed one, the offer is CLOSED and pricing
+# stays hidden - the safe direction.
+FOUNDER_MAP_STATE = DATA_DIR / "founder-map.json"
+FOUNDER_MAP_PUSHED_AT = DATA_DIR / "founder-map.pushed-at.json"
+# A map older than this is still served, but never labelled live.
+MAP_FRESH_SECONDS = 900
+# The five keys the desktop publishes (13.NODE-LANGUAGE nodelang/cloud_relay.py
+# OFFER_KEYS / published_offer_form). The server accepts exactly that form.
+OFFER_KEYS = ("revision", "sha256", "availability", "pricing_visible",
+              "public_label")
+
+
+def published_offer() -> dict:
+    """The offer exactly as the application published it, else empty.
+
+    Mirrors the desktop's published_offer_form: all five keys with their
+    published types, or nothing. A malformed record counts as no record,
+    which keeps pricing hidden.
+    """
+    try:
+        held = json.loads(FOUNDER_MAP_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    offer = held.get("offer") if isinstance(held, dict) else None
+    if not isinstance(offer, dict) or any(k not in offer for k in OFFER_KEYS):
+        return {}
+    digest = offer["sha256"]
+    if (type(offer["revision"]) is not int
+            or not isinstance(digest, str) or len(digest) != 64
+            or not isinstance(offer["availability"], str)
+            or not isinstance(offer["public_label"], str)
+            or type(offer["pricing_visible"]) is not bool):
+        return {}
+    return {k: offer[k] for k in OFFER_KEYS}
+
+
+def pricing_is_public() -> bool:
+    """True only when the published offer itself says pricing may be shown."""
+    return published_offer().get("pricing_visible") is True
+
+
+def map_push_record() -> dict:
+    """When the current map body arrived, as recorded beside it."""
+    try:
+        held = json.loads(FOUNDER_MAP_PUSHED_AT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return held if isinstance(held, dict) else {}
+
+
+def map_pushed_at():
+    """ISO timestamp of the last map push, or None when unknown."""
+    at = map_push_record().get("pushed_at")
+    return at if isinstance(at, str) and at else None
+
+
+def map_is_fresh() -> bool:
+    """True only when the stored map is newer than MAP_FRESH_SECONDS.
+
+    An unknown or unreadable push time is NOT fresh: a map of unknown age is
+    never labelled live.
+    """
+    epoch = map_push_record().get("epoch")
+    if not isinstance(epoch, (int, float)):
+        return False
+    return 0 <= (time.time() - float(epoch)) <= MAP_FRESH_SECONDS
 
 
 def _default_database_url() -> str:

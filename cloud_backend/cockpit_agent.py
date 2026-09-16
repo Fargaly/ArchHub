@@ -190,15 +190,91 @@ def _t_billing_overview(_args: dict) -> dict:
     return founder_cockpit._subscriptions_panel()
 
 
+# Brain COUNTS. The cockpit must be able to say HOW MUCH the brain holds, never
+# WHAT it holds. These helpers read the replica store the way brain_replica.py
+# lays it out (DEFAULT_REPLICAS_ROOT/<user_id>/brain.db plus the reserved firm/
+# and community/ subdirs) and return nothing but integers: no fragment text, no
+# ids, no owners. The connection is opened READ-ONLY and the SQL is fixed in
+# this file - there is still NO raw-SQL tool.
+def _replica_paths() -> list:
+    """[(scope, brain.db Path)] for every replica on disk; [] when the root
+    does not exist yet (fresh box). Never raises."""
+    try:
+        import brain_replica
+        root = getattr(brain_replica, "DEFAULT_REPLICAS_ROOT", None)
+        if root is None or not root.exists():
+            return []
+        shared = {
+            getattr(brain_replica, "_FIRM_SUBDIR", "firm"): "firm",
+            getattr(brain_replica, "_COMMUNITY_SUBDIR", "community"):
+                "community",
+        }
+        out = []
+        for p in sorted(root.iterdir()):
+            if not p.is_dir():
+                continue
+            scope = shared.get(p.name)
+            if scope:
+                for q in sorted(p.iterdir()):
+                    if q.is_dir() and (q / "brain.db").exists():
+                        out.append((scope, q / "brain.db"))
+                continue
+            if (p / "brain.db").exists():
+                out.append(("user", p / "brain.db"))
+        return out
+    except Exception:
+        return []
+
+
+def _fragment_counts(db_path) -> dict:
+    """COUNT(*) by fragment kind for ONE replica, live rows only (a tombstoned
+    row carries valid_until). Opens the file READ-ONLY; not one row of content
+    is selected - only counts leave this function."""
+    import sqlite3
+    con = sqlite3.connect("file:%s?mode=ro" % db_path.as_posix(), uri=True)
+    try:
+        rows = con.execute(
+            "SELECT kind, COUNT(*) FROM fragments "
+            "WHERE valid_until IS NULL GROUP BY kind").fetchall()
+    finally:
+        con.close()
+    by_kind = {str(k): int(n) for k, n in rows}
+    return {"fragments": sum(by_kind.values()),
+            "facts": int(by_kind.get("fact", 0)),
+            "by_kind": by_kind}
+
+
 def _t_brain_inspect(_args: dict) -> dict:
-    """Redacted counts only — never fact contents (no secret/PII leak)."""
+    """Redacted COUNTS only: replicas, fragments, facts — never contents."""
     import founder_cockpit
     sysp = founder_cockpit._system_panel()
+    totals = {"replicas": 0, "fragments": 0, "facts": 0}
+    by_scope: dict = {}
+    unreadable = 0
+    for scope, path in _replica_paths():
+        totals["replicas"] += 1
+        s = by_scope.setdefault(scope, {"replicas": 0, "fragments": 0,
+                                        "facts": 0})
+        s["replicas"] += 1
+        try:
+            counts = _fragment_counts(path)
+        except Exception:
+            unreadable += 1
+            continue
+        for k in ("fragments", "facts"):
+            s[k] += counts[k]
+            totals[k] += counts[k]
     return {
-        "brain_replicas": sysp.get("brain_replicas"),
+        "brain_replicas":  sysp.get("brain_replicas"),
+        "replicas_total":  totals["replicas"],
+        "fragments_total": totals["fragments"],
+        "facts_total":     totals["facts"],
+        "by_scope":        by_scope,
+        "unreadable_replicas": unreadable,
         "memory_captures": founder_cockpit._usage_panel().get(
             "memory_captures_total"),
-        "note": "Redacted counts only — fact contents are never returned.",
+        "note": ("Redacted counts only — fact contents, ids and owners "
+                 "are never returned."),
     }
 
 
@@ -470,7 +546,9 @@ TOOLS: dict[str, dict] = {
     },
     "brain_inspect": {
         "kind": "read", "run": _t_brain_inspect,
-        "desc": "Brain replica + memory-capture COUNTS only (redacted).",
+        "desc": ("Brain COUNTS only, redacted: how many replicas exist and "
+                 "how many fragments / memory facts they hold, by scope, plus "
+                 "memory-capture totals. Never fact contents."),
         "params": {"type": "object", "properties": {}},
     },
     "agents_queue_status": {

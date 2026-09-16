@@ -926,10 +926,14 @@ async def brain_sync(req: Request,
         #      so a later empty pull still round-trips device A's facts),
         #  (c) keys this very delta just touched, and
         #  (d) community keys the caller declared membership of this call.
+        # (b) and (c) are history, not membership: re-check them against
+        # (a) on every read, so a user removed from a company stops reading
+        # that firm's shared replica once the company_members row is gone.
         replica.firm_keys = sorted(
             set(replica.firm_keys)
-            | set(replica.contributed_firm_keys())
-            | set(merge_result.get("firm_keys") or []))
+            | ((set(replica.contributed_firm_keys())
+                | set(merge_result.get("firm_keys") or []))
+               & set(firm_keys)))
         # Community read-set stays the membership list; contributions can
         # only have landed in member communities now.
         replica.community_keys = sorted(set(replica.community_keys))
@@ -995,8 +999,11 @@ def _brain_read_replica(user: dict):
     if config.brain_can_shared_scope(user.get("plan")):
         # Durable contributed keys (communities joined by code have no cloud
         # membership table) so a later read still unions device A's shares.
+        # A contributed FIRM key is read only while company membership
+        # (firm_keys above) still lists it: removal ends the read too.
         replica.firm_keys = sorted(
-            set(replica.firm_keys) | set(replica.contributed_firm_keys()))
+            set(replica.firm_keys)
+            | (set(replica.contributed_firm_keys()) & set(firm_keys)))
         replica.community_keys = sorted(
             set(replica.community_keys)
             | set(replica.contributed_community_keys()))
@@ -1185,6 +1192,29 @@ async def _has_body(req: Request) -> bool:
         return False
 
 
+@app.get("/v1/offer")
+def offer() -> dict:
+    """The offer the application published, relayed verbatim.
+
+    The cloud authors no offer of its own - no label, no availability text -
+    it forwards the record from the map push and nothing else. With no push,
+    no offer block, or a malformed one, the answer is CLOSED and pricing
+    stays hidden, so a quiet backend can never announce an offer the product
+    does not hold.
+    """
+    published = config.published_offer()
+    return {
+        "state":           "open" if published else "closed",
+        "availability":    published.get("availability"),
+        "public_label":    published.get("public_label"),
+        "pricing_visible": config.pricing_is_public(),
+        "revision":        published.get("revision"),
+        "sha256":          published.get("sha256"),
+        "published_at":    config.map_pushed_at(),
+        "source":          "founder-map",
+    }
+
+
 @app.get("/v1/billing/plans")
 def billing_plans() -> dict:
     """Public plan catalog (Model C) — used by the desktop app to render
@@ -1197,6 +1227,22 @@ def billing_plans() -> dict:
     can show "Coming soon" until the founder wires the real ids).
     """
     pricing = config.public_pricing()
+    if not config.pricing_is_public():
+        # The published offer withholds pricing, so the catalogue is served
+        # EMPTY rather than guessed, and checkout is refused by the same
+        # gate. No price reaches the client while the offer is closed.
+        return {
+            "provider":        config.BILLING_PROVIDER,
+            "model":           pricing["model"],
+            "currency":        pricing["currency"],
+            "annual_discount": pricing["annual_discount"],
+            "ai_modes":        pricing["ai_modes"],
+            "default_ai_mode": pricing["default_ai_mode"],
+            "credit_pack":     None,
+            "tiers":           [],
+            "trial_messages":  config.TRIAL_MESSAGES,
+            "pricing_visible": False,
+        }
     tiers = []
     for t in pricing["tiers"]:
         tier_name = t["id"]
@@ -1228,6 +1274,7 @@ def billing_plans() -> dict:
         "credit_pack":     pricing["credit_pack"],
         "tiers":           tiers,
         "trial_messages":  config.TRIAL_MESSAGES,
+        "pricing_visible": True,
     }
 
 
@@ -1247,6 +1294,10 @@ def _billing_provider_module():
 def checkout(req: CheckoutReq,
               authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
+    if not config.pricing_is_public():
+        # Same gate as /v1/billing/plans: while the published offer withholds
+        # pricing there is nothing to sell, so no session is opened.
+        raise HTTPException(status_code=403, detail="checkout_closed")
     # Validate tier against whichever provider is configured. Both
     # provider dicts share the same tier keys.
     valid_tiers = (

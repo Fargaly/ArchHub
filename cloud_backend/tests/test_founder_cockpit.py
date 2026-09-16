@@ -69,6 +69,22 @@ def _auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _open_offer(monkeypatch, tmp_path):
+    """Publish an offer record that shows pricing.
+
+    The subscriptions panel derives MRR only while the published offer shows
+    pricing (test_offer_gate.py covers the hidden, counts-only side). Tests of
+    the derivation itself run with this open record."""
+    import json
+    import config
+    body = tmp_path / "founder-map.json"
+    body.write_text(json.dumps({"offer": {
+        "revision": 1, "sha256": "0" * 64, "availability": "paid",
+        "pricing_visible": True, "public_label": "Paid plans"}}),
+        encoding="utf-8")
+    monkeypatch.setattr(config, "FOUNDER_MAP_STATE", body)
+
+
 def _cookie_client(value):
     """A TestClient that carries `founder_session=value` on every request.
     Driven over https:// so the Secure cookie is actually sent, and set on the
@@ -120,7 +136,8 @@ class TestNonFounderBlocked:
 
 # --- (c) founder -> 200 + real keys present -------------------------------
 class TestFounderAllowed:
-    def test_overview_200_with_real_keys(self, client, monkeypatch):
+    def test_overview_200_with_real_keys(self, client, monkeypatch, tmp_path):
+        _open_offer(monkeypatch, tmp_path)
         token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
         r = client.get("/founder/api/overview", headers=_auth(token))
         assert r.status_code == 200, r.text
@@ -155,8 +172,9 @@ class TestFounderAllowed:
         emails = {u["email"] for u in body["recent"]}
         assert "extra.user@studio.com" in emails
 
-    def test_subscriptions_mrr_from_paid_plan(self, client, monkeypatch):
+    def test_subscriptions_mrr_from_paid_plan(self, client, monkeypatch, tmp_path):
         import db, config
+        _open_offer(monkeypatch, tmp_path)
         token = _sign_in(client, monkeypatch, FOUNDER_EMAIL)
         # Upgrade a real user to Solo -> MRR must reflect the Solo price.
         paid = db.get_user_by_email("paid@studio.com")

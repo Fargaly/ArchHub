@@ -96,14 +96,10 @@ def _protected_emails() -> set:
     founder, so 'purge test users' can never delete the operator's own account
     even if their address happens to match a test pattern (e.g. the founder
     signs in with a throwaway-domain address in the cockpit test-suite)."""
-    protected = set()
     try:
-        protected.add(
-            (os.environ.get("FOUNDER_EMAIL") or
-             "ahmedfargale@gmail.com").strip().lower())
+        return set(config.founder_emails())
     except Exception:
-        pass
-    return protected
+        return set()
 
 
 def is_test_account_email(email: Optional[str]) -> bool:

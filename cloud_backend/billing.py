@@ -42,6 +42,15 @@ def _ensure_stripe() -> bool:
     return True
 
 
+def _checkout_is_open() -> bool:
+    """Checkout follows the published offer: hidden pricing, no checkout.
+
+    One gate, shared by every session this module opens, so a closed offer
+    cannot be bypassed by reaching a different checkout helper.
+    """
+    return config.pricing_is_public()
+
+
 def create_checkout_url(*, user: dict, tier: str,
                         annual: bool = False) -> Optional[str]:
     """Build a Stripe Checkout session for the given plan tier and
@@ -51,6 +60,8 @@ def create_checkout_url(*, user: dict, tier: str,
     Studio/Firm bill per-seat through the company checkout. `annual`
     selects the −20% price id.
     """
+    if not _checkout_is_open():
+        return None
     if not _ensure_stripe():
         return None
     price = config.stripe_price_id(tier, annual=annual)
@@ -94,6 +105,8 @@ def create_company_checkout(*, company_id: str, plan: str,
     selects the −20% price id. Metadata carries `company_id` so the
     webhook routes the resulting subscription back to the correct row.
     """
+    if not _checkout_is_open():
+        return None
     if not _ensure_stripe():
         return None
     price = config.stripe_price_id(plan, annual=annual)
@@ -170,6 +183,8 @@ def create_credit_pack_checkout(*, company_id: Optional[str] = None,
     actual message count + price live in config.CREDIT_PACK /
     STRIPE_PRICE_CREDIT_PACK — we never hardcode them here.
     """
+    if not _checkout_is_open():
+        return None
     if not _ensure_stripe():
         return None
     price = config.STRIPE_PRICE_CREDIT_PACK

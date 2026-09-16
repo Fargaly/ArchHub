@@ -15,8 +15,9 @@ Surfaces (all behind ONE founder-only gate — `require_founder`):
 Gating (critical — founder-only, no bypass):
   Every route depends on `require_founder`, which resolves the caller via the
   SAME bearer-token path as main._require_user (db.user_for_token), then allows
-  ONLY the user whose email == FOUNDER_EMAIL (env, default
-  'ahmedfargale@gmail.com'). Any other user → 403. Unauthenticated → 403.
+  ONLY a user whose email is one of config.founder_emails() (env
+  FOUNDER_EMAILS / FOUNDER_EMAIL, else both founder addresses). Any other
+  user → 403. Unauthenticated → 403.
   No anonymous access, no second auth path, no toggle.
 
 Real data: every number is read live from db.py / config.py / billing.py and
@@ -34,6 +35,8 @@ from collections import deque
 from typing import Optional
 
 from urllib.parse import quote as _urlquote
+
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Cookie, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -54,10 +57,11 @@ FOUNDER_COOKIE = "founder_session"
 # ---------------------------------------------------------------------------
 # Founder identity (the gate)
 # ---------------------------------------------------------------------------
-# The single owner email. Read from env so it is never hard-pinned in a way
-# the founder can't rotate, but defaults to the founder's address so the
-# cockpit is gated correctly even before any env is set. Compared
-# case-insensitively + trimmed, matching how db stores emails (lower-cased).
+# Admission uses config.founder_emails(): the cockpit has TWO owner addresses
+# (env FOUNDER_EMAILS / FOUNDER_EMAIL override both). This constant names the
+# original cloud-account address and stays for existing callers; it is no
+# longer the gate. Emails compare case-insensitively + trimmed, matching how
+# db stores them (lower-cased).
 DEFAULT_FOUNDER_EMAIL = "ahmedfargale@gmail.com"
 
 
@@ -65,7 +69,7 @@ def founder_email() -> str:
     """The configured founder email, lower-cased + trimmed. Read at call
     time (not import time) so a test / deploy can set FOUNDER_EMAIL and have
     it take effect without re-importing the module."""
-    return (os.environ.get("FOUNDER_EMAIL") or DEFAULT_FOUNDER_EMAIL).strip().lower()
+    return sorted(config.founder_emails())[0]
 
 
 def _bearer(authorization: Optional[str]) -> Optional[str]:
@@ -94,7 +98,7 @@ def _founder_user_for_token(token: Optional[str]) -> Optional[dict]:
     if user is None:
         return None
     email = (user.get("email") or "").strip().lower()
-    if not email or email != founder_email():
+    if not email or email not in config.founder_emails():
         return None
     return user
 
@@ -269,6 +273,25 @@ def _subscriptions_panel() -> dict:
         })
 
     paying_subscribers = sum(t["subscribers"] for t in tiers)
+    if not config.pricing_is_public():
+        # Pricing is hidden, so this panel carries no price source: real
+        # subscriber and seat counts only, and no MRR derived from a
+        # catalogue the product is not currently offering.
+        return {
+            "tiers": [{"tier": t["tier"], "name": t["name"],
+                       "source": t["source"], "subscribers": t["subscribers"],
+                       "seats": t["seats"]} for t in tiers],
+            "mrr_estimate":   None,
+            "arr_estimate":   None,
+            "currency":       "USD",
+            "basis":          "counts_only_pricing_hidden",
+            "note": ("Pricing is hidden while the published offer withholds "
+                     "it, so no per-seat price or MRR is derived. The "
+                     "subscriber and seat counts are real."),
+            "paying_subscribers": paying_subscribers,
+            "trial_users":    int(by_plan.get("trial", 0)),
+            "companies":      db.count_companies(),
+        }
     return {
         "tiers":          tiers,
         "mrr_estimate":   round(mrr, 2),
@@ -922,7 +945,17 @@ async def cockpit_map_state(request: Request,
     tmp = _MAP_STATE.with_suffix(_MAP_STATE.suffix + ".tmp")
     tmp.write_bytes(payload)
     os.replace(tmp, _MAP_STATE)
-    return {"ok": True, "bytes": len(payload)}
+    # Record WHEN this body arrived, beside it, so the cockpit can show the
+    # age of the map and never label a stale map live. The body file itself
+    # stays byte-compatible for map-data.js.
+    now = time.time()
+    pushed_at = datetime.fromtimestamp(now, timezone.utc).isoformat()
+    stamp = config.FOUNDER_MAP_PUSHED_AT
+    stamp_tmp = stamp.with_suffix(stamp.suffix + ".tmp")
+    stamp_tmp.write_text(json.dumps({"pushed_at": pushed_at,
+                                     "epoch": int(now)}), encoding="utf-8")
+    os.replace(stamp_tmp, stamp)
+    return {"ok": True, "bytes": len(payload), "pushed_at": pushed_at}
 
 
 @router.get("/map-assets/{asset:path}")
@@ -932,9 +965,16 @@ def cockpit_asset(asset: str,
     if asset == "map-data.js":
         if _MAP_STATE.is_file():
             # The founder's LIVE graph, as pushed by his running application.
+            # ATLAS_LIVE claims this is the running application graph, so
+            # it holds only while the push is recent. An old or unknown-age
+            # map is still served - it is the real graph - but it is never
+            # labelled live.
             return Response(
                 b"window.ATLAS_MAP = " + _MAP_STATE.read_bytes()
-                + b"; window.ATLAS_LIVE = true;",
+                + b"; window.ATLAS_MAP_PUSHED_AT = "
+                + json.dumps(config.map_pushed_at()).encode("utf-8")
+                + b"; window.ATLAS_LIVE = "
+                + (b"true" if config.map_is_fresh() else b"false") + b";",
                 media_type="text/javascript; charset=utf-8",
             )
         # NO PUSH, SO NO MAP. This fell through to a checked-in, hand-authored
@@ -1057,7 +1097,7 @@ async def login_email(email: str = Form(default="")) -> Response:
     code is spent."""
     said = "If that address owns this cockpit, a sign-in link is on its way. It expires in five minutes."
     address = (email or "").strip().lower()
-    if not address or address != founder_email():
+    if not address or address not in config.founder_emails():
         return HTMLResponse(_login_html(notice=said))
     try:
         import auth as _auth  # local import: keeps founder_cockpit importable alone

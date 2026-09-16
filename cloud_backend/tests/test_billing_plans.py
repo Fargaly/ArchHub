@@ -22,6 +22,21 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _pricing_published(tmp_path, monkeypatch):
+    """The catalogue is served only while the published offer shows pricing
+    (test_offer_gate.py covers the closed side). These tests are about the
+    catalogue itself, so each one runs with an open offer record."""
+    import json
+    import config
+    body = tmp_path / "founder-map.json"
+    body.write_text(json.dumps({"offer": {
+        "revision": 1, "sha256": "0" * 64, "availability": "paid",
+        "pricing_visible": True, "public_label": "Paid plans"}}),
+        encoding="utf-8")
+    monkeypatch.setattr(config, "FOUNDER_MAP_STATE", body)
+
+
 class TestPlansEndpoint:
     def test_returns_three_tiers(self, client):
         r = client.get("/v1/billing/plans")

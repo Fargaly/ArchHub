@@ -339,3 +339,137 @@ class TestMigrationSafety:
         with pytest.raises(ValueError):
             brain_replica.BrainReplica.open_shared("firm", "../..",
                                                    root=replicas_root)
+
+
+# ===========================================================================
+# 7. C-F0 - a contributed firm key is HISTORY, not a membership: removing a
+#    member ends their READ of the firm replica on every read path.
+# ===========================================================================
+def _paid_user(suffix: str = "", plan: str = "studio") -> tuple[dict, dict]:
+    """`_user` on a tier inside BRAIN_SHARED_SCOPE_PLANS, so the portal reads
+    (/v1/brain/facts|search|stats and /mcp) exercise the shared-scope union."""
+    import db
+    u, h = _user(suffix)
+    db.update_user_plan(u["id"], plan=plan)
+    return db.get_or_create_user(u["email"]), h
+
+
+def _mcp_fact_texts(client, headers) -> set[str]:
+    """The account brain over MCP (POST /mcp) - it reads through
+    main._brain_read_replica, so it obeys the same membership law."""
+    import json
+    r = client.post("/mcp", headers=headers, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "brain.list_facts", "arguments": {"limit": 200}}})
+    assert r.status_code == 200, r.text
+    data = [ln for ln in r.text.splitlines() if ln.startswith("data: ")][0][6:]
+    payload = json.loads(json.loads(data)["result"]["content"][0]["text"])
+    return {f["text"] for f in payload["facts"]}
+
+
+def _all_reads(client, headers) -> dict:
+    """Every firm READ path in one call: the sync merge, the facts list, the
+    search pool, the stats scope histogram, and the MCP tool surface."""
+    sync = client.post("/v1/brain/sync", headers=headers,
+                       json={"delta": {"fragments": []}})
+    assert sync.status_code == 200, sync.text
+    facts = client.get("/v1/brain/facts?limit=200", headers=headers)
+    assert facts.status_code == 200, facts.text
+    search = client.get("/v1/brain/search?q=firmsecret&limit=200",
+                        headers=headers)
+    assert search.status_code == 200, search.text
+    stats = client.get("/v1/brain/stats", headers=headers)
+    assert stats.status_code == 200, stats.text
+    return {
+        "sync":   {f["id"] for f in sync.json()["merged"]["fragments"]},
+        "facts":  {f["id"] for f in facts.json()["results"]},
+        "search": {f["id"] for f in search.json()["results"]},
+        "scopes": stats.json()["by_scope"],
+        "mcp":    _mcp_fact_texts(client, headers),
+    }
+
+
+class TestRemovedMemberLosesFirmRead:
+    """`contributed_firm_keys` only records that a user once pushed into a
+    firm. Every read re-checks `company_members`, so a removed member stops
+    reading the firm replica the moment the membership row is gone."""
+
+    def _firm_with_fact(self, client):
+        import db
+        owner, ho = _paid_user("cf0owner")
+        member, hm = _paid_user("cf0member")
+        mate, hc = _paid_user("cf0mate")
+        cid = db.create_company(name="Studio CF0",
+                                owner_user_id=owner["id"])["id"]
+        db.add_company_member(company_id=cid, user_id=member["id"])
+        db.add_company_member(company_id=cid, user_id=mate["id"])
+        pushed = client.post("/v1/brain/sync", headers=hm, json={"delta": {
+            "fragments": [
+                _frag("cf0-firm", "firm", "firmsecret detail set",
+                      "0000000000000001.aaaaaaaa", firm_id=cid),
+                _frag("cf0-own", "user", "member private note",
+                      "0000000000000001.aaaaaaab"),
+            ]}})
+        assert pushed.status_code == 200, pushed.text
+        assert pushed.json()["rejected"] == []
+        return cid, (owner, ho), (member, hm), (mate, hc)
+
+    def test_removed_member_reads_no_firm_fact_on_any_path(self, client):
+        import brain_replica
+        import db
+        cid, (owner, ho), (member, hm), _mate = self._firm_with_fact(client)
+        # Baseline: while a member, they read it.
+        assert "cf0-firm" in _all_reads(client, hm)["sync"]
+        # And the durable contribution record - the thing that used to grant
+        # the read forever - is present.
+        assert cid in brain_replica.BrainReplica.open(
+            user_id=member["id"]).contributed_firm_keys()
+
+        r = client.delete(f"/v1/companies/{cid}/members/{member['id']}",
+                          headers=ho)
+        assert r.status_code == 200, r.text
+        assert db.get_membership(cid, member["id"]) is None
+
+        after = _all_reads(client, hm)
+        assert "cf0-firm" not in after["sync"], "sync must drop the firm fact"
+        assert "cf0-firm" not in after["facts"]
+        assert "cf0-firm" not in after["search"]
+        assert "firm" not in after["scopes"], after["scopes"]
+        assert "firmsecret detail set" not in after["mcp"]
+        # Still theirs: their own USER-scope fact is untouched.
+        assert "cf0-own" in after["sync"] and "cf0-own" in after["facts"]
+
+    def test_current_member_still_reads_the_firm_fact(self, client):
+        # Positive control: revoking one member must not blind the others.
+        cid, (owner, ho), (member, hm), (mate, hc) = self._firm_with_fact(client)
+        assert client.delete(
+            f"/v1/companies/{cid}/members/{member['id']}",
+            headers=ho).status_code == 200
+        still = _all_reads(client, hc)
+        assert "cf0-firm" in still["sync"]
+        assert "cf0-firm" in still["facts"]
+        assert "cf0-firm" in still["search"]
+        assert still["scopes"].get("firm") == 1
+        assert "firmsecret detail set" in still["mcp"]
+
+    def test_re_added_member_reads_again(self, client):
+        # The membership table is the authority in BOTH directions: this is a
+        # live re-check, not a tombstone burned onto the contributed key.
+        import db
+        cid, (owner, ho), (member, hm), _mate = self._firm_with_fact(client)
+        client.delete(f"/v1/companies/{cid}/members/{member['id']}", headers=ho)
+        assert "cf0-firm" not in _all_reads(client, hm)["facts"]
+        db.add_company_member(company_id=cid, user_id=member["id"])
+        assert "cf0-firm" in _all_reads(client, hm)["facts"]
+
+    def test_removed_member_firm_write_still_refused(self, client):
+        # Write-side law unchanged (2026-09-03 closure), so the read cannot be
+        # re-earned by pushing into the firm again.
+        cid, (owner, ho), (member, hm), _mate = self._firm_with_fact(client)
+        client.delete(f"/v1/companies/{cid}/members/{member['id']}", headers=ho)
+        r = client.post("/v1/brain/sync", headers=hm, json={"delta": {
+            "fragments": [_frag("cf0-late", "firm", "late write",
+                                "0000000000000002.aaaaaaaa", firm_id=cid)]}}).json()
+        assert any("not a member" in (x.get("reason") or "")
+                   for x in r["rejected"]), r["rejected"]
+        assert "cf0-late" not in {f["id"] for f in r["merged"]["fragments"]}

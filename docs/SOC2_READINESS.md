@@ -43,7 +43,7 @@ we don't yet make.
 |---|---|---|
 | Multi-factor auth on all admin accounts | ✅ | GitHub MFA enforced, Stripe MFA |
 | SSO for production access | ⚠️ Partial | GitHub OAuth in place; cloud_backend admin uses email magic-link (acceptable) |
-| Encryption at rest | ✅ | Fly.io disk encryption; SQLite db on encrypted volume |
+| Encryption at rest | Partial | Fly.io disk encryption only (host-level; `flyctl volumes list` reports the volume encrypted, recorded in `docs/USER_DATABASE.md`). No application-level encryption: the SQLite db and brain replicas are readable in clear by ArchHub's processes. |
 | Encryption in transit | ✅ | TLS 1.2+ enforced; Fly.io terminates |
 | Least-privilege IAM | ⚠️ Partial | Fly.io token has full org scope — split into deploy + observe tokens |
 | Secrets management | ✅ | Fly.io secrets + GitHub Actions secrets; no plaintext in repo |

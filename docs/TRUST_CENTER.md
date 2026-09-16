@@ -13,7 +13,7 @@ Updated whenever a real control changes. Reviewed quarterly.
 
 | Area | Status |
 |---|---|
-| Data encryption at rest | TLS-volume + SQLite on encrypted Fly.io disk |
+| Data encryption at rest | Host-level only. The Fly.io volume holding `archhub_cloud.db` and the brain replicas is reported encrypted by Fly.io (`flyctl volumes list`, recorded in `docs/USER_DATABASE.md`). ArchHub applies no application-level or end-to-end encryption; ArchHub's systems can read stored content. |
 | Data encryption in transit | TLS 1.2+ enforced everywhere |
 | Authentication | OAuth + magic-link (no passwords stored) |
 | Multi-factor auth | Required for all admin + production accounts |
@@ -54,7 +54,8 @@ For users on Cloud or Solo/Studio tiers, the cloud backend at `cloud.archhub.io`
 
 - Email address (sign-in identifier)
 - Stripe customer + subscription IDs (for billing only — full PAN never touches us)
-- Chat history sync (encrypted at rest; off by default — opt-in per session)
+- Your cloud brain copy, when cloud sync is on. When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed. (This is the sentence the public Cell website is to carry; its text lives in `13.NODE-LANGUAGE/nodelang/cell_website.py` and is on no published page today.)
+- Chat history sync to ArchHub's cloud: does not exist today (no chat-history table in `cloud_backend/db.py`, no such endpoint in `docs/CLOUD_API.md`). The desktop's **Sync sessions** button pushes sessions to a private GitHub repository you own (`app/cloud_sync.py`), not to ArchHub's servers. Hosted-mode chat writes `usage_log` counters (`cloud_backend/proxy.py`); a chat turn you explicitly approve for training is posted to `/v1/memory/capture` and stored as a `training_samples` row (`cloud_backend/main.py`). Neither the database nor the brain replicas are application-level encrypted.
 - Marketplace pack uploads + downloads
 - Token-usage counters for billing (provider name + count, never prompt content)
 
@@ -91,7 +92,7 @@ Anyone on the **BYO Key** tier never touches our cloud at all.
 - Dependabot scans dependencies weekly; CVE > Medium severity gets a same-week fix
 
 ### Data
-- Encryption at rest: Fly.io volume encryption + SQLite full-file encryption
+- Encryption at rest: Fly.io volume encryption only (host-level, as `flyctl volumes list` reports it; `docs/USER_DATABASE.md`). No application-level encryption: the SQLite database and brain replicas on that volume are not encrypted by ArchHub, and ArchHub's systems can read them.
 - Encryption in transit: TLS 1.2+ on every endpoint, HSTS enforced
 - Backups: nightly Fly.io snapshots, 30-day retention, restore-test documented
 

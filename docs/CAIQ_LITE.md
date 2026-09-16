@@ -22,7 +22,7 @@ This doc is the canonical pre-filled answer set. When a buyer sends their versio
 |---|---|---|
 | AIS-01 | Is application source code reviewed for vulnerabilities? | **Yes.** Dependabot scans weekly. Founder reviews every PR (solo team). |
 | AIS-02 | Are inputs validated to prevent injection (SQL, XSS, command)? | **Yes.** All DB access via parameterised queries. Tool engine validates JSON Schema before dispatch. |
-| AIS-03 | Is data classified in transit and at rest? | **Yes.** TLS 1.2+ in transit. AES-256 at rest (Fly.io volume + SQLite full-file). |
+| AIS-03 | Is data classified in transit and at rest? | **Partial.** TLS 1.2+ in transit. At rest: host-level Fly.io volume encryption only (`docs/USER_DATABASE.md`); no application-level encryption. The SQLite database and brain replicas are not encrypted by ArchHub, and ArchHub's systems can read them. |
 
 ## BCR — Business Continuity & Resilience
 
@@ -43,9 +43,9 @@ This doc is the canonical pre-filled answer set. When a buyer sends their versio
 
 | # | Question | Answer |
 |---|---|---|
-| CEK-01 | Is data encrypted at rest? | **Yes.** AES-256 via Fly.io volume + SQLite encrypted. |
+| CEK-01 | Is data encrypted at rest? | **Host-level only.** The Fly.io volume is reported encrypted by the host (`flyctl volumes list`, recorded in `docs/USER_DATABASE.md`). No application-level encryption: ArchHub applies none to the database or to cloud brain copies, and ArchHub's systems can read stored content. |
 | CEK-02 | Is data encrypted in transit? | **Yes.** TLS 1.2+ enforced; HSTS preload pending. |
-| CEK-03 | How are encryption keys managed? | Fly.io-managed for infrastructure. App-level secrets in GitHub Actions secrets (encrypted with libsodium sealed box). |
+| CEK-03 | How are encryption keys managed? | Volume encryption keys are Fly.io-managed. ArchHub holds no application-level data-encryption key (there is no application-level encryption). Deployment secrets live in Fly.io secrets and GitHub Actions secrets (both provider-managed). |
 | CEK-04 | Are keys rotated on a schedule? | **Annually** for app-level secrets. Provider-managed for cloud infra. |
 
 ## DCS — Data Centre Security
@@ -60,9 +60,10 @@ This doc is the canonical pre-filled answer set. When a buyer sends their versio
 | # | Question | Answer |
 |---|---|---|
 | DSP-01 | Do you have a data classification policy? | **In draft.** Public / Internal / Confidential tiers, formal doc Q3 2026. |
-| DSP-02 | Do you have data retention policies? | **Yes.** Chat history kept only while user account active. Telemetry: 90 days. Backups: 30 days. |
+| DSP-02 | Do you have data retention policies? | **Yes.** No chat-history store exists in the cloud (`cloud_backend/db.py` has no such table); chat turns you explicitly approve for training are kept as `training_samples` rows (see DSP-04). Telemetry: 90 days. Backups: 30 days. |
 | DSP-03 | Do you support data deletion on request? | **Yes.** GDPR / CCPA compliant. Email `privacy@archhub.io` → 30-day deletion SLA. |
 | DSP-04 | Do you use customer data for AI training? | **No, never** unless customer explicitly opts in. Default is OFF and we have no plan to make it ON. |
+| DSP-05 | Can the provider read customer memory ("brain") content stored in the cloud? | **Yes.** When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed. |
 
 ## GRC — Governance, Risk & Compliance
 

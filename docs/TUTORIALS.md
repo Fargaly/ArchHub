@@ -66,8 +66,8 @@ to open it.
   brighter cards are more active. Each shows when it was learned and last used.
 - **Project filter** — narrow to one project (BBC4, BH3D, P-674, P-679, …).
 - **Search your brain** — find any memory by meaning, not just keyword.
-- **Back up my brain** — encrypted sync of your brain to the cloud, so it follows
-  you across machines.
+- **Back up my brain**: sync your brain to the cloud so it follows you across
+  machines. When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.
 
 You never have to manage the brain by hand. It grows as you work: every
 successful result flows back in, so it gets smarter each session.
@@ -102,18 +102,21 @@ account chip on the top bar is your entry point.
   messages.
 - Click the chip to open the account menu / Settings → Account for billing and
   sign-out.
-- Sign-in is a real browser flow (magic-link or Google); your token is stored
-  encrypted on the machine. See [CLOUD_API.md](CLOUD_API.md).
+- Sign-in is a real browser flow (magic-link or Google); your token is stored in
+  plain JSON at `%APPDATA%\ArchHub\brain\cloud.json` (`app/cloud_client.py`). See [CLOUD_API.md](CLOUD_API.md).
 
-Your data lives on a persistent, encrypted cloud database that survives
-redeploys — details in [USER_DATABASE.md](USER_DATABASE.md).
+Your data lives on a persistent cloud database on a Fly.io volume that the host
+reports as encrypted; ArchHub applies no application-level encryption and its
+systems read the data in clear. It survives redeploys; details in [USER_DATABASE.md](USER_DATABASE.md).
 
 ---
 
 ## 6. Sessions in the cloud
 
-Sessions are saved locally as node graphs and can sync to the cloud so they
-follow you between machines.
+Sessions are saved locally as node graphs and can sync to a private GitHub
+repository you own (`ArchHub-data`, created with `gh`; `app/cloud_sync.py`) so
+they follow you between machines. That sync goes to your GitHub account, not
+to ArchHub's servers.
 
 - On Home, click **Sync sessions** in the Sessions header. A `synced <when>`
   badge shows the last sync.

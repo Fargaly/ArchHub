@@ -71,6 +71,10 @@ Every private call sends `Authorization: Bearer <token>` (the token from
 
 ### Brain and memory
 
+Privacy note: `/v1/brain/sync` stores fragments in clear on the server (not
+end-to-end encrypted; ArchHub's systems can read them); recognised API-key
+formats are rejected (`secret_blocked`). When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.
+
 | Method | Path | Auth | Purpose | Live (no token) |
 | --- | --- | --- | --- | --- |
 | POST | `/v1/brain/sync` | bearer | Push/pull your brain replica delta (plus any firm/community replicas). | — |

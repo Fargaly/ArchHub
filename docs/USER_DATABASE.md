@@ -40,6 +40,8 @@ shows `data · 1GB · encrypted true · ord`).
 Your **personal brain** also lives on the same disk, in its own folder
 (`/data/replicas`), one folder per account. So both your account and your
 brain's cloud copy ride the durable, encrypted disk and survive redeploys.
+That copy is not encrypted by ArchHub, and ArchHub's own processes read it in
+clear. When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.
 
 ## What is in it
 
@@ -119,7 +121,9 @@ does not change anything — these are read-only `SELECT` queries.
 
 ## Why this is safe
 
-- The disk is **encrypted at rest**.
+- The disk is **encrypted at rest** by the host (Fly.io). ArchHub applies no
+  application-level encryption on top of it; ArchHub's own processes read the
+  database and brain replicas in clear.
 - Sign-in keys **expire after 90 days** and can be revoked at any time.
 - We **never** store your AI provider keys in this database — those stay on the
   backend's secret store and are never written to a user row.

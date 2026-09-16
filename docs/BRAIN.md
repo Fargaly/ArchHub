@@ -27,8 +27,10 @@ and every AI agent — checks the brain before it starts work.
     each of your devices.
 - It is **bound to you**. Once you sign in, the brain records its owner, so your
   memory is yours and shared firm/community memory is kept separate.
-- Your memory also keeps a private copy on ArchHub Cloud
+- When cloud sync is on, your memory also keeps a copy on ArchHub Cloud
   (`https://archhub-cloud.fly.dev`), so the brain follows you across devices.
+  That copy is not end-to-end encrypted, and ArchHub's systems can read it
+  (see Privacy below).
 
 ## The six workers
 
@@ -40,7 +42,7 @@ environment variable, but on is the default).
 | Worker | What it does |
 | --- | --- |
 | **Sync** | Periodically syncs firm/project/community memory between teammates (a conflict-free merge — everyone converges, nobody overwrites). |
-| **Personal cloud sync** | Syncs **your** personal memory up to your private copy on ArchHub Cloud, privacy-redacted. Inert until you sign in. This is what lets your brain follow you across devices. |
+| **Personal cloud sync** | Syncs **your** personal memory up to your copy on ArchHub Cloud. Before upload the daemon replaces recognised credential values (API keys, AWS keys, Google tokens, JWTs) with a placeholder and drops any fragment still carrying a bare secret (`personal-brain-mcp/src/personal_brain/personal_cloud_sync.py`, `_sanitize_outbound`); the server rejects any that slip through (`cloud_backend/brain_replica.py`, `secret_blocked`). Both are pattern gates for recognised API-key formats only: names, emails, paths and URLs are sent as written, nothing is encrypted by ArchHub, and the copy is readable by ArchHub's systems. Inert until you sign in. This is what lets your brain follow you across devices. |
 | **Publish** | Publishes privacy-noised patterns to the shared federation outbox, when enabled. |
 | **Reflexion** | Watches your finished work and mints reusable skills from the successful runs. |
 | **Organize** | Periodically tidies memory — re-embeds new facts and re-groups them — so search and recall stay sharp as memory grows. |
@@ -90,12 +92,20 @@ off on any device.
 
 ## Privacy
 
-- Your personal memory stays **private to you**. Firm and community memory is a
-  separate, deliberately shared layer; the owner of any shared item is stamped by
-  the server, so nobody can pose as someone else.
-- The brain stores **references** to secrets (`op://…`), never the secret values
-  themselves; the actual keys are resolved at the moment of use and never written
-  into memory.
-- The cloud copy of your brain is privacy-redacted before it leaves your machine,
-  and it lives in your own per-account folder on the encrypted cloud disk (see
-  `docs/USER_DATABASE.md`).
+- When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.
+- The sentence above is the privacy statement the public Cell website is to
+  carry. Its text lives in `13.NODE-LANGUAGE/nodelang/cell_website.py`
+  (`/website/security`, item 04); no published page carries it today.
+- Firm and community memory is a separate, deliberately shared layer; the owner
+  of any shared item is stamped by the server.
+- The brain is built to hold secret **references** (`op://...`) rather than
+  resolved values. Before upload the daemon redacts recognised credential values
+  and drops any fragment that still carries one
+  (`personal-brain-mcp/src/personal_brain/personal_cloud_sync.py`,
+  `_sanitize_outbound`); the server rejects any that slip through
+  (`cloud_backend/brain_replica.py`, `secret_blocked`). Both are pattern matches
+  for recognised API-key formats, not a guarantee that no secret text is ever
+  stored, and nothing else (names, emails, paths, URLs) is redacted.
+- Where the copy physically lives (a Fly.io volume the host reports as encrypted,
+  which ArchHub's own processes read in clear) is described in
+  `docs/USER_DATABASE.md`.

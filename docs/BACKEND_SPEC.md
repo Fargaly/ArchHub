@@ -24,6 +24,15 @@ data model is the SQLite schema created by `cloud_backend/db.py`
 - **Per-user brain replicas**: stored under `REPLICAS_ROOT`, which resolves
   to `/data/replicas` on Fly (also on the persistent volume). Each signed-in
   account gets its own replica folder, so brain sync survives redeploys too.
+  Replica fragments are stored in clear: `cloud_backend/brain_replica.py`
+  writes fragment text and JSON straight into SQLite. Before upload the desktop
+  daemon redacts recognised credential values and drops any fragment that still
+  carries one (`personal-brain-mcp/src/personal_brain/personal_cloud_sync.py`,
+  `_sanitize_outbound`); the server rejects any that slip through
+  (`secret_blocked`). Both are pattern gates for recognised API-key formats
+  only; no other redaction and no application-level encryption is applied, the
+  volume's encryption is host-level, and the copy is readable by ArchHub's
+  systems. When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.
 - **Schema creation**: `init_schema()` runs on every startup. It creates the
   tables if missing and applies a set of idempotent `ALTER TABLE` migrations,
   so a redeploy can add a column without a manual migration step.
@@ -142,6 +151,12 @@ Firm ($29/seat, minimum 10 seats, SSO).
 See `docs/PERMISSIONS.md` for the full roles model.
 
 ### Brain, memory, training, marketplace
+
+Privacy note for `/v1/brain/sync`: fragments are stored in clear (not
+end-to-end encrypted; ArchHub's systems can read them); fragments carrying a
+recognised API-key format are rejected (`secret_blocked`). `DELETE` removes the
+caller's own replica folder only; firm and community replicas are separate
+folders and are not removed.
 
 | Method | Path | Auth | Purpose | Live (no token) |
 | --- | --- | --- | --- | --- |

@@ -90,14 +90,14 @@ The hard rule: **ArchHub never owns inference cost it can't bill back with margi
 | Data | Synced? |
 |---|---|
 | Sessions, Skills, custom nodes | Yes, Pro+ |
-| Memory facts | Yes, encrypted, Studio+ |
+| Memory facts | Proposed: encrypted, Studio+. Not implemented: today the cloud brain copy (`/v1/brain/sync` on the Fly.io backend) is stored in clear and ArchHub's systems can read it. |
 | Audit log | Yes, Studio+ |
 | Profile fields | Yes, all tiers |
 | Provider API keys | **NEVER** — Credential Manager only |
 | Host detection results | NEVER — per-machine; would lie |
 | Workflow run cache | NEVER — big, ephemeral, leak-prone |
 
-Content-addressable: client SHA256 → Worker checks → upload on miss only. Per-user key from JWT does client-side encryption; server proxies opaque blobs.
+Proposed (not implemented): content-addressable sync (client SHA256 -> Worker checks -> upload on miss only) with a per-user client-side encryption key so the server would proxy opaque blobs. Today no such sync or encryption exists; `/v1/brain/sync` on the Fly.io backend (`cloud_backend/brain_replica.py`) stores brain fragments in clear.
 
 ---
 

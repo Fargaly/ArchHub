@@ -83,7 +83,7 @@ def live_sessions() -> list[dict]:
             # A title, or nothing. The whole /info dict used to stand in here
             # and carried document_path and username into every status line
             # and onto BABOOM's face (audit 2026-09-06).
-            document = info.get("title") or info.get("doc") or None
+            document = info.get("document_title") or info.get("title") or info.get("doc") or None
         found.append({
             "port": port,
             "pid": answer.get("pid"),

@@ -31,7 +31,7 @@ var _window = window,
   MapCanvas = _window.MapCanvas,
   STC = _window.STC,
   catCol = _window.catCol,
-  SEED_DB = _window.SEED_DB,
+  EMPTY_DB = _window.EMPTY_DB,
   ckLoad = _window.ckLoad,
   ckSave = _window.ckSave;
 
@@ -419,7 +419,7 @@ function AtlasCockpit() {
   var canvas = React.useRef(null);
   var tRef = React.useRef(null);
   var _React$useState35 = React.useState(function () {
-      return ckLoad() || SEED_DB();
+      return ckLoad() || EMPTY_DB();
     }),
     _React$useState36 = _slicedToArray(_React$useState35, 2),
     cdb = _React$useState36[0],
@@ -1491,6 +1491,27 @@ function AtlasCockpit() {
       })
     }).then(function (r) {
       return r.json();
+    });
+  };
+  // The offer is ONE record in the app (app:users:accounts:offer); the cockpit
+  // keeps no copy of it. Saving relays the founder's exact words through the
+  // same door the ask bar uses and reports the application's own answer.
+  var _React$useState43 = React.useState(null),
+    _React$useState44 = _slicedToArray(_React$useState43, 2),
+    offerEdit = _React$useState44[0],
+    setOfferEdit = _React$useState44[1];
+  var saveOffer = function saveOffer() {
+    var label = String(offerEdit || '').trim();
+    if (!label) {
+      flash('The offer label cannot be empty');
+      return;
+    }
+    setOfferEdit(null);
+    relayToApp('set offer public-label to "' + label + '"', true).then(function (d) {
+      flash(String(d.message || (d.ok ? 'offer updated' : 'offer not changed')).slice(0, 160));
+      reloadMap();
+    })["catch"](function (e) {
+      return flash('offer not changed — ' + e);
     });
   };
   var runNode = function runNode(id) {
@@ -3311,7 +3332,15 @@ function AtlasCockpit() {
       padding: '0 4px 6px',
       lineHeight: 1.4
     }
-  }, "attaches into the open/selected domain & wires to its nodes"), DB.agents.map(function (a) {
+  }, "attaches into the open/selected domain & wires to its nodes"), DB.agents.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: HB.inkMute,
+      padding: '2px 4px 6px',
+      lineHeight: 1.5
+    }
+  }, "No agents reported \u2014 nothing to drop until your running app pushes them."), DB.agents.map(function (a) {
     return /*#__PURE__*/React.createElement("button", {
       key: a.id,
       onClick: function onClick() {
@@ -3589,6 +3618,87 @@ function AtlasCockpit() {
       fontSize: 9.5
     }
   }, "refresh")), /*#__PURE__*/React.createElement("div", {
+    title: M.offer ? 'The offer record your app published with this map.' : 'Your app has not published an offer record.',
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      padding: '6px 10px',
+      borderRadius: 8,
+      background: HB.card,
+      border: "1px solid ".concat(HB.line),
+      flexShrink: 0,
+      pointerEvents: 'auto',
+      whiteSpace: 'nowrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      color: HB.inkMute,
+      letterSpacing: '0.12em'
+    }
+  }, "OFFER"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 11,
+      color: M.offer ? HB.ink : HB.inkMute
+    }
+  }, M.offer ? M.offer.public_label : 'not declared'), M.offer && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      color: HB.inkMute
+    }
+  }, M.offer.pricing_visible ? '· pricing shown' : '· pricing hidden'), offerEdit === null ? /*#__PURE__*/React.createElement("button", {
+    onClick: function onClick() {
+      return setOfferEdit(M.offer ? M.offer.public_label : '');
+    },
+    title: "Change what the product is offered as",
+    style: {
+      border: "1px solid ".concat(HB.line),
+      background: 'transparent',
+      color: HB.inkSoft,
+      borderRadius: 5,
+      padding: '2px 7px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 9.5
+    }
+  }, "edit") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    value: offerEdit,
+    onChange: function onChange(e) {
+      return setOfferEdit(e.target.value);
+    },
+    onKeyDown: function onKeyDown(e) {
+      if (e.key === 'Enter') saveOffer();
+      if (e.key === 'Escape') setOfferEdit(null);
+    },
+    style: {
+      width: 150,
+      border: "1px solid ".concat(HB.line),
+      background: HB.paper2,
+      color: HB.ink,
+      borderRadius: 5,
+      padding: '2px 6px',
+      fontFamily: HB.mono,
+      fontSize: 11,
+      outline: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: saveOffer,
+    style: {
+      border: "1px solid ".concat(HB.accent),
+      background: 'transparent',
+      color: HB.accent,
+      borderRadius: 5,
+      padding: '2px 7px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 9.5
+    }
+  }, "save"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',

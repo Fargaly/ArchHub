@@ -21,7 +21,7 @@ You do not need a terminal. Install the app the one supported way:
 
 The installer puts a desktop icon and a Start-menu shortcut in place. (Until the app has a code-signing certificate, Windows SmartScreen may show a warning the first time — that is expected for new installers.)
 
-On first launch, a short sign-in wizard connects you to a cloud AI model so the app can think. It uses a **magic link** — you type your email, click the link it sends, and you are in. Open beta is free and asks for **no credit card**.
+On first launch, a short sign-in wizard connects you to a cloud AI model so the app can think. It uses a **magic link** — you type your email, click the link it sends, and you are in. ArchHub is Free during beta and asks for **no credit card**.
 
 > **Known launch gotcha:** on some NVIDIA graphics cards the window opens but the inside renders blank. The current workaround is to set the environment variable `ARCHHUB_VERIFY_NO_GPU=1` and relaunch. An automatic fallback for this is planned but not yet built.
 
@@ -175,6 +175,6 @@ So you are never surprised, here is what is **not** finished yet and should not 
 - **A self-building agent** that takes any request and builds the whole feature for you, end to end. The pieces exist (the composer, the checking step, the brain), and there are early **Plan-only** building slots that never apply on their own — but the full "ask for anything, it builds it and proves it" loop is not assembled and shipped.
 - **A free, no-key cloud AI model** out of the box — in progress.
 - **Automatic recovery from the blank-on-NVIDIA issue** — for now use the environment-variable workaround above.
-- **Buying a plan from the website** — the plan catalog is published (see [pricing](/pricing)), but there is no checkout on archhub.io. Everything shipped is free during open beta.
+- **Buying a plan from the website** — there is no checkout on archhub.io. Everything shipped is Free during beta.
 
 Everything else described on this page is live in the app today.

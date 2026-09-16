@@ -8,7 +8,7 @@ import Base from '../layouts/Base.astro';
     <div class="wrap">
       <div class="eyebrow">● Security</div>
       <h1 class="title serif">Your work happens here.<br/><span class="ital">Your knowledge stays yours.</span></h1>
-      <p class="lede">ArchHub is a desktop application. Your projects, your brain, and your skills live on your machine. The cloud is opt-in for collaboration and billing — and even then it holds references, never resolved secrets.</p>
+      <p class="lede">ArchHub is a desktop application. Your projects, your brain, and your skills live on your machine. The cloud is opt-in for collaboration and billing.</p>
     </div>
   </section>
 
@@ -40,10 +40,10 @@ import Base from '../layouts/Base.astro';
     <div class="split">
       <div>
         <div class="eyebrow">Data residency</div>
-        <h2 class="serif split-h">References travel. <span class="ital">Secrets don't.</span></h2>
+        <h2 class="serif split-h">What syncs, <span class="ital">and what doesn't.</span></h2>
         <ul class="feat-list">
           <li><span class="fi">⌂</span><span class="ft"><b>On your machine</b><span>brain.db (skills + facts), .speckle/ commits (project state), and 1Password / Windows Credential Manager references to your API keys.</span></span></li>
-          <li><span class="fi">☁</span><span class="ft"><b>On the cloud (Fly.io), opt-in</b><span>Identity, plan tier, firm membership, billing state, and a per-user brain replica synced via CRDT — references only, no PII bodies.</span></span></li>
+          <li><span class="fi">☁</span><span class="ft"><b>On the cloud (Fly.io), opt-in</b><span>Identity, plan tier, firm membership and billing state. When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.</span></span></li>
           <li><span class="fi">⊘</span><span class="ft"><b>Never on the cloud</b><span>Resolved API keys, project drawings, and full chat transcripts (unless you opt in to telemetry).</span></span></li>
         </ul>
       </div>
@@ -51,7 +51,7 @@ import Base from '../layouts/Base.astro';
         <pre class="skill"><span class="pun">&#123;</span>
   <span class="key">"local"</span><span class="pun">:</span> <span class="pun">[</span><span class="str">"brain.db"</span><span class="pun">,</span> <span class="str">".speckle/"</span><span class="pun">,</span> <span class="str">"key refs"</span><span class="pun">]</span><span class="pun">,</span>
   <span class="key">"cloud"</span><span class="pun">:</span> <span class="pun">[</span><span class="str">"identity"</span><span class="pun">,</span> <span class="str">"plan"</span><span class="pun">,</span>
-    <span class="str">"brain replica · refs only"</span><span class="pun">]</span><span class="pun">,</span>
+    <span class="str">"brain copy · readable by ArchHub"</span><span class="pun">]</span><span class="pun">,</span>
   <span class="key">"never"</span><span class="pun">:</span> <span class="pun">[</span><span class="str">"resolved keys"</span><span class="pun">,</span>
     <span class="str">"drawings"</span><span class="pun">,</span> <span class="str">"transcripts"</span><span class="pun">]</span><span class="pun">,</span>
   <span class="key">"delete"</span><span class="pun">:</span> <span class="str">"Settings → Account · one button"</span>
@@ -68,7 +68,7 @@ import Base from '../layouts/Base.astro';
       <h2 class="serif" style="font-size:42px; line-height:1; margin:0;">Honest answers, <span class="ital">in the repo.</span></h2>
       <p class="darklede">The full statement lives in <code>TRUST_CENTER.md</code> and <code>CAIQ_LITE.md</code> in the source tree — copy-paste them straight into a vendor security review.</p>
       <ul class="feat-list">
-        <li><span class="fi">⌦</span><span class="ft"><b>One-button delete</b><span>GDPR delete is one operation in Settings → Account: your cloud brain replica is purged immediately and your auth tokens are invalidated.</span></span></li>
+        <li><span class="fi">⌦</span><span class="ft"><b>Deleting your cloud brain</b><span>Settings → Account. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.</span></span></li>
         <li><span class="fi">◷</span><span class="ft"><b>Local-first by default</b><span>Nothing syncs to the cloud unless you sign in and opt in. The app is fully usable with no account at all.</span></span></li>
       </ul>
       <p style="margin-top:24px;"><a class="ilink" href="https://github.com/Fargaly/ArchHub" rel="noopener">Read the source on GitHub →</a></p>

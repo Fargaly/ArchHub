@@ -31,7 +31,7 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
     <div class="wrap">
       <div class="eyebrow">● Your brain</div>
       <h1 class="title serif">Everything ArchHub<br/><span class="ital">learned for you.</span></h1>
-      <p class="lede">Your personal cloud brain — the facts your ArchHub synced from your work, searchable from anywhere. Owner-only: only you can read your brain. Your plan sets how much you see and whether search is on.</p>
+      <p class="lede">Your personal cloud brain — the facts your ArchHub synced from your work, searchable from anywhere. When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed. Your plan sets how much you see and whether search is on.</p>
     </div>
   </section>
 
@@ -114,8 +114,8 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
           + 'brain — your synced knowledge appears here.</div>';
       let h = rows.map(factCard).join('');
       if (capped)
-        h += '<div class="empty">Showing your most recent facts (your plan’s '
-          + 'cap). <a class="cta" href="' + API + '/upgrade">Upgrade</a> to see more.</div>';
+        h += '<div class="empty">Showing your most recent facts (your account’s '
+          + 'cap).</div>';
       return h;
     }
 
@@ -129,9 +129,8 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
           + encodeURIComponent(q) + '&limit=200',
           { headers: { 'Authorization': 'Bearer ' + TOKEN } });
         if (r.status === 402) {
-          list.innerHTML = '<div class="empty">Search is a paid feature. '
-            + '<a class="cta" href="' + API + '/upgrade">Upgrade</a> to '
-            + 'search your brain.</div>';
+          list.innerHTML = '<div class="empty">Search is not switched on for '
+            + 'this account.</div>';
           return;
         }
         const d = await r.json();
@@ -176,9 +175,8 @@ const CLOUD_API = (import.meta.env.PUBLIC_CLOUD_API
         if (caps.can_search) {
           html += '<input class="search" id="q" placeholder="Search facts…">';
         } else {
-          html += '<div class="empty">Search is available on paid plans. '
-            + '<a class="btn btn-primary cta" href="' + API + '/upgrade">'
-            + 'Upgrade to search</a></div>';
+          html += '<div class="empty">Search is not switched on for this '
+            + 'account.</div>';
         }
         html += '<div class="facts" id="list">'
           + renderFacts(facts.results, facts.capped) + '</div>';

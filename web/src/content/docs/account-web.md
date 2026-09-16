@@ -86,9 +86,8 @@ The website navigation also gives you the rest of the public site: **Home**,
 
 ## 4. Your license and plan
 
-ArchHub is **free in open beta**: one tier, every shipped feature, no credit
-card, no trial clock. Paid tiers (Solo, Studio, Firm) are planned and not
-active — nothing is billed today.
+ArchHub is **Free during beta**: every shipped feature, no credit card, no
+trial clock. No paid plan is offered today, and nothing is billed.
 
 There are two ways to run the AI behind ArchHub:
 
@@ -104,9 +103,9 @@ website.
 ### Buying and managing your plan
 
 - **Pricing** lives on the **[Pricing](https://archhub.io/pricing)** page and
-  says the same thing: free in open beta.
-- No plan can be bought today; no credit pack is sold. When billing opens, this
-  page and the app will say so first.
+  says the same thing: Free during beta.
+- No plan can be bought today. When that changes, this page and the app will
+  say so first.
 
 > **Heads-up on purchasing:** there is no checkout. Any "Coming soon" label in
 > the app means exactly that.
@@ -178,7 +177,7 @@ A clean path for a brand-new user:
 | --- | --- |
 | Sign in / sign up | **Sign in** on archhub.io, or first-run in the app (magic link) |
 | Your email, plan, messages left | Account chip on **Home**, **Settings**, or **Account** on the web |
-| Plans / billing | none in open beta — everything shipped is free |
+| Plans / billing | Free during beta — everything shipped is free |
 | Explore your memory | **Brain browser / folders** in the app |
 | Back up your brain | Cloud backup (write-only, secrets stripped) in the app |
 

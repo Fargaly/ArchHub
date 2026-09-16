@@ -61,8 +61,8 @@ a cloud account so it can give you a chat-capable AI to drive your graphs:
 1. Enter your email address.
 2. ArchHub sends you a **magic link** — open the email and click the link to
    confirm. (There is no password to create.)
-3. You land back in the app, signed in on the **free open-beta tier**. No credit
-   card, no trial clock.
+3. You land back in the app, signed in. ArchHub is **Free during beta**. No
+   credit card, no trial clock.
 
 > **Note on sign-in options.** Two paths work today: the email magic link, and
 > **Sign in with Google**. Pick whichever you prefer — both land you in the

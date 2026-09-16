@@ -105,18 +105,18 @@ ArchHub watches its own health. A **Self-Heal Inspector** shows you self-heal ac
 
 ---
 
-## Plans and tiers
+## Plans
 
-ArchHub is free in open beta: one tier, every shipped feature. Paid tiers (Solo, Studio, Firm) are planned, not active.
+ArchHub is Free during beta: every shipped feature. No paid plan is offered today.
 
 Your tier is shown, never a placeholder; You can see your current plan and how many messages you have remaining:
 
 - **In the app:** the **account chip** on the Home screen shows your email, plan, and messages remaining — read live, never a placeholder.
 - **On the web:** sign in at archhub.io and the **Account** page shows the same — your email, plan, and remaining messages.
 
-### A note on billing (coming soon where noted)
+### A note on billing
 
-Nothing is billed in open beta — **no credit card, no credit packs, no trial clock**. The billing machinery exists in the cloud backend but is switched off; the app shows **"Coming soon"** wherever a purchase would be, never a fake checkout. See [Pricing](/pricing) for current details.
+Nothing is billed during beta — **no credit card, no credit packs, no trial clock**. The billing machinery exists in the cloud backend but is switched off; the app shows **"Coming soon"** wherever a purchase would be, never a fake checkout. See [Pricing](/pricing) for current details.
 
 ---
 

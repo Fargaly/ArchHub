@@ -56,7 +56,6 @@ import Base from '../layouts/Base.astro';
           return;
         }
         var remaining = (m.remaining_messages != null) ? m.remaining_messages : '—';
-        var canUpgrade = m.can_upgrade !== false && m.plan !== 'firm';
         body.innerHTML =
           '<div class="acct-grid">' +
             '<div class="acct-cell wide"><div class="acct-k">Signed in as</div>' +
@@ -69,7 +68,6 @@ import Base from '../layouts/Base.astro';
           '</div>' +
           '<div class="acct-actions">' +
             '<a class="btn btn-primary lg" href="' + A.APP_URL + '" rel="noopener">Open the app ↓</a>' +
-            (canUpgrade ? '<a class="btn lg" href="/pricing">Upgrade plan</a>' : '') +
             '<button class="btn lg" id="signOutBtn" type="button">Sign out</button>' +
           '</div>';
         var so = document.getElementById('signOutBtn');

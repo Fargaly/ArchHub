@@ -1,39 +1,17 @@
 ---
 import Base from '../layouts/Base.astro';
 import buildInfo from '../data/build-info.json';
-import pricing from '../data/pricing.json';
 import { releaseInfo } from '../lib/release.js';
 const connectors = buildInfo.connectors ?? 0;
 const release = releaseInfo();
-
-// This page used to invent its own tier names — Pro / Studio / Enterprise —
-// which matched neither the billing service nor the repo's own pricing data.
-// A reader comparing the site to the app saw three different products. The
-// tiers below come from src/data/pricing.json, extracted by
-// scripts/extract_pricing.py from cloud_backend/config.py :: public_pricing()
-// — the same snapshot the backend serves at GET /v1/billing/plans and the
-// desktop pricing dialog reads. Change a price in config.py, re-extract, and
-// this page follows; it cannot drift on its own.
-const tiers = pricing.tiers ?? [];
-const annualPct = Math.round((pricing.annual_discount ?? 0) * 100);
-const creditPack = pricing.credit_pack ?? null;
-const currency = (pricing.currency ?? 'usd').toUpperCase();
-
-// Seat wording straight from the tier's own min/max, so it can never
-// contradict the numbers the backend enforces at checkout.
-function seats(t) {
-  if (t.max_seats === 1) return 'Single seat';
-  if (t.min_seats > 1) return `${t.min_seats} seats minimum`;
-  return 'Seats à la carte';
-}
 ---
-<Base title="Pricing" description="ArchHub is free in open beta — every shipped feature, no credit card, no paywall. Download the Windows installer and start wiring hosts.">
+<Base title="Pricing" description="Free during beta — every shipped feature, no credit card, no paywall. Download the Windows installer and start wiring hosts.">
 
   <!-- ════════ HEADER ════════ -->
   <section class="phead">
     <div class="wrap">
       <div class="eyebrow">● Pricing</div>
-      <h1 class="title serif">Free<br/><span class="ital">in open beta.</span></h1>
+      <h1 class="title serif">Free<br/><span class="ital">during beta.</span></h1>
       <p class="lede">Every shipped feature is free right now — the app, the {connectors} connectors, the brain, and offline Speckle sync. No credit card, no paywall, no trial clock.</p>
       <div class="cta-row">
         <a class="btn btn-primary lg" href="https://github.com/Fargaly/ArchHub/releases/latest" rel="noopener">Download for Windows ↓</a>
@@ -48,7 +26,7 @@ function seats(t) {
   <section class="sec wrap">
     <div class="eyebrow" style="margin-bottom:10px;">Everything that works today</div>
     <h2 class="serif" style="font-size:var(--fs-d2); line-height:1; margin:0 0 8px;">Free <span class="ital">means free.</span></h2>
-    <p class="lede2">No part of the shipped product is behind a paywall during open beta.</p>
+    <p class="lede2">No part of the shipped product is behind a paywall during beta.</p>
     <ul class="free-list">
       <li><span class="fi">◈</span><span class="ft"><b>The full graph-first canvas</b><span>Unlimited nodes, wires, sessions, and replays.</span></span></li>
       <li><span class="fi">⌗</span><span class="ft"><b>All {connectors} host connectors</b><span>Revit, AutoCAD, Rhino, Max, Blender, Speckle, Excel, Office, Outlook, Notion, Procore and more.</span></span></li>
@@ -56,32 +34,6 @@ function seats(t) {
       <li><span class="fi">⚿</span><span class="ft"><b>Bring your own AI key</b><span>Point at your own provider or a local Ollama. We charge nothing for AI and never see your prompts.</span></span></li>
       <li><span class="fi">◇</span><span class="ft"><b>Offline Speckle sync</b><span>Local disk transport — no server, no account required.</span></span></li>
     </ul>
-  </section>
-
-  <div class="wrap"><div class="dim"><span class="tick"></span><span class="rule"></span><span class="label">THE PLANS</span><span class="rule"></span><span class="tick"></span></div></div>
-
-  <!-- ════════ THE REAL TIERS (from the backend's own catalog) ════════ -->
-  <section class="sec wrap">
-    <div class="eyebrow" style="margin-bottom:10px;">After the beta</div>
-    <h2 class="serif" style="font-size:42px; line-height:1; margin:0 0 8px;">Three plans, <span class="ital">per seat.</span></h2>
-    <p class="lede2">These are the plans ArchHub's billing service publishes. You do not need one to use the app during open beta — everything shipped is free — and the local-first, bring-your-own-key path stays free after it.</p>
-    <div class="tiers">
-      {tiers.map((t) => (
-        <div class="tier">
-          <div class="nm">{t.name}</div>
-          <div class="pr">${t.price_per_seat} <span class="per">/ seat / month</span></div>
-          <div class="ann">${t.price_per_seat_annual} / seat / month billed yearly (−{annualPct}%)</div>
-          <div class="who">{t.blurb}</div>
-          <div class="soon">{seats(t)}{t.sso ? ' · SSO and audit' : ''}</div>
-        </div>
-      ))}
-    </div>
-    <p class="note mono">
-      {currency} · AI modes: bring your own key (default) or hosted{creditPack
-        ? ` · hosted credit pack $${creditPack.price_usd} for ${creditPack.messages} messages, ${creditPack.rollover_days}-day rollover`
-        : ''}.
-    </p>
-    <p class="note mono">Source: cloud_backend/config.py :: public_pricing(), served at /v1/billing/plans — the same catalog the desktop app reads.</p>
   </section>
 
   <!-- ════════ CLOSING ════════ -->
@@ -115,16 +67,6 @@ function seats(t) {
     .free-list li .ft b { font-family: var(--sans); font-size: 15px; font-weight: 600; color: var(--ink); display: block; margin-bottom: 3px; }
     .free-list li .ft span { font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; }
 
-    .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 6px 0 0; }
-    .tier { background: var(--bg-panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
-    .tier .nm { font-family: var(--serif); font-size: 26px; font-weight: 400; letter-spacing: -0.02em; }
-    .tier .pr { font-family: var(--serif); font-size: 34px; color: var(--accent); letter-spacing: -0.02em; margin-top: 8px; line-height: 1; }
-    .tier .pr .per { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--ink-muted); text-transform: uppercase; }
-    .tier .ann { font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); letter-spacing: 0.04em; margin-top: 8px; }
-    .tier .who { font-size: 13.5px; color: var(--ink-soft); margin-top: 8px; }
-    .tier .soon { font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); letter-spacing: 0.04em; }
-    .note { font-size: 10.5px; color: var(--ink-muted); letter-spacing: 0.04em; margin-top: 22px; }
-
     .closing { padding: 110px 0; text-align: center; border-top: 1px solid var(--line-soft);
       background-image: radial-gradient(var(--line-soft) 1px, transparent 1px); background-size: 22px 22px; }
     .closing h2 { font-size: var(--fs-d2); line-height: 0.95; letter-spacing: -0.04em; margin: 0 0 12px; font-weight: 400; }
@@ -132,7 +74,6 @@ function seats(t) {
 
     @media (max-width: 820px) {
       h1.title { font-size: 60px; }
-      .tiers { grid-template-columns: 1fr; }
       .closing h2 { font-size: 48px; }
     }
   </style>

@@ -3648,11 +3648,20 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     return () => { alive.current = false; dragRef.current = null; };
   }, []);
 
+  // A drag that ends while the previous save is still in flight is queued, not
+  // dropped: on a large graph a save takes long enough that the next drag used
+  // to land inside it and vanish with "Wait for the current change".
+  const queuedSave = React.useRef(null);
   const savePositions = async (next, before, expectedRevision, remember = true) => {
     if (!scopeStillCurrent()) return false;
     const entries = Object.entries(next).filter(([id, point]) => before[id]?.x !== point.x || before[id]?.y !== point.y);
     if (!entries.length) return true;
     const restore = () => setPositions(held => ({...held, ...before}));
+    if (saving.current && canSaveLayout && entries.length <= MAX_LAYOUT_NODES) {
+      // The preview already shows the new place; the save runs right after the current one.
+      queuedSave.current = {next, before, expectedRevision, remember};
+      return true;
+    }
     if (!canSaveLayout || blocked || saving.current || entries.length > MAX_LAYOUT_NODES) {
       restore();
       setLayoutError(entries.length > MAX_LAYOUT_NODES ? 'Move or arrange at most 256 nodes at a time.' :
@@ -3671,13 +3680,33 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       return true;
     } catch (error) {
       if (scopeStillCurrent()) {
-        restore(); setUndoLayout(null); setLayoutNeedsRefresh(true);
-        setLayoutError((error.message || 'Positions could not be confirmed.') + ' Refresh the canvas to reconcile any saved positions.');
+        restore(); setUndoLayout(null); queuedSave.current = null;
+        // A refused save used to lock every later save behind a manual refresh.
+        // Refresh once here instead; the next drag starts from the reconciled canvas.
+        let recovered = false;
+        try {
+          if (authority) await authority.load();
+          else if (normal) await normal.refreshTopologyCanvas();
+          recovered = !!(authority || normal);
+        } catch (refreshError) { recovered = false; }
+        if (scopeStillCurrent()) {
+          setLayoutNeedsRefresh(!recovered);
+          setLayoutError((error.message || 'Positions could not be confirmed.') + (recovered
+            ? ' The canvas was reloaded; move the node again.'
+            : ' Refresh the canvas to reconcile any saved positions.'));
+        }
       }
       return false;
     } finally {
       saving.current = false;
       if (alive.current) setLayoutBusy(false);
+      const queued = queuedSave.current;
+      queuedSave.current = null;
+      if (queued && alive.current && scopeStillCurrent()) {
+        // Run the queued drag against the canvas as it is now; its `before` is the
+        // preview the drag started from, which is what the server holds after the save.
+        setTimeout(() => saveRef.current && saveRef.current(queued.next, queued.before, queued.expectedRevision, queued.remember), 0);
+      }
     }
   };
   saveRef.current = savePositions;
@@ -3758,12 +3787,14 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     suppressNodeClick.current = false;
     const ids = selected.has(id) ? [...selected] : [id];
     setSelectedIds(ids); closeContextMenu();
-    if (!scopeStillCurrent() || blocked || saving.current) return;
+    // A save in flight no longer swallows the next drag: the preview keeps the held
+    // positions while it runs and the drag is queued behind it (see savePositions).
+    if (!scopeStillCurrent() || layoutNeedsRefresh || !!authorityState?.pending || !!authorityState?.requires_refresh) return;
     if (!canSaveLayout || ids.length > MAX_LAYOUT_NODES) {
       setLayoutError(!canSaveLayout ? 'This connection cannot save node positions.' : 'Move or arrange at most 256 nodes at a time.');
       return;
     }
-    if (ids.some(root => !allNodes.some(node => node.id === root && node.x === positions[root]?.x && node.y === positions[root]?.y))) {
+    if (!saving.current && ids.some(root => !allNodes.some(node => node.id === root && node.x === positions[root]?.x && node.y === positions[root]?.y))) {
       setLayoutError('The canvas is receiving new positions. Try the drag again.'); return;
     }
     const before = Object.fromEntries(ids.filter(root => positions[root]).map(root => [root, {...positions[root]}]));

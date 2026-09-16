@@ -66,10 +66,59 @@ ROLE_NAMES = (
 )
 
 WEBSITE_CSS = r"""
-:root{--paper:#f6f7f8;--panel:#ffffff;--ink:#111214;--muted:#5f646b;--line:#d9dde2;--line-strong:#aeb4bc;--signal:#d84a2f;--signal-soft:#fff0ec;--teal:#146c72;--dark:#17191c;--dark-soft:#23262a}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font-family:"Segoe UI",Arial,sans-serif;font-size:16px;letter-spacing:0}a{color:inherit}a:focus-visible{outline:3px solid var(--signal);outline-offset:4px}.site-shell{min-height:100vh;background:var(--paper)}.site-nav{height:68px;padding:0 5vw;display:flex;align-items:center;gap:24px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.96);position:relative;z-index:5}.site-brand{font-size:20px;font-weight:760;text-decoration:none}.site-brand-mark{color:var(--signal)}.site-nav-links{margin-left:auto;display:flex;align-items:center;gap:4px;list-style:none;padding:0}.site-nav-link{display:inline-flex;min-height:40px;align-items:center;padding:0 10px;text-decoration:none;color:var(--muted);font-size:14px;border-bottom:2px solid transparent}.site-nav-link:hover{color:var(--ink)}.site-nav-link[aria-current="page"]{color:var(--ink);border-bottom-color:var(--signal)}.site-access{border:1px solid var(--ink);padding:8px 12px;text-decoration:none;font-size:14px}.site-access:hover{background:var(--ink);color:#fff}.site-main{display:block}.site-hero{min-height:660px;display:grid;grid-template-columns:minmax(340px,.9fr) minmax(520px,1.1fr);border-bottom:1px solid var(--line);background:var(--panel)}.site-hero-copy{padding:112px 7vw 72px;display:flex;flex-direction:column;justify-content:center}.site-kicker{margin:0 0 18px;color:var(--signal);font-size:12px;font-weight:700;text-transform:uppercase}.site-title{font-size:72px;line-height:.94;margin:0;max-width:680px;font-weight:780}.site-lede{font-size:25px;line-height:1.35;max-width:610px;margin:28px 0 0}.site-body{font-size:16px;line-height:1.7;color:var(--muted);max-width:600px;margin:18px 0 0}.site-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}.site-primary,.site-secondary{display:inline-flex;align-items:center;min-height:46px;padding:0 16px;text-decoration:none;font-weight:650}.site-primary{background:var(--signal);color:#fff}.site-primary:hover{background:#b93a24}.site-secondary{border:1px solid var(--line-strong);background:var(--panel)}.site-release-note{margin-top:28px;padding-left:12px;border-left:3px solid var(--teal);font-size:13px;line-height:1.55;color:var(--muted);max-width:520px}.site-graph{position:relative;overflow:hidden;background:var(--dark);color:#fff;padding:96px 5vw 60px}.site-graph::before{content:"";position:absolute;inset:0;background-size:24px 24px;background-image:radial-gradient(circle,#3a3e44 1px,transparent 1px);opacity:.58}.site-graph-head,.site-domain-grid{position:relative}.site-graph-head{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:22px}.site-graph-label{font-size:12px;color:#afb6bf;text-transform:uppercase}.site-graph-state{font-size:12px;color:#83d2ce}.site-domain-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.site-domain-card{min-height:104px;border:1px solid #3c4148;background:var(--dark-soft);padding:14px;display:flex;flex-direction:column;justify-content:space-between}.site-domain-card:nth-child(3n+1){border-top-color:var(--signal)}.site-domain-card:nth-child(3n+2){border-top-color:#e0b04b}.site-domain-card:nth-child(3n){border-top-color:#57aaa9}.site-domain-kind{font-size:10px;color:#949ca6;text-transform:uppercase}.site-domain-title{font-size:16px;line-height:1.25;margin:16px 0 0}.site-principles{padding:72px 7vw 86px;background:var(--paper)}.site-section-head{display:flex;align-items:end;justify-content:space-between;gap:30px;margin-bottom:28px}.site-section-title{font-size:38px;line-height:1.08;margin:0;max-width:720px}.site-section-copy{max-width:540px;color:var(--muted);line-height:1.65;margin:0}.site-principle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line)}.site-principle{min-height:190px;padding:24px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--panel)}.site-principle-index{font-size:11px;color:var(--signal);font-weight:750}.site-principle-title{font-size:21px;margin:34px 0 10px}.site-principle-body{color:var(--muted);line-height:1.6;margin:0}.site-page-main{min-height:calc(100vh - 140px);padding:94px 7vw 100px}.site-page-header{max-width:900px}.site-page-title{font-size:58px;line-height:1;margin:0}.site-page-lede{font-size:22px;line-height:1.5;color:var(--muted);margin:24px 0 0;max-width:820px}.site-page-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:54px;border-top:1px solid var(--line);border-left:1px solid var(--line)}.site-page-card{min-height:230px;padding:26px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--panel)}.site-card-kicker{font-size:11px;text-transform:uppercase;color:var(--teal);font-weight:750}.site-card-title{font-size:23px;margin:36px 0 12px}.site-card-body{color:var(--muted);line-height:1.65;margin:0}.site-card-status{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--signal);font-weight:700}.site-footer{min-height:72px;padding:22px 5vw;display:flex;align-items:center;justify-content:space-between;gap:20px;background:var(--dark);color:#d9dde2}.site-footer-copy{font-size:13px}.site-footer-link{font-size:13px;color:#fff}
-@media(max-width:1100px){.site-hero{grid-template-columns:1fr}.site-hero-copy{min-height:610px}.site-graph{min-height:560px}.site-title{font-size:64px}.site-domain-grid{grid-template-columns:repeat(3,minmax(150px,1fr))}.site-principle-grid,.site-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.site-nav{height:auto;min-height:64px;padding:10px 18px;align-items:flex-start;flex-wrap:wrap;gap:8px 14px}.site-nav-links{order:3;width:100%;overflow:auto;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto}.site-hero-copy{min-height:560px;padding:78px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:21px}.site-graph{padding:62px 24px 42px}.site-domain-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-principles,.site-page-main{padding:58px 24px 70px}.site-section-head{display:block}.site-section-copy{margin-top:16px}.site-principle-grid,.site-page-grid{grid-template-columns:1fr}.site-page-title{font-size:44px}.site-page-lede{font-size:19px}.site-footer{align-items:flex-start;flex-direction:column}}
+:root{--bg-deep:#0a0a0d;--bg:#0e0e11;--panel:#15151a;--soft:#1c1c23;--ink:#ece8e0;--ink-soft:#9b938a;--ink-muted:#8b837a;--line:#26262e;--line-soft:#1e1e24;--accent:#d97757;--accent-soft:#3a2018;--accent-hi:#e8896a;--on-fill:#180f08;--ok:#7ec18e;--serif:"Instrument Serif",Georgia,serif;--sans:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.5}a{color:inherit;text-decoration:none}a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.site-shell{min-height:100vh;background:var(--bg)}
+.site-nav{height:64px;padding:0 5vw;display:flex;align-items:center;gap:28px;border-bottom:1px solid var(--line-soft);background:rgba(14,14,17,.82);position:sticky;top:0;z-index:50}
+.site-brand{font-family:var(--serif);font-size:20px;letter-spacing:.02em;text-transform:uppercase}.site-brand-mark{color:var(--accent);font-style:italic}
+.site-nav-links{margin-left:auto;display:flex;align-items:center;gap:22px;list-style:none;padding:0;margin-right:22px}
+.site-nav-link{display:inline-flex;min-height:40px;align-items:center;font-size:13.5px;color:var(--ink-soft);border-bottom:2px solid transparent}.site-nav-link:hover{color:var(--ink)}.site-nav-link[aria-current="page"]{color:var(--ink);border-bottom-color:var(--accent)}
+.site-access{border:1px solid var(--line);border-radius:6px;padding:8px 16px;font-size:13.5px;color:var(--ink)}.site-access:hover{border-color:var(--ink-muted)}
+.site-main{display:block}
+.site-hero{display:grid;grid-template-columns:minmax(340px,1.15fr) minmax(460px,.95fr);border-bottom:1px solid var(--line-soft);background-image:radial-gradient(var(--line-soft) 1px,transparent 1px);background-size:22px 22px}
+.site-hero-copy{padding:96px 7vw 72px;display:flex;flex-direction:column;justify-content:center}
+.site-kicker{margin:0 0 18px;font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent)}
+.site-title{font-family:var(--serif);font-size:88px;line-height:.9;letter-spacing:-.04em;margin:0;max-width:680px;font-weight:400}
+.site-lede{font-family:var(--serif);font-style:italic;font-size:24px;line-height:1.38;color:var(--ink-soft);max-width:560px;margin:24px 0 0}
+.site-body{font-size:14.5px;line-height:1.65;color:var(--ink-soft);max-width:600px;margin:18px 0 0}
+.site-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.site-primary,.site-secondary{display:inline-flex;align-items:center;min-height:44px;padding:0 20px;border-radius:6px;font-size:14.5px;font-weight:500}
+.site-primary{background:var(--accent);color:var(--on-fill);font-weight:600}.site-primary:hover{background:var(--accent-hi)}
+.site-secondary{border:1px solid var(--line);color:var(--ink)}.site-secondary:hover{border-color:var(--ink-muted)}
+.site-release-note{margin-top:28px;padding-left:12px;border-left:2px solid var(--accent);font-family:var(--mono);font-size:11px;line-height:1.6;color:var(--ink-muted);max-width:520px}
+.site-graph{position:relative;background:var(--bg-deep);padding:88px 5vw 60px;border-left:1px solid var(--line-soft)}
+.site-graph-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:22px}
+.site-graph-label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-muted)}
+.site-graph-state{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ok)}
+.site-domain-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.site-domain-card{min-height:104px;border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:7px;background:var(--panel);padding:14px;display:flex;flex-direction:column;justify-content:space-between}
+.site-domain-card:nth-child(3n+2){border-top-color:var(--ok)}.site-domain-card:nth-child(3n){border-top-color:var(--ink-muted)}
+.site-domain-kind{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted)}
+.site-domain-title{font-family:var(--serif);font-size:19px;line-height:1.25;margin:16px 0 0;font-weight:400}
+.site-principles{padding:72px 7vw 86px}
+.site-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:30px;margin-bottom:28px}
+.site-section-title{font-family:var(--serif);font-size:44px;line-height:1.05;letter-spacing:-.03em;margin:0;max-width:720px;font-weight:400}
+.site-section-copy{max-width:540px;color:var(--ink-soft);font-size:14.5px;line-height:1.65;margin:0}
+.site-principle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line)}
+.site-principle{min-height:190px;padding:24px 26px 28px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.site-principle:last-child{border-right:0}
+.site-principle-index{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--accent)}
+.site-principle-title{font-family:var(--serif);font-size:26px;letter-spacing:-.02em;margin:30px 0 10px;font-weight:400}
+.site-principle-body{color:var(--ink-soft);font-size:14px;line-height:1.6;margin:0}
+.site-page-main{min-height:calc(100vh - 136px);padding:94px 7vw 100px}
+.site-page-header{max-width:900px}
+.site-page-title{font-family:var(--serif);font-size:56px;line-height:1;letter-spacing:-.035em;margin:0;font-weight:400}
+.site-page-lede{font-family:var(--serif);font-style:italic;font-size:21px;line-height:1.45;color:var(--ink-soft);margin:24px 0 0;max-width:820px}
+.site-page-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:54px;border-top:1px solid var(--line)}
+.site-page-card{min-height:230px;padding:26px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--panel)}.site-page-card:last-child{border-right:0}
+.site-card-kicker{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.site-card-title{font-family:var(--serif);font-size:23px;margin:32px 0 12px;font-weight:400}
+.site-card-body{color:var(--ink-soft);font-size:14px;line-height:1.65;margin:0}
+.site-card-status{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink-muted)}
+.site-footer{min-height:72px;padding:22px 5vw;display:flex;align-items:center;justify-content:space-between;gap:20px;border-top:1px solid var(--line-soft);background:var(--bg-deep)}
+.site-footer-copy{font-family:var(--mono);font-size:11px;color:var(--ink-muted);letter-spacing:.06em}
+.site-footer-link{font-family:var(--mono);font-size:11px;color:var(--ink-soft);letter-spacing:.06em}.site-footer-link:hover{color:var(--ink)}
+@media(max-width:1100px){.site-hero{grid-template-columns:1fr}.site-graph{border-left:0;border-top:1px solid var(--line-soft)}.site-title{font-size:68px}.site-principle-grid,.site-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.site-nav{height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 14px}.site-nav-links{order:3;width:100%;overflow:auto;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto}.site-hero-copy{padding:72px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:19px}.site-graph{padding:56px 24px 42px}.site-domain-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-principles,.site-page-main{padding:56px 24px 70px}.site-section-head{display:block}.site-section-copy{margin-top:16px}.site-principle-grid,.site-page-grid{grid-template-columns:1fr}.site-principle,.site-page-card{border-right:0}.site-page-title{font-size:40px}.site-footer{flex-direction:column;align-items:flex-start}}
 """
 
 _UNSAFE_CSS = ("</style", "@import", "url(", "expression(", "javascript:")
@@ -208,7 +257,26 @@ def _domain_property_value_root(
     return matches[0]
 
 
-def _page_specs():
+OFFER_DEFAULT_DISPLAY = "Free during beta"
+
+
+def offer_display_text(offer):
+    """The one public price sentence, taken from the cockpit-owned offer."""
+    if offer is None:
+        return OFFER_DEFAULT_DISPLAY
+    try:
+        display = str(offer["display"]).strip()
+        monetary = bool(offer["monetary"])
+    except (KeyError, TypeError) as exc:
+        raise InvalidCell("offer record needs display and monetary") from exc
+    if not display:
+        raise InvalidCell("offer record has no display text")
+    if monetary:
+        raise InvalidCell("a monetary offer is not admitted on the public site")
+    return display
+
+
+def _page_specs(offer_display=OFFER_DEFAULT_DISPLAY):
     return {
         "/website/features": (
             "Everything is connected through one graph",
@@ -220,9 +288,13 @@ def _page_specs():
             ),
         ),
         "/website/pricing": (
-            "Commercial release is not active",
-            "ArchHub is still in governed WIP. No plan, checkout, subscription, or commercial promise is being offered until the product, legal, security, support, and release courts are complete.",
-            (("STATUS", "Not for sale yet", "Work is focused on making the application coherent, secure, recoverable, and usable before monetisation is activated.", "NO MONETARY EFFECTS ENABLED"),),
+            offer_display,
+            "Every shipped feature is free while the product is in beta. No plan, checkout, subscription or commercial promise is offered yet.",
+            ((
+                "STATUS", offer_display,
+                "Work is focused on making the application coherent, secure, recoverable and usable before any price is set.",
+                "NO MONETARY EFFECTS ENABLED",
+            ),),
         ),
         "/website/changelog": (
             "Revision evidence, not progress theatre",
@@ -239,6 +311,7 @@ def _page_specs():
                 ("01", "Default deny", "Unknown routes, adapters, actions, policies, audiences, classifications, and malformed graph relations fail closed.", "LOCAL GATES ACTIVE"),
                 ("02", "Keys stay outside ordinary Cells", "The graph stores public descriptors, policy, and evidence while private signing bytes remain in admitted operating-system or cloud custody.", "LOCAL CNG AND TPM-PROVIDER COURTS"),
                 ("03", "Release boundaries remain honest", "Hardware attestation, production cloud KMS, independent witnesses, monitoring, and external security review are not yet release-green.", "EXTERNAL COURTS OPEN"),
+                ("04", "What cloud sync holds", "When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.", "CLOUD SYNC IS OPT-IN"),
             ),
         ),
         "/website/community": (
@@ -264,8 +337,10 @@ def build_universal_website(
     map_registry: UniversalMapRegistry,
     published_lifecycle_root: str,
     read_action_root: str,
+    offer=None,
 ) -> UniversalWebsiteBuild:
     """Compose the public lens, then make it reachable from the application."""
+    offer_display = offer_display_text(offer)
     snapshot = store.snapshot()
     if WEBSITE_ROOT in snapshot.cells:
         raise InvalidCell("universal website already exists")
@@ -305,9 +380,9 @@ def build_universal_website(
         )
 
     nav_labels = (
-        ("Product", "/website/features"),
-        ("Release", "/website/pricing"),
-        ("Evidence", "/website/changelog"),
+        ("Features", "/website/features"),
+        ("Pricing", "/website/pricing"),
+        ("Changelog", "/website/changelog"),
         ("Security", "/website/security"),
         ("Community", "/website/community"),
     )
@@ -334,7 +409,7 @@ def build_universal_website(
         if path == "/website/signin":
             access_attributes["aria-current"] = "page"
         access = element(
-            "a", "site-access", text="Access status", attrs=access_attributes,
+            "a", "site-access", text="Sign in", attrs=access_attributes,
         )
         return element(
             "nav", "site-nav", attrs={"aria-label": "Primary"},
@@ -448,7 +523,7 @@ def build_universal_website(
         )
     }
 
-    for path, (title, lede, cards) in _page_specs().items():
+    for path, (title, lede, cards) in _page_specs(offer_display).items():
         token = _part(path)
         title_root = scalar("app:website:text:%s:title" % token, title)
         path_root = scalar("app:website:path:%s" % token, path)
@@ -756,6 +831,7 @@ def ensure_universal_website(
     map_registry: UniversalMapRegistry,
     published_lifecycle_root: str,
     read_action_root: str,
+    offer=None,
 ) -> UniversalWebsiteBuild:
     snapshot = store.snapshot()
     if WEBSITE_ROOT not in snapshot.cells:
@@ -773,6 +849,7 @@ def ensure_universal_website(
             map_registry=map_registry,
             published_lifecycle_root=published_lifecycle_root,
             read_action_root=read_action_root,
+            offer=offer,
         )
     return read_universal_website(
         snapshot,
@@ -832,12 +909,14 @@ def project_universal_website_document(
 
 
 __all__ = [
+    "OFFER_DEFAULT_DISPLAY",
     "PUBLIC_WEBSITE_ROUTES",
     "UniversalWebsiteBuild",
     "WebsiteDomainBinding",
     "WebsiteProtocol",
     "build_universal_website",
     "ensure_universal_website",
+    "offer_display_text",
     "project_universal_website_document",
     "project_website_protocol",
     "read_universal_website",

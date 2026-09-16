@@ -71,7 +71,7 @@ def test_http_server_serves_the_universal_app_and_website_lenses(website):
         assert 'One persistent operating graph' in web
         for route, expected in (
                 ('/website/features', 'Everything is connected through one graph'),
-                ('/website/pricing', 'Commercial release is not active'),
+                ('/website/pricing', 'Free during beta'),
                 ('/website/changelog', 'Revision evidence, not progress theatre'),
                 ('/website/security', 'Security is an authority chain'),
                 ('/website/community', 'Community federation is not connected'),

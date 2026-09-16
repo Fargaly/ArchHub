@@ -3,7 +3,7 @@
 // open a node → its ego-graph of real connections. Central map + permanent control
 // panels (left = VIEW, right = ACT). Vellum drafting aesthetic. Built from real data.
 
-const { HB, hsc, HBtn, HIconBtn, HPill, HDot, HAvatar, MapCanvas, STC, catCol, SEED_DB, ckLoad, ckSave } = window;
+const { HB, hsc, HBtn, HIconBtn, HPill, HDot, HAvatar, MapCanvas, STC, catCol, EMPTY_DB, ckLoad, ckSave } = window;
 
 // v6: no imposed classification. Domains sit where they are put and snap to M.grid; any
 // meaning in the layout is the founder's, expressed by moving and grouping them. Bumping
@@ -143,7 +143,7 @@ function AtlasCockpit() {
   const [leftTab, setLeftTab] = React.useState('library');    // library | agents | index | view
   const canvas = React.useRef(null);
   const tRef = React.useRef(null);
-  const [cdb, setCdb] = React.useState(() => ckLoad() || SEED_DB());
+  const [cdb, setCdb] = React.useState(() => ckLoad() || EMPTY_DB());
   React.useEffect(() => { ckSave(cdb); }, [cdb]);
   const setColl = (coll, fn) => setCdb(d => ({ ...d, [coll]: fn(d[coll]) }));
   const flash = (m) => { setToast(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setToast(null), 2000); };
@@ -453,6 +453,18 @@ function AtlasCockpit() {
   // founder's running application answers (confirm=true = act).
   const relayToApp = (command, execute) => fetch('/founder/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({ command, confirm: !!execute }) }).then(r => r.json());
+  // The offer is ONE record in the app (app:users:accounts:offer); the cockpit
+  // keeps no copy of it. Saving relays the founder's exact words through the
+  // same door the ask bar uses and reports the application's own answer.
+  const [offerEdit, setOfferEdit] = React.useState(null);
+  const saveOffer = () => {
+    const label = String(offerEdit || '').trim();
+    if (!label) { flash('The offer label cannot be empty'); return; }
+    setOfferEdit(null);
+    relayToApp('set offer public-label to "' + label + '"', true)
+      .then(d => { flash(String(d.message || (d.ok ? 'offer updated' : 'offer not changed')).slice(0, 160)); reloadMap(); })
+      .catch(e => flash('offer not changed — ' + e));
+  };
   const runNode = (id) => {
     const node = M.nodes.find(n => n.id === id); if (!node) return;
     if (node.frozen) { flash('Frozen — unfreeze to run'); return; }
@@ -917,6 +929,11 @@ function AtlasCockpit() {
 
           <PanelLabel>AGENTS · DROP AS NODES</PanelLabel>
           <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, padding: '0 4px 6px', lineHeight: 1.4 }}>attaches into the open/selected domain & wires to its nodes</div>
+          {DB.agents.length === 0 && (
+            <div style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute, padding: '2px 4px 6px', lineHeight: 1.5 }}>
+              No agents reported — nothing to drop until your running app pushes them.
+            </div>
+          )}
           {DB.agents.map(a => (
             <button key={a.id} onClick={() => addAgentNode(a.id)} title="Drop onto the map" style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 8px', borderRadius: 7, border: 'none', background: 'transparent', cursor: 'pointer', color: HB.ink }}
               onMouseEnter={e => e.currentTarget.style.background = HB.paper2} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -983,6 +1000,28 @@ function AtlasCockpit() {
               </span>
               <button onClick={reloadMap} title="Fetch the projection again from the cloud"
                 style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5 }}>refresh</button>
+            </div>
+            {/* WHAT ARCHHUB IS OFFERED AS. One record in the app travels with the push;
+                the cockpit states it and edits it through the same door the ask bar uses.
+                No declared offer is drawn as absent, never as a price. */}
+            <div title={M.offer ? 'The offer record your app published with this map.' : 'Your app has not published an offer record.'}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flexShrink: 0, pointerEvents: 'auto', whiteSpace: 'nowrap' }}>
+              <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, letterSpacing: '0.12em' }}>OFFER</span>
+              <span style={{ fontFamily: HB.mono, fontSize: 11, color: M.offer ? HB.ink : HB.inkMute }}>
+                {M.offer ? M.offer.public_label : 'not declared'}
+              </span>
+              {M.offer && <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>
+                {M.offer.pricing_visible ? '· pricing shown' : '· pricing hidden'}
+              </span>}
+              {offerEdit === null
+                ? <button onClick={() => setOfferEdit(M.offer ? M.offer.public_label : '')} title="Change what the product is offered as"
+                    style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5 }}>edit</button>
+                : <React.Fragment>
+                    <input autoFocus value={offerEdit} onChange={e => setOfferEdit(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveOffer(); if (e.key === 'Escape') setOfferEdit(null); }}
+                      style={{ width: 150, border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.ink, borderRadius: 5, padding: '2px 6px', fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
+                    <button onClick={saveOffer} style={{ border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5 }}>save</button>
+                  </React.Fragment>}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flex: '0 1 160px', minWidth: 92, boxSizing: 'border-box', pointerEvents: 'auto' }}>
               <CKIcon name="search" size={12} color={HB.inkMute} style={{ flexShrink: 0 }}/>

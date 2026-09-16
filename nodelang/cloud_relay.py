@@ -25,6 +25,7 @@ RESULT_PATH = "/founder/api/agent-tasks/%s/result"
 MAP_PATH = "/founder/map-state"
 DEFAULT_BASE = "https://api.archhub.io"
 APP_KINDS = ("app", "app-execute")
+OFFER_KEYS = ("revision", "sha256", "availability", "pricing_visible", "public_label")
 
 
 def load_cloud_session(appdata: Path) -> Optional[dict]:
@@ -74,6 +75,23 @@ def cockpit_url(appdata: Path) -> str:
     return str(claim) if isinstance(claim, str) and claim.startswith("https://") else plain
 
 
+def published_offer_form(value: object) -> Optional[dict]:
+    """The offer as its one published record, or None when nothing valid is declared.
+
+    Only the five published keys travel; the rest of the record stays in the app.
+    """
+    if not isinstance(value, Mapping) or any(key not in value for key in OFFER_KEYS):
+        return None
+    digest = value["sha256"]
+    if type(value["revision"]) is not int or not isinstance(digest, str) or len(digest) != 64:
+        return None
+    if not isinstance(value["availability"], str) or not isinstance(value["public_label"], str):
+        return None
+    if type(value["pricing_visible"]) is not bool:
+        return None
+    return {key: value[key] for key in OFFER_KEYS}
+
+
 def render_answer(result: Mapping[str, object]) -> str:
     """One founder-readable text from a BABOOM response or execution payload."""
     body = result.get("response") if isinstance(result.get("response"), Mapping) else result
@@ -121,6 +139,7 @@ class CloudRelay:
         timeout: float = 20.0,
         map_script: Optional[Callable[[], str]] = None,
         hosts: Optional[Callable[[], object]] = None,
+        offer: Optional[Callable[[], object]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.token = str(token)
@@ -131,6 +150,7 @@ class CloudRelay:
         self.timeout = float(timeout)
         self.map_script = map_script
         self.hosts = hosts
+        self.offer = offer
         self.last_error: str = ""
         self.answered = 0
         self._map_digest = ""
@@ -234,6 +254,7 @@ class CloudRelay:
         own answers, read the same way he would: the agents on this machine,
         the governed work, the hosts and their states. Best effort: a silent
         brain or coordination host leaves the field empty, never breaks the push.
+        The declared offer travels beside it; an undeclared offer sends no key.
         """
         try:
             model = json.loads(body)
@@ -277,8 +298,16 @@ class CloudRelay:
             ][:40]
         except Exception:
             pass
+        offer = None
+        if callable(self.offer) and not self._stop.is_set():
+            try:
+                offer = published_offer_form(self.offer())
+            except Exception:
+                offer = None
         if isinstance(model, dict):
             model["control"] = control
+            if offer is not None:
+                model["offer"] = offer
             return json.dumps(model, separators=(",", ":"))
         return body
 
@@ -306,6 +335,7 @@ def start_cloud_relay(
     execute: Callable[[str], Mapping[str, object]],
     map_script: Optional[Callable[[], str]] = None,
     hosts: Optional[Callable[[], object]] = None,
+    offer: Optional[Callable[[], object]] = None,
 ) -> Optional[CloudRelay]:
     """Start the relay thread when the founder's session and consent exist."""
     from .cloud_publish_consent import cloud_publish_allowed
@@ -318,11 +348,13 @@ def start_cloud_relay(
     relay = CloudRelay(
         base_url=session["base_url"], token=session["token"],
         respond=respond, execute=execute, map_script=map_script, hosts=hosts,
+        offer=offer,
     )
     return relay.start()
 
 
 __all__ = [
-    "CloudRelay", "load_cloud_session", "render_answer", "start_cloud_relay",
+    "CloudRelay", "load_cloud_session", "published_offer_form", "render_answer",
+    "start_cloud_relay",
     "CLAIM_PATH", "RESULT_PATH", "MAP_PATH",
 ]

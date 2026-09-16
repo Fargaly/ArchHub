@@ -1046,6 +1046,12 @@ def _cockpit_execute(utterance):
     return host.execute_input(utterance)
 
 
+def _cockpit_offer():
+    # The offer the cockpit states is the one record the app holds, never a copy.
+    from nodelang.cell_accounts import published_offer
+    return published_offer(server.universal_store.snapshot())
+
+
 cloud_relay = None
 try:
     from nodelang.cloud_relay import start_cloud_relay as _start_relay
@@ -1055,6 +1061,7 @@ try:
         respond=_cockpit_respond, execute=_cockpit_execute,
         map_script=lambda: _atlas(server.universal_store, server.universal_registry),
         hosts=lambda: server._host_rows(),
+        offer=_cockpit_offer,
     )
     print("  cockpit    :", "relay on (actions wait for signed BABOOM attachment)"
           if cloud_relay else "relay off (no cloud session or consent)", flush=True)

@@ -4,11 +4,14 @@ import json
 
 import pytest
 
-from nodelang.cell_accounts import ensure_accounts, set_tier, upsert_account
+from nodelang.cell_accounts import (
+    ACCOUNTS_ROOT, FOUNDER_EMAIL_ROOT, FOUNDERS_ROOT, ensure_accounts, founder_email,
+    founder_emails, is_founder, read_accounts, set_tier, upsert_account,
+)
 from nodelang.cloud_session import signed_in_cloud_account
 from nodelang.map_import import resolve_map_path
 from nodelang.universal_application import build_universal_application
-from nodelang.universal_cell import InvalidCell
+from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 
 
 def test_the_founder_tier_is_not_assignable():
@@ -38,3 +41,46 @@ def test_the_routes_demand_proof_and_the_founder_machine():
     assert src.index("owner._require_founder_machine()", accounts) < src.index("read_accounts(", accounts)
     tier = src.index("elif self.path == '/api/universal/account-tier':")
     assert src.index("owner._require_founder_machine()", tier) < src.index("tier = set_tier(", tier)
+
+
+def _graph_before_the_founders_relation():
+    store = CellStore()
+    text = lambda root, value: Cell(root, NULL_CELL_ID, NULL_CELL_ID, value.encode("utf-8"))
+    store.commit(store.snapshot().revision, create=(
+        text(ACCOUNTS_ROOT + ":role:account", "account"),
+        text(ACCOUNTS_ROOT + ":role:email", "email"),
+        text(ACCOUNTS_ROOT + ":role:tier", "tier"),
+        Cell(ACCOUNTS_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"accounts"),
+        text(FOUNDER_EMAIL_ROOT, "ahmed.fargaly98@gmail.com"),
+    ))
+    return store
+
+
+def test_both_founder_accounts_are_founders():
+    store = CellStore()
+    ensure_accounts(store, founder_email="ahmed.fargaly98@gmail.com")
+    snapshot = store.snapshot()
+    assert set(founder_emails(snapshot)) == {"ahmed.fargaly98@gmail.com", "ahmedfargale@gmail.com"}
+    assert founder_email(snapshot) == "ahmed.fargaly98@gmail.com"
+    assert is_founder(snapshot, " AhmedFargale@Gmail.com ")
+    assert not is_founder(snapshot, "colleague@example.com")
+    assert not is_founder(snapshot, "not-an-email")
+    assert upsert_account(store, "ahmedfargale@gmail.com")[2] == "founder"
+    for founder in ("ahmed.fargaly98@gmail.com", "ahmedfargale@gmail.com"):
+        with pytest.raises(InvalidCell, match="cannot be re-tiered"):
+            set_tier(store, founder, "pro")
+
+
+def test_the_founders_migration_only_appends():
+    store = _graph_before_the_founders_relation()
+    assert FOUNDERS_ROOT not in store.snapshot().cells
+    assert upsert_account(store, "ahmedfargale@gmail.com")[2] == "free", "one founder before the migration"
+    ensure_accounts(store, founder_email="ahmed.fargaly98@gmail.com")
+    snapshot = store.snapshot()
+    assert set(founder_emails(snapshot)) == {"ahmed.fargaly98@gmail.com", "ahmedfargale@gmail.com"}
+    assert founder_email(snapshot) == "ahmed.fargaly98@gmail.com", "the recorded founder is never replaced"
+    tiers = {row["email"]: row["tier"] for row in read_accounts(snapshot)}
+    assert tiers["ahmedfargale@gmail.com"] == "founder"
+    revision = snapshot.revision
+    ensure_accounts(store, founder_email="ahmed.fargaly98@gmail.com")
+    assert store.snapshot().revision == revision, "a repeated sign-in must not rewrite the founders"

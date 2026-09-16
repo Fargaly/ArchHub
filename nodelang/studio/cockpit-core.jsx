@@ -1,8 +1,8 @@
 // cockpit-core.jsx — ARCHHUB FOUNDER COCKPIT · God Mode. (rev2)
-// Shared seed DATA (the actual application databases), persistence, and UI atoms.
+// Persistence and UI atoms. No seed databases: the cockpit draws what the running
+// application pushes, and absent data is drawn as absent.
 // Derives 100% of its palette from window.AH (tokens.jsx) — no hardcoded hexes.
-// Everything here is editable at runtime and persisted to localStorage; the
-// cockpit is the real control surface, not a dashboard for show.
+// The control surface is editable at runtime; what it SHOWS comes from the app.
 
 const CK = window.AH;
 const CKLS = 'archhub.cockpit.v1';
@@ -12,129 +12,18 @@ const ckLoad = () => { try { const s = JSON.parse(localStorage.getItem(CKLS)); i
 const ckSave = (db) => { try { localStorage.setItem(CKLS, JSON.stringify({ ...db, _v: 1 })); } catch (e) {} };
 const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 8);
 
-/* ════════════════ SEED — the application databases ════════════════ */
-// These mirror what the live product would hold. The founder edits these directly.
-
-const SEED_FIRMS = [
-  { id: 'f_habib',  name: 'Habib Studio',      plan: 'Studio', seats: 14, mrr: 1106, region: 'MA·Casablanca', since: '2024-11', health: 'green',  brain: 'br_habib' },
-  { id: 'f_north',  name: 'Northline Arch',    plan: 'Studio', seats: 22, mrr: 1738, region: 'US·Chicago',    since: '2025-01', health: 'green',  brain: 'br_north' },
-  { id: 'f_ksa',    name: 'Riyadh BIM Lab',    plan: 'Pro',    seats: 8,  mrr: 312,  region: 'SA·Riyadh',     since: '2025-03', health: 'amber',  brain: 'br_ksa'   },
-  { id: 'f_solo',   name: 'C. Fournier (solo)',plan: 'Pro',    seats: 1,  mrr: 39,   region: 'FR·Lyon',       since: '2025-02', health: 'green',  brain: 'br_solo'  },
-  { id: 'f_atlas',  name: 'Atlas Engineering', plan: 'Studio', seats: 31, mrr: 2449, region: 'UK·London',     since: '2024-12', health: 'red',    brain: 'br_atlas' },
-  { id: 'f_delta',  name: 'Delta Build Co',    plan: 'Free',   seats: 3,  mrr: 0,    region: 'US·Austin',     since: '2025-04', health: 'green',  brain: 'br_delta' },
-];
-
-const SEED_USERS = [
-  { id: 'u_mh',   name: 'Mehdi Habib',     email: 'mehdi@habib.studio',   role: 'founder', firm: 'f_habib', seat: 'owner',  status: 'active',  last: 'now',     runs: 1284 },
-  { id: 'u_sa',   name: 'Sara Amrani',     email: 'sara@habib.studio',    role: 'admin',  firm: 'f_habib', seat: 'editor', status: 'active',  last: '4m',      runs: 642  },
-  { id: 'u_jd',   name: 'James Dornan',    email: 'james@northline.com',  role: 'admin',  firm: 'f_north', seat: 'owner',  status: 'active',  last: '20m',     runs: 911  },
-  { id: 'u_kp',   name: 'Kavya Pillai',    email: 'kavya@northline.com',  role: 'member', firm: 'f_north', seat: 'editor', status: 'active',  last: '1h',      runs: 388  },
-  { id: 'u_fa',   name: 'Faisal Otaibi',   email: 'faisal@riyadhbim.sa',  role: 'admin',  firm: 'f_ksa',   seat: 'owner',  status: 'active',  last: '3h',      runs: 204  },
-  { id: 'u_cf',   name: 'Claire Fournier', email: 'claire@fournier.fr',   role: 'member', firm: 'f_solo',  seat: 'owner',  status: 'active',  last: 'yesterday', runs: 156 },
-  { id: 'u_ap',   name: 'Adam Price',      email: 'adam@atlas-eng.uk',    role: 'admin',  firm: 'f_atlas', seat: 'owner',  status: 'suspended', last: '2d',    runs: 1502 },
-  { id: 'u_rw',   name: 'Rachel Wong',     email: 'rachel@atlas-eng.uk',  role: 'member', firm: 'f_atlas', seat: 'editor', status: 'active',  last: '5h',      runs: 720  },
-  { id: 'u_dt',   name: 'Diego Torres',    email: 'diego@deltabuild.co',  role: 'member', firm: 'f_delta', seat: 'viewer', status: 'invited', last: '—',       runs: 0    },
-];
-
-const SEED_BRAINS = [
-  { id: 'br_founder', name: 'Founder Brain',     scope: 'global', firm: '—',       memories: 2841, layers: 4, tokens: 18420, sync: 'private-relay', owner: 'u_mh', sees: 'everything' },
-  { id: 'br_habib',   name: 'Habib · Firm Brain',scope: 'firm',  firm: 'f_habib', memories: 412,  layers: 4, tokens: 7210,  sync: 'private-relay', owner: 'u_mh', sees: 'firm' },
-  { id: 'br_north',   name: 'Northline Brain',   scope: 'firm',  firm: 'f_north', memories: 388,  layers: 4, tokens: 6840,  sync: 'private-relay', owner: 'u_jd', sees: 'firm' },
-  { id: 'br_ksa',     name: 'Riyadh Brain',      scope: 'firm',  firm: 'f_ksa',   memories: 96,   layers: 3, tokens: 2010,  sync: 'local-only',    owner: 'u_fa', sees: 'firm' },
-  { id: 'br_solo',    name: 'Fournier Brain',    scope: 'personal', firm: 'f_solo', memories: 41, layers: 2, tokens: 880,   sync: 'local-only',    owner: 'u_cf', sees: 'self' },
-  { id: 'br_atlas',   name: 'Atlas Brain',       scope: 'firm',  firm: 'f_atlas', memories: 503,  layers: 4, tokens: 9120,  sync: 'private-relay', owner: 'u_ap', sees: 'firm' },
-];
-
-const SEED_MODELS = [
-  { id: 'm_sonnet', name: 'Claude Sonnet 4.5', vendor: 'Anthropic', ctx: '200k', inCost: 3.0, outCost: 15.0, latency: 420, status: 'primary',  share: 58, tasks: ['intent','vision','compose'] },
-  { id: 'm_opus',   name: 'Claude Opus 4.1',   vendor: 'Anthropic', ctx: '200k', inCost: 15.0, outCost: 75.0, latency: 980, status: 'enabled',  share: 6,  tasks: ['critique'] },
-  { id: 'm_gpt5',   name: 'GPT-5',             vendor: 'OpenAI',    ctx: '256k', inCost: 5.0, outCost: 20.0, latency: 510, status: 'enabled',  share: 26, tasks: ['fallback','vision'] },
-  { id: 'm_gemini', name: 'Gemini 2.5 Pro',    vendor: 'Google',    ctx: '1M',   inCost: 2.0, outCost: 8.0,  latency: 380, status: 'enabled',  share: 9,  tasks: ['extract'] },
-  { id: 'm_qwen',   name: 'qwen3:32b',         vendor: 'Ollama',    ctx: '32k',  inCost: 0,   outCost: 0,    latency: 980, status: 'local',    share: 1,  tasks: ['offline'] },
-  { id: 'm_mistral',name: 'Mistral Large',     vendor: 'Mistral',   ctx: '128k', inCost: 2.0, outCost: 6.0,  latency: 440, status: 'disabled', share: 0,  tasks: [] },
-];
-
-const SEED_SKILLS = [
-  { id: 's_sketch', name: 'Sketch → Production', author: 'archhub', scope: 'official', installs: 12400, version: '2.1.0', stages: 6, hosts: ['vision','revit','speckle'], status: 'published' },
-  { id: 's_dim',    name: 'Dimension walls',     author: 'archhub', scope: 'official', installs: 18200, version: '1.4.2', stages: 1, hosts: ['revit'],   status: 'published' },
-  { id: 's_doors',  name: 'Doors & windows from plan', author: '@mhabib', scope: 'firm', installs: 89, version: '0.9.0', stages: 2, hosts: ['revit'], status: 'published' },
-  { id: 's_boq',    name: 'BOQ → Excel',         author: '@studio_lk', scope: 'community', installs: 3100, version: '1.1.0', stages: 3, hosts: ['revit','excel'], status: 'review' },
-  { id: 's_layer',  name: 'AutoCAD layer cleanup', author: '@drafter', scope: 'community', installs: 8100, version: '2.0.1', stages: 1, hosts: ['autocad'], status: 'published' },
-  { id: 's_curtain',name: 'Curtain wall optimizer', author: '@panel_co', scope: 'community', installs: 4000, version: '1.2.0', stages: 3, hosts: ['rhino','revit'], status: 'flagged' },
-];
-
-const SEED_CONNECTORS = [
-  { id: 'c_revit',  name: 'Revit 2025',  port: 48884, sessions: 1240, status: 'healthy',  uptime: 99.97, heals7d: 47, p50: 340 },
-  { id: 'c_rhino',  name: 'Rhino 8',     port: 48887, sessions: 612,  status: 'healthy',  uptime: 99.99, heals7d: 12, p50: 210 },
-  { id: 'c_acad',   name: 'AutoCAD 2025',port: 48885, sessions: 880,  status: 'healing',  uptime: 99.71, heals7d: 64, p50: 520 },
-  { id: 'c_speckle',name: 'Speckle',     port: null,  sessions: 430,  status: 'healthy',  uptime: 99.95, heals7d: 3,  p50: 180 },
-  { id: 'c_blender',name: 'Blender 4.2', port: 9876,  sessions: 254,  status: 'degraded', uptime: 98.40, heals7d: 31, p50: 740 },
-  { id: 'c_max',    name: '3ds Max 2025',port: 48886, sessions: 96,   status: 'idle',     uptime: 99.20, heals7d: 8,  p50: 410 },
-];
-
-const SEED_ISSUES = [
-  { id: 'i_481', level: 'error', title: "TypeError: cannot read 'port' of null", where: 'connector/speckle.rebind', count: 142, users: 18, last: '6m', status: 'open',  assignee: null,  release: 'v0.27.0' },
-  { id: 'i_477', level: 'error', title: 'RPC heartbeat timeout (3 retries) — AutoCAD', where: 'heal/watchdog', count: 64, users: 9, last: '21m', status: 'investigating', assignee: 'ag_heal', release: 'v0.27.0' },
-  { id: 'i_469', level: 'warn',  title: 'Skill JSON schema drift on import', where: 'brain/skill.parse', count: 38, users: 12, last: '1h', status: 'open',  assignee: null,  release: 'v0.26.4' },
-  { id: 'i_462', level: 'error', title: 'OOM during 1M-token Gemini vision pass', where: 'model/router', count: 11, users: 3, last: '3h', status: 'open',  assignee: 'ag_router', release: 'v0.27.0' },
-  { id: 'i_455', level: 'info',  title: 'Slow plot: sheet set > 80 sheets', where: 'compose/plot', count: 27, users: 7, last: '5h', status: 'triaged', assignee: null, release: 'v0.26.4' },
-  { id: 'i_440', level: 'warn',  title: 'Private relay cert rotation reminder', where: 'sync/relay', count: 6, users: 6, last: '1d', status: 'resolved', assignee: 'ag_ops', release: 'v0.26.3' },
-];
-
-const SEED_ROADMAP = [
-  // lane: now | next | later | shipped
-  { id: 'r_uikit', lane: 'now',   type: 'feature', title: 'Drag-drop UI builder GA', goal: 'Let firms theme ArchHub without code', effort: 'L', owner: 'ag_ui', votes: 34, progress: 60 },
-  { id: 'r_relay', lane: 'now',   type: 'infra',   title: 'Private relay for Brain sync', goal: 'Brain never touches GitHub', effort: 'M', owner: 'ag_ops', votes: 51, progress: 80 },
-  { id: 'r_heal2', lane: 'next',  type: 'feature', title: 'Self-heal v2 — predictive', goal: 'Reconnect before the drop', effort: 'L', owner: 'ag_heal', votes: 42, progress: 15 },
-  { id: 'r_market',lane: 'next',  type: 'growth',  title: 'Skill marketplace payouts', goal: 'Pay community skill authors', effort: 'M', owner: 'ag_growth', votes: 28, progress: 5 },
-  { id: 'r_mobile',lane: 'later', type: 'feature', title: 'Mobile companion · review on site', goal: 'Approve the line from the field', effort: 'L', owner: null, votes: 19, progress: 0 },
-  { id: 'r_sso',   lane: 'later', type: 'infra',   title: 'Enterprise SSO + audit log', goal: 'Unlock large firms', effort: 'M', owner: null, votes: 23, progress: 0 },
-  { id: 'r_dim',   lane: 'shipped', type: 'feature', title: 'Auto-dimension active view', goal: 'Ship CD faster', effort: 'S', owner: 'ag_compose', votes: 67, progress: 100 },
-];
-
-const SEED_AGENTS = [
-  { id: 'ag_ui',      name: 'UI-Builder Agent', model: 'm_sonnet', task: 'Wire drag-drop builder to live theme tokens', status: 'working', brain: 'br_founder', autonomy: 'propose', queue: 3 },
-  { id: 'ag_ops',     name: 'Ops Agent',        model: 'm_sonnet', task: 'Rotate private-relay certs, watch fleet', status: 'working', brain: 'br_founder', autonomy: 'act', queue: 1 },
-  { id: 'ag_heal',    name: 'Self-Heal Agent',  model: 'm_gemini', task: 'Triage AutoCAD heartbeat timeouts', status: 'working', brain: 'br_founder', autonomy: 'act', queue: 5 },
-  { id: 'ag_router',  name: 'Model-Router Agent',model: 'm_qwen',  task: 'Pick cheapest model per task within SLA', status: 'idle', brain: 'br_founder', autonomy: 'act', queue: 0 },
-  { id: 'ag_growth',  name: 'Growth Agent',     model: 'm_gpt5',   task: 'Draft marketplace payout spec', status: 'paused', brain: 'br_founder', autonomy: 'propose', queue: 2 },
-  { id: 'ag_compose', name: 'Compose Agent',    model: 'm_sonnet', task: 'Idle — last shipped auto-dimension', status: 'idle', brain: 'br_founder', autonomy: 'propose', queue: 0 },
-];
-
-// Live org activity — "see and know what everyone is doing". Streamed in Pulse.
-const SEED_ACTIVITY = [
-  { id: uid('ev'), who: 'u_sa', verb: 'ran skill', what: 'Dimension walls · Tower-A', firm: 'f_habib', t: 2 },
-  { id: uid('ev'), who: 'u_jd', verb: 'edited brain', what: 'added detail-library standard', firm: 'f_north', t: 14 },
-  { id: uid('ev'), who: 'ag_heal', verb: 'healed', what: 'AutoCAD session #2841 · 38ms', firm: 'f_ksa', t: 22 },
-  { id: uid('ev'), who: 'u_fa', verb: 'wired host', what: 'Speckle → riyadh-bim/main', firm: 'f_ksa', t: 48 },
-  { id: uid('ev'), who: 'u_rw', verb: 'published skill', what: 'Curtain wall v1.2', firm: 'f_atlas', t: 90 },
-];
-
-const SEED_METRICS = {
-  mrr: 5644, mrrPrev: 5102, arr: 67728,
-  users: 9, usersPrev: 8, firms: 6,
-  churn: 1.8, churnPrev: 2.4,
-  netNew: 542,
-  modelSpend: 47.82, modelBudget: 200,
-  mrrSeries: [3980, 4210, 4380, 4520, 4690, 4880, 5102, 5240, 5390, 5470, 5560, 5644],
-  usersSeries: [4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9],
-  spendSeries: [3.2, 5.1, 4.8, 8.9, 6.1, 11.4, 8.3, 9.1, 7.2, 10.4, 6.9, 8.0],
-};
-
-const SEED_FLAGS = [
-  { id: 'fl_builder', name: 'ui_builder', desc: 'Drag-drop UI builder', stage: 'beta', rollout: 25, on: true },
-  { id: 'fl_heal2',   name: 'predictive_heal', desc: 'Self-heal v2 predictive reconnect', stage: 'internal', rollout: 5, on: true },
-  { id: 'fl_payouts', name: 'marketplace_payouts', desc: 'Pay skill authors', stage: 'off', rollout: 0, on: false },
-  { id: 'fl_mobile',  name: 'mobile_review', desc: 'Mobile companion review', stage: 'off', rollout: 0, on: false },
-  { id: 'fl_relay',   name: 'private_relay', desc: 'Brain sync via private relay (no GitHub)', stage: 'ga', rollout: 100, on: true },
-];
-
-const SEED_DB = () => ({
-  firms: SEED_FIRMS, users: SEED_USERS, brains: SEED_BRAINS, models: SEED_MODELS,
-  skills: SEED_SKILLS, connectors: SEED_CONNECTORS, issues: SEED_ISSUES,
-  roadmap: SEED_ROADMAP, agents: SEED_AGENTS, activity: SEED_ACTIVITY,
-  metrics: SEED_METRICS, flags: SEED_FLAGS,
-  beat: 1,            // founder-controlled simulation tempo
+/* ════════════════ the cockpit's collections ════════════════ */
+// No seed databases. Every collection starts empty and is filled by what the
+// founder's running application pushes, so a collection nobody has filled draws
+// as absent instead of as invented firms, users or revenue (audit 2026-09-07).
+// ADGR-0003: an operator reads a size per office, never memories, tokens or
+// contents, and no brain is "global" or "sees everything".
+const EMPTY_DB = () => ({
+  firms: [], users: [], brains: [], models: [],
+  skills: [], connectors: [], issues: [],
+  roadmap: [], agents: [], activity: [],
+  metrics: null, flags: [],
+  beat: 1,            // founder-controlled tempo
 });
 
 /* ════════════════ status colour map ════════════════ */
@@ -367,6 +256,6 @@ if (typeof document !== 'undefined' && !document.getElementById('ck-anim')) {
 }
 
 Object.assign(window, {
-  CK, CKLS, ckLoad, ckSave, uid, SEED_DB, sc, STAT,
+  CK, CKLS, ckLoad, ckSave, uid, EMPTY_DB, sc, STAT,
   CKIcon, Btn, IconBtn, Pill, Dot, Avatar, Field, Select, Toggle, Modal, SecHead, Spark, StatCard,
 });

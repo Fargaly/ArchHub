@@ -4,8 +4,19 @@ Identity is an email account -- never a machine. The founder places any
 account in any tier at any time; tiers decide which features an
 installed app opens. Enforcement of paid tiers belongs to the cloud
 account service; this module is the graph record both sides read.
+
+The founders are a relation, not one string: every founder account stands
+in it, and the migration that fills it only ever appends. The offer is one
+record -- what ArchHub is offered as, and whether a price is shown --
+declared once on the founder's instance and read by every surface that
+states it. Callers pass the account a cloud session proved; this module
+checks that account against the founders.
 """
 from __future__ import annotations
+
+import hashlib
+import json
+import re
 
 from .cell_protocols import prepare_append_relation_members, read_relation
 from .universal_cell import NULL_CELL_ID, Cell, InvalidCell
@@ -15,8 +26,22 @@ ACCOUNT_ROLE = ACCOUNTS_ROOT + ":role:account"
 EMAIL_ROLE = ACCOUNTS_ROOT + ":role:email"
 TIER_ROLE = ACCOUNTS_ROOT + ":role:tier"
 FOUNDER_EMAIL_ROOT = ACCOUNTS_ROOT + ":founder-email"
+FOUNDERS_ROOT = ACCOUNTS_ROOT + ":founders"
+FOUNDER_ROLE = ACCOUNTS_ROOT + ":role:founder"
+OFFER_ROOT = ACCOUNTS_ROOT + ":offer"
 
 TIERS = ("free", "pro", "firm", "founder")
+
+# Founder decision 2026-09-15: both of these accounts are the founder.
+FOUNDER_EMAILS = ("ahmed.fargaly98@gmail.com", "ahmedfargale@gmail.com")
+
+# Founder decision 2026-09-15: pricing stays hidden; ArchHub is free during beta.
+BETA_OFFER = {
+    "availability": "free-during-beta",
+    "pricing-visible": "false",
+    "public-label": "Free during beta",
+}
+OFFER_FIELDS = tuple(BETA_OFFER)
 
 
 def _terminal(root_id, value):
@@ -37,15 +62,23 @@ def _normal(email):
     return email
 
 
+def _digest_root(prefix, email):
+    return prefix + hashlib.sha256(email.encode("utf-8")).hexdigest()[:24]
+
+
 def _account_root(email):
-    import hashlib
-    return ACCOUNTS_ROOT + ":account:" + hashlib.sha256(
-        email.encode("utf-8")
-    ).hexdigest()[:24]
+    return _digest_root(ACCOUNTS_ROOT + ":account:", email)
+
+
+def _founder_member_root(email):
+    return _digest_root(FOUNDERS_ROOT + ":member:", email)
 
 
 def ensure_accounts(store, *, founder_email):
-    """The accounts registry, and the founder standing in it as founder."""
+    """The accounts registry, and the founders standing in it as founder.
+
+    This runs on every sign-in, so it never declares the offer.
+    """
     snapshot = store.snapshot()
     create = []
     if ACCOUNTS_ROOT not in snapshot.cells:
@@ -57,13 +90,81 @@ def ensure_accounts(store, *, founder_email):
         ))
     if FOUNDER_EMAIL_ROOT not in snapshot.cells:
         create.append(_terminal(FOUNDER_EMAIL_ROOT, _normal(founder_email)))
+    if FOUNDER_ROLE not in snapshot.cells:
+        create.append(_terminal(FOUNDER_ROLE, "founder"))
+    if FOUNDERS_ROOT not in snapshot.cells:
+        create.append(Cell(FOUNDERS_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"founders"))
     if create:
         store.commit(snapshot.revision, create=tuple(create))
+    recorded = _text(store.snapshot(), FOUNDER_EMAIL_ROOT)
+    _append_founders(store, (recorded, *FOUNDER_EMAILS))
     upsert_account(store, founder_email)
 
 
+def _relation_founders(snapshot):
+    if FOUNDERS_ROOT not in snapshot.cells:
+        return ()
+    return tuple(
+        _text(snapshot, member.participant_id)
+        for member in read_relation(snapshot, FOUNDERS_ROOT, budget=100_000)
+        if member.role_id == FOUNDER_ROLE
+    )
+
+
+def _append_founders(store, emails):
+    """Append-only migration: add missing founders, never replace a member.
+
+    An account a founder opened before being recorded as one is lifted to
+    the founder tier in the same commit.
+    """
+    snapshot = store.snapshot()
+    present = set(_relation_founders(snapshot))
+    missing = [
+        email for email in dict.fromkeys(_normal(value) for value in emails)
+        if email not in present
+    ]
+    if not missing:
+        return
+    create, replace, pairs = [], [], []
+    for email in missing:
+        member = _founder_member_root(email)
+        if member not in snapshot.cells:
+            create.append(_terminal(member, email))
+        pairs.append((FOUNDER_ROLE, member))
+        held = snapshot.cells.get(_account_root(email) + ":tier")
+        if held is not None and bytes(held.atom) != b"founder":
+            replace.append(Cell(held.id, held.link0, held.link1, b"founder"))
+    patch = prepare_append_relation_members(
+        snapshot, FOUNDERS_ROOT, tuple(pairs), budget=100_000
+    )
+    store.commit(
+        snapshot.revision,
+        create=(*create, *patch.create),
+        replace=(*replace, *patch.replace),
+    )
+
+
 def founder_email(snapshot):
+    """The founder account recorded first; kept for existing callers."""
     return _text(snapshot, FOUNDER_EMAIL_ROOT)
+
+
+def founder_emails(snapshot):
+    """Every founder account; empty before the registry exists."""
+    held = list(_relation_founders(snapshot))
+    if FOUNDER_EMAIL_ROOT in snapshot.cells:
+        recorded = _text(snapshot, FOUNDER_EMAIL_ROOT)
+        if recorded not in held:
+            # A graph from before the founders relation holds one founder only.
+            held.insert(0, recorded)
+    return tuple(held)
+
+
+def is_founder(snapshot, email):
+    try:
+        return _normal(email) in founder_emails(snapshot)
+    except InvalidCell:
+        return False
 
 
 def upsert_account(store, email):
@@ -73,7 +174,7 @@ def upsert_account(store, email):
     root = _account_root(email)
     if root in snapshot.cells:
         return root, email, _text(snapshot, root + ":tier")
-    tier = "founder" if email == founder_email(snapshot) else "free"
+    tier = "founder" if is_founder(snapshot, email) else "free"
     create = (
         _terminal(root + ":email", email),
         _terminal(root + ":tier", tier),
@@ -113,11 +214,11 @@ def set_tier(store, email, tier):
     if tier not in TIERS:
         raise InvalidCell("unknown tier %r" % tier)
     snapshot = store.snapshot()
-    if email == founder_email(snapshot):
+    if is_founder(snapshot, email):
         raise InvalidCell("the founder account cannot be re-tiered")
     if tier == "founder":
-        # There is one founder, declared at bootstrap; the tier cannot be
-        # handed to a second account through the tier dial.
+        # The founders are recorded in their relation; the tier cannot be
+        # handed to another account through the tier dial.
         raise InvalidCell("the founder tier is not assignable")
     root = _account_root(email)
     if root not in snapshot.cells:
@@ -129,7 +230,86 @@ def set_tier(store, email, tier):
     return tier
 
 
+def _offer_field_root(field):
+    return OFFER_ROOT + ":" + field
+
+
+def _offer_value(field, value):
+    if field not in OFFER_FIELDS:
+        raise InvalidCell("unknown offer field %r" % field)
+    value = str(value)
+    if field == "availability":
+        if len(value) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value):
+            raise InvalidCell("offer availability must be a short lowercase slug")
+    elif field == "pricing-visible":
+        if value not in ("true", "false"):
+            raise InvalidCell("offer pricing visibility must be true or false")
+    else:
+        value = value.strip()
+        if not value or len(value) > 80 or any(ord(ch) < 32 for ch in value):
+            raise InvalidCell("offer public label must be 1-80 printable characters")
+    return value
+
+
+def declare_offer(store, *, founder_account, offer=None):
+    """Declare the offer once, from a founder account; an existing offer stays."""
+    snapshot = store.snapshot()
+    if not is_founder(snapshot, founder_account):
+        raise InvalidCell("only a founder account can declare the offer")
+    if OFFER_ROOT in snapshot.cells:
+        return read_offer(snapshot)
+    fields = dict(BETA_OFFER if offer is None else offer)
+    if set(fields) != set(OFFER_FIELDS):
+        raise InvalidCell("the offer needs exactly: " + ", ".join(OFFER_FIELDS))
+    create = tuple(
+        _terminal(_offer_field_root(field), _offer_value(field, fields[field]))
+        for field in OFFER_FIELDS
+    ) + (Cell(OFFER_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"offer"),)
+    store.commit(snapshot.revision, create=create)
+    return read_offer(store.snapshot())
+
+
+def read_offer(snapshot):
+    """The declared offer, or None: an undeclared offer is shown as absent."""
+    if OFFER_ROOT not in snapshot.cells:
+        return None
+    return {field: _text(snapshot, _offer_field_root(field)) for field in OFFER_FIELDS}
+
+
+def set_offer_field(store, field, value, *, founder_account):
+    """A founder account changes one offer field."""
+    snapshot = store.snapshot()
+    if not is_founder(snapshot, founder_account):
+        raise InvalidCell("only a founder account can change the offer")
+    if OFFER_ROOT not in snapshot.cells:
+        raise InvalidCell("the offer has not been declared")
+    value = _offer_value(field, value)
+    held = snapshot.cells[_offer_field_root(field)]
+    if bytes(held.atom) != value.encode("utf-8"):
+        store.commit(snapshot.revision, replace=(Cell(
+            held.id, held.link0, held.link1, value.encode("utf-8")
+        ),))
+    return read_offer(store.snapshot())
+
+
+def published_offer(snapshot):
+    """The offer in the one form every published surface reads, or None."""
+    offer = read_offer(snapshot)
+    if offer is None:
+        return None
+    canonical = json.dumps(offer, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {
+        "revision": snapshot.revision,
+        "sha256": hashlib.sha256(canonical).hexdigest(),
+        "availability": offer["availability"],
+        "pricing_visible": offer["pricing-visible"] == "true",
+        "public_label": offer["public-label"],
+    }
+
+
 __all__ = [
-    "ACCOUNTS_ROOT", "TIERS", "ensure_accounts", "founder_email",
-    "read_accounts", "set_tier", "upsert_account",
+    "ACCOUNTS_ROOT", "BETA_OFFER", "FOUNDER_EMAILS", "FOUNDERS_ROOT", "OFFER_FIELDS",
+    "OFFER_ROOT", "TIERS", "declare_offer", "ensure_accounts", "founder_email",
+    "founder_emails", "is_founder", "published_offer", "read_accounts", "read_offer",
+    "set_offer_field", "set_tier", "upsert_account",
 ]

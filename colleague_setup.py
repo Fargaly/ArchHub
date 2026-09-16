@@ -46,7 +46,9 @@ PACKAGES = (
     ("numpy", "numpy"),
     ("psutil", "psutil"),
     ("keyring", "keyring"),
-)
+    ("mcp", "mcp"),
+) + ((("pywin32", "pythoncom"), ("pywin32", "win32com.client"))
+     if sys.platform == "win32" else ())
 
 
 def _has(module):
@@ -160,6 +162,269 @@ def prepare_environment(root: Path, check_only=False):
                           env=clean_environment()).returncode
 
 
+
+# This setup evidence is deliberately separate from runtime broker probes:
+# no listener, COM attachment, host process or assistant session is opened.
+_HOST_SETUP_NAMES = {
+    "revit": "Revit", "autocad": "AutoCAD", "max": "3ds Max",
+    "rhino": "Rhino", "blender": "Blender", "excel": "Excel",
+    "word": "Word", "powerpoint": "PowerPoint", "outlook": "Classic Outlook",
+}
+_HOST_SETUP_EXES = dict(zip(_HOST_SETUP_NAMES, (
+    "Revit.exe", "acad.exe", "3dsmax.exe", "Rhino.exe", "blender.exe",
+    "EXCEL.EXE", "WINWORD.EXE", "POWERPNT.EXE", "OUTLOOK.EXE",
+)))
+
+
+def _setup_app_paths(exe: str) -> list[Path]:
+    """Read only the named executable's Windows App Paths registrations."""
+    if sys.platform != "win32":
+        return []
+    import winreg
+    paths = []
+    key = "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" + exe
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(hive, key, 0, winreg.KEY_READ | view) as handle:
+                    value, kind = winreg.QueryValueEx(handle, "")
+                if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) and isinstance(value, str):
+                    paths.append(Path(os.path.expandvars(value.strip().strip('"'))))
+            except OSError:
+                continue
+    return paths
+
+
+def _setup_children(directory: Path, limit: int = 32) -> list[Path]:
+    """Bounded single-directory inventory; never descend into host projects."""
+    try:
+        with os.scandir(directory) as entries:
+            paths = []
+            for index, entry in enumerate(entries):
+                if index == limit:
+                    break
+                paths.append(Path(entry.path))
+            return paths
+    except OSError:
+        return []
+
+
+def _setup_host_installations() -> dict[str, list[str]]:
+    """Executable file evidence only; custom or unregistered installs may be missed."""
+    found = {host: set() for host in _HOST_SETUP_NAMES}
+    bases = {Path(value) for key in ("ProgramFiles", "ProgramFiles(x86)")
+             if (value := os.environ.get(key))}
+    for host, exe in _HOST_SETUP_EXES.items():
+        candidates = _setup_app_paths(exe)
+        for base in bases:
+            if host in ("revit", "autocad", "max"):
+                candidates.extend(base / "Autodesk" / f"{_HOST_SETUP_NAMES[host]} {year}" / exe
+                                  for year in range(2018, 2036))
+            elif host == "rhino":
+                candidates.extend(base / f"Rhino {version}" / "System" / exe
+                                  for version in range(5, 11))
+            elif host == "blender":
+                candidates.extend(path / exe for path in _setup_children(base / "Blender Foundation"))
+            else:
+                candidates.extend((base / "Microsoft Office" / "root" / "Office16" / exe,
+                                   base / "Microsoft Office" / "Office16" / exe))
+        for path in candidates:
+            try:
+                if not path.is_file():
+                    continue
+            except OSError:
+                continue
+            if host in ("revit", "autocad", "max"):
+                match = re.search(r"(?:Revit|AutoCAD|3ds Max) (20\d{2})(?:[\\/]|$)", str(path), re.I)
+            elif host in ("rhino", "blender"):
+                match = re.search(r"(?:Rhino|Blender) (\d+(?:\.\d+)*)(?:[\\/]|$)", str(path), re.I)
+            else:
+                match = None
+            found[host].add(match.group(1) if match else "version-unchecked")
+    return {host: sorted(versions) for host, versions in found.items()}
+
+
+def _setup_compiler_candidates(root: Path) -> bool:
+    """Find files, never execute a compiler or imply language-version validation."""
+    candidates = [root / "bin" / "csc" / "csc.exe"]
+    if value := os.environ.get("ARCHHUB_CSC_PATH"):
+        candidates.append(Path(value))
+    for key in ("ProgramFiles", "ProgramFiles(x86)"):
+        if not (value := os.environ.get(key)):
+            continue
+        base = Path(value)
+        for edition in ("BuildTools", "Community", "Professional", "Enterprise"):
+            candidates.append(base / "Microsoft Visual Studio" / "2022" / edition
+                              / "MSBuild" / "Current" / "Bin" / "Roslyn" / "csc.exe")
+        candidates.extend(sdk / "Roslyn" / "bincore" / "csc.dll"
+                          for sdk in _setup_children(base / "dotnet" / "sdk"))
+    # A framework csc can exist yet support only C# 5. Its presence remains
+    # unverified here; the existing runtime owner must enforce C# >= 7.3.
+    if value := os.environ.get("WINDIR"):
+        candidates.append(Path(value) / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe")
+    return any(path.is_file() for path in candidates)
+
+
+def host_installation_readiness(root: Path) -> list[dict]:
+    """Passive setup evidence, never permission or a claim of live execution readiness."""
+    installations = _setup_host_installations()
+    compiler = "candidate-unverified" if _setup_compiler_candidates(root) else "compiler-not-found"
+    com_available = sys.platform == "win32" and _has("pythoncom") and _has("win32com.client")
+    rows = [{"host": "Assistant MCP runtime", "version": "",
+             "host_installation": "not-applicable",
+             "packaged": "importable" if _has("mcp") else "dependency-missing",
+             "deployment": "assistant-registration-unchecked", "compiler": "not-applicable",
+             "detail": "MCP import does not establish assistant registration, a session, or graph access."}]
+    scripts = {"rhino": root / "bridges/rhino/archhub_mcp.py",
+               "blender": root / "bridges/blender/archhub_mcp/__init__.py",
+               # installer/build_release.ps1 ships no 3ds Max script; bridges/sources is never payload.
+               "max": None}
+    for host, label in _HOST_SETUP_NAMES.items():
+        for version in installations.get(host) or ["not-detected"]:
+            row = {"host": label, "version": version,
+                   "host_installation": "executable-found" if version != "not-detected" else "not-detected",
+                   "packaged": "not-packaged", "deployment": "unchecked",
+                   "compiler": compiler if host in ("revit", "autocad") else "not-applicable",
+                   "detail": "No host was opened; authentication and host load state are unchecked."}
+            if host in ("revit", "autocad"):
+                names = ("RevitMCP.dll", "RevitMCPCore.dll") if host == "revit" else ("AcadMCP.dll",)
+                payload = root / "bridges" / host / version
+                if all((payload / name).is_file() for name in names):
+                    row["packaged"] = "payload-files-present-unverified"
+                    row["detail"] = "Payload files exist; release closure, matching host registration and compiler compatibility need verification. A host restart may be needed after deployment."
+                else:
+                    row["detail"] = "This build has no connector payload for this detected host version; installing the host alone does not install its ArchHub connector."
+                if host == "revit" and re.fullmatch(r"20\d{2}", version) and os.environ.get("APPDATA"):
+                    manifest = Path(os.environ["APPDATA"]) / "Autodesk/Revit/Addins" / version / "RevitMCP.addin"
+                    if manifest.is_file():
+                        row["deployment"] = "registration-present-unverified"
+                        row["detail"] += " An existing Revit add-in registration was found; its ownership, version and load state were not verified."
+            elif host in scripts:
+                row["packaged"] = ("script-packaged" if scripts[host] is not None and scripts[host].is_file()
+                                   else "not-packaged")
+                row["deployment"] = "activation-unchecked"
+                row["detail"] = ("This build does not package an ArchHub script for this host." if scripts[host] is None
+                                 else "The host must explicitly load the ArchHub script; script presence does not establish activation.")
+                if host == "rhino":
+                    row["detail"] += " The packaged script requires Rhino 8 CPython 3."
+                    if version.isdigit() and int(version) < 8:
+                        row["deployment"] = "unsupported-version"
+                elif host == "blender":
+                    row["detail"] += " The packaged add-on declares Blender 3.6 or newer."
+                    if re.fullmatch(r"\d+(?:\.\d+)*", version) and tuple(map(int, version.split("."))) < (3, 6):
+                        row["deployment"] = "unsupported-version"
+                elif re.fullmatch(r"20\d{2}", version) and os.environ.get("LOCALAPPDATA"):
+                    startup = Path(os.environ["LOCALAPPDATA"]) / "Autodesk/3dsMax" / f"{version} - 64bit" / "ENU/scripts/startup/max_mcp_startup.py"
+                    if startup.is_file():
+                        row["deployment"] = "startup-script-present-unverified"
+                        row["detail"] += " A per-user startup script exists; its contents and host load state are unchecked. A host restart may be needed after deployment."
+            else:
+                row["packaged"] = "COM-dependency-importable" if com_available else "pywin32-missing"
+                row["deployment"] = "built-in-COM-adapter"
+                row["detail"] = "Requires the installed Windows desktop Office application and its configured user profile; no separate listener is installed. COM access and sign-in are unchecked."
+                if host == "outlook":
+                    row["detail"] += " New Outlook uses the separate Microsoft Graph connector and its prerequisite/sign-in check."
+            rows.append(row)
+    return rows
+
+
+def print_host_installation_readiness(root: Path) -> None:
+    print("  external hosts: passive installation evidence; no host or assistant was opened")
+    print("  Detection covers App Paths and bounded standard locations; custom installs may be missed.")
+    try:
+        for row in host_installation_readiness(root):
+            print("  {host} {version}: host={host_installation}; payload={packaged}; deployment={deployment}; compiler={compiler}".format(**row))
+            print("    " + row["detail"])
+    except Exception:  # noqa: BLE001 - evidence only; the ready marker must still be written
+        print("  Host installation evidence is unavailable. External connectors are not verified ready.")
+
+
+def _launcher_state_root() -> Path:
+    # launch_archhub_test.py owns this location; a court holds the two equal.
+    return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR")
+                or Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+
+
+def _assistant_integration(root: Path, identity: str) -> None:
+    """Offer Claude Code registration, record the choice, and say what is true.
+
+    Registration adds one entry to this Windows user's Claude Code MCP list,
+    and only on their yes. It does not start the server, connect a session or
+    prove a host action; the window says so.
+    """
+    import json
+    from nodelang.client_mcp_installation import readiness, register_claude_code
+
+    state = _launcher_state_root()
+    receipt_path = state / "assistant-integration.json"
+    try:
+        previous = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        previous = {}
+    report = readiness(root, state)
+    requested = [argument.split("=", 1)[1] for argument in sys.argv[1:]
+                 if argument.startswith("--assistant=")]
+    choice = "not_asked"
+    if report["claude_code"] == "ready_to_register":
+        if requested:
+            choice = "accepted" if requested[-1] == "claude-code" else "declined"
+        elif type(previous) is dict and previous.get("choice") == "declined":
+            choice = "declined"
+        elif sys.stdin is not None and sys.stdin.isatty():
+            try:
+                answer = input("  Connect ArchHub tools to Claude Code for this Windows user?"
+                               " It adds one entry to your Claude Code MCP list and"
+                               " changes nothing else. [y/N] ")
+            except EOFError:
+                answer = None
+            if answer is not None:
+                choice = "accepted" if answer.strip().lower() in ("y", "yes") else "declined"
+        if choice == "accepted":
+            report = register_claude_code(root, state, consent=True)
+    print("  claude code:", report["claude_code"])
+    if report.get("reason"):
+        suffix = "" if report.get("exit_code") is None else " (exit %d)" % report["exit_code"]
+        print("  reason     : %s%s" % (report["reason"], suffix))
+    if report.get("project_overrides"):
+        print("  override   : %d Claude Code project(s) define their own %s; the user entry"
+              " does not apply in those projects, and nothing was changed there."
+              % (report["project_overrides"], report["server_name"]))
+    if report.get("legacy_migration_needed"):
+        print("  legacy     : %s: migration needed; not an ArchHub connection; left unchanged"
+              % ", ".join(report["legacy_migration_needed"]))
+    print("  claude app :", report["claude_desktop"])
+    if report["claude_code"] == "registered":
+        print("  note       : entry registered only. Open ArchHub, then start Claude Code to"
+              " use it; a project's own .mcp.json can still override it. Setup does not"
+              " verify host actions.")
+    elif report["claude_code"] == "registered_with_project_overrides":
+        print("  note       : entry registered, but not in effect in the projects above."
+              " Setup does not verify host actions.")
+    elif report["claude_code"] == "ready_to_register":
+        print("  later      : \"%s\" -E -s \"%s\" --assistant=claude-code"
+              % (sys.executable, root / "colleague_setup.py"))
+    entry = report.get("entry")
+    receipt = {
+        "schema": "assistant-integration-v1", "build": identity, "client": "claude-code",
+        "choice": choice, "result": report["claude_code"], "server_name": report["server_name"],
+        "entry_sha256": (hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":"))
+                                        .encode("utf-8")).hexdigest() if entry else None),
+        "exit_code": report.get("exit_code"), "project_overrides": report.get("project_overrides", 0),
+        "legacy_migration_needed": list(report.get("legacy_migration_needed") or ()),
+        "host_execution": "not_verified",
+    }
+    state.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".assistant-integration-", dir=state)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(receipt, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, receipt_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main():
     print("ArchHub setup")
     print("  python     :", sys.version.split()[0])
@@ -210,6 +475,7 @@ def main():
             print("  REFUSED: %s installed but cannot be imported." % probe)
             print("  send this window text to Ahmed.")
             return 4
+    print_host_installation_readiness(root)
     try:
         if readiness_identity(root) != identity:
             raise ValueError("installed build changed during setup")
@@ -217,6 +483,12 @@ def main():
     except (OSError, UnicodeError, ValueError):
         print("  REFUSED: setup could not record this build as ready. Run setup again.")
         return 6
+    # Offered once the build is ready. A failure here is one line on this
+    # screen, never an application that does not open.
+    try:
+        _assistant_integration(root, identity)
+    except Exception as exc:  # noqa: BLE001 - the application must still open
+        print("  assistant  : not connected (%s)" % type(exc).__name__)
     # The installer owns the shortcuts (Start menu + Desktop, both opening
     # ArchHub.vbs). Writing a second one here put two different ArchHub
     # entries on the Desktop.

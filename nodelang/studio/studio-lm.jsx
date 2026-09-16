@@ -5262,6 +5262,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
     ['providers',   'Providers',   'keys on this machine'],
     ['models',      'Models',      'Sonnet 4.5'],
     ['theme',       'Theme',       personalTheme?.configuration?.state || window.ArchHubTheme.source],
+    ['baboom',      'BABOOM',      personalTheme?.configuration?.baboom_startup?.value || null],
     ['shortcuts',   'Shortcuts',   null],
     ['storage',     'Storage',     '2.3 GB'],
     ['about',       'About',       'build and updates'],
@@ -5309,6 +5310,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
           {tab === 'providers'   && <SettingsProviders store={store} patch={patch}/>}
           {tab === 'models'      && <SettingsModels/>}
           {tab === 'theme'       && <SettingsTheme store={store} patch={patch}/>}
+          {tab === 'baboom'      && <SettingsBaboom/>}
           {tab === 'shortcuts'   && <SettingsShortcuts/>}
           {tab === 'storage'     && <SettingsStorage/>}
           {tab === 'about'       && <SettingsAbout/>}
@@ -5764,6 +5766,54 @@ const SettingsModels = () => (
     ))}
   </div>
 );
+
+// ── BABOOM: the owner's startup choice, saved in this ArchHub's graph
+const SettingsBaboom = () => {
+  const state = usePersonalTheme(), api = window.ARCHHUB_EXISTING_WORKSHOP;
+  const setting = state?.configuration?.baboom_startup;
+  const [error, setError] = React.useState('');
+  const busy = React.useRef(false);
+  const unreadable = setting?.source === 'unreadable';
+  const on = setting?.value === 'on';
+  const enabled = !!api && setting?.available === true && !unreadable && !state?.pending;
+  const change = async () => {
+    if (!enabled || busy.current) return;
+    busy.current = true;
+    setError('');
+    try { await api.setBaboomStartup(on ? 'off' : 'on'); }
+    catch (failure) { setError(failure.message || 'BABOOM startup could not be changed.'); }
+    finally { busy.current = false; }
+  };
+  const status = !setting ? 'Settings not read' : unreadable ? 'Unreadable' :
+    setting.source === 'default' ? 'Default (on)' :
+    [on ? 'On' : 'Off', setting.source === 'graph' ? 'Saved' : String(setting.source),
+      setting.revision ? 'revision ' + String(setting.revision).slice(-10) : ''].filter(Boolean).join(' · ');
+  return <div>
+    <SHead title="BABOOM" sub="Choose whether BABOOM starts when ArchHub opens."/>
+    <div style={{display:'flex', alignItems:'center', gap:12, padding:12, background:LM.bg,
+      border:'1px solid ' + LM.line, borderRadius:LM.rad.md}}>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{fontSize:13}}>Start BABOOM when ArchHub opens</div>
+        <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:3, letterSpacing:'0.04em'}}>{status}</div>
+      </div>
+      <button type="button" role="switch" aria-checked={on} aria-label="Start BABOOM when ArchHub opens"
+        disabled={!enabled} onClick={change} style={{width:30, height:16, borderRadius:999, padding:1,
+          position:'relative', border:0, background:on ? LM.accent : LM.lineSoft, transition:'background .15s',
+          cursor:enabled ? 'pointer' : 'default', opacity:enabled ? 1 : 0.5}}>
+        <span style={{position:'absolute', top:1, left:on ? 14 : 1, width:14, height:14,
+          borderRadius:'50%', background:'#fff', transition:'left .15s'}}/>
+      </button>
+    </div>
+    {unreadable && <p style={{fontSize:12, color:LM.warn}}>
+      Setting unreadable - BABOOM will not start until this is fixed{setting.error ? ' (' + setting.error + ')' : ''}
+    </p>}
+    {setting && !unreadable && setting.available !== true && <p style={{fontSize:11, color:LM.inkSoft}}>
+      Only the owner of this ArchHub can change this.
+    </p>}
+    <p style={{fontSize:11, color:LM.inkSoft}}>Takes effect next time ArchHub opens.</p>
+    {error && <p role="alert" style={{fontSize:12, color:LM.warn}}>{error}</p>}
+  </div>;
+};
 
 // ── Theme / Shortcuts / Storage / About (lighter, but real)
 const SettingsTheme = () => {

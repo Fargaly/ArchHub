@@ -74,7 +74,7 @@ class Host:
         self.running = False
 
 
-def worker_namespace(monkeypatch, host, *, stop=None, emit=None):
+def worker_namespace(monkeypatch, host, *, stop=None, emit=None, startup=lambda: "on"):
     stop = stop or ImmediateWait()
     prepared, delivered = [], []
 
@@ -89,6 +89,8 @@ def worker_namespace(monkeypatch, host, *, stop=None, emit=None):
         "_keep_attaching", _baboom_stop=stop, _baboom_attachment=owner,
         server=object(), state_dir=Path("unused"), descriptor_path=Path("unused"),
         machine_key_provider=object(),
+        # The persistent startup gate adds these free names to _keep_attaching.
+        _baboom_startup_choice=startup, _baboom_off_reason=None,
     )
     return namespace, stop, prepared, delivered, owner
 
@@ -141,7 +143,7 @@ def test_destroyed_receiver_cleans_undelivered_host(monkeypatch):
 def test_cockpit_uses_late_signed_attachment_without_restarting_relay():
     stop = threading.Event()
     calls = []
-    ns = launcher_names("_cockpit_execute", _baboom_stop=stop, baboom_host=None)
+    ns = launcher_names("_cockpit_execute", _baboom_stop=stop, baboom_host=None, _baboom_off_reason=None)
     execute = ns["_cockpit_execute"]
     with pytest.raises(RuntimeError, match="no action was performed"):
         execute("run chosen task")
@@ -269,3 +271,205 @@ def test_descriptor_restore_failure_is_not_reported_as_clean_shutdown(capsys):
     )
     assert ns["_finish_application_shutdown"]() is False
     assert actions == ["close"] and "descriptor restore" in capsys.readouterr().out
+
+
+# Persistent startup setting: Studio Settings -> graph -> next launch.
+# RED-first: every case below fails on the c6e2689 launcher, which prepares
+# BABOOM unconditionally and defines no _baboom_startup_choice.
+
+OFF_REASON = "BABOOM is turned off in Settings; no action was performed."
+UNREADABLE_REASON = (
+    "BABOOM did not start because its Settings value is unreadable; "
+    "no action was performed."
+)
+
+
+def test_startup_setting_off_prepares_no_host_and_records_why(monkeypatch, capsys):
+    host = Host()
+    ns, stop, prepared, delivered, owner = worker_namespace(
+        monkeypatch, host, startup=lambda: "off"
+    )
+    ns["_keep_attaching"]()
+    out = capsys.readouterr().out
+    assert prepared == [] and delivered == [] and host.connect_calls == 0
+    assert owner.pending_host is None
+    assert stop.waits == [] and not stop.is_set(), "off is not a shutdown"
+    assert ns["_baboom_off_reason"] == OFF_REASON
+    assert out.count("  BABOOM     : off (Settings); not started this launch") == 1
+
+
+def test_startup_setting_on_is_read_before_the_host_is_prepared(monkeypatch):
+    order = []
+
+    def on():
+        order.append("startup")
+        return "on"
+
+    host = Host(lambda _: order.append("connect"))
+    ns, _, prepared, delivered, _ = worker_namespace(monkeypatch, host, startup=on)
+    ns["_keep_attaching"]()
+    assert order == ["startup", "connect"]
+    assert len(prepared) == 1 and delivered == [host]
+    assert ns["_baboom_off_reason"] is None
+
+
+def test_unreadable_startup_setting_fails_closed_before_prepare(monkeypatch, capsys):
+    from nodelang.universal_cell import InvalidCell
+
+    def unreadable():
+        raise InvalidCell("BABOOM startup binding drifted")
+
+    host = Host()
+    ns, stop, prepared, delivered, _ = worker_namespace(
+        monkeypatch, host, startup=unreadable
+    )
+    ns["_keep_attaching"]()
+    out = capsys.readouterr().out
+    assert prepared == [] and delivered == [] and host.connect_calls == 0
+    assert not stop.is_set()
+    assert ns["_baboom_off_reason"] == UNREADABLE_REASON
+    assert "  BABOOM     : not started; startup setting unreadable (InvalidCell)" in out
+
+
+def test_startup_value_outside_on_off_is_unreadable_never_on(monkeypatch, capsys):
+    host = Host()
+    ns, _, prepared, _, _ = worker_namespace(monkeypatch, host, startup=lambda: "enabled")
+    ns["_keep_attaching"]()
+    assert prepared == [] and host.connect_calls == 0
+    assert ns["_baboom_off_reason"] == UNREADABLE_REASON
+    assert "startup setting unreadable (ValueError)" in capsys.readouterr().out
+
+
+def test_cancelled_startup_read_returns_quietly_without_prepare(monkeypatch, capsys):
+    host = Host()
+    ns, _, prepared, delivered, _ = worker_namespace(monkeypatch, host, startup=lambda: None)
+    ns["_keep_attaching"]()
+    assert prepared == [] and delivered == [] and host.connect_calls == 0
+    assert ns["_baboom_off_reason"] is None
+    assert "BABOOM" not in capsys.readouterr().out
+
+
+def startup_choice(monkeypatch, server, stop, reader):
+    monkeypatch.setitem(
+        sys.modules, "nodelang.universal_application",
+        SimpleNamespace(read_universal_baboom_startup=reader),
+    )
+    return launcher_names(
+        "_baboom_startup_choice", server=server, _baboom_stop=stop,
+    )["_baboom_startup_choice"]
+
+
+def test_startup_choice_reads_the_graph_under_the_mutation_lock(monkeypatch):
+    events, snapshot, registry = [], object(), object()
+
+    class Lock:
+        def acquire(self, *args, **kwargs):
+            events.append("acquire")
+            return True
+
+        def release(self):
+            events.append("release")
+
+    def reader(read_snapshot, read_registry):
+        assert read_snapshot is snapshot and read_registry is registry
+        events.append("read")
+        return {"value": "off", "source": "graph"}
+
+    server = SimpleNamespace(
+        mutation_lock=Lock(), universal_registry=registry,
+        universal_store=SimpleNamespace(snapshot=lambda: events.append("snapshot") or snapshot),
+    )
+    choose = startup_choice(monkeypatch, server, threading.Event(), reader)
+    assert choose() == "off"
+    assert events == ["acquire", "snapshot", "read", "release"]
+
+
+def test_startup_choice_releases_the_lock_when_the_setting_is_unreadable(monkeypatch):
+    released = []
+
+    class Lock:
+        def acquire(self, *args, **kwargs):
+            return True
+
+        def release(self):
+            released.append(True)
+
+    def reader(*_):
+        raise ValueError("BABOOM startup value is invalid")
+
+    server = SimpleNamespace(
+        mutation_lock=Lock(), universal_registry=object(),
+        universal_store=SimpleNamespace(snapshot=object),
+    )
+    choose = startup_choice(monkeypatch, server, threading.Event(), reader)
+    with pytest.raises(ValueError, match="value is invalid"):
+        choose()
+    assert released == [True]
+
+
+def test_startup_choice_lock_wait_is_cancellable_and_never_reads(monkeypatch):
+    stop, attempts, released = threading.Event(), [], []
+
+    class Busy:
+        def acquire(self, *args, **kwargs):
+            attempts.append(kwargs.get("timeout", args[1] if len(args) > 1 else None))
+            if len(attempts) == 2:
+                stop.set()
+            return False
+
+        def release(self):
+            released.append(True)
+
+    server = SimpleNamespace(
+        mutation_lock=Busy(), universal_registry=object(),
+        universal_store=SimpleNamespace(snapshot=lambda: pytest.fail("graph read after cancellation")),
+    )
+    choose = startup_choice(
+        monkeypatch, server, stop,
+        lambda *_: pytest.fail("startup setting read after cancellation"),
+    )
+    assert choose() is None
+    assert len(attempts) == 2 and released == []
+    # Bounded waits, so GUI shutdown can always cancel the worker.
+    assert all(isinstance(wait, (int, float)) and 0 < wait <= 0.1 for wait in attempts)
+
+
+def test_startup_choice_cancelled_after_acquire_releases_without_reading(monkeypatch):
+    stop, released = threading.Event(), []
+
+    class Lock:
+        def acquire(self, *args, **kwargs):
+            stop.set()
+            return True
+
+        def release(self):
+            released.append(True)
+
+    server = SimpleNamespace(
+        mutation_lock=Lock(), universal_registry=object(),
+        universal_store=SimpleNamespace(snapshot=lambda: pytest.fail("graph read after cancellation")),
+    )
+    choose = startup_choice(
+        monkeypatch, server, stop,
+        lambda *_: pytest.fail("startup setting read after cancellation"),
+    )
+    assert choose() is None
+    assert released == [True]
+
+
+@pytest.mark.parametrize("reason,named", [
+    (OFF_REASON, "turned off in Settings"),
+    (UNREADABLE_REASON, "Settings value is unreadable"),
+])
+def test_cockpit_execute_names_the_startup_setting_instead_of_retry(reason, named):
+    stop = threading.Event()
+    ns = launcher_names(
+        "_cockpit_execute", _baboom_stop=stop, baboom_host=None, _baboom_off_reason=reason,
+    )
+    with pytest.raises(RuntimeError, match=named) as refused:
+        ns["_cockpit_execute"]("run chosen task")
+    assert "no action was performed" in str(refused.value)
+    assert "Retry when it connects" not in str(refused.value)
+    stop.set()
+    with pytest.raises(RuntimeError, match="closing"):
+        ns["_cockpit_execute"]("another task")

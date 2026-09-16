@@ -822,6 +822,12 @@ _PRESENTATION_FALLBACK_MODE_ROOT = (
     "app:presentation-binding-mode:fallback-when-empty"
 )
 _PRESENTATION_COLOR_CONTRACT_ROOT = "app:presentation-contract:hex-color-v1"
+_BABOOM_STARTUP_CONTRACT_ROOT = "app:contract:baboom-startup:v1"
+_BABOOM_STARTUP_CONTRACT_TEXT = b"BABOOM startup at next launch: on or off"
+_BABOOM_STARTUP_VALUES = ("on", "off")
+_BABOOM_STARTUP_DEFAULT = "on"
+_BABOOM_STARTUP_TOKEN_PREFIX = "baboom-startup-"
+_BABOOM_STARTUP_BINDING_PREFIX = "app:baboom-startup-binding:"
 _DEFAULT_NODE_PRESENTATION_COLOR = "#9b938a"
 _ATTENTION_PRIORITY_SPECS = (
     ("app:attention-priority:safety", "Safety and security"),
@@ -3638,7 +3644,13 @@ _TOPOLOGY_OPERATION_ROOTS = MappingProxyType({
 })
 _APPEARANCE_OPERATION_ROOTS = MappingProxyType({
     name: "app:appearance-operation:%s:v1" % name
-    for name in ("preview", "reset", "theme-preview", "theme-restore")
+    for name in (
+        "preview",
+        "reset",
+        "theme-preview",
+        "theme-restore",
+        "baboom-startup",
+    )
 })
 _PROPERTY_OPERATION_ROOTS = MappingProxyType({
     "batch-edit": "app:property-operation:batch-edit:v1",
@@ -24034,6 +24046,9 @@ def _project_universal_canvas_interpreter(
         ),
         "event_fact_input": _EVENT_FACT_ROOTS["submitted_value"],
     } for name, value in settings_theme.items()]
+    baboom_startup = _project_universal_baboom_startup(
+        snapshot, registry, view_session
+    )
     if previous_projection is None:
         design_token_system = open_archhub_design_token_system(
             snapshot, registry.presentation.theme_roots
@@ -24875,6 +24890,7 @@ def _project_universal_canvas_interpreter(
             "actor": settings_revision.actor_root,
             "theme": settings_theme,
             "theme_fields": settings_theme_fields,
+            "baboom_startup": baboom_startup,
             "design_system": design_system_runtime,
             "history": settings_history,
             "shared_revision": (
@@ -26547,6 +26563,281 @@ def restore_universal_theme_revision(
     )
     _activate_personal_theme_wip(store, registry, view_session)
     return revision_root
+
+
+def _baboom_startup_roots(view_session_root: str) -> tuple[str, str]:
+    """Derive the owner's BABOOM startup asset and binding roots.
+
+    This is the only derivation; the reader and the writer both call it.
+    """
+    token_hex = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        view_session_root + "\0" + _AGENT_BODY_BABOOM_ROOT,
+    ).hex
+    return (
+        "assembly-instance:" + _BABOOM_STARTUP_TOKEN_PREFIX + token_hex,
+        _BABOOM_STARTUP_BINDING_PREFIX + token_hex,
+    )
+
+
+def read_universal_baboom_startup(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+) -> dict[str, object]:
+    """Decode the instance owner's BABOOM startup choice from one snapshot.
+
+    Snapshot-only: no store, no authorization and no writes. The canvas
+    projection and the launcher share this one decoder. No binding reads as
+    the default; a binding that is present but not exact is refused.
+    """
+    owner_root = registry.authorization.subject_root
+    view_session = registry.view_sessions.get(owner_root)
+    if view_session is None:
+        raise InvalidCell("BABOOM startup owner has no provisioned view")
+    asset_root, binding_root = _baboom_startup_roots(view_session.root_id)
+    asset_present = asset_root in snapshot.cells
+    binding_present = binding_root in snapshot.cells
+    if not asset_present and not binding_present:
+        return {
+            "value": _BABOOM_STARTUP_DEFAULT,
+            "source": "default",
+            "revision": None,
+            "actor": None,
+            "asset": None,
+            "binding": None,
+        }
+    if not (asset_present and binding_present):
+        raise InvalidCell("BABOOM startup binding is partial")
+    roles = registry.roles
+    expected_members = {
+        (roles["owner"], _AGENT_BODY_BABOOM_ROOT),
+        (roles["value"], asset_root),
+        (roles["scope"], view_session.root_id),
+        (roles["authority"], owner_root),
+        (roles["contract"], _BABOOM_STARTUP_CONTRACT_ROOT),
+    }
+    members = read_relation(snapshot, binding_root, budget=16)
+    if len(members) != len(expected_members) or {
+        (member.role_id, member.participant_id) for member in members
+    } != expected_members:
+        raise InvalidCell("BABOOM startup binding drifted")
+    expected_contract = Cell(
+        _BABOOM_STARTUP_CONTRACT_ROOT,
+        NULL_CELL_ID,
+        NULL_CELL_ID,
+        _BABOOM_STARTUP_CONTRACT_TEXT,
+    )
+    if (
+        expected_contract.id not in snapshot.cells
+        or snapshot.cells[expected_contract.id] != expected_contract
+    ):
+        raise InvalidCell("BABOOM startup contract drifted")
+    lifecycle = registry.standard_library.lifecycle_protocol
+    instance = read_lifecycle_instance(
+        snapshot, registry.assembly_protocol, lifecycle, asset_root
+    )
+    heads = state_heads(
+        snapshot,
+        lifecycle,
+        instance.state_pointers[lifecycle.states["wip"]],
+    )
+    if len(heads) != 1:
+        raise InvalidCell("BABOOM startup has multiple WIP heads")
+    revision = read_revision(snapshot, lifecycle, heads[0])
+    content = snapshot.cells[revision.content_root]
+    if (
+        content.link0 != NULL_CELL_ID
+        or content.link1 != NULL_CELL_ID
+        or content.atom not in (b"on", b"off")
+    ):
+        raise InvalidCell("BABOOM startup value is invalid")
+    if revision.actor_root != owner_root:
+        raise InvalidCell("BABOOM startup actor drifted")
+    return {
+        "value": content.atom.decode("ascii"),
+        "source": "graph",
+        "revision": heads[0],
+        "actor": revision.actor_root,
+        "asset": asset_root,
+        "binding": binding_root,
+    }
+
+
+def _project_universal_baboom_startup(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+) -> dict[str, object]:
+    """Project the BABOOM startup setting without ever failing the canvas."""
+    try:
+        current = read_universal_baboom_startup(snapshot, registry)
+    except Exception as exc:
+        return {
+            "value": None,
+            "source": "unreadable",
+            "revision": None,
+            "actor": None,
+            "available": False,
+            "control": None,
+            "event_fact_input": None,
+            "effect": "next-launch",
+            "error": type(exc).__name__,
+        }
+    available = (
+        view_session.subject_root == registry.authorization.subject_root
+    )
+    return {
+        "value": current["value"],
+        "source": current["source"],
+        "revision": current["revision"],
+        "actor": current["actor"],
+        "available": available,
+        "control": (
+            _appearance_control_root(
+                view_session.subject_root,
+                _AGENT_BODY_BABOOM_ROOT,
+                _APPEARANCE_OPERATION_ROOTS["baboom-startup"],
+            )
+            if available else None
+        ),
+        "event_fact_input": (
+            _EVENT_FACT_ROOTS["submitted_value"] if available else None
+        ),
+        "effect": "next-launch",
+        "error": None,
+    }
+
+
+def set_universal_baboom_startup(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    value: str,
+    *,
+    base_revision_root: str | None = None,
+    authentication_context: object | None = None,
+) -> str:
+    """Append the instance owner's BABOOM startup choice as a WIP revision.
+
+    The choice takes effect at the next launch. It is not a tracked canvas
+    change: view action history would let canvas undo flip it, so this
+    follows the personal lifecycle path the theme and presentation use.
+    """
+    if value not in _BABOOM_STARTUP_VALUES:
+        raise InvalidCell("BABOOM startup value must be on or off")
+    snapshot = store.snapshot()
+    view_session, context = _view_session_for_context(
+        registry, authentication_context
+    )
+    if view_session.subject_root != registry.authorization.subject_root:
+        raise AuthorizationDenied(
+            "BABOOM startup belongs to the instance owner"
+        )
+    _require_application_authorization(
+        snapshot,
+        registry,
+        "edit",
+        view_session.root_id,
+        authentication_context=context,
+        resource_lineage_roots=(
+            registry.authorization.personal_view_scope_root,
+        ),
+    )
+    actor_root = registry.authorization.broker.resolve(context).subject_root
+    lifecycle = registry.standard_library.lifecycle_protocol
+    current = read_universal_baboom_startup(snapshot, registry)
+    if current["source"] == "graph":
+        if base_revision_root != current["revision"]:
+            raise InvalidCell("BABOOM startup changed; refresh before saving")
+        if value == current["value"]:
+            raise InvalidCell("BABOOM startup is already %s" % value)
+        return append_wip_revision(
+            store,
+            registry.assembly_protocol,
+            lifecycle,
+            str(current["asset"]),
+            content=value.encode("ascii"),
+            actor_root=actor_root,
+            base_revision_root=str(current["revision"]),
+            reason="BABOOM startup setting",
+        )
+    if base_revision_root is not None:
+        raise InvalidCell("BABOOM startup changed; refresh before saving")
+    if value == current["value"]:
+        raise InvalidCell("BABOOM startup is already %s" % value)
+    asset_root, binding_root = _baboom_startup_roots(view_session.root_id)
+    if asset_root in snapshot.cells or binding_root in snapshot.cells:
+        raise InvalidCell("partial BABOOM startup binding exists")
+    definition_root = _versioned_asset_definition_root(
+        store, snapshot, registry
+    )
+    composed = seed_composed_lifecycle_content(
+        snapshot,
+        registry.assembly_protocol,
+        lifecycle,
+        compose_catalog_instance(
+            snapshot,
+            registry.assembly_protocol,
+            registry.standard_library.catalog_root,
+            definition_root,
+            token=asset_root[len("assembly-instance:"):],
+        ),
+        value.encode("ascii"),
+        actor_root=actor_root,
+    )
+    if composed.instance.root_id != asset_root:
+        raise InvalidCell("BABOOM startup asset identity drifted")
+    roles = registry.roles
+    relation = compose_relation_cells((
+        (roles["owner"], _AGENT_BODY_BABOOM_ROOT),
+        (roles["value"], asset_root),
+        (roles["scope"], view_session.root_id),
+        (roles["authority"], actor_root),
+        (roles["contract"], _BABOOM_STARTUP_CONTRACT_ROOT),
+    ), relation_id=binding_root)
+    contract = Cell(
+        _BABOOM_STARTUP_CONTRACT_ROOT,
+        NULL_CELL_ID,
+        NULL_CELL_ID,
+        _BABOOM_STARTUP_CONTRACT_TEXT,
+    )
+    application_members = [
+        (roles["member"], binding_root),
+        (roles["member"], asset_root),
+    ]
+    created_contract: tuple[Cell, ...] = ()
+    if contract.id not in snapshot.cells:
+        created_contract = (contract,)
+        application_members.append((roles["member"], contract.id))
+    elif snapshot.cells[contract.id] != contract:
+        raise InvalidCell("BABOOM startup contract identity drifted")
+    application_patch = prepare_append_relation_members(
+        snapshot,
+        registry.application_root,
+        tuple(application_members),
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision,
+        create=(
+            *created_contract,
+            *composed.cells,
+            *relation.cells,
+            *application_patch.create,
+        ),
+        replace=application_patch.replace,
+    )
+    written = store.snapshot()
+    instance = read_lifecycle_instance(
+        written, registry.assembly_protocol, lifecycle, asset_root
+    )
+    heads = state_heads(
+        written,
+        lifecycle,
+        instance.state_pointers[lifecycle.states["wip"]],
+    )
+    if len(heads) != 1:
+        raise InvalidCell("new BABOOM startup WIP is ambiguous")
+    return heads[0]
 
 
 def promote_universal_theme_to_shared(
@@ -44561,6 +44852,38 @@ def ensure_universal_presentation_interactions(
             ),
             CAPABILITY_TRANSITION,
         ))
+    startup = configuration.get("baboom_startup")
+    if startup is not None:
+        if not isinstance(startup, Mapping):
+            raise InvalidCell(
+                "BABOOM startup interaction projection is invalid"
+            )
+        if startup.get("available") is True:
+            startup_control = startup.get("control")
+            if (
+                subject_root != registry.authorization.subject_root
+                or startup_control != _appearance_control_root(
+                    subject_root,
+                    _AGENT_BODY_BABOOM_ROOT,
+                    _APPEARANCE_OPERATION_ROOTS["baboom-startup"],
+                )
+                or startup.get("event_fact_input") != submitted_spec.root_id
+            ):
+                raise InvalidCell("BABOOM startup interaction control drifted")
+            definitions.append((
+                startup_control,
+                _APPEARANCE_OPERATION_ROOTS["baboom-startup"],
+                events["preview"],
+                _AGENT_BODY_BABOOM_ROOT,
+                (
+                    _APPEARANCE_OPERATION_ROOTS["baboom-startup"],
+                    _AGENT_BODY_BABOOM_ROOT,
+                    submitted_spec.root_id,
+                ),
+                CAPABILITY_EDIT_VALUE,
+            ))
+        elif startup.get("control") is not None:
+            raise InvalidCell("unavailable BABOOM startup exposes a control")
     if len(definitions) != len({item[0] for item in definitions}):
         raise InvalidCell("presentation interaction controls are duplicated")
 
@@ -47526,6 +47849,7 @@ def submit_universal_edit_value_interaction(
     batch_property_candidate = None
     presentation_candidate = None
     theme_candidate = None
+    baboom_startup_candidate = None
     interface_candidate = None
     collection_candidate = None
     value_root = None
@@ -47571,6 +47895,29 @@ def submit_universal_edit_value_interaction(
                 raise InvalidCell("batch property control relation drifted")
             batch_property_candidate = candidate
         value_root = batch_control_root
+    elif (
+        len(inputs) == 3
+        and inputs[0] == _APPEARANCE_OPERATION_ROOTS["baboom-startup"]
+    ):
+        _operation_root, body_root, submitted_spec_root = inputs
+        configuration = projection.get("configuration")
+        startup = (
+            configuration.get("baboom_startup")
+            if isinstance(configuration, Mapping) else None
+        )
+        if not isinstance(startup, Mapping):
+            raise InvalidCell(
+                "BABOOM startup interaction projection is incomplete"
+            )
+        if (
+            body_root == _AGENT_BODY_BABOOM_ROOT
+            and interaction.target_root == body_root
+            and startup.get("available") is True
+            and startup.get("control") == control_root
+            and startup.get("event_fact_input") == submitted_spec_root
+        ):
+            baboom_startup_candidate = startup
+        value_root = body_root
     elif len(inputs) == 3:
         relation_root, value_root, submitted_spec_root = inputs
         projected_properties = projection.get("properties")
@@ -47709,6 +48056,7 @@ def submit_universal_edit_value_interaction(
             theme_candidate,
             interface_candidate,
             collection_candidate,
+            baboom_startup_candidate,
         )) != 1
     ):
         raise InvalidCell("edit-value interaction wiring is invalid")
@@ -47721,7 +48069,19 @@ def submit_universal_edit_value_interaction(
     value = values["submitted_value"]
     if type(value) is not str:
         raise InvalidCell("edit-value interaction value is not text")
-    if theme_candidate is not None:
+    if baboom_startup_candidate is not None:
+        if value not in _BABOOM_STARTUP_VALUES:
+            raise InvalidCell("BABOOM startup value must be on or off")
+        if value == baboom_startup_candidate.get("value"):
+            raise InvalidCell("BABOOM startup is already %s" % value)
+        set_universal_baboom_startup(
+            store,
+            registry,
+            value,
+            base_revision_root=baboom_startup_candidate.get("revision"),
+            authentication_context=context,
+        )
+    elif theme_candidate is not None:
         configuration = projection["configuration"]
         personal_wip_heads = configuration.get("personal_wip_heads")
         if (
@@ -49965,6 +50325,8 @@ __all__ = [
     "ensure_universal_property_interactions",
     "ensure_universal_operational_transition_interactions",
     "ensure_universal_presentation_interactions",
+    "read_universal_baboom_startup",
+    "set_universal_baboom_startup",
     "ensure_universal_interface_value_interactions",
     "ensure_universal_relation_member_interactions",
     "ensure_universal_topology_interactions",

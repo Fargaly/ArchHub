@@ -488,6 +488,7 @@ def _validated_machine_deliberation_response(result):
 _CONFIGURATION_DELTA_FIELDS = (
     "actor",
     "asset",
+    "baboom_startup",
     "binding",
     "binding_mode",
     "can_promote",

@@ -334,6 +334,24 @@ first_boot = not _saved_graph_exists(state_dir, state_path)
 print("  first boot  :", first_boot, flush=True)
 started = time.perf_counter()
 
+# Startup recovery copies the whole graph and history while holding the owner
+# locks. Measured 2026-09-15: 105.4 MiB/s for copy, both quick_checks, hash and
+# fsync, so the 2-second budget covers about 210 MiB. A larger graph is not
+# copied at startup; its recovery is left to the update-close path.
+_STARTUP_BACKUP_MAX_BYTES = 64 * 1024 * 1024
+
+def _startup_backup_bytes(*paths):
+    total = 0
+    for path in paths:
+        if path is None:
+            continue
+        for suffix in ("", "-wal"):
+            try:
+                total += os.stat(str(path) + suffix).st_size
+            except FileNotFoundError:
+                pass
+    return total
+
 def _boot():
     # The boot is sampled while it runs: boot-profile.log beside launcher.log
     # says where the seconds went (the founder's boot reached 694s and nobody
@@ -370,20 +388,26 @@ def _boot_unsampled():
         ),
         **workshop_arguments,
     )
-    try:
-        recovery = server.conversation_content.backup_recovery(state_dir / "backups",
-            authentication_context=server.universal_registry.authorization.session.context(),
-            timeout_seconds=2.0)
-        print("  backup     : checked post-construction recovery saved: " + recovery.name, flush=True)
-    except Exception as refusal:
-        print("  backup     : not completed (%s); existing backups retained" % type(refusal).__name__, flush=True)
-        if isinstance(refusal, TimeoutError):
-            print("  backup     : startup recovery exceeded its 2-second budget; no new recovery was published", flush=True)
-        sqlite_code = getattr(refusal, "sqlite_errorcode", None)
-        if type(sqlite_code) is int:
-            print("  backup     : SQLite error code %d; recovery remains incomplete" % sqlite_code, flush=True)
-        for note in getattr(refusal, "__notes__", ()):
-            print("  backup     : " + note, flush=True)
+    startup_backup_bytes = _startup_backup_bytes(state_path, server.conversation_content._path)
+    if startup_backup_bytes > _STARTUP_BACKUP_MAX_BYTES:
+        print("  backup     : skipped at startup (%.0f MiB exceeds the %d MiB startup limit); "
+              "existing backups retained" % (startup_backup_bytes / 1048576,
+                                             _STARTUP_BACKUP_MAX_BYTES // 1048576), flush=True)
+    else:
+        try:
+            recovery = server.conversation_content.backup_recovery(state_dir / "backups",
+                authentication_context=server.universal_registry.authorization.session.context(),
+                timeout_seconds=2.0)
+            print("  backup     : checked post-construction recovery saved: " + recovery.name, flush=True)
+        except Exception as refusal:
+            print("  backup     : not completed (%s); existing backups retained" % type(refusal).__name__, flush=True)
+            if isinstance(refusal, TimeoutError):
+                print("  backup     : startup recovery exceeded its 2-second budget; no new recovery was published", flush=True)
+            sqlite_code = getattr(refusal, "sqlite_errorcode", None)
+            if type(sqlite_code) is int:
+                print("  backup     : SQLite error code %d; recovery remains incomplete" % sqlite_code, flush=True)
+            for note in getattr(refusal, "__notes__", ()):
+                print("  backup     : " + note, flush=True)
     server._existing_workshop_native_host = ExistingWorkshopNativeHost(server,
         state_dir=state_dir, descriptor_path=descriptor_path, key_provider=machine_key_provider)
     try:
@@ -872,6 +896,7 @@ window.activateWindow()
 baboom_host = None
 baboom_window = None
 _baboom_stop = threading.Event()
+_baboom_off_reason = None
 def _stop_baboom_for_user():
     _baboom_stop.set()
     host = baboom_host or _baboom_attachment.pending_host
@@ -951,7 +976,29 @@ _baboom_attachment = _BaboomAttachment(app)
 app.aboutToQuit.connect(_baboom_stop.set)
 
 
+def _baboom_startup_choice():
+    """Read the owner's BABOOM startup choice from the graph, on the attach worker.
+
+    Returns "on", "off", or None when the launch closes during the lock wait.
+    An undecodable setting raises, and the caller then does not start BABOOM.
+    No session context is used, so an expired owner lease cannot hide BABOOM.
+    """
+    while not server.mutation_lock.acquire(timeout=0.1):
+        if _baboom_stop.is_set():
+            return None
+    try:
+        if _baboom_stop.is_set():
+            return None
+        from nodelang.universal_application import read_universal_baboom_startup
+        return read_universal_baboom_startup(
+            server.universal_store.snapshot(), server.universal_registry
+        )["value"]
+    finally:
+        server.mutation_lock.release()
+
+
 def _keep_attaching():
+    global _baboom_off_reason
     from nodelang.application_machine_transport import MachineTransportError
     from nodelang.baboom_attach import prepare_baboom_host
 
@@ -963,6 +1010,22 @@ def _keep_attaching():
     }
     handed_off = False
     try:
+        # Settings decide this launch before any key file, custody commit or
+        # retry. An unreadable setting fails closed and says so.
+        try:
+            choice = _baboom_startup_choice()
+            if choice not in (None, "on", "off"):
+                raise ValueError("BABOOM startup value must be on or off")
+        except Exception as refusal:
+            _baboom_off_reason = "BABOOM did not start because its Settings value is unreadable; no action was performed."
+            print("  BABOOM     : not started; startup setting unreadable (%s)" % type(refusal).__name__, flush=True)
+            return
+        if choice is None:
+            return
+        if choice == "off":
+            _baboom_off_reason = "BABOOM is turned off in Settings; no action was performed."
+            print("  BABOOM     : off (Settings); not started this launch", flush=True)
+            return
         for attempt in range(40):
             if _baboom_stop.wait(0.0 if attempt == 0 else 15.0):
                 return
@@ -1040,6 +1103,8 @@ def _cockpit_execute(utterance):
         raise RuntimeError("ArchHub is closing; the request was not performed")
     host = baboom_host
     if host is None:
+        if _baboom_off_reason is not None:
+            raise RuntimeError(_baboom_off_reason)
         raise RuntimeError("BABOOM is not attached; no action was performed. Retry when it connects.")
     # Exactly the same signed method used by the companion, never a fallback
     # server mutation or a GUI-bound controller call from the relay worker.

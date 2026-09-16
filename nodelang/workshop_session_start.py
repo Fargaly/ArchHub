@@ -218,6 +218,17 @@ def start_workshop_session(owner, browser, body, *, browser_guard):
         prompt, node, route, expected, user, append, context, guard, response)
 
 
+def _failure_record(exc):
+    """Name a failed turn by code-defined identifiers only; exception and provider text are never saved."""
+    def token(value):
+        if type(value) is str and value.isascii() and value.isidentifier() and len(value) <= 64:
+            return value
+        return "none" if value is None else "unrecognized"
+    return ("The model did not return an admitted reply. Its outcome is not retried automatically."
+            " Failure class: %s; reason code: %s."
+            % (token(type(exc).__name__), token(getattr(exc, "reason_code", None))))
+
+
 def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, route,
                          expected, user, append, context, guard, response):
     from .agent_composer import run_agent_composer, resolve_node_model_route
@@ -276,15 +287,13 @@ def _dispatch_model_turn(owner, browser, conversation, scope, prompt, node, rout
             append(message, ":failure", refs=(node,), reply_to=user["id"])
             return response(user, "failed", reason="provider_rate_limited",
                 message=message, model=route, node=node)
-        append("The model did not return an admitted reply. Its outcome is not retried automatically.",
-            ":failure", refs=(node,), reply_to=user["id"])
+        append(_failure_record(exc), ":failure", refs=(node,), reply_to=user["id"])
         return response(user, "failed", reason="model_reply_unavailable", model=route, node=node)
-    except Exception:
+    except Exception as exc:
         if not dispatched:
             return response(user, "not_sent", reason="preparation_failed", provider_not_called=True,
                 message="The model request could not be prepared. Your prompt is saved.", model=route, node=node)
-        append("The model did not return an admitted reply. Its outcome is not retried automatically.",
-            ":failure", refs=(node,), reply_to=user["id"])
+        append(_failure_record(exc), ":failure", refs=(node,), reply_to=user["id"])
         return response(user, "failed", reason="model_reply_unavailable", model=route, node=node)
 
 

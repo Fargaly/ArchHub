@@ -84,6 +84,7 @@
       if (kind === 'preview' && (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value))) {
         fail('Enter a six-digit hex colour, such as #1177aa.');
       }
+      if (kind === 'baboom-startup' && value !== 'on' && value !== 'off') fail('BABOOM startup must be on or off.');
       const identity = themeCanvas && topologyIdentity(themeCanvas);
       let acceptedRead = false, submitted = false, committed = false;
       themeError = '';
@@ -92,13 +93,21 @@
         if (identity && topologyIdentity(fresh) !== identity) fail('The view changed. Review its Personal Settings before saving.');
         const base = acceptTheme(fresh), config = base.configuration;
         acceptedRead = true;
-        if (config.personal_wip_heads.length !== 1) fail('Personal Settings needs one draft before Save or Restore.');
+        if (kind !== 'baboom-startup' && config.personal_wip_heads.length !== 1) fail('Personal Settings needs one draft before Save or Restore.');
         let control, facts = [];
         if (kind === 'preview') {
           const field = config.theme_fields.find(field => field.key === key);
           if (!field) fail('The selected colour is not declared in Personal Settings.');
           control = field.control;
           facts = [{input:field.event_fact_input, value}];
+        } else if (kind === 'baboom-startup') {
+          const setting = config.baboom_startup;
+          if (!setting || setting.available !== true || !text(setting.control) || !text(setting.event_fact_input)) {
+            fail('BABOOM startup cannot be changed from this view.');
+          }
+          if (setting.value === value) fail('BABOOM startup is already ' + value + '.');
+          control = setting.control;
+          facts = [{input:setting.event_fact_input, value}];
         } else {
           const entry = config.history.find(entry => entry.revision === key && !entry.current && text(entry.restore_control));
           if (!entry) fail('This theme version cannot be restored from the current view.');
@@ -114,6 +123,7 @@
             !Array.isArray(result.control_state?.controls) || !result.control_state.controls.length ||
             !result.configuration_state || !result.interaction_projection ||
             (kind === 'preview' && result.configuration_state.theme?.[key] !== value) ||
+            (kind === 'baboom-startup' && result.configuration_state.baboom_startup?.value !== value) ||
             (kind === 'restore' && result.configuration_state.preview_revision === config.preview_revision)) {
           fail('The theme save needs reconciliation. Refresh Personal Settings before another save.');
         }
@@ -126,12 +136,14 @@
           submitted && !(error.status >= 400 && error.status < 500) ?
             'Save outcome unknown; refresh Personal Settings before saving again.' :
           error.message || 'Personal Settings could not be saved.';
-        if (error.status === 409) {
+        if (error.status === 409 || (kind === 'baboom-startup' && submitted && error.status === 400)) {
           try {
             const refreshed = await get('/api/universal/canvas');
             if (!identity || topologyIdentity(refreshed) === identity) acceptTheme(refreshed);
           } catch (_) {}
-          themeError = 'Personal Settings changed before this save. Review the refreshed theme and save again.';
+          themeError = kind === 'baboom-startup' ?
+            'BABOOM startup was not changed. Review the refreshed setting and try again.' :
+            'Personal Settings changed before this save. Review the refreshed theme and save again.';
         }
         publish();
         throw new Error(themeError);
@@ -803,6 +815,7 @@
       },
       previewThemeToken: (key, value) => changeTheme('preview', key, value),
       restoreThemeRevision: root => changeTheme('restore', root),
+      setBaboomStartup: value => changeTheme('baboom-startup', null, value),
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
       readProviders() {
         if (providerRead) return providerRead;

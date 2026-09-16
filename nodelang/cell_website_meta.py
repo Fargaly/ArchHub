@@ -9,6 +9,9 @@ Every string here goes through the voice rules on the way in, so the site cannot
 say something the product would refuse to say. A changelog entry exists only for
 a RELEASED revision, and a download exists only for a RELEASED artifact. There
 is no default origin -- a canonical link the graph cannot justify is refused.
+
+The application serves the site under /website; the public export puts it at
+the root. A canonical link names the public address, never the in-app one.
 """
 from __future__ import annotations
 
@@ -28,6 +31,8 @@ ARTIFACT_ROLE = META_ROOT + ":role:artifact"
 
 RELEASED = META_ROOT + ":state:released"
 DRAFT = META_ROOT + ":state:draft"
+
+IN_APP_PREFIX = "/website"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +72,17 @@ def ensure_meta(store):
         Cell(META_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"relation"),
     ))
     return META_ROOT
+
+
+def public_path(path):
+    """Where a page lives on the public site: /website is /, /website/x is /x/."""
+    if not path.startswith("/"):
+        raise InvalidCell("a page path must be rooted")
+    if path == IN_APP_PREFIX:
+        return "/"
+    if path.startswith(IN_APP_PREFIX + "/"):
+        path = path[len(IN_APP_PREFIX):]
+    return path if path.endswith("/") else path + "/"
 
 
 def set_origin(store, origin):
@@ -123,20 +139,28 @@ def describe_page(store, *, path, title, description):
     return page_root
 
 
-def page_meta(snapshot, path):
-    """Title, description and canonical, all out of the graph."""
+def page_texts(snapshot, path):
+    """Title and description of a described page; no origin is needed."""
     page_root = "%s:page:%s" % (META_ROOT, path)
     if page_root not in snapshot.cells:
         raise InvalidCell("no page describes itself at %s" % path)
+    return (
+        _text(snapshot, page_root + ":title"),
+        _text(snapshot, page_root + ":description"),
+    )
+
+
+def page_meta(snapshot, path):
+    """Title, description and canonical, all out of the graph.
+
+    The canonical link is the exported root address, so it matches the
+    static site byte for byte rather than the in-app /website route.
+    """
+    title, description = page_texts(snapshot, path)
     if ORIGIN_ROOT not in snapshot.cells:
         raise InvalidCell("no origin is set, so no canonical link can be built")
     origin = _text(snapshot, ORIGIN_ROOT)
-    return PageMeta(
-        path,
-        _text(snapshot, page_root + ":title"),
-        _text(snapshot, page_root + ":description"),
-        origin + path,
-    )
+    return PageMeta(path, title, description, origin + public_path(path))
 
 
 def record_release(store, *, revision, summary, state=RELEASED):

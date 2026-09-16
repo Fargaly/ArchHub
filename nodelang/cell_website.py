@@ -66,7 +66,7 @@ ROLE_NAMES = (
 )
 
 WEBSITE_CSS = r"""
-:root{--bg-deep:#0a0a0d;--bg:#0e0e11;--panel:#15151a;--soft:#1c1c23;--ink:#ece8e0;--ink-soft:#9b938a;--ink-muted:#8b837a;--line:#26262e;--line-soft:#1e1e24;--accent:#d97757;--accent-soft:#3a2018;--accent-hi:#e8896a;--on-fill:#180f08;--ok:#7ec18e;--serif:"Instrument Serif",Georgia,serif;--sans:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace}
+:root{--bg-deep:#0a0a0d;--bg:#0e0e11;--panel:#15151a;--soft:#1c1c23;--ink:#ece8e0;--ink-soft:#9b938a;--ink-muted:#8b837a;--line:#26262e;--line-soft:#1e1e24;--accent:#d97757;--accent-soft:#3a2018;--accent-hi:#e8896a;--on-fill:#180f08;--ok:#7ec18e;--cyan:#5fb3b3;--serif:"Instrument Serif",Georgia,serif;--sans:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.5}a{color:inherit;text-decoration:none}a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .site-shell{min-height:100vh;background:var(--bg)}
 .site-nav{height:64px;padding:0 5vw;display:flex;align-items:center;gap:28px;border-bottom:1px solid var(--line-soft);background:rgba(14,14,17,.82);position:sticky;top:0;z-index:50}
@@ -75,17 +75,21 @@ WEBSITE_CSS = r"""
 .site-nav-link{display:inline-flex;min-height:40px;align-items:center;font-size:13.5px;color:var(--ink-soft);border-bottom:2px solid transparent}.site-nav-link:hover{color:var(--ink)}.site-nav-link[aria-current="page"]{color:var(--ink);border-bottom-color:var(--accent)}
 .site-access{border:1px solid var(--line);border-radius:6px;padding:8px 16px;font-size:13.5px;color:var(--ink)}.site-access:hover{border-color:var(--ink-muted)}
 .site-main{display:block}
+.site-wrap{max-width:1240px;margin:0 auto;padding:0 5vw}
 .site-hero{display:grid;grid-template-columns:minmax(340px,1.15fr) minmax(460px,.95fr);border-bottom:1px solid var(--line-soft);background-image:radial-gradient(var(--line-soft) 1px,transparent 1px);background-size:22px 22px}
 .site-hero-copy{padding:96px 7vw 72px;display:flex;flex-direction:column;justify-content:center}
 .site-kicker{margin:0 0 18px;font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent)}
 .site-title{font-family:var(--serif);font-size:88px;line-height:.9;letter-spacing:-.04em;margin:0;max-width:680px;font-weight:400}
+.site-title-ital{display:block;font-style:italic;color:var(--accent)}
+.site-ital{font-style:italic;color:var(--accent)}
 .site-lede{font-family:var(--serif);font-style:italic;font-size:24px;line-height:1.38;color:var(--ink-soft);max-width:560px;margin:24px 0 0}
-.site-body{font-size:14.5px;line-height:1.65;color:var(--ink-soft);max-width:600px;margin:18px 0 0}
 .site-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.site-actions-center{justify-content:center}
 .site-primary,.site-secondary{display:inline-flex;align-items:center;min-height:44px;padding:0 20px;border-radius:6px;font-size:14.5px;font-weight:500}
 .site-primary{background:var(--accent);color:var(--on-fill);font-weight:600}.site-primary:hover{background:var(--accent-hi)}
 .site-secondary{border:1px solid var(--line);color:var(--ink)}.site-secondary:hover{border-color:var(--ink-muted)}
-.site-release-note{margin-top:28px;padding-left:12px;border-left:2px solid var(--accent);font-family:var(--mono);font-size:11px;line-height:1.6;color:var(--ink-muted);max-width:520px}
+.site-fineprint{margin:18px 0 0;font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--ink-muted)}
+.site-dots>span+span::before{content:"\00B7";margin:0 .6em;color:var(--ink-muted)}
 .site-graph{position:relative;background:var(--bg-deep);padding:88px 5vw 60px;border-left:1px solid var(--line-soft)}
 .site-graph-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:22px}
 .site-graph-label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-muted)}
@@ -95,15 +99,56 @@ WEBSITE_CSS = r"""
 .site-domain-card:nth-child(3n+2){border-top-color:var(--ok)}.site-domain-card:nth-child(3n){border-top-color:var(--ink-muted)}
 .site-domain-kind{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted)}
 .site-domain-title{font-family:var(--serif);font-size:19px;line-height:1.25;margin:16px 0 0;font-weight:400}
-.site-principles{padding:72px 7vw 86px}
-.site-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:30px;margin-bottom:28px}
-.site-section-title{font-family:var(--serif);font-size:44px;line-height:1.05;letter-spacing:-.03em;margin:0;max-width:720px;font-weight:400}
-.site-section-copy{max-width:540px;color:var(--ink-soft);font-size:14.5px;line-height:1.65;margin:0}
-.site-principle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line)}
-.site-principle{min-height:190px;padding:24px 26px 28px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.site-principle:last-child{border-right:0}
-.site-principle-index{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--accent)}
-.site-principle-title{font-family:var(--serif);font-size:26px;letter-spacing:-.02em;margin:30px 0 10px;font-weight:400}
-.site-principle-body{color:var(--ink-soft);font-size:14px;line-height:1.6;margin:0}
+.site-section{padding:88px 0}
+.site-section-title{font-family:var(--serif);font-size:56px;line-height:1;letter-spacing:-.03em;margin:0 0 8px;font-weight:400;max-width:820px}
+.site-dim{display:flex;align-items:center;width:100%;color:var(--ink-muted)}
+.site-dim::before,.site-dim::after{content:"";flex:1;height:1px;background:var(--line)}
+.site-dim-label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;padding:0 12px;white-space:nowrap}
+.site-pillar-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line);margin-top:28px}
+.site-pillar{padding:28px 28px 32px;border-right:1px solid var(--line)}.site-pillar:last-child{border-right:0}
+.site-pillar-index{margin:0;font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-muted)}
+.site-pillar-title{font-family:var(--serif);font-size:30px;letter-spacing:-.02em;margin:22px 0 10px;font-weight:400}
+.site-pillar-body{font-size:14.5px;color:var(--ink-soft);line-height:1.6;margin:0}
+.site-heal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:40px}
+.site-heal-title{font-family:var(--serif);font-size:58px;line-height:1;letter-spacing:-.035em;margin:0 0 14px;font-weight:400;max-width:760px}
+.site-heal-kicker{font-family:var(--serif);font-style:italic;font-size:16px;color:var(--ink-soft);margin:28px 0 0;padding-top:24px;border-top:1px solid var(--line)}
+.site-split{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
+.site-split-title{font-family:var(--serif);font-size:52px;line-height:1.02;letter-spacing:-.03em;margin:0;font-weight:400}
+.site-feat-list{list-style:none;padding:0;margin:24px 0 0}
+.site-feat{display:flex;gap:14px;padding:16px 0;border-top:1px solid var(--line)}
+.site-feat-index{font-family:var(--serif);font-style:italic;font-size:22px;color:var(--accent);min-width:30px}
+.site-feat-title{display:block;font-size:15px;font-weight:600;color:var(--ink);margin-bottom:3px}
+.site-feat-body{font-size:13.5px;color:var(--ink-soft);line-height:1.55}
+.site-chain-card{background:var(--bg-deep);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.site-chain-head{padding:10px 14px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;color:var(--ink-muted)}
+.site-chain{list-style:none;margin:0;padding:18px}
+.site-chain-node{display:flex;align-items:baseline;gap:14px;padding:12px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}.site-chain-node+.site-chain-node{margin-top:10px}
+.site-chain-kind{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);min-width:96px}
+.site-chain-name{font-family:var(--serif);font-size:18px}
+.site-skill{background:var(--bg-deep);border:1px solid var(--line);border-radius:10px;padding:20px 22px;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:var(--ink-soft)}
+.site-skill-line{display:block}.site-skill-line-in{padding-left:1.5em}.site-skill-line-deep{padding-left:3em}
+.site-skill-key{color:var(--cyan)}.site-skill-str{color:var(--ok)}.site-skill-pun{color:var(--ink-muted)}
+.site-skill-note{margin:14px 0 0;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted)}
+.site-boundary-section{background:var(--bg-deep);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:88px 0}
+.site-boundary{display:grid;grid-template-columns:1fr 96px 1fr;align-items:stretch;margin-top:30px}
+.site-boundary-side{padding:22px 24px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.site-boundary-inside{border-color:var(--ok)}
+.site-boundary-tag{margin:0 0 14px;font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--ok)}
+.site-boundary-outside .site-boundary-tag{color:var(--accent)}
+.site-boundary-tag-sync{margin-top:18px;padding-top:14px;border-top:1px dashed var(--line)}
+.site-boundary-list{list-style:none;margin:0;padding:0}
+.site-boundary-item{padding:9px 0;border-top:1px solid var(--line-soft)}.site-boundary-item:first-child{border-top:0}
+.site-boundary-name{display:block;font-size:13.5px;font-weight:500;color:var(--ink)}
+.site-boundary-out .site-boundary-name{color:var(--accent)}
+.site-boundary-detail{display:block;font-family:var(--mono);font-size:10.5px;color:var(--ink-soft);margin-top:3px;line-height:1.5}
+.site-boundary-gap{position:relative;display:grid;place-items:center}
+.site-boundary-wire{position:relative;display:block;width:100%;height:2px;background:linear-gradient(90deg,var(--ok),var(--accent))}
+.site-boundary-label{position:absolute;top:12px;left:50%;transform:translateX(-50%);white-space:nowrap;font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted)}
+.site-boundary-foot{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;padding-top:18px;border-top:1px solid var(--line-soft);font-size:13px;color:var(--ink-soft);line-height:1.6}
+.site-boundary-foot a{color:var(--ink);border-bottom:1px solid var(--accent)}
+.site-closing{padding:120px 0;text-align:center;border-top:1px solid var(--line-soft)}
+.site-closing-title{font-family:var(--serif);font-size:88px;line-height:.95;letter-spacing:-.04em;margin:0 0 10px;font-weight:400}
+.site-closing-copy{font-family:var(--serif);font-style:italic;font-size:22px;color:var(--ink-soft);margin:0 auto 32px;max-width:560px}
 .site-page-main{min-height:calc(100vh - 136px);padding:94px 7vw 100px}
 .site-page-header{max-width:900px}
 .site-page-title{font-family:var(--serif);font-size:56px;line-height:1;letter-spacing:-.035em;margin:0;font-weight:400}
@@ -114,11 +159,14 @@ WEBSITE_CSS = r"""
 .site-card-title{font-family:var(--serif);font-size:23px;margin:32px 0 12px;font-weight:400}
 .site-card-body{color:var(--ink-soft);font-size:14px;line-height:1.65;margin:0}
 .site-card-status{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink-muted)}
-.site-footer{min-height:72px;padding:22px 5vw;display:flex;align-items:center;justify-content:space-between;gap:20px;border-top:1px solid var(--line-soft);background:var(--bg-deep)}
-.site-footer-copy{font-family:var(--mono);font-size:11px;color:var(--ink-muted);letter-spacing:.06em}
-.site-footer-link{font-family:var(--mono);font-size:11px;color:var(--ink-soft);letter-spacing:.06em}.site-footer-link:hover{color:var(--ink)}
-@media(max-width:1100px){.site-hero{grid-template-columns:1fr}.site-graph{border-left:0;border-top:1px solid var(--line-soft)}.site-title{font-size:68px}.site-principle-grid,.site-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.site-nav{height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 14px}.site-nav-links{order:3;width:100%;overflow:auto;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto}.site-hero-copy{padding:72px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:19px}.site-graph{padding:56px 24px 42px}.site-domain-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-principles,.site-page-main{padding:56px 24px 70px}.site-section-head{display:block}.site-section-copy{margin-top:16px}.site-principle-grid,.site-page-grid{grid-template-columns:1fr}.site-principle,.site-page-card{border-right:0}.site-page-title{font-size:40px}.site-footer{flex-direction:column;align-items:flex-start}}
+.site-footer{padding:56px 5vw 64px;border-top:1px solid var(--line-soft);background:var(--bg-deep)}
+.site-foot-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:32px}
+.site-foot-tag{font-family:var(--serif);font-style:italic;font-size:17px;color:var(--ink-soft);max-width:320px;line-height:1.4;margin:14px 0 0}
+.site-foot-head{margin:0 0 12px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted)}
+.site-foot-link{display:block;font-size:13.5px;color:var(--ink-soft);padding:4px 0}.site-foot-link:hover{color:var(--ink)}
+.site-foot-base{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px 20px;margin-top:44px;padding-top:24px;border-top:1px solid var(--line-soft);font-family:var(--mono);font-size:10.5px;color:var(--ink-muted);letter-spacing:.06em;text-transform:uppercase}
+@media(max-width:1100px){.site-hero{grid-template-columns:1fr}.site-graph{border-left:0;border-top:1px solid var(--line-soft)}.site-title{font-size:68px}.site-split,.site-boundary,.site-boundary-foot,.site-foot-grid{grid-template-columns:1fr}.site-boundary-gap{height:60px}.site-boundary-wire{width:2px;height:100%;background:linear-gradient(180deg,var(--ok),var(--accent))}.site-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.site-nav{height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 14px}.site-nav-links{order:3;width:100%;overflow:auto;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto}.site-hero-copy{padding:72px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:19px}.site-graph{padding:56px 24px 42px}.site-domain-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-section{padding:56px 0}.site-section-title,.site-heal-title,.site-split-title{font-size:38px}.site-pillar-grid{grid-template-columns:1fr}.site-pillar{border-right:0;border-bottom:1px solid var(--line)}.site-heal{padding:24px}.site-closing{padding:72px 0}.site-closing-title{font-size:48px}.site-page-main{padding:56px 24px 70px}.site-page-grid{grid-template-columns:1fr}.site-page-card{border-right:0}.site-page-title{font-size:40px}.site-footer{padding:40px 24px 48px}}
 """
 
 _UNSAFE_CSS = ("</style", "@import", "url(", "expression(", "javascript:")
@@ -259,6 +307,12 @@ def _domain_property_value_root(
 
 OFFER_DEFAULT_DISPLAY = "Free during beta"
 
+PRIVACY_SENTENCE = (
+    "When cloud sync is on, ArchHub keeps a copy of your brain on our servers "
+    "so it can reach your other devices and your firm. That copy is not "
+    "end-to-end encrypted, and ArchHub's systems can read it."
+)
+
 
 def offer_display_text(offer):
     """The one public price sentence, taken from the cockpit-owned offer."""
@@ -311,7 +365,7 @@ def _page_specs(offer_display=OFFER_DEFAULT_DISPLAY):
                 ("01", "Default deny", "Unknown routes, adapters, actions, policies, audiences, classifications, and malformed graph relations fail closed.", "LOCAL GATES ACTIVE"),
                 ("02", "Keys stay outside ordinary Cells", "The graph stores public descriptors, policy, and evidence while private signing bytes remain in admitted operating-system or cloud custody.", "LOCAL CNG AND TPM-PROVIDER COURTS"),
                 ("03", "Release boundaries remain honest", "Hardware attestation, production cloud KMS, independent witnesses, monitoring, and external security review are not yet release-green.", "EXTERNAL COURTS OPEN"),
-                ("04", "What cloud sync holds", "When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it can reach your other devices and your firm. That copy is not end-to-end encrypted, and ArchHub's systems can read it. Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.", "CLOUD SYNC IS OPT-IN"),
+                ("04", "What cloud sync holds", PRIVACY_SENTENCE + " Recognised API-key formats are blocked from upload. Deleting your cloud brain removes your personal copy; entries you shared with a firm are not removed.", "CLOUD SYNC IS OPT-IN"),
             ),
         ),
         "/website/community": (
@@ -387,14 +441,16 @@ def build_universal_website(
         ("Community", "/website/community"),
     )
 
-    def navigation(path: str, token: str) -> str:
-        brand = element(
+    def brand() -> str:
+        return element(
             "a", "site-brand", attrs={"href": "/website"},
             children=(
                 element("span", text="Arch"),
                 element("span", "site-brand-mark", text="Hub"),
             ),
         )
+
+    def navigation(path: str, token: str) -> str:
         links = []
         for index, (label, href) in enumerate(nav_labels):
             attributes = {"href": href}
@@ -413,52 +469,119 @@ def build_universal_website(
         )
         return element(
             "nav", "site-nav", attrs={"aria-label": "Primary"},
-            children=(brand, nav_list, access),
+            children=(brand(), nav_list, access),
             root_id="app:website:nav:%s" % token,
         )
 
+    def link(class_name: str, text: str, href: str) -> str:
+        return element("a", class_name, text=text, attrs={"href": href})
+
+    def dots(tag: str, class_name: str, parts) -> str:
+        """One mono line whose parts the stylesheet separates with a dot."""
+        return element(
+            tag, class_name + " site-dots",
+            children=tuple(element("span", text=part) for part in parts),
+        )
+
+    def accent_line(tag: str, class_name: str, parts, accent_class="site-ital") -> str:
+        """A heading whose accented words the design sets in italic."""
+        return element(
+            tag, class_name,
+            children=tuple(
+                element("span", accent_class if accent else "", text=part)
+                for part, accent in parts
+            ),
+        )
+
+    def divider(parts) -> str:
+        return element("div", "site-wrap", children=(
+            element("div", "site-dim", children=(
+                dots("span", "site-dim-label", parts),
+            )),
+        ))
+
+    def feature_list(items) -> str:
+        return element("ul", "site-feat-list", children=tuple(
+            element("li", "site-feat", children=(
+                element("span", "site-feat-index", text=index),
+                element("div", children=(
+                    element("strong", "site-feat-title", text=title),
+                    element("span", "site-feat-body", text=body),
+                )),
+            ))
+            for index, title, body in items
+        ))
+
+    def boundary_rows(rows, item_class="site-boundary-item") -> str:
+        return element("ul", "site-boundary-list", children=tuple(
+            element("li", item_class, children=(
+                element("strong", "site-boundary-name", text=name),
+                element("span", "site-boundary-detail", text=detail),
+            ))
+            for name, detail in rows
+        ))
+
+    def footer_column(heading: str, links) -> str:
+        return element("div", children=(
+            element("p", "site-foot-head", text=heading),
+            *(link("site-foot-link", label, href) for label, href in links),
+        ))
+
     footer = element(
         "footer", "site-footer", children=(
-            element("span", "site-footer-copy", text="ArchHub is in governed WIP."),
-            element(
-                "a", "site-footer-link", text="Security and release status",
-                attrs={"href": "/website/security"},
-            ),
+            element("div", "site-wrap", children=(
+                element("div", "site-foot-grid", children=(
+                    element("div", children=(
+                        brand(),
+                        element("p", "site-foot-tag", text="A drafting table for AI."),
+                    )),
+                    footer_column("Product", (
+                        ("Features", "/website/features"),
+                        ("Pricing", "/website/pricing"),
+                        ("Changelog", "/website/changelog"),
+                    )),
+                    footer_column("Company", (
+                        ("Security", "/website/security"),
+                        ("Community", "/website/community"),
+                        ("Sign in", "/website/signin"),
+                    )),
+                )),
+                element("div", "site-foot-base", children=(
+                    element("span", text="ArchHub is in beta"),
+                    element("span", text="Drafted, not generated"),
+                )),
+            )),
         ),
         root_id="app:website:footer",
     )
 
-    home_title = scalar("app:website:text:home:title", "ArchHub")
+    home_title = scalar("app:website:text:home:title", "Drafted, not generated.")
     route_title_roots["/website"] = home_title
     route_path_roots["/website"] = scalar(
         "app:website:path:home", "/website"
     )
+    offer_root = scalar("app:website:text:offer:display", offer_display)
     home_nav = navigation("/website", "home")
     hero_copy = element("div", "site-hero-copy", children=(
-        element("p", "site-kicker", text="One persistent operating graph"),
-        element("h1", "site-title", text_root=home_title),
-        element(
-            "p", "site-lede",
-            text="A visual graph computer for designing, governing, and operating the built environment.",
-        ),
-        element(
-            "p", "site-body",
-            text="Data, geometry, decisions, interfaces, AI work, governance, and delivery remain connected through universal Cells and explicit relation-nodes instead of separate opaque tools.",
-        ),
-        element("div", "site-actions", children=(
-            element(
-                "a", "site-primary", text="See how it works",
-                attrs={"href": "/website/features"},
-            ),
-            element(
-                "a", "site-secondary", text="Read the security status",
-                attrs={"href": "/website/security"},
-            ),
+        element("p", "site-kicker", text="Graph-first AI workspace for AEC"),
+        element("h1", "site-title", children=(
+            element("span", text="Drafted, "),
+            element("span", "site-title-ital", text="not generated."),
         )),
         element(
-            "p", "site-release-note",
-            text="Current state: governed work in progress. Public release and account access are not active.",
+            "p", "site-lede",
+            text="One canvas wires every tool you already use: Revit, Rhino, Speckle, Excel. The AI edits the graph; you approve the line. Your work stays local. Your knowledge stays yours.",
         ),
+        element("div", "site-actions", children=(
+            link("site-primary", "Sign in", "/website/signin"),
+            link("site-secondary", "See how it works", "/website/features"),
+        )),
+        element("p", "site-fineprint site-dots", children=(
+            element("span", text_root=offer_root),
+            element("span", text="bring your own key"),
+            element("span", text="no credit card"),
+            element("span", text="Windows"),
+        )),
     ))
 
     domain_cards: dict[str, str] = {}
@@ -478,11 +601,11 @@ def build_universal_website(
         domain_cards[key] = card_root
         card_roots.append(card)
     graph_panel = element(
-        "section", "site-graph", attrs={"aria-label": "Connected product domains"},
+        "section", "site-graph", attrs={"aria-label": "Grand Map domains"},
         children=(
             element("div", "site-graph-head", children=(
-                element("span", "site-graph-label", text="The application composition"),
-                element("span", "site-graph-state", text="Same roots / different lens"),
+                element("span", "site-graph-label", text="The Grand Map"),
+                element("span", "site-graph-state", text="Every domain is a node"),
             )),
             element("div", "site-domain-grid", children=card_roots),
         ),
@@ -492,28 +615,241 @@ def build_universal_website(
         "section", "site-hero", children=(hero_copy, graph_panel),
         root_id="app:website:hero",
     )
-    principles = element(
-        "section", "site-principles", children=(
-            element("div", "site-section-head", children=(
-                element("h2", "site-section-title", text="Simple physical floor. Visible power above it."),
-                element("p", "site-section-copy", text="The user works with understandable assemblies. Govern and Floor reveal deeper authority and mechanics only when needed."),
-            )),
-            element("div", "site-principle-grid", children=tuple(
-                element("article", "site-principle", children=(
-                    element("span", "site-principle-index", text=index),
-                    element("h3", "site-principle-title", text=title),
-                    element("p", "site-principle-body", text=body),
-                ))
-                for index, title, body in (
-                    ("01", "Everything has identity", "Properties, rules, wires, sessions, interfaces, and presentations remain addressable graph compositions."),
-                    ("02", "Every connection is explicit", "Relations carry participants, gates, transforms, lifecycle, security, and evidence instead of magical coupling."),
-                    ("03", "Every change is recoverable", "History, WIP, review, publication, effects, reconciliation, and undo remain separate and traceable."),
-                )
+
+    pillars = element(
+        "section", "site-section", children=(
+            element("div", "site-wrap", children=(
+                element("p", "site-kicker", text="The three pillars"),
+                accent_line("h2", "site-section-title", (
+                    ("Canvas. Composer. ", False), ("Brain.", True),
+                )),
+                element(
+                    "p", "site-lede",
+                    text="The whole product is three ideas, and not one of them is a chat box.",
+                ),
+                element("div", "site-pillar-grid", children=tuple(
+                    element("article", "site-pillar", children=(
+                        dots("p", "site-pillar-index", (index, role)),
+                        element("h3", "site-pillar-title", text=title),
+                        element("p", "site-pillar-body", text=body),
+                    ))
+                    for index, role, title, body in (
+                        ("01", "The surface", "Canvas", "Every action is a node; every node is replayable. Drag a parameter and the chain downstream re-runs. Nothing happens that you can't see, trace, or undo."),
+                        ("02", "The hand", "Composer", "Talk to the project. The AI proposes edits to the graph; you approve the line before it's drawn. Set out, don't ask out: review is the default, not an afterthought."),
+                        ("03", "The memory", "Brain", "Persistent memory and reusable skills that grow with your firm. Save any thread as a skill: a graph-held assembly you own, with the work it was learned from and the evidence that earned it. No marketplace lock-in."),
+                    )
+                )),
             )),
         ),
+        root_id="app:website:pillars",
     )
+
+    self_heal = element(
+        "section", "site-section", children=(
+            element("div", "site-wrap", children=(
+                element("div", "site-heal", children=(
+                    element("p", "site-kicker", text="Self-healing connectors"),
+                    accent_line("h2", "site-heal-title", (
+                        ("Your CAD ", False), ("tells us", True),
+                        (" when it breaks. We listen.", False),
+                    )),
+                    element(
+                        "p", "site-lede",
+                        text='No restarts. No "please relaunch Revit." The connector watches the host, reconnects on its own, and tells you what it did.',
+                    ),
+                    element(
+                        "p", "site-heal-kicker",
+                        text="You didn't notice. That's the point.",
+                    ),
+                )),
+            )),
+        ),
+        root_id="app:website:self-heal",
+    )
+
+    graph_split = element(
+        "section", "site-section", children=(
+            element("div", "site-wrap", children=(
+                element("div", "site-split", children=(
+                    element("div", children=(
+                        element("p", "site-kicker", text="The canvas"),
+                        accent_line("h2", "site-split-title", (
+                            ("A graph you can ", False), ("audit", True),
+                            (", not a transcript you have to trust.", False),
+                        )),
+                        feature_list((
+                            ("01", "Replayable by construction", "Re-run any node from any upstream state. The same inputs always draw the same line."),
+                            ("02", "Parametric, not one-shot", "Every chat turn becomes a parameter. Nudge a slider; the chain re-runs from that node down."),
+                            ("03", "Auditable wires", "Every connection is typed and logged. Hover any wire to see exactly what passed through it."),
+                        )),
+                    )),
+                    element(
+                        "aside", "site-chain-card",
+                        attrs={"aria-label": "A chain of nodes"},
+                        children=(
+                            element("div", "site-chain-head", text="sketch to sheet set, as nodes"),
+                            element("ul", "site-chain", children=tuple(
+                                element("li", "site-chain-node", children=(
+                                    element("span", "site-chain-kind", text=kind),
+                                    element("span", "site-chain-name", text=name),
+                                ))
+                                for kind, name in (
+                                    ("Read", "sketch.png"),
+                                    ("AI", "Extract floors"),
+                                    ("Transform", "Build walls"),
+                                    ("Compose", "Door schedule"),
+                                    ("Output", "Plot sheet set"),
+                                )
+                            )),
+                        ),
+                    ),
+                )),
+            )),
+        ),
+        root_id="app:website:graph-split",
+    )
+
+    skill_lines = (
+        ("", (("pun", "{"),)),
+        ("in", (("key", '"name"'), ("pun", ": "), ("str", '"Sketch to production"'), ("pun", ","))),
+        ("in", (("key", '"purpose"'), ("pun", ": "), ("str", '"sketch to sheet set"'), ("pun", ","))),
+        ("in", (("key", '"steps"'), ("pun", ": ["), ("str", '"read"'), ("pun", ", "), ("str", '"extract"'), ("pun", ", "), ("str", '"build"'), ("pun", ","))),
+        ("deep", (("str", '"dimension"'), ("pun", ", "), ("str", '"schedule"'), ("pun", ", "), ("str", '"plot"'), ("pun", "],"))),
+        ("in", (("key", '"learned_from"'), ("pun", ": "), ("str", '"Tower-A, issue 04"'), ("pun", ","))),
+        ("in", (("key", '"released"'), ("pun", ": "), ("str", "true"))),
+        ("", (("pun", "}"),)),
+    )
+    skill_card = element("div", "site-skill", children=tuple(
+        element(
+            "span",
+            "site-skill-line" if not indent else "site-skill-line site-skill-line-" + indent,
+            children=tuple(
+                element("span", "site-skill-" + kind, text=text)
+                for kind, text in tokens
+            ),
+        )
+        for indent, tokens in skill_lines
+    ))
+    brain_split = element(
+        "section", "site-section", children=(
+            element("div", "site-wrap", children=(
+                element("div", "site-split", children=(
+                    element("div", children=(
+                        skill_card,
+                        dots("p", "site-skill-note", (
+                            "Held in your brain", "Purpose, work and evidence",
+                            "Recall is by purpose, out of the graph",
+                        )),
+                    )),
+                    element("div", children=(
+                        element("p", "site-kicker", text="The brain"),
+                        accent_line("h2", "site-split-title", (
+                            ("Memory that grows with the ", False), ("firm", True),
+                            (", not the vendor.", False),
+                        )),
+                        feature_list((
+                            ("01", "Skills you own", "Save any thread as a skill. Each one carries its purpose, the work it was learned from and the evidence that earned it; a skill without evidence is never promoted."),
+                            ("02", "Persistent across projects", "The Brain remembers your standards, from sheet naming to dim styles to detail libraries, and reuses them on the next tower."),
+                            ("03", "No marketplace lock-in", "Recall comes out of your own graph, not a marketplace. There is no index and no cache in between: the brain that holds a skill is the brain that recalls it."),
+                        )),
+                    )),
+                )),
+            )),
+        ),
+        root_id="app:website:brain-split",
+    )
+
+    boundary = element(
+        "section", "site-boundary-section", children=(
+            element("div", "site-wrap", children=(
+                element("p", "site-kicker", text="Local-first by default"),
+                accent_line("h2", "site-section-title", (
+                    ("Your work happens here. ", False),
+                    ("Your knowledge stays yours.", True),
+                )),
+                element(
+                    "p", "site-lede",
+                    text="What stays on your machine, and what crosses when a node asks or when you turn cloud sync on.",
+                ),
+                element("div", "site-boundary", children=(
+                    element("div", "site-boundary-side site-boundary-inside", children=(
+                        element("p", "site-boundary-tag", text="Inside your machine"),
+                        boundary_rows((
+                            ("The canvas", "sessions, nodes and wires"),
+                            ("The brain", "your memory and skills, on this machine"),
+                            ("Your drawings", "read in place by the connector"),
+                            ("Provider keys", "the graph holds where a key lives, never the key; anything that looks like a credential is refused"),
+                            ("Skills", "purpose, work and evidence you can read, diff and delete"),
+                        )),
+                    )),
+                    element(
+                        "div", "site-boundary-gap", attrs={"aria-hidden": "true"},
+                        children=(
+                            element("span", "site-boundary-wire", children=(
+                                element("span", "site-boundary-label", text="the crossings"),
+                            )),
+                        ),
+                    ),
+                    element("div", "site-boundary-side site-boundary-outside", children=(
+                        element("p", "site-boundary-tag", text="Leaves, when a node asks"),
+                        boundary_rows((
+                            ("One model call", "the prompt that node built, to your provider on your key"),
+                        ), "site-boundary-item site-boundary-out"),
+                        element(
+                            "p", "site-boundary-tag site-boundary-tag-sync",
+                            text="Leaves, when cloud sync is on",
+                        ),
+                        boundary_rows((("Your brain", PRIVACY_SENTENCE),)),
+                    )),
+                )),
+                element("div", "site-boundary-foot", children=(
+                    element(
+                        "span",
+                        text="If you can't read what a node does, it doesn't belong on your canvas.",
+                    ),
+                    element("span", children=(
+                        element("span", text="Your provider invoices you directly for model calls. "),
+                        link("", "Read the security page", "/website/security"),
+                    )),
+                )),
+            )),
+        ),
+        root_id="app:website:boundary",
+    )
+
+    closing = element(
+        "section", "site-closing", children=(
+            element("div", "site-wrap", children=(
+                element("p", "site-kicker", text="Plotted on Friday, not promised"),
+                accent_line("h2", "site-closing-title", (
+                    ("Sit down at the ", False), ("drafting table.", True),
+                ), accent_class="site-title-ital"),
+                element(
+                    "p", "site-closing-copy",
+                    text="Open the canvas. Wire your first host. Read every sentence aloud to a senior architect; if they nod, you're home.",
+                ),
+                element("div", "site-actions site-actions-center", children=(
+                    link("site-primary", "Sign in", "/website/signin"),
+                    link("site-secondary", "Read the changelog", "/website/changelog"),
+                )),
+            )),
+        ),
+        root_id="app:website:closing",
+    )
+
     home_main = element(
-        "main", "site-main", children=(complete_hero, principles),
+        "main", "site-main", children=(
+            complete_hero,
+            pillars,
+            divider(("Self-healing connectors",)),
+            self_heal,
+            divider(("Every step is a node",)),
+            graph_split,
+            divider(("The brain", "Skills you own")),
+            brain_split,
+            boundary,
+            closing,
+        ),
         root_id="app:website:main:home",
     )
     page_roots: dict[str, str] = {
@@ -910,6 +1246,7 @@ def project_universal_website_document(
 
 __all__ = [
     "OFFER_DEFAULT_DISPLAY",
+    "PRIVACY_SENTENCE",
     "PUBLIC_WEBSITE_ROUTES",
     "UniversalWebsiteBuild",
     "WebsiteDomainBinding",

@@ -4,21 +4,37 @@ The exporter is a read-only release boundary over the same website, route,
 CloudRoute, UI, and stylesheet Cells served by the application.  It refuses
 unsafe graph state; it does not sanitize a second website implementation into
 looking public.
+
+The application keeps serving the site under /website.  Root paths exist only
+in the export output.  The --offer file is the canonical offer record of
+app:users:accounts:offer as nodelang/cell_accounts.py publishes it (each
+field passing cell_accounts._offer_value unchanged): a JSON object
+{"availability", "pricing-visible", "public-label"}.  The exporter
+recomputes the sha256 of its canonical bytes the way
+cell_accounts.published_offer does, refuses unless it equals --offer-sha256,
+and maps the record to the website offer {"display": public-label,
+"monetary": pricing-visible == "true"} for cell_website.offer_display_text.
+404.html is the one page typed here, not projected from the graph.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import re
+import shutil
 from pathlib import Path
 
+from .cell_accounts import OFFER_FIELDS, _offer_value
 from .cell_protocols import read_relation
 from .cell_website import (
     PUBLIC_WEBSITE_ROUTES,
+    offer_display_text,
     project_universal_website_document,
     read_universal_website,
 )
+from .cell_website_meta import META_ROOT, ORIGIN_ROOT, page_texts, public_path
 from .universal_cell import NULL_CELL_ID, InvalidCell
 
 
@@ -45,101 +61,25 @@ _PRIVATE_PATTERNS = (
      "private runtime authority"),
 )
 
-PACKAGE_JSON = """{
-  "name": "archhub-node-native-public-site",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "node build.mjs"
-  }
-}
-"""
+_ORIGIN = re.compile(
+    r"(?i)https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::[0-9]{1,5})?"
+)
+_WEBSITE_HREF = re.compile(r'href="/website(?:/[A-Za-z0-9-]+)?"')
+_LEDE = re.compile(r'<p class="site-(?:page-)?lede">(.*?)</p>', re.DOTALL)
+_TAG = re.compile(r"<[^>]+>")
 
-HOSTING_JSON = """{
-  "d1": null,
-  "r2": null
-}
-"""
-
-WRANGLER_JSON = """{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "archhub-node-native-public-site",
-  "compatibility_date": "2026-07-13",
-  "main": "./dist/server/index.js",
-  "assets": {
-    "directory": "./dist/client",
-    "binding": "ASSETS",
-    "html_handling": "auto-trailing-slash",
-    "not_found_handling": "404-page"
-  }
-}
-"""
-
-BUILD_MJS = r"""import { createHash } from "node:crypto";
-import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
-
-const canonical = (value) => {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
-  }
-  return value;
-};
-const digest = (value) => createHash("sha256").update(value).digest("hex");
-const source = JSON.parse(await readFile("site-export.json", "utf8"));
-const sealed = { ...source };
-delete sealed.export_sha256;
-const actualExportHash = digest(JSON.stringify(canonical(sealed)));
-if (actualExportHash !== source.export_sha256) throw new Error("site export seal is invalid");
-if (source.format !== "archhub-universal-cell-site-v2") throw new Error("unsupported site export format");
-if (source.publication_tier !== "T0 PUBLIC") throw new Error("site export is not T0 PUBLIC");
-if (Object.keys(source.routes).length !== 7) throw new Error("site export must contain seven routes");
-
-await rm("dist", { recursive: true, force: true });
-await mkdir("dist/client", { recursive: true });
-for (const [assetPath, contents] of Object.entries(source.assets)) {
-  const target = join("dist/client", assetPath);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, contents, "utf8");
-}
-for (const [route, record] of Object.entries(source.routes)) {
-  if (digest(record.html) !== record.html_sha256) throw new Error(`route seal is invalid: ${route}`);
-  if (record.output_path.includes("..") || record.output_path.startsWith("/")) {
-    throw new Error(`unsafe route output path: ${record.output_path}`);
-  }
-  const target = join("dist/client", record.output_path);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, record.html, "utf8");
-}
-const redirect = "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=/website\"><title>ArchHub</title><a href=\"/website\">ArchHub</a>";
-const missing = "<!doctype html><meta charset=\"utf-8\"><title>Not found</title><h1>Not found</h1><p><a href=\"/website\">Return to ArchHub</a></p>";
-await writeFile("dist/client/index.html", redirect, "utf8");
-await writeFile("dist/client/404.html", missing, "utf8");
-await mkdir("dist/server", { recursive: true });
-await writeFile("dist/server/index.js", `export default {\n  async fetch(request, env) {\n    if (!env.ASSETS) return new Response("Static assets unavailable", { status: 503 });\n    return env.ASSETS.fetch(request);\n  }\n};\n`, "utf8");
-await mkdir("dist/.openai", { recursive: true });
-await writeFile("dist/.openai/hosting.json", await readFile(".openai/hosting.json", "utf8"), "utf8");
-await writeFile("dist/build-manifest.json", JSON.stringify({
-  format: source.format,
-  export_sha256: source.export_sha256,
-  publication_tier: source.publication_tier,
-  routes: Object.keys(source.routes).sort()
-}, null, 2) + "\n", "utf8");
-"""
-
-README = """# ArchHub public graph export
-
-This project is a sealed static projection of the seven public website Cell
-roots. `site-export.json` is generated by `nodelang.site_export`; `build.mjs`
-verifies every route and the complete export before writing `dist/`.
-
-The deployment boundary is intentionally static. It contains no application
-runtime, Brain, private Grand Map, authentication, billing, database, storage,
-credentials, or live cloud resource identifiers. Those capabilities remain
-honest website states until their governed graph gates are connected.
-"""
+NOT_FOUND_HTML = (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<meta name="color-scheme" content="light">'
+    '<title>Not found | ArchHub</title>'
+    '<link rel="stylesheet" href="/assets/site.css"></head><body>'
+    '<main class="site-page-main"><h1 class="site-page-title">Not found</h1>'
+    '<p class="site-page-lede">There is no page at this address.</p>'
+    '<p><a class="site-nav-link" href="/">Return to ArchHub</a></p>'
+    '</main></body></html>'
+)
 
 
 def _canonical_bytes(value):
@@ -149,6 +89,113 @@ def _canonical_bytes(value):
 
 def _digest_text(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def offer_digest(record):
+    """The sha256 of the canonical offer record.
+
+    The same bytes cell_accounts.published_offer digests: json.dumps of the
+    record with sorted keys, compact separators and ASCII escapes.
+    """
+    return hashlib.sha256(json.dumps(
+        record, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")).hexdigest()
+
+
+def _offer_record(offer):
+    """The canonical offer record, in field order, or a refusal."""
+    if not isinstance(offer, dict):
+        raise SiteExportError("offer record must be a JSON object")
+    if sorted(offer) != sorted(OFFER_FIELDS):
+        raise SiteExportError(
+            "offer record needs exactly: " + ", ".join(OFFER_FIELDS))
+    if any(not isinstance(value, str) for value in offer.values()):
+        raise SiteExportError("offer record fields must be strings")
+    # Every field must pass the rule cell_accounts applies when it declares
+    # the record, unchanged: a record cell_accounts would refuse ("True",
+    # "yes", a shouted slug, an 81-character label) must not reach the site.
+    record = {}
+    for field in OFFER_FIELDS:
+        try:
+            value = _offer_value(field, offer[field])
+        except InvalidCell as exc:
+            raise SiteExportError("offer record refused: %s" % exc) from exc
+        if value != offer[field]:
+            raise SiteExportError(
+                "offer record field %r is not in the form cell_accounts stores"
+                % field
+            )
+        record[field] = value
+    return record
+
+
+def website_offer(record):
+    """The offer as cell_website.offer_display_text reads it."""
+    record = _offer_record(record)
+    return {
+        "display": record["public-label"],
+        "monetary": record["pricing-visible"] == "true",
+    }
+
+
+def offer_record_from_published(published):
+    """The canonical record behind what cell_accounts.published_offer returns.
+
+    Refused when the sha256 it carries is not the digest of that record.
+    """
+    try:
+        visible = published["pricing_visible"]
+        record = {
+            "availability": str(published["availability"]),
+            "pricing-visible": "true" if visible is True else "false",
+            "public-label": str(published["public_label"]),
+        }
+        declared = str(published["sha256"]).strip().lower()
+    except (KeyError, TypeError) as exc:
+        raise SiteExportError(
+            "published offer must carry availability, pricing_visible, "
+            "public_label and sha256") from exc
+    if not isinstance(visible, bool):
+        raise SiteExportError("published offer pricing_visible must be a bool")
+    if offer_digest(record) != declared:
+        raise SiteExportError(
+            "published offer sha256 does not match its record")
+    return record
+
+
+def _verified_offer(offer, offer_sha256):
+    """The offer record, or None, after its digest and display are proven."""
+    if offer is None:
+        if offer_sha256 is not None:
+            raise SiteExportError("offer_sha256 was given without an offer record")
+        return None
+    record = _offer_record(offer)
+    if offer_sha256 is None:
+        raise SiteExportError("an offer record needs its offer_sha256")
+    expected = offer_digest(record)
+    if str(offer_sha256).strip().lower() != expected:
+        raise SiteExportError(
+            "offer sha256 mismatch: the offer record is not the one declared"
+        )
+    try:
+        display = offer_display_text(website_offer(record))
+    except InvalidCell as exc:
+        raise SiteExportError("offer record refused: %s" % exc) from exc
+    return {"record": record, "display": display, "sha256": expected}
+
+
+def _public_origin(origin):
+    if origin is None:
+        return None
+    origin = str(origin).strip().rstrip("/")
+    if not _ORIGIN.fullmatch(origin):
+        raise SiteExportError("a public origin must be an https host, got %r" % origin)
+    return origin
+
+
+def _graph_origin(snapshot):
+    cell = snapshot.cells.get(ORIGIN_ROOT)
+    return None if cell is None else bytes(cell.atom).decode("utf-8")
 
 
 def _scan_public_text(value, label):
@@ -184,8 +231,66 @@ def _static_document(document):
     return html, stylesheet
 
 
-def _output_path(route):
-    return route.strip("/") + "/index.html"
+def _root_hrefs(static_html):
+    """In-app /website links become the root paths the static site serves."""
+    return _WEBSITE_HREF.sub(
+        lambda match: 'href="%s"' % public_path(match.group(0)[6:-1]),
+        static_html,
+    )
+
+
+def _output_path(root_path):
+    return (root_path.strip("/") + "/index.html").lstrip("/")
+
+
+def _page_identity(snapshot, verified, route, static_html):
+    """Title and description: the page meta held by the graph when it
+    describes the page, otherwise the route title Cell and the rendered lede."""
+    try:
+        if "%s:page:%s" % (META_ROOT, route) in snapshot.cells:
+            return page_texts(snapshot, route)
+        title = _terminal_text(
+            snapshot, verified.route_title_roots[route], "route title"
+        )
+    except InvalidCell as exc:
+        raise SiteExportError(
+            "page identity for %s is unusable: %s" % (route, exc)) from exc
+    lede = _LEDE.search(static_html)
+    return (
+        title,
+        html.unescape(_TAG.sub("", lede.group(1))).strip() if lede else "",
+    )
+
+
+def _with_head_meta(static_html, origin, root_path, title, description):
+    if "</head>" not in static_html:
+        raise SiteExportError("projected website document has no head")
+    url = html.escape(origin + root_path, quote=True)
+    tags = [
+        '<link rel="canonical" href="%s">' % url,
+        '<meta property="og:title" content="%s">' % html.escape(title, quote=True),
+    ]
+    if description:
+        tags.append('<meta property="og:description" content="%s">'
+                    % html.escape(description, quote=True))
+    tags.append('<meta property="og:url" content="%s">' % url)
+    return static_html.replace("</head>", "".join(tags) + "</head>", 1)
+
+
+def _robots_txt(origin):
+    return "User-agent: *\nSitemap: %s/sitemap.xml\n" % origin
+
+
+def _sitemap_xml(origin, root_paths):
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "".join(
+            "  <url><loc>%s</loc></url>\n" % html.escape(origin + path, quote=True)
+            for path in root_paths
+        )
+        + "</urlset>\n"
+    )
 
 
 def _cell_record(snapshot, root_id):
@@ -288,10 +393,27 @@ def _verified_website(store, registry):
         ) from exc
 
 
-def build_site_export(store, registry):
-    """Return a sealed public payload from the verified universal website."""
+def build_site_export(store, registry, *, offer=None, offer_sha256=None,
+                      origin=None):
+    """Return a sealed public payload from the verified universal website.
+
+    With an offer record the export is refused unless the digest of the
+    record equals offer_sha256, the offer is not monetary, and the rendered
+    pricing page shows its public label.  With an origin every page carries
+    its canonical root URL and the site carries robots.txt and sitemap.xml;
+    without one the payload is a graph projection with no address.
+    """
+    verified_offer = _verified_offer(offer, offer_sha256)
+    origin = _public_origin(origin)
     verified = _verified_website(store, registry)
     snapshot = store.snapshot()
+    if origin is not None:
+        graph_origin = _graph_origin(snapshot)
+        if graph_origin is not None and graph_origin != origin:
+            raise SiteExportError(
+                "graph origin %s differs from export origin %s"
+                % (graph_origin, origin)
+            )
     publication_tier = _terminal_text(
         snapshot, verified.classification_root, "website classification"
     ).strip().upper()
@@ -306,6 +428,7 @@ def build_site_export(store, registry):
         )
 
     records = {}
+    root_paths = []
     shared_stylesheet = None
     for route in PUBLIC_ROUTES:
         try:
@@ -327,22 +450,48 @@ def build_site_export(store, registry):
             shared_stylesheet = stylesheet
         elif shared_stylesheet != stylesheet:
             raise SiteExportError("website routes do not share one graph stylesheet")
+        static_html = _root_hrefs(static_html)
+        if 'href="/website' in static_html:
+            raise SiteExportError(
+                "route %s still links to the in-app path after rewriting" % route
+            )
+        root_path = public_path(route)
+        if origin is not None:
+            title, description = _page_identity(
+                snapshot, verified, route, static_html
+            )
+            static_html = _with_head_meta(
+                static_html, origin, root_path, title, description
+            )
         _scan_public_text(static_html, route)
         source_roots, source_fingerprint = _source_fingerprint(
             snapshot, verified, route, static_html
         )
+        root_paths.append(root_path)
         records[route] = {
             "html": static_html,
             "html_sha256": _digest_text(static_html),
-            "output_path": _output_path(route),
+            "output_path": _output_path(root_path),
             "root_node": verified.page_roots[route],
             "source_fingerprint": source_fingerprint,
             "source_roots": source_roots,
         }
 
+    if verified_offer is not None:
+        pricing = records["/website/pricing"]["html"]
+        display = verified_offer["display"]
+        if display not in pricing and html.escape(display) not in pricing:
+            raise SiteExportError(
+                "the pricing page does not show the offer display %r" % display
+            )
+
     _scan_public_text(shared_stylesheet or "", "shared stylesheet")
+    assets = {"assets/site.css": shared_stylesheet, "404.html": NOT_FOUND_HTML}
+    if origin is not None:
+        assets["robots.txt"] = _robots_txt(origin)
+        assets["sitemap.xml"] = _sitemap_xml(origin, root_paths)
     payload = {
-        "assets": {"assets/site.css": shared_stylesheet},
+        "assets": assets,
         "format": EXPORT_FORMAT,
         "application_root": registry.application_root,
         "website_root": verified.root_id,
@@ -355,6 +504,11 @@ def build_site_export(store, registry):
             "lifecycle": _cell_record(snapshot, verified.lifecycle_root),
         })).hexdigest(),
         "publication_tier": PUBLICATION_TIER,
+        "origin": origin,
+        "offer": None if verified_offer is None else verified_offer["record"],
+        "offer_sha256": (
+            None if verified_offer is None else verified_offer["sha256"]
+        ),
         "routes": records,
     }
     _scan_public_text(_canonical_bytes(payload).decode("ascii"), "site export")
@@ -362,57 +516,96 @@ def build_site_export(store, registry):
     return payload
 
 
-def write_public_site(store, registry, project_dir):
-    """Write the sealed graph export and dependency-free hosting scaffold."""
+def write_public_site(store, registry, project_dir, *, offer=None,
+                      offer_sha256=None, origin=None):
+    """Write site-export.json, .gitignore and the static site under dist/."""
     project = Path(project_dir)
     project.mkdir(parents=True, exist_ok=True)
-    (project / ".openai").mkdir(parents=True, exist_ok=True)
-    payload = build_site_export(store, registry)
-    hosting = json.loads(HOSTING_JSON)
-    hosting_path = project / ".openai" / "hosting.json"
-    if hosting_path.is_file():
-        existing = json.loads(hosting_path.read_text(encoding="utf-8"))
-        for key in ("project_id", "d1", "r2"):
-            if key in existing:
-                hosting[key] = existing[key]
+    payload = build_site_export(
+        store, registry, offer=offer, offer_sha256=offer_sha256, origin=origin,
+    )
+    dist = project / "dist"
+    if dist.exists():
+        shutil.rmtree(dist)
     files = {
         "site-export.json": json.dumps(payload, sort_keys=True, indent=2,
                                        ensure_ascii=True) + "\n",
-        "package.json": PACKAGE_JSON,
-        "build.mjs": BUILD_MJS,
-        "wrangler.jsonc": WRANGLER_JSON,
-        ".openai/hosting.json": json.dumps(
-            hosting, sort_keys=True, indent=2, ensure_ascii=True) + "\n",
-        ".gitignore": "dist/\nnode_modules/\n",
-        "README.md": README,
+        ".gitignore": "dist/\n",
     }
+    for relative, contents in payload["assets"].items():
+        files["dist/" + relative] = contents
+    for record in payload["routes"].values():
+        files["dist/" + record["output_path"]] = record["html"]
     for relative, contents in files.items():
+        if relative.startswith("/") or ".." in relative.split("/"):
+            raise SiteExportError("unsafe export output path: %s" % relative)
         target = project / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(contents, encoding="utf-8", newline="\n")
     return payload
 
 
-def _build_public_seed_application():
-    """Build export input from the bundled T0-safe seed, never local authority."""
+def _build_public_seed_application(offer=None):
+    """Build export input from the bundled T0-safe seed, never local authority.
+
+    The website offer, when given, is what the seed's pricing page renders.
+    """
     from .map_import import PUBLIC_MAP_PATH
     from .universal_application import build_universal_application
 
-    return build_universal_application(PUBLIC_MAP_PATH)
+    return build_universal_application(PUBLIC_MAP_PATH, offer=offer)
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Export the T0 public website as a static site from the "
+                    "canonical offer record of app:users:accounts:offer.",
+    )
+    parser.add_argument(
+        "--offer", required=True,
+        help="path to the canonical offer record JSON: availability, "
+             "pricing-visible, public-label",
+    )
+    parser.add_argument(
+        "--offer-sha256", required=True,
+        help="sha256 of the canonical bytes of the offer record, as "
+             "cell_accounts.published_offer publishes it",
+    )
+    parser.add_argument(
+        "--origin", required=True,
+        help="public https origin, for example https://archhub.io",
+    )
     parser.add_argument(
         "--output",
         default=str(Path(__file__).resolve().parents[1] / "public_site"),
     )
     args = parser.parse_args(argv)
-    store, registry = _build_public_seed_application()
-    payload = write_public_site(store, registry, args.output)
+    try:
+        offer = json.loads(Path(args.offer).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        parser.error("--offer is not a readable JSON file: %s" % exc)
+    try:
+        verified = _verified_offer(offer, args.offer_sha256)
+        origin = _public_origin(args.origin)
+    except SiteExportError as exc:
+        parser.exit(1, "site export refused: %s\n" % exc)
+    store, registry = _build_public_seed_application(
+        website_offer(verified["record"])
+    )
+    try:
+        payload = write_public_site(
+            store, registry, args.output,
+            offer=verified["record"], offer_sha256=args.offer_sha256,
+            origin=origin,
+        )
+    except SiteExportError as exc:
+        parser.exit(1, "site export refused: %s\n" % exc)
     print(json.dumps({
         "format": payload["format"],
         "publication_tier": payload["publication_tier"],
+        "origin": payload["origin"],
+        "offer": payload["offer"],
+        "offer_sha256": payload["offer_sha256"],
         "routes": len(payload["routes"]),
         "export_sha256": payload["export_sha256"],
         "output": str(Path(args.output).resolve()),

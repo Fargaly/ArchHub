@@ -32,10 +32,10 @@ at HEAD `b914892` (2026-09-16 20:46; `f61ac9b` is four commits below it).
   `/website/signin`), `read_universal_website` (`:690`) and
   `project_universal_website_document` (`:868`). `nodelang/application_server.py`
   serves those routes from that module (imports `:248-251`), and
-  `nodelang/site_export.py` (imports `:17-21`; `build_site_export` `:291-362`;
-  `write_public_site` `:365-393`) projects them into
-  `public_site/site-export.json`, which `public_site/build.mjs` verifies and
-  seals into `dist/`. `public_site/README.md` states that this static export
+  `nodelang/site_export.py` (imports `:28-37`; `build_site_export` `:380`;
+  `write_public_site` `:499`) projects them into
+  `public_site/site-export.json` and the static site under
+  `public_site/dist/`. `public_site/README.md` states that this static export
   carries no runtime, Brain, authentication, billing or database.
   `nodelang/website.py` (`build_website`, `:100`) is the older builder used
   only by `nodelang/application.py` (`:38`, `:2009`); it is neither served by
@@ -68,12 +68,15 @@ at HEAD `b914892` (2026-09-16 20:46; `f61ac9b` is four commits below it).
   `OFFER_DEFAULT_DISPLAY` "Free during beta", `:260`) and says "No plan,
   checkout, subscription or commercial promise is offered yet."
   (`:290-297`); `public_site/site-export.json` carries "Free during beta"
-  three times and no plan name or price literal;
+  and no plan name or price literal;
   `tests_replica/test_node_native_website.py:74` holds the route to that
-  text. Both `ensure_universal_website` calls
-  (`nodelang/universal_application.py:12767-12778`, `:15677-15688`) pass no
-  `offer`, so the website shows the module default rather than a read of
-  the offer record; wiring the record into the website build is not landed.
+  text. `build_universal_application` takes `offer=None` and hands it to
+  the `ensure_universal_website` call it makes
+  (`nodelang/universal_application.py:12767-12778`); the export passes the
+  verified canonical record there (`nodelang/site_export.py`,
+  `_build_public_seed_application`), and the second call (`:15677-15688`)
+  keeps the default. An existing graph keeps its persisted website pages
+  until a governed website revision path exists (open item W6).
   The internal tier vocabulary `free`, `pro`, `firm`, `founder`
   (`cell_accounts.py:33`, `TIERS`) is an account attribute, not a published
   plan. The cloud backend in `../12.PRODUCTION` (`cloud_backend/main.py:1195`
@@ -136,7 +139,7 @@ at HEAD `b914892` (2026-09-16 20:46; `f61ac9b` is four commits below it).
 | `evidence/` | `build_current_evidence.py` → `current-evidence.json`, the record that binds a green claim to a source hash |
 | `desktop/` | the shell that opens the canvas as an application window |
 | `installer/`, `packaging/`, `infrastructure/` | selected installer, dependency assets and deployment recipes |
-| `public_site/`, `docs/` | `public_site/`: the sealed static projection of the Cell website (`nodelang/cell_website.py` routes, written by `nodelang/site_export.py` as `site-export.json`, sealed by `build.mjs` into `dist/`); deploying `dist/` is a separate credential-bound step, not claimed here. `docs/`: this checkout's pages |
+| `public_site/`, `docs/` | `public_site/`: the sealed static projection of the Cell website (`nodelang/cell_website.py` routes, written by `nodelang/site_export.py` as `site-export.json` and rendered by it into `dist/`); deploying `dist/` from `packaging/website/` is a separate credential-bound step, not claimed here. `docs/`: this checkout's pages |
 | `domain_sessions/` | saved graph sessions used as fixtures |
 | `tools/` | scripts that drive the graph from outside: servers, sweeps, one-shot builders |
 | `legacy_engine/` | the superseded engine (`node_lang.py`) and everything that imports it. Not the kernel. Nothing in `nodelang/` depends on it. |

@@ -68,7 +68,7 @@ def test_http_server_serves_the_universal_app_and_website_lenses(website):
         assert 'class="archhub-app"' in app
         assert 'class="site-shell"' in web
         assert 'class="archhub-app"' not in web
-        assert 'One persistent operating graph' in web
+        assert 'Drafted, not generated.' in web
         for route, expected in (
                 ('/website/features', 'Everything is connected through one graph'),
                 ('/website/pricing', 'Free during beta'),

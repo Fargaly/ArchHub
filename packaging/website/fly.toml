@@ -1,0 +1,49 @@
+# fly.toml -- ArchHub public website (archhub.io): the Cell website exported by
+# nodelang.site_export and served by BusyBox httpd (packaging/website/Dockerfile).
+# Ported from the frozen 12.PRODUCTION/web/fly.toml: same app, port and check.
+#
+# Founder, from the 13.NODE-LANGUAGE repository root (the build context):
+#   flyctl deploy . --config packaging/website/fly.toml \
+#       --build-arg OFFER_SHA256=<sha256 of the offer record>
+#   flyctl certs add archhub.io    # once, after DNS points at the app
+# packaging/website/offer.json (the canonical offer record, gitignored) must be
+# written before the build; the exporter refuses a digest that does not match.
+# build.ignorefile keeps everything but nodelang/, httpd.conf and offer.json
+# out of the context sent to the builder.
+#
+# No secrets, no volume, no env: a pure static site.
+
+app = 'archhub-web'
+primary_region = 'ord'
+
+[build]
+  # flyctl joins these paths with the directory holding fly.toml.
+  dockerfile = 'Dockerfile'
+  ignorefile = '.dockerignore'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'requests'
+    hard_limit = 200
+    soft_limit = 150
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '5s'
+    method = 'GET'
+    path = '/'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256

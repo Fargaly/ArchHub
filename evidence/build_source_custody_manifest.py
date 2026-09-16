@@ -34,6 +34,7 @@ EXCLUDED_RELATIVE_PATHS = {
     "evidence/current-evidence.json",
     "grand_sweep_ledger.json",
     "grandmap.session.json",
+    "packaging/website/offer.json",
     "self-hosting-map.html",
     "tests_replica/test_authority_coherence.py",
 }

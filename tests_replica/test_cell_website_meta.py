@@ -11,6 +11,7 @@ from nodelang.cell_website_meta import (
     downloads,
     offer_download,
     page_meta,
+    page_texts,
     record_release,
     set_origin,
 )
@@ -35,13 +36,21 @@ def test_a_page_says_what_it_is_with_a_canonical_from_the_graph():
     store = _store()
     meta = page_meta(store.snapshot(), PATH)
     assert meta.title == "One graph"
-    assert meta.canonical == "https://archhub.io/website/features"
+    assert meta.canonical == "https://archhub.io/features/"
 
 
 def test_without_an_origin_no_canonical_link_can_be_built():
     store = CellStore()
     describe_page(store, path=PATH, title="One graph", description="A shape.")
     with pytest.raises(InvalidCell):
+        page_meta(store.snapshot(), PATH)
+
+
+def test_a_described_page_has_its_texts_before_any_origin_is_set():
+    store = CellStore()
+    describe_page(store, path=PATH, title="One graph", description="A shape.")
+    assert page_texts(store.snapshot(), PATH) == ("One graph", "A shape.")
+    with pytest.raises(InvalidCell, match="no origin"):
         page_meta(store.snapshot(), PATH)
 
 

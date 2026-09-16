@@ -11798,8 +11798,13 @@ def build_universal_application(
     runtime_compliance_runner: Callable[
         [CourtInvocation], CourtResult
     ] | None = None,
+    offer: dict | None = None,
 ) -> tuple[CellStore, UniversalApplicationRegistry]:
-    """Compose the map, standard assemblies, and live application lens."""
+    """Compose the map, standard assemblies, and live application lens.
+
+    The offer, when given, is the website offer cell_website.offer_display_text
+    reads; the public pricing page renders its display.
+    """
     store = store or CellStore()
     map_registry = import_grand_map_cells(store, map_path)
     assembly_protocol = bootstrap_assembly_protocol(
@@ -12775,6 +12780,7 @@ def build_universal_application(
             standard_library.lifecycle_protocol.states["published"]
         ),
         read_action_root=authorization.protocol.actions["read"],
+        offer=offer,
     )
     application_http_route_roots.update({
         "GET %s" % path: root

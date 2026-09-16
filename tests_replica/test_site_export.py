@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -13,11 +12,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nodelang.application_server import ApplicationServer  # noqa: E402
+from nodelang.cell_accounts import BETA_OFFER  # noqa: E402
 from nodelang.map_import import PUBLIC_MAP_PATH  # noqa: E402
 from nodelang.site_export import (  # noqa: E402
     PUBLIC_ROUTES,
     SiteExportError,
     build_site_export,
+    offer_digest,
+    website_offer,
     write_public_site,
 )
 from nodelang.universal_application import (  # noqa: E402
@@ -59,7 +61,10 @@ def test_export_is_complete_deterministic_and_provenanced_by_route_cells(applica
             "stylesheet": registry.website.stylesheet_root,
             "title": registry.website.route_title_roots[route],
         }
-        assert record["output_path"] == route.strip("/") + "/index.html"
+        assert record["output_path"] == (
+            "index.html" if route == "/website"
+            else route.rsplit("/", 1)[1] + "/index.html"
+        )
 
 
 def test_export_is_reproducible_from_fresh_public_seed_builds():
@@ -72,13 +77,28 @@ def test_export_is_reproducible_from_fresh_public_seed_builds():
 
 
 def test_checked_in_public_site_export_is_generated_from_current_cell_authority():
-    store, registry = build_universal_application(PUBLIC_MAP_PATH)
-    expected = build_site_export(store, registry)
     project = Path(__file__).resolve().parents[1] / "public_site"
-
-    assert json.loads((project / "site-export.json").read_text(
+    checked_in = json.loads((project / "site-export.json").read_text(
         encoding="utf-8"
-    )) == expected
+    ))
+    offer = checked_in.get("offer")
+    store, registry = build_universal_application(
+        PUBLIC_MAP_PATH,
+        offer=None if offer is None else website_offer(offer),
+    )
+    expected = build_site_export(
+        store, registry,
+        offer=offer,
+        offer_sha256=checked_in.get("offer_sha256"),
+        origin=checked_in.get("origin"),
+    )
+
+    # The checked-in export is the real record at the real origin, never a
+    # self-consistent export of some other offer or a staging origin.
+    assert offer == dict(BETA_OFFER)
+    assert checked_in.get("offer_sha256") == offer_digest(BETA_OFFER)
+    assert checked_in.get("origin") == "https://archhub.io"
+    assert checked_in == expected
 
 
 def test_export_changes_only_when_resolved_graph_state_changes():
@@ -127,8 +147,9 @@ def test_public_payload_has_navigation_but_no_runtime_or_private_leakage(applica
     ):
         assert forbidden not in raw
     for record in payload["routes"].values():
-        assert 'href="/website/features"' in record["html"]
-        assert 'href="/website/pricing"' in record["html"]
+        assert 'href="/features/"' in record["html"]
+        assert 'href="/pricing/"' in record["html"]
+        assert 'href="/website' not in record["html"]
         assert "<script" not in record["html"]
         assert "data-action" not in record["html"]
         assert "data-edit" not in record["html"]
@@ -201,49 +222,29 @@ def test_application_site_export_route_fails_closed_after_policy_tamper():
         server.close()
 
 
-def test_dependency_free_build_is_valid_for_sites_and_cloudflare(application, tmp_path):
+def test_written_site_is_a_static_root_tree_with_no_scaffold_or_readme(
+    application, tmp_path
+):
     store, registry = application
     project = tmp_path / "public-site"
     payload = write_public_site(store, registry, project)
-    result = subprocess.run(
-        ["node", "build.mjs"], cwd=project, capture_output=True, text=True)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (project / "dist/server/index.js").is_file()
-    assert (project / "dist/.openai/hosting.json").is_file()
-    assert (project / "dist/client/assets/site.css").is_file()
-    assert (project / "dist/client/index.html").is_file()
-    assert (project / "dist/client/404.html").is_file()
+    written = sorted(
+        path.relative_to(project).as_posix()
+        for path in project.rglob("*") if path.is_file()
+    )
+    assert written == [
+        ".gitignore", "dist/404.html", "dist/assets/site.css",
+        "dist/changelog/index.html", "dist/community/index.html",
+        "dist/features/index.html", "dist/index.html",
+        "dist/pricing/index.html", "dist/security/index.html",
+        "dist/signin/index.html", "site-export.json",
+    ]
+    assert (project / "dist/assets/site.css").read_text(encoding="utf-8") == (
+        payload["assets"]["assets/site.css"]
+    )
     for record in payload["routes"].values():
-        rendered = project / "dist/client" / record["output_path"]
+        rendered = project / "dist" / record["output_path"]
         assert rendered.read_text(encoding="utf-8") == record["html"]
-    worker_check = subprocess.run(
-        ["node", "--check", str(project / "dist/server/index.js")],
-        capture_output=True, text=True)
-    assert worker_check.returncode == 0, worker_check.stderr
-
-
-def test_build_refuses_tampered_graph_export(application, tmp_path):
-    store, registry = application
-    project = tmp_path / "tampered-site"
-    write_public_site(store, registry, project)
-    source = json.loads((project / "site-export.json").read_text(encoding="utf-8"))
-    source["routes"]["/website"]["html"] += "<!-- tampered -->"
-    (project / "site-export.json").write_text(json.dumps(source), encoding="utf-8")
-    result = subprocess.run(
-        ["node", "build.mjs"], cwd=project, capture_output=True, text=True)
-    assert result.returncode != 0
-    assert "seal is invalid" in result.stderr
-
-
-def test_regeneration_preserves_the_single_sites_identity(application, tmp_path):
-    store, registry = application
-    project = tmp_path / "public-site"
-    write_public_site(store, registry, project)
-    hosting = project / ".openai" / "hosting.json"
-    hosting.write_text(json.dumps({
-        "project_id": "site-authority-opaque", "d1": None, "r2": None,
-    }), encoding="utf-8")
-    write_public_site(store, registry, project)
-    assert json.loads(hosting.read_text(encoding="utf-8")) == {
-        "project_id": "site-authority-opaque", "d1": None, "r2": None,
-    }
+    assert json.loads(
+        (project / "site-export.json").read_text(encoding="utf-8")
+    ) == payload

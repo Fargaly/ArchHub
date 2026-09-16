@@ -1067,6 +1067,25 @@ class _CleanAuthorityHttpServer:
                 ),
             )
         )
+        # The first click after a boot paid the whole cold catalogue: GET
+        # canvas 79.5s on 2026-08-27, 58.1s of it the lens reading every
+        # published definition, because the lens memos are process memory
+        # and a boot filled none of them. Read the catalogue once here,
+        # before any surface answers. The definition memos are kept by
+        # read set, so the browser's sign-in commit does not discard them.
+        # A read only -- an owner opens, never installs -- and a graph
+        # without a catalogue, or a caller it refuses, costs nothing here
+        # and is refused where it always was: at the request.
+        _w0 = _time.perf_counter()
+        try:
+            from .unified_application_lens import _catalogue as _warm_catalogue
+            warmed = len(_warm_catalogue(authority, scope_caller))
+        except Exception:
+            warmed = -1
+        self._record_gesture_timing(
+            "boot: warm catalogue %.1fs (definitions=%d)"
+            % (_time.perf_counter() - _w0, warmed)
+        )
         self.clean_interaction_broker = InteractionProjectionBroker()
         self._clean_projection_handles: dict[str, object] = {}
         self._clean_projection_cache: dict[tuple, tuple] = {}
@@ -1758,7 +1777,8 @@ class _CleanAuthorityHttpServer:
                     # An empty click clears nothing the graph holds; the
                     # projection the view already has is the answer.
                     return self._gesture_answer(binding, body, view_only=True)
-                revise_clean_browser_focus(
+                base_revision = self.authority.store.revision
+                result = revise_clean_browser_focus(
                     self.clean_authority,
                     self.clean_browser_authority,
                     binding.session_root,
@@ -1767,9 +1787,11 @@ class _CleanAuthorityHttpServer:
                     primary_root=primary,
                     caller=self.clean_caller,
                     command_id=str(_uuid.uuid4()),
-                    expected_revision=self.authority.store.revision,
+                    expected_revision=base_revision,
                 )
-                return self._gesture_answer(binding, body)
+                return self._gesture_answer(
+                    binding, body, focus=(result, base_revision),
+                )
             raise CleanGestureRefused(
                 "gesture without positions or viewport is not admitted"
             )
@@ -1822,7 +1844,7 @@ class _CleanAuthorityHttpServer:
         projection["moved"] = moved
         return projection
 
-    def _canvas_after_view_commit(self, binding, held_payload):
+    def _canvas_after_view_commit(self, binding, held_payload, held_lens=None):
         """The projection after a commit that touched only this view's
         session state, from the projection the view already holds.
 
@@ -1858,6 +1880,17 @@ class _CleanAuthorityHttpServer:
             }
             payload["revision"] = snapshot.revision
             payload["interaction_projection"]["revision"] = snapshot.revision
+            # The lens the view holds moves by the same two facts, so the
+            # next focus commit can be answered from it (see
+            # _canvas_after_focus_commit). A lens not in hand stays None.
+            lens = None
+            if held_lens is not None:
+                lens = dict(held_lens)
+                lens["revision"] = snapshot.revision
+                lens["viewport"] = {
+                    str(key): value
+                    for key, value in dict(viewport or {}).items()
+                }
             controls = (
                 payload.get("configuration", {})
                 .get("design_system", {})
@@ -1894,7 +1927,7 @@ class _CleanAuthorityHttpServer:
             snapshot.cells, json.dumps(payload),
         )
         self._issue_projection_lease(binding, snapshot, payload)
-        self._remember_view_projection(binding, payload)
+        self._remember_view_projection(binding, payload, lens)
         self._record_gesture_timing(
             "view-only reuse rev=%s scope=%s" % (
                 snapshot.revision, self.clean_scope_root[:12],
@@ -1902,17 +1935,128 @@ class _CleanAuthorityHttpServer:
         )
         return payload
 
-    def _remember_view_projection(self, binding, payload) -> None:
+    @with_relation_projection_scope
+    def _canvas_after_focus_commit(
+        self, binding, scope_root, result, *, base_revision,
+    ):
+        """The projection after a focus commit, from the lens this view
+        already holds.
+
+        A select click commits attention cells and then rebuilt the whole
+        projection; the lens phase alone re-read the scope level, every
+        instance definition, the relations and the ports -- 0.08-0.12 s on
+        the founder graph -- to change exactly two lens fields,
+        selected_root and selected_roots. The selection is read back from
+        the focus the commit recorded, never from the request, so the graph
+        stays the only truth; every selected root was already checked
+        against the cards and wires of this scope by
+        revise_clean_browser_focus at this very revision, which is the
+        visibility rule of the lens itself. The held lens is reused only
+        when it was built at the exact revision the commit was accepted
+        against, for this scope; anything else, a replayed command
+        included, falls back to the full build. The canvas phase runs
+        exactly as _canvas runs it. Returns None when the reuse cannot be
+        made exact.
+        """
+        held = (getattr(self, "_view_projections", None) or {}).get(
+            binding.view_root
+        )
+        if (
+            held is None or held[3] is None or result.replayed
+            or held[0] != base_revision or held[1] != scope_root
+        ):
+            return None
+        snapshot = self.authority.store.snapshot()
+        if snapshot.revision != result.revision:
+            return None
+        import time as _time
+        _t0 = _time.perf_counter()
+        try:
+            from .cell_attention import active_focus, open_attention_protocol
+            focus = active_focus(
+                snapshot, open_attention_protocol(snapshot),
+                session_root=binding.view_root,
+            )
+            if (
+                focus is None or focus.root_id != result.root_id
+                or focus.scope_root != scope_root
+            ):
+                return None
+            self._expand_scope_interactions(scope_root)
+            lens = dict(held[3])
+            lens["revision"] = snapshot.revision
+            lens["selected_roots"] = list(focus.selected_roots)
+            lens["selected_root"] = focus.primary_root
+            visual = open_clean_visual_system(
+                self.clean_authority, caller=self.clean_caller,
+            )
+            payload = project_clean_visual_canvas(
+                self.clean_authority,
+                visual,
+                lens,
+                caller=self.clean_caller,
+                session_root=binding.session_root,
+                subject_root=binding.subject_root,
+                interactions=self.clean_scope_interactions,
+                door_root=self.clean_scope_root,
+                can_undo=getattr(self, "_undo_entry", None) is not None,
+                door_label=self._door_label(snapshot),
+            )
+            from .workshop_conversation import workshop_descriptors
+            payload["workshops"] = workshop_descriptors(
+                self.clean_authority, lens, caller=self.clean_caller,
+            )
+        except Exception:
+            return None
+        lease_key = (
+            id(snapshot.cells),
+            snapshot.revision,
+            scope_root,
+            binding.view_root,
+            binding.session_root,
+            None,
+        )
+        if len(self._clean_projection_cache) >= 4:
+            self._clean_projection_cache.pop(
+                next(iter(self._clean_projection_cache))
+            )
+        self._clean_projection_cache[lease_key] = (
+            snapshot.cells, json.dumps(payload),
+        )
+        self._issue_projection_lease(binding, snapshot, payload)
+        self._remember_view_projection(binding, payload, lens)
+        self._record_gesture_timing(
+            "focus reuse rev=%s scope=%s canvas=%.3fs nodes=%s" % (
+                snapshot.revision, scope_root[:12],
+                _time.perf_counter() - _t0, len(payload.get("nodes", ())),
+            )
+        )
+        return payload
+
+    def _remember_view_projection(self, binding, payload, lens=None) -> None:
         """Keep the last full projection this view received, so the next
-        gesture can be answered as a delta against it."""
+        gesture can be answered as a delta against it -- and the lens it
+        was projected from, when the caller built one. Remembering the same
+        revision again without a lens (a cache hit) keeps the lens already
+        held; any other revision drops it."""
         held = getattr(self, "_view_projections", None)
         if held is None:
             held = self._view_projections = {}
-        held[binding.view_root] = (payload.get("revision"), payload.get("root"), payload)
+        if lens is None:
+            previous = held.get(binding.view_root)
+            if (
+                previous is not None
+                and previous[0] == payload.get("revision")
+                and previous[1] == payload.get("root")
+            ):
+                lens = previous[3]
+        held[binding.view_root] = (
+            payload.get("revision"), payload.get("root"), payload, lens,
+        )
         if len(held) > 16:
             held.pop(next(iter(held)))
 
-    def _gesture_answer(self, binding, body, *, view_only=False):
+    def _gesture_answer(self, binding, body, *, view_only=False, focus=None):
         """A gesture's answer: the full projection, or -- when the client
         says which revision it holds and asks for a delta -- only what
         changed since it.
@@ -1932,10 +2076,14 @@ class _CleanAuthorityHttpServer:
             binding.view_root
         )
         projection = (
-            self._canvas_after_view_commit(binding, held[2])
+            self._canvas_after_view_commit(binding, held[2], held[3])
             if view_only and held is not None and held[1] == self.clean_scope_root
             else None
         )
+        if projection is None and focus is not None:
+            projection = self._canvas_after_focus_commit(
+                binding, standing, focus[0], base_revision=focus[1],
+            )
         if projection is None:
             projection = self._canvas(binding, scope_root=standing)
         wanted = body.get("projection_mode")
@@ -2742,7 +2890,7 @@ class _CleanAuthorityHttpServer:
         )
         _l0 = _time.perf_counter()
         self._issue_projection_lease(binding, snapshot, payload)
-        self._remember_view_projection(binding, payload)
+        self._remember_view_projection(binding, payload, lens)
         self._record_gesture_timing(
             "lease rev=%s issue=%.3fs" % (snapshot.revision, _time.perf_counter() - _l0)
         )
@@ -3515,11 +3663,16 @@ class _CleanAuthorityHttpServer:
                                 command_id=command_id,
                                 expected_revision=revision,
                             )
-                            payload = owner._canvas(
-                                binding,
-                                scope_root=scope_root,
-                                at_revision=result.revision,
+                            payload = owner._canvas_after_focus_commit(
+                                binding, scope_root, result,
+                                base_revision=revision,
                             )
+                            if payload is None:
+                                payload = owner._canvas(
+                                    binding,
+                                    scope_root=scope_root,
+                                    at_revision=result.revision,
+                                )
                         self._json(200, {
                             "ok": True,
                             **payload,

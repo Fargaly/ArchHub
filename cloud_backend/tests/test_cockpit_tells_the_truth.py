@@ -56,23 +56,28 @@ def cockpit() -> str:
     return read("atlas-cockpit.js")
 
 
+@pytest.fixture(scope="module")
+def registry() -> str:
+    return read("param-types.js")
+
+
 # -- 1. a wire is a node: it has parameters, from the shared registry ----------
 
-def test_wire_parameters_are_published_on_the_shared_registry(panels: str) -> None:
-    """The six connection parameters exist once, on window, for both graphs."""
+def test_wire_parameters_are_published_on_the_shared_registry(panels: str, registry: str) -> None:
+    """The six connection parameters exist once, in param-types.jsx, for both graphs."""
     assert "window.WIRE_PARAMS" in panels
     for key in ("enabled", "lacing", "tree", "condition", "on_fail", "throttle_ms"):
-        assert "'%s'" % key in panels, "wire parameter %s is missing" % key
+        assert "'%s'" % key in registry, "wire parameter %s is missing" % key
     for label in ("Lacing", "Data tree", "On block", "Throttle"):
-        assert label in panels, "wire parameter label %s is missing" % label
+        assert label in registry, "wire parameter label %s is missing" % label
 
 
-def test_wire_parameter_options_are_the_engine_vocabulary(panels: str) -> None:
+def test_wire_parameter_options_are_the_engine_vocabulary(registry: str) -> None:
     """Dynamo lacing and Grasshopper tree ops, spelled as the design spells them."""
     for option in ("shortest", "longest", "cross product",
                    "flatten", "graft", "simplify",
                    "pass last", "pass empty"):
-        assert "'%s'" % option in panels, "option %s is missing" % option
+        assert "'%s'" % option in registry, "option %s is missing" % option
 
 
 def test_the_wire_inspector_reads_the_registry_not_a_local_copy(panels: str) -> None:
@@ -111,11 +116,23 @@ def test_a_parameter_row_is_34px_and_flat(panels: str) -> None:
         "the parameter row is still drawn as a rounded card")
 
 
-def test_the_registry_types_carry_a_colour_and_a_label(panels: str) -> None:
+def test_the_registry_types_carry_a_colour_and_a_label(registry: str) -> None:
     for kind in ("number", "toggle", "text", "menu", "colour",
                  "elements", "view", "dims", "file", "any"):
-        assert re.search(r"\b%s: \{\s*label:" % kind, panels), (
+        assert re.search(r"\b%s: \{\s*label:" % kind, registry), (
             "type %s is missing from the registry" % kind)
+
+
+def test_the_registry_is_one_file_every_cockpit_page_loads(panels: str, registry: str) -> None:
+    """The panels carried a fallback copy of the registry that had drifted from
+    param-types.jsx. The cloud page loads the one file before the panels now, and the
+    panels hold no copy of their own."""
+    assert "WIRE_PARAMS" in registry and "PM_TYPES" in registry
+    assert "cross product" not in panels, "the panels still carry their own wire options"
+    assert "label: 'Number'" not in panels, "the panels still carry their own type registry"
+    page = (SOURCES / "map.html").read_text(encoding="utf-8")
+    assert "compiled/param-types.js" in page, "the cloud page never loads the registry"
+    assert page.index("compiled/param-types.js") < page.index("compiled/atlas-panels.js")
 
 
 # -- 3. nothing invents a run -------------------------------------------------
@@ -284,9 +301,30 @@ def test_the_refresh_hook_the_ask_bar_calls_exists(cockpit: str) -> None:
     assert "window.ATLAS_RELOAD" in page, "the ask bar no longer calls the hook"
 
 
+# -- 8. incidents and model routing are what the cloud and the app hold -------
+
+def test_incidents_are_the_failures_the_cloud_holds(side: str, cockpit: str) -> None:
+    """The incident list read a collection this page kept and nothing filled, then said
+    Queue clear. It counts failed instruction rows and cloud server errors now, and says it
+    cannot tell when neither can be read."""
+    assert "DB.issues" not in side, "incidents still come from a list the page keeps"
+    assert "Queue clear" not in side
+    assert "r.status === 'failed'" in side
+    assert "serverErrors" in side and "/founder/api/errors" in cockpit
+    assert "cannot tell whether anything failed" in side
+
+
+def test_model_routing_is_what_the_app_published(side: str) -> None:
+    """Routing read a model list nothing filled and claimed a change rewrote the fleet."""
+    assert "ctl.models" in side and "ctl.routes" in side
+    assert "has not published its model list" in side
+    assert "rewrites the fleet" not in side
+    assert "setColl('models'" not in side, "a route is still written to a list the page keeps"
+
+
 # -- the built assets match the sources they were built from ------------------
 
-@pytest.mark.parametrize("stem", ("atlas-panels", "atlas-side", "atlas-cockpit"))
+@pytest.mark.parametrize("stem", ("param-types", "atlas-panels", "atlas-side", "atlas-cockpit"))
 def test_the_built_asset_is_newer_than_its_source(stem: str) -> None:
     """A source edit that was never rebuilt never reaches the browser."""
     src = SOURCES / (stem + ".jsx")

@@ -792,6 +792,16 @@ function AtlasCockpit() {
     _React$useState42 = _slicedToArray(_React$useState41, 2),
     agentTasks = _React$useState42[0],
     setAgentTasks = _React$useState42[1];
+  // Server errors the cloud recorded since it last restarted (/founder/api/errors). With the
+  // failed task rows these are the incidents the cockpit can prove. loaded stays false while
+  // the route cannot be read, so the panel says it cannot tell instead of saying all clear.
+  var _React$useState43 = React.useState({
+      loaded: false,
+      rows: []
+    }),
+    _React$useState44 = _slicedToArray(_React$useState43, 2),
+    serverErrors = _React$useState44[0],
+    setServerErrors = _React$useState44[1];
   var readTasksRef = React.useRef(null);
   React.useEffect(function () {
     var dead = false;
@@ -819,9 +829,28 @@ function AtlasCockpit() {
         });
       })["catch"](function () {});
     };
-    read();
-    readTasksRef.current = read;
-    var t = setInterval(read, 30000);
+    var readErrors = function readErrors() {
+      return fetch('/founder/api/errors', {
+        headers: {
+          Accept: 'application/json'
+        }
+      }).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (d) {
+        if (dead || !d || !Array.isArray(d.errors)) return;
+        setServerErrors({
+          loaded: true,
+          rows: d.errors
+        });
+      })["catch"](function () {});
+    };
+    var readAll = function readAll() {
+      read();
+      readErrors();
+    };
+    readAll();
+    readTasksRef.current = readAll;
+    var t = setInterval(readAll, 30000);
     return function () {
       dead = true;
       clearInterval(t);
@@ -988,10 +1017,10 @@ function AtlasCockpit() {
   // Every hook sits above the loading return. A hook below it runs only once the model has
   // loaded, so that render calls more hooks than the first and React stops the whole page
   // (minified error 310): the cockpit went blank the moment its map arrived.
-  var _React$useState43 = React.useState(null),
-    _React$useState44 = _slicedToArray(_React$useState43, 2),
-    offerEdit = _React$useState44[0],
-    setOfferEdit = _React$useState44[1];
+  var _React$useState45 = React.useState(null),
+    _React$useState46 = _slicedToArray(_React$useState45, 2),
+    offerEdit = _React$useState46[0],
+    setOfferEdit = _React$useState46[1];
   var dropLibraryRef = React.useRef(null);
   React.useEffect(function () {
     window.__atlasDropLibraryItem = function (item, clientX, clientY) {
@@ -3086,6 +3115,8 @@ function AtlasCockpit() {
     flash: flash,
     control: M.control,
     tasks: agentTasks,
+    tasksLoaded: appSeen.loaded,
+    serverErrors: serverErrors,
     onRelay: relayToApp,
     onReloadTasks: reloadTasks
   }), leftTab === 'view' && /*#__PURE__*/React.createElement("div", {

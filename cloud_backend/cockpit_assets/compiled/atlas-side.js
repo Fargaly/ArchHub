@@ -164,12 +164,18 @@ function AgenticPanel(_ref2) {
     flash = _ref2.flash,
     control = _ref2.control,
     tasks = _ref2.tasks,
+    tasksLoaded = _ref2.tasksLoaded,
+    serverErrors = _ref2.serverErrors,
     onRelay = _ref2.onRelay,
     onReloadTasks = _ref2.onReloadTasks;
   var _React$useState5 = React.useState('activity'),
     _React$useState6 = _slicedToArray(_React$useState5, 2),
     tab = _React$useState6[0],
     setTab = _React$useState6[1];
+  var _React$useState7 = React.useState({}),
+    _React$useState8 = _slicedToArray(_React$useState7, 2),
+    openRows = _React$useState8[0],
+    setOpenRows = _React$useState8[1]; // session cards the founder folded open or shut
   var rows = tasks || [];
   var ctl = control || null;
 
@@ -455,48 +461,58 @@ function AgenticPanel(_ref2) {
       }
     }, r.result, r.ms ? ' · ' + r.ms + 'ms' : '', " \xB7 ", ago(r.t), " ago")));
   })))), tab === 'routing' && function () {
-    var models = DB.models || [];
-    var live = models.filter(function (m) {
-      return m.status !== 'disabled';
-    });
-    // task classes present anywhere in the fleet, plus the ones the app always needs
-    var classes = _toConsumableArray(new Set(['intent', 'vision', 'compose', 'critique', 'extract', 'fallback', 'offline'].concat(_toConsumableArray(models.flatMap(function (m) {
-      return m.tasks || [];
-    })))));
-    // There used to be a hardcoded monthly call volume per task class here, multiplied by
-    // each model's rate into a dollar figure the panel printed as SPEND. No call was ever
-    // counted. The cockpit does not meter model usage, so it now shows the routing it can
-    // prove and says plainly that no spend has been measured.
-    var ownerOf = function ownerOf(cls) {
-      return (live.find(function (m) {
-        return (m.tasks || []).includes(cls);
-      }) || {}).id || '';
-    };
-    var route = function route(cls, id) {
-      setColl && setColl('models', function (ms) {
-        return ms.map(function (m) {
-          var has = (m.tasks || []).includes(cls);
-          if (m.id === id && !has) return _objectSpread(_objectSpread({}, m), {}, {
-            tasks: [].concat(_toConsumableArray(m.tasks || []), [cls])
-          });
-          if (m.id !== id && has) return _objectSpread(_objectSpread({}, m), {}, {
-            tasks: (m.tasks || []).filter(function (t) {
-              return t !== cls;
-            })
-          });
-          return m;
-        });
+    // MODEL ROUTING shows what the app publishes with its map: control.models and
+    // control.routes (the contract is published_models_form in nodelang/cloud_relay.py).
+    // This panel used to route task classes over a model list kept in this page that
+    // nothing filled, and told the founder a change reached the fleet when no router saw it.
+    // Until the app publishes, it says so; a route is changed in the app, not here.
+    var published = ctl && Array.isArray(ctl.models) ? ctl.models : null;
+    var routes = ctl && Array.isArray(ctl.routes) ? ctl.routes : [];
+    // INCIDENTS are the failures the cloud holds: instructions your app answered with a
+    // refusal or an error (failed task rows), and server errors since the cloud last
+    // restarted. Identical failures fold into one row that carries their real count.
+    var fold = function fold(items) {
+      var byKey = new Map();
+      items.forEach(function (it) {
+        var was = byKey.get(it.key);
+        if (was) {
+          was.count += 1;
+          was.t = Math.max(was.t || 0, it.t || 0);
+        } else byKey.set(it.key, _objectSpread(_objectSpread({}, it), {}, {
+          count: 1
+        }));
       });
-      var nm = (models.find(function (m) {
-        return m.id === id;
-      }) || {}).name || 'none';
-      flash && flash(cls + ' → ' + nm);
+      return _toConsumableArray(byKey.values()).sort(function (a, b) {
+        return (b.t || 0) - (a.t || 0);
+      });
     };
-    var issues = DB.issues || [];
-    var openIss = issues.filter(function (i) {
-      return i.status !== 'resolved';
-    });
-    var agents = DB.agents || [];
+    var errorsLoaded = !!(serverErrors && serverErrors.loaded);
+    var failed = tasksLoaded ? rows.filter(function (r) {
+      return r.status === 'failed';
+    }).map(function (r) {
+      return {
+        key: 'task:' + r.directive,
+        source: 'your app',
+        title: String(r.directive || 'instruction'),
+        detail: String(r.result || ''),
+        t: taskStamp(r)
+      };
+    }) : [];
+    var serverRows = errorsLoaded ? (serverErrors.rows || []).map(function (e) {
+      return {
+        key: 'error:' + e.where + ':' + e.kind,
+        source: 'cloud',
+        title: String(e.kind || 'error') + " \xB7 " + String(e.where || ''),
+        detail: String(e.message || ''),
+        t: e.ts ? e.ts * 1000 : null
+      };
+    }) : [];
+    var incidents = fold([].concat(_toConsumableArray(failed), _toConsumableArray(serverRows)));
+    var events = incidents.reduce(function (n, it) {
+      return n + it.count;
+    }, 0);
+    var known = !!tasksLoaded || errorsLoaded;
+    var clearText = [tasksLoaded ? 'Nothing failed in the last ' + rows.length + ' instruction' + (rows.length === 1 ? '' : 's') : 'The task queue could not be read', errorsLoaded ? 'the cloud has recorded no server error since it last restarted' : 'the cloud error log could not be read'].join('; ') + '.';
     return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
       style: sideSec
     }, /*#__PURE__*/React.createElement("div", {
@@ -508,15 +524,74 @@ function AgenticPanel(_ref2) {
       style: {
         color: HB.inkSoft
       }
-    }, classes.length, " task classes")), /*#__PURE__*/React.createElement("div", {
+    }, published ? published.length + ' model' + (published.length === 1 ? '' : 's') : 'not published')), !published && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: HB.serif,
+        fontStyle: 'italic',
+        fontSize: 13,
+        color: HB.inkMute,
+        lineHeight: 1.5
+      }
+    }, "Your app has not published its model list, so there is no routing to show. It appears here once the app sends it with the map."), published && published.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: HB.serif,
+        fontStyle: 'italic',
+        fontSize: 13,
+        color: HB.inkMute
+      }
+    }, "Your app published an empty model list."), published && published.length > 0 && /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         flexDirection: 'column',
         gap: 5
       }
-    }, classes.map(function (cls) {
+    }, published.map(function (m, i) {
       return /*#__PURE__*/React.createElement("div", {
-        key: cls,
+        key: m.name + ':' + i,
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '6px 9px',
+          borderRadius: 7,
+          background: HB.paper2,
+          border: '1px solid ' + HB.lineSoft
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          flexShrink: 0,
+          background: m.available ? HB.green : HB.inkMute
+        }
+      }), /*#__PURE__*/React.createElement("span", {
+        style: {
+          flex: 1,
+          minWidth: 0,
+          fontSize: 12,
+          color: HB.ink,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }
+      }, m.name), /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontFamily: HB.mono,
+          fontSize: 9.5,
+          color: HB.inkMute
+        }
+      }, m.provider, m.available ? '' : " \xB7 unavailable"));
+    })), published && routes.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        marginTop: 10
+      }
+    }, routes.map(function (r) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: r.task,
         style: {
           display: 'flex',
           alignItems: 'center',
@@ -530,31 +605,19 @@ function AgenticPanel(_ref2) {
           width: 62,
           flexShrink: 0
         }
-      }, cls), /*#__PURE__*/React.createElement("select", {
-        value: ownerOf(cls),
-        onChange: function onChange(e) {
-          return route(cls, e.target.value);
-        },
+      }, r.task), /*#__PURE__*/React.createElement("span", {
         style: {
           flex: 1,
           minWidth: 0,
-          padding: '5px 6px',
-          borderRadius: 6,
-          border: '1px solid ' + HB.line,
-          background: HB.paper,
-          color: HB.ink,
           fontFamily: HB.mono,
-          fontSize: 10
+          fontSize: 10,
+          color: HB.inkSoft,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
         }
-      }, /*#__PURE__*/React.createElement("option", {
-        value: ""
-      }, "\u2014 unrouted \u2014"), live.map(function (m) {
-        return /*#__PURE__*/React.createElement("option", {
-          key: m.id,
-          value: m.id
-        }, m.name);
-      })));
-    })), /*#__PURE__*/React.createElement("div", {
+      }, r.model));
+    })), published && /*#__PURE__*/React.createElement("div", {
       style: {
         fontFamily: HB.mono,
         fontSize: 9,
@@ -562,7 +625,7 @@ function AgenticPanel(_ref2) {
         marginTop: 9,
         lineHeight: 1.5
       }
-    }, "Reassigning a class rewrites the fleet. The change is saved with your model list.")), /*#__PURE__*/React.createElement("div", {
+    }, routes.length ? 'Routing as your app reported it. Change it in the app.' : 'Your app did not report which model serves each task.')), /*#__PURE__*/React.createElement("div", {
       style: sideSec
     }, /*#__PURE__*/React.createElement("div", {
       style: sideLabel
@@ -574,15 +637,7 @@ function AgenticPanel(_ref2) {
         color: HB.inkSoft,
         lineHeight: 1.5
       }
-    }, "Not measured. Nothing here counts model calls, so the cockpit has no spend figure to give you."), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontFamily: HB.mono,
-        fontSize: 9.5,
-        color: HB.inkMute,
-        marginTop: 7,
-        lineHeight: 1.5
-      }
-    }, "Rates you entered per model are shown with each model; a total needs real usage, and usage is not reported to the cloud.")), /*#__PURE__*/React.createElement("div", {
+    }, "Not measured. Nothing here counts model calls, so the cockpit has no spend figure to give you.")), /*#__PURE__*/React.createElement("div", {
       style: _objectSpread(_objectSpread({}, sideSec), {}, {
         borderBottom: 'none'
       })
@@ -593,17 +648,34 @@ function AgenticPanel(_ref2) {
       })
     }, /*#__PURE__*/React.createElement("span", null, "INCIDENTS"), /*#__PURE__*/React.createElement("span", {
       style: {
-        color: openIss.length ? HB.red : HB.green
+        color: !known ? HB.inkMute : events ? HB.red : HB.green
       }
-    }, openIss.length, " open")), /*#__PURE__*/React.createElement("div", {
+    }, !known ? 'not known' : events ? events + ' recorded' : 'none recorded')), !known && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: HB.serif,
+        fontStyle: 'italic',
+        fontSize: 13,
+        color: HB.inkMute,
+        lineHeight: 1.5
+      }
+    }, "The cockpit could not read the task queue or the cloud error log, so it cannot tell whether anything failed."), known && incidents.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontFamily: HB.serif,
+        fontStyle: 'italic',
+        fontSize: 13,
+        color: HB.inkSoft,
+        lineHeight: 1.5
+      }
+    }, clearText), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         flexDirection: 'column',
         gap: 6
       }
-    }, openIss.slice(0, 6).map(function (it) {
+    }, incidents.slice(0, 8).map(function (it) {
       return /*#__PURE__*/React.createElement("div", {
-        key: it.id,
+        key: it.key,
+        title: it.detail,
         style: {
           padding: '8px 9px',
           borderRadius: 7,
@@ -621,7 +693,7 @@ function AgenticPanel(_ref2) {
           width: 6,
           height: 6,
           borderRadius: '50%',
-          background: it.level === 'error' ? HB.red : HB.amber,
+          background: HB.red,
           flexShrink: 0
         }
       }), /*#__PURE__*/React.createElement("span", {
@@ -641,75 +713,24 @@ function AgenticPanel(_ref2) {
           fontSize: 9,
           color: HB.inkSoft
         }
-      }, "\xD7", it.count || 1)), /*#__PURE__*/React.createElement("div", {
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          marginTop: 7
-        }
-      }, /*#__PURE__*/React.createElement("select", {
-        value: it.owner || '',
-        onChange: function onChange(e) {
-          var nm = e.target.value;
-          setColl && setColl('issues', function (xs) {
-            return xs.map(function (x) {
-              return x.id === it.id ? _objectSpread(_objectSpread({}, x), {}, {
-                owner: nm
-              }) : x;
-            });
-          });
-          flash && flash(nm ? 'Assigned to ' + nm : 'Unassigned');
-        },
-        style: {
-          flex: 1,
-          minWidth: 0,
-          padding: '4px 5px',
-          borderRadius: 5,
-          border: '1px solid ' + HB.line,
-          background: HB.paper,
-          color: HB.ink,
-          fontFamily: HB.mono,
-          fontSize: 9.5
-        }
-      }, /*#__PURE__*/React.createElement("option", {
-        value: ""
-      }, "\u2014 unassigned \u2014"), agents.map(function (a) {
-        return /*#__PURE__*/React.createElement("option", {
-          key: a.id || a.name,
-          value: a.name
-        }, a.name);
-      })), /*#__PURE__*/React.createElement("button", {
-        onClick: function onClick() {
-          setColl && setColl('issues', function (xs) {
-            return xs.map(function (x) {
-              return x.id === it.id ? _objectSpread(_objectSpread({}, x), {}, {
-                status: 'resolved'
-              }) : x;
-            });
-          });
-          flash && flash('Resolved');
-        },
+      }, "\xD7" + it.count)), /*#__PURE__*/React.createElement("div", {
         style: {
           fontFamily: HB.mono,
           fontSize: 9.5,
-          padding: '4px 8px',
-          borderRadius: 5,
-          border: '1px solid ' + HB.green,
-          background: 'transparent',
-          color: HB.green,
-          cursor: 'pointer',
-          flexShrink: 0
+          color: HB.inkMute,
+          marginTop: 5,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
         }
-      }, "resolve")));
-    }), !openIss.length && /*#__PURE__*/React.createElement("div", {
+      }, it.source, it.t ? " \xB7 " + ago(it.t) + ' ago' : '', it.detail ? " \xB7 " + it.detail : ''));
+    }), incidents.length > 8 && /*#__PURE__*/React.createElement("div", {
       style: {
-        fontFamily: HB.serif,
-        fontStyle: 'italic',
-        fontSize: 13,
-        color: HB.inkSoft
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: HB.inkMute
       }
-    }, "Queue clear."))));
+    }, incidents.length - 8, " more not shown"))));
   }(), tab === 'sessions' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: _objectSpread(_objectSpread({}, sideSec), {}, {
       borderBottom: "1px solid ".concat(HB.line)
@@ -754,7 +775,7 @@ function AgenticPanel(_ref2) {
       flexDirection: 'column',
       gap: 8
     }
-  }, rows.slice(0, 24).map(function (r) {
+  }, rows.slice(0, 24).map(function (r, i) {
     var tone = {
       ok: HB.green,
       err: HB.red,
@@ -762,69 +783,151 @@ function AgenticPanel(_ref2) {
       mute: HB.inkMute
     }[TASK_TONE[r.status] || 'mute'];
     var at = taskStamp(r);
-    return (
-      /*#__PURE__*/
-      // His treatment: what the founder said sits right in an
-      // accent bubble, what the app answered sits left in a
-      // bordered card, both capped so the exchange reads as a
-      // conversation instead of two stacked blocks.
-      React.createElement("div", {
-        key: r.id,
-        style: {
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          display: 'flex',
-          flexDirection: 'row-reverse',
-          gap: 8
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          maxWidth: '82%',
-          padding: '7px 10px',
-          borderRadius: 10,
-          fontSize: 12,
-          lineHeight: 1.45,
-          background: HB.accent,
-          color: '#fff'
-        }
-      }, r.directive)), /*#__PURE__*/React.createElement("div", {
-        style: {
-          display: 'flex',
-          flexDirection: 'row-reverse',
-          gap: 8
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontFamily: HB.mono,
-          fontSize: 9.5,
-          color: tone
-        }
-      }, r.status, r.claimed_by ? ' · ' + r.claimed_by : '', at ? ' · ' + ago(at) + ' ago' : '')), /*#__PURE__*/React.createElement("div", {
-        style: {
-          display: 'flex',
-          flexDirection: 'row',
-          gap: 8
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          maxWidth: '82%',
-          padding: '7px 10px',
-          borderRadius: 10,
-          fontSize: 12,
-          lineHeight: 1.5,
-          background: HB.card,
-          color: r.result ? HB.ink : HB.inkMute,
-          border: "1px solid ".concat(HB.line),
-          whiteSpace: 'pre-wrap',
-          fontFamily: r.result ? HB.sans : HB.serif,
-          fontStyle: r.result ? 'normal' : 'italic'
-        }
-      }, r.result || (r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.'))))
-    );
+    // His card: each exchange is a card that folds open to the conversation
+    // inside it, and the newest opens by itself as the first card did in his
+    // design. The rows are still the real task queue; nothing here is seeded.
+    var open = openRows[r.id] !== undefined ? openRows[r.id] : i === 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: r.id,
+      style: {
+        border: "1px solid ".concat(HB.line),
+        borderRadius: 10,
+        overflow: 'hidden',
+        background: HB.card
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: function onClick() {
+        return setOpenRows(function (o) {
+          return _objectSpread(_objectSpread({}, o), {}, _defineProperty({}, r.id, !open));
+        });
+      },
+      "aria-expanded": open,
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        width: '100%',
+        textAlign: 'left',
+        padding: '10px 11px',
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 26,
+        height: 26,
+        borderRadius: 7,
+        display: 'grid',
+        placeItems: 'center',
+        background: HB.accentSoft,
+        color: HB.accentHi,
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement(CKIcon, {
+      name: "agent",
+      size: 13
+    })), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 600,
+        color: HB.ink,
+        display: 'block',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, r.directive), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: HB.inkMute
+      }
+    }, r.claimed_by || 'your app', at ? " \xB7 " + ago(at) + ' ago' : '')), /*#__PURE__*/React.createElement("span", {
+      title: r.status,
+      style: {
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        flexShrink: 0,
+        background: tone
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 15,
+        color: HB.inkMute,
+        width: 14,
+        textAlign: 'center'
+      }
+    }, open ? "\u25BE" : "\u25B8")), open &&
+    /*#__PURE__*/
+    // His treatment inside the card: what the founder said sits right in an
+    // accent bubble with its state under it, what the app answered sits left
+    // in a bordered card, both capped so the exchange reads as a conversation.
+    React.createElement("div", {
+      style: {
+        borderTop: "1px solid ".concat(HB.lineSoft),
+        padding: '10px 11px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        background: HB.paper2
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'row-reverse',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        maxWidth: '82%',
+        padding: '7px 10px',
+        borderRadius: 10,
+        fontSize: 12,
+        lineHeight: 1.45,
+        background: HB.accent,
+        color: '#fff'
+      }
+    }, r.directive)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'row-reverse',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: tone
+      }
+    }, r.status)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'row',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        maxWidth: '82%',
+        padding: '7px 10px',
+        borderRadius: 10,
+        fontSize: 12,
+        lineHeight: 1.5,
+        background: HB.card,
+        color: r.result ? HB.ink : HB.inkMute,
+        border: "1px solid ".concat(HB.line),
+        whiteSpace: 'pre-wrap',
+        fontFamily: r.result ? HB.sans : HB.serif,
+        fontStyle: r.result ? 'normal' : 'italic'
+      }
+    }, r.result || (r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.')))));
   })), /*#__PURE__*/React.createElement(SessionComposer, {
     onRelay: onRelay,
     onReloadTasks: onReloadTasks,
@@ -1035,22 +1138,22 @@ function LibraryPanel(_ref5) {
   var onCreateNode = _ref5.onCreateNode,
     onAddDomain = _ref5.onAddDomain,
     flash = _ref5.flash;
-  var _React$useState7 = React.useState(''),
-    _React$useState8 = _slicedToArray(_React$useState7, 2),
-    q = _React$useState8[0],
-    setQ = _React$useState8[1];
-  var _React$useState9 = React.useState(function () {
+  var _React$useState9 = React.useState(''),
+    _React$useState0 = _slicedToArray(_React$useState9, 2),
+    q = _React$useState0[0],
+    setQ = _React$useState0[1];
+  var _React$useState1 = React.useState(function () {
       return Object.fromEntries(LIB_GROUPS.map(function (g) {
         return [g.cat, true];
       }));
     }),
-    _React$useState0 = _slicedToArray(_React$useState9, 2),
-    open = _React$useState0[0],
-    setOpen = _React$useState0[1];
-  var _React$useState1 = React.useState(null),
     _React$useState10 = _slicedToArray(_React$useState1, 2),
-    ghost = _React$useState10[0],
-    setGhost = _React$useState10[1];
+    open = _React$useState10[0],
+    setOpen = _React$useState10[1];
+  var _React$useState11 = React.useState(null),
+    _React$useState12 = _slicedToArray(_React$useState11, 2),
+    ghost = _React$useState12[0],
+    setGhost = _React$useState12[1];
   var ql = q.trim().toLowerCase();
   // POINTER drag, not HTML5 drag-and-drop. The founder could not drag a node
   // onto the canvas at all: QtWebEngine does not carry an HTML5 drag reliably

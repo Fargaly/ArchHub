@@ -287,6 +287,10 @@ function AtlasCockpit() {
   // The real exchanges between the founder and his app: every instruction the cockpit
   // queued and every answer the app posted back. The Sessions lens renders these rows.
   const [agentTasks, setAgentTasks] = React.useState([]);
+  // Server errors the cloud recorded since it last restarted (/founder/api/errors). With the
+  // failed task rows these are the incidents the cockpit can prove. loaded stays false while
+  // the route cannot be read, so the panel says it cannot tell instead of saying all clear.
+  const [serverErrors, setServerErrors] = React.useState({ loaded: false, rows: [] });
   const readTasksRef = React.useRef(null);
   React.useEffect(() => {
     let dead = false;
@@ -302,9 +306,14 @@ function AtlasCockpit() {
         setAppSeen({ loaded: true, at: ts.length ? Math.max(...ts) * 1000 : null, queued: d.queued || 0 });
       })
       .catch(() => {});
-    read();
-    readTasksRef.current = read;
-    const t = setInterval(read, 30000);
+    const readErrors = () => fetch('/founder/api/errors', { headers: { Accept: 'application/json' } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (dead || !d || !Array.isArray(d.errors)) return; setServerErrors({ loaded: true, rows: d.errors }); })
+      .catch(() => {});
+    const readAll = () => { read(); readErrors(); };
+    readAll();
+    readTasksRef.current = readAll;
+    const t = setInterval(readAll, 30000);
     return () => { dead = true; clearInterval(t); };
   }, []);
   const reloadTasks = React.useCallback(() => { if (readTasksRef.current) readTasksRef.current(); }, []);
@@ -893,7 +902,7 @@ function AtlasCockpit() {
             </div>
           <div className="hb-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
             {leftTab === 'library' && <LibraryPanel onCreateNode={createFromLibrary} onAddDomain={() => setDomModal(true)} flash={flash}/>}
-            {leftTab === 'agents' && <AgenticPanel M={M} DB={DB} assign={assign} attention={attention} onGoto={gotoAttention} onTuneAttention={tuneAttention} setColl={setColl} flash={flash} control={M.control} tasks={agentTasks} onRelay={relayToApp} onReloadTasks={reloadTasks}/>}
+            {leftTab === 'agents' && <AgenticPanel M={M} DB={DB} assign={assign} attention={attention} onGoto={gotoAttention} onTuneAttention={tuneAttention} setColl={setColl} flash={flash} control={M.control} tasks={agentTasks} tasksLoaded={appSeen.loaded} serverErrors={serverErrors} onRelay={relayToApp} onReloadTasks={reloadTasks}/>}
             {leftTab === 'view' && <div style={{ padding: '12px 11px' }}>
           <PanelLabel>DETAIL</PanelLabel>
           <div style={{ display: 'flex', background: HB.paper2, borderRadius: 8, padding: 3, gap: 3 }}>

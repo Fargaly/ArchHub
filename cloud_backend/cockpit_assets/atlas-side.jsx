@@ -62,8 +62,9 @@ function SessionComposer({ onRelay, onReloadTasks, flash }) {
 }
 
 
-function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNode, setColl, flash, control, tasks, onRelay, onReloadTasks }) {
+function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNode, setColl, flash, control, tasks, tasksLoaded, serverErrors, onRelay, onReloadTasks }) {
   const [tab, setTab] = React.useState('activity');
+  const [openRows, setOpenRows] = React.useState({});   // session cards the founder folded open or shut
   const rows = tasks || [];
   const ctl = control || null;
 
@@ -129,50 +130,69 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
         )}
 
         {tab === 'routing' && (() => {
-          const models = DB.models || [];
-          const live = models.filter(m => m.status !== 'disabled');
-          // task classes present anywhere in the fleet, plus the ones the app always needs
-          const classes = [...new Set(['intent', 'vision', 'compose', 'critique', 'extract', 'fallback', 'offline',
-            ...models.flatMap(m => m.tasks || [])])];
-          // There used to be a hardcoded monthly call volume per task class here, multiplied by
-          // each model's rate into a dollar figure the panel printed as SPEND. No call was ever
-          // counted. The cockpit does not meter model usage, so it now shows the routing it can
-          // prove and says plainly that no spend has been measured.
-          const ownerOf = (cls) => (live.find(m => (m.tasks || []).includes(cls)) || {}).id || '';
-          const route = (cls, id) => {
-            setColl && setColl('models', ms => ms.map(m => {
-              const has = (m.tasks || []).includes(cls);
-              if (m.id === id && !has) return { ...m, tasks: [...(m.tasks || []), cls] };
-              if (m.id !== id && has) return { ...m, tasks: (m.tasks || []).filter(t => t !== cls) };
-              return m;
-            }));
-            const nm = (models.find(m => m.id === id) || {}).name || 'none';
-            flash && flash(cls + ' → ' + nm);
+          // MODEL ROUTING shows what the app publishes with its map: control.models and
+          // control.routes (the contract is published_models_form in nodelang/cloud_relay.py).
+          // This panel used to route task classes over a model list kept in this page that
+          // nothing filled, and told the founder a change reached the fleet when no router saw it.
+          // Until the app publishes, it says so; a route is changed in the app, not here.
+          const published = ctl && Array.isArray(ctl.models) ? ctl.models : null;
+          const routes = ctl && Array.isArray(ctl.routes) ? ctl.routes : [];
+          // INCIDENTS are the failures the cloud holds: instructions your app answered with a
+          // refusal or an error (failed task rows), and server errors since the cloud last
+          // restarted. Identical failures fold into one row that carries their real count.
+          const fold = (items) => {
+            const byKey = new Map();
+            items.forEach(it => {
+              const was = byKey.get(it.key);
+              if (was) { was.count += 1; was.t = Math.max(was.t || 0, it.t || 0); }
+              else byKey.set(it.key, { ...it, count: 1 });
+            });
+            return [...byKey.values()].sort((a, b) => (b.t || 0) - (a.t || 0));
           };
-          const issues = (DB.issues || []);
-          const openIss = issues.filter(i => i.status !== 'resolved');
-          const agents = DB.agents || [];
+          const errorsLoaded = !!(serverErrors && serverErrors.loaded);
+          const failed = tasksLoaded ? rows.filter(r => r.status === 'failed').map(r => ({
+            key: 'task:' + r.directive, source: 'your app', title: String(r.directive || 'instruction'), detail: String(r.result || ''), t: taskStamp(r) })) : [];
+          const serverRows = errorsLoaded ? (serverErrors.rows || []).map(e => ({
+            key: 'error:' + e.where + ':' + e.kind, source: 'cloud', title: String(e.kind || 'error') + ' \u00b7 ' + String(e.where || ''), detail: String(e.message || ''), t: e.ts ? e.ts * 1000 : null })) : [];
+          const incidents = fold([...failed, ...serverRows]);
+          const events = incidents.reduce((n, it) => n + it.count, 0);
+          const known = !!tasksLoaded || errorsLoaded;
+          const clearText = [
+            tasksLoaded ? 'Nothing failed in the last ' + rows.length + ' instruction' + (rows.length === 1 ? '' : 's') : 'The task queue could not be read',
+            errorsLoaded ? 'the cloud has recorded no server error since it last restarted' : 'the cloud error log could not be read',
+          ].join('; ') + '.';
           return (
             <div>
               <div style={sideSec}>
                 <div style={{ ...sideLabel, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>MODEL ROUTING</span><span style={{ color: HB.inkSoft }}>{classes.length} task classes</span>
+                  <span>MODEL ROUTING</span><span style={{ color: HB.inkSoft }}>{published ? published.length + ' model' + (published.length === 1 ? '' : 's') : 'not published'}</span>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                  {classes.map(cls => (
-                    <div key={cls} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink, width: 62, flexShrink: 0 }}>{cls}</span>
-                      <select value={ownerOf(cls)} onChange={e => route(cls, e.target.value)}
-                        style={{ flex: 1, minWidth: 0, padding: '5px 6px', borderRadius: 6, border: '1px solid ' + HB.line, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 10 }}>
-                        <option value="">— unrouted —</option>
-                        {live.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft, marginTop: 9, lineHeight: 1.5 }}>
-                  Reassigning a class rewrites the fleet. The change is saved with your model list.
-                </div>
+                {!published && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute, lineHeight: 1.5 }}>Your app has not published its model list, so there is no routing to show. It appears here once the app sends it with the map.</div>}
+                {published && published.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>Your app published an empty model list.</div>}
+                {published && published.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {published.map((m, i) => (
+                      <div key={m.name + ':' + i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 7, background: HB.paper2, border: '1px solid ' + HB.lineSoft }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: m.available ? HB.green : HB.inkMute }}/>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: HB.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
+                        <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{m.provider}{m.available ? '' : ' \u00b7 unavailable'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {published && routes.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 10 }}>
+                    {routes.map(r => (
+                      <div key={r.task} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink, width: 62, flexShrink: 0 }}>{r.task}</span>
+                        <span style={{ flex: 1, minWidth: 0, fontFamily: HB.mono, fontSize: 10, color: HB.inkSoft, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.model}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {published && <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft, marginTop: 9, lineHeight: 1.5 }}>
+                  {routes.length ? 'Routing as your app reported it. Change it in the app.' : 'Your app did not report which model serves each task.'}
+                </div>}
               </div>
 
               <div style={sideSec}>
@@ -180,35 +200,27 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                 <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkSoft, lineHeight: 1.5 }}>
                   Not measured. Nothing here counts model calls, so the cockpit has no spend figure to give you.
                 </div>
-                <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 7, lineHeight: 1.5 }}>
-                  Rates you entered per model are shown with each model; a total needs real usage, and usage is not reported to the cloud.
-                </div>
               </div>
 
               <div style={{ ...sideSec, borderBottom: 'none' }}>
                 <div style={{ ...sideLabel, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>INCIDENTS</span><span style={{ color: openIss.length ? HB.red : HB.green }}>{openIss.length} open</span>
+                  <span>INCIDENTS</span>
+                  <span style={{ color: !known ? HB.inkMute : events ? HB.red : HB.green }}>{!known ? 'not known' : events ? events + ' recorded' : 'none recorded'}</span>
                 </div>
+                {!known && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute, lineHeight: 1.5 }}>The cockpit could not read the task queue or the cloud error log, so it cannot tell whether anything failed.</div>}
+                {known && incidents.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkSoft, lineHeight: 1.5 }}>{clearText}</div>}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {openIss.slice(0, 6).map(it => (
-                    <div key={it.id} style={{ padding: '8px 9px', borderRadius: 7, background: HB.paper2, border: '1px solid ' + HB.line }}>
+                  {incidents.slice(0, 8).map(it => (
+                    <div key={it.key} title={it.detail} style={{ padding: '8px 9px', borderRadius: 7, background: HB.paper2, border: '1px solid ' + HB.line }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: it.level === 'error' ? HB.red : HB.amber, flexShrink: 0 }}/>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: HB.red, flexShrink: 0 }}/>
                         <span style={{ fontFamily: HB.sans, fontSize: 12, color: HB.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title}</span>
-                        <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft }}>×{it.count || 1}</span>
+                        <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkSoft }}>{'\u00d7' + it.count}</span>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7 }}>
-                        <select value={it.owner || ''} onChange={e => { var nm = e.target.value; setColl && setColl('issues', xs => xs.map(x => x.id === it.id ? { ...x, owner: nm } : x)); flash && flash(nm ? 'Assigned to ' + nm : 'Unassigned'); }}
-                          style={{ flex: 1, minWidth: 0, padding: '4px 5px', borderRadius: 5, border: '1px solid ' + HB.line, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 9.5 }}>
-                          <option value="">— unassigned —</option>
-                          {agents.map(a => <option key={a.id || a.name} value={a.name}>{a.name}</option>)}
-                        </select>
-                        <button onClick={() => { setColl && setColl('issues', xs => xs.map(x => x.id === it.id ? { ...x, status: 'resolved' } : x)); flash && flash('Resolved'); }}
-                          style={{ fontFamily: HB.mono, fontSize: 9.5, padding: '4px 8px', borderRadius: 5, border: '1px solid ' + HB.green, background: 'transparent', color: HB.green, cursor: 'pointer', flexShrink: 0 }}>resolve</button>
-                      </div>
+                      <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.source}{it.t ? ' \u00b7 ' + ago(it.t) + ' ago' : ''}{it.detail ? ' \u00b7 ' + it.detail : ''}</div>
                     </div>
                   ))}
-                  {!openIss.length && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkSoft }}>Queue clear.</div>}
+                  {incidents.length > 8 && <div style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{incidents.length - 8} more not shown</div>}
                 </div>
               </div>
             </div>
@@ -227,28 +239,43 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
               </div>
               {rows.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>No instructions yet. Ask the cockpit something and the exchange lands here.</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {rows.slice(0, 24).map(r => {
+                {rows.slice(0, 24).map((r, i) => {
                   const tone = { ok: HB.green, err: HB.red, accent: HB.accent, mute: HB.inkMute }[TASK_TONE[r.status] || 'mute'];
                   const at = taskStamp(r);
+                  // His card: each exchange is a card that folds open to the conversation
+                  // inside it, and the newest opens by itself as the first card did in his
+                  // design. The rows are still the real task queue; nothing here is seeded.
+                  const open = openRows[r.id] !== undefined ? openRows[r.id] : i === 0;
                   return (
-                    // His treatment: what the founder said sits right in an
-                    // accent bubble, what the app answered sits left in a
-                    // bordered card, both capped so the exchange reads as a
-                    // conversation instead of two stacked blocks.
-                    <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: 8 }}>
-                        <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.45, background: HB.accent, color: '#fff' }}>{r.directive}</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: 8 }}>
-                        <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: tone }}>
-                          {r.status}{r.claimed_by ? ' · ' + r.claimed_by : ''}{at ? ' · ' + ago(at) + ' ago' : ''}
+                    <div key={r.id} style={{ border: `1px solid ${HB.line}`, borderRadius: 10, overflow: 'hidden', background: HB.card }}>
+                      <button onClick={() => setOpenRows(o => ({ ...o, [r.id]: !open }))} aria-expanded={open}
+                        style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left', padding: '10px 11px', border: 'none', background: 'transparent', cursor: 'pointer' }}>
+                        <span style={{ width: 26, height: 26, borderRadius: 7, display: 'grid', placeItems: 'center', background: HB.accentSoft, color: HB.accentHi, flexShrink: 0 }}><CKIcon name="agent" size={13}/></span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 600, color: HB.ink, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.directive}</span>
+                          <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.claimed_by || 'your app'}{at ? ' \u00b7 ' + ago(at) + ' ago' : ''}</span>
                         </span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'row', gap: 8 }}>
-                        <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.5, background: HB.card, color: r.result ? HB.ink : HB.inkMute, border: `1px solid ${HB.line}`, whiteSpace: 'pre-wrap', fontFamily: r.result ? HB.sans : HB.serif, fontStyle: r.result ? 'normal' : 'italic' }}>
-                          {r.result || (r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.')}
-                        </span>
-                      </div>
+                        <span title={r.status} style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: tone }}/>
+                        <span style={{ fontFamily: HB.mono, fontSize: 15, color: HB.inkMute, width: 14, textAlign: 'center' }}>{open ? '\u25be' : '\u25b8'}</span>
+                      </button>
+                      {open && (
+                        // His treatment inside the card: what the founder said sits right in an
+                        // accent bubble with its state under it, what the app answered sits left
+                        // in a bordered card, both capped so the exchange reads as a conversation.
+                        <div style={{ borderTop: `1px solid ${HB.lineSoft}`, padding: '10px 11px', display: 'flex', flexDirection: 'column', gap: 6, background: HB.paper2 }}>
+                          <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: 8 }}>
+                            <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.45, background: HB.accent, color: '#fff' }}>{r.directive}</span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'row-reverse', gap: 8 }}>
+                            <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: tone }}>{r.status}</span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'row', gap: 8 }}>
+                            <span style={{ maxWidth: '82%', padding: '7px 10px', borderRadius: 10, fontSize: 12, lineHeight: 1.5, background: HB.card, color: r.result ? HB.ink : HB.inkMute, border: `1px solid ${HB.line}`, whiteSpace: 'pre-wrap', fontFamily: r.result ? HB.sans : HB.serif, fontStyle: r.result ? 'normal' : 'italic' }}>
+                              {r.result || (r.status === 'queued' ? 'Waiting for your app to claim it.' : 'No answer posted.')}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

@@ -6,7 +6,7 @@
 const fs = require('fs'), path = require('path');
 const root = path.resolve(__dirname, '..', 'cockpit_assets');
 const Babel = require(path.join(root, 'vendor', 'babel.js'));
-const order = ['tokens', 'cockpit-core', 'hub-kit', 'atlas-engine', 'atlas-runtime', 'atlas-panels', 'atlas-side', 'atlas-cockpit'];
+const order = ['tokens', 'param-types', 'cockpit-core', 'hub-kit', 'atlas-engine', 'atlas-runtime', 'atlas-panels', 'atlas-side', 'atlas-cockpit'];
 fs.mkdirSync(path.join(root, 'compiled'), { recursive: true });
 for (const name of order) {
   const src = fs.readFileSync(path.join(root, name + '.jsx'), 'utf8');

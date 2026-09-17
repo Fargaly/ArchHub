@@ -12,24 +12,10 @@
 
 const LM = window.AH;  // tokens.jsx — single source of truth
 
-// ─── Categories — each is a node type with color + icon + role ───
-const CAT = window.ArchHubTheme.derive((LM) => ({
-  wire:      { col:LM.inkSoft, icon:'⇄', label:'CONNECTION' },
-  host:      { col:LM.cyan,    icon:'⌬', label:'HOST',      role:'Connected app' },
-  read:      { col:LM.cyan,    icon:'◇', label:'READ',      role:'Pulls data from a host' },
-  filter:    { col:LM.inkSoft, icon:'⌗', label:'FILTER',    role:'Filters a stream' },
-  transform: { col:LM.warn,    icon:'⌭', label:'TRANSFORM', role:'Modifies elements' },
-  annotate:  { col:LM.accent,  icon:'✎', label:'ANNOTATE',  role:'Adds dims / tags / text' },
-  compose:   { col:LM.accent,  icon:'▤', label:'COMPOSE',   role:'Builds schedules / sheets' },
-  logic:     { col:LM.purple,  icon:'⌥', label:'LOGIC',     role:'Branch / loop / switch' },
-  ai:        { col:LM.purple,  icon:'✦', label:'AI',        role:'LLM reasoning, vision, match' },
-  output:    { col:LM.ok,      icon:'↗', label:'OUTPUT',    role:'Publishes / saves / notifies' },
-}));
-
-const WIRE = window.ArchHubTheme.derive((LM) => ({
-  view:LM.cyan, selection:LM.cyan, walls:LM.accent, doors:LM.accent, sheets:LM.accent,
-  intent:LM.purple, prediction:LM.purple, trace:LM.inkSoft, dims:LM.ok, file:LM.ok, any:LM.inkSoft,
-}));
+// Categories and signal colours come from node-registry.jsx - one definition, read by the
+// canvas, the node library and the minimap alike.
+const CAT = window.AH_CAT;
+const WIRE = window.AH_WIRE;
 
 const studioCategory = name => CAT[name] || {col:LM.accent, icon:'○', label:name, role:''};
 const useStudioProjection = () => {
@@ -314,83 +300,8 @@ const _SEED_GRAPH = {
   ],
 };
 
-// ─── Library of nodes that can be inserted — Grasshopper/Dynamo style
-const LM_LIBRARY = [
-  { cat:'host', items:[
-    // Every host the founder works with. Each row is a real wire; the node
-    // itself says when its host is closed, so nothing here is a promise.
-    { id:'h_revit',   title:'Revit',    sub:'live sessions on this machine', engine:'revit.sessions' },
-    { id:'h_autocad', title:'AutoCAD',  sub:'line work from the live drawing', engine:'cad.host_lines' },
-    { id:'h_max',     title:'3ds Max',  sub:'MAXScript / Python in the open scene', engine:'max.exec', params:{ code:'' } },
-    { id:'h_rhino',   title:'Rhino',    sub:'RhinoPython in the open model', engine:'rhino.exec', params:{ code:'' } },
-    { id:'h_blender', title:'Blender',  sub:'Python in the open scene', engine:'blender.exec', params:{ code:'' } },
-    { id:'h_excel',   title:'Excel',    sub:'open workbooks and their sheets', engine:'office.read', params:{ operation:'excel.list_workbooks' } },
-    { id:'h_word',    title:'Word',     sub:'open documents and their paragraphs', engine:'office.read', params:{ operation:'word.list_documents' } },
-    { id:'h_ppt',     title:'PowerPoint', sub:'open decks and their slides', engine:'office.read', params:{ operation:'powerpoint.list_presentations' } },
-    { id:'h_outlook', title:'Outlook',  sub:'the inbox, newest first', engine:'outlook.inbox', params:{ count:20 } },
-    { id:'h_notion',  title:'Notion',   sub:'search your workspace', engine:'notion.search', params:{ query:'' } },
-    { id:'h_dropbox', title:'Dropbox',  sub:'files in your Dropbox folder', engine:'dropbox.list', params:{ path:'' } },
-    { id:'h_speckle', title:'Speckle',  sub:'commit the wired rows to a branch', engine:'library.push_speckle', params:{ project:'', branch:'archhub/main', message:'ArchHub push' } },
-  ]},
-  { cat:'read', items:[
-    { id:'r_walls',     title:'list_walls',    sub:'pull walls from active view', engine:'revit.read', params:{ operation:'revit.list_walls' } },
-    { id:'r_doors',     title:'list_doors',    sub:'pull doors + swings + marks', engine:'revit.read', params:{ operation:'revit.list_doors' } },
-    { id:'r_windows',   title:'list_windows',  sub:'pull windows + types', engine:'revit.read', params:{ operation:'revit.list_windows' } },
-    { id:'r_sheets',    title:'list_sheets',   sub:'enumerate sheets in set', engine:'revit.read', params:{ operation:'revit.list_sheets' } },
-    { id:'r_views',     title:'list_views',    sub:'plans, sections, schedules', engine:'revit.read', params:{ operation:'revit.list_views' } },
-    { id:'r_levels',    title:'list_levels',   sub:'levels + elevations', engine:'revit.read', params:{ operation:'revit.list_levels' } },
-    { id:'r_selection', title:'get_selection', sub:'whatever is selected in host', engine:'revit.read', params:{ operation:'revit.get_selection' } },
-    { id:'r_warnings',  title:'list_warnings', sub:'host warnings · by severity', engine:'revit.read', params:{ operation:'revit.list_warnings' } },
-    { id:'r_xl_sheets', title:'excel worksheets', sub:'sheets of the workbook in front', engine:'office.read', params:{ operation:'excel.list_worksheets' } },
-    { id:'r_doc_paras', title:'word paragraphs', sub:'paragraphs of the document in front', engine:'office.read', params:{ operation:'word.list_paragraphs' } },
-    { id:'r_ppt_slides', title:'powerpoint slides', sub:'slides of the deck in front', engine:'office.read', params:{ operation:'powerpoint.list_slides' } },
-  ]},
-  { cat:'filter', items:[
-    { id:'f_type',  title:'where type',      sub:'by family/type' , engine:'library.filter_field'},
-    { id:'f_cat',   title:'where category',  sub:'by Revit category' , engine:'library.filter_field'},
-    { id:'f_level', title:'where level',     sub:'by level reference' , engine:'library.filter_field'},
-    { id:'f_param', title:'where parameter', sub:'predicate on a parameter' , engine:'library.filter_compare'},
-    { id:'f_pred',  title:'where custom',    sub:'arbitrary JS predicate' , engine:'library.filter_rule'},
-  ]},
-  { cat:'transform', items:[
-    { id:'t_setp',  title:'set parameter',   sub:'mutates parameter values' , engine:'library.set_field'},
-    { id:'t_move',  title:'move',            sub:'translation' , engine:'library.move'},
-    { id:'t_rot',   title:'rotate',          sub:'rotation' , engine:'library.rotate'},
-    { id:'t_scale', title:'scale',           sub:'uniform / per-axis' , engine:'library.scale'},
-    { id:'t_group', title:'group by',        sub:'key → list' , engine:'library.group_by'},
-    { id:'t_sort',  title:'sort by',         sub:'asc / desc on key' , engine:'library.sort_by'},
-  ]},
-  { cat:'annotate', items:[
-    { id:'a_dims',  title:'create_dimensions', sub:'aligned, parallel, baseline' , engine:'library.dimensions'},
-    { id:'a_tags',  title:'place_tags',         sub:'tag every untagged element of a category' , engine:'library.place_tags'},
-    { id:'a_text',  title:'add_text',           sub:'text note · positioned' , engine:'library.add_text'},
-    { id:'a_rooms', title:'tag_rooms',          sub:'tag every untagged room in the view' , engine:'library.tag_rooms'},
-  ]},
-  { cat:'compose', items:[
-    { id:'c_sched', title:'build_schedule',  sub:'table from a stream' , engine:'library.build_schedule'},
-    { id:'c_sheet', title:'place_on_sheet',  sub:'named views onto a sheet' , engine:'library.place_on_sheet'},
-    { id:'c_legend',title:'make_legend',     sub:'symbol legend block' , engine:'library.make_legend'},
-  ]},
-  { cat:'logic', items:[
-    { id:'l_if',     title:'if',     sub:'predicate → true / false branches' , engine:'library.if'},
-    { id:'l_switch', title:'switch', sub:'multi-branch on a key' , engine:'library.switch'},
-    { id:'l_loop',   title:'loop',   sub:'iterate over a list' , engine:'library.loop'},
-    { id:'l_merge',  title:'merge',  sub:'concat / dedupe streams' , engine:'library.merge'},
-  ]},
-  { cat:'ai', items:[
-    { id:'i_think', title:'think',  sub:'reason with the picked model' , engine:'library.think'},
-    { id:'i_vis',   title:'vision', sub:'read a sketch / screenshot with the picked model' , engine:'library.vision'},
-    { id:'i_match', title:'match_skill', sub:'best saved skill for an intent' , engine:'library.match_skill'},
-    { id:'i_embed', title:'embed',  sub:'similar facts from the brain' , engine:'library.embed'},
-  ]},
-  { cat:'output', items:[
-    { id:'o_skill', title:'save_skill',     sub:'template this run' , engine:'library.save_skill'},
-    { id:'o_pdf',   title:'publish_pdf',    sub:'sheets → PDF files via the live Revit' , engine:'library.publish_pdf'},
-    { id:'o_spk',   title:'push_speckle',   sub:'commit the wired rows to a branch' , engine:'library.push_speckle'},
-    { id:'o_email', title:'draft_email',    sub:'draft in Outlook · you send' , engine:'library.draft_email'},
-    { id:'o_notify',title:'notify',         sub:'desktop notification' , engine:'library.notify'},
-  ]},
-];
+// The insertable nodes come from node-registry.jsx - one definition.
+const LM_LIBRARY = window.AH_LIBRARY;
 
 // ──────────────────────── ROOT ────────────────────────
 const StudioLM = () => {
@@ -712,6 +623,7 @@ const StudioLM = () => {
         @keyframes lmDash  { to { stroke-dashoffset: -16 } }
         @keyframes lmSlideIn { from { transform: translateX(8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
         @keyframes lmPop    { from { transform: scale(.92); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+        .lm-home-draft::placeholder { color: ${LM.inkSoft}; font-style: italic; opacity: 1 }
       `}</style>
     </div>
   );
@@ -799,19 +711,21 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, 
     background:LM.bgPanel, borderRight:`1px solid ${LM.line}`,
     overflow:'hidden', minHeight:0,
   }}>
-    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
-      workshopActive={!!workshopContext}/>
+    <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}/>
+    {/* Workshop open: the agents take this panel's place, one rail, not two (design studio-lm.jsx:442-445). */}
+    {workshopContext
+      ? <WorkshopAgentsPanel key={JSON.stringify([openId, workshopContext.graphId, workshopContext.scopeRoot,
+          workshopContext.descriptor.root])} context={workshopContext} target={workshopTarget} onSelect={onWorkshopTarget}/>
+      : <>
     {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onSettings}/>}
-    {panel === 'nodes' && (workshopContext ?
-      <WorkshopAgentsPanel key={JSON.stringify([openId, workshopContext.graphId, workshopContext.scopeRoot,
-        workshopContext.descriptor.root])} context={workshopContext} target={workshopTarget} onSelect={onWorkshopTarget}/> :
-      <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onSettings}/>)}
+    {panel === 'nodes'  && <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onSettings}/>}
     {panel === 'skills' && <SkillsPanel/>}
     {panel === 'search' && <SearchPanel/>}
+      </>}
   </aside>
 );
 
-const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, workshopActive }) => {
+const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
   const items = [
     { id:'chats',  title:'Chats',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4l-5 2 2-4.6A8.4 8.4 0 1 1 21 11.5z"/></svg> },
     { id:'nodes',  title:'Nodes',  svg:<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
@@ -832,8 +746,7 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs, workshopActive 
       </RailIcon>
       <div style={{ height:6 }}/>
       {items.map(it => (
-        <RailIcon key={it.id} active={panel === it.id} onClick={() => setPanel(it.id)}
-          title={it.id === 'nodes' && workshopActive ? 'Workshop agents' : it.title}>
+        <RailIcon key={it.id} active={panel === it.id} onClick={() => setPanel(it.id)} title={it.title}>
           {it.svg}
         </RailIcon>
       ))}
@@ -1040,49 +953,68 @@ const WorkshopAgentsPanel = ({context, target, onSelect}) => {
       row.connection_status === 'stale' ? 'No recent activity' :
       row.connection_status === 'connected' && observed(row) && row.expires_at <= clock ? 'Activity expired' : 'Connection unverified';
     const seen = observed(row) ? new Date(row.observed_at * 1000).toLocaleString() : '';
-    return <button key={row.root} type="button" aria-disabled={!selectable} aria-pressed={target === row.root}
+    // Design AgentsRail row (studio-workshop.jsx:246-265): avatar, name + role chip, provider line,
+    // status dot + label, one activity line. Every value is the projected participant row.
+    const on = target === row.root, self = row.root === transcript?.self;
+    const tone = workshopAgentTone(row.root, self);
+    const statusTone = active ? LM.ok : row.connection_status === 'disconnected' ? LM.err : LM.inkMuted;
+    const name = row.label || row.root;
+    return <button key={row.root} type="button" aria-disabled={!selectable} aria-pressed={on}
       aria-haspopup={disconnectable(row) ? 'menu' : undefined}
       onContextMenu={event => openMenu(event, row)}
       onKeyDown={event => { if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) openMenu(event, row); }}
       title={[row.root, selectable ? 'Choose as message recipient' : '', seen ? 'Last seen: ' + seen : ''].filter(Boolean).join('\n')}
       onClick={() => { if (selectable) onSelect(row.root); }} style={{
-        display:'block', width:'100%', textAlign:'left', padding:'10px 12px', marginBottom:6,
-        border:`1px solid ${target === row.root ? LM.accent : LM.line}`, borderRadius:LM.rad.md,
-        background:target === row.root ? LM.accentDim : LM.bg, color:LM.ink,
+        display:'flex', gap:9, width:'100%', textAlign:'left', padding:'9px 14px', margin:0,
+        border:0, borderBottom:`1px solid ${LM.lineSoft}`, borderRadius:0,
+        background:on ? LM.bgSoft : 'transparent', boxShadow:on ? `inset 2px 0 0 ${LM.accent}` : 'none', color:LM.ink,
+        opacity:row.connection_status === 'disconnected' || !row.attached ? .55 : 1,
         cursor:selectable ? 'pointer' : 'default', fontFamily:LM.sans, overflowWrap:'anywhere',
       }}>
-      <span style={{display:'flex', gap:8, alignItems:'center', fontSize:14, fontWeight:500}}>
-        <span aria-hidden="true" style={{width:7, height:7, borderRadius:'50%', flexShrink:0,
-          background:active ? LM.ok : LM.inkMuted}}/>
-        <span>{row.label || row.root}{row.root === transcript?.self ? ' (you)' : ''}</span>
+      <span aria-hidden="true" style={{width:28, height:28, borderRadius:self ? '50%' : 7, background:tone.bg, flex:'none',
+        color:tone.fg, display:'grid', placeItems:'center', fontSize:13, fontWeight:600,
+        opacity:active ? 1 : .6}}>{String(name).trim().charAt(0).toUpperCase() || '?'}</span>
+      <span style={{display:'block', minWidth:0, flex:1}}>
+        <span style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+          <span style={{fontSize:12.5, fontWeight:500, letterSpacing:'-0.005em'}}>{name}</span>
+          <span style={{fontFamily:LM.mono, fontSize:8.5, letterSpacing:'0.12em', padding:'1px 5px', borderRadius:3,
+            border:`1px solid ${LM.line}`, color:LM.inkMuted}}>{self ? 'YOU' : 'AGENT'}</span>
+        </span>
+        {row.runtime && <span style={{display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.03em', marginTop:2}}>{row.runtime}</span>}
+        <span style={{display:'flex', alignItems:'center', gap:5, marginTop:5, fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', color:statusTone}}>
+          <span style={{width:6, height:6, borderRadius:'50%', background:statusTone, flex:'none',
+            animation:active ? 'lmPulse 1.3s infinite' : 'none'}}/>{status.toUpperCase()}
+        </span>
+        {seen && <span style={{display:'block', fontSize:11.5, color:LM.inkSoft, lineHeight:1.4, marginTop:5}}>Last seen {seen}</span>}
+        {linkStatus(row) && <span role="status" aria-live="polite" style={{display:'block', fontSize:11.5, color:LM.inkSoft, lineHeight:1.4, marginTop:4}}>{linkStatus(row)}</span>}
+        {!row.attached && <span style={{display:'block', fontSize:11.5, color:LM.inkSoft, lineHeight:1.4, marginTop:4}}>{'History participant \u00b7 detached'}</span>}
       </span>
-      {row.runtime && <span style={{display:'block', fontSize:12, color:LM.inkSoft, marginTop:3}}>{row.runtime}</span>}
-      <span style={{display:'block', fontSize:12, color:active ? LM.ok : LM.inkSoft, marginTop:3}}>{status}</span>
-      {seen && <span style={{display:'block', fontSize:11, color:LM.inkSoft, marginTop:3}}>Last seen {seen}</span>}
-      {linkStatus(row) && <span role="status" aria-live="polite" style={{display:'block', fontSize:11, color:LM.inkSoft, marginTop:3}}>{linkStatus(row)}</span>}
-      {!row.attached && <span style={{display:'block', fontSize:11, color:LM.inkSoft}}>History participant · detached</span>}
     </button>;
   };
-  return <section ref={sectionRef} aria-label="Workshop agents" style={{position:'relative', display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
-    <div style={{padding:'12px 12px 10px', borderBottom:`1px solid ${LM.line}`}}>
-      <div style={{fontSize:14, fontWeight:600}}>Workshop agents</div>
-      <div style={{fontSize:12, color:LM.inkSoft, marginTop:4, overflowWrap:'anywhere'}}>{descriptor.label}</div>
+  const railLabel = {fontFamily:LM.mono, fontSize:9, letterSpacing:'0.18em', color:LM.inkMuted};
+  return <section ref={sectionRef} aria-label="Workshop agents" style={{position:'relative', display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden', background:LM.bgPanel}}>
+    <div style={{padding:'9px 12px 9px 14px', borderBottom:`1px solid ${LM.lineSoft}`, display:'flex', alignItems:'center', gap:8}}>
+      <span style={railLabel}>CONNECTED AGENTS</span><div style={{flex:1}}/>
+      <span title={descriptor.label} style={{...railLabel, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:120}}>{descriptor.label}</span>
     </div>
-    <div className="ah-scroll" style={{flex:1, minHeight:0, overflow:'auto', padding:10}}>
-      <div style={{fontSize:12, color:LM.inkSoft, marginBottom:10}}>Active recently · {connected.length}</div>
-      {!transcript ? <p role="status" style={{fontSize:13, color:LM.inkSoft}}>No live agent data for this Workshop. Waiting for its current connection status.</p> :
-        !connected.length && <p role="status" style={{fontSize:13, color:LM.inkSoft}}>No agents have verified recent activity in this Workshop.</p>}
+    <div className="ah-scroll" style={{flex:1, minHeight:0, overflow:'auto', display:'flex', flexDirection:'column'}}>
+      <div style={{...railLabel, padding:'9px 14px 7px', borderBottom:`1px solid ${LM.lineSoft}`}}>{'ACTIVE RECENTLY \u00b7 '}{connected.length}</div>
+      {!transcript ? <p role="status" style={{fontSize:11.5, lineHeight:1.5, color:LM.inkSoft, padding:'9px 14px', margin:0}}>No live agent data for this Workshop. Waiting for its current connection status.</p> :
+        !connected.length && <p role="status" style={{fontSize:11.5, lineHeight:1.5, color:LM.inkSoft, padding:'9px 14px', margin:0}}>No agents have verified recent activity in this Workshop.</p>}
       {connected.map(renderParticipant)}
-      {other.length > 0 && <details style={{marginTop:14}}>
-        <summary style={{fontSize:12, color:LM.inkSoft, cursor:'pointer', marginBottom:10}}>
-          Disconnected or unverified · {other.length}
+      {other.length > 0 && <details>
+        <summary style={{...railLabel, padding:'9px 14px 7px', cursor:'pointer', borderBottom:`1px solid ${LM.lineSoft}`}}>
+          {'DISCONNECTED OR UNVERIFIED \u00b7 '}{other.length}
         </summary>
         {other.map(renderParticipant)}
       </details>}
     </div>
-    <div style={{padding:'10px 12px', borderTop:`1px solid ${LM.line}`, fontSize:12, color:LM.inkSoft}}>
-      Select a participant to address a message. Recent activity does not mean an agent is running a task.
-      {canDisconnect && ' Right-click an agent with a Session Link channel, or press Shift+F10, to disconnect that channel. It does not end the agent session or undo work already delivered.'}
+    <div style={{padding:'11px 14px', borderTop:`1px solid ${LM.lineSoft}`}}>
+      <span style={railLabel}>SCOPE</span>
+      <div style={{fontSize:11.5, color:LM.inkSoft, lineHeight:1.5, marginTop:7}}>
+        Select a participant to address a message. Recent activity does not mean an agent is running a task.
+        {canDisconnect && ' Right-click an agent with a Session Link channel, or press Shift+F10, to disconnect that channel. It does not end the agent session or undo work already delivered.'}
+      </div>
     </div>
     {menu && <CanvasMenu x={menu.x} y={menu.y} maxHeight={menu.maxHeight} opener={menu.opener}
       actions={menu.actions} onClose={() => setMenu(null)}/>}
@@ -1285,7 +1217,12 @@ const SkillsPanel = withLiveCatalogue('ARCHHUB_LOAD_SKILLS', LM_SAVED_SKILLS, ()
 ));
 
 // ─── Global search panel ───
-const SearchPanel = () => (
+const SearchPanel = () => {
+  // Scope counts are read from what this Studio holds; a scope nothing counts draws no number.
+  const projected = useStudioProjection();
+  const live = window.ARCHHUB_LIVE || {};
+  const count = list => Array.isArray(list) ? list.length : null;
+  return (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
       <span style={{ fontFamily:LM.sans, fontSize:14, fontWeight:600, color:LM.ink }}>Search</span>
@@ -1307,12 +1244,12 @@ const SearchPanel = () => (
     <div style={{ padding:'4px 10px', fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.14em' }}>SCOPES</div>
     <div style={{ padding:'0 6px', display:'flex', flexDirection:'column', gap:1 }}>
       {[
-        ['chats',  'sessions + messages',  14],
-        ['nodes',  'in current graph',      11],
-        ['skills', 'saved templates',       6],
-        ['memory', 'what Claude remembers', 8],
-        ['files',  'Revit / Rhino / Speckle', 47],
-        ['hosts',  'connectors',            6],
+        ['chats',  'sessions + messages',  count(LM_SESSIONS)],
+        ['nodes',  'in current graph',     count(projected?.graph?.nodes || live.graph?.nodes)],
+        ['skills', 'saved templates',      count(live.skills)],
+        ['memory', 'what the brain governs', count(live.memory)],
+        ['files',  'Revit / Rhino / Speckle', null],
+        ['hosts',  'connectors',           count(live.connectors)],
       ].map(([k, sub, n]) => (
         <button key={k} style={{
           padding:'6px 10px', borderRadius:LM.rad.sm, background:'transparent', border:0,
@@ -1323,12 +1260,13 @@ const SearchPanel = () => (
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:54 }}>{k}</span>
           <span style={{ flex:1, fontSize:11, color:LM.inkSoft }}>{sub}</span>
-          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{n}</span>
+          {n != null && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{n}</span>}
         </button>
       ))}
     </div>
   </div>
-);
+  );
+};
 
 const kbd = () => ({
   fontFamily:LM.mono, fontSize:9, padding:'1px 5px', background:LM.bgSoft,
@@ -1406,20 +1344,30 @@ const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
     padding:'30px 44px 36px', display:'flex', flexDirection:'column',
   }}>
     <ModelStrip model={native ? {...model,name:native.title || native.app,vendor:native.app} : model} setPickerOpen={setPickerOpen}/>
-    <form onSubmit={startSession} style={{background:LM.bgPanel, border:`1px solid ${LM.line}`,
-      borderRadius:LM.rad.xl, padding:'16px 18px', marginBottom:16, marginTop:14}}>
-      <textarea aria-label="Start a new session" placeholder="Start a new session…"
-        value={draft} onChange={event => setDraft(event.target.value)} disabled={starting}
-        onKeyDown={event => {if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing) startSession(event);}}
-        rows={2} maxLength={12000} style={{width:'100%',boxSizing:'border-box',resize:'vertical',
-          background:'transparent',border:0,color:LM.ink,fontFamily:LM.serif,fontSize:24,lineHeight:1.4}}/>
-      <div style={{display:'flex',alignItems:'center',gap:12,marginTop:10}}>
-        <span style={{flex:1,fontSize:12,color:LM.inkMuted}}>
-          {native ? native.app + ' · ' + (native.title || 'Connected session') : modelRoute(model) || 'Choose an agent or model above'}
-        </span>
-        <button type="submit" disabled={starting || !draft.trim()} style={{padding:'9px 16px',
-          border:0,borderRadius:7,background:LM.accent,color:(window.AH && window.AH.onFill) || '#180f08',cursor:'pointer'}}>
-          {starting ? 'Starting…' : '→ Send'}
+    <form onSubmit={startSession} style={{
+      background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.xl,
+      padding:'16px 18px', marginBottom:16, marginTop:14,
+    }}>
+      <div style={{ display:'flex', alignItems:'flex-end', gap:14 }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          <textarea aria-label="Start a new session" placeholder={'Start a new session\u2026'} className="lm-home-draft"
+            value={draft} onChange={event => setDraft(event.target.value)} disabled={starting}
+            onKeyDown={event => {if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent?.isComposing) startSession(event);}}
+            rows={1} maxLength={12000} style={{width:'100%', boxSizing:'border-box', resize:'none', display:'block',
+              background:'transparent', border:0, outline:'none', color:LM.ink, fontFamily:LM.serif, fontSize:24,
+              letterSpacing:'-0.01em', lineHeight:1.4, padding:'2px 0'}}/>
+          {/* The chip row (design studio-lm.jsx:811-816) names the route this session starts on. */}
+          <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:10, minWidth:0 }}>
+            <Chip mono>{native ? native.app + ' \u00b7 ' + (native.title || 'Connected session') : modelRoute(model) || 'Choose an agent or model above'}</Chip>
+          </div>
+        </div>
+        <button type="submit" disabled={starting || !draft.trim()} style={{
+          padding:'9px 16px 9px 14px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08',
+          border:0, borderRadius:7, fontFamily:LM.sans, fontSize:13, fontWeight:500,
+          cursor:'pointer', display:'inline-flex', alignItems:'center', gap:7, flexShrink:0,
+        }}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={(window.AH && window.AH.onFill) || "#180f08"} strokeWidth="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          {starting ? 'Starting\u2026' : 'Send'}
         </button>
       </div>
       {startError && <p role="alert" style={{color:LM.warn,marginBottom:0}}>{startError}</p>}
@@ -1452,7 +1400,7 @@ const Home = ({ onOpen, model, native, setPickerOpen, onStarted }) => {
     </form>
     </details>
     <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:14 }}>
-      <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Graphs</h2>
+      <h2 style={{ fontFamily:LM.serif, fontSize:26, fontWeight:400, letterSpacing:'-0.015em', margin:0 }}>Sessions</h2>
       <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em' }}>
         {shown.length} · CLICK TO OPEN
       </span>
@@ -1561,11 +1509,10 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
         workshop ? <WorkshopConversation key={JSON.stringify([session.id, workshopState.canvas.graph_id,
           workshopState.canvas.root, workshop.root])} descriptor={workshop} target={target}
           setTarget={target => updateView({target})} setMode={setMode}/> : <>
-          {window.ARCHHUB_LIVE || window.ARCHHUB_STUDIO_AUTHORITY
-            ? <p role="status" style={{padding:24, color:LM.inkSoft}}>
-                Choose a Workshop conversation, or select a node with a model on the canvas.</p>
-            : <><ChatView session={session} model={model} setMode={setMode}/>
-                <InferenceInspector model={model} setPickerOpen={setPickerOpen}/></>}
+          <ChatView session={session} model={model} setMode={setMode}
+            workshopRoom={workshopModeRoom(workshops, '')}
+            openWorkshop={root => updateView({conversationRoot:root, mode:'chat', target:''})}/>
+          <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
         </>
       ) : (
         <>
@@ -1678,28 +1625,54 @@ const WorkshopLayoutStrip = ({layout, setLayout}) => (
     ))}
   </div>
 );
+// One participant tone for the agents rail and the transcript avatars (design studio-workshop.jsx:127-132):
+// palette tokens only, chosen from the participant root so the same agent keeps its colour.
+const workshopAgentTone = (root, self) => {
+  if (self) return {bg:LM.userAv, fg:LM.onUserAv};
+  const tones = [LM.accent, LM.cyan, LM.purple, LM.blue];
+  const bg = tones[[...String(root || '')].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % tones.length];
+  return {bg, fg:LM.onFill};
+};
 const WorkshopLayoutPane = ({layout, native, nodes, target, setMode}) => {
-  if (layout === 'board') return <section aria-label="Workshop task board" style={{marginBottom:24}}>
-    <h3 style={{fontSize:14, marginTop:0}}>Task board</h3>
-    <p role="status" style={{fontSize:12, color:LM.inkSoft, lineHeight:1.5}}>
-      Not available in this connection. This Workshop projects one native Work at a time{native?.state ? ` (state: ${native.state})` : ''};
-      no task-list projection exists, so nothing is grouped or counted here.
-    </p>
+  const paneLabel = {fontFamily:LM.mono, fontSize:9, letterSpacing:'0.18em', color:LM.inkMuted, fontWeight:400, margin:0};
+  if (layout === 'board') return <section aria-label="Workshop task board" style={{marginBottom:24, display:'flex', flexDirection:'column', gap:10}}>
+    <div style={{display:'flex', alignItems:'center', gap:7, paddingBottom:8, borderBottom:`1px solid ${LM.lineSoft}`}}>
+      <span style={{width:6, height:6, borderRadius:'50%', background:LM.inkMuted, flex:'none'}}/>
+      <h3 style={paneLabel}>TASK BOARD</h3>
+    </div>
+    <div style={{background:LM.bgPanel, borderRadius:9, border:`1px dashed ${LM.line}`, opacity:.75, padding:'11px 13px'}}>
+      <p role="status" style={{fontSize:12.5, color:LM.inkSoft, lineHeight:1.55, margin:0}}>
+        Not available in this connection. This Workshop projects one native Work at a time{native?.state ? ` (state: ${native.state})` : ''};
+        no task-list projection exists, so nothing is grouped or counted here.
+      </p>
+    </div>
   </section>;
   if (layout !== 'graph') return null;
   const all = Array.isArray(nodes) ? nodes : [], shown = all.slice(0, 64);
+  // Design GraphPane (studio-workshop.jsx:279-330): gridded canvas, node cards, live chip, open-as-nodes.
   return <section aria-label="Workshop live graph" style={{marginBottom:24}}>
-    <h3 style={{fontSize:14, marginTop:0}}>Live graph · {all.length} projected node{all.length === 1 ? '' : 's'}</h3>
-    {!shown.length ? <p role="status" style={{fontSize:12, color:LM.inkSoft}}>No topology projection is held for this scope.</p> :
-      shown.map(node => <div key={node.id} data-node={node.id} aria-current={target === node.id ? 'true' : undefined}
-        style={{padding:'6px 8px', marginBottom:6, background:LM.bg, borderRadius:LM.rad.md, overflowWrap:'anywhere',
-          border:`1px solid ${target === node.id ? LM.accent : LM.line}`}}>
-        <div style={{fontSize:12.5, fontWeight:500}}>{node.title || node.id}</div>
-        <div style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{node.sub || ''}{node.status ? ` · ${node.status}` : ''}</div>
-      </div>)}
-    {all.length > shown.length && <p style={{fontSize:11, color:LM.inkMuted}}>{all.length - shown.length} more on the Canvas.</p>}
-    {typeof setMode === 'function' && <button type="button" onClick={() => setMode('canvas')} style={{marginTop:6, background:LM.bgPanel,
-      color:LM.ink, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, padding:'7px 9px', font:'inherit', cursor:'pointer'}}>⌗ Open as nodes</button>}
+    <h3 style={{...paneLabel, marginBottom:8}}>{'Live graph \u00b7 '}{all.length} projected node{all.length === 1 ? '' : 's'}</h3>
+    <div style={{position:'relative', background:LM.bgCanvas, border:`1px solid ${LM.line}`, borderRadius:7, overflow:'hidden', minHeight:180, padding:'44px 12px 12px'}}>
+      <div aria-hidden="true" style={{position:'absolute', inset:0, opacity:.55, pointerEvents:'none',
+        backgroundImage:`linear-gradient(${LM.lineSoft} 1px,transparent 1px),linear-gradient(90deg,${LM.lineSoft} 1px,transparent 1px)`, backgroundSize:'40px 40px'}}/>
+      <div style={{position:'absolute', top:12, left:12, display:'flex', gap:6, zIndex:3, alignItems:'center'}}>
+        {typeof setMode === 'function' && <button type="button" onClick={() => setMode('canvas')} title="Open as nodes" style={{display:'inline-flex', alignItems:'center', gap:5,
+          padding:'3px 9px', margin:0, borderRadius:5, background:LM.bg, border:`1px solid ${LM.line}`, color:LM.inkSoft,
+          fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em', cursor:'pointer'}}>{'\u2317 Open as nodes'}</button>}
+        <span style={{display:'inline-flex', alignItems:'center', padding:'3px 9px', borderRadius:5, background:LM.accentDim,
+          border:`1px solid ${LM.accentSoft}`, color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em'}}>live</span>
+      </div>
+      {!shown.length ? <p role="status" style={{position:'relative', fontSize:11.5, lineHeight:1.5, color:LM.inkSoft, margin:0}}>No topology projection is held for this scope.</p> :
+        <div style={{position:'relative', display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))', gap:10}}>
+          {shown.map(node => <div key={node.id} data-node={node.id} aria-current={target === node.id ? 'true' : undefined}
+            style={{padding:'8px 10px', background:LM.bgPanel, borderRadius:7, overflowWrap:'anywhere',
+              border:`1px solid ${target === node.id ? LM.accent : LM.line}`, boxShadow:target === node.id ? `0 0 0 3px ${LM.accent}1a` : 'none'}}>
+            <div style={{fontSize:11.5, fontWeight:500, letterSpacing:'-0.005em', color:LM.ink}}>{node.title || node.id}</div>
+            <div style={{fontFamily:LM.mono, fontSize:9, letterSpacing:'0.04em', marginTop:3, color:target === node.id ? LM.accent : LM.inkMuted}}>{node.sub || ''}{node.status ? ` \u00b7 ${node.status}` : ''}</div>
+          </div>)}
+        </div>}
+    </div>
+    {all.length > shown.length && <p style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{all.length - shown.length} more on the Canvas.</p>}
   </section>;
 };
 
@@ -2337,6 +2310,14 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
   }, []);
   const joined = participants.some(row => row.root === transcript?.self && row.attached) &&
     (!existing || transcript?.can_send === true);
+  // Design WorkshopView chrome (studio-workshop.jsx:487-552): label, select, ghost and column styles, tokens only.
+  const wsLabel = {fontFamily:LM.mono, fontSize:9, letterSpacing:'0.18em', color:LM.inkMuted};
+  const wsSelect = {padding:'3px 8px', margin:0, borderRadius:5, background:LM.bg, border:`1px solid ${LM.line}`, color:LM.inkSoft,
+    fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'100%'};
+  const wsGhost = {padding:'3px 9px', margin:0, borderRadius:5, background:'transparent', border:`1px solid ${LM.line}`, color:LM.inkSoft,
+    fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em', cursor:'pointer'};
+  const wsColumn = {maxWidth:layout === 'conversation' ? 760 : 'none', margin:'0 auto', padding:'0 26px'};
+  const listening = participants.filter(row => row.attached && row.root !== transcript?.self).length;
   const act = async (action) => {
     if (busyRef.current || (action === 'send' && !editorsReady)) return;
     const details = action === 'send' ? {target, message:draft.trim(), ...(execution ? {execution_root:execution} : {})} : {};
@@ -2367,120 +2348,154 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
       [aria-label="Workshop conversation"] button,
       [aria-label="Workshop conversation"] select,
       [aria-label="Workshop conversation"] textarea {
-        background:${LM.bgPanel}; color:${LM.ink}; border:1px solid ${LM.line};
-        border-radius:5px; padding:7px 9px; font:inherit; max-width:100%;
+        background:${LM.bg}; color:${LM.ink}; border:1px solid ${LM.line};
+        border-radius:5px; padding:5px 9px; font-family:${LM.sans}; font-size:11.5px; max-width:100%; box-sizing:border-box;
       }
-      [aria-label="Native Workshop review"] button {margin:4px 4px 4px 0; cursor:pointer;}
+      [aria-label="Native Workshop review"] button {margin:4px 4px 4px 0; cursor:pointer; background:transparent; color:${LM.inkSoft}; padding:5px 12px;}
+      [aria-label="Native Workshop review"] summary {font-family:${LM.mono}; font-size:10px; letter-spacing:0.04em; color:${LM.inkSoft}; cursor:pointer;}
+      [aria-label="Native Workshop review"] h3, [aria-label="Native Workshop review"] h4 {font-family:${LM.mono}; font-size:9px; font-weight:400; letter-spacing:0.18em; text-transform:uppercase; color:${LM.inkMuted};}
       [aria-label="Native Workshop review"] button:disabled,
       [aria-label="Workshop conversation"] button:disabled {opacity:.5; cursor:default;}
     `}</style>
     <section aria-label="Workshop conversation" style={{gridColumn:'1', gridRow:'2', minHeight:0, minWidth:0,
       display:'flex', flexDirection:'column', background:LM.bg, fontSize:14}}>
-      <div style={{padding:'16px 24px', borderBottom:`1px solid ${LM.line}`}}>
-        <div style={{display:'flex', gap:12, alignItems:'center', justifyContent:'space-between', flexWrap:'wrap'}}>
-          <div style={{fontFamily:LM.serif, fontSize:22, overflowWrap:'anywhere'}}>{descriptor.label}</div>
-          <WorkshopLayoutStrip layout={layout} setLayout={setLayout}/>
+      <div style={{borderBottom:`1px solid ${LM.line}`, background:LM.bgPanel}}>
+        <div style={{display:'flex', gap:10, alignItems:'center', padding:'5px 14px', minHeight:34, boxSizing:'border-box', flexWrap:'wrap'}}>
+          <span style={{display:'inline-flex', alignItems:'center', gap:6, padding:'3px 9px', border:`1px solid ${LM.accentSoft}`,
+            background:LM.accentDim, borderRadius:5, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.14em', color:LM.accent}}>
+            <span style={{width:6, height:6, borderRadius:'50%', background:LM.accent, flex:'none', animation:'lmPulse 1.3s infinite'}}/>WORKSHOP
+          </span>
+          <span style={{fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, letterSpacing:'0.04em', overflowWrap:'anywhere'}}>{descriptor.label}</span>
+          <span style={{width:1, height:16, background:LM.line}}/>
+          <span role={transcript?.error ? 'alert' : 'status'} style={{fontFamily:LM.mono, fontSize:10, color:transcript?.error ? LM.err : LM.inkMuted}}>
+            {transcript?.error || (paging ? 'Loading message page\u2026' : refreshing ? 'Updating messages\u2026' :
+              transcript ? (olderPage ? 'Earlier messages synchronized' : 'Messages synchronized') : 'Loading messages\u2026')}
+            {transcript && !transcript.error ? ` \u00b7 ${messages.length} displayed \u00b7 ${listening} listening` : ''}
+          </span>
+          <div style={{flex:1}}/>
           {content && typeof authority.showWorkshopFeed === 'function' &&
-            <select aria-label="Workshop feed" value={feed} disabled={busy || paging}
+            <select aria-label="Workshop feed" value={feed} disabled={busy || paging} style={wsSelect}
               title="Notes and replies, routine tool activity, or the complete history"
               onChange={event => chooseFeed(event.target.value)}>
               <option value="messages">Notes &amp; replies</option>
               <option value="activity">Tool activity</option>
               <option value="all">All history</option>
             </select>}
-          <label style={{display:'flex', gap:8, alignItems:'center'}}>
-            Text size
-            <select aria-label="Workshop message text size" value={messageTextSize}
-              onChange={event => setMessageTextSize(Number(event.target.value))}>
-              {[14, 16, 18, 20].map(size => <option key={size} value={size}>{size} px</option>)}
-            </select>
-          </label>
+          <select aria-label="Workshop message text size" title="Text size" value={messageTextSize} style={wsSelect}
+            onChange={event => setMessageTextSize(Number(event.target.value))}>
+            {[14, 16, 18, 20].map(size => <option key={size} value={size}>{size} px</option>)}
+          </select>
+          <span style={wsLabel}>LAYOUT</span>
+          <WorkshopLayoutStrip layout={layout} setLayout={setLayout}/>
         </div>
-        <div role={transcript?.error ? 'alert' : 'status'} style={{fontSize:12, color:transcript?.error ? LM.err : LM.inkSoft}}>
-          {transcript?.error || (paging ? 'Loading message page…' : refreshing ? 'Updating messages…' :
-            transcript ? (olderPage ? 'Earlier messages synchronized' : 'Messages synchronized') : 'Loading messages…')}
-        </div>
-        {(content || olderPage || transcript?.error || awayFromLatest) && <div style={{display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap'}}>
-          <button disabled={busy || paging || !transcript?.next_before || !!transcript?.error}
+        {(content || olderPage || transcript?.error || awayFromLatest) && <div style={{display:'flex', gap:8, alignItems:'center', padding:'6px 14px',
+          borderTop:`1px solid ${LM.lineSoft}`, flexWrap:'wrap'}}>
+          <button disabled={busy || paging || !transcript?.next_before || !!transcript?.error} style={wsGhost}
             onClick={() => navigatePage(false)}>Older messages</button>
-          {(olderPage || transcript?.error || awayFromLatest) && <button disabled={busy}
+          {(olderPage || transcript?.error || awayFromLatest) && <button disabled={busy} style={wsGhost}
             aria-label="Jump to latest messages" title="Latest messages"
-            onClick={() => navigatePage(true)}>↓ Latest</button>}
-          {transcript && !transcript.error && <span style={{fontSize:12, color:LM.inkSoft}}>
-            {messages.length} displayed{content ? ` · ${transcript.total} ${feed === 'activity' ? 'tool records' : feed === 'messages' ? 'notes' : 'records'} available` : ''}
+            onClick={() => navigatePage(true)}>{'\u2193 Latest'}</button>}
+          {transcript && !transcript.error && content && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>
+            {`${transcript.total} ${feed === 'activity' ? 'tool records' : feed === 'messages' ? 'notes' : 'records'} available`}
           </span>}
         </div>}
       </div>
       <div ref={messageViewport} className="ah-scroll" onScroll={() => messageScroll.current.scroll(messageViewport.current)}
-        style={{flex:1, minHeight:0, overflow:'auto', overflowAnchor:'none', padding:'20px 24px', fontSize:messageTextSize}}>
-        <div ref={messageContent}>
-        {!content && transcript?.has_older && <p style={{color:LM.inkSoft}}>Showing the available recent messages.</p>}
-        {transcript && !transcript.error && !messages.length && <p>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</p>}
-        {messages.map(message => <article key={message.root} data-workshop-message={message.root} style={{marginBottom:20}}>
-          <div style={{fontSize:Math.max(12, messageTextSize - 2), color:LM.inkSoft, overflowWrap:'anywhere'}}>
-            <span title={message.sender_root}>{names.get(message.sender_root) || message.sender_root}</span>
-            {' → '}
-            <span title={message.recipient_root}>
-              {Array.isArray(message.recipient_roots) ?
-                (message.recipient_roots.length ? message.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Everyone') :
-                (names.get(message.recipient_root) || message.recipient_root)}
-            </span>
-          </div>
-          <div style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', lineHeight:1.6, marginTop:5}}>
-            {message.body.startsWith('Model review evidence. Independent review is still required.\n') ?
-              <WorkshopReview text={message.body.slice(message.body.indexOf('\n') + 1)}/> : message.body}
-          </div>
-          <div style={{fontSize:Math.max(12, messageTextSize - 3), color:LM.inkMuted, marginTop:4}}>
-            {message.state === 'acted' ? 'Acted on · verification separate' : message.state} · {message.category}
-            {message.reply_to_root && ' · Reply'}
-          </div>
-        </article>)}
+        style={{flex:1, minHeight:0, overflow:'auto', overflowAnchor:'none', padding:'20px 0 10px', fontSize:messageTextSize}}>
+        <div ref={messageContent} style={{...wsColumn, display:'flex', flexDirection:'column', gap:20}}>
+        {!content && transcript?.has_older && <p style={{color:LM.inkSoft, margin:0}}>Showing the available recent messages.</p>}
+        {transcript && !transcript.error && !messages.length && <p style={{fontFamily:LM.serif, color:LM.inkSoft, margin:0}}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</p>}
+        {messages.map(message => {
+          const mine = message.sender_root === transcript?.self;
+          const sender = names.get(message.sender_root) || message.sender_root;
+          const tone = workshopAgentTone(message.sender_root, mine);
+          return <article key={message.root} data-workshop-message={message.root} style={{display:'flex', gap:12}}>
+            <span aria-hidden="true" style={{width:28, height:28, borderRadius:mine ? '50%' : 7, background:tone.bg, color:tone.fg,
+              display:'grid', placeItems:'center', fontSize:12, fontWeight:700, flex:'none', fontFamily:LM.sans}}>{String(sender || '?').trim().charAt(0).toUpperCase()}</span>
+            <div style={{flex:1, minWidth:0}}>
+              <div style={{display:'flex', alignItems:'baseline', gap:8, marginBottom:4, flexWrap:'wrap', overflowWrap:'anywhere'}}>
+                <span title={message.sender_root} style={{fontSize:12.5, fontWeight:500, color:LM.ink}}>{sender}</span>
+                <span title={message.recipient_root} style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, border:`1px solid ${LM.line}`, borderRadius:3, padding:'1px 5px'}}>
+                  to {Array.isArray(message.recipient_roots) ?
+                    (message.recipient_roots.length ? message.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Everyone') :
+                    (names.get(message.recipient_root) || message.recipient_root)}
+                </span>
+              </div>
+              <div style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', lineHeight:1.6, color:LM.ink,
+                fontFamily:mine ? LM.sans : LM.serif, letterSpacing:mine ? 0 : '-0.003em'}}>
+                {message.body.startsWith('Model review evidence. Independent review is still required.\n') ?
+                  <WorkshopReview text={message.body.slice(message.body.indexOf('\n') + 1)}/> : message.body}
+              </div>
+              <div style={{fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em', color:LM.inkMuted, marginTop:4}}>
+                {message.state === 'acted' ? 'Acted on \u00b7 verification separate' : message.state}{' \u00b7 '}{message.category}
+                {message.reply_to_root && ' \u00b7 Reply'}
+              </div>
+            </div>
+          </article>;
+        })}
         </div>
       </div>
-      <div style={{padding:'14px 24px', borderTop:`1px solid ${LM.line}`, color:LM.inkSoft, fontSize:12}}>
+      <div style={{padding:'12px 0 16px', borderTop:`1px solid ${LM.lineSoft}`, color:LM.inkSoft, fontSize:12}}>
+        <div style={wsColumn}>
         {protectedEditors && !editorsReady && <div role={editorError ? 'alert' : 'status'} style={{marginBottom:8}}>
-          {editorError || 'Connecting draft protection…'}
-          {editorError && <button onClick={prepareEditors} style={{marginLeft:8}}>Retry</button>}
+          {editorError || 'Connecting draft protection\u2026'}
+          {editorError && <button onClick={prepareEditors} style={{...wsGhost, marginLeft:8}}>Retry</button>}
         </div>}
         {actionError && <div role="alert" style={{color:LM.err, marginBottom:8}}>{actionError}</div>}
         {state?.workshopNotice && <div role="status" style={{marginBottom:8}}>{state.workshopNotice}</div>}
         {!joined ? existing ? <span>Messaging requires an admitted Workshop participant.</span> :
-          <button disabled={busy || !transcript?.can_join} onClick={() => act('attach')}>
-          {busy ? 'Joining…' : 'Join Workshop'}</button> : <>
-          <select aria-label="Recipient" value={target} disabled={busy} onChange={e => setTarget(e.target.value)}>
+          <button disabled={busy || !transcript?.can_join} onClick={() => act('attach')}
+            style={{...wsGhost, background:LM.accent, borderColor:LM.accent, color:LM.onFill, fontFamily:LM.sans, fontSize:11.5, fontWeight:500, padding:'5px 12px'}}>
+          {busy ? 'Joining\u2026' : 'Join Workshop'}</button> :
+          <div style={{background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:9, padding:'11px 13px'}}>
+          <textarea aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !editorsReady}
+            onChange={e => {protectDraft('message'); setDraft(e.target.value);}} placeholder={'Reply to the Workshop\u2026'}
+            style={{display:'block', width:'100%', boxSizing:'border-box', margin:0, minHeight:44, resize:'vertical', border:0, borderRadius:0,
+              background:'transparent', outline:'none', color:LM.ink, fontFamily:LM.serif, fontSize:16.5, letterSpacing:'-0.01em', padding:'2px 0 9px'}}/>
+          <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+          <select aria-label="Recipient" value={target} disabled={busy} onChange={e => setTarget(e.target.value)}
+            style={{...wsSelect, background:LM.accentDim, border:`1px solid ${LM.accentSoft}`, color:LM.accent}}>
             <option value="">Choose a participant</option>
-            {modelAgent && <option value={'model:' + modelAgent.root}>Agent · {modelAgent.model}</option>}
+            {modelAgent && <option value={'model:' + modelAgent.root}>{'Agent \u00b7 '}{modelAgent.model}</option>}
             {nativeContacts.length > 0 && <optgroup label="Connected agent environments">
               {nativeContacts.map(row => <option key={row.root} value={'contact:' + row.root}>
-                {row.label} · {row.connected === true ? row.app : row.connected === false ? 'offline' : 'availability unknown'}
+                {row.label}{' \u00b7 '}{row.connected === true ? row.app : row.connected === false ? 'offline' : 'availability unknown'}
               </option>)}
             </optgroup>}
             {participants.filter(row => row.attached && row.root !== transcript.self).map(row =>
               <option key={row.root} value={row.root}>{row.label}</option>)}
           </select>
           {existing && authority.nativeAgents && <button disabled={busy || contactsLoading}
-            aria-label="Refresh agent connections" title="Refresh agent connections" onClick={refreshContacts}>↻</button>}
-          {contactError && <p role="status">{contactError}</p>}
-          {!existing && <select aria-label="Connected task node" value={execution} disabled={busy} onChange={e => setExecution(e.target.value)}>
+            aria-label="Refresh agent connections" title="Refresh agent connections" onClick={refreshContacts}
+            style={{width:24, height:24, display:'grid', placeItems:'center', padding:0, margin:0, borderRadius:5, background:'transparent',
+              border:`1px solid ${LM.line}`, color:LM.inkSoft, fontFamily:LM.mono, fontSize:12, lineHeight:1, cursor:'pointer'}}>{'\u21bb'}</button>}
+          {!existing && <select aria-label="Connected task node" value={execution} disabled={busy} onChange={e => setExecution(e.target.value)} style={wsSelect}>
             <option value="">Message only</option>
             {(transcript.execution_nodes || []).map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
           </select>}
-          <textarea aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !editorsReady}
-            onChange={e => {protectDraft('message'); setDraft(e.target.value);}} placeholder="Message or task instructions"
-            style={{display:'block', width:'100%', margin:'8px 0', minHeight:64}}/>
+          <div style={{flex:1}}/>
+          <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{listening} {listening === 1 ? 'participant' : 'participants'} listening</span>
           <button disabled={busy || !editorsReady || !target || !draft.trim() ||
             (target.startsWith('contact:') && (!contactTarget || contactTarget.connected === false)) ||
-            (target.startsWith('model:') && !modelTarget)} onClick={() => act('send')}>
-            {busy ? 'Sending…' : execution ? 'Assign task' : 'Send'}</button>
-        </>}
+            (target.startsWith('model:') && !modelTarget)} onClick={() => act('send')}
+            style={{padding:'5px 12px', margin:0, borderRadius:5, cursor:'pointer', fontFamily:LM.sans, fontSize:11.5, fontWeight:500,
+              background:LM.accent, border:`1px solid ${LM.accent}`, color:LM.onFill}}>
+            {busy ? 'Sending\u2026' : execution ? 'Assign task' : 'Send \u21b5'}</button>
+          </div>
+          {contactError && <p role="status" style={{margin:'8px 0 0', fontSize:11.5}}>{contactError}</p>}
+          </div>}
+        </div>
       </div>
     </section>
-    <aside aria-label="Workshop participants" className="ah-scroll" style={{gridColumn:'2', gridRow:'2',
-      background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`, padding:16, overflow:'auto'}}>
+    <aside aria-label="Workshop participants" className="ah-scroll" style={{gridColumn:'2', gridRow:'2', minHeight:0,
+      background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`, padding:'0 16px 16px', overflow:'auto', fontSize:12, color:LM.inkSoft}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, margin:'0 -16px 12px', padding:'11px 16px', borderBottom:`1px solid ${LM.lineSoft}`}}>
+        <span style={wsLabel}>{nativeTarget ? 'SELECTED \u00b7 WORK' : 'SELECTED \u00b7 WORKSHOP'}</span><div style={{flex:1}}/>
+      </div>
       {/* Layout presets B/C (design studio-workshop.jsx:554-569, 275-330) on the real snapshot only. */}
       <WorkshopLayoutPane layout={layout} native={native} nodes={projectedWorkNodes} target={nativeTarget} setMode={setMode}/>
       {nativeAvailable && <section aria-label="Native Workshop review" style={{marginBottom:24}}>
-        <h3 style={{fontSize:14, marginTop:0}}>Work on a project</h3>
+        <h3 style={{margin:'0 0 8px'}}>Work on a project</h3>
         <button disabled={busy} onClick={() => nativeAct('refresh')}>Read operation status</button>
         <p role="status">{native?.state || 'Read status to connect to the native Workshop.'}</p>
         {native?.review_recovered && <p style={{fontSize:12, color:LM.inkSoft}}>
@@ -2842,7 +2857,12 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
 };
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
-const ChatView = ({ session, model, setMode }) => {
+const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop }) => {
+  const live = !!(window.ARCHHUB_LIVE || window.ARCHHUB_STUDIO_AUTHORITY);
+  const account = live && typeof acLoad === 'function' ? (acLoad() || {}) : {};
+  const me = live ? (String(account.name || account.email || '').trim() || 'You') : 'Fargaly';
+  const routed = !!modelRoute(model);
+  const answerName = String((live && !routed ? 'ArchHub' : model.name) || 'ArchHub');
   const conv = LM_GRAPH.nodes.find(n => n.cat === 'ai')
     || LM_GRAPH.nodes.find(n => n.id === 'ai_intent');
   const [messages, setMessages] = React.useState((conv && conv.messages) || []);
@@ -2890,13 +2910,19 @@ const ChatView = ({ session, model, setMode }) => {
             <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
               <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.cyan, letterSpacing:'0.14em' }}>SYSTEM PROMPT</span>
               <div style={{ flex:1 }}/>
-              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>312 tok</span>
-              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.accent, cursor:'pointer' }}>edit</span>
+              {!live && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>312 tok</span>}
+              {!live && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.accent, cursor:'pointer' }}>edit</span>}
             </div>
-            <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:15, lineHeight:1.55, color:LM.inkSoft, letterSpacing:'-0.005em' }}>
+            {live ? <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:15, lineHeight:1.55, color:LM.inkSoft, letterSpacing:'-0.005em' }}>
+              {'You operate the ArchHub node canvas. Prepare editable, wired changes for review; never claim that effects ran.'}
+            </div> : <div style={{ fontFamily:LM.serif, fontStyle:'italic', fontSize:15, lineHeight:1.55, color:LM.inkSoft, letterSpacing:'-0.005em' }}>
               You are ArchHub running in Revit 2025. The active file is {session.file}. Be terse and technical. Never write code without asking — use the connector tools. Units: millimeters.
-            </div>
+            </div>}
           </div>
+
+          {live && !messages.length && <p role="status" style={{ margin:'0 0 24px', fontFamily:LM.serif, fontStyle:'italic', fontSize:15, lineHeight:1.6, color:LM.inkMuted, letterSpacing:'-0.005em' }}>
+            {'Ask for a change on the canvas, choose a Workshop conversation, or select a node with a model on the canvas.'}
+          </p>}
 
           {/* Conversation — calm, generous, serif for Claude */}
           {messages.map((m, i) => (
@@ -2906,10 +2932,10 @@ const ChatView = ({ session, model, setMode }) => {
                 background: m.me ? LM.userAv : LM.accent,
                 display:'grid', placeItems:'center',
                 color: m.me ? LM.onUserAv : ((window.AH && window.AH.onFill) || '#180f08'), fontFamily:LM.sans, fontSize:13, fontWeight:700,
-              }}>{m.me ? 'F' : 'C'}</div>
+              }}>{m.me ? me[0].toUpperCase() : answerName[0].toUpperCase()}</div>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:4 }}>
-                  <span style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{m.me ? 'Fargaly' : model.name}</span>
+                  <span style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{m.me ? me : answerName}</span>
                   <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.time}</span>
                 </div>
                 <div style={{
@@ -2938,13 +2964,26 @@ const ChatView = ({ session, model, setMode }) => {
             <div style={{ display:'flex', alignItems:'center', gap:6 }}>
               <Chip mono>@ skill</Chip>
               <Chip>＋ sketch</Chip>
+              {live ? <button type="button" disabled={!workshopRoom || !openWorkshop}
+                onClick={() => workshopRoom && openWorkshop && openWorkshop(workshopRoom)}
+                title={workshopRoom ? undefined : 'No Workshop conversation in this scope'} style={{
+                display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
+                background: workshopRoom ? LM.accentDim : 'transparent',
+                border: workshopRoom ? `1px solid ${LM.accentSoft}` : `1px dashed ${LM.line}`, borderRadius:LM.rad.sm,
+                color: workshopRoom ? LM.accent : LM.inkMuted, fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em',
+                cursor: workshopRoom ? 'pointer' : 'default',
+              }}>{'\u25c6 workshop'}</button> : <button onClick={() => setMode('workshop')} style={{
+                display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
+                background:LM.accentDim, border:`1px solid ${LM.accentSoft}`, borderRadius:LM.rad.sm,
+                color:LM.accent, fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em', cursor:'pointer',
+              }}>{'\u25c6 workshop'}</button>}
               <button onClick={() => setMode('canvas')} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
                 color:LM.inkSoft, fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em', cursor:'pointer',
               }}>⌗ open as nodes</button>
               <div style={{ flex:1 }}/>
-              <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted }}>{model.name.split(' ').slice(0,2).join(' ')} · ~{model.latency}ms</span>
+              <span title={modelRoute(model) || undefined} style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{routed ? model.name.split(' ').slice(0,2).join(' ') : model.name}{model.latency != null ? ' \u00b7 ~' + model.latency + 'ms' : ''}</span>
               <button onClick={send} disabled={busy} style={{ padding:'7px 14px', background:LM.accent, color: (window.AH && window.AH.onFill) || '#180f08', border:0, borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer', opacity: busy ? 0.6 : 1 }}>Send ↵</button>
             </div>
           </div>
@@ -2960,7 +2999,7 @@ const ChatView = ({ session, model, setMode }) => {
 // authored -- an empty canvas shows an empty chain, honestly.
 const LiveChain = () => {
   const graph = window.ARCHHUB_LIVE?.graph;
-  if (!graph || !graph.nodes.length) return null;
+  if (!graph) return null;
   const wired = new Set(graph.wires.flatMap(w => [w.from[0], w.to[0]]));
   const incoming = {};
   graph.wires.forEach(w => { incoming[w.to[0]] = (incoming[w.to[0]] || 0) + 1; });
@@ -2976,7 +3015,12 @@ const LiveChain = () => {
     });
     frontier = graph.nodes.filter(n => next.has(n.id));
   }
-  if (!stages.length) return null;
+  if (!stages.length) return (
+    <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>{'PARAMETRIC CHAIN \u00b7 0 STAGES'}</div>
+      <div role="status" style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5 }}>No wired nodes on this canvas yet.</div>
+    </div>
+  );
   return (
     <div style={{ padding:'14px 16px', borderBottom:`1px solid ${LM.lineSoft}` }}>
       <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:10 }}>PARAMETRIC CHAIN · {stages.length} STAGE{stages.length === 1 ? '' : 'S'}</div>
@@ -3019,7 +3063,7 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
         <span style={{ width:22, height:22, borderRadius:LM.rad.sm, background:model.col, color:((window.AH && window.AH.onFill) || '#180f08'), display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:700 }}>{model.name[0]}</span>
         <div style={{ flex:1, textAlign:'left', lineHeight:1.15 }}>
           <div style={{ fontSize:13, fontWeight:500 }}>{model.name}</div>
-          <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{model.vendor} · ctx {model.ctx}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted }}>{model.vendor}{model.ctx ? ' \u00b7 ctx ' + model.ctx : ''}</div>
         </div>
         <span style={{ color:LM.inkSoft, fontSize:11 }}>▾</span>
       </button>
@@ -3053,6 +3097,8 @@ const InferenceInspector = ({ model, setPickerOpen }) => (
           </div>
         );
       })}
+      {window.ARCHHUB_LIVE && !(window.ARCHHUB_LIVE.connectors || []).length &&
+        <div role="status" style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5 }}>No host has answered a probe yet.</div>}
     </div>
   </aside>
 );
@@ -3118,7 +3164,8 @@ const ApplicationUpdateControls = ({compact = false}) => {
   };
   const buttonStyle = {...smallBtn(), fontSize:compact ? 10.5 : 12, flexShrink:0,
     ...(compact ? {width:28, height:28, padding:0, display:'grid', placeItems:'center'} : {}),
-    opacity:pending ? .5 : 1, cursor:pending ? 'default' : 'pointer'};
+    // Pending is drawn with a dashed border, never alpha (design DECISIONS.md, disabled controls).
+    ...(pending ? {borderStyle:'dashed', color:LM.inkSoft} : {}), cursor:pending ? 'default' : 'pointer'};
   return <section aria-label="Application release updates" style={compact ? {
     display:'flex', alignItems:'center', gap:6, flexShrink:0, paddingLeft:6,
   } : {marginTop:16, padding:'14px 16px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
@@ -3454,13 +3501,14 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
     {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
       color:LM.inkSoft, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
       {conversationNotice}</span>}
-    {conversationRoot ? (workshopModel ? <span style={{fontSize:11, color:LM.inkSoft, padding:'0 8px'}}>
-      {workshopModel}</span> : null) : <>
-      <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
-      {/* fork and save as skill (design studio-lm.jsx:1147-1148) have no binding in this build: drawn, disabled, and saying so. */}
-      <HoverBtn disabled title="Fork is not available in this build">fork</HoverBtn>
-      <HoverBtn primary disabled title="Save as skill is not available in this build">save as skill</HoverBtn>
-    </>}
+    {/* The model chip, fork and save as skill are drawn in every mode (design studio-lm.jsx:1146-1148).
+        In a Workshop conversation the chip names the conversation's own model when it has one. */}
+    <ModelStrip model={conversationRoot && workshopModel ? {...model, name:workshopModel, route:workshopModel,
+      routed:workshopModel, vendor:'Workshop conversation', tag:'', ctx:'', latency:null} : model}
+      setPickerOpen={setPickerOpen} compact/>
+    {/* fork and save as skill have no binding in this build: drawn, disabled, and saying so. */}
+    <HoverBtn disabled title="Fork is not available in this build">fork</HoverBtn>
+    <HoverBtn primary disabled title="Save as skill is not available in this build">save as skill</HoverBtn>
     <ApplicationUpdateControls compact/>
   </div>
 );
@@ -4084,7 +4132,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     {icon:'arrange', label:'Arrange all nodes', action:() => arrangeIds(allIds), disabled:blocked || !canSaveLayout || !allIds.length},
     {icon:'undo', label:'Undo last layout', action:undoPositions, disabled:blocked || !undoAvailable},
     {separator:true},
-    ...(normal && focusWireIdx >= 0 ? [{icon:'delete', label:'Delete selected connection',
+    ...(normal && focusWireIdx >= 0 ? [{icon:'delete', label:'Delete selected connection', danger:true,
       action:() => normalConnectionAction('disconnect'), disabled:blocked || graph.wires[focusWireIdx]?.nary !== false}] : []),
     ...(authority ? [{icon:'run', label:'Run current scope', action:() => window.ARCHHUB_RUN().catch(error =>
       { if (scopeStillCurrent()) setLayoutError(error.message || 'The run could not be confirmed.'); }), disabled:blocked || !window.ARCHHUB_RUN}] : []),
@@ -4181,7 +4229,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             'Unnamed connection'}: {wire.reason}</li>)}</ul>
         {unresolvedWires.length > 20 && <p>{unresolvedWires.length - 20} more connections are affected.</p>}
       </details>}
-      {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. */}
+      {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas
+          draws no status chip, so an idle canvas draws none; Refresh stays in the canvas menu. */}
+      {(layoutError || authorityState?.error || wireError || layoutBusy || authorityState?.pending || wireStart || selected.size > 0) &&
       <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
         display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
         <span role={authorityState?.error || wireError || layoutError ? 'alert' : 'status'} style={{fontSize:12,
@@ -4194,7 +4244,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           <CanvasActionIcon name="clear"/></button>}
         <button disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}
           title="Refresh canvas" aria-label="Refresh canvas" style={toolBtn()}><CanvasActionIcon name="refresh"/></button>
-      </div>
+      </div>}
       {/* Drop-target ghost */}
       {dropTarget && (
         <div style={{
@@ -4304,12 +4354,13 @@ const CanvasMenu = ({ x, y, maxHeight, opener, actions, onClose }) => {
         <button key={i} role="menuitem" disabled={!!it.disabled} title={it.label} aria-label={it.label}
           onClick={() => { if (!it.disabled && typeof it.action === 'function') { dismiss(); it.action(); } }} style={{
           width:'100%', display:'flex', alignItems:'center', gap:10, padding:'6px 10px',
-          background:'transparent', border:0, borderRadius:4, cursor:it.disabled ? 'default' : 'pointer', opacity:it.disabled ? .45 : 1,
-          color:LM.ink, fontFamily:LM.sans, fontSize:12.5, textAlign:'left',
+          background:'transparent', border:0, borderRadius:4, cursor:it.disabled ? 'default' : 'pointer',
+          color:it.disabled ? LM.inkMuted : it.danger ? LM.err : LM.ink, fontFamily:LM.sans, fontSize:12.5, textAlign:'left',
         }}
         onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-          <CanvasActionIcon name={it.icon}/>
+          <span style={{ width:14, display:'inline-flex', justifyContent:'center', flexShrink:0,
+            color:it.danger && !it.disabled ? LM.err : LM.inkMuted }}><CanvasActionIcon name={it.icon}/></span>
           <span style={{ flex:1 }}>{it.label}</span>
         </button>
       ))}
@@ -4587,10 +4638,11 @@ const HostBody = ({ n }) => (
 const AIBody = ({ n, expanded, onToggleExpand }) => {
   const [showReasoning, setShowReasoning] = React.useState(false);
   const [q, setQ] = React.useState('');
-  const total = n.messages.length;
+  const msgs = n.messages || [];   // Workshop / future ai nodes may carry no transcript
+  const total = msgs.length;
 
   if (expanded) {
-    const filtered = q ? n.messages.filter(m => m.text.toLowerCase().includes(q.toLowerCase())) : n.messages;
+    const filtered = q ? msgs.filter(m => m.text.toLowerCase().includes(q.toLowerCase())) : msgs;
     return (
       <div onClick={e => e.stopPropagation()} style={{ marginTop:9, display:'flex', flexDirection:'column', gap:7 }}>
         {/* Search bar */}
@@ -4653,7 +4705,7 @@ const AIBody = ({ n, expanded, onToggleExpand }) => {
   }
 
   // Compact view
-  const recent = n.messages.slice(-2);
+  const recent = msgs.slice(-2);
   return (
     <div style={{ marginTop:9, display:'flex', flexDirection:'column', gap:9 }}>
       {total > 2 && (
@@ -4950,8 +5002,7 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, setLibraryOpen }) => (
     <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:10, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
-    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>
-      <CanvasActionIcon name="fit"/></button>
+    <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>{'\u27f2'}</button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
@@ -5128,13 +5179,22 @@ const LibCatBtn = ({ id, label, icon, col, active, onSelect }) => (
 // ──────────────────────── NODE RAIL ────────────────────────
 const NodeModelConversation = ({node}) => {
   const [answer, setAnswer] = React.useState('');
-  return <section aria-label={'Conversation with ' + node.title}>
-    <p style={{fontFamily:LM.mono, fontSize:11, overflowWrap:'anywhere'}}>
-      {nodeModelRoute(node) || 'Choose a model for this node'}</p>
-    <div style={{display:'flex', gap:6, alignItems:'center'}}>
-      <InlineAsk scale="reply" node={node} onAnswer={setAnswer} placeholder={'Ask ' + node.title + '…'}/>
+  const cat = studioCategory('ai');
+  const route = nodeModelRoute(node);
+  return <section aria-label={'Conversation with ' + node.title} style={{ display:'flex', flexDirection:'column', gap:10, borderTop:`1px solid ${LM.lineSoft}`, paddingTop:12 }}>
+    <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+      <span style={{ color:cat.col, fontFamily:LM.mono }}>{cat.icon}</span>
+      <span style={{ fontFamily:LM.mono, fontSize:9, color:cat.col, letterSpacing:'0.18em' }}>CONVERSATION</span>
+      <div style={{ flex:1 }}/>
+      <p title={route || undefined} style={{ margin:0, maxWidth:170, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+        {route || 'Choose a model for this node'}</p>
     </div>
-    {answer && <p role="status" style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontSize:13}}>{answer}</p>}
+    {answer && <p role="status" style={{ margin:0, whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontFamily:LM.serif, fontSize:14, lineHeight:1.55, color:LM.ink, letterSpacing:'-0.003em' }}>{answer}</p>}
+    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7, padding:'8px 11px' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:6, minHeight:22, fontSize:13, color:LM.inkSoft }}>
+        <InlineAsk scale="reply" node={node} onAnswer={setAnswer} placeholder={'Ask ' + node.title + '\u2026'}/>
+      </div>
+    </div>
   </section>;
 };
 
@@ -5385,9 +5445,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
   const patch = (k, v) => setStore(st => Object.assign({}, st, typeof k === 'object' ? k : { [k]: v }));
   const tabs = [
     ['account',     'Account',     (account || {}).graphTier || null],
-    ['memory',      'Memory',      `${LM_MEMORY.length - (store.forgotten || []).length} facts`],
-    ['brain',       'Brain',       'not available'],
-    ['team',        'Team',        'not available'],
+    ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
+    ['team',        'Team',        null],
     ['profile',     'Profile',     'Architect'],
     ['permissions', 'Permissions', (() => { const v = LM_PERMISSIONS.map(p => permMode(store, p)); return `${v.filter(x => x === 'auto').length} auto · ${v.filter(x => x === 'ask').length} ask`; })()],
     ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(store, h) !== 'off').length} live`],
@@ -5436,8 +5495,7 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
         <div className="ah-scroll" style={{ gridColumn:'2', gridRow:'2', overflow:'auto', padding:'20px 24px 24px' }}>
           {tab === 'account'     && <SettingsAccount account={account} setAccount={setAccount} onSignOut={onSignOut}/>}
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
-          {tab === 'brain'       && <SettingsNotAvailable title="Brain" what="strata, lakes, gates and per-fact classes" hint="Memory holds the facts this app has loaded."/>}
-          {tab === 'team'        && <SettingsNotAvailable title="Team" what="a firm roster, seats, roles or invite tokens"/>}
+          {tab === 'team'        && <SettingsTeam/>}
           {tab === 'profile'     && <SettingsProfile/>}
           {tab === 'permissions' && <SettingsPermissions store={store} patch={patch}/>}
           {tab === 'hosts'       && <SettingsHosts store={store} patch={patch}/>}
@@ -5462,102 +5520,210 @@ const SHead = ({ title, sub }) => (
   </div>
 );
 
-// ── Absent state for tabs the design fills from seeded modules (design studio-lm.jsx:2443-2444,
-// 2519-2725 Brain via brain-model.jsx; 2731-2791 Team roster/seats/invite token). No binding in
-// studio.html projects either, so the tab says so instead of drawing a sample.
-const SettingsNotAvailable = ({ title, what, hint }) => (
-  <div>
-    <SHead title={title} sub="Not available in this connection."/>
-    <p role="status" style={{ fontSize:13, color:LM.inkSoft, lineHeight:1.6, margin:0 }}>
-      No data path projects {what} for this view. Nothing is shown rather than a sample.{hint ? ' ' + hint : ''}
-    </p>
-  </div>
-);
-
-// ── Memory: things the AI remembers about you (Notion AI / Claude style)
-// What the brain remembers, loaded when this panel opens (see studio.html).
-// Eight invented facts used to sit here; a colleague would have read them as his own.
+// -- Brain: the governance layer, read from brain-model.jsx (the single definition).
+// The strata, gates and key text come from brain-model.jsx; the facts are the real ones the brain
+// holds (ARCHHUB_LOAD_MEMORY, see studio.html). Nothing in the shipped brain classifies a fact yet,
+// so every real fact files under Instances as unclassified, which the model seals by default.
 const LM_MEMORY = (window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.memory) || [];
-const SettingsMemory = withLiveCatalogue('ARCHHUB_LOAD_MEMORY', LM_MEMORY, ({ store, patch }) => (
+const SettingsMemory = withLiveCatalogue('ARCHHUB_LOAD_MEMORY', LM_MEMORY, ({ store, patch }) => {
+  const strata = window.BRAIN_STRATA || [];
+  const CEIL   = window.BRAIN_CEIL || {};
+  const gates  = window.BRAIN_GATES || [];
+  const keys   = window.BRAIN_KEYS || {};
+  const facts  = LM_MEMORY.map(m => ({ id:m.id, text:m.text, src:m.src, stratum:'instances', cls:null, sealed:true, unclassified:true, held:m }));
+  const [open, setOpen] = React.useState(facts.length ? 'instances' : 'category');
+  const [showGates, setShowGates] = React.useState(false);
+  const [showLog, setShowLog] = React.useState(false);
+  const [kit, setKit] = React.useState(null);
+  const [rotate, setRotate] = React.useState(false);
+  const forgotten = store.forgotten || [];
+  const log = store.consents || [];
+  const live = facts.filter(f => forgotten.indexOf(f.id) < 0);
+
+  // THE CONSENT RECORD. Every crossing is written down: what, which gate, which way, when.
+  const record = (act, f, gate) => ({
+    t: new Date().toTimeString().slice(0, 5), act, gate,
+    fact: f.text.length > 62 ? f.text.slice(0, 60) + '\u2026' : f.text,
+    cls: f.cls || 'unclassified',
+  });
+
+  // The brain forgets first; the panel follows.
+  const forget = async m => {
+    try { await window.ARCHHUB_BRAIN_FORGET(m.id); } catch (e) { return; }
+    patch({ forgotten: forgotten.concat(m.id), consents: [record('forgot', m, '\u2014')].concat(log).slice(0, 40) });
+  };
+  const edit = async (m, e) => {
+    const said = window.prompt('Rewrite this memory', m.text);
+    if (!said || said.trim() === m.text) return;
+    const b = e.currentTarget;
+    b.textContent = 'saving\u2026';
+    try {
+      // In place: the old text is replaced, not duplicated.
+      await window.ARCHHUB_BRAIN_EDIT(m.id, said.trim());
+      m.held.text = said.trim();
+      b.textContent = 'saved';
+    } catch (error) { b.textContent = 'refused'; }
+    setTimeout(() => { b.textContent = 'edit'; }, 4000);
+  };
+
+  return (
   <div>
-    <SHead title="Memory" sub="What Claude remembers about you across sessions. Edit, forget, or pin. Nothing is sent to the model unless you load this session."/>
-    <div style={{
-      display:'flex', alignItems:'center', gap:LM.sp.sm, padding:'9px 12px', marginBottom:LM.sp.md,
-      background:LM.accentDim, border:`1px solid ${LM.accent}55`, borderRadius:7,
-    }}>
-      <span style={{ color:LM.accent, fontSize:14 }}>✦</span>
-      <span style={{ flex:1, fontSize:12.5 }}>You can also say "<span style={{ color:LM.accent, fontFamily:LM.mono }}>/remember</span> …" inside any chat — I'll save it here.</span>
-      <button onClick={async (e) => {
-        const said = window.prompt('What should the brain remember?');
-        if (!said || !said.trim()) return;
-        const b = e.currentTarget;
-        b.textContent = 'saving…';
-        try {
-          await window.ARCHHUB_REMEMBER(said.trim());
-          b.textContent = 'saved';
-        } catch (error) {
-          b.textContent = 'refused';
-        }
-        setTimeout(() => { b.textContent = 'add fact'; }, 4000);
-      }} style={smallBtn()}>add fact</button>
-    </div>
-    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      {LM_MEMORY.filter(m => (store.forgotten || []).indexOf(m.id) < 0).map((m, i) => (
-        <div key={m.id} style={{
-          padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md,
-          borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}`,
-        }}>
-          <span style={{ width:6, height:6, borderRadius:'50%', background:LM.accent, flexShrink:0 }}/>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:13, color:LM.ink, lineHeight:1.4 }}>{m.text}</div>
-            <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{m.src}</div>
+    <SHead title="Brain" sub="Not a list of facts &#x2014; the layer that decides what kinds of things exist, how they relate and how they are filed. The top three strata are structure and can be shared; instances stay put."/>
+
+    {/* strata -- the spine */}
+    <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:LM.sp.md }}>
+      {strata.map(s => {
+        const mine = live.filter(f => f.stratum === s.id);
+        const on = open === s.id;
+        return (
+          <div key={s.id} style={{ background:LM.bg, border:`1px solid ${on ? s.col + '66' : LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
+            <div onClick={() => setOpen(on ? null : s.id)} style={{ display:'flex', alignItems:'center', gap:LM.sp.md, padding:'11px 14px', cursor:'pointer' }}>
+              <span style={{ width:7, height:7, borderRadius:2, background:s.col, flexShrink:0 }}/>
+              <div style={{ minWidth:0, flex:1 }}>
+                <div style={{ fontSize:13.5, color:LM.ink }}>{s.n}
+                  <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.05em', marginLeft:8 }}>{s.one}</span>
+                </div>
+                {on && <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.5, marginTop:5 }}>{s.holds}</div>}
+              </div>
+              <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 7px', borderRadius:3,
+                background: s.id === 'instances' ? LM.err + '1f' : s.col + '1c', color: s.id === 'instances' ? LM.err : s.col }}>
+                {s.travels === 'freely' ? 'TRAVELS' : s.travels === 'on opt-in' ? 'OPT-IN' : 'STAYS'}
+              </span>
+              <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, minWidth:18, textAlign:'right' }}>{mine.length}</span>
+              <span style={{ color:LM.inkMuted, fontSize:10 }}>{on ? '\u25be' : '\u25b8'}</span>
+            </div>
+            {on && (
+              <div>
+                {mine.map(f => {
+                  const c = CEIL[f.cls] || { col:LM.err, label:'UNCLASSIFIED \u00b7 SEALED' };
+                  return (
+                    <div key={f.id} style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}` }}>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, color: f.sealed ? LM.inkSoft : LM.ink, lineHeight:1.4 }}>{f.text}</div>
+                        <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:4, flexWrap:'wrap' }}>
+                          <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', padding:'1px 6px', borderRadius:3, background:c.col + '1c', color:c.col }}>{c.label}</span>
+                          <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>{f.src}</span>
+                        </div>
+                      </div>
+                      <span title="The ontology could not place this, so it defaults to sealed &#x2014; there is no release path at all."
+                        style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.err, letterSpacing:'0.08em' }}>&#x2298; sealed</span>
+                      <button onClick={e => edit(f, e)} style={{ ...smallBtn(), padding:'3px 8px' }}>edit</button>
+                      <button title={'Forget: ' + f.text}
+                        onClick={() => forget(f)}
+                        style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>
+                    </div>
+                  );
+                })}
+                {mine.length === 0 && (
+                  <div style={{ padding:'12px 14px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
+                    Nothing at this stratum yet.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <button onClick={async (e) => {
-            const said = window.prompt('Rewrite this memory', m.text);
-            if (!said || said.trim() === m.text) return;
-            const b = e.currentTarget;
-            b.textContent = 'saving…';
-            try {
-              // In place: the old text is replaced, not duplicated.
-              await window.ARCHHUB_BRAIN_EDIT(m.id, said.trim());
-              m.text = said.trim();
-              b.textContent = 'saved';
-            } catch (error) { b.textContent = 'refused'; }
-            setTimeout(() => { b.textContent = 'edit'; }, 4000);
-          }} style={{ ...smallBtn(), padding:'3px 8px' }}>edit</button>
-          <button title={'Forget: ' + m.text}
-            onClick={async () => {
-              // The brain forgets first; the panel follows.
-              try { await window.ARCHHUB_BRAIN_FORGET(m.id); } catch (e) { return; }
-              patch('forgotten', (store.forgotten || []).concat(m.id));
-            }}
-            style={{ ...smallBtn(), padding:'3px 8px', color:LM.err, borderColor:LM.lineSoft }}>forget</button>
-        </div>
-      ))}
-      {LM_MEMORY.length === (store.forgotten || []).length && (
-        <div style={{ padding:'16px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:14, color:LM.inkSoft }}>
-          Nothing remembered. Claude starts every session cold.
-        </div>
-      )}
+        );
+      })}
     </div>
-    {(store.forgotten || []).length > 0 && (
-      <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:10 }}>
-        <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.06em' }}>
-          {(store.forgotten || []).length} forgotten this session
-        </span>
+
+    {forgotten.length > 0 && (
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:LM.sp.md }}>
+        <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.06em' }}>{forgotten.length} forgotten this session</span>
         <button onClick={() => patch('forgotten', [])} style={{ ...smallBtn(), padding:'3px 9px' }}>restore all</button>
       </div>
     )}
-    <div style={{ marginTop:14, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
-      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+
+    {/* gates */}
+    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.md }}>
+      <div onClick={() => setShowGates(!showGates)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer' }}>
+        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>GATES</span>
+        <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>Four crossings, each with a decider and a way back. Nothing flows by default.</span>
+        <span style={{ color:LM.inkMuted, fontSize:10 }}>{showGates ? '\u25be' : '\u25b8'}</span>
+      </div>
+      {showGates && gates.map(g => (
+        <div key={g.id} style={{ padding:'10px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', gap:LM.sp.md, alignItems:'flex-start' }}>
+          <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', color:LM.accent, minWidth:126 }}>{g.label}</span>
+          <div style={{ flex:1, minWidth:0, fontSize:12, lineHeight:1.55, color:LM.inkSoft }}>
+            <div>Decided by <b style={{ color:LM.ink, fontWeight:500 }}>{g.decider}</b> &#xb7; default {g.def} &#xb7; {g.revocable}</div>
+            <div style={{ marginTop:3 }}>Passes: {g.passes}</div>
+            {g.never !== '\u2014' && <div style={{ color:LM.err, marginTop:3 }}>Never: {g.never}</div>}
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {/* consent record -- the audit the gates are only real because of */}
+    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
+      <div onClick={() => setShowLog(!showLog)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer' }}>
+        <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>CONSENT RECORD</span>
+        <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>
+          {log.length ? `${log.length} crossing${log.length === 1 ? '' : 's'} this session \u00b7 append-only` : 'Nothing has crossed a gate yet.'}
+        </span>
+        <span style={{ color:LM.inkMuted, fontSize:10 }}>{showLog ? '\u25be' : '\u25b8'}</span>
+      </div>
+      {showLog && (log.length
+        ? log.map((e, i) => (
+            <div key={i} style={{ padding:'8px 14px', borderTop:`1px solid ${LM.lineSoft}`, display:'flex', gap:10, alignItems:'baseline', fontSize:12 }}>
+              <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, minWidth:34 }}>{e.t}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.08em', minWidth:58,
+                color: e.act === 'shared' ? LM.ok : e.act === 'withdrew' ? LM.warn : LM.err }}>{e.act.toUpperCase()}</span>
+              <span style={{ flex:1, minWidth:0, color:LM.inkSoft, lineHeight:1.45 }}>{e.fact}</span>
+              <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>{e.gate}</span>
+            </div>
+          ))
+        : <div style={{ padding:'12px 14px', borderTop:`1px solid ${LM.lineSoft}`, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
+            Share or withdraw a fact above and it appears here. The record cannot be edited, only exported.
+          </div>)}
+    </div>
+
+    {/* keys + export */}
+    <div style={{ padding:'11px 13px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md, marginBottom:LM.sp.sm }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em', marginBottom:7 }}>KEY</div>
+      <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>{keys.how}</div>
+      <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6, marginTop:7 }}>{keys.cost}</div>
+
+      {kit && (
+        <div role="status" style={{ marginTop:11, padding:'11px 12px', background:LM.bgDeep, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
+          No recovery kit exists in this connection. The login-wrapped key is proposed, not shipped, so there is nothing to write down yet.
+        </div>
+      )}
+
+      {rotate && (
+        <div role="status" style={{ marginTop:11, padding:'11px 12px', background:LM.bgDeep, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
+          No wrapped key exists in this connection, so there is nothing to re-wrap.
+        </div>
+      )}
+
+      <div style={{ display:'flex', gap:7, marginTop:10 }}>
+        <button onClick={() => setKit(kit ? null : 'show')} style={{ ...smallBtn(), padding:'3px 9px' }}>
+          {kit ? 'hide recovery kit' : 'show recovery kit'}
+        </button>
+        <button onClick={() => setRotate(!rotate)} style={{ ...smallBtn(), padding:'3px 9px' }}>rotate login</button>
+      </div>
+    </div>
+    <div style={{ padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
         <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>EXPORT</span>
-        <span style={{ flex:1, fontSize:12, color:LM.inkSoft }}>Take your memory with you — JSON, plaintext, or Markdown.</span>
+        <span style={{ flex:1, fontSize:12, color:LM.inkSoft, minWidth:180 }}>Take the whole brain with you &#x2014; strata, facts, consent record.</span>
+        <button onClick={async (e) => {
+          const said = window.prompt('What should the brain remember?');
+          if (!said || !said.trim()) return;
+          const b = e.currentTarget;
+          b.textContent = 'saving\u2026';
+          try {
+            await window.ARCHHUB_REMEMBER(said.trim());
+            b.textContent = 'saved';
+          } catch (error) {
+            b.textContent = 'refused';
+          }
+          setTimeout(() => { b.textContent = 'add fact'; }, 4000);
+        }} style={smallBtn()}>add fact</button>
         <button onClick={async (e) => {
           const b = e.currentTarget;
           b.textContent = 'reading…';
           try {
-            const facts = await window.ARCHHUB_BRAIN_EXPORT();
-            const blob = new Blob([JSON.stringify(facts, null, 2)],
+            const held = await window.ARCHHUB_BRAIN_EXPORT();
+            const blob = new Blob([JSON.stringify({ facts:held, consents:log }, null, 2)],
               { type:'application/json' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -5582,8 +5748,44 @@ const SettingsMemory = withLiveCatalogue('ARCHHUB_LOAD_MEMORY', LM_MEMORY, ({ st
       </div>
     </div>
   </div>
-));
+  );
+});
 
+// -- Team: identity, seats, invites (design studio-lm.jsx:2731-2792). No data path projects a firm
+// roster, seats or invite tokens into this view, so the layout stays and every value is empty.
+const SettingsTeam = () => {
+  const none = 'No firm in this connection';
+  const off = { ...smallBtn(), padding:'4px 11px', borderStyle:'dashed', color:LM.inkMuted, cursor:'default' };
+  return (
+  <div>
+    <SHead title="Team" sub="One person owns the workspace and invites teammates by email. Firm brain access follows membership &#x2014; removing someone stops what they can read next, not what they already hold."/>
+    <div style={{ display:'flex', gap:LM.sp.sm, marginBottom:LM.sp.md, flexWrap:'wrap' }}>
+      {[['FIRM','\u2014'],['SEATS','\u2014'],['USED','\u2014'],['YOUR ROLE','\u2014']].map(([k,v]) => (
+        <div key={k} style={{ flex:'1 1 150px', padding:'9px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
+          <div style={{ fontFamily:LM.mono, fontSize:9, letterSpacing:'0.14em', color:LM.inkMuted }}>{k}</div>
+          <div style={{ fontSize:13, marginTop:4, color:LM.inkMuted }}>{v}</div>
+        </div>
+      ))}
+    </div>
+    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden', marginBottom:LM.sp.sm }}>
+      <div role="status" style={{ padding:'12px 14px', fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
+        No firm in this connection. Members appear here when the workspace has one.
+      </div>
+    </div>
+    <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
+      <button disabled title={none} style={off}>invite a teammate</button>
+      <button disabled title={none} style={off}>set seat count</button>
+      <button disabled title={none} style={off}>transfer ownership</button>
+      <button disabled title={none} style={{ ...off, color:LM.err }}>leave firm</button>
+    </div>
+    <div style={{ marginTop:LM.sp.md, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
+      <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>
+        <b style={{ color:LM.ink, fontWeight:500 }}>Seats are protected against over-inviting.</b> The check counts current members plus outstanding invites, so pending invites cannot squeeze past a seat limit once accepted.
+      </div>
+    </div>
+  </div>
+  );
+};
 // ── Profile: who you are, the AI's system prompt anchor
 const SettingsProfile = () => (
   <div>
@@ -5968,6 +6170,7 @@ const SettingsTheme = () => {
   const [accent, setAccent] = React.useState(() => LM.accent);
   const [dirty, setDirty] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [editAccent, setEditAccent] = React.useState(false);
   React.useEffect(() => {
     if (!dirty && config?.theme?.accent) setAccent(config.theme.accent);
   }, [dirty, config?.theme?.accent]);
@@ -5985,58 +6188,78 @@ const SettingsTheme = () => {
     .slice(0, 10).map(row => row.entry);
   const fieldStyle = {background:LM.bg, color:LM.ink, border:`1px solid ${LM.line}`,
     borderRadius:LM.rad.md, padding:'8px 10px', fontFamily:LM.mono};
+  const notLinked = 'Not linked to Personal Settings yet';
   return <div>
-    <SHead title="Theme" sub="Appearance comes from this view’s Personal Settings."/>
-    <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:14, color:LM.inkSoft, fontSize:12}}>
+    <SHead title="Theme" sub="Honest dark for honest drafting. Light when you need to share a screen."/>
+    <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:14, fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em'}}>
       <span style={{flex:1}}>{config ? `${config.binding_mode} · ${config.state}` :
         !api && window.ArchHubTheme?.source === 'graph' ? 'Graph theme · read-only in this view' : 'Personal Settings not read'}</span>
       <button title="Refresh Personal Settings" aria-label="Refresh Personal Settings" disabled={!api || state?.pending}
-        style={fieldStyle} onClick={() => run(() => api.refreshTheme())}>↻</button>
+        style={{ ...smallBtn(), padding:'3px 8px' }} onClick={() => run(() => api.refreshTheme())}>&#x21bb;</button>
     </div>
-    <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10}}>
-      {['System','Dark','Light'].map(name => <div key={name} style={{padding:'12px 14px',
-        background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7}}>
-        <div style={{display:'flex', gap:4, marginBottom:8}}>
-          {name !== 'Light' && <span style={{flex:1, height:30, background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4}}/>}
-          {name !== 'Dark' && <span style={{flex:1, height:30, background:LM.l_bg, border:`1px solid ${LM.lineSoft}`, borderRadius:4}}/>}
+    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+      {[
+        ['System',  'follows OS', LM.bg, LM.l_bg],
+        ['Dark',    'studio default', LM.bg, null],
+        ['Light',   'high contrast',  null, LM.l_bg],
+      ].map(([name, sub, dark, light]) => (
+        <button key={name} disabled title={notLinked} style={{
+          padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`,
+          borderRadius:7, textAlign:'left', cursor:'default', color:LM.ink, fontFamily:LM.sans,
+        }}>
+          <div style={{ display:'flex', gap:LM.sp.xs, marginBottom:LM.sp.sm }}>
+            {dark && <div style={{ flex:1, height:36, background:dark, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>}
+            {light && <div style={{ flex:1, height:36, background:light, borderRadius:4, border:`1px solid ${LM.lineSoft}` }}/>}
+          </div>
+          <div style={{ fontSize:13, fontWeight:500 }}>{name}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>
+        </button>
+      ))}
+    </div>
+    <div style={{ marginTop:LM.sp.lg, display:'flex', flexDirection:'column', gap:10 }}>
+      <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px' }}>
+          <span title="Current graph accent" style={{ width:16, height:16, borderRadius:4, background:LM.accent, border:`1px solid ${LM.lineSoft}` }}/>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:12.5 }}>Accent color</div>
+            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{accent} &#xb7; hover, pressed and soft shades follow when presets are linked</div>
+          </div>
+          <button onClick={() => setEditAccent(!editAccent)} style={{ background:'transparent', border:0, padding:0, color:LM.inkMuted, fontSize:11, cursor:'pointer' }}>{editAccent ? 'close' : 'change'}</button>
         </div>
-        <div style={{fontSize:13}}>{name}</div>
-        <div style={{fontSize:10, color:LM.inkMuted, marginTop:4}}>Not linked to Personal Settings yet</div>
-      </div>)}
-    </div>
-    <div style={{marginTop:20, padding:12, background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md}}>
-      <div style={{fontSize:13, marginBottom:6}}>Accent colour</div>
-      <div style={{fontSize:11, color:LM.inkSoft, marginBottom:10}}>Accent only; hover, pressed and soft shades follow when presets are linked.</div>
-      <p style={{fontSize:11, color:LM.inkSoft}}>Check text and control contrast after changing colours; automatic contrast adjustment is not available.</p>
-      {config && config.binding_mode !== 'personal-wip' && <p style={{fontSize:11, color:LM.warn}}>
-        Saving switches this view to its personal draft, including that draft’s other colours.
-      </p>}
-      <div style={{display:'flex', alignItems:'center', gap:8}}>
-        <span title="Current graph accent" style={{width:22, height:22, background:LM.accent, border:`1px solid ${LM.line}`, borderRadius:4}}/>
-        <input aria-label="Choose accent colour" type="color" value={/^#[0-9a-fA-F]{6}$/.test(accent) ? accent : LM.accent}
-          onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
-        <input aria-label="Accent hex colour" value={accent} maxLength={7} style={{...fieldStyle, width:100}}
-          onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
-        <button style={fieldStyle} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
-          onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Saving…' : 'Save accent'}</button>
+        {editAccent && <div style={{ padding:'0 12px 10px', borderTop:`1px solid ${LM.lineSoft}` }}>
+          <p style={{fontSize:11, color:LM.inkSoft}}>Check text and control contrast after changing colours; automatic contrast adjustment is not available.</p>
+          {config && config.binding_mode !== 'personal-wip' && <p style={{fontSize:11, color:LM.warn}}>
+            Saving switches this view to its personal draft, including that draft&#x2019;s other colours.
+          </p>}
+          <div style={{display:'flex', alignItems:'center', gap:8}}>
+            <input aria-label="Choose accent colour" type="color" value={/^#[0-9a-fA-F]{6}$/.test(accent) ? accent : LM.accent}
+              onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
+            <input aria-label="Accent hex colour" value={accent} maxLength={7} style={{...fieldStyle, width:100}}
+              onChange={event => {setAccent(event.target.value); setDirty(true);}} disabled={!!state?.pending}/>
+            <button style={fieldStyle} disabled={unavailable || !/^#[0-9a-fA-F]{6}$/.test(accent) || accent.toLowerCase() === config?.theme?.accent?.toLowerCase()}
+              onClick={() => run(() => api.previewThemeToken('accent', accent), true)}>{state?.pending ? 'Saving\u2026' : 'Save accent'}</button>
+          </div>
+          {config && !oneDraft && <p style={{fontSize:11, color:LM.warn}}>
+            {config.personal_wip_heads.length > 1 ? 'Multiple theme drafts exist; merging is not linked yet.' : 'No personal theme draft is available.'}
+          </p>}
+        </div>}
       </div>
-      {config && !oneDraft && <p style={{fontSize:11, color:LM.warn}}>
-        {config.personal_wip_heads.length > 1 ? 'Multiple theme drafts exist; merging is not linked yet.' : 'No personal theme draft is available.'}
-      </p>}
-    </div>
-    <div style={{marginTop:14, display:'grid', gap:8}}>
-      {[['Editor font',LM.mono],['Display font',LM.serif],['Density','Comfortable']].map(([name,value]) =>
-        <div key={name} style={{padding:10, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md}}>
-          <div style={{fontSize:12}}>{name} · {value}</div>
-          <div style={{fontSize:10, color:LM.inkMuted, marginTop:3}}>Not linked to Personal Settings yet</div>
-        </div>)}
+      {[['Editor font', LM.mono], ['Display font', LM.serif + ' \u00b7 ' + LM.sans + ' for UI'], ['Density', 'Comfortable']].map(([k, v]) => (
+        <div key={k} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:12.5 }}>{k}</div>
+            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v}</div>
+          </div>
+          <span title={notLinked} style={{ color:LM.inkMuted, fontSize:11 }}>change</span>
+        </div>
+      ))}
     </div>
     {!!history.length && <div style={{marginTop:18}}>
-      <div style={{fontSize:12, marginBottom:8}}>Versions · showing {Math.min(10,history.length)} of {history.length}</div>
+      <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em', marginBottom:8}}>VERSIONS &#xb7; SHOWING {Math.min(10,history.length)} OF {history.length}</div>
       {versions.map(entry => <div key={entry.revision} style={{display:'flex', gap:8, alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${LM.lineSoft}`}}>
         <span style={{flex:1, fontSize:11, color:LM.inkSoft}}>{entry.reason || entry.state} {entry.current ? '· current' : ''}
           <small style={{display:'block'}}>{entry.timestamp || 'Time unavailable'} · {entry.state} · {entry.digest ? entry.digest.slice(0,10) : String(entry.revision).slice(-10)}</small></span>
-        {!entry.current && entry.restore_control && <button style={fieldStyle} disabled={unavailable}
+        {!entry.current && entry.restore_control && <button style={{ ...smallBtn(), padding:'3px 9px' }} disabled={unavailable}
           onClick={() => run(() => api.restoreThemeRevision(entry.revision))}>Restore</button>}
       </div>)}
     </div>}
@@ -6045,7 +6268,6 @@ const SettingsTheme = () => {
     </p>}
   </div>;
 };
-
 const SettingsShortcuts = () => (
   <div>
     <SHead title="Shortcuts" sub="The keys that matter."/>
@@ -6119,7 +6341,8 @@ const SettingsAbout = () => (
   <div>
     <SHead title="About" sub="ArchHub Studio · the AEC stack with one foot in your model and one in the LLM."/>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'14px 16px', fontFamily:LM.mono, fontSize:11.5, color:LM.inkSoft, lineHeight:1.85 }}>
-      <div><span style={{ color:LM.inkMuted }}>connection </span> {window.location.origin}</div>
+      <div><span style={{ color:LM.inkMuted }}>server     </span> {window.location.origin}</div>
+      <div><span style={{ color:LM.inkMuted }}>hosts      </span> {LM_HOSTS.length} configured &#xb7; {LM_HOSTS.filter(h=>h.state!=='off').length} live</div>
     </div>
     <ApplicationUpdateControls/>
   </div>
@@ -6183,6 +6406,7 @@ const SettingsHosts = withLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS, ({ store
 
 // ──────────────────────── MODEL PICKER ────────────────────────
 const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
+  const note = { margin:0, padding:'6px 10px', fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5, letterSpacing:'0.02em' };
   // The list is read LIVE from the app (/api/universal/models: the founder's
   // cloud, OpenRouter with real prices, LM Studio / Ollama on this machine);
   // only discovered rows are selectable. `routed` is what the router reads: a CLOUD row must
@@ -6242,44 +6466,44 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
           <span style={{ fontFamily:LM.mono, fontSize:9, color: live ? LM.ok : LM.inkMuted, letterSpacing:'0.12em' }}>{live ? ('LIVE · ' + live.count) : 'DISCOVERING'}</span>
           <kbd style={kbd()}>esc</kbd>
           <button type="button" disabled={saving} onClick={() => {setLive(null); setNative(null); setDiscovery(value => value + 1);}}
-            style={{background:'transparent',border:0,color:LM.inkSoft,cursor:'pointer'}}>Refresh</button>
+            style={{background:'transparent',border:0,color:LM.inkMuted,cursor:'pointer',fontFamily:LM.mono,fontSize:10,letterSpacing:'0.06em'}}>Refresh</button>
           <button disabled={saving} onClick={() => choose({name:'Choose a model', route:'', routed:''})}
             title="Clear this model selection" aria-label="Clear this model selection"
-            style={{background:'transparent',border:0,color:LM.inkSoft,cursor:'pointer'}}>×</button>
+            style={{background:'transparent',border:0,color:LM.inkMuted,cursor:'pointer',fontSize:14,lineHeight:1}}>{'\u00d7'}</button>
         </div>
         <div className="ah-scroll" style={{ maxHeight:420, overflow:'auto', padding:'6px 8px 10px' }}>
-          {selectionError && <p role="alert" style={{padding:12,color:LM.err}}>{selectionError}</p>}
-          {onNativeSelect && <div style={{padding:'8px 10px', borderBottom:`1px solid ${LM.line}`}}>
-            <div style={{fontFamily:LM.mono,fontSize:10,color:LM.inkMuted}}>NATIVE AGENT SESSIONS</div>
-            {nativeError && <p role="status">{nativeError}</p>}
-            {!native && !nativeError && <p role="status">Discovering open agent sessions…</p>}
-            {native?.status === 'unavailable' && <p role="status">Native session discovery is unavailable. Open your client and refresh.</p>}
+          {selectionError && <p role="alert" style={{...note,color:LM.err}}>{selectionError}</p>}
+          {onNativeSelect && <div style={{ marginTop:LM.sp.sm, paddingBottom:6, borderBottom:`1px solid ${LM.lineSoft}` }}>
+            <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.18em', padding:'4px 10px' }}>NATIVE AGENT SESSIONS</div>
+            {nativeError && <p role="status" style={note}>{nativeError}</p>}
+            {!native && !nativeError && <p role="status" style={note}>{'Discovering open agent sessions\u2026'}</p>}
+            {native?.status === 'unavailable' && <p role="status" style={note}>Native session discovery is unavailable. Open your client and refresh.</p>}
             {(Array.isArray(native?.readiness) ? native.readiness : []).map(row =>
-              <p key={row.app} style={{fontSize:11,color:LM.inkMuted}}>
+              <p key={row.app} style={note}>
                 {row.app}: {row.state === 'executable-discovered' ? 'Command-line client found' : 'Command-line client not detected'}.
                 {row.state === 'executable-discovered' && !(native.rows || []).some(session => session.app === row.app && session.connected === true)
                   ? ' No open session was discovered.' : ''}
               </p>)}
             {native?.status === 'ok' && !(native.rows || []).some(row => row.kind === 'native-session') &&
-              <p role="status">No open agent sessions were found. Open a session in your installed client, then refresh.</p>}
+              <p role="status" style={note}>No open agent sessions were found. Open a session in your installed client, then refresh.</p>}
             {(native?.rows || []).filter(row => row.kind === 'native-session' && (!q ||
               [row.app,row.title,row.workspace].join(' ').toLowerCase().includes(q.toLowerCase()))).map(row =>
               <button type="button" key={JSON.stringify([row.app,row.session_id])}
                 disabled={saving || row.connected !== true || row.selectable === false || row.reason === 'ambiguous_endpoint'} onClick={() => chooseNative(row)}
-                style={{display:'block',width:'100%',textAlign:'left',padding:'9px 10px',marginTop:5,
-                  color:LM.ink,background:LM.bgSoft,border:`1px solid ${LM.line}`,borderRadius:LM.rad.md,
+                style={{display:'block',width:'100%',textAlign:'left',padding:'8px 10px',
+                  color:LM.ink,background:'transparent',border:0,borderRadius:LM.rad.md,lineHeight:1.15,
                   cursor:row.connected === true ? 'pointer' : 'default'}}>
-                <span>{row.app} · {row.title || 'Untitled session'}</span>
-                <small style={{display:'block',color:LM.inkMuted,marginTop:4}}>
+                <span style={{fontSize:13,fontFamily:LM.sans}}>{row.app}{' \u00b7 '}{row.title || 'Untitled session'}</span>
+                <small style={{display:'block',fontFamily:LM.mono,fontSize:9.5,color:LM.inkMuted,letterSpacing:'0.04em',marginTop:3}}>
                   {row.reason === 'ambiguous_endpoint' ? 'Multiple endpoints found; select one in the client' :
                     row.connected === true && row.selectable !== false ? 'Open session · connect to this graph' : 'Session unavailable'}
                   {row.workspace ? ' · ' + row.workspace : ''}
                 </small>
               </button>)}
           </div>}
-          {saving && <p role="status" style={{padding:12}}>Saving model selection…</p>}
-          {!live && <p role="status" style={{padding:12}}>{catalogueError || 'Discovering models from connected providers…'}</p>}
-          {live && !live.groups.some(group => group.items?.length) && <p role="status" style={{padding:12}}>
+          {saving && <p role="status" style={note}>{'Saving model selection\u2026'}</p>}
+          {!live && <p role="status" style={note}>{catalogueError || 'Discovering models from connected providers\u2026'}</p>}
+          {live && !live.groups.some(group => group.items?.length) && <p role="status" style={note}>
             No models were discovered. Connect an online provider or start a local model service.</p>}
           {(live?.groups || []).map(g => ({ ...g, items: g.items.filter(m => !q || (m.name + ' ' + m.route + ' ' + (m.vendor||'')).toLowerCase().includes(q.toLowerCase())).slice(0, q ? 60 : 40) })).filter(g => g.items.length).map(g => (
             <div key={g.name} style={{ marginTop:LM.sp.sm }}>
@@ -6296,7 +6520,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                     <span style={{ width:22, height:22, borderRadius:4, background:m.col, color:((window.AH && window.AH.onFill) || '#180f08'), display:'grid', placeItems:'center', fontFamily:LM.mono, fontSize:11, fontWeight:700 }}>{m.name[0]}</span>
                     <div style={{ flex:1, lineHeight:1.15 }}>
                       <div style={{ fontSize:13 }}>{m.name}</div>
-                      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.vendor} · ctx {m.ctx} · {m.cost}</div>
+                      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.04em' }}>{m.vendor}{m.ctx ? ' \u00b7 ctx ' + m.ctx : ''}</div>
                     </div>
                     {m.latency != null && <span style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.ok }}>{m.latency}ms</span>}
                     <span style={{
@@ -6340,14 +6564,25 @@ const DRows = ({ rows }) => (
   </div>
 );
 
-const DOC_INDEX = [{"s":"start","k":"page","t":"Getting started","d":"ArchHub runs as a local server next to your CAD/BIM host. Nothing leaves your machine unless a node asks it to."},{"s":"canvas","k":"page","t":"The canvas & nodes","d":"A node takes typed inputs, does one job, and emits typed outputs. The canvas is the record of how they connect."},{"s":"connectors","k":"page","t":"Connectors","d":"A connector is a long-lived link to a running application. It is the only thing in ArchHub that can read or write your model."},{"s":"skills","k":"page","t":"Skills as JSON you own","d":"A skill is a saved group of nodes, serialised as plain JSON in your project. No proprietary format, no lock-in, no hidden state."},{"s":"brain","k":"page","t":"The Brain & memory layers","d":"The Brain is what makes the second session smarter than the first. It is a local store, not a cloud profile."},{"s":"healing","k":"page","t":"Self-healing internals","d":"A graph that stops the moment a host hiccups is not usable in practice. Self-healing is the loop that keeps a long run alive."},{"s":"cli","k":"page","t":"CLI & API reference","d":"Everything Studio does, the CLI does. The UI is a client of the same local server."},{"s":"start","k":"section","t":"INSTALL","d":"Getting started"},{"s":"start","k":"section","t":"FIRST RUN","d":"Getting started"},{"s":"start","k":"section","t":"KEYS","d":"Getting started"},{"s":"canvas","k":"section","t":"THE NINE CATEGORIES","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"WIRES ARE TYPED","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"GROUPING","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"NAVIGATION","d":"The canvas & nodes"},{"s":"connectors","k":"section","t":"SUPPORTED HOSTS","d":"Connectors"},{"s":"connectors","k":"section","t":"LIFECYCLE","d":"Connectors"},{"s":"skills","k":"section","t":"SHAPE","d":"Skills as JSON you own"},{"s":"skills","k":"section","t":"RULES","d":"Skills as JSON you own"},{"s":"brain","k":"section","t":"THE FOUR LAYERS","d":"The Brain & memory layers"},{"s":"brain","k":"section","t":"PROMOTION","d":"The Brain & memory layers"},{"s":"healing","k":"section","t":"THE LOOP","d":"Self-healing internals"},{"s":"healing","k":"section","t":"REPAIR STRATEGIES","d":"Self-healing internals"},{"s":"healing","k":"section","t":"GUARANTEES","d":"Self-healing internals"},{"s":"cli","k":"section","t":"CLI","d":"CLI & API reference"},{"s":"cli","k":"section","t":"HTTP","d":"CLI & API reference"},{"s":"cli","k":"section","t":"EXIT CODES","d":"CLI & API reference"},{"s":"start","k":"key","t":"⌘K","d":"Getting started"},{"s":"start","k":"key","t":"⌘L","d":"Getting started"},{"s":"start","k":"key","t":"⌘↵","d":"Getting started"},{"s":"start","k":"key","t":"⌘,","d":"Getting started"},{"s":"start","k":"key","t":"⌘/","d":"Getting started"},{"s":"start","k":"cli","t":"archhub up","d":"Getting started"},{"s":"start","k":"cli","t":"archhub doctor","d":"Getting started"},{"s":"cli","k":"cli","t":"archhub up","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub doctor","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub run","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub skill","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub brain","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub hosts","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub logs","d":"CLI & API reference"},{"s":"start","k":"topic","t":"1 · Connect a host","d":"Getting started"},{"s":"start","k":"topic","t":"2 · Add a provider","d":"Getting started"},{"s":"start","k":"topic","t":"3 · Open a session","d":"Getting started"},{"s":"start","k":"topic","t":"4 · Place a node","d":"Getting started"},{"s":"canvas","k":"topic","t":"Hosts","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Read","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Filter","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Transform","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Annotate","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Compose","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Logic","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"AI","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Output","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Pan","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Zoom","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Focus a node","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Multi-select","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Run","d":"The canvas & nodes"},{"s":"connectors","k":"topic","t":"Revit 2022–2025","d":"Connectors"},{"s":"connectors","k":"topic","t":"Rhino 7 / 8","d":"Connectors"},{"s":"connectors","k":"topic","t":"Blender 4.x / 5.x","d":"Connectors"},{"s":"connectors","k":"topic","t":"Speckle","d":"Connectors"},{"s":"connectors","k":"topic","t":"IFC 2x3 / 4","d":"Connectors"},{"s":"skills","k":"topic","t":"inputs / outputs","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"params","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"requires","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"version","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"dry_run","d":"Skills as JSON you own"},{"s":"brain","k":"topic","t":"1 · Session","d":"The Brain & memory layers"},{"s":"brain","k":"topic","t":"2 · Project","d":"The Brain & memory layers"},{"s":"brain","k":"topic","t":"3 · Practice","d":"The Brain & memory layers"},{"s":"brain","k":"topic","t":"4 · Personal","d":"The Brain & memory layers"},{"s":"healing","k":"topic","t":"transport","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"version drift","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"auth","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"host busy","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"crash","d":"Self-healing internals"},{"s":"cli","k":"topic","t":"archhub run <session>","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub skill ls | add | rm","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub brain ls | promote | forget","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub logs -f","d":"CLI & API reference"}]
+const DOC_INDEX = [{"s":"start","k":"page","t":"Getting started","d":"ArchHub runs as a local server next to your CAD/BIM host. Nothing leaves your machine unless a node asks it to."},{"s":"canvas","k":"page","t":"The canvas & nodes","d":"A node takes typed inputs, does one job, and emits typed outputs. The canvas is the record of how they connect."},{"s":"connectors","k":"page","t":"Connectors","d":"A connector is a long-lived link to a running application. It is the only thing in ArchHub that can read or write your model."},{"s":"skills","k":"page","t":"Skills as JSON you own","d":"A skill is a saved group of nodes, serialised as plain JSON in your project. No proprietary format, no lock-in, no hidden state."},{"s":"healing","k":"page","t":"Self-healing internals","d":"A graph that stops the moment a host hiccups is not usable in practice. Self-healing is the loop that keeps a long run alive."},{"s":"cli","k":"page","t":"CLI & API reference","d":"Everything Studio does, the CLI does. The UI is a client of the same local server."},{"s":"start","k":"section","t":"INSTALL","d":"Getting started"},{"s":"start","k":"section","t":"FIRST RUN","d":"Getting started"},{"s":"start","k":"section","t":"KEYS","d":"Getting started"},{"s":"canvas","k":"section","t":"THE NINE CATEGORIES","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"WIRES ARE TYPED","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"GROUPING","d":"The canvas & nodes"},{"s":"canvas","k":"section","t":"NAVIGATION","d":"The canvas & nodes"},{"s":"connectors","k":"section","t":"SUPPORTED HOSTS","d":"Connectors"},{"s":"connectors","k":"section","t":"LIFECYCLE","d":"Connectors"},{"s":"skills","k":"section","t":"SHAPE","d":"Skills as JSON you own"},{"s":"skills","k":"section","t":"RULES","d":"Skills as JSON you own"},{"s":"healing","k":"section","t":"THE LOOP","d":"Self-healing internals"},{"s":"healing","k":"section","t":"REPAIR STRATEGIES","d":"Self-healing internals"},{"s":"healing","k":"section","t":"GUARANTEES","d":"Self-healing internals"},{"s":"cli","k":"section","t":"CLI","d":"CLI & API reference"},{"s":"cli","k":"section","t":"HTTP","d":"CLI & API reference"},{"s":"cli","k":"section","t":"EXIT CODES","d":"CLI & API reference"},{"s":"start","k":"key","t":"\u2318K","d":"Getting started"},{"s":"start","k":"key","t":"\u2318L","d":"Getting started"},{"s":"start","k":"key","t":"\u2318\u21b5","d":"Getting started"},{"s":"start","k":"key","t":"\u2318,","d":"Getting started"},{"s":"start","k":"key","t":"\u2318/","d":"Getting started"},{"s":"start","k":"cli","t":"archhub up","d":"Getting started"},{"s":"start","k":"cli","t":"archhub doctor","d":"Getting started"},{"s":"cli","k":"cli","t":"archhub up","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub doctor","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub run","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub skill","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub brain","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub hosts","d":"CLI & API reference"},{"s":"cli","k":"cli","t":"archhub logs","d":"CLI & API reference"},{"s":"start","k":"topic","t":"1 \u00b7 Connect a host","d":"Getting started"},{"s":"start","k":"topic","t":"2 \u00b7 Add a provider","d":"Getting started"},{"s":"start","k":"topic","t":"3 \u00b7 Open a session","d":"Getting started"},{"s":"start","k":"topic","t":"4 \u00b7 Place a node","d":"Getting started"},{"s":"canvas","k":"topic","t":"Hosts","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Read","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Filter","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Transform","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Annotate","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Compose","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Logic","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"AI","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Output","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Pan","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Zoom","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Focus a node","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Multi-select","d":"The canvas & nodes"},{"s":"canvas","k":"topic","t":"Run","d":"The canvas & nodes"},{"s":"connectors","k":"topic","t":"Revit 2022\u20132025","d":"Connectors"},{"s":"connectors","k":"topic","t":"Rhino 7 / 8","d":"Connectors"},{"s":"connectors","k":"topic","t":"Blender 4.x / 5.x","d":"Connectors"},{"s":"connectors","k":"topic","t":"Speckle","d":"Connectors"},{"s":"connectors","k":"topic","t":"IFC 2x3 / 4","d":"Connectors"},{"s":"skills","k":"topic","t":"inputs / outputs","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"params","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"requires","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"version","d":"Skills as JSON you own"},{"s":"skills","k":"topic","t":"dry_run","d":"Skills as JSON you own"},{"s":"healing","k":"topic","t":"transport","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"version drift","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"auth","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"host busy","d":"Self-healing internals"},{"s":"healing","k":"topic","t":"crash","d":"Self-healing internals"},{"s":"cli","k":"topic","t":"archhub run <session>","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub skill ls | add | rm","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub brain ls | share | forget","d":"CLI & API reference"},{"s":"cli","k":"topic","t":"archhub logs -f","d":"CLI & API reference"}];
+// The brain's search entries are DERIVED from brain-model.jsx, never restated. The old static
+// entries kept indexing the superseded layer model long after the page stopped saying it, so
+// search returned a brain the page no longer held. Deriving makes that drift impossible.
+(() => {
+  const P = 'The Brain';
+  DOC_INDEX.push({ s:'brain', k:'page', t:P, d:'Not a store of facts \u2014 the layer that governs what kinds of things exist, how they relate, and how they are filed.' });
+  ['FOUR STRATA', 'THREE LAKES, NOT ONE CASCADE', 'GATES', 'YOUR KEY'].forEach(t => DOC_INDEX.push({ s:'brain', k:'section', t, d:P }));
+  (window.BRAIN_STRATA || []).forEach(x => DOC_INDEX.push({ s:'brain', k:'topic', t:x.n + ' \u00b7 ' + x.one, d:P }));
+  (window.BRAIN_LAKES  || []).forEach(x => DOC_INDEX.push({ s:'brain', k:'topic', t:x.n + ' brain', d:P }));
+  (window.BRAIN_GATES  || []).forEach(x => DOC_INDEX.push({ s:'brain', k:'topic', t:x.label, d:P }));
+})();
 
 const DOC_SECTIONS = [
   ['start',      'Getting started', 'install'],
   ['canvas',     'Canvas & nodes',  '9 categories'],
   ['connectors', 'Connectors',      '4 hosts'],
   ['skills',     'Skills as JSON',  'you own them'],
-  ['brain',      'Brain & memory',  '4 layers'],
+  ['brain',      'Brain',           '4 strata'],
   ['healing',    'Self-healing',    'internals'],
   ['cli',        'CLI & API',       'reference'],
 ];
@@ -6581,27 +6816,39 @@ const DocsSkills = () => (
   </div>
 );
 
-const DocsBrain = () => (
+const DocsBrain = () => {
+  const strata = window.BRAIN_STRATA || [];
+  const gates  = window.BRAIN_GATES || [];
+  const keys   = window.BRAIN_KEYS || {};
+  const paths  = window.BRAIN_PATHS || {};
+  return (
   <div>
-    <SHead title="The Brain & memory layers" sub="The Brain is what makes the second session smarter than the first. It is a local store, not a cloud profile."/>
-    <DP>Every layer is inspectable and editable, and every fact carries a source. If you cannot see why the model knows something, it does not belong in the brain.</DP>
-    <DSub>THE FOUR LAYERS</DSub>
-    <DRows rows={[
-      ['1 · Session',  'The live canvas and chat. Discarded unless promoted. Cheapest, most specific.'],
-      ['2 · Project',  'Facts true of this building: levels, phases, naming rules, the consultant list. Scoped to the project folder.'],
-      ['3 · Practice', 'Facts true of your office: standards, templates, detail libraries, house units. Shared across projects, versioned with the practice repo.'],
-      ['4 · Personal', 'Facts true of you: preferred tone, units, shortcuts, what you never want auto-run. Never shared, never synced.'],
-    ]}/>
-    <DP>A model call assembles context bottom-up — personal, then practice, then project, then session — and stops when the budget is spent. The nearest layer always wins a conflict, so a project override beats an office standard without editing the standard.</DP>
-    <DSub>PROMOTION</DSub>
-    <DCode>{`session fact  ──promote──▶  project
-project fact  ──promote──▶  practice
-any fact      ──forget───▶  gone, with an audit line`}</DCode>
-    <DP>Promotion is always a deliberate act. Nothing climbs a layer on its own, which is why the brain does not drift.</DP>
-    <DNote>The brain is stored locally in <code style={{ fontFamily:LM.mono, fontSize:12 }}>~/.archhub/brain</code> and in your project folder. It is not a git-hosted service and it is not uploaded — sync between machines is your choice of transport.</DNote>
+    <SHead title="The Brain" sub="Not a store of facts &#x2014; the layer that governs what kinds of things exist, how they relate, and how they are filed."/>
+    <DP>The brain is what makes the second session smarter than the first, but it does not mainly hold things. It holds the shape things take. That distinction is the whole design: <b style={{ color:LM.ink, fontWeight:500 }}>the shape can be shared, the contents cannot</b> &#x2014; which is how an office can publish how it works without a single client fact leaving.</DP>
+    <DSub>FOUR STRATA</DSub>
+    <DRows rows={strata.map(s => [
+      s.n + ' \u00b7 ' + s.one,
+      s.holds + ' Example: \u201c' + s.eg + '\u201d. ' + (s.travels === 'never past firm' ? 'Stays inside the firm.' : 'Can travel ' + s.travels + '.'),
+    ])}/>
+    <DP>The top three are how a practice thinks. The bottom one is what it knows. A gate does not ask &#x201c;may this travel?&#x201d; so much as &#x201c;is this structure, or an instance wearing structure&#x2019;s clothes?&#x201d; Every fact is classified on the way in, and <b style={{ color:LM.ink, fontWeight:500 }}>anything the ontology cannot place defaults to sealed</b> &#x2014; it has no release path at all.</DP>
+    <DSub>THREE LAKES, NOT ONE CASCADE</DSub>
+    <DCode>{`personal     yours \u00b7 opened by your login \u00b7 invisible to the firm
+firm         owned by your office's own admin \u00b7 shared inside it
+community    structure only \u00b7 no instances, ever \u00b7 cleartext by design`}</DCode>
+    <DP>They are separate bodies of water, not layers of one pool. Nothing flows by default; each crossing has a named decider, a consent record and a way back.</DP>
+    <DSub>GATES</DSub>
+    <DRows rows={gates.map(g => [g.label, 'Decided by ' + g.decider + ' \u00b7 default ' + g.def + '. Passes: ' + g.passes + (g.never !== '\u2014' ? '. Never: ' + g.never : '')])}/>
+    <DSub>YOUR KEY</DSub>
+    <DP>{keys.how}</DP>
+    <DP>{keys.recovery} {keys.cost}</DP>
+    <DCode>{`${paths.personal || ''}
+  facts.db       encrypted \u00b7 key wrapped by your login
+  sealed/        classes with no upload path
+  consents.log   append-only \u00b7 what crossed, when, why`}</DCode>
+    <DNote>Settings &#x2192; Brain shows the same strata, the same gates and the same classification this page describes &#x2014; both read <code style={{ fontFamily:LM.mono, fontSize:12 }}>brain-model.jsx</code>. If they ever disagree, that is a bug, not a difference of framing.</DNote>
   </div>
-);
-
+  );
+};
 const DocsHealing = () => (
   <div>
     <SHead title="Self-healing internals" sub="A graph that stops the moment a host hiccups is not usable in practice. Self-healing is the loop that keeps a long run alive."/>
@@ -6635,7 +6882,7 @@ const DocsAPI = () => (
       ['archhub doctor',          'Check hosts, providers, ports, brain integrity.'],
       ['archhub run <session>',   'Run a session headless. --node to run one node and its dependencies.'],
       ['archhub skill ls | add | rm', 'Manage skills in the current project.'],
-      ['archhub brain ls | promote | forget', 'Inspect and edit memory layers.'],
+      ['archhub brain ls | share | forget', 'Inspect the strata, share a fact into the firm brain, or forget one. Sealed and unclassified facts have no share path.'],
       ['archhub hosts',           'List connectors with state and host build.'],
       ['archhub logs -f',         'Follow the audit stream, including heal attempts.'],
     ]}/>
@@ -6689,10 +6936,13 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, account }) 
         <>
           <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem>{session.file}</StripItem>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
+          {/* Draw or omit: the model slot names a picked model, never the picker's placeholder. */}
+          {modelRoute(model) ? <>
+          <span style={{ color:LM.inkDim, padding:'0 2px' }}>{'\u00b7'}</span>
           <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
             <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span>
           </StripItem>
+          </> : null}
         </>
       ) : (
         <>

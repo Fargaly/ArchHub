@@ -7,7 +7,7 @@ card in local React state alone: invisible to Run, never written to the
 graph, gone on reload.
 
 This court holds the engine side of that gap shut. It reads the real
-LM_LIBRARY out of the studio source rather than a copy, so the numbers
+AH_LIBRARY out of the studio registry (node-registry.jsx) rather than a copy, so the numbers
 here move the moment the library does.
 """
 from __future__ import annotations
@@ -24,7 +24,8 @@ from nodelang.library_engines import (
     LIBRARY_ITEM_ENGINES,
 )
 
-_STUDIO = Path(__file__).resolve().parents[1] / "nodelang" / "studio" / "studio-lm.jsx"
+_STUDIO = Path(__file__).resolve().parents[1] / "nodelang" / "studio" / "node-registry.jsx"
+_CANVAS = Path(__file__).resolve().parents[1] / "nodelang" / "studio" / "studio-lm.jsx"
 
 _LINES = [
     [0.0, 0.0, 3000.0, 0.0],
@@ -92,9 +93,9 @@ _STREAM_ENGINES = [
 
 
 def _library_items():
-    """Every LM_LIBRARY card in the studio source, with its engine or None."""
+    """Every AH_LIBRARY card in the studio registry, with its engine or None."""
     source = _STUDIO.read_text(encoding="utf-8", errors="replace")
-    start = source.index("const LM_LIBRARY = [")
+    start = source.index("const AH_LIBRARY = [")
     end = source.index(chr(10) + "];", start)
     items = {}
     for line in source[start:end].splitlines():
@@ -192,7 +193,7 @@ def test_every_library_card_either_runs_or_says_it_cannot():
         line = [l for l in source.splitlines() if "id:'%s'" % item in l]
         assert line and "noEngine:true" in line[0], (
             "%s can never run and is not marked: %s" % (item, line[:1]))
-    assert "libItem.noEngine" in source, "the drop must refuse, not vanish"
+    assert "libItem.noEngine" in _CANVAS.read_text(encoding="utf-8", errors="replace"), "the drop must refuse, not vanish"
 
 
 def test_every_mapped_card_names_an_engine_that_exists():

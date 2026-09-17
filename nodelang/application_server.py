@@ -2415,12 +2415,12 @@ class _CleanAuthorityHttpServer:
         admitted = {
             "studio.html", "studio-authority.js", "tokens.jsx", "design-canvas.jsx",
             "shared-data.jsx", "studio-suite.jsx", "param-types.jsx", "studio-params.jsx",
-            "studio-mobile.jsx", "studio-account.jsx", "studio-lm.jsx", "mount.jsx",
+            "studio-mobile.jsx", "studio-account.jsx", "node-registry.jsx", "brain-model.jsx", "studio-lm.jsx", "mount.jsx",
             "vendor/react.js", "vendor/react-dom.js", "vendor/babel.js",
             "compiled/manifest.json", "compiled/tokens.js", "compiled/design-canvas.js",
             "compiled/shared-data.js", "compiled/studio-suite.js", "compiled/param-types.js",
             "compiled/studio-params.js", "compiled/studio-mobile.js", "compiled/studio-account.js",
-            "compiled/studio-lm.js", "compiled/mount.js",
+            "compiled/node-registry.js", "compiled/brain-model.js", "compiled/studio-lm.js", "compiled/mount.js",
         }
         if name not in admitted:
             raise FileNotFoundError("Studio asset not found")

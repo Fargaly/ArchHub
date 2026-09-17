@@ -174,15 +174,20 @@ test('sidebar account chip reads the account record, never a seeded person', asy
   } finally { out.close(); }
 });
 
-test('canvas chrome: the status line clears the minimap, the toolbar and hint carry the design labels', async () => {
+test('canvas chrome: no idle status chip, a selection status clears the minimap, the toolbar and hint carry the design labels', async () => {
   const studio = await mountStudio();
   try {
     openCanvas(studio);
     const mapLabel = [...studio.doc.querySelectorAll('div')].find(node => node.textContent === 'MAP' && !node.children.length);
     assert.ok(mapLabel, 'the minimap is drawn');
     const map = mapLabel.parentElement;
-    const status = [...studio.doc.querySelectorAll('[role="status"]')].find(node => node.textContent === 'Canvas');
-    assert.ok(status, 'the canvas status line is drawn');
+    assert.equal([...studio.doc.querySelectorAll('[role="status"]')].some(node => node.textContent === 'Canvas'), false,
+      'an idle canvas draws no status chip (design studio-lm.jsx NodeCanvas draws none)');
+    const node = studio.doc.querySelector('.lm-node');
+    assert.ok(node, 'a node card is drawn');
+    studio.flush(() => node.click());
+    const status = [...studio.doc.querySelectorAll('[role="status"]')].find(node => node.textContent === '1 selected');
+    assert.ok(status, 'a selection draws the status line');
     const chip = status.parentElement;
     assert.ok(chip.style.right !== '' && map.style.right !== '', 'both sit on the right edge');
     assert.ok(px(chip.style.top) >= px(map.style.top) + px(map.style.height),

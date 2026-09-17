@@ -38,7 +38,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     studioMount = (async () => {
       const names = ['tokens.jsx','design-canvas.jsx','shared-data.jsx',
         'studio-suite.jsx','param-types.jsx','studio-params.jsx',
-        'studio-mobile.jsx','studio-account.jsx','studio-lm.jsx','mount.jsx'];
+        'studio-mobile.jsx','studio-account.jsx','node-registry.jsx','brain-model.jsx','studio-lm.jsx','mount.jsx'];
       const refusal = message => { throw new Error(message + ' Run npm run build:studio, or install a complete release.'); };
       if (!window.crypto?.subtle) refusal('Studio build verification is unavailable.');
       const asset = async (name, limit) => {
@@ -81,7 +81,7 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         sourceBytes += file.source_bytes; outputBytes += file.bytes;
       }
       if (sourceBytes > 2097152 || outputBytes > 4194304) refusal('Studio build exceeds its aggregate bound.');
-      // Read/hash the ten fixed sources sequentially. Never fetch vendored Babel.
+      // Read/hash the eleven fixed sources sequentially. Never fetch vendored Babel.
       // This detects stale source-mode builds without Node on an installed app.
       for (const file of manifest.files) {
         const bytes = await asset(file.source, 524288);

@@ -1,86 +1,72 @@
-/* Settings > Team and Settings > Brain are explicit absent states, never a roster or a strata list.
-   The design bundle (70.HANDOFFS/ARCHHUB-handoff.zip archhub/project/studio-lm.jsx:2443-2444 and
-   2731-2791) fills both tabs from authored data: a firm name with a seat count, four roster rows, a
-   single-use invite token and brain-model.jsx strata. No window.ARCHHUB_* binding projects any of
-   it (studio.html:209-216 holds only REMEMBER/EXPORT/FORGET/EDIT), so the shipped tabs must say so.
+/* Settings > Brain is the design's governance layer read from brain-model.jsx, filled with the real
+   facts the brain holds; Settings > Team is the design layout with every value empty.
+   The design bundle (archhub/project/studio-lm.jsx Settings 2411-2506, SettingsMemory 2519-2730,
+   SettingsTeam 2731-2793, brain-model.jsx) seeds a firm, a roster, an invite token, a recovery kit and
+   thirteen sample facts. No window.ARCHHUB_* binding projects a firm, seats, invites or a key wrap
+   (studio.html holds only REMEMBER/EXPORT/FORGET/EDIT/LOAD_MEMORY), so none of that sample may ship.
    Real browser DOM in memory; no application, provider or network. */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 const {createHash} = require('node:crypto');
 const root = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const jsx = read('nodelang/studio/studio-lm.jsx');
+const model = read('nodelang/studio/brain-model.jsx');
 
-// Authored data the design drew as if it were real. None of it may reach the shipped Studio.
-const SEEDED = ['Habib Studio', 'ah-inv-', '@practice.com', 'BRAIN_STRATA', 'BRAIN_FACTS', 'BRAIN_GATES',
-  'SettingsTeam', 'invite a teammate', 'transfer ownership', 'leave firm', 'strata ·', '5 seats'];
-const ABSENT = 'Not available in this connection.';
-const STATUS = {
-  Team: 'No data path projects a firm roster, seats, roles or invite tokens for this view. Nothing is shown rather than a sample.',
-  Brain: 'No data path projects strata, lakes, gates and per-fact classes for this view. Nothing is shown rather than a sample. Memory holds the facts this app has loaded.',
-};
-const escape = text => text.replace(/[.]/g, '\\.');
+// Authored sample the design drew as if it were real. None of it may reach the shipped Studio.
+const SEEDED = ['Habib Studio', 'ah-inv-', '@practice.com', 'AHUB-4K7M', '5 seats', 'Fargaly Habib',
+  'Amina Habib', 'Karim Saleh', 'Dina Wasfy', 'L02 cladding', '\u00a3', 'Studio \u00b7 5'];
+const STRATA = ['Ontology', 'Relationships', 'Categorisation', 'Instances'];
+const TEAM_STATUS = 'No firm in this connection. Members appear here when the workspace has one.';
 const seedText = read('nodelang/universal_presentation_seed.py').match(/^THEME = \{([\s\S]*?)^\}/m)[1];
 const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{6})'/g)]
   .map(match => [match[1], match[2]]));
 
-test('the Settings tab table lists Brain and Team as absent states beside the real Memory tab', () => {
+test('brain-model.jsx is the one brain definition, registered once and carrying no sample facts', () => {
+  const names = read('packaging/compile_studio.cjs').match(/const names = \[([\s\S]*?)\];/)[1];
+  assert.match(names, /'studio-account\.jsx',[\s\S]*'brain-model\.jsx',\s*'studio-lm\.jsx'/, 'brain-model.jsx loads before studio-lm.jsx');
+  assert.match(read('nodelang/studio/studio.html'), /'studio-account\.jsx',(?:'[a-z-]+\.jsx',)*'brain-model\.jsx','studio-lm\.jsx'/);
+  assert.match(model, /const BRAIN_FACTS = \[\];/, 'the seeded facts stay in the design bundle');
+  for (const name of ['BRAIN_STRATA', 'BRAIN_LAKES', 'BRAIN_GATES', 'BRAIN_KEYS', 'BRAIN_PATHS']) {
+    assert.ok(model.includes(name), `brain-model.jsx exports ${name}`);
+    assert.equal(new RegExp(`const ${name} = `).test(jsx), false, `studio-lm.jsx never restates ${name}`);
+  }
+  for (const seeded of SEEDED) {
+    assert.equal(jsx.includes(seeded), false, `studio-lm.jsx carries no ${JSON.stringify(seeded)}`);
+    assert.equal(model.includes(seeded), false, `brain-model.jsx carries no ${JSON.stringify(seeded)}`);
+  }
+});
+
+test('the Settings tab table matches the design: Brain on the memory tab, Team beside it', () => {
   const settings = jsx.indexOf('const Settings = (');
   const tabsStart = jsx.indexOf('  const tabs = [', settings);
   const tabsEnd = jsx.indexOf('\n  ];', tabsStart);
-  const componentEnd = jsx.indexOf('// ── Settings section header', tabsEnd);
+  const componentEnd = jsx.indexOf('// \u2500\u2500 Settings section header', tabsEnd);
   assert.ok(settings > 0 && tabsStart > settings && tabsEnd > tabsStart && componentEnd > tabsEnd);
   const tabs = jsx.slice(tabsStart, tabsEnd);
   const rendered = jsx.slice(tabsEnd, componentEnd);
-  for (const [id, label] of [['brain', 'Brain'], ['team', 'Team']]) {
-    const row = tabs.match(new RegExp(`\\['${id}',\\s*'([^']*)',\\s*('[^']*'|null)\\]`));
-    assert.ok(row, `Settings lists a ${label} tab`);
-    assert.equal(row[1], label);
-    assert.equal(row[2], "'not available'", `the ${label} badge states the absence, never a count, a firm or a plan`);
-    assert.match(rendered, new RegExp(`\\{tab === '${id}'\\s+&& <SettingsNotAvailable title="${label}"`),
-      `the ${label} tab mounts the shared absent state`);
-  }
-  assert.match(tabs, /\['memory',\s*'Memory',\s*`\$\{LM_MEMORY\.length/, 'Memory still counts the facts the app loaded');
-  assert.match(rendered, /\{tab === 'memory'\s+&& <SettingsMemory /, 'Memory still opens the real brain panel');
-  for (const seeded of SEEDED) assert.equal(jsx.includes(seeded), false, `studio-lm.jsx carries no ${JSON.stringify(seeded)}`);
+  assert.match(tabs, /\['memory',\s*'Brain',\s*`\$\{\(window\.BRAIN_STRATA \|\| \[\]\)\.length\} strata \\u00b7 \$\{LM_MEMORY\.length/);
+  assert.match(tabs, /\['team',\s*'Team',\s*null\]/, 'the Team badge states nothing it cannot read');
+  assert.equal(/\['brain',/.test(tabs), false, 'there is one Brain tab, not a Memory tab beside an empty Brain tab');
+  assert.match(rendered, /\{tab === 'memory'\s+&& <SettingsMemory /);
+  assert.match(rendered, /\{tab === 'team'\s+&& <SettingsTeam\/>\}/);
 });
 
-test('SettingsNotAvailable renders the absence as one status line with nothing sampled', () => {
-  const start = jsx.indexOf('// ── Settings section header');
-  const end = jsx.indexOf('// ── Memory: things the AI remembers', start);
-  assert.ok(start > 0 && end > start);
-  const {code} = require('esbuild').transformSync(jsx.slice(start, end) +
-    '\nthis.SettingsNotAvailable = SettingsNotAvailable;', {loader:'jsx', target:'es2020'});
-  const React = require('react');
-  const context = vm.createContext({React, LM:{}});
-  vm.runInContext(code, context);
-  const {renderToStaticMarkup} = require('react-dom/server');
-  const markup = props => renderToStaticMarkup(React.createElement(context.SettingsNotAvailable, props));
-  const team = markup({title:'Team', what:'a firm roster, seats, roles or invite tokens'});
-  assert.ok(team.includes('>Team<') && team.includes('>' + ABSENT + '<'), 'the head names the tab and the absence');
-  assert.match(team, new RegExp('<p role="status"[^>]*>' + escape(STATUS.Team) + '</p>'));
-  const brain = markup({title:'Brain', what:'strata, lakes, gates and per-fact classes',
-    hint:'Memory holds the facts this app has loaded.'});
-  assert.match(brain, new RegExp('<p role="status"[^>]*>' + escape(STATUS.Brain) + '</p>'));
-  for (const html of [team, brain]) {
-    assert.equal(/<(button|input|table|ul|ol)\b/.test(html), false, 'no control, list or roster is drawn');
-    for (const seeded of SEEDED) assert.equal(html.includes(seeded), false);
-  }
-});
-
-test('the shipped Settings dialog opens Team and Brain as absent states and draws no roster or strata', async () => {
+test('the shipped Settings dialog draws the brain strata with real facts and an empty Team', async () => {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
-  const held = manifest.files.find(file => file.source === 'studio-lm.jsx');
-  const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio/studio-lm.jsx'))).digest('hex');
-  assert.equal(held && held.source_sha256, live, 'Studio build is stale for studio-lm.jsx: run npm run build:studio');
+  for (const source of ['studio-lm.jsx', 'brain-model.jsx']) {
+    const held = manifest.files.find(file => file.source === source);
+    const live = createHash('sha256').update(fs.readFileSync(path.join(root, 'nodelang/studio', source))).digest('hex');
+    assert.equal(held && held.source_sha256, live, `Studio build is stale for ${source}: run npm run build:studio`);
+  }
   const {JSDOM} = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost/', runScripts:'outside-only', pretendToBeVisual:true});
   const win = dom.window;
   win.fetch = () => new Promise(() => {}); // court sandbox: the mounted Studio talks to a server that never answers
   win.ARCHHUB_THEME = {...seed};
+  win.ARCHHUB_LIVE = {memory:[{id:'m1', text:'Real fact read from the brain.', src:'folder'}]};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
@@ -95,22 +81,29 @@ test('the shipped Settings dialog opens Team and Brain as absent states and draw
     const anchor = [...win.document.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'Theme');
     assert.ok(anchor, 'actual Settings sidebar exists');
     const sidebar = anchor.parentElement;
-    const tab = label => [...sidebar.children].find(button => button.firstElementChild?.textContent === label);
-    const memory = tab('Memory');
-    assert.ok(memory && /\d+ facts$/.test(memory.lastElementChild.textContent), 'the real Memory tab survives beside Brain');
-    for (const label of ['Team', 'Brain']) {
-      const button = tab(label);
-      assert.ok(button, `actual Settings ${label} tab exists`);
-      assert.equal(button.lastElementChild.textContent, 'not available', `the ${label} badge states the absence`);
-      win.ReactDOM.flushSync(() => button.click());
-      const line = [...win.document.querySelectorAll('[role="status"]')].find(node => node.textContent === STATUS[label]);
-      assert.ok(line, `the ${label} panel is one status line`);
-      const panel = line.closest('.ah-scroll');
-      assert.ok(panel && panel.textContent.includes(label) && panel.textContent.includes(ABSENT), `the ${label} head names the absence`);
-      assert.equal(panel.querySelectorAll('button, input, table, ul, ol, [role="switch"]').length, 0,
-        `the ${label} panel draws no seat, invite, share or roster control`);
-      for (const seeded of SEEDED) assert.equal(win.document.body.textContent.includes(seeded), false, `no ${JSON.stringify(seeded)} on screen`);
-    }
+    const tab = label => [...sidebar.children].filter(button => button.firstElementChild?.textContent === label);
+    assert.equal(tab('Memory').length, 0, 'no separate Memory tab');
+    assert.equal(tab('Brain').length, 1, 'one Brain tab');
+    assert.equal(tab('Brain')[0].lastElementChild.textContent, '4 strata \u00b7 1 facts');
+    win.ReactDOM.flushSync(() => tab('Brain')[0].click());
+    const panel = sidebar.nextElementSibling;
+    for (const name of STRATA) assert.ok(panel.textContent.includes(name), `the Brain panel draws the ${name} stratum`);
+    assert.ok(panel.textContent.includes('Real fact read from the brain.'), 'the real fact is filed under Instances');
+    assert.ok(panel.textContent.includes('UNCLASSIFIED \u00b7 SEALED'), 'an unclassified real fact is sealed by default');
+    assert.ok(panel.textContent.includes('GATES') && panel.textContent.includes('CONSENT RECORD') && panel.textContent.includes('KEY'));
+    const kit = [...panel.querySelectorAll('button')].find(button => button.textContent === 'show recovery kit');
+    win.ReactDOM.flushSync(() => kit.click());
+    assert.ok([...panel.querySelectorAll('[role="status"]')].some(node => node.textContent.startsWith('No recovery kit exists in this connection.')),
+      'the recovery kit is an absent state, never a sample key');
+    const team = tab('Team')[0];
+    assert.ok(team && !team.lastElementChild.textContent.includes('seat'), 'the Team badge names no firm or seats');
+    win.ReactDOM.flushSync(() => team.click());
+    const teamPanel = sidebar.nextElementSibling;
+    assert.ok([...teamPanel.querySelectorAll('[role="status"]')].some(node => node.textContent.trim() === TEAM_STATUS));
+    const controls = [...teamPanel.querySelectorAll('button')];
+    assert.deepEqual(controls.map(button => button.textContent), ['invite a teammate', 'set seat count', 'transfer ownership', 'leave firm']);
+    assert.ok(controls.every(button => button.disabled), 'no Team control acts without a firm');
+    for (const seeded of SEEDED) assert.equal(win.document.body.textContent.includes(seeded), false, `no ${JSON.stringify(seeded)} on screen`);
   } finally {
     if (win.__studioRoot) win.ReactDOM.flushSync(() => win.__studioRoot.unmount());
     dom.window.close();

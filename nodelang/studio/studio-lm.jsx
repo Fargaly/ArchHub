@@ -644,7 +644,7 @@ const StudioLM = () => {
         panel={panel} setPanel={setPanel}
         openId={openId} onOpen={openSession}
         onHome={() => setOpenId(null)} onSettings={() => { setDocsOpen(false); setSettingsOpen(true); }} onDocs={() => { setSettingsOpen(false); setDocsOpen(true); }}
-        addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext}
+        addNodeFromLibrary={addNodeFromLibrary} workshopContext={workshopContext} account={account}
         workshopTarget={workspaceView.target} onWorkshopTarget={target => updateWorkspaceView({target})}/>
       {session
         ? <Workspace
@@ -792,7 +792,7 @@ const LM_NODE_TEMPLATES = {
 
 // ──────────────────────── SIDEBAR (icon rail + active panel) ────────────────────────
 const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, addNodeFromLibrary,
-  workshopContext, workshopTarget, onWorkshopTarget }) => (
+  workshopContext, workshopTarget, onWorkshopTarget, account }) => (
   <aside style={{
     gridColumn:'1', gridRow:'1',
     display:'grid', gridTemplateColumns:'44px 1fr',
@@ -801,11 +801,11 @@ const Sidebar = ({ panel, setPanel, openId, onOpen, onHome, onSettings, onDocs, 
   }}>
     <IconRail panel={panel} setPanel={setPanel} onHome={onHome} onSettings={onSettings} onDocs={onDocs}
       workshopActive={!!workshopContext}/>
-    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome}/>}
+    {panel === 'chats'  && <ChatsPanel openId={openId} onOpen={onOpen} onNew={onHome} account={account} onAccount={onSettings}/>}
     {panel === 'nodes' && (workshopContext ?
       <WorkshopAgentsPanel key={JSON.stringify([openId, workshopContext.graphId, workshopContext.scopeRoot,
         workshopContext.descriptor.root])} context={workshopContext} target={workshopTarget} onSelect={onWorkshopTarget}/> :
-      <NodesPanel addNodeFromLibrary={addNodeFromLibrary}/>)}
+      <NodesPanel addNodeFromLibrary={addNodeFromLibrary} account={account} onAccount={onSettings}/>)}
     {panel === 'skills' && <SkillsPanel/>}
     {panel === 'search' && <SearchPanel/>}
   </aside>
@@ -868,7 +868,7 @@ const RailIcon = ({ active, onClick, title, children }) => (
   </button>
 );
 
-const ChatsPanel = ({ openId, onOpen, onNew }) => (
+const ChatsPanel = ({ openId, onOpen, onNew, account, onAccount }) => (
   <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
     {/* Panel header */}
     <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
@@ -922,19 +922,32 @@ const ChatsPanel = ({ openId, onOpen, onNew }) => (
     </div>
 
     {/* User */}
-    <div style={{
-      margin:LM.sp.sm, padding:'7px 10px', borderRadius:LM.rad.md,
-      background:LM.bgSoft, border:`1px solid ${LM.line}`,
-      display:'flex', alignItems:'center', gap:9,
-    }}>
-      <div style={{ width:22, height:22, borderRadius:'50%', background:LM.userAv, display:'grid', placeItems:'center', fontSize:11, color:LM.onUserAv, fontWeight:700 }}>F</div>
-      <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
-        <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
-        <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
-      </div>
-    </div>
+    <AccountChip account={account} onOpen={onAccount}/>
   </div>
 );
+
+// The account chip (design studio-lm.jsx:644-654) draws the account record: archhub.account.v1,
+// reconciled with the cloud session in StudioLM. Never a seeded person. Signed out, it is the way
+// in: Settings opens on Account. A part the record does not hold is omitted, not blanked.
+const AccountChip = ({ account, onOpen }) => {
+  const email = account && account.signedIn ? String(account.email || '') : '';
+  const name = email ? String(account.name || email.split('@')[0]) : '';
+  const tier = email ? String(account.graphTier || '').toUpperCase() : '';
+  return (
+    <button type="button" aria-label="Account" title={email || 'Sign in'} onClick={onOpen} style={{
+      margin:LM.sp.sm, padding:'7px 10px', borderRadius:LM.rad.md,
+      background:LM.bgSoft, border:`1px solid ${LM.line}`,
+      display:'flex', alignItems:'center', gap:9, textAlign:'left',
+      color:LM.ink, fontFamily:LM.sans, cursor:'pointer',
+    }}>
+      {name && <div style={{ width:22, height:22, borderRadius:'50%', background:LM.userAv, display:'grid', placeItems:'center', fontSize:11, color:LM.onUserAv, fontWeight:700, flexShrink:0 }}>{name[0].toUpperCase()}</div>}
+      <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
+        <div style={{ fontSize:12, fontWeight:500, color:name ? LM.ink : LM.accent, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{name || 'Sign in'}</div>
+        {tier && <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>{tier}</div>}
+      </div>
+    </button>
+  );
+};
 
 const panelIconBtn = () => ({
   width:22, height:22, padding:0, border:0, background:'transparent',
@@ -1077,7 +1090,7 @@ const WorkshopAgentsPanel = ({context, target, onSelect}) => {
 };
 
 // ─── Nodes panel — primary drag source ───
-const NodesPanel = ({ addNodeFromLibrary }) => {
+const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
   const library = useStudioProjection()?.library || LM_LIBRARY;
   const [q, setQ] = React.useState('');
   const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
@@ -1137,17 +1150,7 @@ const NodesPanel = ({ addNodeFromLibrary }) => {
         })}
       </div>
 
-      <div style={{
-        margin:LM.sp.sm, padding:'7px 10px', borderRadius:LM.rad.md,
-        background:LM.bgSoft, border:`1px solid ${LM.line}`,
-        display:'flex', alignItems:'center', gap:9,
-      }}>
-        <div style={{ width:22, height:22, borderRadius:'50%', background:LM.userAv, display:'grid', placeItems:'center', fontSize:11, color:LM.onUserAv, fontWeight:700 }}>F</div>
-        <div style={{ flex:1, lineHeight:1.1, minWidth:0 }}>
-          <div style={{ fontSize:12, fontWeight:500, color:LM.ink }}>Fargaly</div>
-          <div style={{ fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.08em' }}>BYO · CLOUD</div>
-        </div>
-      </div>
+      <AccountChip account={account} onOpen={onAccount}/>
     </div>
   );
 };
@@ -3411,13 +3414,18 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
         const sm = LM_STATE_META[s.state];
         return <WsTab key={id} s={s} a={a} sm={sm} onClick={() => setOpenId(id)} onClose={(e) => { e.stopPropagation(); closeTab(id); }}/>;
       })}
+      {/* New session after the tabs (design studio-lm.jsx:1123-1129). Home is where a session or a graph starts. */}
+      <button type="button" onClick={onHome} title="Start a new session from Home" aria-label="Start a new session from Home" style={{
+        width:26, height:26, padding:0, border:0, borderRadius:LM.rad.sm,
+        background:'transparent', color:LM.inkMuted, cursor:'pointer', flexShrink:0,
+        display:'grid', placeItems:'center', fontSize:14,
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = LM.bgSoft}
+      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>+</button>
     </div>
 
-    <div style={{
-      display:'flex', alignItems:'center', gap:1, padding:2, background:LM.bg,
-      border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, flexShrink:0,
-    }}>
-      {workshops.length > 0 && (window.ARCHHUB_EXISTING_WORKSHOP?.refreshConversationCatalog ?
+    {/* The conversation source sits beside the switch; the switch itself holds only Chat, Workshop and Canvas. */}
+    {workshops.length > 0 && (window.ARCHHUB_EXISTING_WORKSHOP?.refreshConversationCatalog ?
         <WorkshopConversationMenu key={JSON.stringify([workshops.find(row => row.is_general)?.root, session.id])}
           workshops={workshops} conversationRoot={conversationRoot} setConversationRoot={setConversationRoot}/> :
         <select aria-label="Conversation source" value={conversationRoot}
@@ -3426,11 +3434,17 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
         <option value="">Conversation</option>
         {workshops.map(row => <option key={row.root} value={row.root}>{row.label}</option>)}
       </select>)}
+
+    <div style={{
+      display:'flex', alignItems:'center', gap:1, padding:2, background:LM.bg,
+      border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, flexShrink:0,
+    }}>
       {workshopModeSegments({mode, conversationRoot, workshops}).map(segment => (
         <button key={segment.key} type="button" disabled={segment.disabled} title={segment.title} aria-pressed={segment.active}
           onClick={() => chooseWorkshopMode(segment.key, {mode, conversationRoot, workshops, setMode, setConversationRoot})} style={{
           padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:segment.disabled ? 'default' : 'pointer',
-          background:segment.active ? LM.accentDim : 'transparent', opacity:segment.disabled ? .5 : 1,
+          background:segment.active ? LM.accentDim : 'transparent',
+          outline:segment.disabled ? `1px dashed ${LM.line}` : 'none', outlineOffset:-1,
           color:segment.active ? LM.accent : LM.inkSoft,
           fontFamily:LM.sans, fontSize:11.5, fontWeight:segment.active ? 500 : 400,
         }}>{segment.label}</button>
@@ -3443,11 +3457,9 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
     {conversationRoot ? (workshopModel ? <span style={{fontSize:11, color:LM.inkSoft, padding:'0 8px'}}>
       {workshopModel}</span> : null) : <>
       <ModelStrip model={model} setPickerOpen={setPickerOpen} compact/>
-      <HoverBtn>fork</HoverBtn>
-      <HoverBtn primary disabled title="Save as skill unavailable" aria-label="Save as skill unavailable"
-        style={{width:28, height:28, padding:0, display:'grid', placeItems:'center'}}>
-        <StudioHeaderIcon name="skill"/>
-      </HoverBtn>
+      {/* fork and save as skill (design studio-lm.jsx:1147-1148) have no binding in this build: drawn, disabled, and saying so. */}
+      <HoverBtn disabled title="Fork is not available in this build">fork</HoverBtn>
+      <HoverBtn primary disabled title="Save as skill is not available in this build">save as skill</HoverBtn>
     </>}
     <ApplicationUpdateControls compact/>
   </div>
@@ -3514,7 +3526,8 @@ const HoverBtn = ({ primary, onClick, children, style, disabled, title, 'aria-la
           ? { filter: h ? 'brightness(1.12)' : 'none' }
           : { background: h ? LM.bgHover : 'transparent', borderColor: h ? LM.accent+'66' : LM.line, color: h ? LM.ink : LM.inkSoft }),
         ...style,
-        ...(disabled ? {opacity:.5, cursor:'default', filter:'none'} : {}),
+        // Disabled controls use a dashed border, never alpha (design DECISIONS.md, node-logic section).
+        ...(disabled ? {background:'transparent', borderColor:LM.line, borderStyle:'dashed', color:LM.inkSoft, cursor:'default', filter:'none'} : {}),
       }}>{children}</button>
   );
 };
@@ -3542,10 +3555,11 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
     <div style={{ flex:1, textAlign:'left', lineHeight:1.15 }}>
       <div style={{ fontSize: compact ? 12.5 : 13.5, fontWeight:500 }}>{model.name}</div>
       <div style={{ fontFamily:LM.mono, fontSize: compact ? 9 : 10, color:LM.inkMuted, letterSpacing:'0.05em' }}>
-        {model.vendor} · ctx {model.ctx} · {model.tag}
+        {[model.vendor, model.ctx ? 'ctx ' + model.ctx : '', model.tag].filter(Boolean).join(' \u00b7 ')}
       </div>
     </div>
-    <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.ok, letterSpacing:'0.08em' }}>● {model.latency}ms</span>
+    {/* Draw or omit: no latency dot until a latency was measured. */}
+    {model.latency != null && <span style={{ fontFamily:LM.mono, fontSize:9, color:LM.ok, letterSpacing:'0.08em' }}>{'\u25cf ' + model.latency + 'ms'}</span>}
     <span style={{ color:LM.inkSoft, fontSize:11, marginLeft:2 }}>▾</span>
   </button>
   );
@@ -3556,7 +3570,13 @@ const SOCKET_TOP = 42;
 const SOCKET_STEP = 19;
 const SOCKET_R = 5;
 
-const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
+// One number places a socket and its wire end: `top` is the centre of port row 0,
+// measured from the card's outer top edge. Port rows lay out in normal flow below
+// the title, so a title that wraps pushes them down; each card measures where its
+// port band landed and the canvas draws wires from that same number. SOCKET_TOP is
+// only the estimate used before a card has measured.
+const socketY = (i, top = SOCKET_TOP) => top + i * SOCKET_STEP;
+const nodePortTop = band => (band.closest('.lm-node')?.clientTop || 0) + band.offsetTop + SOCKET_STEP / 2;
 
 const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
   const adjacency = new Map(nodeIds.map(id => [id, new Set()]));
@@ -3790,6 +3810,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (ctxMenu?.opener?.isConnected) ctxMenu.opener.focus({preventScroll:true});
   };
   const [expanded, setExpanded] = React.useState({});
+  // Where each card measured its port rows; wires read the number the card drew with.
+  const [portTops, setPortTops] = React.useState({});
+  const reportPortTop = React.useCallback((id, top) =>
+    setPortTops(held => held[id] === top ? held : {...held, [id]:top}), []);
   const [dropTarget, setDropTarget] = React.useState(null); // {x,y} canvas-local
 
   // Convert client coords → canvas coords (the world space the nodes live in)
@@ -3966,8 +3990,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       return null;
     }
     const sourceWidth = fromNode.cat === 'ai' && expanded[fromNode.id] ? Math.max(520, fromNode.w) : fromNode.w;
-    const x1 = fromNode.x + sourceWidth, y1 = fromNode.y + socketY(fromIdx);
-    const x2 = toNode.x,                y2 = toNode.y + socketY(toIdx);
+    const x1 = fromNode.x + sourceWidth, y1 = fromNode.y + socketY(fromIdx, portTops[fromNode.id]);
+    const x2 = toNode.x,                y2 = toNode.y + socketY(toIdx, portTops[toNode.id]);
     const touches = w.from[0] === focusId || w.to[0] === focusId || i === focusWireIdx;
     return {
       i, x1, y1, x2, y2, selected: i === focusWireIdx,
@@ -4138,6 +4162,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
               onContextMenu={onNodeContextMenu(n.id)}
               onKeyDown={onNodeKeyDown(n.id)}
               onSocket={(port, side) => useSocket(n.id, port, side)}
+              portTop={portTops[n.id]}
+              onPortTop={reportPortTop}
               onOpen={n.openable && authority ? () => authority.open(n.id).catch(() => {}) : undefined}
             />
           );
@@ -4155,7 +4181,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             'Unnamed connection'}: {wire.reason}</li>)}</ul>
         {unresolvedWires.length > 20 && <p>{unresolvedWires.length - 20} more connections are affected.</p>}
       </details>}
-      <div data-no-pan style={{position:'absolute', top:10, right:12, zIndex:5,
+      {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. */}
+      <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
         display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
         <span role={authorityState?.error || wireError || layoutError ? 'alert' : 'status'} style={{fontSize:12,
           color:authorityState?.error || wireError || layoutError ? LM.err : LM.inkSoft, overflowWrap:'anywhere'}}>
@@ -4207,7 +4234,9 @@ const CanvasHint = () => (
   }}>
     <span>scroll → zoom</span>
     <span style={{ color:LM.inkDim }}>·</span>
-    <span>Shift + click → select</span>
+    <span>{'drag \u2192 pan'}</span>
+    <span style={{ color:LM.inkDim }}>{'\u00b7'}</span>
+    <span>{'shift + click \u2192 select'}</span>
     <span style={{ color:LM.inkDim }}>·</span>
     <span>right-click → menu</span>
   </div>
@@ -4289,11 +4318,31 @@ const CanvasMenu = ({ x, y, maxHeight, opener, actions, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown }) => {
+const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown, portTop, onPortTop }) => {
   const cat = studioCategory(n.cat);
   // AI nodes can expand horizontally for full conversation + search
   const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
   const isAi = n.cat === 'ai';
+  const portRows = Math.max(n.ins?.length || 0, n.outs?.length || 0);
+  const headRef = React.useRef(null), portBand = React.useRef(null);
+  const held = React.useRef(null);
+  held.current = {id:n.id, portTop, onPortTop};
+  const measurePorts = React.useCallback(() => {
+    const band = portBand.current, {id, portTop:drawn, onPortTop:report} = held.current;
+    if (!band || !report) return;
+    const top = nodePortTop(band);
+    if (top !== drawn) report(id, top);
+  }, []);
+  // The title, summary, width and header chrome decide where the port rows land.
+  React.useLayoutEffect(() => { measurePorts(); }, [measurePorts, n.title, n.sub, w, isAi, portRows, portTop]);
+  // A late web font re-wraps the title without any prop change.
+  React.useEffect(() => {
+    const head = headRef.current;
+    if (typeof ResizeObserver !== 'function' || !head) return undefined;
+    const observer = new ResizeObserver(() => measurePorts());
+    observer.observe(head);
+    return () => observer.disconnect();
+  }, [measurePorts]);
   return (
     <div className="lm-node" data-node-id={n.id} onClick={onFocus} onDoubleClick={onOpen} onContextMenu={onContextMenu}
       tabIndex={0} role="group" aria-label={(n.title || n.id) + ' node'} aria-haspopup="menu" aria-keyshortcuts="Shift+F10" onKeyDown={onKeyDown}
@@ -4339,16 +4388,22 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
         )}
       </div>
 
-      {/* Body */}
-      <div style={{ padding:'9px 12px 11px' }}>
-        <div style={{ fontSize:13, fontWeight:500, color:LM.ink, marginBottom:2, lineHeight:1.2 }}>{n.title}</div>
-        {n.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em' }}>{n.sub}</div>}
-        <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
+      {/* Title and summary in normal flow: a wrapped title takes its real height */}
+      <div ref={headRef} style={{ padding:'9px 12px 0' }}>
+        <div style={{ fontSize:13, fontWeight:500, color:LM.ink, marginBottom:2, lineHeight:1.2, overflowWrap:'anywhere' }}>{n.title}</div>
+        {n.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', overflowWrap:'anywhere' }}>{n.sub}</div>}
       </div>
 
-      {/* Sockets */}
-      {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
-      {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
+      {/* Sockets: one row per port index below the title, so no title line covers a port */}
+      <div ref={portBand} style={{ position:'relative', height:portRows * SOCKET_STEP, marginTop:portRows ? 6 : 0 }}>
+        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
+        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
+      </div>
+
+      {/* Body */}
+      <div style={{ padding:'0 12px 11px' }}>
+        <NodeBody n={n} expanded={expanded} onToggleExpand={onToggleExpand}/>
+      </div>
     </div>
   );
 };
@@ -4371,7 +4426,7 @@ const Socket = ({ side, i, t, label, onUse }) => {
   const col = WIRE[t] || LM.inkSoft;
   return (
     <div style={{
-      position:'absolute', top: socketY(i) - SOCKET_R,
+      position:'absolute', top: socketY(i, SOCKET_STEP / 2) - SOCKET_R,
       [side === 'in' ? 'left' : 'right']: -SOCKET_R,
       display:'flex', alignItems:'center', gap:6,
       flexDirection: side === 'in' ? 'row' : 'row-reverse',
@@ -4899,10 +4954,10 @@ const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, setLibraryOpen }) => (
       <CanvasActionIcon name="fit"/></button>
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
-      padding:'0 5px', height:22, border:0, background:'transparent', cursor:'pointer',
+      padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
       color:LM.accent, fontFamily:LM.mono, fontSize:10, letterSpacing:'0.06em',
       display:'flex', alignItems:'center', gap:LM.sp.xs,
-    }}><CanvasActionIcon name="add"/></button>
+    }}>{'\uff0b add node'}</button>
   </div>
 );
 
@@ -4917,8 +4972,11 @@ const toolBtn = () => ({
 // the model selected in the header and prints the reply above the field.
 const FloatingComposer = ({ setLibraryOpen, model, node }) => {
   const [answer, setAnswer] = React.useState('');
+  // The drawn caret stands in for an idle field; once the field has focus its own caret is the only one.
+  const [typing, setTyping] = React.useState(false);
+  const route = (node ? nodeModelRoute(node) : modelRoute(model)) || 'no model picked';
   return (
-    <div data-no-pan style={{
+    <div data-no-pan onFocus={() => setTyping(true)} onBlur={() => setTyping(false)} style={{
       position:'absolute', left:'50%', bottom:14, transform:'translateX(-50%)',
       width:620, maxWidth:'82%',
       background:LM.bgPanel, border:`1px solid ${LM.accent}66`,
@@ -4935,15 +4993,16 @@ const FloatingComposer = ({ setLibraryOpen, model, node }) => {
       )}
       <div style={{ display:'flex', alignItems:'center', gap:LM.sp.sm, fontSize:13.5, fontFamily:LM.sans, color:LM.ink, minHeight:24 }}>
         <span style={{ color:LM.accent, fontFamily:LM.mono, fontSize:13 }}>/</span>
-        <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4 }}/>
+        <span style={{ animation:'lmCaret 1s infinite', display:'inline-block', width:1.5, height:16, background:LM.accent, marginLeft:-4, visibility:typing ? 'hidden' : 'visible' }}/>
         {/* His order: the slash glyph, the field, library, then Send as the
             rightmost control - the placeholder names the affordance drawn
             beside it again (2026-09-07). */}
         <InlineAsk scale="composer" placeholder={node ? 'Ask ' + node.title + '…' : 'Reply, or type / to add a node…'} model={model} node={node} onAnswer={setAnswer}
-          before={<button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>}/>
-      </div>
-      <div style={{ marginTop:6, fontFamily:LM.mono, fontSize:9, color:LM.inkMuted, letterSpacing:'0.06em' }}>
-        → {(node ? nodeModelRoute(node) : modelRoute(model)) || 'no model picked'}
+          before={<>
+            {/* One row, as drawn: the route is named inside it, the way the chat composer names its model (design studio-lm.jsx:1012). */}
+            <span title={route} style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, maxWidth:160, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flexShrink:1 }}>{route}</span>
+            <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} style={{ ...smallBtn(), padding:'3px 9px' }}>library</button>
+          </>}/>
       </div>
     </div>
   );

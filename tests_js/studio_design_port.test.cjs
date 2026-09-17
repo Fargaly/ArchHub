@@ -103,16 +103,18 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 
-test('header: three-segment switch, New session after the tabs, a model chip that draws only what it holds, unbound actions dashed', async () => {
+test('header: the design row ends at save as skill; three-segment switch, New session after the tabs, a model chip that draws only what it holds, unbound actions dashed', async () => {
   const studio = await mountStudio();
   try {
     const segmented = segmentedControl(studio);
     assert.deepEqual([...segmented.children].map(child => child.textContent.trim()), ['Chat', 'Workshop', 'Canvas'],
       'the segmented control holds only Chat, Workshop and Canvas (design studio-lm.jsx:1132-1144)');
     const header = segmented.parentElement;
-    const menu = header.querySelector('[aria-label="Conversations"]');
-    assert.ok(menu, 'the real Workshop conversation menu is still in the header');
-    assert.equal(segmented.contains(menu), false, 'the conversation menu sits beside the switch, not inside it');
+    assert.equal(header.querySelector('[aria-label="Conversations"]') === null, true,
+      'Chat draws the design row: no conversation menu beside the switch (design studio-lm.jsx:1099-1150)');
+    assert.equal(header.querySelector('section[aria-label="Application release updates"]') === null, true,
+      'no release update controls in the header: Settings > About and the status strip hold them');
+    assert.equal(header.lastElementChild.textContent.trim(), 'save as skill', 'save as skill closes the header row as designed');
 
     const tab = [...header.querySelectorAll('span')].find(span => span.textContent === 'ArchHub');
     assert.ok(tab, 'the open graph tab is drawn from the projected session list');
@@ -139,7 +141,14 @@ test('header: three-segment switch, New session after the tabs, a model chip tha
       assert.equal(button.style.backgroundColor, 'transparent', label + ' is not drawn as a filled primary while disabled');
     }
 
-    studio.flush(() => fresh.click());
+    // The conversation menu is drawn only while a Workshop conversation is open, beside the switch, never inside it.
+    const jsx = read('nodelang/studio/studio-lm.jsx');
+    const wsHeader = jsx.slice(jsx.indexOf('\nconst WsHeader = '), jsx.indexOf('\nconst WsTab = '));
+    assert.match(wsHeader, /workshops\.length > 0 && mode === 'chat' && conversationRoot && \(window\.ARCHHUB_EXISTING_WORKSHOP\?\.refreshConversationCatalog \?\s*<WorkshopConversationMenu/,
+      'the Workshop conversation menu is gated on an open Workshop conversation');
+    assert.ok(wsHeader.indexOf('<WorkshopConversationMenu') < wsHeader.indexOf('workshopModeSegments('), 'and sits before the switch, outside it');
+
+    studio.flush(() => studio.doc.querySelector('button[title="Start a new session from Home"]').click());
     assert.ok(studio.doc.querySelector('textarea[aria-label="Start a new session"]'), 'New session opens Home, where a session starts');
     assert.equal(studio.buttons('Canvas').filter(button => button.hasAttribute('aria-pressed')).length, 0, 'the workspace header is gone');
   } finally { studio.close(); }
@@ -174,7 +183,7 @@ test('sidebar account chip reads the account record, never a seeded person', asy
   } finally { out.close(); }
 });
 
-test('canvas chrome: no idle status chip, a selection status clears the minimap, the toolbar and hint carry the design labels', async () => {
+test('canvas chrome: no status chip idle or selected, the minimap at its design place, the toolbar and hint carry the design labels', async () => {
   const studio = await mountStudio();
   try {
     openCanvas(studio);
@@ -186,23 +195,22 @@ test('canvas chrome: no idle status chip, a selection status clears the minimap,
     const node = studio.doc.querySelector('.lm-node');
     assert.ok(node, 'a node card is drawn');
     studio.flush(() => node.click());
-    const status = [...studio.doc.querySelectorAll('[role="status"]')].find(node => node.textContent === '1 selected');
-    assert.ok(status, 'a selection draws the status line');
-    const chip = status.parentElement;
-    assert.ok(chip.style.right !== '' && map.style.right !== '', 'both sit on the right edge');
-    assert.ok(px(chip.style.top) >= px(map.style.top) + px(map.style.height),
-      'the status chip starts below the minimap instead of covering it: ' + chip.style.top + ' vs ' + map.style.top + '+' + map.style.height);
+    assert.equal([...studio.doc.querySelectorAll('[role="status"]')].some(row => /selected$/.test(row.textContent.trim())), false,
+      'a selection draws no status chip: the design canvas draws none, the card carries its own focus');
+    assert.deepEqual(['right', 'top', 'width', 'height'].map(key => px(map.style[key])), [14, 14, 170, 96],
+      'the minimap sits where the design puts it (design studio-lm.jsx:2090-2114)');
     const add = studio.doc.querySelector('button[aria-label="Add node"]');
     assert.ok(add, 'the toolbar add action exists');
     assert.equal(add.textContent.trim(), '\uff0b add node', 'the toolbar names its add action (design studio-lm.jsx:2055-2059)');
-    const hint = [...studio.doc.querySelectorAll('span')].map(node => node.textContent);
-    for (const affordance of ['scroll ' + ARROW + ' zoom', 'drag ' + ARROW + ' pan', 'right-click ' + ARROW + ' menu']) {
-      assert.ok(hint.includes(affordance), 'the hint strip keeps the design affordance ' + affordance);
-    }
+    const first = [...studio.doc.querySelectorAll('span')].find(node => node.textContent === 'scroll ' + ARROW + ' zoom');
+    assert.ok(first, 'the hint strip is drawn');
+    assert.deepEqual([...first.parentElement.children].map(node => node.textContent),
+      ['scroll ' + ARROW + ' zoom', DOT, 'drag ' + ARROW + ' pan', DOT, 'right-click ' + ARROW + ' menu'],
+      'the hint strip carries exactly the design affordances (design studio-lm.jsx:1504-1517)');
   } finally { studio.close(); }
 });
 
-test('composer: one design row that still names the route, a drawn caret that yields to the real one', async () => {
+test('composer: one design row (slash, caret, field, library, Send), no route line, a drawn caret that yields to the real one', async () => {
   const studio = await mountStudio();
   try {
     openCanvas(studio);
@@ -213,11 +221,13 @@ test('composer: one design row that still names the route, a drawn caret that yi
     assert.equal(row.parentElement, composer, 'the field sits in the composer row');
     assert.equal(composer.children.length, 1, 'one row and nothing under it (design studio-lm.jsx:2069-2087): ' + composer.children.length + ' children');
     assert.equal([...composer.querySelectorAll('div')].some(node => node.textContent.startsWith(ARROW + ' ')), false, 'no second route line');
-    const route = [...row.querySelectorAll('span')].find(node => node.textContent === 'no model picked');
-    assert.ok(route, 'the route is still named, inside the row');
+    assert.equal([...row.querySelectorAll('span')].some(node => /no model picked/.test(node.textContent)), false,
+      'the design row names no route: the header model chip names the model that answers');
     const [library] = studio.buttons('library', row), [send] = studio.buttons('Send \u21b5', row);
     assert.ok(library && send, 'library and Send stay in the row');
-    assert.ok(route.compareDocumentPosition(library) & studio.win.Node.DOCUMENT_POSITION_FOLLOWING, 'the route sits before library and Send');
+    assert.deepEqual([...row.children].map(child => child.tagName.toLowerCase()), ['span', 'span', 'input', 'button', 'button'],
+      'slash, caret, field, library, then Send as the rightmost control (design studio-lm.jsx:2069-2087)');
+    assert.ok(library.compareDocumentPosition(send) & studio.win.Node.DOCUMENT_POSITION_FOLLOWING, 'library sits before Send');
     const caret = [...row.querySelectorAll('span')].find(node => (node.style.animation || '').includes('lmCaret'));
     assert.ok(caret, 'the drawn caret is there while the field is idle');
     assert.notEqual(caret.style.visibility, 'hidden', 'idle: the drawn caret shows');

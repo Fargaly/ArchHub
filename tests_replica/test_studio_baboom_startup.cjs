@@ -1,7 +1,9 @@
 /* Court C: Studio changes BABOOM startup only through the Personal Settings write path.
  *
  * RED-first: on source without api.setBaboomStartup, the 'baboom-startup' kind of
- * changeTheme, SettingsBaboom and a regenerated compiled Studio, every case fails.
+ * changeTheme, BaboomStartupRow and a regenerated compiled Studio, every case fails.
+ * The design (archhub/project studio-lm.jsx:2441-2454) has no BABOOM tab, so the startup choice is
+ * a row in the design's own Settings > Hosts list; the tab table stays the design's twelve.
  */
 'use strict';
 const test = require('node:test');
@@ -134,9 +136,9 @@ function loadTokens(theme) {
 
 async function withSettingsBaboom(state, api, check) {
   const source = read('nodelang/studio/studio-lm.jsx');
-  const start = source.indexOf('const SettingsBaboom = () =>');
+  const start = source.indexOf('const BaboomStartupRow = ({ first }) =>');
   const end = source.indexOf('// ── Theme / Shortcuts / Storage / About (lighter, but real)');
-  assert.ok(start >= 0 && end > start, 'studio-lm.jsx declares SettingsBaboom immediately before the Theme panel');
+  assert.ok(start >= 0 && end > start, 'studio-lm.jsx declares BaboomStartupRow immediately before the Theme panel');
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
@@ -149,7 +151,7 @@ async function withSettingsBaboom(state, api, check) {
   window.ARCHHUB_EXISTING_WORKSHOP = api;
   const context = vm.createContext({window, React, LM:window.AH, usePersonalTheme:() => state,
     SHead:({title}) => React.createElement('h3', null, title)});
-  vm.runInContext(transformSync(source.slice(start, end)+'\nglobalThis.Component=SettingsBaboom;',
+  vm.runInContext(transformSync(source.slice(start, end)+'\nglobalThis.Component=BaboomStartupRow;',
     {loader:'jsx', format:'cjs'}).code, context);
   const rootNode = createRoot(dom.window.document.getElementById('root'));
   try {
@@ -200,7 +202,7 @@ test('rendered BABOOM Settings is disabled and says why when the setting cannot 
   }
 });
 
-test('shipped Studio tree carries the BABOOM Settings tab and its startup switch', async () => {
+test('shipped Studio tree carries the BABOOM startup switch as a row of Settings > Hosts, with no BABOOM tab', async () => {
   assert.ok(read('nodelang/studio/compiled/studio-lm.js').includes('Start BABOOM when ArchHub opens'),
     'compiled Studio was regenerated from studio-lm.jsx');
   const {JSDOM} = await import('jsdom');
@@ -220,11 +222,14 @@ test('shipped Studio tree carries the BABOOM Settings tab and its startup switch
     const settings = win.document.querySelector('[title="Settings"]');
     assert.ok(settings, 'actual Studio Settings control exists');
     win.ReactDOM.flushSync(() => settings.click());
-    const tab = [...win.document.querySelectorAll('button')].find(button => button.firstElementChild?.textContent === 'BABOOM');
-    assert.ok(tab, 'actual Settings BABOOM tab exists');
-    win.ReactDOM.flushSync(() => tab.click());
+    const tabs = [...win.document.querySelectorAll('button')].filter(button => button.firstElementChild?.textContent);
+    assert.equal(tabs.some(button => button.firstElementChild.textContent === 'BABOOM'), false, 'the design draws no BABOOM tab');
+    const hosts = tabs.find(button => button.firstElementChild.textContent === 'Hosts');
+    assert.ok(hosts, 'actual Settings Hosts tab exists');
+    win.ReactDOM.flushSync(() => hosts.click());
     const toggle = win.document.querySelector(SWITCH);
-    assert.ok(toggle, 'actual BABOOM startup switch exists');
+    assert.ok(toggle, 'actual BABOOM startup switch exists in the Hosts list');
+    assert.equal(toggle.parentElement.querySelector(':scope > div > div').textContent, 'BABOOM', 'the row is named like a host row');
     assert.equal(disabled(toggle), true, 'no Workshop API and no read setting means no write');
     assert.match(win.document.body.textContent, TAKES_EFFECT);
   } finally {

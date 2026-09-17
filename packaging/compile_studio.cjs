@@ -10,7 +10,7 @@ const studio = path.join(root, 'nodelang', 'studio');
 const output = path.join(studio, 'compiled');
 const names = ['tokens.jsx', 'design-canvas.jsx', 'shared-data.jsx', 'studio-suite.jsx',
   'param-types.jsx', 'studio-params.jsx', 'studio-mobile.jsx', 'studio-account.jsx',
-  'node-registry.jsx', 'brain-model.jsx', 'studio-lm.jsx', 'mount.jsx'];
+  'node-registry.jsx', 'brain-model.jsx', 'studio-workshop.jsx', 'studio-lm.jsx', 'mount.jsx'];
 const version = '7.29.0';
 // These are the actual classic-script defaults in this vendored version's
 // transformScriptTags/SEe function. Only its inline source maps are omitted.

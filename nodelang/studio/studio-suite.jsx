@@ -2,8 +2,10 @@
 // 1) UIKit  2) Onboarding  3) Landing  4) SkillJson  5) MobileCompanion
 // 7) SelfHealInspector  — 6) Pricing removed: the app states no price of its own.
 
-// tokens.jsx — single source of truth (+ suite-specific extras)
-const ST = { ...window.AH, accent2:window.AH.warn, selBg:'#241914' };
+// tokens.jsx — single source of truth (+ suite-specific extras). Derived through the theme store, so the
+// screens that open inside the Studio follow the graph's saved palette like every other Studio surface.
+const ST = window.ArchHubTheme ? window.ArchHubTheme.derive(AH => ({ ...AH, accent2:AH.warn, selBg:'#241914' }))
+  : { ...window.AH, accent2:window.AH.warn, selBg:'#241914' };
 
 // ─────────────────────── shared atoms ───────────────────────
 const SBox = ({ children, style }) => (
@@ -367,17 +369,91 @@ const StageCard = ({ idx, label, host, state }) => {
 };
 
 // ═══════════════════════ 2 · ONBOARDING ═══════════════════════
-// Not mounted in the Studio (design gap row 11, recorded 2026-09-17). Two facts keep it out:
-// 1. No first-run signal reaches the Studio. The launcher computes first_boot (no saved graph)
-//    and only prints it to launcher.log ("first boot  : True"); ApplicationServer never receives
-//    it, and the Studio boot payload ARCHHUB_BOOT carries only the session token and csrf.
-// 2. This is the design artboard, not a bound surface. Its detected hosts, masked keys, relay and
-//    Ollama rows, connector log, timings and slider demo are seeded, and its Continue, Use Anthropic
-//    and Open Studio buttons have no action. Mounted, it would show invented state and dead controls.
-// Mount it only when both change: first_boot is passed through to the Studio, and every step reads
-// live data (ARCHHUB_LIVE.connectors, the model picker, the provider key form) or is omitted.
-// tests_js/studio_design_small_rows.test.cjs checks these facts and fails when one of them changes.
-const StudioOnboarding = () => (
+// Mounted by StudioScreens (end of this file) on a first run only: the launcher's saved-graph check
+// (first_boot) reaches the Studio as ARCHHUB_BOOT.first_run. Layout, type, copy and controls are the
+// design artboard's (ArchHub App.html "Onboarding · first run"); its seed is replaced through the live
+// seam below. A value nothing on this machine measures is not invented: it is left out, or drawn as '—'.
+
+// ─── live seam: what this machine answered, in the shapes the application routes return ───
+const SUITE_HOST_STATES = ['connected', 'listening', 'running', 'installed', 'absent'];
+const SUITE_PROVIDER_COL = { anthropic:'#cc785c', openai:'#10a37f', openrouter:'#3a6acc' };
+const suiteLive = {
+  // /api/universal/hosts connectors: probe_connectors rows {id, name, drive, state, detail}.
+  connectors: () => typeof window.ARCHHUB_LOAD_HOSTS === 'function'
+    ? Promise.resolve().then(window.ARCHHUB_LOAD_HOSTS).then(scan => {
+        if (!scan || !Array.isArray(scan.connectors)) throw new Error('The host scan answered without connectors.');
+        return scan.connectors;
+      })
+    : Promise.reject(new Error('Host scanning requires the application connection.')),
+  // /api/universal/providers rows {id, name, state: keyed | no key | running | not running, source}.
+  providers: () => window.ARCHHUB_EXISTING_WORKSHOP?.readProviders
+    ? window.ARCHHUB_EXISTING_WORKSHOP.readProviders()
+    : Promise.reject(new Error('Provider status requires the application connection.')),
+  // /api/universal/skills want:read: the skill's own file text.
+  skill: name => typeof window.ARCHHUB_READ_SKILL === 'function'
+    ? Promise.resolve().then(() => window.ARCHHUB_READ_SKILL(name))
+    : Promise.reject(new Error('Reading a skill requires the application connection.')),
+  // The projected canvas the Studio opened on, and the graph index's title for it.
+  graph: () => {
+    const topology = window.ARCHHUB_EXISTING_WORKSHOP?.getSnapshot?.()?.topology?.graph;
+    return topology && Array.isArray(topology.nodes) ? topology : (window.ARCHHUB_LIVE?.graph || { nodes:[], wires:[] });
+  },
+  graphTitle: () => {
+    const live = window.ARCHHUB_LIVE || {};
+    return ((live.sessions || []).find(row => row.id === live.currentGraph) || {}).title || '';
+  },
+};
+const useSuiteRead = (read, key) => {
+  const [held, setHeld] = React.useState({ value:null, error:'', pending:true });
+  React.useEffect(() => {
+    let current = true;
+    setHeld(h => ({ ...h, pending:true }));
+    Promise.resolve().then(read).then(
+      value => { if (current) setHeld({ value, error:'', pending:false }); },
+      error => { if (current) setHeld(h => ({ value:h.value, error:(error && error.message) || 'Not available.', pending:false })); });
+    return () => { current = false; };
+  }, [key]);
+  return held;
+};
+const suiteHosts = rows => (Array.isArray(rows) ? rows : []).filter(row => row && row.drive && SUITE_HOST_STATES.includes(row.state));
+const suiteNames = rows => rows.length
+  ? rows.slice(0, 3).map(row => row.name).join(', ') + (rows.length > 3 ? ' +' + (rows.length - 3) : '') : 'none';
+const suiteTime = at => at ? at.toTimeString().slice(0, 8) : '—';
+// The disabled treatment the Studio uses everywhere (DECISIONS.md): a dashed border and a reason, never alpha.
+// It swaps the border shorthand, never adds a longhand: removing borderStyle on re-enable would leave the
+// browser's outset button border. A borderless fill keeps its size by trading 1px of padding for the dash.
+const suiteDisabled = (style, disabled) => !disabled ? style : {
+  ...style, cursor:'default',
+  border:`1px dashed ${style.border === 0 ? ST.accent : ST.line}`,
+  padding:style.border === 0 ? '6px 13px' : style.padding,
+};
+
+const StudioOnboarding = ({ model, onPickModel, onDone }) => {
+  const hosts = useSuiteRead(suiteLive.connectors, 'hosts');
+  const providers = useSuiteRead(suiteLive.providers, 'providers');
+  // Measured, not seeded: seconds from the page opening to the Studio mounting this screen.
+  const readyIn = React.useRef(Math.max(1, Math.round(((window.performance && window.performance.now()) || 0) / 1000))).current;
+  const [continued, setContinued] = React.useState(false);
+  const rows = suiteHosts(hosts.value);
+  const detected = rows.filter(row => row.state !== 'absent'), missing = rows.filter(row => row.state === 'absent');
+  const provided = Array.isArray(providers.value) ? providers.value : [];
+  const keys = provided.filter(row => SUITE_PROVIDER_COL[row.id]);
+  const relays = provided.filter(row => row.id === 'cloud');
+  const locals = provided.filter(row => row.id === 'ollama' || row.id === 'lmstudio');
+  const keyed = keys.find(row => row.state === 'keyed');
+  const graph = suiteLive.graph();
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const params = nodes.reduce((sum, node) => sum + (Array.isArray(node.params) ? node.params.length : 0), 0);
+  const slider = nodes.flatMap(node => (node.params || []).map(param => ({ node, param })))
+    .find(({ param }) => param.type === 'slider' && param.editable && param.rel && Number.isFinite(Number(param.v))
+      && Number.isFinite(Number(param.min)) && Number.isFinite(Number(param.max)));
+  // The rail reports what has actually happened: continued here, a model chosen, a host connected.
+  const done = [continued, !!(model && (model.routed || model.route)), rows.some(row => row.state === 'connected'), false];
+  const current = done.indexOf(false);
+  const openHost = row => window.ArchHubStudioScreens.open('connector', row);
+  const hostLine = row => row.state === 'connected' ? [ST.ok, '✓'] : row.state === 'listening' || row.state === 'running' ? [ST.warn, '↻'] : [ST.inkMuted, '·'];
+  const note = (text, color) => <div style={{ fontFamily:ST.mono, fontSize:10, color:color || ST.inkMuted, marginBottom:5 }}>{text}</div>;
+  return (
   <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto', padding:'40px 48px' }} className="ah-scroll">
     <div style={{ marginBottom:28 }}>
       <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>FIRST RUN · 60 SECONDS · 4 STEPS</div>
@@ -394,37 +470,46 @@ const StudioOnboarding = () => (
           <div style={{ fontFamily:ST.serif, fontStyle:'italic', fontSize:15, color:ST.inkSoft, marginTop:6 }}>Talk to your AEC stack.</div>
         </div>
         <div style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, lineHeight:1.7, padding:'10px 0', borderTop:`1px solid ${ST.lineSoft}` }}>
-          <div>· detected: Revit 2025, Blender 4.0</div>
-          <div>· not detected: AutoCAD, 3ds Max</div>
-          <div style={{ color:ST.ok }}>✓ ready in 12s</div>
+          <div>· detected: {hosts.value ? suiteNames(detected) : '—'}</div>
+          <div>· not detected: {hosts.value ? suiteNames(missing) : '—'}</div>
+          {hosts.error ? <div style={{ color:ST.err }}>! {hosts.error}</div> : <div style={{ color:ST.ok }}>✓ ready in {readyIn}s</div>}
         </div>
-        <button style={{...btnPrimary(), width:'100%', justifyContent:'center'}}>Continue</button>
+        <button onClick={() => setContinued(true)} style={{...btnPrimary(), width:'100%', justifyContent:'center'}}>Continue</button>
       </OnbStep>
 
       {/* 2 · Pick LLM */}
       <OnbStep n="02" title="Pick a brain" sub="who runs the chat">
         <SLabel>YOUR KEY (BYO)</SLabel>
-        {[['Anthropic','sk-ant-•••','#cc785c'],['OpenAI','sk-•••','#10a37f'],['Google','AIza-•••','#4285f4']].map(([n,k,c])=>(
-          <div key={n} style={pickRow()}>
-            <span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:c }}/>
-            <span style={{ flex:1, fontSize:12.5 }}>{n}</span>
-            <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>{k}</span>
+        {providers.error && note('! ' + providers.error, ST.err)}
+        {!providers.value && !providers.error && note('· —')}
+        {keys.map(row => (
+          <div key={row.id} onClick={onPickModel} style={pickRow()}>
+            <span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:SUITE_PROVIDER_COL[row.id] }}/>
+            <span style={{ flex:1, fontSize:12.5 }}>{row.name}</span>
+            <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>{row.state === 'keyed' ? row.source || 'keyed' : 'no key'}</span>
           </div>
         ))}
-        <SLabel>OR</SLabel>
-        <div style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:ST.accent }}/><span style={{ flex:1, fontSize:12.5 }}>ArchHub Cloud Relay</span><span style={{ fontFamily:ST.mono, fontSize:10, color:ST.accent }}>STUDIO</span></div>
-        <div style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:'#9333ea' }}/><span style={{ flex:1, fontSize:12.5 }}>Local Ollama</span><span style={{ fontFamily:ST.mono, fontSize:10, color:ST.ok }}>OFFLINE</span></div>
-        <button style={{...btnPrimary(), width:'100%', justifyContent:'center', marginTop:10}}>Use Anthropic</button>
+        {(relays.length > 0 || locals.length > 0) && <SLabel>OR</SLabel>}
+        {relays.map(row => (
+          <div key={row.id} onClick={onPickModel} style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:ST.accent }}/><span style={{ flex:1, fontSize:12.5 }}>{row.name}</span><span style={{ fontFamily:ST.mono, fontSize:10, color:ST.accent }}>{String(row.state).toUpperCase()}</span></div>
+        ))}
+        {locals.map(row => (
+          <div key={row.id} onClick={onPickModel} style={pickRow()}><span style={{ width:14, height:14, borderRadius:ST.rad.xs, background:'#9333ea' }}/><span style={{ flex:1, fontSize:12.5 }}>Local {row.name}</span><span style={{ fontFamily:ST.mono, fontSize:10, color:row.state === 'running' ? ST.ok : ST.inkMuted }}>{String(row.state).toUpperCase()}</span></div>
+        ))}
+        <button onClick={onPickModel} style={{...btnPrimary(), width:'100%', justifyContent:'center', marginTop:10}}>{keyed ? 'Use ' + keyed.name : 'Choose a model'}</button>
       </OnbStep>
 
       {/* 3 · Connector birth */}
       <OnbStep n="03" title="Birth a connector" sub="Claude writes the bridge">
         <div style={{ background:ST.bgDeep, border:`1px solid ${ST.line}`, borderRadius:ST.rad.md, padding:10, fontFamily:ST.mono, fontSize:10.5, color:ST.inkSoft, lineHeight:1.7 }}>
-          <div style={{ color:ST.ok }}>✓ analyze blender SDK</div>
-          <div style={{ color:ST.ok }}>✓ generate addon · 1.2k chars</div>
-          <div style={{ color:ST.ok }}>✓ install to plugin dir</div>
-          <div style={{ color:ST.warn }}>↻ verify handshake :7331…</div>
-          <div style={{ color:ST.inkMuted }}>· arm self-heal watchdog</div>
+          {hosts.error && <div style={{ color:ST.err }}>! {hosts.error}</div>}
+          {!hosts.value && !hosts.error && <div style={{ color:ST.inkMuted }}>· —</div>}
+          {hosts.value && rows.length === 0 && <div style={{ color:ST.inkMuted }}>· no host answered the scan</div>}
+          {rows.slice(0, 5).map(row => {
+            const [color, glyph] = hostLine(row);
+            return <div key={row.id} role="button" tabIndex={0} title={row.detail || row.name} onClick={() => openHost(row)}
+              onKeyDown={e => { if (e.key === 'Enter') openHost(row); }} style={{ color, cursor:'pointer' }}>{glyph} {row.name.toLowerCase()} · {row.state}</div>;
+          })}
         </div>
         <div style={{ marginTop:10, padding:'8px 10px', background:`${ST.accent}11`, border:`1px solid ${ST.accent}33`, borderRadius:ST.rad.md }}>
           <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.accent, letterSpacing:'0.08em' }}>WHY THIS MATTERS</div>
@@ -435,15 +520,14 @@ const StudioOnboarding = () => (
       {/* 4 · First skill */}
       <OnbStep n="04" title="Your first skill" sub="drag a slider">
         <div style={{ background:ST.bgDeep, border:`1px solid ${ST.line}`, borderRadius:ST.rad.md, padding:'10px 12px' }}>
-          <div style={{ fontFamily:ST.serif, fontSize:14, color:ST.ink }}>Sketch to production</div>
-          <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>5 stages · 8 params · 12s e2e</div>
+          <div style={{ fontFamily:ST.serif, fontSize:14, color:ST.ink }}>{suiteLive.graphTitle() || '—'}</div>
+          <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{nodes.length} stages · {params} params</div>
           <div style={{ display:'flex', gap:3, marginTop:ST.sp.sm }}>
-            {[1,2,3,4,5].map(i => <span key={i} style={{ flex:1, height:3, borderRadius:2, background:i<=3?ST.ok:i===4?ST.accent:ST.lineSoft }}/>)}
+            {nodes.slice(0, 12).map(node => <span key={node.id} title={node.title} style={{ flex:1, height:3, borderRadius:2, background:node.status ? ST.ok : ST.lineSoft }}/>)}
           </div>
         </div>
-        <ParamDemo k="roof_pitch" v={30} unit="°"/>
-        <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.accent, textAlign:'center', marginTop:ST.sp.xs }}>↻ chain re-running…</div>
-        <button style={{...btnPrimary(), width:'100%', justifyContent:'center', marginTop:ST.sp.sm}}>Open Studio</button>
+        {slider && <OnbParam key={slider.param.rel} node={slider.node} param={slider.param}/>}
+        <button onClick={onDone} style={{...btnPrimary(), width:'100%', justifyContent:'center', marginTop:ST.sp.sm}}>Open Studio</button>
       </OnbStep>
     </div>
 
@@ -451,13 +535,44 @@ const StudioOnboarding = () => (
     <div style={{ marginTop:ST.sp['2xl'], display:'flex', alignItems:'center', gap:0 }}>
       {[1,2,3,4].map(i=>(
         <React.Fragment key={i}>
-          <div style={{ width:28, height:28, borderRadius:'50%', border:`2px solid ${i<=2?ST.ok:i===3?ST.accent:ST.line}`, background:i<=2?ST.ok:'transparent', color:i<=2?((window.AH && window.AH.onFill) || '#180f08'):ST.inkSoft, display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize:11, fontWeight:600 }}>{i<=2?'✓':i}</div>
-          {i<4 && <div style={{ flex:1, height:2, background:i<=2?ST.ok:ST.lineSoft }}/>}
+          <div aria-label={'Step ' + i + (done[i - 1] ? ' done' : i - 1 === current ? ' current' : '')} style={{ width:28, height:28, borderRadius:'50%', border:`2px solid ${done[i-1]?ST.ok:i-1===current?ST.accent:ST.line}`, background:done[i-1]?ST.ok:'transparent', color:done[i-1]?((window.AH && window.AH.onFill) || '#180f08'):ST.inkSoft, display:'grid', placeItems:'center', fontFamily:ST.mono, fontSize:11, fontWeight:600 }}>{done[i-1]?'✓':i}</div>
+          {i<4 && <div style={{ flex:1, height:2, background:done[i-1]?ST.ok:ST.lineSoft }}/>}
         </React.Fragment>
       ))}
     </div>
   </div>
-);
+  );
+};
+// The design's ParamDemo row, bound: one real slider parameter of the opened graph, written through the
+// same governed set-property route the inspector uses, when the drag ends.
+const OnbParam = ({ node, param }) => {
+  const [v, setV] = React.useState(Number(param.v));
+  const [write, setWrite] = React.useState({ state:'', error:'' });
+  const commit = async value => {
+    if (typeof window.ARCHHUB_SET_PROP !== 'function') { setWrite({ state:'error', error:'Saving requires the application connection.' }); return; }
+    setWrite({ state:'pending', error:'' });
+    try { await window.ARCHHUB_SET_PROP(param.rel, value); setWrite({ state:'saved', error:'' }); }
+    catch (error) { setWrite({ state:'error', error:(error && error.message) || 'The value was not saved.' }); }
+  };
+  const end = e => commit(Number(e.currentTarget.value));
+  return (
+    <>
+      <div style={{ padding:'5px 0', borderBottom:`1px dashed ${ST.lineSoft}` }}>
+        <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:2 }}>
+          <span style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkSoft, flex:1 }}>{param.k}</span>
+          <span style={{ fontFamily:ST.mono, fontSize:12, color:ST.ink, fontWeight:500 }}>{v}</span>
+        </div>
+        <input type="range" aria-label={param.k} min={Number(param.min)} max={Number(param.max)} step={Number(param.step) || 1} value={v}
+          disabled={write.state === 'pending'} onChange={e => setV(Number(e.target.value))} onMouseUp={end} onTouchEnd={end} onKeyUp={end}
+          style={{ width:'100%', accentColor:ST.accent }}/>
+      </div>
+      <div role={write.state === 'error' ? 'alert' : 'status'} style={{ fontFamily:ST.mono, fontSize:10, textAlign:'center', marginTop:ST.sp.xs,
+        color:write.state === 'error' ? ST.err : write.state === 'saved' ? ST.ok : write.state === 'pending' ? ST.accent : ST.inkMuted }}>
+        {write.state === 'pending' ? '↻ saving to the graph…' : write.state === 'saved' ? '✓ saved · ' + node.title : write.error || 'drives ' + node.title}
+      </div>
+    </>
+  );
+};
 const OnbStep = ({ n, title, sub, children }) => (
   <div style={{ background:ST.bgPanel, border:`1px solid ${ST.line}`, borderRadius:ST.rad.lg, padding:14, display:'flex', flexDirection:'column', gap:ST.sp.sm }}>
     <div>
@@ -589,44 +704,44 @@ const StudioLanding = () => (
 );
 
 // ═══════════════════════ 4 · SKILL JSON ═══════════════════════
-const StudioSkillJson = () => {
-  const json = `{
-  "name": "Sketch to production",
-  "version": "1.4.2",
-  "author": "fargaly",
-  "license": "MIT",
-  "stages": [
-    { "id": "s1", "kind": "vision",
-      "intent": "extract massing from sketch",
-      "params": { "source": "sketch.png" } },
-    { "id": "s2", "kind": "rhino.mass",
-      "params": {
-        "mass_height": { "type": "slider", "default": 32,
-                         "min": 6, "max": 80, "unit": "m" },
-        "levels": { "type": "slider", "default": 9 }
-      } },
-    { "id": "s3", "kind": "revit.walls",
-      "params": {
-        "wall_type": "Generic 200",
-        "thickness": 200, "rooms": true
-      } }
-  ],
-  "tags": ["aec","sketch-to-bim","flagship"]
-}`;
+// Opened inside the Studio by ArchHubStudioScreens.open('skill', row) with a skills catalogue row
+// {name, source, description, path}. The source pane is that skill's own file, read through
+// ARCHHUB_READ_SKILL, and its size and line count are measured from the text. The artboard's rating,
+// install count, Fork and Open in chat have no source in this build, so they are not drawn.
+const suiteFrontmatter = text => {
+  const held = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text || ''), out = {};
+  if (held) for (const line of held[1].split(/\r?\n/)) {
+    const pair = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
+    if (pair) out[pair[1]] = pair[2].replace(/^["']|["']$/g, '').trim();
+  }
+  return out;
+};
+const StudioSkillJson = ({ skill, onClose }) => {
+  const read = useSuiteRead(() => suiteLive.skill(skill.name), 'skill:' + skill.name);
+  const json = typeof read.value === 'string' ? read.value.replace(/\r\n/g, '\n') : '';
+  const meta = suiteFrontmatter(json);
+  const file = String(skill.path || '').split(/[\\/]/).pop() || 'SKILL.md';
+  const lines = json ? json.split('\n') : [];
+  const bytes = json ? new TextEncoder().encode(json).length : 0;
+  const stages = lines.filter(line => /^##\s+\S/.test(line)).map(line => line.replace(/^##\s+/, '').trim()).slice(0, 8);
+  const version = meta.version ? (/^v/i.test(meta.version) ? meta.version : 'v' + meta.version) : '';
+  const [copied, setCopied] = React.useState('');
+  const copy = () => navigator.clipboard.writeText(json).then(() => setCopied('Copied'), error => setCopied((error && error.message) || 'Copy refused'));
+  const waiting = !json;
   return (
     <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto' }} className="ah-scroll">
       <div style={{ padding:'32px 48px 24px', borderBottom:`1px solid ${ST.line}`, display:'flex', alignItems:'flex-end', gap:18 }}>
         <div style={{ flex:1 }}>
           <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>SKILL · OPEN</div>
-          <h1 style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.02em', margin:'4px 0 4px', fontWeight:400 }}>Sketch to production</h1>
+          <h1 style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.02em', margin:'4px 0 4px', fontWeight:400 }}>{skill.name}</h1>
           <div style={{ display:'flex', gap:ST.sp.sm, alignItems:'center' }}>
-            <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted }}>v1.4.2 · ★ 4.8 · 1.2k installs · MIT</span>
+            <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted }}>{[version, skill.source, meta.license].filter(Boolean).join(' · ') || '—'}</span>
           </div>
         </div>
         <div style={{ display:'flex', gap:ST.sp.sm }}>
-          <button style={btnSecondary()}>📋 Copy JSON</button>
-          <button style={btnSecondary()}>↗ Fork</button>
-          <button style={btnPrimary()}>Open in chat ▸</button>
+          <button onClick={copy} disabled={waiting} title={waiting ? 'The skill file has not been read yet.' : copied || 'Copy ' + file}
+            style={suiteDisabled(btnSecondary(), waiting)}>📋 {copied || 'Copy ' + file}</button>
+          <button onClick={onClose} title="Back to the Studio (Esc)" style={btnPrimary()}>Close</button>
         </div>
       </div>
 
@@ -635,37 +750,26 @@ const StudioSkillJson = () => {
         <div style={{ padding:'24px 32px', borderRight:`1px solid ${ST.line}`, overflow:'auto' }} className="ah-scroll">
           <SLabel>WHAT IT DOES</SLabel>
           <div style={{ fontFamily:ST.serif, fontSize:18, lineHeight:1.55, color:ST.ink, letterSpacing:'-0.005em' }}>
-            Six-stage pipeline that takes a hand sketch to a production drawing set. Extracts massing, pushes through Speckle, builds walls in Revit, places fenestration, and paginates sheets at 1:50.
+            {skill.description || meta.description || '—'}
           </div>
+          {stages.length > 0 && <>
           <div style={{ height:18 }}/>
           <SLabel>STAGES</SLabel>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-            {[
-              ['1','Vision · sketch parse','vision'],
-              ['2','Rhino · mass extract','rhino'],
-              ['3','Revit · wall build','revit'],
-              ['4','Revit · fenestration','revit'],
-              ['5','Revit · sheets','revit'],
-            ].map(([n,t,h])=>(
-              <div key={n} style={{ display:'flex', gap:ST.sp.sm, alignItems:'center', padding:'6px 0', borderBottom:`1px dashed ${ST.lineSoft}` }}>
-                <span style={{ width:18, height:18, borderRadius:'50%', border:`1.5px solid ${ST.ok}`, color:ST.ok, fontFamily:ST.mono, fontSize:9, display:'grid', placeItems:'center' }}>{n}</span>
+            {stages.map((t, i)=>(
+              <div key={i} style={{ display:'flex', gap:ST.sp.sm, alignItems:'center', padding:'6px 0', borderBottom:`1px dashed ${ST.lineSoft}` }}>
+                <span style={{ width:18, height:18, borderRadius:'50%', border:`1.5px solid ${ST.ok}`, color:ST.ok, fontFamily:ST.mono, fontSize:9, display:'grid', placeItems:'center' }}>{i + 1}</span>
                 <span style={{ flex:1, fontSize:13.5 }}>{t}</span>
-                <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, letterSpacing:'0.04em' }}>{h.toUpperCase()}</span>
+                <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted, letterSpacing:'0.04em' }}>{String(skill.source || '').toUpperCase()}</span>
               </div>
             ))}
           </div>
-          <div style={{ height:18 }}/>
-          <SLabel>EXPOSED PARAMETERS</SLabel>
-          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-            {['mass_height','levels','wall_type','thickness','wwr','door_w','scale','titleblock'].map(p=>(
-              <span key={p} style={{ fontFamily:ST.mono, fontSize:11, padding:'2px 7px', borderRadius:4, background:ST.bgPanel, color:ST.accent, border:`1px solid ${ST.lineSoft}` }}>{p}</span>
-            ))}
-          </div>
+          </>}
           <div style={{ height:18 }}/>
           <div style={{ background:ST.bgPanel, border:`1px solid ${ST.line}`, borderRadius:ST.rad.lg, padding:14 }}>
             <div style={{ fontFamily:ST.mono, fontSize:9.5, color:ST.inkMuted, letterSpacing:'0.14em' }}>YOU OWN THIS</div>
             <div style={{ fontFamily:ST.serif, fontSize:15, color:ST.inkSoft, marginTop:6, fontStyle:'italic' }}>
-              Skills are plain JSON files in your private GitHub repo. Edit them, version them, share them, take them with you. ArchHub is the runner — never the registry.
+              This skill is a plain file on this machine{skill.path ? ' — ' + skill.path : ''}. Edit it, version it, share it, take it with you. ArchHub is the runner — never the registry.
             </div>
           </div>
         </div>
@@ -673,12 +777,14 @@ const StudioSkillJson = () => {
         {/* JSON */}
         <div style={{ padding:'18px 24px', overflow:'auto', background:ST.bgDeep }} className="ah-scroll">
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
-            <SLabel>SOURCE · skill.json</SLabel>
+            <SLabel>SOURCE · {file}</SLabel>
             <div style={{ flex:1 }}/>
-            <span style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>478 bytes · 23 lines</span>
+            <span role={read.error ? 'alert' : undefined} style={{ fontFamily:ST.mono, fontSize:10, color:read.error ? ST.err : ST.inkMuted }}>
+              {read.error || (json ? bytes + ' bytes · ' + lines.length + ' lines' : '—')}
+            </span>
           </div>
           <pre style={{ margin:0, fontFamily:ST.mono, fontSize:12.5, lineHeight:1.65, color:ST.ink, whiteSpace:'pre-wrap' }}>
-            {json.split('\n').map((line, i) => (
+            {lines.map((line, i) => (
               <div key={i} style={{ display:'flex', gap:14 }}>
                 <span style={{ color:ST.inkMuted, opacity:0.5, width:20, textAlign:'right', userSelect:'none' }}>{i+1}</span>
                 <span style={{ flex:1 }}>{colorJson(line)}</span>
@@ -706,35 +812,65 @@ const colorJson = (line) => {
 // stills). Deleted here rather than left shadowed: it loaded first and lost, silently.
 
 // ═══════════════════════ 7 · SELF-HEAL INSPECTOR ═══════════════════════
-const StudioSelfHeal = () => {
-  const checks = [
-    { t:'Process check',       sub:'Revit.exe found, PID 14728', ok:true,  d:'42ms' },
-    { t:'Plugin DLL loaded',   sub:'ArchHubBridge.dll · v2.4.1', ok:true,  d:'18ms' },
-    { t:'Port :48884 reachable', sub:'localhost · TCP open',     ok:true,  d:'7ms' },
-    { t:'Handshake',           sub:'awaiting hello frame…',     warn:true, d:'1.8s' },
-    { t:'API version match',   sub:'expected ≥2.4.0',           pending:true, d:'—' },
-    { t:'Tool catalog sync',   sub:'14 tools registered',       pending:true, d:'—' },
+// Opened inside the Studio by ArchHubStudioScreens.open('connector', row) with a host scan row
+// {id, name, drive, state, detail}. The chain is what the scan's own state order establishes
+// (absent < installed < running < listening < connected); Check now runs the scan again. Nothing in
+// this build times a check, keeps an uptime, counts failures or records a heal, so those cells draw
+// the design's '—' and the artboard's Pause, Show diff and Apply fix are not drawn.
+const SUITE_STATE_RANK = { absent:0, installed:1, running:2, listening:3, connected:4 };
+const StudioSelfHeal = ({ connector, onClose }) => {
+  const [row, setRow] = React.useState(connector);
+  const [probe, setProbe] = React.useState({ pending:false, error:'', at:null, lastOk:null });
+  const check = async () => {
+    setProbe(p => ({ ...p, pending:true, error:'' }));
+    try {
+      const next = (await suiteLive.connectors()).find(item => item && item.id === row.id);
+      if (!next) throw new Error('The host scan no longer reports ' + row.name + '.');
+      const at = new Date();
+      setRow(next);
+      setProbe(p => ({ pending:false, error:'', at, lastOk:next.state === 'connected' ? at : p.lastOk }));
+    } catch (error) {
+      setProbe(p => ({ ...p, pending:false, error:(error && error.message) || 'The host scan did not answer.' }));
+    }
+  };
+  const rank = Object.prototype.hasOwnProperty.call(SUITE_STATE_RANK, row.state) ? SUITE_STATE_RANK[row.state] : -1;
+  const chain = [
+    { t:'Installed on this machine', need:1 },
+    { t:'Process running',           need:2 },
+    { t:'Port reachable',            need:3 },
+    { t:'Handshake',                 need:4 },
   ];
+  const firstOpen = chain.findIndex(c => rank < c.need);
+  const checks = chain.map((c, i) => rank >= c.need
+    ? { t:c.t, sub:'host scan · ' + row.state, ok:true, d:'—' }
+    : i === firstOpen
+      ? { t:c.t, sub:row.detail || row.state, warn:probe.pending, pending:!probe.pending, d:'—' }
+      : { t:c.t, sub:'not reached', pending:true, d:'—' });
+  checks.push(row.drive ? { t:'Wired to the graph', sub:row.drive, ok:true, d:'—' }
+    : { t:'Wired to the graph', sub:'no wire in this build', pending:true, d:'—' });
+  const live = row.state === 'connected';
+  const word = live ? 'connected' : row.state === 'absent' ? 'not found' : String(row.state || 'unknown').replace(/-/g, ' ');
+  const fresh = probe.pending ? 'running' : live ? 'fresh' : rank >= 1 ? 'stale' : 'off';
   return (
     <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto', padding:'40px 48px' }} className="ah-scroll">
       <div style={{ marginBottom:ST.sp.xl }}>
         <div style={{ fontFamily:ST.mono, fontSize:11, color:ST.inkMuted, letterSpacing:'0.16em' }}>CONNECTOR · DIAGNOSTIC</div>
         <h1 style={{ fontFamily:ST.serif, fontSize:48, letterSpacing:'-0.03em', margin:'8px 0 4px', fontWeight:400 }}>
-          Revit dropped — <span style={{ color:ST.accent, fontStyle:'italic' }}>healing.</span>
+          {row.name} {word} — <span style={{ color:ST.accent, fontStyle:'italic' }}>{probe.pending ? 'checking.' : live ? 'live.' : 'not live.'}</span>
         </h1>
-        <div style={{ fontFamily:ST.serif, fontStyle:'italic', fontSize:16, color:ST.inkSoft }}>You don't restart it. ArchHub does.</div>
+        <div style={{ fontFamily:ST.serif, fontStyle:'italic', fontSize:16, color:ST.inkSoft }}>{row.drive ? 'Wired to ' + row.drive + '.' : 'No wire in this build.'}</div>
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1.2fr 1fr', gap:18 }}>
         {/* Diagnostic chain */}
         <SBox style={{ padding:0 }}>
           <div style={{ padding:'14px 18px', borderBottom:`1px solid ${ST.lineSoft}`, display:'flex', alignItems:'center', gap:10 }}>
-            <span style={{ width:36, height:36, borderRadius:7, background:'#5fb3b3', color:'#0a0a0d', display:'grid', placeItems:'center', fontFamily:ST.serif, fontSize:18 }}>R</span>
+            <span style={{ width:36, height:36, borderRadius:7, background:'#5fb3b3', color:'#0a0a0d', display:'grid', placeItems:'center', fontFamily:ST.serif, fontSize:18 }}>{String(row.name || '?').charAt(0).toUpperCase()}</span>
             <div style={{ flex:1 }}>
-              <div style={{ fontFamily:ST.serif, fontSize:18 }}>Revit 2025</div>
-              <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>:48884 · PID 14728 · attempt 2/3</div>
+              <div style={{ fontFamily:ST.serif, fontSize:18 }}>{row.name}</div>
+              <div style={{ fontFamily:ST.mono, fontSize:10, color:ST.inkMuted }}>{row.id} · {row.drive || 'no wire'} · {row.state}</div>
             </div>
-            <Freshness state="running"/>
+            <Freshness state={fresh}/>
           </div>
           <div style={{ padding:'4px 0' }}>
             {checks.map((c, i) => (
@@ -757,43 +893,84 @@ const StudioSelfHeal = () => {
             ))}
           </div>
           <div style={{ padding:'12px 18px', borderTop:`1px solid ${ST.line}`, display:'flex', alignItems:'center', gap:10 }}>
-            <span style={{ fontFamily:ST.mono, fontSize:10.5, color:ST.inkMuted, flex:1 }}>backoff · 1.2s · next attempt at 12:43:14</span>
-            <button style={btnSecondary()}>Pause</button>
-            <button style={btnPrimary()}>Heal now ↻</button>
+            <span role={probe.error ? 'alert' : undefined} style={{ fontFamily:ST.mono, fontSize:10.5, color:probe.error ? ST.err : ST.inkMuted, flex:1 }}>
+              {probe.error || 'last check · ' + suiteTime(probe.at)}
+            </span>
+            <button onClick={onClose} title="Back to the Studio (Esc)" style={btnSecondary()}>Close</button>
+            <button onClick={check} disabled={probe.pending} title={probe.pending ? 'Wait for the host scan to answer.' : 'Run the host scan again'}
+              style={suiteDisabled(btnPrimary(), probe.pending)}>Check now ↻</button>
           </div>
         </SBox>
 
         {/* Side panels */}
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-          <SBox><SLabel>SUGGESTED FIX · CLAUDE</SLabel>
+          {!live && row.detail && <SBox><SLabel>SUGGESTED FIX</SLabel>
             <div style={{ fontFamily:ST.serif, fontSize:16, lineHeight:1.45, color:ST.ink, letterSpacing:'-0.005em' }}>
-              Revit's plugin loader is alive but no hello frame is coming back. This usually means the addon DLL is locked by an open transaction. I'll send a soft cancel and re-handshake. If that fails, I'll regenerate the addon (your changes are safe — Skills are JSON).
+              {row.detail}
             </div>
-            <div style={{ display:'flex', gap:ST.sp.sm, marginTop:ST.sp.md }}>
-              <button style={btnSecondary()}>Show diff</button>
-              <button style={btnPrimary()}>Apply fix</button>
-            </div>
-          </SBox>
+          </SBox>}
           <SBox><SLabel>CONTEXT</SLabel>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:ST.sp.sm, fontFamily:ST.mono, fontSize:10.5, color:ST.inkSoft, letterSpacing:'0.04em' }}>
-              <div><div style={{ color:ST.inkMuted }}>UPTIME</div><div style={{ color:ST.ink }}>4h 12m</div></div>
-              <div><div style={{ color:ST.inkMuted }}>LAST OK</div><div style={{ color:ST.ink }}>12:42:01</div></div>
-              <div><div style={{ color:ST.inkMuted }}>FAILURES 7d</div><div style={{ color:ST.ink }}>3 (auto-healed)</div></div>
-              <div><div style={{ color:ST.inkMuted }}>HEAL P95</div><div style={{ color:ST.ink }}>2.1s</div></div>
+              <div><div style={{ color:ST.inkMuted }}>UPTIME</div><div style={{ color:ST.ink }}>—</div></div>
+              <div><div style={{ color:ST.inkMuted }}>LAST OK</div><div style={{ color:ST.ink }}>{suiteTime(probe.lastOk)}</div></div>
+              <div><div style={{ color:ST.inkMuted }}>FAILURES 7d</div><div style={{ color:ST.ink }}>—</div></div>
+              <div><div style={{ color:ST.inkMuted }}>HEAL P95</div><div style={{ color:ST.ink }}>—</div></div>
             </div>
           </SBox>
           <SBox><SLabel>RECENT HEALS</SLabel>
-            {[['12:14','handshake timeout','2.4s'],['09:08','DLL locked','5.1s'],['Yesterday','version mismatch · rewrote','12.8s']].map(([t,r,d])=>(
-              <div key={t} style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, padding:'5px 0', borderBottom:`1px dashed ${ST.lineSoft}`, fontFamily:ST.mono, fontSize:10.5 }}>
-                <span style={{ color:ST.ok }}>✓</span>
-                <span style={{ color:ST.inkMuted, width:64 }}>{t}</span>
-                <span style={{ flex:1, color:ST.inkSoft }}>{r}</span>
-                <span style={{ color:ST.inkMuted }}>{d}</span>
-              </div>
-            ))}
+            <div style={{ display:'flex', alignItems:'center', gap:ST.sp.sm, padding:'5px 0', borderBottom:`1px dashed ${ST.lineSoft}`, fontFamily:ST.mono, fontSize:10.5 }}>
+              <span style={{ color:ST.inkMuted }}>·</span>
+              <span style={{ flex:1, color:ST.inkSoft }}>no heal is recorded in this build</span>
+              <span style={{ color:ST.inkMuted }}>—</span>
+            </div>
           </SBox>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ═══════════════════════ STUDIO SCREENS ═══════════════════════
+// The artboards that open inside the running Studio, full-bleed as the design draws them: the first-run
+// onboarding (only when ARCHHUB_BOOT.first_run is true, until Open Studio is pressed in this page
+// session), a skill's split view and a connector's diagnostic. Owning surfaces open the last two
+// through window.ArchHubStudioScreens; Close or Esc returns to the Studio.
+const studioScreens = (() => {
+  let view = null;
+  const listeners = new Set();
+  const publish = next => { view = next; for (const notify of listeners) { try { notify(); } catch (_) {} } };
+  return Object.freeze({
+    open(kind, subject) {
+      if ((kind !== 'skill' && kind !== 'connector') || !subject || typeof subject.name !== 'string' || !subject.name) {
+        throw new Error('A Studio screen opens a named skill or connector row.');
+      }
+      publish({ kind, subject });
+    },
+    close() { publish(null); },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    getSnapshot() { return view; },
+  });
+})();
+window.ArchHubStudioScreens = studioScreens;
+const ONBOARDING_CLOSED = 'archhub.onboarding.closed.v1';
+const StudioScreens = ({ model, onPickModel }) => {
+  const view = React.useSyncExternalStore(studioScreens.subscribe, studioScreens.getSnapshot);
+  const [closed, setClosed] = React.useState(() => { try { return window.sessionStorage.getItem(ONBOARDING_CLOSED) === '1'; } catch (_) { return false; } });
+  const firstRun = !!(window.ARCHHUB_BOOT && window.ARCHHUB_BOOT.first_run === true) && !closed;
+  React.useEffect(() => {
+    if (!view) return undefined;
+    const onKey = e => { if (e.key === 'Escape') studioScreens.close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view]);
+  if (!view && !firstRun) return null;
+  const finish = () => { try { window.sessionStorage.setItem(ONBOARDING_CLOSED, '1'); } catch (_) {} setClosed(true); };
+  return (
+    // 16px / normal line height: the artboard's own type context, not the Studio shell's 13px / 1.5.
+    <div data-studio-screen={view ? view.kind : 'onboarding'} style={{ position:'absolute', inset:0, zIndex:45, fontSize:16, lineHeight:'normal' }}>
+      {view && view.kind === 'skill' ? <StudioSkillJson key={view.subject.name} skill={view.subject} onClose={studioScreens.close}/>
+        : view && view.kind === 'connector' ? <StudioSelfHeal key={view.subject.id || view.subject.name} connector={view.subject} onClose={studioScreens.close}/>
+        : <StudioOnboarding model={model} onPickModel={onPickModel} onDone={finish}/>}
     </div>
   );
 };
@@ -804,3 +981,4 @@ window.StudioOnboarding = StudioOnboarding;
 window.StudioLanding = StudioLanding;
 window.StudioSkillJson = StudioSkillJson;
 window.StudioSelfHeal = StudioSelfHeal;
+window.StudioScreens = StudioScreens;

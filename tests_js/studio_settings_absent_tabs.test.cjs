@@ -26,8 +26,9 @@ const seed = Object.fromEntries([...seedText.matchAll(/'([^']+)':\s*'(#[0-9a-f]{
 
 test('brain-model.jsx is the one brain definition, registered once and carrying no sample facts', () => {
   const names = read('packaging/compile_studio.cjs').match(/const names = \[([\s\S]*?)\];/)[1];
-  assert.match(names, /'studio-account\.jsx',[\s\S]*'brain-model\.jsx',\s*'studio-lm\.jsx'/, 'brain-model.jsx loads before studio-lm.jsx');
-  assert.match(read('nodelang/studio/studio.html'), /'studio-account\.jsx',(?:'[a-z-]+\.jsx',)*'brain-model\.jsx','studio-lm\.jsx'/);
+  // Design ArchHub App.html load order: brain-model.jsx, then studio-workshop.jsx, then studio-lm.jsx.
+  assert.match(names, /'studio-account\.jsx',[\s\S]*'brain-model\.jsx',\s*'studio-workshop\.jsx',\s*'studio-lm\.jsx'/, 'brain-model.jsx loads before studio-lm.jsx');
+  assert.match(read('nodelang/studio/studio.html'), /'studio-account\.jsx',(?:'[a-z-]+\.jsx',)*'brain-model\.jsx','studio-workshop\.jsx','studio-lm\.jsx'/);
   assert.match(model, /const BRAIN_FACTS = \[\];/, 'the seeded facts stay in the design bundle');
   for (const name of ['BRAIN_STRATA', 'BRAIN_LAKES', 'BRAIN_GATES', 'BRAIN_KEYS', 'BRAIN_PATHS']) {
     assert.ok(model.includes(name), `brain-model.jsx exports ${name}`);

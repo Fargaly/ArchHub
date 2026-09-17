@@ -7,6 +7,8 @@ const vm = require('node:vm');
 // Execute the actual component's selection block, including functional state updates.
 const source = fs.readFileSync(process.env.ARCHHUB_WORKSPACE_TEST_PATH ||
   path.join(__dirname, '../nodelang/studio/studio-lm.jsx'), 'utf8');
+// Work selection and the Work revision editor ship with the Workshop view in studio-workshop.jsx.
+const workshopSource = fs.readFileSync(path.join(__dirname, '../nodelang/studio/studio-workshop.jsx'), 'utf8');
 const start = source.indexOf('  const viewScope =', source.indexOf('const StudioLM ='));
 const end = source.indexOf('  const selectedWorkshop =', start);
 assert.ok(start > 0 && end > start);
@@ -28,10 +30,10 @@ const projection = (subject = 'owner-a') => ({canvas:{graph_id:'graph-a',root:'s
 function workSelectionHarness() {
   const context = {};
   vm.createContext(context);
-  const from = source.indexOf('const workshopSelectionId =');
-  const to = source.indexOf('const LM_SESSIONS =', from);
+  const from = workshopSource.indexOf('const workshopSelectionId =');
+  const to = workshopSource.indexOf('// Workshop task cards read from the transcript only', from);
   assert.ok(from > 0 && to > from);
-  vm.runInContext(source.slice(from, to) + '\nglobalThis.select = selectedWorkshopWork;', context);
+  vm.runInContext(workshopSource.slice(from, to) + '\nglobalThis.select = selectedWorkshopWork;', context);
   return (state, root = 'general-a', nodes) =>
     context.select(state, root, nodes);
 }
@@ -112,10 +114,10 @@ test('cold local revision editor restores exact saved submission and refuses for
           input_digest:'a'.repeat(64),inputs:{files:[]},requirements:{},pending_revision:pending}};
       }}};
     vm.createContext(context);
-    const from = source.indexOf('  const beginWorkRevision =');
-    const to = source.indexOf('  React.useEffect(', from);
+    const from = workshopSource.indexOf('  const beginWorkRevision =');
+    const to = workshopSource.indexOf('  React.useEffect(', from);
     assert.ok(from > 0 && to > from);
-    vm.runInContext(source.slice(from,to) + '\nglobalThis.openRevision = beginWorkRevision;', context);
+    vm.runInContext(workshopSource.slice(from,to) + '\nglobalThis.openRevision = beginWorkRevision;', context);
     await context.openRevision({work:'work-a',result:pending.result,
       resolution:foreign ? 'other-decision' : pending.resolution});
     if (foreign) {

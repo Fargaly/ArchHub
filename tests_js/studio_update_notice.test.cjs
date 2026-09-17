@@ -115,11 +115,13 @@ async function mountStrip(server) {
     {session:{file:'archhub.universal'}, model:{name:'Choose a model'}, account:null});
 }
 
-// The Workspace header's own compact update controls, from the shipped source.
+// The compact update controls, from the shipped source. The Workspace header draws the design row without them
+// (design studio-lm.jsx:1146-1148); Settings > About and the status strip carry release updates.
 async function mountHeaderControls(server) {
   const jsx = read('nodelang/studio/studio-lm.jsx');
   const header = jsx.slice(jsx.indexOf('\nconst WsHeader = '), jsx.indexOf('\nconst WsTab = '));
-  assert.match(header, /<ApplicationUpdateControls compact\/>/, 'the Workspace header carries the compact update controls');
+  assert.equal(/<ApplicationUpdateControls/.test(header), false, 'the Workspace header draws no update controls');
+  assert.match(definition(jsx, 'SettingsAbout'), /<ApplicationUpdateControls\/>/, 'Settings > About carries the update controls');
   const names = ['smallBtn', 'visuallyHiddenStyle', 'StudioHeaderIcon', 'ApplicationUpdateControls'];
   if (jsx.includes('\nconst useRestartConfirmation = ')) names.unshift('useRestartConfirmation');
   return mountSource(server, names.map(name => definition(jsx, name)).join('\n'), 'ApplicationUpdateControls', {compact:true});
@@ -340,7 +342,7 @@ test('a late answer never overrides a newer read, and a failed first read keeps 
   } finally { strip.close(); }
 });
 
-test('the Workspace header restart needs the same confirming second click as the strip', async () => {
+test('the compact update restart needs the same confirming second click as the strip; the Workspace header draws none', async () => {
   let current = status('ready');
   const header = await mountHeaderControls({get:() => current, post:(url, body) => {
     assert.equal(url, UPDATE); assert.deepEqual(plain(body), {action:'reload'});
@@ -350,7 +352,7 @@ test('the Workspace header restart needs the same confirming second click as the
   try {
     const reload = () => header.doc.querySelector('button[aria-label="Update and reload"]');
     const confirm = () => header.doc.querySelector('button[aria-label="' + CONFIRM + '"]');
-    assert.ok(reload() && !reload().disabled, 'a ready release offers the header restart');
+    assert.ok(reload() && !reload().disabled, 'a ready release offers the compact restart');
     await header.click(reload());
     assert.deepEqual(header.posts, [], 'one click on the header never restarts');
     assert.ok(confirm() && !reload(), 'the first click asks again and names what is lost');

@@ -72,13 +72,19 @@ const _bootDetail = (key) => {
     return held.length + ' facts' + (sources.size ? ' · ' + sources.size + ' folders' : '');
   }
   if (key === 'hosts') {
-    const live_hosts = (live.connectors || []).filter(
+    // The host scan answers when Hosts opens, not during boot. An empty list is
+    // not a scan result, so it claims nothing: the design's absent mark.
+    const scanned = live.connectors || [];
+    if (!scanned.length) return '—';
+    const live_hosts = scanned.filter(
       c => c.state === 'connected' || c.state === 'listening');
     return live_hosts.length
       ? live_hosts.map(c => c.name).join(' · ') : 'none listening';
   }
   if (key === 'skills') {
-    return (live.skills || []).length + ' on this machine';
+    // Likewise the skills catalogue loads with its panel; unread is not zero.
+    const held = live.skills || [];
+    return held.length ? held.length + ' on this machine' : '—';
   }
   const nodes = (live.graph && live.graph.nodes) || [];
   return nodes.length + ' nodes restored';
@@ -583,10 +589,18 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           tier, no claim: this panel never names a plan the account was not granted, and
           it carries no price — the offer is a graph record, not a literal in the app. */}
       {a.graphTier && (
-        <div style={{ marginBottom: 10 }}>
+        <div>
           <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', marginBottom: 9 }}>SUBSCRIPTION</div>
-          <div style={{ padding: '11px 12px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, fontSize: 12.5, fontWeight: 500 }}>
-            {String(a.graphTier)}
+          {/* The design's plan grid, holding the one plan card the account actually has: the current
+              card's accent border and fill, no price and no plan table beside it. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 10 }}>
+            <div style={{
+              textAlign: 'left', padding: '11px 12px', borderRadius: AC.rad.md,
+              border: `1px solid ${AC.accent}`, background: AC.accentSoft, color: AC.ink, fontFamily: AC.sans,
+            }}>
+              <div style={{ fontSize: 12.5, fontWeight: 500 }}>{String(a.graphTier)} · current</div>
+              <div style={{ fontSize: 11, color: AC.inkSoft, marginTop: 3, lineHeight: 1.45 }}>The tier the graph holds for this account.</div>
+            </div>
           </div>
         </div>
       )}

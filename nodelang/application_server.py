@@ -2415,12 +2415,14 @@ class _CleanAuthorityHttpServer:
         admitted = {
             "studio.html", "studio-authority.js", "tokens.jsx", "design-canvas.jsx",
             "shared-data.jsx", "studio-suite.jsx", "param-types.jsx", "studio-params.jsx",
-            "studio-mobile.jsx", "studio-account.jsx", "node-registry.jsx", "brain-model.jsx", "studio-lm.jsx", "mount.jsx",
+            "studio-mobile.jsx", "studio-account.jsx", "node-registry.jsx", "brain-model.jsx", "studio-workshop.jsx",
+            "studio-lm.jsx", "mount.jsx",
             "vendor/react.js", "vendor/react-dom.js", "vendor/babel.js",
             "compiled/manifest.json", "compiled/tokens.js", "compiled/design-canvas.js",
             "compiled/shared-data.js", "compiled/studio-suite.js", "compiled/param-types.js",
             "compiled/studio-params.js", "compiled/studio-mobile.js", "compiled/studio-account.js",
-            "compiled/node-registry.js", "compiled/brain-model.js", "compiled/studio-lm.js", "compiled/mount.js",
+            "compiled/node-registry.js", "compiled/brain-model.js", "compiled/studio-workshop.js",
+            "compiled/studio-lm.js", "compiled/mount.js",
         }
         if name not in admitted:
             raise FileNotFoundError("Studio asset not found")
@@ -4904,6 +4906,9 @@ class ApplicationServer:
                 )
             )
         self.adapter_consent_broker = UserConsentBroker()
+        # Set by the desktop launcher from its saved-graph check (first_boot);
+        # carried to the Studio in ARCHHUB_BOOT.first_run.
+        self.studio_first_run = False
         if browser_session_credentials is not None and type(
             browser_session_credentials
         ) is not BrowserSessionCredentials:
@@ -5825,6 +5830,9 @@ class ApplicationServer:
                             json.dumps({
                                 'token': (studio_session_token),
                                 'csrf': studio_binding.csrf_token,
+                                # The launcher's saved-graph check, so the Studio
+                                # mounts its onboarding on a new installation only.
+                                'first_run': owner.studio_first_run is True,
                             }).encode('utf-8'),
                         )
                     kind = (

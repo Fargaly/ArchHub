@@ -586,6 +586,8 @@ def _initialize_startup_pipeline(owner, *, first_boot):
 # first_boot comes from the validated saved-graph check, not a UI marker.
 # Existing graphs retain their nodes, parameters and previous results. Repair
 # seeding and execution remain available through their admitted application routes.
+# The Studio reads the same check (ARCHHUB_BOOT.first_run) to mount its onboarding.
+server.studio_first_run = first_boot is True
 try:
     _initialize_startup_pipeline(server, first_boot=first_boot)
     print("  pipeline   : %s; execution awaits an admitted Run" % (

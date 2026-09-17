@@ -6,7 +6,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {createHash} = require('node:crypto');
 const source = fs.readFileSync(path.join(__dirname,'../nodelang/studio/studio-existing-workshop.js'),'utf8');
-const jsx = fs.readFileSync(path.join(__dirname,'../nodelang/studio/studio-lm.jsx'),'utf8');
+// The Workshop view and its Send ship in the design module studio-workshop.jsx.
+const jsx = fs.readFileSync(path.join(__dirname,'../nodelang/studio/studio-workshop.jsx'),'utf8');
 const agent = {root:'agent-a',model:'openrouter/model-a',binding_digest:'a'.repeat(64)};
 const scope = root => ({graph_id:'graph-a',root,revision:4,workshops:[{root:'child-a',label:'My session'}]});
 const page = () => ({ok:true,graph_id:'graph-a',root:'child-a',scope_root:'scope-a',revision:4,
@@ -88,8 +89,8 @@ test('malformed projected model metadata cannot be sent',async()=>{
   assert.equal(f.posts.length,0);
 });
 test('visible Send dispatches to selected model and preserves draft after refusal',async()=>{
-  const component=jsx.indexOf('const WorkshopConversation =');
-  const start=jsx.indexOf('  const act = async (action) => {',component),end=jsx.indexOf('\n  return <>',start);
+  const component=jsx.indexOf('const WorkshopView =');
+  const start=jsx.indexOf('  const act = async (action) => {',component),end=jsx.indexOf('\n  const sendDisabled =',start);
   assert.ok(start>component && end>start);
   for (const rejected of [false,true]) {
     const calls=[],clears=[],errors=[];

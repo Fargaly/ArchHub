@@ -758,7 +758,7 @@ function NodeInspector({ node }) {
           <span style={{ flex: 1, fontFamily: PM.mono, fontSize: 10, color: dirty.length ? PM.warn : PM.inkSoft, lineHeight: 1.5 }}>
             {dirty.length
               ? 'Output is stale · ' + dirty.join(', ') + ' changed since the last run'
-              : (ran && !persistence.runError && !persistence.errors.size && !persistence.pending.size ? 'Last successful run · ' + ran + (ran === 1 ? ' time' : ' times') + ' this session' : 'Output has not been verified for these inputs')
+              : (ran && !persistence.runError && !persistence.errors.size && !persistence.pending.size ? 'Output current · ran ' + ran + (ran === 1 ? ' time' : ' times') + ' this session' : 'Output not run yet this session')
                 + (overridden ? ' · ' + overridden + ' off default' : '')}
           </span>
         </div>
@@ -802,7 +802,7 @@ function NodeInspector({ node }) {
               color: dirty.length ? (PM.onFill || '#180f08') : PM.inkSoft,
               boxShadow: dirty.length ? 'none' : `inset 0 0 0 1px ${PM.line}`,
               fontFamily: PM.sans, fontSize: 12.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>{pmGraphRunning ? 'Running graph…' : '↻ Run graph'}</button>
+            }}>{pmGraphRunning ? '↻ Running…' : '↻ Rerun' + (dirty.length ? ' · ' + dirty.length : '')}</button>
             <button style={pmIcon()} title={node.isWire ? 'Save this connection\u2019s rules as a reusable skill' : 'Save these parameters as a reusable skill'}>◈</button>
             <button style={pmIcon()} title="Fork the graph from here, keeping everything upstream">⑂</button>
             <button onClick={() => setConfirmDel(true)} style={pmIcon()} title={node.isWire ? 'Delete this connection…' : 'Delete node…'}>⌫</button>

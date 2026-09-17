@@ -46,7 +46,7 @@ function projected(rawCanvas) {
 }
 
 async function mountStudio({rawCanvas = existingCanvas, update = {state:'idle', current_build:'20260916-2130-e733a13'},
-  pending = '', answer = null} = {}) {
+  pending = '', answer = null, prepare = () => {}} = {}) {
   const manifest = JSON.parse(read('nodelang/studio/compiled/manifest.json'));
   for (const source of ['studio-lm.jsx', 'studio-suite.jsx']) {
     const held = manifest.files.find(file => file.source === source);
@@ -81,6 +81,7 @@ async function mountStudio({rawCanvas = existingCanvas, update = {state:'idle', 
   };
   win.ARCHHUB_LIVE = {sessions:[{id:'graph-a', title:'ArchHub', state:'idle', file:'Graph composition'}],
     currentGraph:'graph-a', hosts:[], connectors:[], graph, memory:[], skills:[]};
+  prepare(win);
   win.eval(read('nodelang/studio/vendor/react.js'));
   win.eval(read('nodelang/studio/vendor/react-dom.js'));
   for (const file of manifest.files) {
@@ -105,7 +106,7 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 const serverStrip = studio => {
-  const server = [...studio.doc.querySelectorAll('button')].find(button => button.textContent.includes('server 127.0.0.1:53912'));
+  const server = [...studio.doc.querySelectorAll('button')].find(button => button.textContent.includes('server :53912'));
   assert.ok(server, 'the status bar is drawn');
   return server.parentElement;
 };
@@ -117,12 +118,16 @@ const assertDisabledStyle = (button, label) => {
   assert.notEqual(button.title, button.getAttribute('aria-label'), label + ' says why it is disabled, not only its name: ' + button.title);
 };
 
-test('status bar: the model slot names the picked model, and is not drawn while nothing is picked', async () => {
+test('status bar: the design strip with live values; the model slot is the picked model slug, absent while nothing is picked', async () => {
   const unpicked = await mountStudio();
   try {
     const strip = serverStrip(unpicked);
     assert.equal(/choose[- ]a[- ]model/i.test(strip.textContent), false, 'no placeholder slug in the status bar: ' + strip.textContent);
     assert.ok(strip.textContent.includes('Graph composition'), 'the open session file is still named');
+    assert.equal(/sign in|@/i.test(strip.textContent), false, 'no account item: the account chip and Settings hold the account');
+    assert.ok(strip.textContent.trim().endsWith('20260916-2130-e733a13'),
+      'the running build closes the strip where the design names its version (design studio-lm.jsx:3625): ' + strip.textContent);
+    assert.match(strip.textContent, /server :53912 \u00b7 0\/0 hosts/, 'server port and live/total hosts in the design format');
     const kinds = [...strip.children].map(child => child.tagName === 'SPAN' && child.textContent.trim() === DOT ? 'sep' :
       child.tagName === 'DIV' && !child.textContent ? 'spacer' : 'item');
     assert.equal(kinds.join(' ').includes('sep sep'), false, 'no doubled separator: ' + kinds.join(' '));
@@ -138,51 +143,101 @@ test('status bar: the model slot names the picked model, and is not drawn while 
       !serverStrip(picked).contains(button));
     await picked.settle(() => !!chip(), 'the saved model selection reaches the header model chip');
     const strip = serverStrip(picked);
-    assert.ok(strip.textContent.includes(name), 'the status bar names the picked model as the catalogue names it: ' + strip.textContent);
+    assert.ok(strip.textContent.includes(name.toLowerCase().replace(/\s+/g, '-')),
+      'the status bar names the picked model as the design slug of its catalogue name: ' + strip.textContent);
     assert.equal(/choose[- ]a[- ]model/i.test(strip.textContent), false, 'no placeholder beside the picked model');
   } finally { picked.close(); }
 });
 
-test('icon rail: every drawn rail control has an action, so the unbound Share icon is gone', async () => {
+test('icon rail: the design icons in order; Share has no action in this build, so it is disabled and says so', async () => {
   const studio = await mountStudio();
   try {
     const rail = studio.doc.querySelector('aside').firstElementChild;
     const buttons = [...rail.querySelectorAll('button')];
-    assert.ok(buttons.length >= 6, 'the rail is drawn: ' + buttons.length + ' controls');
-    const dead = buttons.filter(button => typeof reactProps(button).onClick !== 'function').map(button => button.title);
-    assert.deepEqual(dead, [], 'rail controls with no action: ' + dead.join(', '));
-    assert.equal(buttons.some(button => button.title === 'Share'), false, 'no Share icon without a share action');
-    for (const title of ['Home', 'Settings']) assert.ok(buttons.some(button => button.title === title), title + ' stays on the rail');
+    assert.deepEqual(buttons.map(button => button.title.split(' \u00b7 ')[0]),
+      ['Home', 'Chats', 'Nodes', 'Skills', 'Search', 'Share', 'Documentation', 'Settings'], 'the design rail (design studio-lm.jsx:454-494)');
+    const dead = buttons.filter(button => !button.disabled && typeof reactProps(button).onClick !== 'function').map(button => button.title);
+    assert.deepEqual(dead, [], 'enabled rail controls with no action: ' + dead.join(', '));
+    const share = buttons.find(button => button.title.startsWith('Share'));
+    assert.equal(share.disabled, true, 'Share is disabled');
+    assert.match(share.title, /not available/i, 'Share says why');
+    assert.equal(share.style.opacity, '', 'Share is disabled without alpha');
   } finally { studio.close(); }
 });
 
-test('canvas menu: disabled actions are dashed and say why, never alpha', async () => {
+test('canvas menu: the design rows in order with their shortcuts; rows without an action are dashed and say why; a node menu holds selection', async () => {
   const studio = await mountStudio();
   try {
     openCanvas(studio);
     const region = studio.doc.querySelector('[aria-label="Workflow canvas"]');
-    studio.flush(() => region.dispatchEvent(new studio.win.MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:120, clientY:120})));
-    const menu = studio.doc.querySelector('[role="menu"][aria-label="Canvas actions"]');
+    const open = () => studio.flush(() => region.dispatchEvent(new studio.win.MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:120, clientY:120})));
+    open();
+    let menu = studio.doc.querySelector('[role="menu"][aria-label="Canvas actions"]');
     assert.ok(menu, 'right-click opens the canvas menu');
-    const items = [...menu.querySelectorAll('button[role="menuitem"]')];
+    assert.deepEqual([...menu.children].map(child => child.tagName === 'BUTTON' ? child.children[1].textContent : '-'),
+      ['Add node\u2026', 'Paste', '-', 'Fit graph to view', 'Zoom to 100%', '-', 'Snap to grid', 'Auto-layout', '-', 'Reset positions', 'Clear all nodes'],
+      'the design rows (design studio-lm.jsx:1526-1537)');
+    assert.deepEqual([...menu.querySelectorAll('kbd')].map(key => key.textContent),
+      ['\u2318L', '\u2318V', '\u23180', '\u23181', '\u2318\u21e7L', '\u2318\u21e7R'], 'the design shortcuts');
+    const items = [...menu.querySelectorAll('button[role^="menuitem"]')];
     const disabled = items.filter(item => item.disabled);
-    assert.ok(disabled.some(item => item.getAttribute('aria-label') === 'Clear selection'), 'with nothing selected, Clear selection is disabled');
-    for (const item of disabled) assertDisabledStyle(item, 'menu item ' + item.getAttribute('aria-label'));
-    const clear = disabled.find(item => item.getAttribute('aria-label') === 'Clear selection');
-    assert.match(clear.title, /nothing is selected/i, 'Clear selection names its reason');
-    for (const item of items.filter(item => !item.disabled)) {
-      assert.notEqual(item.style.borderStyle, 'dashed', 'enabled item ' + item.getAttribute('aria-label') + ' is not dashed');
-      assert.equal(item.style.opacity, '', 'enabled item ' + item.getAttribute('aria-label') + ' carries no alpha');
+    for (const label of ['Paste', 'Clear all nodes', 'Reset positions']) {
+      assert.ok(disabled.some(item => item.getAttribute('aria-label') === label), label + ' has no action here and is disabled');
     }
+    for (const item of disabled) {
+      assert.match(item.style.outline, /dashed/, item.getAttribute('aria-label') + ' is dashed');
+      assert.equal(item.style.opacity, '', item.getAttribute('aria-label') + ' carries no alpha');
+      assert.ok(item.title && item.title !== item.getAttribute('aria-label'), item.getAttribute('aria-label') + ' says why: ' + item.title);
+    }
+    for (const item of items.filter(item => !item.disabled)) {
+      assert.doesNotMatch(item.style.outline || '', /dashed/, 'enabled row ' + item.getAttribute('aria-label') + ' is not dashed');
+      assert.equal(item.style.opacity, '', 'enabled row ' + item.getAttribute('aria-label') + ' carries no alpha');
+    }
+    const snap = items.find(item => item.getAttribute('aria-label') === 'Snap to grid');
+    assert.equal(snap.getAttribute('role'), 'menuitemcheckbox');
+    assert.equal(snap.getAttribute('aria-checked'), 'true', 'Snap to grid is on, as drawn');
+    studio.flush(() => snap.click());
+    assert.equal(studio.doc.querySelector('[role="menu"]') === null, true, 'choosing a row closes the menu');
+    open();
+    menu = studio.doc.querySelector('[role="menu"][aria-label="Canvas actions"]');
+    assert.equal(menu.querySelector('[aria-label="Snap to grid"]').getAttribute('aria-checked'), 'false', 'the toggle holds its new state');
+    studio.flush(() => menu.querySelector('[aria-label="Zoom to 100%"]').click());
+    assert.ok([...studio.doc.querySelectorAll('div')].some(node => node.textContent === '100%' && !node.children.length), 'Zoom to 100% sets the zoom');
+
+    const card = studio.doc.querySelector('.lm-node[data-node-id="work-a"]');
+    studio.flush(() => card.dispatchEvent(new studio.win.MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:200, clientY:140})));
+    const nodeMenu = studio.doc.querySelector('[role="menu"][aria-label="Node actions"]');
+    assert.ok(nodeMenu, 'right-click on a card opens its node menu');
+    const nodeRows = [...nodeMenu.querySelectorAll('button[role="menuitem"]')];
+    assert.deepEqual(nodeRows.map(item => item.getAttribute('aria-label')), ['Select direct neighbours', 'Select connected group',
+      'Select all nodes', 'Clear selection', 'Fit selection', 'Auto-layout selection', 'Refresh canvas'],
+      'the selection, fit and refresh actions the design canvas menu has no row for');
+    assert.equal(nodeRows.find(item => item.getAttribute('aria-label') === 'Clear selection').disabled, false, 'the right-clicked card is selected');
   } finally { studio.close(); }
 });
 
-test('update controls: a pending request and an unavailable restart are dashed and say why, never alpha', async () => {
-  const header = studio => studio.doc.querySelector('section[aria-label="Application release updates"]');
+test('update controls: not in the Workspace header; in Settings > About a pending request and an unavailable restart are dashed and say why', async () => {
+  const header = studio => {
+    const canvas = [...studio.doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === 'Canvas');
+    assert.equal(canvas.parentElement.parentElement.querySelector('section[aria-label="Application release updates"]') === null, true,
+      'the Workspace header draws no update controls (design studio-lm.jsx:1146-1148)');
+    if (!studio.doc.querySelector('section[aria-label="Application release updates"]')) {
+      studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:',', ctrlKey:true, bubbles:true})));
+      const about = [...studio.doc.querySelectorAll('button')].find(button => button.textContent.trim().startsWith('About'));
+      assert.ok(about, 'Settings offers About');
+      studio.flush(() => about.click());
+      // The design's About card keeps the controls behind its own "updates →" row.
+      const more = [...studio.doc.querySelectorAll('[role="button"]')].find(row => row.textContent.trim().startsWith('updates'));
+      if (more) studio.flush(() => more.click());
+    }
+    const section = studio.doc.querySelector('section[aria-label="Application release updates"]');
+    assert.ok(section, 'Settings > About holds the release update controls');
+    return section;
+  };
   const busy = await mountStudio({pending:'check'});
   try {
     const check = header(busy).querySelector('button[aria-label="Check and download"]');
-    assert.ok(check, 'the header update control is drawn');
+    assert.ok(check, 'the About update control is drawn');
     assertDisabledStyle(check, 'Check and download while a request is pending');
     assert.match(check.title, /wait/i, 'the pending control says it is waiting: ' + check.title);
   } finally { busy.close(); }
@@ -241,36 +296,74 @@ test('minimap: the map frames the real nodes of an existing graph, wherever they
   }
 });
 
-test('onboarding: not mounted, and the recorded reason still matches the code that keeps it out', async () => {
-  const studio = await mountStudio();
+test('onboarding: mounted on the first run the launcher measured, from live rows, with every control bound', async () => {
+  const returning = await mountStudio();
   try {
-    for (const artboard of ['FIRST RUN', 'Pick a brain', 'Birth a connector']) {
-      assert.equal(studio.doc.body.textContent.includes(artboard), false, 'the onboarding artboard is not on screen: ' + artboard);
+    assert.equal(returning.doc.querySelector('[data-studio-screen]'), null, 'no onboarding without ARCHHUB_BOOT.first_run');
+    assert.equal(returning.doc.body.textContent.includes('FIRST RUN'), false, 'a saved graph opens straight into the Studio');
+  } finally { returning.close(); }
+  // Rows in the shapes the routes answer: /api/universal/hosts (probe_connectors) and /api/universal/providers (provider_rows).
+  const connectors = [
+    {id:'revit', name:'Revit', drive:'revit.build_walls', state:'connected', detail:'1 session(s)'},
+    {id:'autocad', name:'AutoCAD', drive:'cad.host_lines', state:'absent', detail:'no session listening'},
+    {id:'blender', name:'Blender', drive:'blender.exec', state:'installed', detail:'enable the ArchHub Blender add-on (listens on :9876)'},
+    {id:'notion', name:'Notion', drive:'notion.search', state:'needs-key', detail:'add a Notion integration token'},
+  ];
+  const providers = [
+    {id:'openrouter', name:'OpenRouter', state:'keyed', source:'secrets store', sets:'OPENROUTER_API_KEY'},
+    {id:'cloud', name:'ArchHub cloud', state:'no key', source:'', sets:''},
+    {id:'anthropic', name:'Anthropic', state:'no key', source:'', sets:'ANTHROPIC_API_KEY'},
+    {id:'ollama', name:'Ollama', state:'not running', source:'127.0.0.1:11434', sets:''},
+  ];
+  const writes = [];
+  const rawCanvas = {nodes:[...existingCanvas.nodes, {id:'sketch-b', label:'Sketch Lines', engine:'vision.sketch_lines', x:0, y:0, status:'',
+    params:[{label:'threshold', value:120, relation:'rel-threshold', editable:true}], ports:[]}], wires:existingCanvas.wires};
+  const first = await mountStudio({rawCanvas, prepare:win => {
+    win.ARCHHUB_BOOT = {token:'t', csrf:'c', first_run:true};
+    win.ARCHHUB_LOAD_HOSTS = async () => ({hosts:[], connectors});
+    win.ARCHHUB_EXISTING_WORKSHOP.readProviders = async () => providers;
+    win.ARCHHUB_SET_PROP = async (relation, value) => { writes.push([relation, value]); return {ok:true}; };
+  }});
+  try {
+    const view = () => first.doc.querySelector('[data-studio-screen="onboarding"]');
+    assert.ok(view(), 'ARCHHUB_BOOT.first_run mounts the design onboarding inside the Studio');
+    await first.settle(() => view().textContent.includes('\u00b7 detected: Revit, Blender') && view().textContent.includes('OpenRouter'),
+      'the steps read the host scan and provider rows');
+    const text = view().textContent;
+    for (const design of ['FIRST RUN \u00b7 60 SECONDS \u00b7 4 STEPS', 'Welcome.', 'Pick a brain', 'YOUR KEY (BYO)', 'Birth a connector',
+      'WHY THIS MATTERS', 'Your first skill', '\u00b7 not detected: AutoCAD', 'secrets store', 'Local Ollama', 'NOT RUNNING', 'Use OpenRouter',
+      '\u2713 revit \u00b7 connected', 'threshold', 'drives Sketch Lines']) {
+      assert.ok(text.includes(design), 'the onboarding draws ' + design);
     }
-  } finally { studio.close(); }
-  const suite = read('nodelang/studio/studio-suite.jsx');
-  const start = suite.indexOf('const StudioOnboarding = () => (');
-  const end = suite.indexOf('const OnbStep = ', start);
-  assert.ok(start > 0 && end > start, 'StudioOnboarding is still in studio-suite.jsx');
-  const record = suite.slice(suite.lastIndexOf('ONBOARDING', start), start);
-  assert.match(record, /not mounted/i, 'studio-suite.jsx records, beside the component, that the onboarding is not mounted and why');
-  assert.match(record, /first_boot/, 'the record names the launcher first-run signal');
-  assert.match(record, /ARCHHUB_BOOT/, 'the record names the Studio boot payload that does not carry it');
-  assert.match(record, /no action/i, 'the record names the unbound buttons');
-  // The facts the record states. When one changes, mount the onboarding or rewrite the record.
-  const component = suite.slice(start, end);
-  const buttons = component.match(/<button\b[^>]*>/g) || [];
-  assert.ok(buttons.length >= 3, 'the artboard still draws its buttons');
-  assert.deepEqual(buttons.filter(tag => /onClick/.test(tag)), [], 'an onboarding button gained an action: revisit the record');
+    assert.doesNotMatch(text, /Revit 2025|Blender 4\.0|sk-ant|AIza|Google|Cloud Relay|STUDIO|analyze blender SDK|Sketch to production|12s e2e|roof_pitch|chain re-running|Notion/,
+      'no seeded artboard value, plan name or undrivable service row');
+    const buttons = [...view().querySelectorAll('button')];
+    assert.equal(buttons.length, 3, 'Continue, the model choice and Open Studio');
+    assert.deepEqual(buttons.filter(button => typeof reactProps(button).onClick !== 'function').map(button => button.textContent), [], 'every onboarding button acts');
+    first.flush(() => buttons.find(button => button.textContent === 'Continue').click());
+    assert.ok(view().querySelector('[aria-label="Step 1 done"]'), 'Continue completes step 1 on the rail');
+    assert.ok(view().querySelector('[aria-label="Step 2 current"]'), 'with no model chosen, step 2 is current');
+    const slider = view().querySelector('input[type="range"][aria-label="threshold"]');
+    first.flush(() => slider.dispatchEvent(new first.win.KeyboardEvent('keyup', {bubbles:true, key:'ArrowRight'})));
+    await first.settle(() => writes.length === 1, 'the slider writes its graph relation when the drag ends');
+    assert.deepEqual(writes[0], ['rel-threshold', 120]);
+    const line = [...view().querySelectorAll('[role="button"]')].find(node => node.textContent === '\u00b7 blender \u00b7 installed');
+    first.flush(() => line.click());
+    assert.equal(first.doc.querySelector('[data-studio-screen]').getAttribute('data-studio-screen'), 'connector', 'a host line opens its diagnostic');
+    first.flush(() => first.win.ArchHubStudioScreens.close());
+    first.flush(() => [...view().querySelectorAll('button')].find(button => button.textContent === 'Open Studio').click());
+    assert.equal(first.doc.querySelector('[data-studio-screen]'), null, 'Open Studio returns to the Studio');
+    assert.equal(first.win.sessionStorage.getItem('archhub.onboarding.closed.v1'), '1', 'and it stays closed for this page session');
+  } finally { first.close(); }
+  // The signal is the launcher's saved-graph check, carried by the server's Studio boot payload.
   const launcher = read('launch_archhub_test.py');
   assert.match(launcher, /^first_boot = not _saved_graph_exists\(/m, 'the launcher still computes first_boot');
+  assert.match(launcher, /^server\.studio_first_run = first_boot is True$/m, 'the launcher hands first_boot to the server');
+  assert.ok(launcher.indexOf('server.studio_first_run = first_boot') < launcher.indexOf('view.load(QUrl(server.bootstrap_url))'),
+    'before the window loads the Studio');
   const server = read('nodelang/application_server.py');
   const at = server.indexOf("b'/*__ARCHHUB_BOOT__*/ null'");
   assert.ok(at > 0, 'the server still injects the Studio boot payload');
-  assert.match(server.slice(at, at + 400), /json\.dumps\(\{\s*'token': \(studio_session_token\),\s*'csrf': studio_binding\.csrf_token,\s*\}\)/,
-    'the Studio boot payload still carries only token and csrf');
-  for (const file of ['nodelang/application_server.py', 'nodelang/studio/studio.html', 'nodelang/studio/studio-lm.jsx',
-    'nodelang/studio/studio-existing-workshop.js', 'nodelang/studio/mount.jsx']) {
-    assert.equal(/first_boot|firstBoot|ARCHHUB_FIRST/.test(read(file)), false, file + ' now carries a first-run signal: revisit the record');
-  }
+  assert.match(server.slice(at, at + 600), /'first_run': owner\.studio_first_run is True,/, 'the Studio boot payload carries first_run');
+  assert.match(server, /self\.studio_first_run = False/, 'a server without the launcher never claims a first run');
 });

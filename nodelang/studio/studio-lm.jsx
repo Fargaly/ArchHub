@@ -780,9 +780,7 @@ const IconRail = ({ panel, setPanel, onHome, onSettings, onDocs }) => {
         </RailIcon>
       ))}
       <div style={{ flex:1 }}/>
-      <RailIcon title="Share">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
-      </RailIcon>
+      {/* No Share icon: this build has no share action, and a rail icon without an action is a dead control. */}
       <RailIcon onClick={onDocs} title="Documentation · ⌘/">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 19.5V5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 18.5v1z"/><path d="M8 7h6M8 11h6"/></svg>
       </RailIcon>
@@ -954,7 +952,7 @@ const WorkshopAgentsPanel = ({context, target, onSelect}) => {
     const retry = row.session_link === 'retiring' || outcomes[row.root]?.outcome === 'uncertain';
     setMenu({x, y, maxHeight:Math.max(60, bounds.height - y - 8), opener:event.currentTarget, actions:[{
       icon:'delete', label:retry ? 'Retry Session Link disconnect' : 'Disconnect Session Link channel', action:() => disconnectAgent(row),
-      disabled:!!pending[row.root],
+      disabled:!!pending[row.root], why:'The disconnect request is still in progress',
     }]});
   };
   const [now, setNow] = React.useState(() => Date.now() / 1000);
@@ -3267,6 +3265,23 @@ const StudioHeaderIcon = ({name}) => <svg aria-hidden="true" focusable="false" w
     <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>}
 </svg>;
 
+// Restarting loses composer text that was never sent. The first click arms the restart and names that loss;
+// a second click within 5 s restarts. The status strip notice and the Workspace header both confirm here.
+const useRestartConfirmation = (ready, restart) => {
+  const [confirming, setConfirming] = React.useState(false);
+  React.useEffect(() => {
+    if (!confirming) return undefined;
+    const timer = window.setTimeout(() => setConfirming(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
+  React.useEffect(() => { if (!ready) setConfirming(false); }, [ready]);
+  return [confirming && 'Restart now - unsent text is lost', () => {
+    if (!confirming) { setConfirming(true); return; }
+    setConfirming(false);
+    restart();
+  }];
+};
+
 const ApplicationUpdateControls = ({compact = false}) => {
   const transport = window.ARCHHUB_EXISTING_WORKSHOP;
   const [snapshot, setSnapshot] = React.useState(() => transport?.getSnapshot() || null);
@@ -3280,6 +3295,8 @@ const ApplicationUpdateControls = ({compact = false}) => {
     setSnapshot(transport.getSnapshot());
     return () => { alive.current = false; unsubscribe(); unwatch(); };
   }, [transport]);
+  const [warning, restart] = useRestartConfirmation(snapshot?.applicationUpdate?.state === 'ready' &&
+    !snapshot?.applicationUpdateError && !localError, () => act('reload'));
   if (!transport?.watchApplicationUpdate) return compact ? null :
     <p style={{fontSize:12, color:LM.inkSoft}}>Release updates are unavailable in this Studio connection.</p>;
   const status = snapshot?.applicationUpdate;
@@ -3298,10 +3315,13 @@ const ApplicationUpdateControls = ({compact = false}) => {
         failure.message || 'The update request could not be confirmed.');
     }
   };
-  const buttonStyle = {...smallBtn(), fontSize:compact ? 10.5 : 12, flexShrink:0,
+  // Disabled controls use a dashed border and say why in their title, never alpha (design DECISIONS.md).
+  // The dashed border replaces the whole border shorthand: a borderStyle longhand beside smallBtn's border
+  // would be removed on re-enable and leave the browser's outset button border behind.
+  const waiting = 'Waiting for the current update request to finish';
+  const buttonStyle = disabled => ({...smallBtn(), fontSize:compact ? 10.5 : 12, flexShrink:0,
     ...(compact ? {width:28, height:28, padding:0, display:'grid', placeItems:'center'} : {}),
-    // Pending is drawn with a dashed border, never alpha (design DECISIONS.md, disabled controls).
-    ...(pending ? {borderStyle:'dashed', color:LM.inkSoft} : {}), cursor:pending ? 'default' : 'pointer'};
+    ...(disabled ? {background:'transparent', border:`1px dashed ${LM.line}`, color:LM.inkSoft, cursor:'default'} : {})});
   return <section aria-label="Application release updates" style={compact ? {
     display:'flex', alignItems:'center', gap:6, flexShrink:0, paddingLeft:6,
   } : {marginTop:16, padding:'14px 16px', border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg}}>
@@ -3323,15 +3343,19 @@ const ApplicationUpdateControls = ({compact = false}) => {
         <span style={visuallyHiddenStyle}>{error || label}</span></> : error || [label, status?.detail].filter(Boolean).join('\n')}
     </span>
     {status?.state === 'ready' && !error && <button disabled={pending || !status.restart_supported}
-      onClick={() => act('reload')} title="Install the ready release through the desktop restart"
-      aria-label="Update and reload"
-      style={{...buttonStyle, color:status.restart_supported ? LM.accent : LM.inkMuted,
-        cursor:pending || !status.restart_supported ? 'default' : 'pointer'}}>
+      onClick={compact ? restart : () => act('reload')}
+      title={compact && warning || (pending ? waiting : status.restart_supported ?
+        'Install the ready release through the desktop restart' : 'Desktop restart is unavailable in this session')}
+      aria-label={compact && warning || 'Update and reload'}
+      style={{...(pending || !status.restart_supported ? buttonStyle(true) : {...buttonStyle(false), color:LM.accent}),
+        ...(compact && warning ? {background:LM.accent, border:`1px solid ${LM.accent}`, color:LM.bg} : {})}}>
       {compact ? <StudioHeaderIcon name="reload"/> : 'Update and reload'}</button>}
     {(!active && status?.state !== 'ready' && !error) && <button disabled={pending || !status}
-      onClick={() => act('check')} title="Check and download" aria-label="Check and download" style={buttonStyle}>
+      onClick={() => act('check')} title={pending ? waiting : !status ? 'Reading release status\u2026' : 'Check and download'}
+      aria-label="Check and download" style={buttonStyle(pending || !status)}>
       {compact ? <StudioHeaderIcon name="download"/> : 'Check and download'}</button>}
-    {error && <button disabled={pending} onClick={() => act('read')} title="Read status" aria-label="Read status" style={buttonStyle}>
+    {error && <button disabled={pending} onClick={() => act('read')} title={pending ? waiting : 'Read status'}
+      aria-label="Read status" style={buttonStyle(pending)}>
       {compact ? <StudioHeaderIcon name="reload"/> : 'Read status'}</button>}
     {status?.state === 'ready' && !status.restart_supported && <span style={{fontSize:11, color:LM.inkSoft}}>
       {compact ? 'Desktop restart unavailable' : 'Desktop restart is unavailable in this session.'}
@@ -3753,6 +3777,22 @@ const ModelStrip = ({ model, setPickerOpen, compact }) => {
 const SOCKET_TOP = 42;
 const SOCKET_STEP = 19;
 const SOCKET_R = 5;
+// Card type is a budget (design DECISIONS.md, "Card type is a budget" and "The label rule"): a line of card
+// text never asks for more room than the card has. A long name is shortened with an ellipsis, never wrapped
+// over the ports or shrunk, and its full text stays as the tooltip.
+const CARD_ONE_LINE = {whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'};
+// Socket labels are capped to the real gap between sockets, not a fixed ceiling (design DECISIONS.md). A label
+// starts after its socket and the gap beside it and may run across the card up to what the opposite column holds
+// on the same row: with no socket there, the far edge; with a socket, the gap left by the opposite label, which
+// gives up at most half. A mono character advances 0.6em plus the 0.04em letter spacing.
+const SOCKET_LABEL = {size:8.5, pad:4, gap:6, advance:0.64};
+const socketLabelWidth = label => label ? String(label).length * SOCKET_LABEL.size * SOCKET_LABEL.advance + SOCKET_LABEL.pad * 2 : 0;
+const socketLabelCap = (inner, opposite) => {
+  const lead = SOCKET_R + SOCKET_LABEL.gap;
+  if (!opposite) return Math.floor(inner - lead);
+  const gap = inner - 2 * lead;
+  return Math.floor(gap - Math.min(socketLabelWidth(opposite.label), gap / 2));
+};
 
 // One number places a socket and its wire end: `top` is the centre of port row 0,
 // measured from the card's outer top edge. Port rows lay out in normal flow below
@@ -4255,24 +4295,34 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   };
   const allIds = allNodes.map(node => node.id);
   const menuHasSeed = !!ctxMenu?.nodeId || selected.size > 0 || allIds.includes(focusId);
+  // Each action names why it is disabled; CanvasMenu shows that reason as the item title.
+  const busyWhy = layoutBusy || authorityState?.pending ? 'Wait for the canvas to finish saving' : 'Refresh the canvas first';
+  const noNodesWhy = 'This canvas has no nodes', noSelectionWhy = 'Nothing is selected', noSeedWhy = 'Select or right-click a node first';
+  const layoutWhy = fallback => blocked ? busyWhy : !canSaveLayout ? 'This connection cannot save node positions' : fallback;
   const menuActions = [
-    {icon:'add', label:'Add node', action:() => setLibraryOpen(true), disabled:blocked},
-    {icon:'near', label:'Select direct neighbours', action:() => selectConnected(false), disabled:!menuHasSeed},
-    {icon:'connected', label:'Select connected group', action:() => selectConnected(true), disabled:!menuHasSeed},
-    {icon:'select', label:'Select all nodes', action:() => setSelectedIds(allIds), disabled:!allIds.length},
-    {icon:'clear', label:'Clear selection', action:() => setSelectedIds([]), disabled:!selected.size},
+    {icon:'add', label:'Add node', action:() => setLibraryOpen(true), disabled:blocked, why:busyWhy},
+    {icon:'near', label:'Select direct neighbours', action:() => selectConnected(false), disabled:!menuHasSeed, why:noSeedWhy},
+    {icon:'connected', label:'Select connected group', action:() => selectConnected(true), disabled:!menuHasSeed, why:noSeedWhy},
+    {icon:'select', label:'Select all nodes', action:() => setSelectedIds(allIds), disabled:!allIds.length, why:noNodesWhy},
+    {icon:'clear', label:'Clear selection', action:() => setSelectedIds([]), disabled:!selected.size, why:noSelectionWhy},
     {separator:true},
-    {icon:'fit', label:'Fit selection', action:() => fitIds([...selected]), disabled:!selected.size},
-    {icon:'fit', label:'Fit all nodes', action:() => fitIds(allIds), disabled:!allIds.length},
-    {icon:'arrange', label:'Arrange selection', action:() => arrangeIds([...selected]), disabled:blocked || !canSaveLayout || !selected.size},
-    {icon:'arrange', label:'Arrange all nodes', action:() => arrangeIds(allIds), disabled:blocked || !canSaveLayout || !allIds.length},
-    {icon:'undo', label:'Undo last layout', action:undoPositions, disabled:blocked || !undoAvailable},
+    {icon:'fit', label:'Fit selection', action:() => fitIds([...selected]), disabled:!selected.size, why:noSelectionWhy},
+    {icon:'fit', label:'Fit all nodes', action:() => fitIds(allIds), disabled:!allIds.length, why:noNodesWhy},
+    {icon:'arrange', label:'Arrange selection', action:() => arrangeIds([...selected]), disabled:blocked || !canSaveLayout || !selected.size,
+      why:layoutWhy(noSelectionWhy)},
+    {icon:'arrange', label:'Arrange all nodes', action:() => arrangeIds(allIds), disabled:blocked || !canSaveLayout || !allIds.length,
+      why:layoutWhy(noNodesWhy)},
+    {icon:'undo', label:'Undo last layout', action:undoPositions, disabled:blocked || !undoAvailable,
+      why:blocked ? busyWhy : 'No layout change to undo'},
     {separator:true},
     ...(normal && focusWireIdx >= 0 ? [{icon:'delete', label:'Delete selected connection', danger:true,
-      action:() => normalConnectionAction('disconnect'), disabled:blocked || graph.wires[focusWireIdx]?.nary !== false}] : []),
+      action:() => normalConnectionAction('disconnect'), disabled:blocked || graph.wires[focusWireIdx]?.nary !== false,
+      why:blocked ? busyWhy : 'This connection cannot be deleted from the canvas'}] : []),
     ...(authority ? [{icon:'run', label:'Run current scope', action:() => window.ARCHHUB_RUN().catch(error =>
-      { if (scopeStillCurrent()) setLayoutError(error.message || 'The run could not be confirmed.'); }), disabled:blocked || !window.ARCHHUB_RUN}] : []),
-    {icon:'refresh', label:'Refresh canvas', action:refreshCanvas, disabled:layoutBusy || !!authorityState?.pending || (!authority && !normal)},
+      { if (scopeStillCurrent()) setLayoutError(error.message || 'The run could not be confirmed.'); }), disabled:blocked || !window.ARCHHUB_RUN,
+      why:blocked ? busyWhy : 'Run is not available in this connection'}] : []),
+    {icon:'refresh', label:'Refresh canvas', action:refreshCanvas, disabled:layoutBusy || !!authorityState?.pending || (!authority && !normal),
+      why:!authority && !normal ? 'Refresh is not available in this connection' : 'Wait for the canvas to finish saving'},
   ];
 
   return (
@@ -4487,13 +4537,16 @@ const CanvasMenu = ({ x, y, maxHeight, opener, actions, onClose }) => {
       {actions.map((it, i) => it.separator ? (
         <div key={i} style={{ height:1, background:LM.lineSoft, margin:'4px 4px' }}/>
       ) : (
-        <button key={i} role="menuitem" disabled={!!it.disabled} title={it.label} aria-label={it.label}
+        <button key={i} role="menuitem" disabled={!!it.disabled} aria-label={it.label}
+          title={it.disabled ? it.why || it.label + ' is not available right now' : it.label}
           onClick={() => { if (!it.disabled && typeof it.action === 'function') { dismiss(); it.action(); } }} style={{
-          width:'100%', display:'flex', alignItems:'center', gap:10, padding:'6px 10px',
-          background:'transparent', border:0, borderRadius:4, cursor:it.disabled ? 'default' : 'pointer',
-          color:it.disabled ? LM.inkMuted : it.danger ? LM.err : LM.ink, fontFamily:LM.sans, fontSize:12.5, textAlign:'left',
+          width:'100%', display:'flex', alignItems:'center', gap:10, padding:'5px 9px',
+          // Disabled actions use a dashed border and say why in the title, never alpha (design DECISIONS.md).
+          background:'transparent', border:`1px ${it.disabled ? 'dashed' : 'solid'} ${it.disabled ? LM.line : 'transparent'}`,
+          borderRadius:4, cursor:it.disabled ? 'default' : 'pointer',
+          color:it.disabled ? LM.inkSoft : it.danger ? LM.err : LM.ink, fontFamily:LM.sans, fontSize:12.5, textAlign:'left',
         }}
-        onMouseEnter={e => e.currentTarget.style.background = LM.bgHover}
+        onMouseEnter={e => { if (!it.disabled) e.currentTarget.style.background = LM.bgHover; }}
         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
           <span style={{ width:14, display:'inline-flex', justifyContent:'center', flexShrink:0,
             color:it.danger && !it.disabled ? LM.err : LM.inkMuted }}><CanvasActionIcon name={it.icon}/></span>
@@ -4575,16 +4628,17 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
         )}
       </div>
 
-      {/* Title and summary in normal flow: a wrapped title takes its real height */}
+      {/* Title and summary in normal flow, one line each within the card budget; the full text is the tooltip */}
       <div ref={headRef} style={{ padding:'9px 12px 0' }}>
-        <div style={{ fontSize:13, fontWeight:500, color:LM.ink, marginBottom:2, lineHeight:1.2, overflowWrap:'anywhere' }}>{n.title}</div>
-        {n.sub && <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', overflowWrap:'anywhere' }}>{n.sub}</div>}
+        <div title={n.title} style={{ fontSize:13, fontWeight:500, color:LM.ink, marginBottom:2, lineHeight:1.2, ...CARD_ONE_LINE }}>{n.title}</div>
+        {n.sub && <div title={n.sub} style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, letterSpacing:'0.04em', ...CARD_ONE_LINE }}>{n.sub}</div>}
       </div>
 
-      {/* Sockets: one row per port index below the title, so no title line covers a port */}
+      {/* Sockets: one row per port index below the title, so no title line covers a port. Each label is capped to
+          its row's real gap: the card width inside its 1px side borders less what the opposite column holds. */}
       <div ref={portBand} style={{ position:'relative', height:portRows * SOCKET_STEP, marginTop:portRows ? 6 : 0 }}>
-        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
-        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
+        {n.ins?.map((s, i) => <Socket key={'in-'+s.id} side="in" i={i} t={s.t} label={s.label} cap={socketLabelCap(w - 2, n.outs?.[i])} onUse={s.connectable && onSocket ? () => onSocket(s, 'in') : undefined}/>)}
+        {n.outs?.map((s, i) => <Socket key={'out-'+s.id} side="out" i={i} t={s.t} label={s.label} cap={socketLabelCap(w - 2, n.ins?.[i])} onUse={s.connectable && onSocket ? () => onSocket(s, 'out') : undefined}/>)}
       </div>
 
       {/* Body */}
@@ -4609,26 +4663,29 @@ const NodeStateDot = ({ s }) => {
   );
 };
 
-const Socket = ({ side, i, t, label, onUse }) => {
+const Socket = ({ side, i, t, label, cap, onUse }) => {
   const col = WIRE[t] || LM.inkSoft;
+  // A label longer than its row's real gap (`cap`) is shortened, never shrunk. Its full name is the tooltip: the
+  // label takes hover even on a port that cannot be connected, while that socket stays inert.
   return (
     <div style={{
       position:'absolute', top: socketY(i, SOCKET_STEP / 2) - SOCKET_R,
       [side === 'in' ? 'left' : 'right']: -SOCKET_R,
-      display:'flex', alignItems:'center', gap:6,
+      display:'flex', alignItems:'center', gap:SOCKET_LABEL.gap,
       flexDirection: side === 'in' ? 'row' : 'row-reverse',
       pointerEvents:onUse ? 'auto' : 'none',
     }}>
       <button type="button" aria-label={(side === 'out' ? 'Connect output ' : 'Connect input ') + label}
         disabled={!onUse} onMouseDown={e => e.stopPropagation()}
-        onClick={e => { e.stopPropagation(); if (onUse) onUse(); }} style={{padding:0, cursor:onUse ? 'crosshair' : 'default',
+        onClick={e => { e.stopPropagation(); if (onUse) onUse(); }} style={{padding:0, flexShrink:0, cursor:onUse ? 'crosshair' : 'default',
         width: SOCKET_R*2, height: SOCKET_R*2, borderRadius:'50%',
         background: side === 'out' ? col : LM.bgPanel,
         border:`1.5px solid ${col}`, boxShadow:`0 0 0 2px ${LM.bgCanvas}`,
       }}/>
-      <span style={{
-        fontFamily:LM.mono, fontSize:8.5, color:LM.inkMuted, letterSpacing:'0.04em',
-        whiteSpace:'nowrap', padding:'0 4px',
+      <span title={label} style={{
+        fontFamily:LM.mono, fontSize:SOCKET_LABEL.size, color:LM.inkMuted, letterSpacing:'0.04em',
+        padding:`0 ${SOCKET_LABEL.pad}px`, maxWidth:Math.max(0, cap), ...CARD_ONE_LINE,
+        pointerEvents: label ? 'auto' : 'none',
         opacity: label ? 0.85 : 0,
       }}>{label}</span>
     </div>
@@ -5196,17 +5253,30 @@ const FloatingComposer = ({ setLibraryOpen, model, node }) => {
 };
 
 // ─── mini-map (TOP-RIGHT) ───
+// The map frames the real nodes: their bounds plus a margin. The old fixed 2400 x 1400 box drew
+// larger graphs, and nodes left of or above the origin, off the map. No nodes: nothing to frame.
+const minimapViewBox = boxes => {
+  if (!boxes.length) return '0 0 2400 1400';
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  for (const box of boxes) {
+    left = Math.min(left, box.x); top = Math.min(top, box.y);
+    right = Math.max(right, box.x + box.w); bottom = Math.max(bottom, box.y + box.h);
+  }
+  const margin = Math.max(right - left, bottom - top) * 0.04 + 24;
+  return [left - margin, top - margin, right - left + 2 * margin, bottom - top + 2 * margin].join(' ');
+};
 const MiniMap = ({ pan, zoom, positions, allNodes }) => {
   const nodes = allNodes || LM_GRAPH.nodes;
+  const boxes = nodes.map(n => ({ n, p: positions[n.id] || { x: n.x, y: n.y } }))
+    .filter(({ n, p }) => [p.x, p.y, n.w, n.h].every(Number.isFinite));
   return (
     <div data-no-pan style={{
       position:'absolute', right:14, top:14, width:170, height:96,
       background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md,
       overflow:'hidden', boxShadow:'0 4px 12px rgba(0,0,0,.3)',
     }}>
-      <svg viewBox="0 0 2400 1400" style={{ width:'100%', height:'100%' }}>
-        {nodes.map(n => {
-          const p = positions[n.id] || { x: n.x, y: n.y };
+      <svg viewBox={minimapViewBox(boxes.map(({ n, p }) => ({ x: p.x, y: p.y, w: n.w, h: n.h })))} style={{ width:'100%', height:'100%' }}>
+        {boxes.map(({ n, p }) => {
           const cat = studioCategory(n.cat);
           return (
             <rect key={n.id} x={p.x} y={p.y} width={n.w} height={n.h}
@@ -7042,6 +7112,69 @@ POST /v1/brain/promote         → { id, to: "practice" }`}</DCode>
   </div>
 );
 
+// Application update notice. The desktop check stages a verified release in the background and the
+// launcher pushes it here. After any update, a release restart or a local install, the running build is
+// confirmed once until dismissed. The notice never blocks work and restarts through the same reload
+// action as Settings > About and the tray. Nothing renders while ArchHub is up to date.
+const applicationUpdateNoticeState = transport => {
+  const snapshot = transport?.getSnapshot?.() || null, status = snapshot?.applicationUpdate;
+  return JSON.stringify([status?.state || '', status?.available_build || '', status?.restart_supported === true,
+    status?.updated_from || '', status?.updated_to || '', snapshot?.applicationUpdatePending || '',
+    snapshot?.applicationUpdateError || '']);
+};
+const ApplicationUpdateNotice = () => {
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  // A string snapshot: unrelated Workshop publishes leave the strip unrendered.
+  const [held, setHeld] = React.useState(() => applicationUpdateNoticeState(transport));
+  const [refusal, setRefusal] = React.useState('');
+  React.useEffect(() => {
+    if (!transport?.watchApplicationUpdate) return undefined;
+    const unsubscribe = transport.subscribe(() => setHeld(applicationUpdateNoticeState(transport)));
+    const unwatch = transport.watchApplicationUpdate();
+    setHeld(applicationUpdateNoticeState(transport));
+    return () => { unsubscribe(); unwatch(); };
+  }, [transport]);
+  const [state, build, restartSupported, updatedFrom, updatedTo, pending, error] = JSON.parse(held);
+  const message = error || refusal;
+  const [warning, restart] = useRestartConfirmation(state === 'ready' && !message, () => act('reload'));
+  const offered = !!build && ['ready', 'restarting'].includes(state);
+  // A first read that failed or never answered stays visible with Read status, so its confirmation is not lost.
+  if (!offered && !updatedTo && !(error && !state)) return null;
+  const act = async action => {
+    setRefusal('');
+    try {
+      if (action === 'read') await transport.refreshApplicationUpdate();
+      else await transport.applicationUpdateAction(action);
+    } catch (failure) {
+      if (!transport.getSnapshot()?.applicationUpdateError) setRefusal(failure.message || 'The update request could not be confirmed.');
+    }
+  };
+  const label = !offered ? 'Updated to build ' + updatedTo :
+    state === 'restarting' ? 'Restarting into build ' + build : 'Update ready \u00b7 build ' + build;
+  const title = message || (offered ? label :
+    updatedFrom ? 'Updated from build ' + updatedFrom + ' to build ' + updatedTo : label);
+  const action = {height:16, padding:'0 7px', borderRadius:LM.rad.xs, border:`1px solid ${LM.accent}`,
+    background:LM.accentDim, color:LM.accent, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
+    lineHeight:'14px', flexShrink:0, cursor:pending ? 'default' : 'pointer', opacity:pending ? .6 : 1};
+  return <div role={message ? 'alert' : 'status'} aria-label="Application update" title={title}
+    style={{display:'flex', alignItems:'center', gap:6, minWidth:0, padding:'0 4px', whiteSpace:'nowrap',
+      fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em', color:message ? LM.err : LM.accent}}>
+    <span aria-hidden="true">{'\u25cf'}</span>
+    <span style={{minWidth:0, overflow:'hidden', textOverflow:'ellipsis'}}>{message || label}</span>
+    {state === 'ready' && offered && !message && restartSupported && <button type="button" disabled={!!pending}
+      onClick={restart} title={warning ? 'Click again to restart into build ' + build : 'Restart into build ' + build}
+      style={warning ? {...action, background:LM.accent, color:LM.bg} : action}>
+      {warning || 'Restart to update'}</button>}
+    {state === 'ready' && offered && !message && !restartSupported && <span style={{color:LM.inkSoft}}>
+      restart ArchHub to install</span>}
+    {!offered && !message && <button type="button" disabled={!!pending} onClick={() => act('acknowledge')}
+      title="Hide this confirmation" style={action}>Dismiss</button>}
+    {message && (state === 'ready' || !offered) && <button type="button" disabled={!!pending}
+      onClick={() => act('read')} style={action}>Read status</button>}
+    <span aria-hidden="true" style={{color:LM.inkDim, padding:'0 2px'}}>{'\u00b7'}</span>
+  </div>;
+};
+
 // ──────────────────────── SERVER STRIP ────────────────────────
 const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, account }) => {
   const live = (window.ARCHHUB_LIVE?.connectors || []).filter(c => c.drive && (c.state === 'connected' || c.state === 'listening')).length;
@@ -7054,14 +7187,15 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, account }) 
           background:'transparent', border:0, padding:'0 4px',
           cursor: onClick ? 'pointer' : 'default',
           color: h && onClick ? LM.ink : (accent || LM.inkMuted),
-          fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em',
+          fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.05em', whiteSpace:'nowrap',
           transition:'color .12s',
         }}>{children}</button>
     );
   };
   return (
     <div style={{
-      gridColumn:'1 / -1', gridRow:'2',
+      // minWidth 0: at the narrowest window the update notice ellipsizes instead of widening the shell grid.
+      gridColumn:'1 / -1', gridRow:'2', minWidth:0,
       background:LM.bgPanel, borderTop:`1px solid ${LM.line}`,
       padding:'0 10px', display:'flex', alignItems:'center', gap:LM.sp.xs,
     }}>
@@ -7072,13 +7206,13 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, account }) 
         <>
           <span style={{ color:LM.inkDim, padding:'0 2px' }}>·</span>
           <StripItem>{session.file}</StripItem>
-          {/* Draw or omit: the model slot names a picked model, never the picker's placeholder. */}
-          {modelRoute(model) ? <>
-          <span style={{ color:LM.inkDim, padding:'0 2px' }}>{'\u00b7'}</span>
-          <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
-            <span style={{ color:LM.inkSoft }}>{model.name.toLowerCase().replace(/\s+/g,'-')}</span>
-          </StripItem>
-          </> : null}
+          {/* The model slot names the picked model; with nothing picked it is not drawn, never the placeholder's slug. */}
+          {modelRoute(model) && <>
+            <span style={{ color:LM.inkDim, padding:'0 2px' }}>{'\u00b7'}</span>
+            <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
+              <span style={{ color:LM.inkSoft }}>{model.name || modelRoute(model)}</span>
+            </StripItem>
+          </>}
         </>
       ) : (
         <>
@@ -7087,6 +7221,7 @@ const ServerStrip = ({ session, model, setSettingsOpen, setDocsOpen, account }) 
         </>
       )}
       <div style={{ flex:1 }}/>
+      <ApplicationUpdateNotice/>
       {/* the signed-in account, or the way in: Settings opens on Account */}
       <StripItem onClick={() => setSettingsOpen && setSettingsOpen(true)}>
         {account && account.signedIn && account.email

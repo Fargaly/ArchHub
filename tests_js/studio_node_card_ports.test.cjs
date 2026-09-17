@@ -1,4 +1,5 @@
-/* Canvas node cards: a title that wraps pushes the port rows down, and every wire ends on the socket that is drawn. */
+/* Canvas node cards: port rows sit below the title block, every wire ends on the socket that is drawn, and the card keeps
+   its type budget: one-line title and summary, socket labels capped to their row's real gap with 0 overlaps. */
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -147,5 +148,134 @@ test('each wire ends on the drawn socket centre, and moves with the ports when t
     assert.equal(after.y2, drawnSocketCentre(doc, 'sink', socket(doc, 'sink', 'Connect input b')),
       'the wire enters the drawn input socket');
     assert.deepEqual(after, {y1:60 + CARD_BORDER_TOP + 108 + STEP / 2, y2:300 + CARD_BORDER_TOP + 52 + STEP / 2 + STEP});
+  } finally { await view.close(); }
+});
+// Design DECISIONS.md "Card type is a budget" and "The label rule": nothing on a card asks for more room than the
+// card has. A long name is shortened with an ellipsis and keeps its full text as a tooltip, never wrapped or shrunk.
+const oneLine = (element, what) => {
+  assert.equal(element.style.whiteSpace, 'nowrap', what + ' stays on one line');
+  assert.equal(element.style.overflow, 'hidden', what + ' is clipped to its box');
+  assert.equal(element.style.textOverflow, 'ellipsis', what + ' is shortened with an ellipsis');
+};
+
+// A Governed Work card (cell_domain_catalog.py): twelve target ports, a title that needs two lines at the card
+// width, two evidence outputs sharing rows 0 and 1, and a policy port the server marks connectable:false.
+const targets = ['dependencies', 'description', 'external-key', 'inputs', 'outputs', 'plan', 'priority',
+  'required-capabilities', 'requirements', 'scope', 'title', 'applicable-policy'];
+const governed = {id:'governed', cat:'logic', live:true, x:40, y:420, w:210, h:282,
+  title:'Governed Work: card budget for the node canvas', sub:'Graph node', params:[],
+  ins:targets.map(name => ({id:'in-' + name, label:name, t:'any', connectable:name !== 'applicable-policy'})),
+  outs:['artifact-proof', 'independent-court-receipt'].map(name => ({id:'out-' + name, label:name, t:'any', connectable:true}))};
+const cards = [...nodes, governed];
+
+test('title and summary take one line each; the full text stays as the tooltip', async () => {
+  const view = await mount({work:92, sink:52, governed:92});
+  try {
+    const doc = await view.draw(cards);
+    for (const node of cards) {
+      const rows = [...card(doc, node.id).querySelectorAll('div')];
+      const title = rows.find(row => row.textContent === node.title && !row.children.length);
+      const sub = rows.find(row => row.textContent === node.sub && !row.children.length);
+      assert.ok(title && sub, 'the card draws its title and summary: ' + node.id);
+      oneLine(title, 'the title of ' + node.id);
+      oneLine(sub, 'the summary of ' + node.id);
+      assert.equal(title.getAttribute('title'), node.title, 'the full title is the tooltip: ' + node.id);
+      assert.equal(sub.getAttribute('title'), node.sub, 'the full summary is the tooltip: ' + node.id);
+    }
+  } finally { await view.close(); }
+});
+
+// The layout arithmetic a browser does for each card, from the styles the card draws: a mono character advances
+// 0.6em plus its letter spacing, an Inter character about 0.55em; a one-line box is clipped to its max width.
+const px = value => parseFloat(value) || 0;
+const em = (value, size) => String(value || '').endsWith('em') ? px(value) * size : px(value);
+const padX = element => { const parts = String(element.style.padding).split(' '); return px(parts[1] ?? parts[0]); };
+const monoWidth = element => {
+  const size = px(element.style.fontSize);
+  return element.textContent.length * (0.6 * size + em(element.style.letterSpacing, size)) + 2 * padX(element);
+};
+const hit = (a, b) => a.left < b.right - 0.01 && b.left < a.right - 0.01 && a.top < b.bottom - 0.01 && b.top < a.bottom - 0.01;
+const clipped = element => element.style.whiteSpace === 'nowrap' && element.style.overflow === 'hidden';
+const HEADER = 7 + 14 + 7 + 1; // title bar: top padding, 14px icon row, bottom padding, hairline
+
+function cardLayout(doc, node) {
+  const element = card(doc, node.id);
+  const inner = px(element.style.width) - px(element.style.borderLeftWidth) - px(element.style.borderRightWidth);
+  const buttons = [...element.querySelectorAll('button[aria-label^="Connect "]')];
+  const band = buttons[0].parentElement.parentElement;
+  const head = band.previousElementSibling;
+  const [title, sub] = [...head.children];
+  const [padTop, padSide] = String(head.style.padding).split(' ').map(px);
+  const content = inner - 2 * padSide;
+  const titleSize = px(title.style.fontSize), titleNatural = title.textContent.length * 0.55 * titleSize;
+  const titleLines = clipped(title) ? 1 : Math.ceil(titleNatural / content);
+  let y = HEADER + padTop;
+  const texts = [{name:'title', left:padSide, right:padSide + Math.min(titleNatural, content), top:y,
+    bottom:y += titleLines * titleSize * px(title.style.lineHeight)}];
+  y += px(title.style.marginBottom);
+  texts.push({name:'sub', left:padSide, right:padSide + Math.min(monoWidth(sub), content), top:y, bottom:y += px(sub.style.fontSize) * 1.2});
+  const bandTop = y + px(band.style.marginTop);
+  const labels = buttons.map(button => {
+    const holder = button.parentElement, label = button.nextElementSibling;
+    const side = button.getAttribute('aria-label').startsWith('Connect input ') ? 'in' : 'out';
+    const row = Math.round((px(holder.style.top) + RADIUS - STEP / 2) / STEP);
+    const edge = px(side === 'in' ? holder.style.left : holder.style.right);
+    const lead = edge + px(button.style.width) + px(holder.style.gap);
+    const natural = monoWidth(label), cap = label.style.maxWidth ? px(label.style.maxWidth) : Infinity;
+    const used = clipped(label) ? Math.min(natural, cap) : natural;
+    const centre = bandTop + row * STEP + STEP / 2, half = px(label.style.fontSize) * 0.6;
+    const span = (from, width) => side === 'in' ? {left:from, right:from + width} : {left:inner - from - width, right:inner - from};
+    return {name:button.getAttribute('aria-label'), port:button.getAttribute('aria-label').replace(/^Connect (input|output) /, ''),
+      side, row, lead, button, holder, label, natural, used,
+      box:{...span(lead, used), top:centre - half, bottom:centre + half},
+      full:{...span(lead, natural), top:centre - half, bottom:centre + half},
+      socket:{...span(edge, px(button.style.width)), top:centre - RADIUS, bottom:centre + RADIUS}};
+  });
+  return {inner, titleNatural, content, texts, labels};
+}
+
+test('layout arithmetic: a twelve-port card with a two-line title draws every row of labels with 0 overlaps', async () => {
+  const view = await mount({work:92, sink:52, governed:92});
+  try {
+    const doc = await view.draw(cards);
+    const {titleNatural, content, labels:ports} = cardLayout(doc, governed);
+    assert.equal(Math.ceil(titleNatural / content), 2, 'the court card has a title that needs two lines at its width');
+    assert.equal(ports.filter(row => row.side === 'in').length, 12, 'the court card has twelve target ports');
+    // 0 overlaps: no label meets the title or summary, a label or socket of the other column, or the card edge.
+    const overlaps = [];
+    for (const node of cards) {
+      const {inner, texts, labels} = cardLayout(doc, node);
+      for (const a of labels) {
+        for (const text of texts) if (hit(a.box, text)) overlaps.push(node.id + ': ' + a.name + ' x ' + text.name);
+        if (a.box.left < -0.01 || a.box.right > inner + 0.01) overlaps.push(node.id + ': ' + a.name + ' x card edge');
+        for (const b of labels) {
+          if (b.side === a.side) continue;
+          if (a.side === 'in' && hit(a.box, b.box)) overlaps.push(node.id + ': ' + a.name + ' x ' + b.name + ' (' + a.used.toFixed(1) + '+' + b.used.toFixed(1) + ' in ' + inner + ')');
+          if (hit(a.box, b.socket)) overlaps.push(node.id + ': ' + a.name + ' x socket of ' + b.name);
+        }
+      }
+    }
+    assert.deepEqual(overlaps, [], 'overlapping boxes in the card layout');
+    for (const node of cards) {
+      const {inner, labels} = cardLayout(doc, node);
+      for (const a of labels) {
+        // Capped to the real gap, not a fixed ceiling: a label is shortened only where its full width would meet
+        // something, and on a shared row it keeps at least half of the gap between the two sockets.
+        const b = labels.find(other => other.side !== a.side && other.row === a.row);
+        if (a.used < a.natural - 0.01) {
+          const meets = a.full.left < -0.01 || a.full.right > inner + 0.01 || Boolean(b && (hit(a.full, b.box) || hit(a.full, b.socket)));
+          assert.ok(meets, node.id + ': ' + a.name + ' is shortened to ' + a.used.toFixed(1) + ' of ' + a.natural.toFixed(1) + ' although its row has room');
+          if (b) assert.ok(a.used >= Math.min(a.natural, (inner - a.lead - b.lead) / 2) - 1, node.id + ': ' + a.name + ' keeps half its row gap');
+        }
+        oneLine(a.label, node.id + ' label ' + a.port);
+        assert.equal(a.button.style.flexShrink, '0', 'the socket never shrinks for a long label: ' + a.port);
+        // The full name is reachable on hover even where the port cannot be connected.
+        assert.equal(a.label.getAttribute('title'), a.port, 'a shortened label keeps its full name as the tooltip: ' + a.port);
+        assert.equal(a.label.style.pointerEvents, 'auto', 'the label takes hover for its tooltip: ' + a.port);
+      }
+    }
+    const policy = cardLayout(doc, governed).labels.find(row => row.port === 'applicable-policy');
+    assert.equal(policy.holder.style.pointerEvents, 'none', 'the non-connectable port stays inert');
+    assert.equal(policy.button.disabled, true, 'the non-connectable socket cannot be used');
   } finally { await view.close(); }
 });

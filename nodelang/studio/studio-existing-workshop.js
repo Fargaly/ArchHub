@@ -18,7 +18,7 @@
     let conversationCreation = null, conversationWrite = null;
     const catalogReads = new Map();
     let applicationUpdate = null, applicationUpdateError = '', applicationUpdatePending = '';
-    let updateRead = null, updateWrite = null, updateEpoch = 0, updateWatchers = 0, updateTimer = null;
+    let updateRead = null, updateWrite = null, updateEpoch = 0, updateWatchers = 0, updateTimer = null, updateReads = 0;
     let topologyCanvas = null, topologyGraph = null, topologyError = '', topologyPending = false;
     let topologyRead = null, topologyWrite = null, topologyRequiresRefresh = false;
     let providerRead = null, providerSave = null;
@@ -225,11 +225,13 @@
           !['idle', 'checking', 'downloading', 'ready', 'restarting', 'failed'].includes(result.state) ||
           (result.available_build != null && (!text(result.available_build) || result.available_build.length > 256)) ||
           (result.detail != null && (typeof result.detail !== 'string' || result.detail.length > 4096)) ||
-          typeof result.restart_supported !== 'boolean' || (result.state === 'ready' && !text(result.available_build))) {
+          typeof result.restart_supported !== 'boolean' || (result.state === 'ready' && !text(result.available_build)) ||
+          [result.updated_from, result.updated_to].some(build => build != null && (!text(build) || build.length > 256))) {
         fail('Application update status could not be verified.');
       }
       applicationUpdate = {ok:true, current_build:result.current_build, state:result.state,
-        available_build:result.available_build || null, detail:result.detail || '', restart_supported:result.restart_supported};
+        available_build:result.available_build || null, detail:result.detail || '', restart_supported:result.restart_supported,
+        updated_from:result.updated_from || null, updated_to:result.updated_to || null};
       applicationUpdateError = ''; publish(); return applicationUpdate;
     };
     const scheduleUpdateRead = () => {
@@ -1027,11 +1029,22 @@
       async refreshApplicationUpdate() {
         if (updateWrite) return updateWrite.promise;
         if (updateRead?.epoch === updateEpoch) return updateRead.promise;
-        const stamp = updateEpoch;
+        const stamp = updateEpoch, count = updateReads += 1;
         applicationUpdatePending = 'read'; publish();
+        let timeout = null, abandoned = false;
+        const reading = Promise.resolve().then(() => get('/api/universal/application-update'));
+        // An answer that arrives after the read was abandoned still applies while no newer read or update
+        // request has started, so a slow first read never loses the one-time update confirmation.
+        reading.then(result => {
+          if (!abandoned || stamp !== updateEpoch || count !== updateReads || updateWrite) return;
+          acceptUpdate(result); scheduleUpdateRead();
+        }).catch(() => {});
         const operation = (async () => {
           try {
-            const result = await Promise.resolve().then(() => get('/api/universal/application-update'));
+            // A read that never answers must not hold back the next one, such as the desktop push.
+            const result = await Promise.race([reading,
+              new Promise((_, reject) => { timeout = global.setTimeout?.(() => { abandoned = true; reject(new Error(
+                'Update status did not answer within 15 seconds. Use Read status to reconnect.')); }, 15000); })]);
             return stamp === updateEpoch ? acceptUpdate(result) : applicationUpdate;
           } catch (error) {
             if (stamp === updateEpoch) {
@@ -1040,6 +1053,7 @@
             }
             throw error;
           } finally {
+            if (timeout != null) global.clearTimeout(timeout);
             if (stamp === updateEpoch) {
               updateRead = null; applicationUpdatePending = ''; publish(); scheduleUpdateRead();
             }
@@ -1049,7 +1063,7 @@
         return operation;
       },
       async applicationUpdateAction(action) {
-        if (!['check', 'reload'].includes(action)) fail('Unknown application update action.');
+        if (!['check', 'reload', 'acknowledge'].includes(action)) fail('Unknown application update action.');
         if (updateWrite) {
           if (updateWrite.action === action) return updateWrite.promise;
           fail('Wait for the current update request to finish.');
@@ -1057,6 +1071,9 @@
         if (action === 'reload' && (applicationUpdateError || applicationUpdate?.state !== 'ready' ||
             applicationUpdate.restart_supported !== true)) fail('A downloaded update and desktop restart support are required.');
         if (action === 'check' && updateActive()) fail('An application update is already in progress.');
+        if (action === 'acknowledge' && (applicationUpdateError || !applicationUpdate?.updated_to)) {
+          fail('No update confirmation is waiting.');
+        }
         updateEpoch += 1;
         applicationUpdateError = ''; applicationUpdatePending = action; publish();
         if (updateTimer !== null) global.clearTimeout(updateTimer);

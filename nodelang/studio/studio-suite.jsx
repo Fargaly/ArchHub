@@ -367,6 +367,16 @@ const StageCard = ({ idx, label, host, state }) => {
 };
 
 // ═══════════════════════ 2 · ONBOARDING ═══════════════════════
+// Not mounted in the Studio (design gap row 11, recorded 2026-09-17). Two facts keep it out:
+// 1. No first-run signal reaches the Studio. The launcher computes first_boot (no saved graph)
+//    and only prints it to launcher.log ("first boot  : True"); ApplicationServer never receives
+//    it, and the Studio boot payload ARCHHUB_BOOT carries only the session token and csrf.
+// 2. This is the design artboard, not a bound surface. Its detected hosts, masked keys, relay and
+//    Ollama rows, connector log, timings and slider demo are seeded, and its Continue, Use Anthropic
+//    and Open Studio buttons have no action. Mounted, it would show invented state and dead controls.
+// Mount it only when both change: first_boot is passed through to the Studio, and every step reads
+// live data (ARCHHUB_LIVE.connectors, the model picker, the provider key form) or is omitted.
+// tests_js/studio_design_small_rows.test.cjs checks these facts and fails when one of them changes.
 const StudioOnboarding = () => (
   <div style={{ background:ST.bg, color:ST.ink, fontFamily:ST.sans, height:'100%', overflow:'auto', padding:'40px 48px' }} className="ah-scroll">
     <div style={{ marginBottom:28 }}>

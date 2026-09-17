@@ -771,8 +771,37 @@ import threading as _restart_threading
 _update_restart_requested = _restart_threading.Event()
 _restart_after_shutdown = False
 from nodelang.application_update import ApplicationUpdate
+from PyQt6.QtCore import (
+    QObject as _UpdateObject, Qt as _UpdateQt, pyqtSignal as _update_signal, pyqtSlot as _update_slot,
+)
+
+
+def _report_update_check(line):
+    # Every finished release check (quiet cadence, tray or Studio) leaves its decision here.
+    print("  update     : %s" % line, flush=True)
+
+
+class _UpdatePush(_UpdateObject):
+    """Carries a download that reached ready from its worker to the desktop page."""
+    ready = _update_signal()
+
+    def __init__(self, parent, page):
+        super().__init__(parent)
+        self.page = page
+        self.ready.connect(self.push, _UpdateQt.ConnectionType.QueuedConnection)
+
+    @_update_slot()
+    def push(self):
+        # The Studio holds no update poll: its transport reads the ready status once, now.
+        self.page.runJavaScript(
+            "void (window.ARCHHUB_EXISTING_WORKSHOP && window.ARCHHUB_EXISTING_WORKSHOP.refreshApplicationUpdate"
+            " && window.ARCHHUB_EXISTING_WORKSHOP.refreshApplicationUpdate().catch(function () {}))")
+
+
+_update_push = _UpdatePush(app, view.page())
 server.application_update = ApplicationUpdate(state_dir, Path(__file__).resolve().parent,
-    request_restart=_update_restart_requested.set, initial_stage=_staged)
+    request_restart=_update_restart_requested.set, initial_stage=_staged, report=_report_update_check,
+    on_ready=_update_push.ready.emit, first_boot=first_boot)
 server._desktop_request_update_restart = server.application_update.reload
 
 

@@ -11,6 +11,19 @@ const { HB, hsc, HBtn, HIconBtn, HPill, HDot, HAvatar, MapCanvas, STC, catCol, E
 const ALS = 'archhub.atlas.v7';
 const aLoad = () => { try { return JSON.parse(localStorage.getItem(ALS)); } catch (e) { return null; } };
 const aSave = (o) => { try { localStorage.setItem(ALS, JSON.stringify(o)); } catch (e) {} };
+// One agent list for every panel: the agents the running app reported in its control
+// push (M.control.agents). This page keeps no list of its own, so no panel can offer
+// an agent the app does not have.
+const reportedAgents = (ctl) => {
+  const rows = (ctl && Array.isArray(ctl.agents)) ? ctl.agents : [];
+  const nameOf = (a) => String(a.provider || a.runtime || 'agent');
+  return rows.map((a, i) => {
+    const name = nameOf(a), session = String(a.session || '');
+    const shared = rows.filter(b => nameOf(b) === name).length > 1;
+    return { id: name + ':' + (session || i), name: shared && session ? name + ' · ' + session.slice(0, 8) : name,
+      runtime: a.runtime && a.runtime !== name ? String(a.runtime) : '', session, status: String(a.status || ''), model: null };
+  });
+};
 
 const STATUS_ORDER = ['live', 'partial', 'prototype', 'planned', 'vision', 'blocked', 'deprecated'];
 const CAT_LIST = ['ai', 'skill', 'connector', 'logic', 'custom', 'output', 'input', 'trigger', 'compose', 'transform', 'host', 'agent', 'watch', 'note'];
@@ -73,7 +86,7 @@ function ScaleLadder({ level, onClimb, depth }) {
     rungs.push(['field' + t, 'FIELD' + (SUP[t] != null ? SUP[t] : '^' + t), 'group of fields ×' + (t - 1)]);
   }
   return (
-    <div style={{ position: 'absolute', top: 54, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', padding: '4px 6px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 10, boxShadow: '0 3px 12px rgba(0,0,0,.08)', fontFamily: HB.mono, zIndex: 6 }}>
+    <div style={{ alignSelf: 'center', pointerEvents: 'auto', display: 'flex', alignItems: 'center', padding: '4px 6px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 10, boxShadow: '0 3px 12px rgba(0,0,0,.08)', fontFamily: HB.mono, zIndex: 6 }}>
       <span style={{ fontSize: 7.5, color: HB.inkMute, letterSpacing: '0.18em', padding: '0 9px 0 5px' }}>SCALE</span>
       {rungs.map(([k, l, sub], i) => {
         const on = level === k;
@@ -146,7 +159,7 @@ function AtlasCockpit() {
   const [cdb, setCdb] = React.useState(() => ckLoad() || EMPTY_DB());
   React.useEffect(() => { ckSave(cdb); }, [cdb]);
   const setColl = (coll, fn) => setCdb(d => ({ ...d, [coll]: fn(d[coll]) }));
-  const flash = (m) => { setToast(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setToast(null), 2000); };
+  const flash = (m) => { setToast(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setToast(null), Math.min(8000, 2000 + String(m).length * 40)); };
 
   // Assembling the model happens more than once: at mount, and again whenever the app
   // pushes a new projection (see ATLAS_RELOAD below). One place for the merge is what
@@ -350,9 +363,20 @@ function AtlasCockpit() {
   // comes only from the app that actually ran it, so a run in flight stays RUNNING until
   // the relay answers, and a node with no engine never enters that state at all.
 
+  // Every hook sits above the loading return. A hook below it runs only once the model has
+  // loaded, so that render calls more hooks than the first and React stops the whole page
+  // (minified error 310): the cockpit went blank the moment its map arrived.
+  const [offerEdit, setOfferEdit] = React.useState(null);
+  const dropLibraryRef = React.useRef(null);
+  React.useEffect(() => {
+    window.__atlasDropLibraryItem = (item, clientX, clientY) =>
+      dropLibraryRef.current ? dropLibraryRef.current(item, clientX, clientY) : false;
+    return () => { delete window.__atlasDropLibraryItem; };
+  }, []);
+
   if (!M || !vis) return <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', color: '#9b938a', fontFamily: 'monospace', fontSize: 13 }}>loading the grand map…</div>;
 
-  const DB = cdb;
+  const DB = { ...cdb, agents: reportedAgents(M.control) };
   const counts = {}; STATUS_ORDER.forEach(s => counts[s] = 0); M.nodes.forEach(n => counts[n.status] = (counts[n.status] || 0) + 1);
   const total = M.nodes.length;
   const domName = (k) => (M.domains.find(d => d.key === k) || {}).title || k;
@@ -456,7 +480,6 @@ function AtlasCockpit() {
   // The offer is ONE record in the app (app:users:accounts:offer); the cockpit
   // keeps no copy of it. Saving relays the founder's exact words through the
   // same door the ask bar uses and reports the application's own answer.
-  const [offerEdit, setOfferEdit] = React.useState(null);
   const saveOffer = () => {
     const label = String(offerEdit || '').trim();
     if (!label) { flash('The offer label cannot be empty'); return; }
@@ -538,7 +561,7 @@ function AtlasCockpit() {
       domains: m.domains.map(d => d.key === key ? { ...d, x: s.x, y: s.y } : d),
       nodes: m.nodes.map(n => n.dom === key ? { ...n, x: n.x + ax, y: n.y + ay } : n) };
   });
-  const delNodes = (ids) => { const s = new Set(ids); setM(m => ({ ...m, nodes: m.nodes.filter(n => !s.has(n.id)), wires: m.wires.filter(w => !s.has(w.a) && !s.has(w.b)) })); clearSel(); flash(`Deleted ${ids.length} node${ids.length > 1 ? 's' : ''}`); };
+  const delNodes = (ids) => { const s = new Set(ids); setM(m => ({ ...m, nodes: m.nodes.filter(n => !s.has(n.id)), wires: m.wires.filter(w => !s.has(w.a) && !s.has(w.b)) })); clearSel(); flash(`Deleted ${ids.length} node${ids.length > 1 ? 's' : ''} from this view — your app's graph is unchanged`); };
   const requestDelete = (ids) => { if (ids.length) setConfirmDel({ ids }); };
   // ── graph logic: wire / unwire / freeze / duplicate, via ports + right-click ──
   const connectNodes = (a, b) => {
@@ -563,10 +586,10 @@ function AtlasCockpit() {
       flash(`✗ ${ta} → ${tb} can't connect — inserted Adapter`);
     }
   };
-  const disconnectWire = (a, b) => { setM(m => ({ ...m, wires: m.wires.filter(w => !(w.a === a && w.b === b) && !(w.a === b && w.b === a)) })); flash('Wire cut'); };
-  const disconnectAll = (id) => { setM(m => ({ ...m, wires: m.wires.filter(w => w.a !== id && w.b !== id) })); flash('Disconnected all wires'); };
-  const freezeNode = (id) => { const n = M.nodes.find(x => x.id === id); patchNode(id, { frozen: !(n && n.frozen) }); flash(n && n.frozen ? 'Unfrozen' : 'Frozen — locked from edits & runs'); };
-  const duplicateNode = (id) => { const n = M.nodes.find(x => x.id === id); if (!n) return; const nid = 'n_' + Date.now().toString(36); setM(m => ({ ...m, nodes: [...m.nodes, { ...n, id: nid, frozen: false, rt: undefined, x: n.x + 28, y: n.y + 28, title: n.title + ' copy' }] })); setSel({ domain: null, nodes: new Set([nid]) }); flash('Duplicated'); };
+  const disconnectWire = (a, b) => { setM(m => ({ ...m, wires: m.wires.filter(w => !(w.a === a && w.b === b) && !(w.a === b && w.b === a)) })); flash('Wire cut in this view'); };
+  const disconnectAll = (id) => { setM(m => ({ ...m, wires: m.wires.filter(w => w.a !== id && w.b !== id) })); flash('Disconnected all wires in this view'); };
+  const freezeNode = (id) => { const n = M.nodes.find(x => x.id === id); patchNode(id, { frozen: !(n && n.frozen) }); flash(n && n.frozen ? 'Unfrozen' : 'Frozen in this view — locked from edits & runs'); };
+  const duplicateNode = (id) => { const n = M.nodes.find(x => x.id === id); if (!n) return; const nid = 'n_' + Date.now().toString(36); setM(m => ({ ...m, nodes: [...m.nodes, { ...n, id: nid, frozen: false, rt: undefined, x: n.x + 28, y: n.y + 28, title: n.title + ' copy' }] })); setSel({ domain: null, nodes: new Set([nid]) }); flash('Duplicated in this view'); };
   const onNodeContext = (id, x, y) => { if (!sel.nodes.has(id)) setSel({ domain: null, nodes: new Set([id]) }); setCtx({ type: 'node', id, x, y }); };
   const onWireContext = (a, b, x, y, bundle) => setCtx({ type: 'wire', a, b, x, y, bundle });
   const pickWire = (w) => setSel({ domain: null, domains: new Set(), nodes: new Set(), fields: new Set(), field: null, wire: w });
@@ -639,26 +662,25 @@ function AtlasCockpit() {
   // that silently never starts leaves no error to read (2026-09-07). Every
   // fixed-canvas editor that works inside an embedded view does it this way.
   // The library calls this on release; the map decides where the node lands.
-  React.useEffect(() => {
-    window.__atlasDropLibraryItem = (item, clientX, clientY) => {
-      const col = mapColRef.current;
-      if (!col || !item) return false;
-      const box = col.getBoundingClientRect();
-      if (
-        clientX < box.left || clientX > box.right
-        || clientY < box.top || clientY > box.bottom
-      ) return false;
-      const w = window.__atlasToWorld && window.__atlasToWorld(clientX, clientY);
-      const host = w && M.domains.find(
-        d => w.x >= d.x && w.x <= d.x + d.w && w.y >= d.y && w.y <= d.y + d.h
-      );
-      createFromLibrary(
-        item, host && host.key, w && host ? { x: w.x - 76, y: w.y - 43 } : null
-      );
-      return true;
-    };
-    return () => { delete window.__atlasDropLibraryItem; };
-  }, [M.domains, sel.domain]);
+  // Assigned on every loaded render, so a drop always sees the current map. The window
+  // hook that calls it is installed once, above the loading return (dropLibraryRef).
+  dropLibraryRef.current = (item, clientX, clientY) => {
+    const col = mapColRef.current;
+    if (!col || !item) return false;
+    const box = col.getBoundingClientRect();
+    if (
+      clientX < box.left || clientX > box.right
+      || clientY < box.top || clientY > box.bottom
+    ) return false;
+    const w = window.__atlasToWorld && window.__atlasToWorld(clientX, clientY);
+    const host = w && M.domains.find(
+      d => w.x >= d.x && w.x <= d.x + d.w && w.y >= d.y && w.y <= d.y + d.h
+    );
+    createFromLibrary(
+      item, host && host.key, w && host ? { x: w.x - 76, y: w.y - 43 } : null
+    );
+    return true;
+  };
   const addDomain = (title, col) => { const key = (title || 'domain').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 14) + '_' + Math.random().toString(36).slice(2, 4); const cols = M.domains.length; const x = 40 + (cols % 4) * 600, y = 40 + Math.floor(cols / 4) * 572; setM(m => ({ ...m, domains: [...m.domains, { key, title: title || 'New Domain', col: col || DOM_COLS[cols % DOM_COLS.length], x, y, w: 568, h: 540 }] })); setVis(v => ({ ...v, domains: new Set([...v.domains, key]) })); flash(`Domain "${title}" created`); };
   // ── RECURSION: group selected nodes INTO a new grand node (a container domain).
   // Reuses the proven super-node machinery — it collapses to a volume, opens to its
@@ -859,7 +881,6 @@ function AtlasCockpit() {
           ))}
         </div>
         <button onClick={() => setLeftTab('inspect')} title="Inspect" style={{ display: 'none' }}/>
-        <HAvatar name="Mehdi Habib" size={28}/>
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -960,6 +981,20 @@ function AtlasCockpit() {
           <MapCanvas ref={canvas} M={M} vis={vis} sel={sel} selMode={selMode} expanded={expanded} agentsByNode={assign} activeWires={activeWires}
             onSelect={pickNode} onSelectBox={onSelectBox} onMarquee={onMarquee} onMove={moveNode} onMoveDomain={moveDomain} onToggleDomain={toggleDomain} onToggleNode={toggleNode} openNodes={openNodes} onPickDomain={pickDomain} onPickField={pickField} onDomainContext={onDomainContext} onFieldContext={onFieldContext} onInspect={inspectNode} onNodeContext={onNodeContext} onConnect={connectNodes} onWireContext={onWireContext} onPickWire={pickWire} query={query} onOffGrid={setOffGrid} hostW={mapW}/>
 
+          {/* NO MAP. Without a live push the model is empty on purpose (assembleModel draws
+              nothing rather than a saved snapshot). A bare blueprint reads as a broken page,
+              so the canvas says why it is empty and offers the same refresh as the chip. */}
+          {M.domains.length === 0 && (
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 5, width: 380, maxWidth: '80%', boxSizing: 'border-box', padding: '18px 20px', borderRadius: 12, background: HB.card, border: `1px solid ${HB.line}`, boxShadow: '0 14px 40px rgba(0,0,0,.3)' }}>
+              <div style={{ fontFamily: HB.mono, fontSize: 9, color: HB.amber, letterSpacing: '0.16em' }}>{mapMeta.live ? 'EMPTY PUSH' : 'NO LIVE PUSH'}</div>
+              <div style={{ fontFamily: HB.serif, fontSize: 21, letterSpacing: '-0.01em', color: HB.ink, marginTop: 4 }}>{mapMeta.live ? 'Your app pushed a map with no domains.' : 'No map yet.'}</div>
+              <div style={{ fontSize: 12.5, color: HB.inkSoft, lineHeight: 1.55, marginTop: 6 }}>{mapMeta.live
+                ? 'The projection arrived but holds nothing to draw. Refresh after your app pushes again.'
+                : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub on your machine and it will appear here.'}</div>
+              <button onClick={reloadMap} style={{ marginTop: 12, border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 10 }}>refresh</button>
+            </div>
+          )}
+
           {/* OFF-GRID HINT — a domain dragged far from the cluster is excluded from "frame
               all" so it can't shrink the whole map. Never rewrite the layout silently: say
               so, offer Tidy up, and let the founder dismiss and keep the placement. */}
@@ -974,8 +1009,10 @@ function AtlasCockpit() {
             </div>
           )}
 
-          {/* corner controls */}
-          <div style={{ position: 'absolute', top: 12, left: 14, right: 372, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, pointerEvents: 'none' }}>
+          {/* corner controls, with the scale ladder under them in one column: a chip row that
+              wraps pushes the ladder down instead of sliding beneath it */}
+          <div style={{ position: 'absolute', top: 12, left: 14, right: 14, zIndex: 6, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, pointerEvents: 'none' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, minWidth: 0, maxWidth: 'calc(100% - 358px)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, boxShadow: '0 3px 12px rgba(0,0,0,.08)', flexShrink: 0, pointerEvents: 'auto' }}>
               <CKIcon name="map" size={13} color={HB.accent}/>
               <span style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink, whiteSpace: 'nowrap', flexShrink: 0 }}>Federated model</span>
@@ -1031,6 +1068,7 @@ function AtlasCockpit() {
 
           {/* SCALE LADDER — the recursive primitive, named and climbable */}
           <ScaleLadder level={scaleLevel} onClimb={climbTo} depth={modelDepth}/>
+          </div>
 
           {/* LOD hint */}
           <div style={{ position: 'absolute', top: 12, right: 14, fontFamily: HB.mono, fontSize: 9.5, color: HB.inkSoft, letterSpacing: '0.1em', whiteSpace: 'nowrap', padding: '6px 11px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 8 }}>
@@ -1062,6 +1100,7 @@ function AtlasCockpit() {
           {(() => {
             const selCount = sel.nodes.size + (sel.domains || new Set()).size;
             if (selCount > 0) return null;
+            if (M.domains.length === 0) return null;   // nothing to select; the empty-map card owns the canvas
             if (offGrid.length > 0 && !offGridDismissed) return null;   // off-grid notice owns this slot
             return (
               <div style={{ position: 'absolute', bottom: 80, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 9, padding: '7px 14px', borderRadius: 999, background: selMode ? HB.accent : HB.cardHi, color: selMode ? '#fff' : HB.inkSoft, border: `1px solid ${selMode ? HB.accent : HB.line}`, boxShadow: '0 6px 20px rgba(0,0,0,.12)', fontFamily: HB.mono, fontSize: 11, whiteSpace: 'nowrap', pointerEvents: 'none' }}>
@@ -1125,7 +1164,12 @@ function AtlasCockpit() {
         names={confirmDel.ids.map(id => (M.nodes.find(n => n.id === id) || {}).title).filter(Boolean)}
         wires={M.wires.filter(w => confirmDel.ids.includes(w.a) || confirmDel.ids.includes(w.b)).length}
         onCancel={() => setConfirmDel(null)} onConfirm={() => { delNodes(confirmDel.ids); setConfirmDel(null); }}/>}
-      {toast && <div style={{ position: 'fixed', bottom: 74, left: '50%', transform: 'translateX(-50%)', zIndex: 80, background: HB.paper2, color: HB.ink, border: `1px solid ${HB.line}`, borderRadius: 999, padding: '8px 16px', fontSize: 12, fontFamily: HB.mono, boxShadow: '0 14px 40px rgba(0,0,0,.3)', display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ color: HB.accent }}><CKIcon name="check" size={13}/></span>{toast}</div>}
+      {toast && (() => {
+        // A refusal or a failure from the app must not wear a check mark.
+        const text = String(toast);
+        const bad = /^✗|not changed|not sent|failed|refused|only a founder|must not|cannot|can't/i.test(text);
+        return <div role="status" style={{ position: 'fixed', bottom: 74, left: '50%', transform: 'translateX(-50%)', zIndex: 80, maxWidth: 'min(640px, 80vw)', background: HB.paper2, color: HB.ink, border: `1px solid ${bad ? HB.red : HB.line}`, borderRadius: 14, padding: '8px 16px', fontSize: 12, lineHeight: 1.45, fontFamily: HB.mono, boxShadow: '0 14px 40px rgba(0,0,0,.3)', display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ color: bad ? HB.red : HB.accent, flexShrink: 0 }}><CKIcon name={bad ? 'x' : 'check'} size={13}/></span><span>{text.replace(/^[✓✗]\s*/, '')}</span></div>;
+      })()}
     </div>
   );
 }
@@ -1207,7 +1251,7 @@ function ContextMenu({ ctx, node, domain, field, openNodes, selCount, nodeDomGro
   ];
   else items = [
     ...(selCount >= 2 ? [{ icon: 'grid', label: 'Group selection', fn: actions.group, accent: true }, { sep: true }] : []),
-    { icon: 'play', label: node && node.frozen ? 'Run (frozen)' : 'Run node', fn: actions.run, dim: node && node.frozen },
+    { icon: 'play', label: node && node.frozen ? 'Run (frozen)' : node && !node.engine ? 'Run node (no engine)' : 'Run node', fn: actions.run, dim: node && (node.frozen || !node.engine) },
     { icon: 'eye', label: 'Add watcher', fn: actions.watch },
     { icon: 'layout', label: openNodes.has(ctx.id) ? 'Collapse pipeline' : 'Open pipeline', fn: actions.pipeline },
     { sep: true },
@@ -1243,11 +1287,11 @@ function ConfirmModal({ count, names, wires, onCancel, onConfirm }) {
       <div onClick={e => e.stopPropagation()} style={{ width: 380, background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 14, padding: 20, boxShadow: '0 30px 80px rgba(0,0,0,.6)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <span style={{ width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center', background: HB.red + '1e', color: HB.red, flexShrink: 0 }}><CKIcon name="trash" size={17}/></span>
-          <div style={{ fontFamily: HB.serif, fontSize: 21, letterSpacing: '-0.01em' }}>Delete {count > 1 ? `${count} nodes` : 'node'}?</div>
+          <div style={{ fontFamily: HB.serif, fontSize: 21, letterSpacing: '-0.01em' }}>Delete {count > 1 ? `${count} nodes` : 'node'} from this view?</div>
         </div>
         <div style={{ fontSize: 13, color: HB.inkSoft, lineHeight: 1.55 }}>
-          {count === 1 && names[0] ? <>This removes <b style={{ color: HB.ink }}>{names[0]}</b> from the model.</> : <>This removes <b style={{ color: HB.ink }}>{count} nodes</b> from the model.</>}
-          {wires > 0 && <> It also cuts <b style={{ color: HB.ink }}>{wires}</b> wire{wires > 1 ? 's' : ''} connected to {count > 1 ? 'them' : 'it'}.</>} This can't be undone.
+          {count === 1 && names[0] ? <>This removes <b style={{ color: HB.ink }}>{names[0]}</b> from this view.</> : <>This removes <b style={{ color: HB.ink }}>{count} nodes</b> from this view.</>}
+          {wires > 0 && <> It also cuts <b style={{ color: HB.ink }}>{wires}</b> wire{wires > 1 ? 's' : ''} connected to {count > 1 ? 'them' : 'it'}.</>} The graph in your app is not changed; {count > 1 ? 'they come' : 'it comes'} back the next time the map is pulled from your app.
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
           <HBtn onClick={onCancel}>Cancel</HBtn>

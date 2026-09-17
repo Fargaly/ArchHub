@@ -1294,10 +1294,6 @@ def _billing_provider_module():
 def checkout(req: CheckoutReq,
               authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)
-    if not config.pricing_is_public():
-        # Same gate as /v1/billing/plans: while the published offer withholds
-        # pricing there is nothing to sell, so no session is opened.
-        raise HTTPException(status_code=403, detail="checkout_closed")
     # Validate tier against whichever provider is configured. Both
     # provider dicts share the same tier keys.
     valid_tiers = (
@@ -1307,6 +1303,11 @@ def checkout(req: CheckoutReq,
     )
     if req.tier not in valid_tiers:
         raise HTTPException(status_code=400, detail="unknown_tier")
+    if not config.pricing_is_public():
+        # Same gate as /v1/billing/plans: while the published offer withholds
+        # pricing there is nothing to sell, so no session is opened. A
+        # malformed request is still answered as malformed first.
+        raise HTTPException(status_code=403, detail="checkout_closed")
     url = _billing_provider_module().create_checkout_url(
         user=user, tier=req.tier, annual=req.annual,
     )

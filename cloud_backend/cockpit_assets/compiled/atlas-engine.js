@@ -1638,7 +1638,11 @@ var MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
         fontFamily: HB.mono,
         fontWeight: "700",
         letterSpacing: "0.14em",
-        fill: window.AH && window.AH.onFill || "#180f08"
+        fill: window.AH && window.AH.onFill || "#180f08",
+        stroke: col,
+        strokeWidth: Math.max(5 * upp, cardFs(12.5) * 0.14),
+        strokeLinejoin: "round",
+        paintOrder: "stroke fill"
       }, "\u2B21 ", label), /*#__PURE__*/React.createElement("text", {
         x: bx + Math.max(196, label.length * 8.4 + 82) + 4,
         y: by + tabH * 0.68,

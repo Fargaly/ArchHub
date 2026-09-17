@@ -654,7 +654,7 @@ const MapCanvas = React.forwardRef(function MapCanvas(props, ref) {
               <rect x={bx} y={by} width={bw} height={bh} rx={26 + tier * 6} fill={col + (tier > 1 ? '14' : '0d')} stroke={selF ? col : col + 'b0'} strokeWidth={selF ? 3 : 2} strokeDasharray={tier > 1 ? '22 10' : '14 9'} style={{ pointerEvents: 'none', filter: `drop-shadow(0 0 8px ${col}44)` }}/>
               <g style={{ cursor: 'pointer' }} onClick={e => { e.stopPropagation(); props.onPickField && props.onPickField(f.id, e.shiftKey || e.metaKey); }} onContextMenu={e => { e.preventDefault(); e.stopPropagation(); props.onFieldContext && props.onFieldContext(f.id, e.clientX, e.clientY); }}>
                 <rect x={bx + 20} y={by} width={Math.max(196, label.length * 8.4 + 82)} height={tabH} rx={9} fill={col}/>
-                <text x={bx + 36} y={by + tabH * 0.68} fontSize={cardFs(12.5)} fontFamily={HB.mono} fontWeight="700" letterSpacing="0.14em" fill={(window.AH && window.AH.onFill) || "#180f08"}>⬡ {label}</text>
+                <text x={bx + 36} y={by + tabH * 0.68} fontSize={cardFs(12.5)} fontFamily={HB.mono} fontWeight="700" letterSpacing="0.14em" fill={(window.AH && window.AH.onFill) || "#180f08"} stroke={col} strokeWidth={Math.max(5 * upp, cardFs(12.5) * 0.14)} strokeLinejoin="round" paintOrder="stroke fill">⬡ {label}</text>
                 <text x={bx + Math.max(196, label.length * 8.4 + 82) + 4} y={by + tabH * 0.68} fontSize={cardFs(10)} fontFamily={HB.mono} fill={col}>{members}</text>
               </g>
             </g>

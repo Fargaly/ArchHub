@@ -118,7 +118,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                   <button key={r.id} onClick={() => onGoto({ nodeId: r.node.id, dom: r.node.dom })} className="hb-rowh" style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '8px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: 'none', background: 'transparent' }}>
                     <span style={{ width: 18, height: 18, borderRadius: 5, marginTop: 1, display: 'grid', placeItems: 'center', background: (r.ok ? HB.green : HB.red) + '1e', color: r.ok ? HB.green : HB.red, flexShrink: 0, fontSize: 10 }}>{r.ok ? '✓' : '✗'}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 12, color: HB.ink, display: 'block' }}><b style={{ fontWeight: 600 }}>{ags[0] ? ags[0].name : 'System'}</b> ran <span style={{ color: HB.inkSoft }}>{r.node.title}</span></span>
+                      <span style={{ fontSize: 12, color: HB.ink, display: 'block' }}><b style={{ fontWeight: 600 }}>{ags[0] ? ags[0].name : r.app ? 'Your app' : 'System'}</b> ran <span style={{ color: HB.inkSoft }}>{r.node.title}</span></span>
                       <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.result}{r.ms ? ' · ' + r.ms + 'ms' : ''} · {ago(r.t)} ago</span>
                     </span>
                   </button>
@@ -316,34 +316,68 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
 // searchable, collapsible categories, drag an item onto the map to create it.
 // Same gesture in the cockpit as in the app: the graph logic is one concept.
 // ─────────────────────────────────────────────────────────────────────────────
+// The COCKPIT library. It held the desktop studio's node palette -- Revit,
+// Rhino, IFC, parameter reads -- which do nothing here: the founder asked
+// what a Revit host node would even do in the cockpit (2026-09-07). The
+// cockpit is where he runs the business and directs the agents, so its
+// library is the work he actually places on this map. Host and geometry
+// nodes stay in the studio, on the canvas that can run them.
 const LIB_GROUPS = [
-  { cat: 'connector', label: 'HOSTS · CONNECTORS', items: [
-    ['Revit', 'open doc · view · selection'], ['Rhino / Grasshopper', 'geometry · definition'],
-    ['IFC / Speckle', 'federated exchange'], ['Navisworks', 'clash · appended model'] ] },
-  { cat: 'input', label: 'READ · INPUT', items: [
-    ['Parameter read', 'element → value'], ['Schedule read', 'tabular extract'],
-    ['Sheet index', 'sheets · revisions'], ['Model health', 'warnings · file size'] ] },
-  { cat: 'transform', label: 'TRANSFORM', items: [
-    ['Map values', 'per-element rewrite'], ['Join / merge', 'two streams → one'],
-    ['Units convert', 'metric ↔ imperial'], ['Classify', 'assign Uniclass / OmniClass'] ] },
-  { cat: 'logic', label: 'LOGIC', items: [
-    ['Filter', 'predicate → subset'], ['Branch', 'route by condition'],
-    ['Gate', 'hold until approved'], ['Loop', 'iterate a collection'] ] },
-  { cat: 'ai', label: 'AI · AGENTS', items: [
-    ['Agent', 'model + tools + brief'], ['Intent', 'natural language → plan'],
-    ['Review', 'critique against a rule'], ['Summarise', 'stream → digest'] ] },
-  { cat: 'skill', label: 'SKILLS', items: [
-    ['Saved field', 'a field you promoted'], ['Saved canvas', 'a whole workflow'],
-    ['Shared skill', 'from the marketplace'] ] },
-  { cat: 'watch', label: 'WATCH · OUTPUT', items: [
-    ['Watcher', 'observe a value live'], ['Preview', 'render the data'],
-    ['Publish', 'write back to host'], ['Notify', 'alert a person or channel'] ] },
+  { cat: 'ai', label: 'AGENTS', items: [
+    ['Agent', 'a runtime that claims Work'], ['Assignment', 'give this to an agent'],
+    ['Review', 'an agent critiques the result'], ['Handoff', 'pass Work between agents'] ] },
+  { cat: 'logic', label: 'WORK', items: [
+    ['Work item', 'something to be done'], ['Gate', 'hold until approved'],
+    ['Court', 'the check that proves it'], ['Blocker', 'why it cannot proceed'] ] },
+  { cat: 'input', label: 'BRAIN', items: [
+    ['Recall', 'ask the brain a question'], ['Remember', 'commit a fact'],
+    ['Fact', 'one thing the brain holds'], ['Digest', 'summarise a stream'] ] },
+  { cat: 'watch', label: 'WATCH', items: [
+    ['Metric', 'a number to follow'], ['Alert', 'tell me when it moves'],
+    ['Report', 'a view assembled on demand'], ['Log', 'what happened, in order'] ] },
+  { cat: 'transform', label: 'MAP', items: [
+    ['Domain', 'a place on this map'], ['Field', 'a domain of domains'],
+    ['Capability', 'something the product does'], ['Wire', 'this depends on that'] ] },
+  { cat: 'connector', label: 'REACH', items: [
+    ['Host', 'an application on a machine'], ['Cloud service', 'something running remotely'],
+    ['Person', 'someone who is told'], ['Schedule', 'when it runs by itself'] ] },
 ];
 
 function LibraryPanel({ onCreateNode, onAddDomain, flash }) {
   const [q, setQ] = React.useState('');
   const [open, setOpen] = React.useState(() => Object.fromEntries(LIB_GROUPS.map(g => [g.cat, true])));
+  const [ghost, setGhost] = React.useState(null);
   const ql = q.trim().toLowerCase();
+  // POINTER drag, not HTML5 drag-and-drop. The founder could not drag a node
+  // onto the canvas at all: QtWebEngine does not carry an HTML5 drag reliably
+  // inside the desktop shell, and a drag that never starts leaves no error to
+  // read (2026-09-07). Pointer capture works in every shell and gives a real
+  // preview of what is being carried.
+  const startLibraryDrag = (event, item, col) => {
+    if (event.button !== 0) return;
+    const from = { x: event.clientX, y: event.clientY };
+    let carrying = false;
+    const move = (moved) => {
+      if (!carrying) {
+        if (Math.abs(moved.clientX - from.x) + Math.abs(moved.clientY - from.y) < 5) return;
+        carrying = true;
+      }
+      setGhost({ item, col, x: moved.clientX, y: moved.clientY });
+    };
+    const up = (ended) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      setGhost(null);
+      if (!carrying) return;
+      const drop = window.__atlasDropLibraryItem;
+      const landed = drop && drop(item, ended.clientX, ended.clientY);
+      if (!landed && flash) flash('Drop it on the map to place ' + item.title);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
       <div style={{ padding: '11px 12px 9px', borderBottom: `1px solid ${HB.lineSoft}`, flexShrink: 0 }}>
@@ -351,6 +385,14 @@ function LibraryPanel({ onCreateNode, onAddDomain, flash }) {
           style={{ width: '100%', padding: '7px 9px', borderRadius: 7, border: `1px solid ${HB.line}`, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
         <button onClick={onAddDomain} style={{ marginTop: 8, width: '100%', padding: '8px 0', borderRadius: 7, border: `1px dashed ${HB.accent}`, background: 'transparent', color: HB.accent, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, letterSpacing: '0.08em' }}>＋ NEW DOMAIN</button>
       </div>
+      {ghost && (
+        <div style={{ position: 'fixed', left: ghost.x + 12, top: ghost.y + 10, zIndex: 9999, pointerEvents: 'none',
+          padding: '6px 10px', borderRadius: 6, background: HB.paper2, color: HB.ink,
+          border: `1px solid ${ghost.col}`, borderLeft: `3px solid ${ghost.col}`,
+          boxShadow: '0 8px 22px rgba(0,0,0,.35)', fontFamily: HB.sans, fontSize: 12, whiteSpace: 'nowrap' }}>
+          {ghost.item.title}
+        </div>
+      )}
       <div className="hb-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '6px 8px 14px', minHeight: 0 }}>
         {LIB_GROUPS.map(g => {
           const items = ql ? g.items.filter(([t, s]) => (t + ' ' + s).toLowerCase().includes(ql)) : g.items;
@@ -368,8 +410,8 @@ function LibraryPanel({ onCreateNode, onAddDomain, flash }) {
               {isOpen && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 1, paddingLeft: 4 }}>
                   {items.map(([title, sub]) => (
-                    <div key={title} draggable="true"
-                      onDragStart={e => { e.dataTransfer.setData('application/x-atlas-node', JSON.stringify({ cat: g.cat, title, sub })); e.dataTransfer.effectAllowed = 'copy'; }}
+                    <div key={title}
+                      onPointerDown={e => startLibraryDrag(e, { cat: g.cat, title, sub }, col)}
                       onDoubleClick={() => onCreateNode({ cat: g.cat, title, sub })}
                       title="Drag onto the map, or double-click to place"
                       style={{ padding: '6px 8px', borderRadius: 5, cursor: 'grab', userSelect: 'none', borderLeft: `2px solid transparent` }}

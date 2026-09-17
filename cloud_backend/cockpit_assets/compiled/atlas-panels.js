@@ -966,7 +966,7 @@ function DomainPanel(_ref5) {
       gap: 4,
       marginTop: 11
     }
-  }, [['control', 'Control'], ['params', "Params ".concat(params.length)], ['links', "Interface ".concat(ifaceCount)]].map(function (_ref6) {
+  }, [['control', 'Control'], ['live', M.control ? 'Live ●' : 'Live'], ['params', "Params ".concat(params.length)], ['links', "Interface ".concat(ifaceCount)]].map(function (_ref6) {
     var _ref7 = _slicedToArray(_ref6, 2),
       k = _ref7[0],
       l = _ref7[1];
@@ -991,12 +991,12 @@ function DomainPanel(_ref5) {
     style: {
       padding: 0
     }
-  }, tab === 'control' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(LiveDomainControl, {
+  }, tab === 'live' && /*#__PURE__*/React.createElement(LiveDomainControl, {
     M: M,
     d: d,
     members: members,
     onRelay: onRelay
-  }), /*#__PURE__*/React.createElement("div", {
+  }), tab === 'control' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: secStyle
   }, /*#__PURE__*/React.createElement("div", {
     style: insLabel
@@ -1088,7 +1088,14 @@ function DomainPanel(_ref5) {
       flexDirection: 'column',
       gap: 6
     }
-  }, DB.agents.map(function (a) {
+  }, DB.agents.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.serif,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: HB.inkMute
+    }
+  }, "Your app has not reported any agents yet."), DB.agents.map(function (a) {
     var on = myAgents.includes(a.id);
     return /*#__PURE__*/React.createElement("button", {
       key: a.id,
@@ -1138,11 +1145,9 @@ function DomainPanel(_ref5) {
       style: {
         fontFamily: HB.mono,
         fontSize: 9.5,
-        color: HB.inkMute
+        color: a.status === 'online' ? HB.green : HB.inkMute
       }
-    }, (DB.models.find(function (m) {
-      return m.id === a.model;
-    }) || {}).name)), on ? /*#__PURE__*/React.createElement("span", {
+    }, [a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app')), on ? /*#__PURE__*/React.createElement("span", {
       style: {
         color: HB.accent
       }
@@ -1498,13 +1503,20 @@ function BulkPanel(_ref10) {
     style: secStyle
   }, /*#__PURE__*/React.createElement("div", {
     style: insLabel
-  }, "ASSIGN AGENT \xB7 ALL \xB7 WIRED TO FOUNDER BRAIN"), /*#__PURE__*/React.createElement("div", {
+  }, "ASSIGN AGENT \xB7 ALL \xB7 AGENTS YOUR APP REPORTED"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
       gap: 5
     }
-  }, DB.agents.map(function (a) {
+  }, DB.agents.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.serif,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: HB.inkMute
+    }
+  }, "Your app has not reported any agents yet."), DB.agents.map(function (a) {
     return /*#__PURE__*/React.createElement("button", {
       key: a.id,
       onClick: function onClick() {
@@ -1538,9 +1550,17 @@ function BulkPanel(_ref10) {
       size: 12
     })), /*#__PURE__*/React.createElement("span", {
       style: {
+        flex: 1,
+        minWidth: 0,
         fontSize: 12.5
       }
-    }, a.name));
+    }, a.name), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 9.5,
+        color: a.status === 'online' ? HB.green : HB.inkMute
+      }
+    }, [a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'));
   }))), /*#__PURE__*/React.createElement("div", {
     style: secStyle
   }, /*#__PURE__*/React.createElement("div", {
@@ -2297,13 +2317,20 @@ function NodeInspector(_ref16) {
     }), s);
   }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: insLabel
-  }, "OWNED BY AGENTS \xB7 WIRED TO FOUNDER BRAIN"), /*#__PURE__*/React.createElement("div", {
+  }, "OWNED BY AGENTS \xB7 AGENTS YOUR APP REPORTED"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
       gap: 6
     }
-  }, DB.agents.map(function (a) {
+  }, DB.agents.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.serif,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: HB.inkMute
+    }
+  }, "Your app has not reported any agents yet."), DB.agents.map(function (a) {
     var on = myAgents.includes(a.id);
     return /*#__PURE__*/React.createElement("button", {
       key: a.id,
@@ -2353,11 +2380,9 @@ function NodeInspector(_ref16) {
       style: {
         fontFamily: HB.mono,
         fontSize: 9.5,
-        color: HB.inkMute
+        color: a.status === 'online' ? HB.green : HB.inkMute
       }
-    }, (DB.models.find(function (m) {
-      return m.id === a.model;
-    }) || {}).name)), on ? /*#__PURE__*/React.createElement("span", {
+    }, [a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app')), on ? /*#__PURE__*/React.createElement("span", {
       style: {
         color: HB.accent
       }
@@ -3423,9 +3448,14 @@ var WIRE_PARAM_DEFS = function WIRE_PARAM_DEFS() {
       k: p.k,
       v: p.def,
       t: p.type === 'toggle' ? 'boolean' : p.type === 'number' ? 'number' : 'string',
+      socket: p.type,
       opts: p.opts,
       help: p.help,
-      label: p.label
+      label: p.label,
+      unit: p.unit,
+      min: p.min,
+      max: p.max,
+      step: p.step
     };
   });
 };
@@ -3531,7 +3561,7 @@ function WirePanel(_ref27) {
         borderLeft: "2px solid ".concat(changed ? HB.accent : 'transparent'),
         borderBottom: "1px solid ".concat(HB.lineSoft)
       }
-    }, ptypeSocket(p.t, false), /*#__PURE__*/React.createElement("span", {
+    }, ptypeSocket(p.socket || p.t, false), /*#__PURE__*/React.createElement("span", {
       style: {
         flex: 1,
         minWidth: 0,
@@ -3617,8 +3647,12 @@ function WirePanel(_ref27) {
       },
       type: p.t === 'number' ? 'number' : 'text',
       placeholder: p.k === 'condition' ? 'always' : 'value…',
+      min: p.min,
+      max: p.max,
+      step: p.step,
+      title: p.unit && p.max != null ? (p.min || 0) + '–' + p.max + ' ' + p.unit : undefined,
       style: {
-        width: 104,
+        width: p.unit ? 80 : 104,
         boxSizing: 'border-box',
         padding: '4px 7px',
         borderRadius: 4,
@@ -3629,7 +3663,14 @@ function WirePanel(_ref27) {
         fontSize: 11,
         outline: 'none'
       }
-    }));
+    }), p.unit && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: HB.mono,
+        fontSize: 10,
+        color: HB.inkMute,
+        width: 18
+      }
+    }, p.unit));
   }))), /*#__PURE__*/React.createElement("div", {
     style: secStyle
   }, /*#__PURE__*/React.createElement("div", {

@@ -443,7 +443,7 @@ function AgenticPanel(_ref2) {
       style: {
         fontWeight: 600
       }
-    }, ags[0] ? ags[0].name : 'System'), " ran ", /*#__PURE__*/React.createElement("span", {
+    }, ags[0] ? ags[0].name : r.app ? 'Your app' : 'System'), " ran ", /*#__PURE__*/React.createElement("span", {
       style: {
         color: HB.inkSoft
       }
@@ -1000,34 +1000,36 @@ function AgenticPanel(_ref2) {
 // searchable, collapsible categories, drag an item onto the map to create it.
 // Same gesture in the cockpit as in the app: the graph logic is one concept.
 // ─────────────────────────────────────────────────────────────────────────────
+// The COCKPIT library. It held the desktop studio's node palette -- Revit,
+// Rhino, IFC, parameter reads -- which do nothing here: the founder asked
+// what a Revit host node would even do in the cockpit (2026-09-07). The
+// cockpit is where he runs the business and directs the agents, so its
+// library is the work he actually places on this map. Host and geometry
+// nodes stay in the studio, on the canvas that can run them.
 var LIB_GROUPS = [{
-  cat: 'connector',
-  label: 'HOSTS · CONNECTORS',
-  items: [['Revit', 'open doc · view · selection'], ['Rhino / Grasshopper', 'geometry · definition'], ['IFC / Speckle', 'federated exchange'], ['Navisworks', 'clash · appended model']]
-}, {
-  cat: 'input',
-  label: 'READ · INPUT',
-  items: [['Parameter read', 'element → value'], ['Schedule read', 'tabular extract'], ['Sheet index', 'sheets · revisions'], ['Model health', 'warnings · file size']]
-}, {
-  cat: 'transform',
-  label: 'TRANSFORM',
-  items: [['Map values', 'per-element rewrite'], ['Join / merge', 'two streams → one'], ['Units convert', 'metric ↔ imperial'], ['Classify', 'assign Uniclass / OmniClass']]
+  cat: 'ai',
+  label: 'AGENTS',
+  items: [['Agent', 'a runtime that claims Work'], ['Assignment', 'give this to an agent'], ['Review', 'an agent critiques the result'], ['Handoff', 'pass Work between agents']]
 }, {
   cat: 'logic',
-  label: 'LOGIC',
-  items: [['Filter', 'predicate → subset'], ['Branch', 'route by condition'], ['Gate', 'hold until approved'], ['Loop', 'iterate a collection']]
+  label: 'WORK',
+  items: [['Work item', 'something to be done'], ['Gate', 'hold until approved'], ['Court', 'the check that proves it'], ['Blocker', 'why it cannot proceed']]
 }, {
-  cat: 'ai',
-  label: 'AI · AGENTS',
-  items: [['Agent', 'model + tools + brief'], ['Intent', 'natural language → plan'], ['Review', 'critique against a rule'], ['Summarise', 'stream → digest']]
-}, {
-  cat: 'skill',
-  label: 'SKILLS',
-  items: [['Saved field', 'a field you promoted'], ['Saved canvas', 'a whole workflow'], ['Shared skill', 'from the marketplace']]
+  cat: 'input',
+  label: 'BRAIN',
+  items: [['Recall', 'ask the brain a question'], ['Remember', 'commit a fact'], ['Fact', 'one thing the brain holds'], ['Digest', 'summarise a stream']]
 }, {
   cat: 'watch',
-  label: 'WATCH · OUTPUT',
-  items: [['Watcher', 'observe a value live'], ['Preview', 'render the data'], ['Publish', 'write back to host'], ['Notify', 'alert a person or channel']]
+  label: 'WATCH',
+  items: [['Metric', 'a number to follow'], ['Alert', 'tell me when it moves'], ['Report', 'a view assembled on demand'], ['Log', 'what happened, in order']]
+}, {
+  cat: 'transform',
+  label: 'MAP',
+  items: [['Domain', 'a place on this map'], ['Field', 'a domain of domains'], ['Capability', 'something the product does'], ['Wire', 'this depends on that']]
+}, {
+  cat: 'connector',
+  label: 'REACH',
+  items: [['Host', 'an application on a machine'], ['Cloud service', 'something running remotely'], ['Person', 'someone who is told'], ['Schedule', 'when it runs by itself']]
 }];
 function LibraryPanel(_ref5) {
   var onCreateNode = _ref5.onCreateNode,
@@ -1045,7 +1047,49 @@ function LibraryPanel(_ref5) {
     _React$useState0 = _slicedToArray(_React$useState9, 2),
     open = _React$useState0[0],
     setOpen = _React$useState0[1];
+  var _React$useState1 = React.useState(null),
+    _React$useState10 = _slicedToArray(_React$useState1, 2),
+    ghost = _React$useState10[0],
+    setGhost = _React$useState10[1];
   var ql = q.trim().toLowerCase();
+  // POINTER drag, not HTML5 drag-and-drop. The founder could not drag a node
+  // onto the canvas at all: QtWebEngine does not carry an HTML5 drag reliably
+  // inside the desktop shell, and a drag that never starts leaves no error to
+  // read (2026-09-07). Pointer capture works in every shell and gives a real
+  // preview of what is being carried.
+  var startLibraryDrag = function startLibraryDrag(event, item, col) {
+    if (event.button !== 0) return;
+    var from = {
+      x: event.clientX,
+      y: event.clientY
+    };
+    var carrying = false;
+    var move = function move(moved) {
+      if (!carrying) {
+        if (Math.abs(moved.clientX - from.x) + Math.abs(moved.clientY - from.y) < 5) return;
+        carrying = true;
+      }
+      setGhost({
+        item: item,
+        col: col,
+        x: moved.clientX,
+        y: moved.clientY
+      });
+    };
+    var _up = function up(ended) {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', _up);
+      window.removeEventListener('pointercancel', _up);
+      setGhost(null);
+      if (!carrying) return;
+      var drop = window.__atlasDropLibraryItem;
+      var landed = drop && drop(item, ended.clientX, ended.clientY);
+      if (!landed && flash) flash('Drop it on the map to place ' + item.title);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', _up);
+    window.addEventListener('pointercancel', _up);
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -1091,7 +1135,25 @@ function LibraryPanel(_ref5) {
       fontSize: 10.5,
       letterSpacing: '0.08em'
     }
-  }, "\uFF0B NEW DOMAIN")), /*#__PURE__*/React.createElement("div", {
+  }, "\uFF0B NEW DOMAIN")), ghost && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      left: ghost.x + 12,
+      top: ghost.y + 10,
+      zIndex: 9999,
+      pointerEvents: 'none',
+      padding: '6px 10px',
+      borderRadius: 6,
+      background: HB.paper2,
+      color: HB.ink,
+      border: "1px solid ".concat(ghost.col),
+      borderLeft: "3px solid ".concat(ghost.col),
+      boxShadow: '0 8px 22px rgba(0,0,0,.35)',
+      fontFamily: HB.sans,
+      fontSize: 12,
+      whiteSpace: 'nowrap'
+    }
+  }, ghost.item.title), /*#__PURE__*/React.createElement("div", {
     className: "hb-scroll",
     style: {
       flex: 1,
@@ -1165,14 +1227,12 @@ function LibraryPanel(_ref5) {
         sub = _ref9[1];
       return /*#__PURE__*/React.createElement("div", {
         key: title,
-        draggable: "true",
-        onDragStart: function onDragStart(e) {
-          e.dataTransfer.setData('application/x-atlas-node', JSON.stringify({
+        onPointerDown: function onPointerDown(e) {
+          return startLibraryDrag(e, {
             cat: g.cat,
             title: title,
             sub: sub
-          }));
-          e.dataTransfer.effectAllowed = 'copy';
+          }, col);
         },
         onDoubleClick: function onDoubleClick() {
           return onCreateNode({

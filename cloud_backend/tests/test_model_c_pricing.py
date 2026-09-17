@@ -33,6 +33,21 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 
 
+@pytest.fixture(autouse=True)
+def _pricing_published(tmp_path, monkeypatch):
+    """Checkout follows the published offer (test_offer_gate.py covers the
+    closed side). These tests prove the Stripe mechanics of an OPEN checkout,
+    so each one runs with an offer record that shows pricing."""
+    import json
+    import config
+    body = tmp_path / "founder-map.json"
+    body.write_text(json.dumps({"offer": {
+        "revision": 1, "sha256": "0" * 64, "availability": "paid",
+        "pricing_visible": True, "public_label": "Paid plans"}}),
+        encoding="utf-8")
+    monkeypatch.setattr(config, "FOUNDER_MAP_STATE", body)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

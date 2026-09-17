@@ -51,6 +51,30 @@ var aSave = function aSave(o) {
     localStorage.setItem(ALS, JSON.stringify(o));
   } catch (e) {}
 };
+// One agent list for every panel: the agents the running app reported in its control
+// push (M.control.agents). This page keeps no list of its own, so no panel can offer
+// an agent the app does not have.
+var reportedAgents = function reportedAgents(ctl) {
+  var rows = ctl && Array.isArray(ctl.agents) ? ctl.agents : [];
+  var nameOf = function nameOf(a) {
+    return String(a.provider || a.runtime || 'agent');
+  };
+  return rows.map(function (a, i) {
+    var name = nameOf(a),
+      session = String(a.session || '');
+    var shared = rows.filter(function (b) {
+      return nameOf(b) === name;
+    }).length > 1;
+    return {
+      id: name + ':' + (session || i),
+      name: shared && session ? name + ' · ' + session.slice(0, 8) : name,
+      runtime: a.runtime && a.runtime !== name ? String(a.runtime) : '',
+      session: session,
+      status: String(a.status || ''),
+      model: null
+    };
+  });
+};
 var STATUS_ORDER = ['live', 'partial', 'prototype', 'planned', 'vision', 'blocked', 'deprecated'];
 var CAT_LIST = ['ai', 'skill', 'connector', 'logic', 'custom', 'output', 'input', 'trigger', 'compose', 'transform', 'host', 'agent', 'watch', 'note'];
 var DOM_COLS = ['#d97757', '#5fb3b3', '#7898d6', '#a98cd6', '#7ec18e', '#e5b25a', '#6a9bcc', '#cc7a52'];
@@ -212,10 +236,8 @@ function ScaleLadder(_ref) {
   }
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      position: 'absolute',
-      top: 54,
-      left: '50%',
-      transform: 'translateX(-50%)',
+      alignSelf: 'center',
+      pointerEvents: 'auto',
       display: 'flex',
       alignItems: 'center',
       padding: '4px 6px',
@@ -437,7 +459,7 @@ function AtlasCockpit() {
     clearTimeout(tRef.current);
     tRef.current = setTimeout(function () {
       return setToast(null);
-    }, 2000);
+    }, Math.min(8000, 2000 + String(m).length * 40));
   };
 
   // Assembling the model happens more than once: at mount, and again whenever the app
@@ -963,6 +985,22 @@ function AtlasCockpit() {
   // comes only from the app that actually ran it, so a run in flight stays RUNNING until
   // the relay answers, and a node with no engine never enters that state at all.
 
+  // Every hook sits above the loading return. A hook below it runs only once the model has
+  // loaded, so that render calls more hooks than the first and React stops the whole page
+  // (minified error 310): the cockpit went blank the moment its map arrived.
+  var _React$useState43 = React.useState(null),
+    _React$useState44 = _slicedToArray(_React$useState43, 2),
+    offerEdit = _React$useState44[0],
+    setOfferEdit = _React$useState44[1];
+  var dropLibraryRef = React.useRef(null);
+  React.useEffect(function () {
+    window.__atlasDropLibraryItem = function (item, clientX, clientY) {
+      return dropLibraryRef.current ? dropLibraryRef.current(item, clientX, clientY) : false;
+    };
+    return function () {
+      delete window.__atlasDropLibraryItem;
+    };
+  }, []);
   if (!M || !vis) return /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
@@ -974,7 +1012,9 @@ function AtlasCockpit() {
       fontSize: 13
     }
   }, "loading the grand map\u2026");
-  var DB = cdb;
+  var DB = _objectSpread(_objectSpread({}, cdb), {}, {
+    agents: reportedAgents(M.control)
+  });
   var counts = {};
   STATUS_ORDER.forEach(function (s) {
     return counts[s] = 0;
@@ -1496,10 +1536,6 @@ function AtlasCockpit() {
   // The offer is ONE record in the app (app:users:accounts:offer); the cockpit
   // keeps no copy of it. Saving relays the founder's exact words through the
   // same door the ask bar uses and reports the application's own answer.
-  var _React$useState43 = React.useState(null),
-    _React$useState44 = _slicedToArray(_React$useState43, 2),
-    offerEdit = _React$useState44[0],
-    setOfferEdit = _React$useState44[1];
   var saveOffer = function saveOffer() {
     var label = String(offerEdit || '').trim();
     if (!label) {
@@ -1739,7 +1775,7 @@ function AtlasCockpit() {
       });
     });
     clearSel();
-    flash("Deleted ".concat(ids.length, " node").concat(ids.length > 1 ? 's' : ''));
+    flash("Deleted ".concat(ids.length, " node").concat(ids.length > 1 ? 's' : '', " from this view \u2014 your app's graph is unchanged"));
   };
   var requestDelete = function requestDelete(ids) {
     if (ids.length) setConfirmDel({
@@ -1836,7 +1872,7 @@ function AtlasCockpit() {
         })
       });
     });
-    flash('Wire cut');
+    flash('Wire cut in this view');
   };
   var disconnectAll = function disconnectAll(id) {
     setM(function (m) {
@@ -1846,7 +1882,7 @@ function AtlasCockpit() {
         })
       });
     });
-    flash('Disconnected all wires');
+    flash('Disconnected all wires in this view');
   };
   var freezeNode = function freezeNode(id) {
     var n = M.nodes.find(function (x) {
@@ -1855,7 +1891,7 @@ function AtlasCockpit() {
     patchNode(id, {
       frozen: !(n && n.frozen)
     });
-    flash(n && n.frozen ? 'Unfrozen' : 'Frozen — locked from edits & runs');
+    flash(n && n.frozen ? 'Unfrozen' : 'Frozen in this view — locked from edits & runs');
   };
   var duplicateNode = function duplicateNode(id) {
     var n = M.nodes.find(function (x) {
@@ -1879,7 +1915,7 @@ function AtlasCockpit() {
       domain: null,
       nodes: new Set([nid])
     });
-    flash('Duplicated');
+    flash('Duplicated in this view');
   };
   var onNodeContext = function onNodeContext(id, x, y) {
     if (!sel.nodes.has(id)) setSel({
@@ -2099,26 +2135,23 @@ function AtlasCockpit() {
   // that silently never starts leaves no error to read (2026-09-07). Every
   // fixed-canvas editor that works inside an embedded view does it this way.
   // The library calls this on release; the map decides where the node lands.
-  React.useEffect(function () {
-    window.__atlasDropLibraryItem = function (item, clientX, clientY) {
-      var col = mapColRef.current;
-      if (!col || !item) return false;
-      var box = col.getBoundingClientRect();
-      if (clientX < box.left || clientX > box.right || clientY < box.top || clientY > box.bottom) return false;
-      var w = window.__atlasToWorld && window.__atlasToWorld(clientX, clientY);
-      var host = w && M.domains.find(function (d) {
-        return w.x >= d.x && w.x <= d.x + d.w && w.y >= d.y && w.y <= d.y + d.h;
-      });
-      createFromLibrary(item, host && host.key, w && host ? {
-        x: w.x - 76,
-        y: w.y - 43
-      } : null);
-      return true;
-    };
-    return function () {
-      delete window.__atlasDropLibraryItem;
-    };
-  }, [M.domains, sel.domain]);
+  // Assigned on every loaded render, so a drop always sees the current map. The window
+  // hook that calls it is installed once, above the loading return (dropLibraryRef).
+  dropLibraryRef.current = function (item, clientX, clientY) {
+    var col = mapColRef.current;
+    if (!col || !item) return false;
+    var box = col.getBoundingClientRect();
+    if (clientX < box.left || clientX > box.right || clientY < box.top || clientY > box.bottom) return false;
+    var w = window.__atlasToWorld && window.__atlasToWorld(clientX, clientY);
+    var host = w && M.domains.find(function (d) {
+      return w.x >= d.x && w.x <= d.x + d.w && w.y >= d.y && w.y <= d.y + d.h;
+    });
+    createFromLibrary(item, host && host.key, w && host ? {
+      x: w.x - 76,
+      y: w.y - 43
+    } : null);
+    return true;
+  };
   var addDomain = function addDomain(title, col) {
     var key = (title || 'domain').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 14) + '_' + Math.random().toString(36).slice(2, 4);
     var cols = M.domains.length;
@@ -2980,9 +3013,6 @@ function AtlasCockpit() {
     style: {
       display: 'none'
     }
-  }), /*#__PURE__*/React.createElement(HAvatar, {
-    name: "Mehdi Habib",
-    size: 28
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
@@ -3462,7 +3492,58 @@ function AtlasCockpit() {
     query: query,
     onOffGrid: setOffGrid,
     hostW: mapW
-  }), offGrid.length > 0 && !offGridDismissed && /*#__PURE__*/React.createElement("div", {
+  }), M.domains.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      zIndex: 5,
+      width: 380,
+      maxWidth: '80%',
+      boxSizing: 'border-box',
+      padding: '18px 20px',
+      borderRadius: 12,
+      background: HB.card,
+      border: "1px solid ".concat(HB.line),
+      boxShadow: '0 14px 40px rgba(0,0,0,.3)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9,
+      color: HB.amber,
+      letterSpacing: '0.16em'
+    }
+  }, mapMeta.live ? 'EMPTY PUSH' : 'NO LIVE PUSH'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.serif,
+      fontSize: 21,
+      letterSpacing: '-0.01em',
+      color: HB.ink,
+      marginTop: 4
+    }
+  }, mapMeta.live ? 'Your app pushed a map with no domains.' : 'No map yet.'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: HB.inkSoft,
+      lineHeight: 1.55,
+      marginTop: 6
+    }
+  }, mapMeta.live ? 'The projection arrived but holds nothing to draw. Refresh after your app pushes again.' : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub on your machine and it will appear here.'), /*#__PURE__*/React.createElement("button", {
+    onClick: reloadMap,
+    style: {
+      marginTop: 12,
+      border: "1px solid ".concat(HB.accent),
+      background: 'transparent',
+      color: HB.accent,
+      borderRadius: 6,
+      padding: '4px 10px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 10
+    }
+  }, "refresh")), offGrid.length > 0 && !offGridDismissed && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'absolute',
       bottom: 78,
@@ -3525,12 +3606,22 @@ function AtlasCockpit() {
       position: 'absolute',
       top: 12,
       left: 14,
-      right: 372,
+      right: 14,
+      zIndex: 6,
       display: 'flex',
-      alignItems: 'center',
+      flexDirection: 'column',
       gap: 8,
       minWidth: 0,
       pointerEvents: 'none'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+      minWidth: 0,
+      maxWidth: 'calc(100% - 358px)'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3739,7 +3830,7 @@ function AtlasCockpit() {
     level: scaleLevel,
     onClimb: climbTo,
     depth: modelDepth
-  }), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'absolute',
       top: 12,
@@ -3817,6 +3908,7 @@ function AtlasCockpit() {
   }(), function () {
     var selCount = sel.nodes.size + (sel.domains || new Set()).size;
     if (selCount > 0) return null;
+    if (M.domains.length === 0) return null; // nothing to select; the empty-map card owns the canvas
     if (offGrid.length > 0 && !offGridDismissed) return null; // off-grid notice owns this slot
     return /*#__PURE__*/React.createElement("div", {
       style: {
@@ -4071,33 +4163,42 @@ function AtlasCockpit() {
       delNodes(confirmDel.ids);
       setConfirmDel(null);
     }
-  }), toast && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'fixed',
-      bottom: 74,
-      left: '50%',
-      transform: 'translateX(-50%)',
-      zIndex: 80,
-      background: HB.paper2,
-      color: HB.ink,
-      border: "1px solid ".concat(HB.line),
-      borderRadius: 999,
-      padding: '8px 16px',
-      fontSize: 12,
-      fontFamily: HB.mono,
-      boxShadow: '0 14px 40px rgba(0,0,0,.3)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: HB.accent
-    }
-  }, /*#__PURE__*/React.createElement(CKIcon, {
-    name: "check",
-    size: 13
-  })), toast));
+  }), toast && function () {
+    // A refusal or a failure from the app must not wear a check mark.
+    var text = String(toast);
+    var bad = /^✗|not changed|not sent|failed|refused|only a founder|must not|cannot|can't/i.test(text);
+    return /*#__PURE__*/React.createElement("div", {
+      role: "status",
+      style: {
+        position: 'fixed',
+        bottom: 74,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 80,
+        maxWidth: 'min(640px, 80vw)',
+        background: HB.paper2,
+        color: HB.ink,
+        border: "1px solid ".concat(bad ? HB.red : HB.line),
+        borderRadius: 14,
+        padding: '8px 16px',
+        fontSize: 12,
+        lineHeight: 1.45,
+        fontFamily: HB.mono,
+        boxShadow: '0 14px 40px rgba(0,0,0,.3)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: bad ? HB.red : HB.accent,
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement(CKIcon, {
+      name: bad ? 'x' : 'check',
+      size: 13
+    })), /*#__PURE__*/React.createElement("span", null, text.replace(/^[✓✗]\s*/, '')));
+  }());
 }
 
 /* left-panel atoms */
@@ -4549,9 +4650,9 @@ function ContextMenu(_ref20) {
     sep: true
   }] : []), [{
     icon: 'play',
-    label: node && node.frozen ? 'Run (frozen)' : 'Run node',
+    label: node && node.frozen ? 'Run (frozen)' : node && !node.engine ? 'Run node (no engine)' : 'Run node',
     fn: actions.run,
-    dim: node && node.frozen
+    dim: node && (node.frozen || !node.engine)
   }, {
     icon: 'eye',
     label: 'Add watcher',
@@ -4746,7 +4847,7 @@ function ConfirmModal(_ref21) {
       fontSize: 21,
       letterSpacing: '-0.01em'
     }
-  }, "Delete ", count > 1 ? "".concat(count, " nodes") : 'node', "?")), /*#__PURE__*/React.createElement("div", {
+  }, "Delete ", count > 1 ? "".concat(count, " nodes") : 'node', " from this view?")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       color: HB.inkSoft,
@@ -4756,15 +4857,15 @@ function ConfirmModal(_ref21) {
     style: {
       color: HB.ink
     }
-  }, names[0]), " from the model.") : /*#__PURE__*/React.createElement(React.Fragment, null, "This removes ", /*#__PURE__*/React.createElement("b", {
+  }, names[0]), " from this view.") : /*#__PURE__*/React.createElement(React.Fragment, null, "This removes ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: HB.ink
     }
-  }, count, " nodes"), " from the model."), wires > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " It also cuts ", /*#__PURE__*/React.createElement("b", {
+  }, count, " nodes"), " from this view."), wires > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " It also cuts ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: HB.ink
     }
-  }, wires), " wire", wires > 1 ? 's' : '', " connected to ", count > 1 ? 'them' : 'it', "."), " This can't be undone."), /*#__PURE__*/React.createElement("div", {
+  }, wires), " wire", wires > 1 ? 's' : '', " connected to ", count > 1 ? 'them' : 'it', "."), " The graph in your app is not changed; ", count > 1 ? 'they come' : 'it comes', " back the next time the map is pulled from your app."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       justifyContent: 'flex-end',

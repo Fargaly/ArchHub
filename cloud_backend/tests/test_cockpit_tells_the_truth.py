@@ -229,7 +229,7 @@ def test_the_open_buttons_for_hosts_survived(panels: str) -> None:
 
 def test_the_map_states_its_source_and_when_it_was_taken(cockpit: str) -> None:
     assert "LIVE PUSH" in cockpit
-    assert "AUTHORED MODEL" in cockpit
+    assert "NO LIVE PUSH" in cockpit, "an absent push must be named, not drawn as a model"
     assert "mapMeta" in cockpit
     assert "taken " in cockpit
 
@@ -238,6 +238,41 @@ def test_the_map_says_whether_the_app_is_answering(cockpit: str) -> None:
     assert "app has not answered yet" in cockpit
     assert "app answered " in cockpit
     assert "appSeen" in cockpit
+
+
+def test_an_empty_map_says_why_it_is_empty(cockpit: str) -> None:
+    """With no push the model is empty on purpose; the canvas says so instead of a bare grid."""
+    assert "No map yet." in cockpit
+    assert "Your app pushed a map with no domains." in cockpit
+
+
+def test_no_hook_runs_below_the_loading_return(cockpit: str) -> None:
+    """A hook after the early return is skipped on the first render and called once the map
+    loads; React then throws error 310 and the whole cockpit goes blank."""
+    start = cockpit.index("loading the grand map")
+    body = cockpit[start:cockpit.index("ARailIcon", start)]
+    assert "React.use" not in body, "a hook is declared below the loading return"
+
+
+# -- 7. nothing on the page is a person or an agent the app did not report ----
+
+def test_the_masthead_names_no_invented_person(cockpit: str) -> None:
+    """The design's sample avatar was drawn as if it were the signed-in founder."""
+    assert "Mehdi Habib" not in cockpit
+
+
+def test_every_agent_list_is_the_agents_the_app_reported(panels: str, cockpit: str) -> None:
+    """DB.agents started empty and nothing filled it, so every assign list was blank.
+    The one list is now derived from the control block the app pushes."""
+    assert "reportedAgents(M.control)" in cockpit
+    assert "Your app has not reported any agents yet." in panels
+    assert "WIRED TO FOUNDER BRAIN" not in panels, "an assignment kept in this page is not wired to the brain"
+
+
+def test_a_delete_in_the_cockpit_does_not_claim_to_change_the_graph(cockpit: str) -> None:
+    """The push owns nodes and wires; a delete here lasts until the next pull."""
+    assert "can't be undone" not in cockpit and "can\\'t be undone" not in cockpit
+    assert "The graph in your app is not changed" in cockpit
 
 
 def test_the_refresh_hook_the_ask_bar_calls_exists(cockpit: str) -> None:

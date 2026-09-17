@@ -398,6 +398,37 @@ def founder_secrets_key(name: str) -> str:
         return ""
 
 
+def _secrets_listing_loader():
+    """One read of the secrets store for a whole provider listing.
+
+    A listing loaded the store module and decrypted its protected file once
+    for every name it checked (2026-09-17). Here the store is loaded once and
+    its protected entries decrypted once, under the credential lock; the
+    returned loader answers each name from that read. Values never leave it
+    except to the caller that asked for a name.
+    """
+    with _CREDENTIAL_LOCK:
+        try:
+            store = _application_secrets_store()
+            raw = _credential_file_bytes(Path(store.SECRETS_FILE))
+            protected = (
+                _protected_credential_entries(store, raw)
+                if raw is not None and raw.startswith(_CREDENTIAL_DPAPI_MARK)
+                else {})
+        except Exception:
+            return lambda name: ""
+
+    def load(name):
+        if not isinstance(name, str) or name.startswith("social-"):
+            return ""
+        try:
+            with _CREDENTIAL_LOCK:
+                return protected.get(name) or str(store.load_api_key(name) or "")
+        except Exception:
+            return ""
+    return load
+
+
 def discover_key(
     family: str,
     *,
@@ -440,17 +471,36 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
     """
     rows = []
     labels = {"openrouter": "OpenRouter", "cloud": "ArchHub cloud",
-              "anthropic": "Anthropic", "openai": "OpenAI"}
+              "anthropic": "Anthropic", "openai": "OpenAI", "google": "Google"}
+    loader = _secrets_listing_loader() if secrets_loader is None else secrets_loader
     for family, plan in _KEY_PLAN.items():
         try:
             _key, source = discover_key(
-                family, environ=environ, secrets_loader=secrets_loader,
+                family, environ=environ, secrets_loader=loader,
                 cloud_session=cloud_session)
             rows.append({"id": family, "name": labels.get(family, family.title()),
                          "state": "keyed", "source": source, "sets": plan["variable"]})
         except ModelRouteRefused:
             rows.append({"id": family, "name": labels.get(family, family.title()),
                          "state": "no key", "source": "", "sets": plan["variable"]})
+    # Providers the graph registry admits (cell_model_providers) whose key
+    # this machine holds. Their keys were stored with no row at all
+    # (2026-09-17). The router has no direct route for them, so the row says
+    # what reaching their models takes on this machine right now.
+    from .cell_model_providers import ADMITTED_PROVIDERS
+    through_openrouter = any(
+        row["id"] == "openrouter" and row["state"] == "keyed" for row in rows)
+    for name, description in ADMITTED_PROVIDERS.items():
+        if name in _KEY_PLAN or not str(loader(name) or "").strip():
+            continue
+        rows.append({"id": name, "name": labels.get(name, description),
+                     "state": "keyed, not routed", "sets": "",
+                     "source": (
+                         "key in the secrets store; no direct route in this build, "
+                         "its models are reached through OpenRouter"
+                         if through_openrouter else
+                         "key in the secrets store; no direct route in this build; "
+                         "add an OpenRouter key to reach these models")})
     probe = local_probe
     if probe is None:
         def probe(host, port):

@@ -828,6 +828,13 @@ _BABOOM_STARTUP_VALUES = ("on", "off")
 _BABOOM_STARTUP_DEFAULT = "on"
 _BABOOM_STARTUP_TOKEN_PREFIX = "baboom-startup-"
 _BABOOM_STARTUP_BINDING_PREFIX = "app:baboom-startup-binding:"
+_COMPOSER_MODEL_CONTRACT_ROOT = "app:contract:composer-model:v1"
+_COMPOSER_MODEL_CONTRACT_TEXT = (
+    b"Studio composer model route chosen by the instance owner; empty is no pick"
+)
+_COMPOSER_MODEL_MAXIMUM_BYTES = 200
+_COMPOSER_MODEL_TOKEN_PREFIX = "composer-model-"
+_COMPOSER_MODEL_BINDING_PREFIX = "app:composer-model-binding:"
 _DEFAULT_NODE_PRESENTATION_COLOR = "#9b938a"
 _ATTENTION_PRIORITY_SPECS = (
     ("app:attention-priority:safety", "Safety and security"),
@@ -3650,6 +3657,7 @@ _APPEARANCE_OPERATION_ROOTS = MappingProxyType({
         "theme-preview",
         "theme-restore",
         "baboom-startup",
+        "composer-model",
     )
 })
 _PROPERTY_OPERATION_ROOTS = MappingProxyType({
@@ -24055,6 +24063,9 @@ def _project_universal_canvas_interpreter(
     baboom_startup = _project_universal_baboom_startup(
         snapshot, registry, view_session
     )
+    composer_model = _project_universal_composer_model(
+        snapshot, registry, view_session
+    )
     if previous_projection is None:
         design_token_system = open_archhub_design_token_system(
             snapshot, registry.presentation.theme_roots
@@ -24897,6 +24908,7 @@ def _project_universal_canvas_interpreter(
             "theme": settings_theme,
             "theme_fields": settings_theme_fields,
             "baboom_startup": baboom_startup,
+            "composer_model": composer_model,
             "design_system": design_system_runtime,
             "history": settings_history,
             "shared_revision": (
@@ -26843,6 +26855,299 @@ def set_universal_baboom_startup(
     )
     if len(heads) != 1:
         raise InvalidCell("new BABOOM startup WIP is ambiguous")
+    return heads[0]
+
+
+def _composer_model_roots(view_session_root: str) -> tuple[str, str]:
+    """Derive the owner's composer model asset and binding roots.
+
+    This is the only derivation; the reader and the writer both call it.
+    """
+    token_hex = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        view_session_root + "\0" + _COMPOSER_MODEL_CONTRACT_ROOT,
+    ).hex
+    return (
+        "assembly-instance:" + _COMPOSER_MODEL_TOKEN_PREFIX + token_hex,
+        _COMPOSER_MODEL_BINDING_PREFIX + token_hex,
+    )
+
+
+def _composer_model_route_text(value: object) -> str:
+    """A model route as the graph holds it: printable ASCII, no spaces."""
+    if (
+        type(value) is not str
+        or len(value) > _COMPOSER_MODEL_MAXIMUM_BYTES
+        or any(not 0x21 <= ord(char) <= 0x7E for char in value)
+    ):
+        raise InvalidCell("composer model route is invalid")
+    return value
+
+
+def read_universal_composer_model(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+) -> dict[str, object]:
+    """Decode the instance owner's Studio composer model pick from a snapshot.
+
+    Snapshot-only: no store, no authorization and no writes. The picker, the
+    Send path and BABOOM read this one decoder. No binding reads as no pick;
+    a binding that is present but not exact is refused.
+    """
+    owner_root = registry.authorization.subject_root
+    view_session = registry.view_sessions.get(owner_root)
+    if view_session is None:
+        raise InvalidCell("composer model owner has no provisioned view")
+    asset_root, binding_root = _composer_model_roots(view_session.root_id)
+    asset_present = asset_root in snapshot.cells
+    binding_present = binding_root in snapshot.cells
+    if not asset_present and not binding_present:
+        return {
+            "value": "",
+            "source": "default",
+            "revision": None,
+            "actor": None,
+            "asset": None,
+            "binding": None,
+        }
+    if not (asset_present and binding_present):
+        raise InvalidCell("composer model binding is partial")
+    roles = registry.roles
+    expected_members = {
+        (roles["owner"], view_session.settings_root),
+        (roles["value"], asset_root),
+        (roles["scope"], view_session.root_id),
+        (roles["authority"], owner_root),
+        (roles["contract"], _COMPOSER_MODEL_CONTRACT_ROOT),
+    }
+    members = read_relation(snapshot, binding_root, budget=16)
+    if len(members) != len(expected_members) or {
+        (member.role_id, member.participant_id) for member in members
+    } != expected_members:
+        raise InvalidCell("composer model binding drifted")
+    expected_contract = Cell(
+        _COMPOSER_MODEL_CONTRACT_ROOT,
+        NULL_CELL_ID,
+        NULL_CELL_ID,
+        _COMPOSER_MODEL_CONTRACT_TEXT,
+    )
+    if (
+        expected_contract.id not in snapshot.cells
+        or snapshot.cells[expected_contract.id] != expected_contract
+    ):
+        raise InvalidCell("composer model contract drifted")
+    lifecycle = registry.standard_library.lifecycle_protocol
+    instance = read_lifecycle_instance(
+        snapshot, registry.assembly_protocol, lifecycle, asset_root
+    )
+    heads = state_heads(
+        snapshot,
+        lifecycle,
+        instance.state_pointers[lifecycle.states["wip"]],
+    )
+    if len(heads) != 1:
+        raise InvalidCell("composer model has multiple WIP heads")
+    revision = read_revision(snapshot, lifecycle, heads[0])
+    content = snapshot.cells[revision.content_root]
+    if content.link0 != NULL_CELL_ID or content.link1 != NULL_CELL_ID:
+        raise InvalidCell("composer model value is invalid")
+    try:
+        value = _composer_model_route_text(bytes(content.atom).decode("ascii"))
+    except (UnicodeDecodeError, InvalidCell) as exc:
+        raise InvalidCell("composer model value is invalid") from exc
+    if revision.actor_root != owner_root:
+        raise InvalidCell("composer model actor drifted")
+    return {
+        "value": value,
+        "source": "graph",
+        "revision": heads[0],
+        "actor": revision.actor_root,
+        "asset": asset_root,
+        "binding": binding_root,
+    }
+
+
+def _project_universal_composer_model(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+) -> dict[str, object]:
+    """Project the composer model pick without ever failing the canvas."""
+    try:
+        current = read_universal_composer_model(snapshot, registry)
+    except Exception as exc:
+        return {
+            "value": None,
+            "source": "unreadable",
+            "revision": None,
+            "actor": None,
+            "available": False,
+            "control": None,
+            "event_fact_input": None,
+            "effect": "next-send",
+            "error": type(exc).__name__,
+        }
+    available = (
+        view_session.subject_root == registry.authorization.subject_root
+    )
+    return {
+        "value": current["value"],
+        "source": current["source"],
+        "revision": current["revision"],
+        "actor": current["actor"],
+        "available": available,
+        "control": (
+            _appearance_control_root(
+                view_session.subject_root,
+                view_session.settings_root,
+                _APPEARANCE_OPERATION_ROOTS["composer-model"],
+            )
+            if available else None
+        ),
+        "event_fact_input": (
+            _EVENT_FACT_ROOTS["submitted_value"] if available else None
+        ),
+        "effect": "next-send",
+        "error": None,
+    }
+
+
+def set_universal_composer_model(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    value: str,
+    *,
+    base_revision_root: str | None = None,
+    authentication_context: object | None = None,
+) -> str:
+    """Append the instance owner's composer model pick as a WIP revision.
+
+    The pick lived only in the page until a Send reached the server, so a
+    restart or an update came back with no model (2026-09-17). It is owner
+    only, append-only and outside canvas undo, like the BABOOM startup
+    setting. An empty value clears the pick. Only a value the graph already
+    holds is refused as unchanged: a graph with no binding takes its first
+    value, even '', so a clear also retires a pick an older build recorded
+    beside the graph.
+    """
+    value = _composer_model_route_text(value)
+    if value:
+        from .model_router import ModelRouteRefused, resolve_model_route
+        try:
+            resolve_model_route(value)
+        except ModelRouteRefused as refused:
+            raise InvalidCell(str(refused)) from refused
+    snapshot = store.snapshot()
+    view_session, context = _view_session_for_context(
+        registry, authentication_context
+    )
+    if view_session.subject_root != registry.authorization.subject_root:
+        raise AuthorizationDenied(
+            "the composer model belongs to the instance owner"
+        )
+    _require_application_authorization(
+        snapshot,
+        registry,
+        "edit",
+        view_session.root_id,
+        authentication_context=context,
+        resource_lineage_roots=(
+            registry.authorization.personal_view_scope_root,
+        ),
+    )
+    actor_root = registry.authorization.broker.resolve(context).subject_root
+    lifecycle = registry.standard_library.lifecycle_protocol
+    current = read_universal_composer_model(snapshot, registry)
+    if current["source"] == "graph":
+        if base_revision_root != current["revision"]:
+            raise InvalidCell("composer model changed; refresh before saving")
+        if value == current["value"]:
+            raise InvalidCell("composer model is already %r" % value)
+        return append_wip_revision(
+            store,
+            registry.assembly_protocol,
+            lifecycle,
+            str(current["asset"]),
+            content=value.encode("ascii"),
+            actor_root=actor_root,
+            base_revision_root=str(current["revision"]),
+            reason="Studio composer model",
+        )
+    if base_revision_root is not None:
+        raise InvalidCell("composer model changed; refresh before saving")
+    asset_root, binding_root = _composer_model_roots(view_session.root_id)
+    if asset_root in snapshot.cells or binding_root in snapshot.cells:
+        raise InvalidCell("partial composer model binding exists")
+    definition_root = _versioned_asset_definition_root(
+        store, snapshot, registry
+    )
+    composed = seed_composed_lifecycle_content(
+        snapshot,
+        registry.assembly_protocol,
+        lifecycle,
+        compose_catalog_instance(
+            snapshot,
+            registry.assembly_protocol,
+            registry.standard_library.catalog_root,
+            definition_root,
+            token=asset_root[len("assembly-instance:"):],
+        ),
+        value.encode("ascii"),
+        actor_root=actor_root,
+    )
+    if composed.instance.root_id != asset_root:
+        raise InvalidCell("composer model asset identity drifted")
+    roles = registry.roles
+    relation = compose_relation_cells((
+        (roles["owner"], view_session.settings_root),
+        (roles["value"], asset_root),
+        (roles["scope"], view_session.root_id),
+        (roles["authority"], actor_root),
+        (roles["contract"], _COMPOSER_MODEL_CONTRACT_ROOT),
+    ), relation_id=binding_root)
+    contract = Cell(
+        _COMPOSER_MODEL_CONTRACT_ROOT,
+        NULL_CELL_ID,
+        NULL_CELL_ID,
+        _COMPOSER_MODEL_CONTRACT_TEXT,
+    )
+    application_members = [
+        (roles["member"], binding_root),
+        (roles["member"], asset_root),
+    ]
+    created_contract: tuple[Cell, ...] = ()
+    if contract.id not in snapshot.cells:
+        created_contract = (contract,)
+        application_members.append((roles["member"], contract.id))
+    elif snapshot.cells[contract.id] != contract:
+        raise InvalidCell("composer model contract identity drifted")
+    application_patch = prepare_append_relation_members(
+        snapshot,
+        registry.application_root,
+        tuple(application_members),
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision,
+        create=(
+            *created_contract,
+            *composed.cells,
+            *relation.cells,
+            *application_patch.create,
+        ),
+        replace=application_patch.replace,
+    )
+    written = store.snapshot()
+    instance = read_lifecycle_instance(
+        written, registry.assembly_protocol, lifecycle, asset_root
+    )
+    heads = state_heads(
+        written,
+        lifecycle,
+        instance.state_pointers[lifecycle.states["wip"]],
+    )
+    if len(heads) != 1:
+        raise InvalidCell("new composer model WIP is ambiguous")
     return heads[0]
 
 
@@ -44890,6 +45195,39 @@ def ensure_universal_presentation_interactions(
             ))
         elif startup.get("control") is not None:
             raise InvalidCell("unavailable BABOOM startup exposes a control")
+    composer_model = configuration.get("composer_model")
+    if composer_model is not None:
+        if not isinstance(composer_model, Mapping):
+            raise InvalidCell(
+                "composer model interaction projection is invalid"
+            )
+        if composer_model.get("available") is True:
+            composer_control = composer_model.get("control")
+            if (
+                subject_root != registry.authorization.subject_root
+                or composer_control != _appearance_control_root(
+                    subject_root,
+                    view_session.settings_root,
+                    _APPEARANCE_OPERATION_ROOTS["composer-model"],
+                )
+                or composer_model.get("event_fact_input")
+                != submitted_spec.root_id
+            ):
+                raise InvalidCell("composer model interaction control drifted")
+            definitions.append((
+                composer_control,
+                _APPEARANCE_OPERATION_ROOTS["composer-model"],
+                events["preview"],
+                view_session.settings_root,
+                (
+                    _APPEARANCE_OPERATION_ROOTS["composer-model"],
+                    view_session.settings_root,
+                    submitted_spec.root_id,
+                ),
+                CAPABILITY_EDIT_VALUE,
+            ))
+        elif composer_model.get("control") is not None:
+            raise InvalidCell("unavailable composer model exposes a control")
     if len(definitions) != len({item[0] for item in definitions}):
         raise InvalidCell("presentation interaction controls are duplicated")
 
@@ -47856,6 +48194,7 @@ def submit_universal_edit_value_interaction(
     presentation_candidate = None
     theme_candidate = None
     baboom_startup_candidate = None
+    composer_model_candidate = None
     interface_candidate = None
     collection_candidate = None
     value_root = None
@@ -47924,6 +48263,29 @@ def submit_universal_edit_value_interaction(
         ):
             baboom_startup_candidate = startup
         value_root = body_root
+    elif (
+        len(inputs) == 3
+        and inputs[0] == _APPEARANCE_OPERATION_ROOTS["composer-model"]
+    ):
+        _operation_root, owner_root, submitted_spec_root = inputs
+        configuration = projection.get("configuration")
+        composer_model = (
+            configuration.get("composer_model")
+            if isinstance(configuration, Mapping) else None
+        )
+        if not isinstance(composer_model, Mapping):
+            raise InvalidCell(
+                "composer model interaction projection is incomplete"
+            )
+        if (
+            owner_root == configuration.get("personal_asset")
+            and interaction.target_root == owner_root
+            and composer_model.get("available") is True
+            and composer_model.get("control") == control_root
+            and composer_model.get("event_fact_input") == submitted_spec_root
+        ):
+            composer_model_candidate = composer_model
+        value_root = owner_root
     elif len(inputs) == 3:
         relation_root, value_root, submitted_spec_root = inputs
         projected_properties = projection.get("properties")
@@ -48063,6 +48425,7 @@ def submit_universal_edit_value_interaction(
             interface_candidate,
             collection_candidate,
             baboom_startup_candidate,
+            composer_model_candidate,
         )) != 1
     ):
         raise InvalidCell("edit-value interaction wiring is invalid")
@@ -48075,7 +48438,20 @@ def submit_universal_edit_value_interaction(
     value = values["submitted_value"]
     if type(value) is not str:
         raise InvalidCell("edit-value interaction value is not text")
-    if baboom_startup_candidate is not None:
+    if composer_model_candidate is not None:
+        if (
+            composer_model_candidate.get("source") == "graph"
+            and value == composer_model_candidate.get("value")
+        ):
+            raise InvalidCell("composer model is already %r" % value)
+        set_universal_composer_model(
+            store,
+            registry,
+            value,
+            base_revision_root=composer_model_candidate.get("revision"),
+            authentication_context=context,
+        )
+    elif baboom_startup_candidate is not None:
         if value not in _BABOOM_STARTUP_VALUES:
             raise InvalidCell("BABOOM startup value must be on or off")
         if value == baboom_startup_candidate.get("value"):
@@ -50333,6 +50709,8 @@ __all__ = [
     "ensure_universal_presentation_interactions",
     "read_universal_baboom_startup",
     "set_universal_baboom_startup",
+    "read_universal_composer_model",
+    "set_universal_composer_model",
     "ensure_universal_interface_value_interactions",
     "ensure_universal_relation_member_interactions",
     "ensure_universal_topology_interactions",

@@ -85,15 +85,17 @@
         fail('Enter a six-digit hex colour, such as #1177aa.');
       }
       if (kind === 'baboom-startup' && value !== 'on' && value !== 'off') fail('BABOOM startup must be on or off.');
+      if (kind === 'composer-model' && (typeof value !== 'string' || value.length > 200 || /[^\x21-\x7e]/.test(value))) {
+        fail('The model route is invalid.');
+      }
       const identity = themeCanvas && topologyIdentity(themeCanvas);
       let acceptedRead = false, submitted = false, committed = false;
       themeError = '';
-      const operation = Promise.resolve().then(async () => {
-        const fresh = await get('/api/universal/canvas');
+      const save = async (fresh, held) => {
         if (identity && topologyIdentity(fresh) !== identity) fail('The view changed. Review its Personal Settings before saving.');
-        const base = acceptTheme(fresh), config = base.configuration;
+        const base = held ? fresh : acceptTheme(fresh), config = base.configuration;
         acceptedRead = true;
-        if (kind !== 'baboom-startup' && config.personal_wip_heads.length !== 1) fail('Personal Settings needs one draft before Save or Restore.');
+        if (kind !== 'baboom-startup' && kind !== 'composer-model' && config.personal_wip_heads.length !== 1) fail('Personal Settings needs one draft before Save or Restore.');
         let control, facts = [];
         if (kind === 'preview') {
           const field = config.theme_fields.find(field => field.key === key);
@@ -106,6 +108,19 @@
             fail('BABOOM startup cannot be changed from this view.');
           }
           if (setting.value === value) fail('BABOOM startup is already ' + value + '.');
+          control = setting.control;
+          facts = [{input:setting.event_fact_input, value}];
+        } else if (kind === 'composer-model') {
+          const setting = config.composer_model;
+          if (!setting || setting.available !== true || !text(setting.control) || !text(setting.event_fact_input)) {
+            fail('The model selection cannot be saved from this view.');
+          }
+          // Only a pick the graph holds is unchanged. With no binding the graph
+          // takes its first value, even '', so a clear also retires a pick an
+          // older build recorded beside the graph.
+          if (setting.source === 'graph' && setting.value === value) {
+            return held ? null : {ok:true, unchanged:true, configuration_state:{composer_model:setting}};
+          }
           control = setting.control;
           facts = [{input:setting.event_fact_input, value}];
         } else {
@@ -124,12 +139,36 @@
             !result.configuration_state || !result.interaction_projection ||
             (kind === 'preview' && result.configuration_state.theme?.[key] !== value) ||
             (kind === 'baboom-startup' && result.configuration_state.baboom_startup?.value !== value) ||
+            (kind === 'composer-model' && result.configuration_state.composer_model?.value !== value) ||
             (kind === 'restore' && result.configuration_state.preview_revision === config.preview_revision)) {
           fail('The theme save needs reconciliation. Refresh Personal Settings before another save.');
         }
         acceptTheme({...base, revision:result.revision, interaction_projection:result.interaction_projection,
           configuration:{...config, ...result.configuration_state}});
         return result;
+      };
+      const operation = Promise.resolve().then(async () => {
+        // A model pick saves against the view this page holds while no newer
+        // revision has been seen. Reading the whole canvas first doubled the
+        // pick on a 137-node scratch graph (read then save 5162 ms, save alone
+        // 2572 ms, 2026-09-17). The server refuses a revision it has moved past
+        // before writing anything; only then, or when the held view cannot
+        // make the request, is the view read fresh. A held view never answers
+        // "unchanged" on its own.
+        if (kind === 'composer-model' && themeCanvas?.configuration?.composer_model?.available === true &&
+            !(topologyCanvas?.revision > themeCanvas.revision)) {
+          try {
+            const saved = await save(themeCanvas, true);
+            if (saved) return saved;
+          } catch (error) {
+            if (committed || (submitted && !(error.status === 409 ||
+                /^(expected revision \d+, current revision is \d+|interaction projection cache is unavailable)$/.test(error.message || '')))) {
+              throw error;
+            }
+          }
+          acceptedRead = false; submitted = false;
+        }
+        return save(await get('/api/universal/canvas'), false);
       }).catch(async error => {
         if (!acceptedRead || submitted) themeCanvas = null;
         themeError = committed ? 'Saved in Personal Settings; refresh to review. Do not repeat this save.' :
@@ -143,6 +182,7 @@
           } catch (_) {}
           themeError = kind === 'baboom-startup' ?
             'BABOOM startup was not changed. Review the refreshed setting and try again.' :
+            kind === 'composer-model' ? 'The model selection changed before this save. Pick the model again.' :
             'Personal Settings changed before this save. Review the refreshed theme and save again.';
         }
         publish();
@@ -818,6 +858,7 @@
       previewThemeToken: (key, value) => changeTheme('preview', key, value),
       restoreThemeRevision: root => changeTheme('restore', root),
       setBaboomStartup: value => changeTheme('baboom-startup', null, value),
+      setComposerModel: value => changeTheme('composer-model', null, value),
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
       readProviders() {
         if (providerRead) return providerRead;

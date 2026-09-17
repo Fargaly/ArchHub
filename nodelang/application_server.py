@@ -493,6 +493,7 @@ _CONFIGURATION_DELTA_FIELDS = (
     "binding_mode",
     "can_promote",
     "can_publish",
+    "composer_model",
     "court",
     "digest",
     "heads",
@@ -4197,14 +4198,10 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
         owner.universal_registry,
         prompt,
         # BABOOM and the cloud gateway have no picker of their own; they ride
-        # the last model the founder picked in the studio. With none picked
-        # yet, the composer refuses and names the picker.
-        # In memory first, then what this machine recorded last time. Only
-        # with neither does the composer ask the router what it can reach.
-        model=(
-            getattr(owner, "_last_agent_model", "")
-            or owner._read_agent_model()
-        ),
+        # the composer model the founder picked in the studio, which the
+        # graph holds. With none picked, the composer refuses and names the
+        # picker.
+        model=owner._read_agent_model(),
         effect_engines=owner.pipeline_effect_engines,
         authentication_context=context,
         mutation_lock=owner.mutation_lock,
@@ -6446,7 +6443,7 @@ class ApplicationServer:
                                 model = body.get('model')
                             else:
                                 with owner.mutation_lock:
-                                    model = owner._remember_agent_model(
+                                    model = (
                                         str(body.get('model') or '').strip()
                                         or owner._read_agent_model()
                                     )
@@ -9568,44 +9565,34 @@ class ApplicationServer:
         value = self._refresh_in_background("brain", 15.0, self._probe_brain)
         return value if isinstance(value, dict) else {"ok": None, "facts": 0}
 
-    def _remember_agent_model(self, route: str) -> str:
-        """The studio's pick outlives the request that carried it.
-
-        BABOOM and the relay ask open questions with no picker; they used to
-        fall through to a model hidden in the composer. They ride the
-        founder's last studio pick now, and an empty pick is left empty so
-        the composer can say 'no model chosen' rather than guess.
-        """
-        route = (route or "").strip()
-        if route:
-            self._last_agent_model = route
-            self._write_agent_model(route)
-        return route
-
     def _agent_model_path(self):
-        """Where this machine remembers the pick. A silent data file."""
+        """Where an older build recorded the pick beside the graph. Read only."""
         from pathlib import Path
         return Path(str(self.universal_state_path) + ".agent-model")
 
-    def _write_agent_model(self, route: str) -> None:
-        """Keep the pick across restarts.
-
-        It lived only in memory, so every restart left BABOOM and the relay
-        with nothing and his chat answered nothing at all (2026-09-07).
-        Best effort: a machine that cannot write here still works, it simply
-        forgets, which is what it did before.
-        """
-        try:
-            path = self._agent_model_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(route[:200], encoding="utf-8")
-        except (OSError, ValueError):
-            pass
-
     def _read_agent_model(self) -> str:
-        """The pick this machine last recorded, or empty."""
+        """The composer pick the graph holds, else an older build's record.
+
+        A Send, BABOOM, the relay and the model listing all read this. The
+        pick is the owner's configuration.composer_model, saved when it is
+        made (2026-09-17). It used to live in memory and in a file a Send
+        wrote beside the graph, so a restart before any Send came back with
+        "Choose a model". That file is only read, and only while the graph
+        holds no pick. An unreadable graph pick is no pick; it never falls
+        back to the file.
+        """
+        store = getattr(self, "universal_store", None)
+        registry = getattr(self, "universal_registry", None)
+        if store is not None and registry is not None:
+            from .universal_application import read_universal_composer_model
+            try:
+                current = read_universal_composer_model(store.snapshot(), registry)
+            except Exception:
+                return ""
+            if current["source"] == "graph":
+                return str(current["value"])
         try:
-            return self._agent_model_path().read_text(encoding="utf-8").strip()
+            return self._agent_model_path().read_text(encoding="utf-8").strip()[:200]
         except (OSError, ValueError):
             return ""
 

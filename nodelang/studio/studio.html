@@ -152,6 +152,14 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_AGENT = async (prompt, model, node) =>
       (await jpost('/api/universal/agent', {prompt, model,
         ...(node !== undefined ? {node} : {})})).answer || 'done';
+    // The composer pick is the owner's graph-held setting
+    // (configuration.composer_model), saved through the interaction route
+    // the other owner settings use; '' clears it.
+    window.ARCHHUB_AGENT_SELECT = async model => {
+      const workshop = window.ARCHHUB_EXISTING_WORKSHOP;
+      if (!workshop || typeof workshop.setComposerModel !== 'function') throw new Error('This connection cannot save a model selection.');
+      return (await workshop.setComposerModel(model))?.configuration_state?.composer_model?.value;
+    };
     let graphRunPromise = null;
     window.ARCHHUB_RUN = () => {
       if (graphRunPromise) return Promise.reject(new Error('The graph is already running. Wait for it to finish, then run again.'));

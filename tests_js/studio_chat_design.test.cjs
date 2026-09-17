@@ -73,6 +73,8 @@ async function mountStudio({raw = wiredCanvas, account = {signedIn:true, email:'
   let answer = null;
   win.ARCHHUB_AGENT = (prompt, route) => { agent.push([prompt, route]); return new Promise(resolve => { answer = resolve; }); };
   win.ARCHHUB_REMEMBER = async () => ({ok:true});
+  // studio.html's graph-held composer pick bridge: the save is confirmed with the route it was given.
+  win.ARCHHUB_AGENT_SELECT = async model => model;
   win.ARCHHUB_THEME = {...seed};
   win.matchMedia = () => ({matches:false, addEventListener() {}, removeEventListener() {}});
   if (account) win.localStorage.setItem('archhub.account.v1', JSON.stringify(account));

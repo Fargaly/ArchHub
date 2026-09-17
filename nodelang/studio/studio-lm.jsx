@@ -279,7 +279,7 @@ const StudioLM = () => {
   useCatalogueVersion();
   const [openId, setOpenId] = React.useState(window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id || null);
   const [openTabs, setOpenTabs] = React.useState(() => [window.ARCHHUB_LIVE?.currentGraph || LM_SESSIONS[0]?.id].filter(Boolean));
-  const [model, setModel] = React.useState({ name:'Choose a model', route:'', routed:'', vendor:'No provider selected', tag:'', ctx:'', col:LM.inkMuted, latency:null });
+  const [model, setModel] = React.useState(noModelPicked);
   const [homeNative, setHomeNative] = React.useState(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   React.useEffect(() => {
@@ -580,10 +580,10 @@ const StudioLM = () => {
             }}/>}
       <ServerStrip session={session} model={model} setSettingsOpen={openSettings} setDocsOpen={openDocs}/>
       {pickerOpen && <ModelPicker setModel={m => !session
-        ? (setHomeNative(null), setModel(m)) : modelTarget
+        ? rememberComposerModel(m).then(picked => { setHomeNative(null); setModel(picked); }) : modelTarget
         ? window.pmPersistValue(modelTarget, 'model', modelRoute(m))
         : window.ARCHHUB_STUDIO_AUTHORITY ? Promise.reject(new Error('Select an AI node on the canvas to set its model.'))
-        : setModel(m)} onClose={() => setPickerOpen(false)} model={displayedModel}
+        : rememberComposerModel(m).then(setModel)} onClose={() => setPickerOpen(false)} model={displayedModel}
         onNativeSelect={window.ARCHHUB_EXISTING_WORKSHOP ? (!session ? row => setHomeNative(row) : connectNativeSession) : undefined}/>}
       {/* Every ask box in the app reads the current choice from here, so a
           box that was not handed a model still asks the model the founder
@@ -1358,6 +1358,20 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
 // (the cloud and OpenRouter ids are the same shape, so the row says which);
 // older rows only have `route`.
 const modelRoute = (m) => String((m && (m.routed || m.route)) || '');
+// A composer pick is the owner's graph-held setting, saved when it is made.
+// It lived only in this page until a Send reached the server, so a restart or
+// an update came back "Choose a model" (2026-09-17). The signed clean engine
+// has no selection route, so there the pick stays page state as before.
+const noModelPicked = () => ({ name:'Choose a model', route:'', routed:'', vendor:'No model selected', tag:'', ctx:'', col:LM.inkMuted, latency:null });
+const rememberComposerModel = async (m) => {
+  const route = modelRoute(m);
+  if (typeof window.ARCHHUB_AGENT_SELECT !== 'function') {
+    if (window.ARCHHUB_STUDIO_AUTHORITY) return route ? m : noModelPicked();
+    throw new Error('This connection cannot save a model selection.');
+  }
+  if (await window.ARCHHUB_AGENT_SELECT(route) !== route) throw new Error('The model selection could not be confirmed.');
+  return route ? m : noModelPicked();
+};
 const nodeModelRow = n => (n?.params || []).find(row => row.k === 'model') || null;
 const nodeModelRoute = n => {
   const route = String(nodeModelRow(n)?.v || '').trim();

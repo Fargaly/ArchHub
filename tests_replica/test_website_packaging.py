@@ -60,10 +60,16 @@ README_SENTENCES = (
     "`write_public_site(store, registry, project_dir, *, offer, "
     "offer_sha256, origin)` writes exactly `<output>/site-export.json`, "
     "`<output>/.gitignore` and `<output>/dist/`",
-    "`404.html`, `robots.txt` and `sitemap.xml`, in Python, with root paths "
-    "and rewritten hrefs. It writes nothing else.",
-    "`404.html` is the one page typed in `site_export.py`, not projected "
-    "from the graph.",
+    "`assets/fonts.css`, `404.html`, `robots.txt`, `sitemap.xml`, one "
+    "redirect page for each retired address of the old site, the brand files "
+    "`favicon.ico`, `favicon.svg` and `og.png`, and the font files and their "
+    "licences under `assets/fonts/`, copied byte for byte from "
+    "`nodelang/data/website/`, in Python, with root paths and rewritten "
+    "hrefs. It writes nothing else.",
+    "`404.html`, `assets/fonts.css` and the redirect pages are the only files "
+    "typed in `site_export.py`, not projected from the graph.",
+    "no page asks another host for a font.",
+    "The export is refused unless the graph offers a released download",
     "The `--offer` file is the canonical offer record of "
     "`app:users:accounts:offer` as `nodelang/cell_accounts.py` publishes it: "
     "a JSON object `{\"availability\", \"pricing-visible\", \"public-label\"}`.",
@@ -129,7 +135,12 @@ def test_website_image_exports_the_cell_site_then_serves_dist_with_busybox_httpd
 
 
 def test_httpd_conf_hands_missing_urls_to_the_exported_404_page():
-    assert _meaningful(HTTPD_CONF.read_text(encoding="utf-8")) == ("E404:404.html",)
+    assert _meaningful(HTTPD_CONF.read_text(encoding="utf-8")) == (
+        ".ico:image/x-icon",
+        ".woff2:font/woff2",
+        ".xml:application/xml",
+        "E404:404.html",
+    )
 
 
 def test_fly_config_serves_port_3000_from_the_website_dockerfile():

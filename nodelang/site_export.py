@@ -14,7 +14,16 @@ recomputes the sha256 of its canonical bytes the way
 cell_accounts.published_offer does, refuses unless it equals --offer-sha256,
 and maps the record to the website offer {"display": public-label,
 "monetary": pricing-visible == "true"} for cell_website.offer_display_text.
-404.html is the one page typed here, not projected from the graph.
+404.html and the redirect pages for retired addresses are the only pages typed
+here, not projected from the graph.
+
+Every written page loads the fonts the graph stylesheet names from this site,
+through assets/fonts.css in its head (the stylesheet may not fetch anything
+itself), and links the brand icons; no page asks another host for a font. The
+brand files, the font files and their licences are copied byte for byte from
+nodelang/data/website; the payload records their size and sha256, never their
+bytes. The export is refused unless the graph offers a released download and
+every page links it.
 """
 from __future__ import annotations
 
@@ -33,6 +42,7 @@ from .cell_website import (
     offer_display_text,
     project_universal_website_document,
     read_universal_website,
+    website_download,
 )
 from .cell_website_meta import META_ROOT, ORIGIN_ROOT, page_texts, public_path
 from .universal_cell import NULL_CELL_ID, InvalidCell
@@ -65,16 +75,87 @@ _ORIGIN = re.compile(
     r"(?i)https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
     r"(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::[0-9]{1,5})?"
 )
-_WEBSITE_HREF = re.compile(r'href="/website(?:/[A-Za-z0-9-]+)?"')
+_WEBSITE_HREF = re.compile(r'href="/website(?:/[A-Za-z0-9-]+)*"')
 _LEDE = re.compile(r'<p class="site-(?:page-)?lede">(.*?)</p>', re.DOTALL)
 _TAG = re.compile(r"<[^>]+>")
+
+# The one script the site serves: the design's interactions (hero canvas drag
+# and wire, host picker, self-heal timeline), a static file admitted by this
+# exact sha256. The graph document stays scriptless; the export adds only this
+# tag, and a page with any other script, or a script file with any other
+# bytes, is refused.
+SITE_SCRIPT = "assets/site.js"
+SITE_SCRIPT_SOURCE = "site.js"
+SITE_SCRIPT_SHA256 = (
+    "4e7a942421c969557a068fe537491b77eae7315c3890588f8c4de8596605840a"
+)
+SITE_SCRIPT_TAG = '<script src="/assets/site.js" defer></script>'
+
+HEAD_LINKS = (
+    '<link rel="stylesheet" href="/assets/fonts.css">'
+    '<link rel="stylesheet" href="/assets/site.css">'
+    '<link rel="icon" href="/favicon.ico" sizes="any">'
+    '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
+    + SITE_SCRIPT_TAG
+)
+
+BRAND_DIR = Path(__file__).resolve().parent / "data" / "website"
+BRAND_FILES = ("favicon.ico", "favicon.svg", "og.png")
+SHARE_IMAGE = "og.png"
+
+# The three families the graph stylesheet names, served from this site. Each
+# woff2 is the Latin subset of an SIL Open Font License 1.1 font (Instrument
+# Serif 1.000, Inter 4.001 held at opsz 14 over weights 400 to 600, JetBrains
+# Mono 2.211); its licence file travels beside it.
+FONT_DIR = "fonts"
+FONT_FACES = (
+    ("instrument-serif-regular.woff2", "Instrument Serif", "normal", "400"),
+    ("instrument-serif-italic.woff2", "Instrument Serif", "italic", "400"),
+    ("inter-variable.woff2", "Inter", "normal", "400 600"),
+    ("jetbrains-mono-regular.woff2", "JetBrains Mono", "normal", "400"),
+)
+FONT_LICENCES = (
+    "OFL-InstrumentSerif.txt", "OFL-Inter.txt", "OFL-JetBrainsMono.txt",
+)
+FONTS_CSS = "".join(
+    '@font-face{font-family:"%s";font-style:%s;font-weight:%s;'
+    'font-display:swap;src:url(/assets/fonts/%s) format("woff2")}\n'
+    % (family, style, weight, name)
+    for name, family, style, weight in FONT_FACES
+)
+# Every file the export copies, by its path under dist/ and its source under
+# nodelang/data/website.
+PUBLIC_FILES = (
+    *((name, name) for name in BRAND_FILES),
+    (SITE_SCRIPT, SITE_SCRIPT_SOURCE),
+    *(
+        ("assets/fonts/" + name, FONT_DIR + "/" + name)
+        for name in (
+            *(face[0] for face in FONT_FACES), *FONT_LICENCES,
+        )
+    ),
+)
+_PUBLIC_FILE_SOURCES = dict(PUBLIC_FILES)
+
+# The addresses the retired Astro site answered at, each sent to the live page
+# closest to what it held: the docs index to the first docs page (the five
+# docs guides are live pages again, at the addresses they had), the brain
+# portal to the security page that explains what cloud sync holds, the account
+# page to sign-in, and the gallery to the community page.
+RETIRED_ADDRESSES = (
+    ("/docs/", "/website/docs/getting-started"),
+    ("/gallery/", "/website/community"),
+    ("/account/", "/website/signin"),
+    ("/brain/", "/website/security"),
+)
+_RETIRED_PATH = re.compile(r"(?:/[a-z0-9-]+)+/")
 
 NOT_FOUND_HTML = (
     '<!doctype html><html lang="en"><head><meta charset="utf-8">'
     '<meta name="viewport" content="width=device-width,initial-scale=1">'
     '<meta name="color-scheme" content="light">'
     '<title>Not found | ArchHub</title>'
-    '<link rel="stylesheet" href="/assets/site.css"></head><body>'
+    + HEAD_LINKS + '</head><body>'
     '<main class="site-page-main"><h1 class="site-page-title">Not found</h1>'
     '<p class="site-page-lede">There is no page at this address.</p>'
     '<p><a class="site-nav-link" href="/">Return to ArchHub</a></p>'
@@ -226,9 +307,29 @@ def _static_document(document):
             )
     style_match = style_matches[0]
     stylesheet = style_match.group(1)
-    html = document[:style_match.start()] + (
-        '<link rel="stylesheet" href="/assets/site.css">') + document[style_match.end():]
+    html = document[:style_match.start()] + HEAD_LINKS + document[style_match.end():]
     return html, stylesheet
+
+
+def admitted_scripts(document, label="page"):
+    """Refuse a page unless its only script is the pinned site script tag."""
+    found = re.findall(r"<script\b[^>]*>", document, flags=re.IGNORECASE)
+    if found != [SITE_SCRIPT_TAG[:-len("</script>")]]:
+        raise SiteExportError(
+            "%s must carry exactly the pinned site script, found %d script tags"
+            % (label, len(found)))
+    if document.count(SITE_SCRIPT_TAG) != 1:
+        raise SiteExportError("%s site script tag is not the pinned one" % label)
+    return document
+
+
+def site_script_bytes(data):
+    """The site script, refused unless its bytes hash to the pinned sha256."""
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != SITE_SCRIPT_SHA256:
+        raise SiteExportError(
+            "site script sha256 %s is not the pinned %s" % (digest, SITE_SCRIPT_SHA256))
+    return data
 
 
 def _root_hrefs(static_html):
@@ -274,7 +375,79 @@ def _with_head_meta(static_html, origin, root_path, title, description):
         tags.append('<meta property="og:description" content="%s">'
                     % html.escape(description, quote=True))
     tags.append('<meta property="og:url" content="%s">' % url)
+    tags.append('<meta property="og:image" content="%s">'
+                % html.escape(origin + "/" + SHARE_IMAGE, quote=True))
+    tags.append('<meta name="twitter:card" content="summary_large_image">')
     return static_html.replace("</head>", "".join(tags) + "</head>", 1)
+
+
+def _redirect_html(origin, route):
+    """A retired address answers with the live page it moved to."""
+    target = public_path(route)
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="color-scheme" content="light">'
+        '<meta name="robots" content="noindex">'
+        '<meta http-equiv="refresh" content="0; url=%s">'
+        '<title>Moved | ArchHub</title>'
+        '<link rel="canonical" href="%s">%s</head><body>'
+        '<main class="site-page-main">'
+        '<h1 class="site-page-title">This page has moved</h1>'
+        '<p class="site-page-lede">It is now at '
+        '<a class="site-nav-link" href="%s">%s</a>.</p>'
+        '</main></body></html>'
+    ) % (
+        html.escape(target, quote=True),
+        html.escape(origin + target, quote=True),
+        HEAD_LINKS,
+        html.escape(target, quote=True),
+        html.escape(origin.split("://", 1)[1] + target),
+    )
+
+
+def _retired_pages(origin):
+    """One redirect page per retired address, at the path it used to answer."""
+    live = {public_path(route) for route in PUBLIC_ROUTES}
+    pages = {}
+    for old_path, route in RETIRED_ADDRESSES:
+        if route not in PUBLIC_ROUTES:
+            raise SiteExportError(
+                "retired address %s points at no public route" % old_path)
+        if old_path in live or not _RETIRED_PATH.fullmatch(old_path):
+            raise SiteExportError(
+                "retired address %s is not a free root path" % old_path)
+        pages[_output_path(old_path)] = _redirect_html(origin, route)
+    return pages
+
+
+def _brand_bytes(name):
+    try:
+        return (BRAND_DIR / _PUBLIC_FILE_SOURCES[name]).read_bytes()
+    except (KeyError, OSError) as exc:
+        raise SiteExportError("public file %s is missing" % name) from exc
+
+
+def _brand_files():
+    """Size and sha256 of each copied file; svg and txt are scanned as text."""
+    records = {}
+    for name, _source in PUBLIC_FILES:
+        data = _brand_bytes(name)
+        if name == SITE_SCRIPT:
+            site_script_bytes(data)
+            _scan_public_text(data.decode("ascii"), name)
+        elif name.endswith((".svg", ".txt")):
+            try:
+                _scan_public_text(data.decode("ascii"), name)
+            except UnicodeDecodeError as exc:
+                raise SiteExportError("%s must be ASCII" % name) from exc
+        elif name.endswith(".woff2") and data[:4] != b"wOF2":
+            raise SiteExportError("%s is not a woff2 font" % name)
+        records[name] = {
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    return records
 
 
 def _robots_txt(origin):
@@ -400,8 +573,10 @@ def build_site_export(store, registry, *, offer=None, offer_sha256=None,
     With an offer record the export is refused unless the digest of the
     record equals offer_sha256, the offer is not monetary, and the rendered
     pricing page shows its public label.  With an origin every page carries
-    its canonical root URL and the site carries robots.txt and sitemap.xml;
-    without one the payload is a graph projection with no address.
+    its canonical root URL and share image, and the site carries robots.txt,
+    sitemap.xml and a redirect page for each retired address; without one the
+    payload is a graph projection with no address.  The brand files are
+    recorded by size and sha256 either way.
     """
     verified_offer = _verified_offer(offer, offer_sha256)
     origin = _public_origin(origin)
@@ -414,6 +589,15 @@ def build_site_export(store, registry, *, offer=None, offer_sha256=None,
                 "graph origin %s differs from export origin %s"
                 % (graph_origin, origin)
             )
+    try:
+        download = website_download(snapshot)
+    except InvalidCell as exc:
+        raise SiteExportError("the offered download is refused: %s" % exc) from exc
+    if download is None:
+        raise SiteExportError(
+            "the graph offers no released download, so the site is not exported"
+        )
+    download_href = 'href="%s"' % html.escape(download.url, quote=True)
     publication_tier = _terminal_text(
         snapshot, verified.classification_root, "website classification"
     ).strip().upper()
@@ -455,6 +639,10 @@ def build_site_export(store, registry, *, offer=None, offer_sha256=None,
             raise SiteExportError(
                 "route %s still links to the in-app path after rewriting" % route
             )
+        if download_href not in static_html:
+            raise SiteExportError(
+                "route %s does not link the released download" % route
+            )
         root_path = public_path(route)
         if origin is not None:
             title, description = _page_identity(
@@ -464,6 +652,7 @@ def build_site_export(store, registry, *, offer=None, offer_sha256=None,
                 static_html, origin, root_path, title, description
             )
         _scan_public_text(static_html, route)
+        admitted_scripts(static_html, route)
         source_roots, source_fingerprint = _source_fingerprint(
             snapshot, verified, route, static_html
         )
@@ -486,12 +675,23 @@ def build_site_export(store, registry, *, offer=None, offer_sha256=None,
             )
 
     _scan_public_text(shared_stylesheet or "", "shared stylesheet")
-    assets = {"assets/site.css": shared_stylesheet, "404.html": NOT_FOUND_HTML}
+    assets = {
+        "assets/site.css": shared_stylesheet,
+        "assets/fonts.css": FONTS_CSS,
+        "404.html": NOT_FOUND_HTML,
+    }
     if origin is not None:
         assets["robots.txt"] = _robots_txt(origin)
         assets["sitemap.xml"] = _sitemap_xml(origin, root_paths)
+        assets.update(_retired_pages(origin))
     payload = {
         "assets": assets,
+        "download": {
+            "revision": download.revision,
+            "sha256": download.sha256,
+            "url": download.url,
+        },
+        "files": _brand_files(),
         "format": EXPORT_FORMAT,
         "application_root": registry.application_root,
         "website_root": verified.root_id,
@@ -524,6 +724,18 @@ def write_public_site(store, registry, project_dir, *, offer=None,
     payload = build_site_export(
         store, registry, offer=offer, offer_sha256=offer_sha256, origin=origin,
     )
+    brand = {}
+    for name, record in payload["files"].items():
+        if name not in _PUBLIC_FILE_SOURCES:
+            raise SiteExportError("unknown public file: %s" % name)
+        data = _brand_bytes(name)
+        if name == SITE_SCRIPT:
+            site_script_bytes(data)
+        if (len(data) != record["bytes"]
+                or hashlib.sha256(data).hexdigest() != record["sha256"]):
+            raise SiteExportError(
+                "public file %s is not the one the export sealed" % name)
+        brand["dist/" + name] = data
     dist = project / "dist"
     if dist.exists():
         shutil.rmtree(dist)
@@ -542,6 +754,10 @@ def write_public_site(store, registry, project_dir, *, offer=None,
         target = project / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(contents, encoding="utf-8", newline="\n")
+    for relative, data in brand.items():
+        target = project / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
     return payload
 
 

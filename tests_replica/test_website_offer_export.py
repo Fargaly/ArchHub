@@ -49,12 +49,28 @@ ROOT_PATHS = {
     "/website/security": "/security/",
     "/website/community": "/community/",
     "/website/signin": "/signin/",
+    "/website/docs/getting-started": "/docs/getting-started/",
+    "/website/docs/composer-canvas": "/docs/composer-canvas/",
+    "/website/docs/brain": "/docs/brain/",
+    "/website/docs/account-web": "/docs/account-web/",
+    "/website/docs/connectors": "/docs/connectors/",
 }
 WRITTEN_SITE = [
-    ".gitignore", "dist/404.html", "dist/assets/site.css",
+    ".gitignore", "dist/404.html", "dist/account/index.html",
+    "dist/assets/fonts.css", "dist/assets/fonts/OFL-InstrumentSerif.txt",
+    "dist/assets/fonts/OFL-Inter.txt", "dist/assets/fonts/OFL-JetBrainsMono.txt",
+    "dist/assets/fonts/instrument-serif-italic.woff2",
+    "dist/assets/fonts/instrument-serif-regular.woff2",
+    "dist/assets/fonts/inter-variable.woff2",
+    "dist/assets/fonts/jetbrains-mono-regular.woff2",
+    "dist/assets/site.css", "dist/assets/site.js", "dist/brain/index.html",
     "dist/changelog/index.html", "dist/community/index.html",
-    "dist/features/index.html", "dist/index.html",
-    "dist/pricing/index.html", "dist/robots.txt",
+    "dist/docs/account-web/index.html", "dist/docs/brain/index.html",
+    "dist/docs/composer-canvas/index.html", "dist/docs/connectors/index.html",
+    "dist/docs/getting-started/index.html", "dist/docs/index.html",
+    "dist/favicon.ico", "dist/favicon.svg",
+    "dist/features/index.html", "dist/gallery/index.html", "dist/index.html",
+    "dist/og.png", "dist/pricing/index.html", "dist/robots.txt",
     "dist/security/index.html", "dist/signin/index.html",
     "dist/sitemap.xml", "site-export.json",
 ]
@@ -411,7 +427,7 @@ def test_the_cli_writes_the_site_from_the_offer_it_was_given(tmp_path):
     assert summary["offer"] == OFFER
     assert summary["offer_sha256"] == _digest(OFFER)
     assert summary["origin"] == ORIGIN
-    assert summary["routes"] == 7
+    assert summary["routes"] == 12
     written = sorted(
         path.relative_to(out).as_posix()
         for path in out.rglob("*") if path.is_file()

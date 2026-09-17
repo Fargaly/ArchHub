@@ -7,6 +7,7 @@ from nodelang.cell_website_meta import (
     DRAFT,
     META_ROOT,
     changelog,
+    hold_artifact,
     describe_page,
     downloads,
     offer_download,
@@ -119,10 +120,15 @@ def test_an_unreleased_revision_must_not_be_offered_for_download():
 def test_a_released_revision_can_be_offered_once():
     store = _store()
     record_release(store, revision="r2", summary="The canvas opens on the work.")
-    offer_download(store, artifact_root="artifact:installer", revision="r2")
+    artifact = hold_artifact(
+        store, revision="r2",
+        url="https://github.com/Fargaly/ArchHub/releases/download/r2/ArchHub-Setup-0.exe",
+        sha256="0" * 64,
+    )
+    offer_download(store, artifact_root=artifact, revision="r2")
     assert downloads(store.snapshot()) == ("r2",)
     with pytest.raises(InvalidCell):
-        offer_download(store, artifact_root="artifact:installer", revision="r2")
+        offer_download(store, artifact_root=artifact, revision="r2")
 
 
 def test_an_artifact_the_graph_does_not_hold_cannot_be_offered():

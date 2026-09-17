@@ -53,11 +53,20 @@ FORBIDDEN = tuple(re.compile(pattern) for pattern in (
     r"second place",
     r"it is gone",
 ))
+# The two addresses outside the site a page links: the installer of the
+# released build the graph offers, and the repository. Pinned here, not
+# borrowed from the code under court.
+INSTALLER = (
+    "https://github.com/Fargaly/ArchHub/releases/download/"
+    "build-20260916-2105-b914892/ArchHub-Setup-0.exe"
+)
+REPOSITORY = "https://github.com/Fargaly/ArchHub"
 HOME_DESIGN_TEXT = (
     "Drafted, ",
     "not generated.",
     "Graph-first AI workspace for AEC",
-    '<a class="site-primary" href="/website/signin">Sign in</a>',
+    '<a class="site-primary" href="%s">Download for Windows</a>' % INSTALLER,
+    '<a class="site-secondary" href="/website/signin">Sign in</a>',
     "bring your own key",
     "no credit card",
     "<span>Windows</span>",
@@ -102,7 +111,8 @@ def test_the_home_is_the_founder_design(documents):
     assert missing == []
     assert "<title>Drafted, not generated. | ArchHub</title>" in home
     assert home.count("<main") == 1
-    # The design's "Create your account" waits until /website/signin opens.
+    # The design's "Create your account" waits until /website/signin opens;
+    # until then the primary call is the Windows download.
     assert "Create your account" not in home
 
 
@@ -138,9 +148,11 @@ def test_every_grand_map_domain_card_is_on_the_home(application, documents):
 
 @pytest.mark.parametrize("path", PUBLIC_WEBSITE_ROUTES)
 def test_every_link_stays_inside_the_public_routes(documents, path):
+    # The offered installer and the repository are the only ways out, and
+    # every page offers both.
     hrefs = set(re.findall(r'href="([^"]*)"', documents[path]))
     assert hrefs
-    assert hrefs <= set(PUBLIC_WEBSITE_ROUTES)
+    assert hrefs - set(PUBLIC_WEBSITE_ROUTES) == {INSTALLER, REPOSITORY}
 
 
 @pytest.mark.parametrize("path", PUBLIC_WEBSITE_ROUTES)

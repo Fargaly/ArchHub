@@ -60,7 +60,7 @@ GRAND_MAP_CLOUD_SERVICES = (
     },
     {
         "id": "cloud_brain_portal", "title": "Brain portal", "role": "portal",
-        "endpoint": {"transport": "https", "address": "https://archhub.io/brain", "enabled": True, "timeout_ms": 8000},
+        "endpoint": {"transport": "https", "address": "https://archhub.io/security/", "enabled": True, "timeout_ms": 8000},
         "configuration": {"view": "tiered-facts", "read_only": True},
     },
     {

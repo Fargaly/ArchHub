@@ -38,6 +38,7 @@ ALLOWED_ATTRIBUTES = frozenset({
 })
 CLASS_PATTERN = re.compile(r"^[A-Za-z0-9_-]+(?: [A-Za-z0-9_-]+)*$")
 ATTRIBUTE_PATTERN = re.compile(r"^[a-z][a-z0-9_.:-]*$")
+EXTERNAL_LINK_PATTERN = re.compile(r"^https://[a-z0-9.-]+(?:/[A-Za-z0-9._~-]+)*/?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,16 @@ class UIBuilder:
         ), relation_id=root_id)
         return root_id
 
+    def bound_attribute(self, name: str, value_root: str) -> str:
+        """An attribute whose value is an existing Cell, read when it renders."""
+        name_root = self._atom("attribute-name", name)
+        root_id = "ui:attribute:%s" % uuid.uuid4().hex
+        self.batch.relation((
+            (self.protocol.role("attribute-name"), name_root),
+            (self.protocol.role("attribute-value"), value_root),
+        ), relation_id=root_id)
+        return root_id
+
     def element(
         self,
         tag: str,
@@ -85,9 +96,12 @@ class UIBuilder:
         text: str | None = None,
         text_root: str | None = None,
         attributes: Mapping[str, str] | None = None,
+        attribute_roots: Mapping[str, str] | None = None,
         children: Iterable[str] = (),
         element_id: str | None = None,
     ) -> str:
+        if set(attributes or {}) & set(attribute_roots or {}):
+            raise InvalidCell("UI element cannot copy and bind one attribute together")
         tag_root = self._atom("tag", tag)
         members = [(self.protocol.role("tag"), tag_root)]
         if class_name:
@@ -106,6 +120,11 @@ class UIBuilder:
         for name, value in (attributes or {}).items():
             members.append((
                 self.protocol.role("attribute"), self.attribute(name, value)
+            ))
+        for name, value_root in (attribute_roots or {}).items():
+            members.append((
+                self.protocol.role("attribute"),
+                self.bound_attribute(name, value_root),
             ))
         members.extend(
             (self.protocol.role("child"), child) for child in children
@@ -153,7 +172,18 @@ def _text(snapshot: Snapshot, root_id: str) -> str:
         raise InvalidCell("UI text is not UTF-8") from exc
 
 
-def _validate_attribute(name: str, value: str) -> None:
+def _external_links(external_links: Iterable[str]) -> frozenset[str]:
+    """The exact https addresses a caller admits; anything else is refused."""
+    links = frozenset(external_links)
+    for link in links:
+        if type(link) is not str or not EXTERNAL_LINK_PATTERN.fullmatch(link):
+            raise InvalidCell("an admitted external link must be a plain https address")
+    return links
+
+
+def _validate_attribute(
+    name: str, value: str, external_links: frozenset[str] = frozenset(),
+) -> None:
     if not ATTRIBUTE_PATTERN.fullmatch(name):
         raise InvalidCell("UI attribute name is invalid")
     if name.startswith("on") or name in {"style", "srcdoc"}:
@@ -166,6 +196,8 @@ def _validate_attribute(name: str, value: str) -> None:
         raise InvalidCell("UI attribute is outside the renderer allowlist")
     if "\x00" in value:
         raise InvalidCell("UI attribute contains a null byte")
+    if name == "href" and value in external_links:
+        return
     if name == "href" and (
         not value.startswith("/")
         or value.startswith("//")
@@ -181,8 +213,14 @@ def render_ui(
     root_id: str,
     *,
     budget: int = 10_000,
+    external_links: Iterable[str] = (),
 ) -> str:
-    """Render one graph UI tree without evaluating atoms as HTML or code."""
+    """Render one graph UI tree without evaluating atoms as HTML or code.
+
+    Links are local absolute paths. A caller may admit exact https addresses
+    through external_links; any other external address is still refused.
+    """
+    admitted = _external_links(external_links)
     remaining = budget
     active: set[str] = set()
 
@@ -224,7 +262,7 @@ def render_ui(
             if name_root is None or value_root is None:
                 raise InvalidCell("UI attribute is incomplete")
             name, value = _text(snapshot, name_root), _text(snapshot, value_root)
-            _validate_attribute(name, value)
+            _validate_attribute(name, value, admitted)
             attributes.append('%s="%s"' % (
                 name, html.escape(value, quote=True)
             ))

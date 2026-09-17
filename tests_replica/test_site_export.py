@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -63,7 +64,7 @@ def test_export_is_complete_deterministic_and_provenanced_by_route_cells(applica
         }
         assert record["output_path"] == (
             "index.html" if route == "/website"
-            else route.rsplit("/", 1)[1] + "/index.html"
+            else route[len("/website/"):] + "/index.html"
         )
 
 
@@ -150,7 +151,10 @@ def test_public_payload_has_navigation_but_no_runtime_or_private_leakage(applica
         assert 'href="/features/"' in record["html"]
         assert 'href="/pricing/"' in record["html"]
         assert 'href="/website' not in record["html"]
-        assert "<script" not in record["html"]
+        # The one script is the pinned site script (founder decision 2026-09-17).
+        assert re.findall(r"<script\b[^>]*>", record["html"]) == [
+            '<script src="/assets/site.js" defer>'
+        ]
         assert "data-action" not in record["html"]
         assert "data-edit" not in record["html"]
         assert "data-navigate" not in record["html"]
@@ -233,9 +237,20 @@ def test_written_site_is_a_static_root_tree_with_no_scaffold_or_readme(
         for path in project.rglob("*") if path.is_file()
     )
     assert written == [
-        ".gitignore", "dist/404.html", "dist/assets/site.css",
+        ".gitignore", "dist/404.html", "dist/assets/fonts.css",
+        "dist/assets/fonts/OFL-InstrumentSerif.txt",
+        "dist/assets/fonts/OFL-Inter.txt", "dist/assets/fonts/OFL-JetBrainsMono.txt",
+        "dist/assets/fonts/instrument-serif-italic.woff2",
+        "dist/assets/fonts/instrument-serif-regular.woff2",
+        "dist/assets/fonts/inter-variable.woff2",
+        "dist/assets/fonts/jetbrains-mono-regular.woff2",
+        "dist/assets/site.css", "dist/assets/site.js",
         "dist/changelog/index.html", "dist/community/index.html",
-        "dist/features/index.html", "dist/index.html",
+        "dist/docs/account-web/index.html", "dist/docs/brain/index.html",
+        "dist/docs/composer-canvas/index.html", "dist/docs/connectors/index.html",
+        "dist/docs/getting-started/index.html",
+        "dist/favicon.ico", "dist/favicon.svg",
+        "dist/features/index.html", "dist/index.html", "dist/og.png",
         "dist/pricing/index.html", "dist/security/index.html",
         "dist/signin/index.html", "site-export.json",
     ]

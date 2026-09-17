@@ -70,12 +70,12 @@ def test_http_server_serves_the_universal_app_and_website_lenses(website):
         assert 'class="archhub-app"' not in web
         assert 'Drafted, not generated.' in web
         for route, expected in (
-                ('/website/features', 'Everything is connected through one graph'),
+                ('/website/features', 'One canvas. Every tool you already use.'),
                 ('/website/pricing', 'Free during beta'),
-                ('/website/changelog', 'Revision evidence, not progress theatre'),
-                ('/website/security', 'Security is an authority chain'),
-                ('/website/community', 'Community federation is not connected'),
-                ('/website/signin', 'Public account access is not enabled')):
+                ('/website/changelog', 'Released builds, not intentions'),
+                ('/website/security', 'Nothing runs without a reason you can see'),
+                ('/website/community', 'Share with your firm, on your terms'),
+                ('/website/signin', 'Sign in from the desktop app')):
             page = urllib.request.urlopen(server.url + route, timeout=10).read().decode('utf-8')
             assert expected in page
     finally:

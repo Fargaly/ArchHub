@@ -1,5 +1,6 @@
 *.py[cod]
 *.pyc
+/.venv/
 .coverage
 .mypy_cache/
 .pytest_cache/
@@ -17,7 +18,10 @@ grand_sweep_ledger.json
 grandmap.session.json
 infrastructure/generated/
 node_modules/
+/nodelang/studio/compiled/
+packaging/website/offer.json
 public_site/.git/
 self-hosting-map.html
 test-results/
 tests_replica/test_authority_coherence.py
+packaging/website/offer.json

@@ -332,7 +332,9 @@
       "why": "the site is projected from the graph, not authored beside it",
       "tests": [
         "tests_replica/test_node_native_website.py",
-        "tests_replica/test_universal_website.py"
+        "tests_replica/test_universal_website.py",
+        "tests_replica/test_website_live_findings.py",
+        "tests_replica/test_website_docs_pages.py"
       ]
     },
     "website_content_source": {
@@ -671,7 +673,8 @@
     "website_seo_meta": {
       "why": "title, description and canonical come out of the graph; no origin means no canonical link, and out-of-voice text is refused",
       "tests": [
-        "tests_replica/test_cell_website_meta.py"
+        "tests_replica/test_cell_website_meta.py",
+        "tests_replica/test_website_live_findings.py"
       ]
     },
     "website_changelog_parser": {
@@ -683,7 +686,8 @@
     "website_download_cta": {
       "why": "a download is offered only for a revision the changelog calls released, and only for an artifact the graph holds",
       "tests": [
-        "tests_replica/test_cell_website_meta.py"
+        "tests_replica/test_cell_website_meta.py",
+        "tests_replica/test_website_live_findings.py"
       ]
     },
     "brain_daemon": {

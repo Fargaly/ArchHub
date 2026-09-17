@@ -295,6 +295,7 @@ from .cell_cloud_sessions import (
     project_cloud_session_protocol,
 )
 from .cell_website import (
+    CORE_WEBSITE_ROUTES,
     PUBLIC_WEBSITE_ROUTES,
     UniversalWebsiteBuild,
     ensure_universal_website,
@@ -15039,9 +15040,13 @@ def restore_universal_application(
     active_route_keys = (
         set(projected_routes) - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
     )
+    core_website_route_keys = {
+        "GET %s" % path for path in CORE_WEBSITE_ROUTES
+    }
     if active_route_keys not in (
         expected_active_route_keys,
         expected_active_route_keys | website_route_keys,
+        expected_active_route_keys | core_website_route_keys,
     ):
         raise InvalidCell("persisted application HTTP route graph drifted")
     active_projected_routes = {

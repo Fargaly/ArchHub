@@ -16,6 +16,7 @@ import hashlib
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Callable, Mapping, Optional
@@ -93,6 +94,9 @@ def published_offer_form(value: object) -> Optional[dict]:
 
 
 MODEL_LIMIT = 40
+# The cloud refuses an expired or revoked sign-in with 401 (API) or 403 (founder routes). The relay then
+# asks again only this often, instead of every poll: on 2026-09-17 it had asked every ~5 s for four days.
+REFUSED_BACKOFF = 300.0
 
 
 def published_models_form(value: object) -> Optional[dict]:
@@ -189,6 +193,7 @@ class CloudRelay:
         offer: Optional[Callable[[], object]] = None,
         offer_command: Optional[Callable[[str, bool], object]] = None,
         models: Optional[Callable[[], object]] = None,
+        session_loader: Optional[Callable[[], Optional[Mapping[str, str]]]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.token = str(token)
@@ -202,6 +207,7 @@ class CloudRelay:
         self.offer = offer
         self.offer_command = offer_command
         self.models = models
+        self.session_loader = session_loader
         self.last_error: str = ""
         self.answered = 0
         self._map_digest = ""
@@ -397,9 +403,38 @@ class CloudRelay:
                 if worked is not None:
                     continue  # drain the queue before sleeping
                 self.push_map()
+            except urllib.error.HTTPError as exc:
+                if exc.code in (401, 403):
+                    stop.wait(self._after_session_refused(exc))
+                    continue
+                self.last_error = "%s: %s" % (type(exc).__name__, exc)
             except Exception as exc:
                 self.last_error = "%s: %s" % (type(exc).__name__, exc)
             stop.wait(interval)
+
+    def _after_session_refused(self, exc: urllib.error.HTTPError) -> float:
+        """The cloud refused this machine's sign-in; return how long to wait before asking again.
+
+        A token lives 90 days on the cloud and cannot be revived. When the founder has signed in
+        again, the record on this machine carries a new token: take it and ask at once. Otherwise
+        say what to do, never the token, and slow down.
+        """
+        fresh = None
+        if callable(self.session_loader):
+            try:
+                fresh = self.session_loader()
+            except Exception:
+                fresh = None
+        token = fresh.get("token") if isinstance(fresh, Mapping) else None
+        if token and str(token) != self.token:
+            self.token = str(token)
+            self.base_url = str(fresh.get("base_url") or self.base_url).rstrip("/")
+            self.last_error = "cloud sign-in renewed from this machine"
+            return 0.0
+        self.last_error = (
+            "the cloud refused this machine's sign-in (HTTP %d): it expired or was revoked. "
+            "Sign in again under Settings, Account." % exc.code)
+        return REFUSED_BACKOFF
 
 
 def start_cloud_relay(
@@ -428,6 +463,7 @@ def start_cloud_relay(
         offer=offer,
         offer_command=offer_command,
         models=models,
+        session_loader=lambda: load_cloud_session(appdata),
     )
     return relay.start()
 

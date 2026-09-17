@@ -529,7 +529,13 @@ def _publish_map_to_cloud():
 try:
     print("  cloud map  :", _publish_map_to_cloud(), flush=True)
 except Exception as _refusal:
-    print("  cloud map  : not published (%s)" % str(_refusal)[:90], flush=True)
+    if getattr(_refusal, "code", None) in (401, 403):
+        # The token in cloud.json lives 90 days on the cloud; a bare "HTTP 403" hid that it had ended.
+        print("  cloud map  : not published (HTTP %s): the cloud refused this machine's sign-in, "
+              "which ends 90 days after it was made. Sign in again under Settings, Account."
+              % _refusal.code, flush=True)
+    else:
+        print("  cloud map  : not published (%s)" % str(_refusal)[:90], flush=True)
 
 # Announce THIS runtime as the machine's active universal runtime, so
 # the brain, BABOOM and any governed agent reach the founder's live

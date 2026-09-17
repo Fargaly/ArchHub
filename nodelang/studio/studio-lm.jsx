@@ -2613,6 +2613,21 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
       </div>
       {/* Design ContextPanel (studio-workshop.jsx:333-381) for the selected task card: every row is read from its events. */}
       {selectedCard && <WorkshopTaskContext card={selectedCard} names={names} self={transcript?.self}/>}
+      {!selectedCard && transcript && !transcript.error && <section aria-label="Workshop summary" style={{margin:'0 -16px 16px', padding:'0 16px 12px', borderBottom:`1px solid ${LM.lineSoft}`}}>
+        <div style={{fontSize:14, fontWeight:500, color:LM.ink, overflowWrap:'anywhere'}}>{descriptor.label}</div>
+        <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2}}>{listening} {listening === 1 ? 'participant' : 'participants'} listening</div>
+        <div style={{marginTop:10}}>
+          {[['needs you', taskCount('block'), LM.err], ['running', taskCount('run') + taskCount('open'), LM.warn],
+            ['submitted', taskCount('review'), LM.cyan], ['delivered', taskCount('done'), LM.ok]].map(([key, value, color], index) =>
+            <div key={key} style={{display:'flex', justifyContent:'space-between', gap:10, padding:'5px 0', fontSize:11.5,
+              borderBottom:index === 3 ? 0 : `1px solid ${LM.lineSoft}`}}>
+              <span style={{fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em', color:LM.inkMuted}}>{key}</span>
+              <span style={{color:value ? color : LM.inkMuted}}>{value}</span>
+            </div>)}
+        </div>
+        <p style={{fontSize:11.5, color:LM.inkSoft, lineHeight:1.5, margin:'10px 0 0'}}>
+          {taskCards.length ? 'Select a task card to see its thread and state here.' : 'No message on this page names a Work yet.'}</p>
+      </section>}
       {/* Layout presets B/C (design studio-workshop.jsx:554-569, 275-330) on the real snapshot only. */}
       <WorkshopLayoutPane layout={layout} native={native} nodes={projectedWorkNodes} target={nativeTarget} setMode={setMode}/>
       {nativeAvailable && <section aria-label="Native Workshop review" style={{marginBottom:24}}>
@@ -2623,7 +2638,7 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
           Reviewing a saved result. No new model run has occurred.
         </p>}
         {(!native || native.state === 'idle' || revisionBase) && <>
-          <details open={!!revisionBase || !nativeTarget} style={{marginBottom:16}}>
+          <details open={!!revisionBase} style={{marginBottom:16}}>
             <summary>{revisionBase ? 'Revise this Work' : 'Create a repair Work node'}</summary>
             <p style={{fontSize:12, color:LM.inkSoft, lineHeight:1.5}}>
               {revisionBase ? 'Saving replaces this Work’s source inputs and criteria together; earlier values and results remain saved.' :

@@ -7,53 +7,10 @@ const insLabel = { fontFamily: HB.mono, fontSize: 8.5, color: HB.accent, fontWei
 const insInput = (mono) => ({ width: '100%', background: HB.paper2, border: `1px solid ${HB.line}`, color: HB.ink, borderRadius: 7, padding: '8px 10px', fontSize: 12.5, fontFamily: mono ? HB.mono : HB.sans, outline: 'none', resize: 'vertical' });
 const secStyle = { padding: '15px 16px', borderBottom: `1px solid ${HB.lineSoft}` };
 
-// ─── THE PARAMETER TYPE REGISTRY — one vocabulary for both graphs ───────────────
-// The cockpit's map and the app's session canvas each grew their own idea of what a
-// parameter type is (cockpit: string/number/boolean/color/trigger — app: number/toggle/
-// text/menu/colour/elements/view/…). Two names for one concept is the drift this project
-// keeps paying for, so the registry is published ONCE on window and every panel reads it.
-// COLOUR encodes the data type. SHAPE encodes cardinality: round = one value, diamond = a
-// list. Adding a type here adds it everywhere.
-// If a page ever loads param-types.jsx before this file, that copy wins and this is skipped.
-if (!window.PM_TYPES) {
-  const T = window.AH;
-  window.PM_TYPES = {
-    number:   { label: 'Number',     glyph: '#',  col: T.warn,     wire: false, def: 0 },
-    toggle:   { label: 'Toggle',     glyph: '◐',  col: T.purple,   wire: false, def: false },
-    text:     { label: 'Text',       glyph: 'T',  col: T.inkSoft,  wire: false, def: '' },
-    menu:     { label: 'Menu',       glyph: '≡',  col: T.blue,     wire: false, def: '' },
-    colour:   { label: 'Colour',     glyph: '◉',  col: T.ok,       wire: false, def: '#d97757' },
-    elements: { label: 'Elements',   glyph: '▭',  col: T.accent,   wire: true },
-    view:     { label: 'View',       glyph: '◱',  col: T.cyan,     wire: true },
-    dims:     { label: 'Annotation', glyph: '↔',  col: T.ok,       wire: true },
-    file:     { label: 'File',       glyph: '⎘',  col: T.ok,       wire: true },
-    any:      { label: 'Any',        glyph: '✳',  col: T.inkMuted, wire: true },
-  };
-  // canvas wire-type names → the registry, so a wire on the map and a socket in a panel agree
-  window.PM_WIRE = {
-    view: T.cyan, selection: T.cyan, walls: T.accent, doors: T.accent, sheets: T.accent,
-    intent: T.purple, prediction: T.purple, trace: T.inkSoft, dims: T.ok, file: T.ok,
-    any: T.inkSoft, number: T.warn, text: T.inkSoft, string: T.inkSoft,
-    boolean: T.purple, exec: T.accent,
-  };
-  // the cockpit's older type names → registry names
-  window.PM_ALIAS = { string: 'text', boolean: 'toggle', color: 'colour', trigger: 'any' };
-  window.pmType = (t) => window.PM_TYPES[t] || window.PM_TYPES[window.PM_ALIAS[t]] || window.PM_TYPES.any;
-  // The parameters a real graph engine gives a CONNECTION. A wire is a node, so it is
-  // governed like one, and it must mean the same thing here as in the app: defined once.
-  //   lacing   — Dynamo list lacing: how two lists of different length are paired.
-  //   tree     — Grasshopper data-tree ops.
-  //   condition/on_fail — the rule, and what downstream gets when the rule stops it.
-  //   throttle — rate limit for a wire fed by a live host.
-  window.WIRE_PARAMS = [
-    { k: 'enabled',     label: 'Enabled',   type: 'toggle', def: true,       help: 'Mute the connection without deleting it. Downstream sees nothing.' },
-    { k: 'lacing',      label: 'Lacing',    type: 'menu',   def: 'shortest', opts: ['shortest', 'longest', 'cross product'], help: 'How two lists of different length are paired.' },
-    { k: 'tree',        label: 'Data tree', type: 'menu',   def: 'none',     opts: ['none', 'flatten', 'graft', 'simplify'], help: 'Restructure on the way through: flatten, graft, or simplify.' },
-    { k: 'condition',   label: 'Condition', type: 'text',   def: '',         page: 'Rules', help: 'The wire only carries when this holds. Empty means always.' },
-    { k: 'on_fail',     label: 'On block',  type: 'menu',   def: 'block',    opts: ['block', 'pass last', 'pass empty'], page: 'Rules', help: 'What downstream receives when the condition blocks or the source errors.' },
-    { k: 'throttle_ms', label: 'Throttle',  type: 'number', def: 0,          unit: 'ms', min: 0, max: 2000, step: 50, page: 'Rules', help: 'Minimum gap between deliveries, for a wire fed by a live host.' },
-  ];
-}
+// The parameter type registry (PM_TYPES, PM_WIRE, PM_ALIAS, pmType, WIRE_PARAMS) is
+// param-types.jsx, the one definition Studio reads too. Every page that loads this file
+// loads that one first. The copy that sat here had already drifted from it: other help
+// text and no hard throttle ceiling (2026-09-17).
 
 /* ════ SYSTEM — macro, nothing selected: whole-system overview ════ */
 function SystemPanel({ M, counts, total, STATUS, attention, onGoto, onAddDomain, onEnter, openRoom }) {

@@ -92,6 +92,53 @@ def published_offer_form(value: object) -> Optional[dict]:
     return {key: value[key] for key in OFFER_KEYS}
 
 
+MODEL_LIMIT = 40
+
+
+def published_models_form(value: object) -> Optional[dict]:
+    """The models and routing the app publishes for the cockpit, or None.
+
+    This is the contract the router publishes into, through CloudRelay(models=...):
+
+        {"models": [{"name": str, "provider": str, "available": bool}, ...],
+         "routes": [{"task": str, "model": str}, ...]}      # routes may be omitted
+
+    name is 1-80 characters and unique; provider is 1-40; task is 1-40 and unique; a
+    route's model names a published model; at most 40 of each. Only those keys travel,
+    so no key, endpoint or price leaves the app with them. Anything else makes the whole
+    value invalid: the cockpit then says the list is not published, never half a list.
+    """
+    def text(item, key, limit):
+        field = item.get(key) if isinstance(item, Mapping) else None
+        return field if isinstance(field, str) and 0 < len(field.strip()) and len(field) <= limit else None
+
+    if not isinstance(value, Mapping):
+        return None
+    models, routes = value.get("models"), value.get("routes", [])
+    if not isinstance(models, list) or not isinstance(routes, list):
+        return None
+    if len(models) > MODEL_LIMIT or len(routes) > MODEL_LIMIT:
+        return None
+    published = []
+    for item in models:
+        name, provider = text(item, "name", 80), text(item, "provider", 40)
+        if name is None or provider is None or type(item.get("available")) is not bool:
+            return None
+        published.append({"name": name, "provider": provider, "available": item["available"]})
+    names = [m["name"] for m in published]
+    if len(set(names)) != len(names):
+        return None
+    routing = []
+    for item in routes:
+        task, model = text(item, "task", 40), text(item, "model", 80)
+        if task is None or model not in names:
+            return None
+        routing.append({"task": task, "model": model})
+    if len({r["task"] for r in routing}) != len(routing):
+        return None
+    return {"models": published, "routes": routing}
+
+
 def render_answer(result: Mapping[str, object]) -> str:
     """One founder-readable text from a BABOOM response or execution payload."""
     body = result.get("response") if isinstance(result.get("response"), Mapping) else result
@@ -141,6 +188,7 @@ class CloudRelay:
         hosts: Optional[Callable[[], object]] = None,
         offer: Optional[Callable[[], object]] = None,
         offer_command: Optional[Callable[[str, bool], object]] = None,
+        models: Optional[Callable[[], object]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.token = str(token)
@@ -153,6 +201,7 @@ class CloudRelay:
         self.hosts = hosts
         self.offer = offer
         self.offer_command = offer_command
+        self.models = models
         self.last_error: str = ""
         self.answered = 0
         self._map_digest = ""
@@ -314,6 +363,16 @@ class CloudRelay:
             ][:40]
         except Exception:
             pass
+        if callable(self.models) and not self._stop.is_set():
+            # No key when the app publishes nothing valid: the cockpit tells "not published"
+            # apart from a published empty list.
+            try:
+                published = published_models_form(self.models())
+            except Exception:
+                published = None
+            if published is not None:
+                control["models"] = published["models"]
+                control["routes"] = published["routes"]
         offer = None
         if callable(self.offer) and not self._stop.is_set():
             try:
@@ -353,6 +412,7 @@ def start_cloud_relay(
     hosts: Optional[Callable[[], object]] = None,
     offer: Optional[Callable[[], object]] = None,
     offer_command: Optional[Callable[[str, bool], object]] = None,
+    models: Optional[Callable[[], object]] = None,
 ) -> Optional[CloudRelay]:
     """Start the relay thread when the founder's session and consent exist."""
     from .cloud_publish_consent import cloud_publish_allowed
@@ -367,12 +427,14 @@ def start_cloud_relay(
         respond=respond, execute=execute, map_script=map_script, hosts=hosts,
         offer=offer,
         offer_command=offer_command,
+        models=models,
     )
     return relay.start()
 
 
 __all__ = [
-    "CloudRelay", "load_cloud_session", "published_offer_form", "render_answer",
+    "CloudRelay", "load_cloud_session", "published_models_form", "published_offer_form",
+    "render_answer",
     "start_cloud_relay",
     "CLAIM_PATH", "RESULT_PATH", "MAP_PATH",
 ]

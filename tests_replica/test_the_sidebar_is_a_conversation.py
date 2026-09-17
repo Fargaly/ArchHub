@@ -42,6 +42,18 @@ def test_the_exchange_reads_as_a_conversation():
     assert "CONVERSATIONS WITH YOUR AGENTS" in text, "the heading his design gives it"
 
 
+def test_each_exchange_is_a_card_that_folds_open():
+    """His Sessions design: one card per exchange, a header with the chevron, the
+    conversation inside, the newest open by itself. The rows are the real task queue."""
+    text = SIDE.read_text(encoding="utf-8")
+    block = text[text.index("{tab === 'sessions'"):text.index("{tab === 'history'")]
+    assert "aria-expanded={open}" in block, "the card header is the toggle"
+    assert "setOpenRows(o => ({ ...o, [r.id]: !open }))" in block
+    assert ": i === 0" in block, "the newest exchange opens by itself"
+    assert "{open && (" in block, "the conversation sits inside the card"
+    assert "seedSessions" not in text
+
+
 def test_the_cloud_sidebar_is_the_same_file():
     if not CLOUD.is_file():
         return

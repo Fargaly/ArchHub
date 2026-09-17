@@ -16,7 +16,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO = ROOT / "nodelang" / "studio"
 CLOUD = ROOT.parent / "12.PRODUCTION" / "cloud_backend" / "cockpit_assets"
-ATLAS = ("atlas-panels", "atlas-engine", "atlas-runtime", "atlas-side", "atlas-cockpit")
+# param-types is the one wire and parameter registry; the cloud tree carries it as a mirror.
+ATLAS = ("param-types", "atlas-panels", "atlas-engine", "atlas-runtime", "atlas-side", "atlas-cockpit")
 
 
 def _lf(path: Path) -> str:

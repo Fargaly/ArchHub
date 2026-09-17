@@ -11,8 +11,11 @@
 // without a legend.
 (() => {
 const T = window.AH;
+// The cloud cockpit's tokens have no live theme store; there the registry is built once
+// from its fixed tokens. Studio and the desktop cockpit keep live re-theming.
+const derive = (window.ArchHubTheme && window.ArchHubTheme.derive) || ((build) => build(window.AH));
 
-const PM_TYPES = window.ArchHubTheme.derive((T) => ({
+const PM_TYPES = derive((T) => ({
   number:   { label: 'Number',     glyph: '#',  col: T.warn,     wire: false, def: 0 },
   toggle:   { label: 'Toggle',     glyph: '◐',  col: T.purple,   wire: false, def: false },
   text:     { label: 'Text',       glyph: 'T',  col: T.inkSoft,  wire: false, def: '' },
@@ -26,7 +29,7 @@ const PM_TYPES = window.ArchHubTheme.derive((T) => ({
 }));
 
 // canvas wire-type names → the registry, so a wire on the map and a socket in a panel agree
-const PM_WIRE = window.ArchHubTheme.derive((T) => ({
+const PM_WIRE = derive((T) => ({
   view: T.cyan, selection: T.cyan, walls: T.accent, doors: T.accent, sheets: T.accent,
   intent: T.purple, prediction: T.purple, trace: T.inkSoft, dims: T.ok, file: T.ok,
   any: T.inkSoft, number: T.warn, text: T.inkSoft, string: T.inkSoft,

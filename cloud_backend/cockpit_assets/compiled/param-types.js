@@ -11,12 +11,7 @@
 // without a legend.
 (function () {
   var T = window.AH;
-  // The cloud cockpit's tokens have no live theme store; there the registry is built once
-  // from its fixed tokens. Studio and the desktop cockpit keep live re-theming.
-  var derive = window.ArchHubTheme && window.ArchHubTheme.derive || function (build) {
-    return build(window.AH);
-  };
-  var PM_TYPES = derive(function (T) {
+  var PM_TYPES = window.ArchHubTheme.derive(function (T) {
     return {
       number: {
         label: 'Number',
@@ -87,7 +82,7 @@
   });
 
   // canvas wire-type names → the registry, so a wire on the map and a socket in a panel agree
-  var PM_WIRE = derive(function (T) {
+  var PM_WIRE = window.ArchHubTheme.derive(function (T) {
     return {
       view: T.cyan,
       selection: T.cyan,

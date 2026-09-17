@@ -30,6 +30,9 @@ import pytest
 
 SOURCES = Path(__file__).resolve().parents[1] / "cockpit_assets"
 COMPILED = SOURCES / "compiled"
+# ONE SOURCE: the cockpit .jsx live only in 13.NODE-LANGUAGE/nodelang/studio; the cloud build compiles
+# them from there, and cockpit_assets keeps the page, the vendor files and the compiled output.
+STUDIO = Path(__file__).resolve().parents[3] / "13.NODE-LANGUAGE" / "nodelang" / "studio"
 
 COCKPIT_BUNDLES = ("atlas-panels.js", "atlas-side.js", "atlas-cockpit.js")
 
@@ -322,16 +325,27 @@ def test_model_routing_is_what_the_app_published(side: str) -> None:
     assert "setColl('models'" not in side, "a route is still written to a list the page keeps"
 
 
-# -- the built assets match the sources they were built from ------------------
+# -- 9. the map corner is the one he drew ----------------------------------------
 
-@pytest.mark.parametrize("stem", ("param-types", "atlas-panels", "atlas-side", "atlas-cockpit"))
-def test_the_built_asset_is_newer_than_its_source(stem: str) -> None:
-    """A source edit that was never rebuilt never reaches the browser."""
-    src = SOURCES / (stem + ".jsx")
-    out = COMPILED / (stem + ".js")
-    assert out.stat().st_mtime >= src.stat().st_mtime, (
-        "%s.js is stale. Run: node cloud_backend/tools/build_cockpit_assets.js" % stem)
+def test_the_map_corner_is_the_designed_one_and_the_truth_chips_sit_in_the_masthead() -> None:
+    """His corner holds the model chip and find on one row with the scale ladder below. The
+    source and offer chips wrapped that row onto three lines and pushed the ladder over the
+    top cards, so they moved into the open span of the masthead (2026-09-17)."""
+    if not (STUDIO / "atlas-cockpit.jsx").is_file():
+        pytest.skip("the cockpit source tree is not beside this one")
+    source = (STUDIO / "atlas-cockpit.jsx").read_text(encoding="utf-8").replace("\r\n", "\n")
+    masthead = source[source.index("THE GRAND MAP"):source.index("{/* corner controls */}")]
+    corner = source[source.index("{/* corner controls */}"):source.index("{/* SCALE LADDER")]
+    assert "Federated model" in corner and "find\u2026" in corner
+    for moved in ("LIVE PUSH", "OFFER", "reloadMap"):
+        assert moved not in corner, "%s is back in the map corner" % moved
+        assert moved in masthead, "%s left the masthead" % moved
+    assert "position: 'absolute', top: 12, left: 14, right: 372, display: 'flex', alignItems: 'center'" in corner
+    ladder = source[source.index("function ScaleLadder"):source.index("function AtlasCockpit")]
+    assert "position: 'absolute', top: 54, left: '50%'" in ladder, "the ladder is not where he drew it"
 
+
+# -- the built assets: freshness is held by test_the_cockpit_has_one_source.py -------
 
 def test_the_inspector_run_list_omits_an_unmeasured_duration(panels: str) -> None:
     """A relayed run carries no duration. The row prints the field only when it exists."""
@@ -356,9 +370,12 @@ def test_the_runtime_bundle_invents_neither_a_result_nor_a_duration():
     card read like it had measured something on a canvas where nothing had run.
     """
     from pathlib import Path
-    root = Path(__file__).resolve().parents[1] / "cockpit_assets"
-    for name in ("atlas-runtime.jsx", "compiled/atlas-runtime.js"):
-        text = (root / name).read_text(encoding="utf-8")
+    paths = [COMPILED / "atlas-runtime.js"]
+    if (STUDIO / "atlas-runtime.jsx").is_file():
+        paths.append(STUDIO / "atlas-runtime.jsx")
+    for path in paths:
+        name = path.name
+        text = path.read_text(encoding="utf-8")
         body = "\n".join(
             line for line in text.split("\n")
             if not line.lstrip().startswith("//"))

@@ -1,0 +1,68 @@
+{
+ "source_root": "13.NODE-LANGUAGE/nodelang/studio",
+ "files": [
+  {
+   "module": "tokens",
+   "source": "tokens.jsx",
+   "source_sha256": "68f421d19ebd1e41833b8fa81dc8069183c7e010349da8d3e837c74649d97043",
+   "output": "tokens.js",
+   "output_sha256": "051358d8fbed47c49e596e3e4a9d86d0613d9de753b73b4daabc7725bde5b1a2"
+  },
+  {
+   "module": "param-types",
+   "source": "param-types.jsx",
+   "source_sha256": "abac5a6a2a9b1fb4c402053beacf65027801ea01f5c7bf714bbdada21e745c3e",
+   "output": "param-types.js",
+   "output_sha256": "7e1f71ab389f7deaf79f8cddc51e479453c5ce910dfc834da8157fa6633c077a"
+  },
+  {
+   "module": "cockpit-core",
+   "source": "cockpit-core.jsx",
+   "source_sha256": "37961e4900d78cd985f1c563aca33cb0c99b3662c77365fa6e0943f5cb6a50ce",
+   "output": "cockpit-core.js",
+   "output_sha256": "d2c19ed73711f82cd7742d3188fe3e73027282f483bd7016955ac8c5ce5ed3bd"
+  },
+  {
+   "module": "hub-kit",
+   "source": "hub-kit.jsx",
+   "source_sha256": "72d5f27ddb0a41021c5f5aae0e5c01455eb3818a226a5cb3c7e7bd60f5e6b4a6",
+   "output": "hub-kit.js",
+   "output_sha256": "b38f70a153ee0ad5feb2490ab479ae2ef16d84092438b5d6b05f99d608016b2f"
+  },
+  {
+   "module": "atlas-engine",
+   "source": "atlas-engine.jsx",
+   "source_sha256": "509a11d888dff4fed39fd04632dae7b38fe554d60ce81efac99ec9b3d44e5a9d",
+   "output": "atlas-engine.js",
+   "output_sha256": "0f24a0b056ddbde2bb130a1040eaba740973835897bb77373e478b2c205733b0"
+  },
+  {
+   "module": "atlas-runtime",
+   "source": "atlas-runtime.jsx",
+   "source_sha256": "5cc60752528345882883c527c4b4c55903c8e91a84e74721afe9bdf508538d38",
+   "output": "atlas-runtime.js",
+   "output_sha256": "c991302e9c552e3160f8fb48e2e5a900e9054dfb795db0e06eaa09de1645f2b7"
+  },
+  {
+   "module": "atlas-panels",
+   "source": "atlas-panels.jsx",
+   "source_sha256": "41051664490c2d9100bab8dc54044ac722a2e27610143f4e8d5bc2cd22ce12c7",
+   "output": "atlas-panels.js",
+   "output_sha256": "053ed8d4199fd78eff7b8372e2eb532e56738f3dfeba84d0d80bd07039c644c2"
+  },
+  {
+   "module": "atlas-side",
+   "source": "atlas-side.jsx",
+   "source_sha256": "b5a26065fe53ebc16e6119545661f767d287dc532cd5643a2d0f4f92fd1e46a7",
+   "output": "atlas-side.js",
+   "output_sha256": "5dcb919ede46b3e0ba2d6e01f7c8fe202984b314f5985e8932a84b3eb925b143"
+  },
+  {
+   "module": "atlas-cockpit",
+   "source": "atlas-cockpit.jsx",
+   "source_sha256": "515166efe9e65a86520443b78dc49576353b29fa4e9e92fb9e3e667d7f88a968",
+   "output": "atlas-cockpit.js",
+   "output_sha256": "ce2531bfc315fb40cea6c22ef9c9c7b075a57deefbd5485b125a622398455b0e"
+  }
+ ]
+}

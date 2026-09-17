@@ -15,7 +15,7 @@ COCKPIT_PY = (ROOT / "cloud_backend" / "founder_cockpit.py").read_text(
     encoding="utf-8"
 )
 COCKPIT_JSX = (
-    ROOT / "cloud_backend" / "cockpit_assets" / "atlas-cockpit.jsx"
+    ROOT.parent / "13.NODE-LANGUAGE" / "nodelang" / "studio" / "atlas-cockpit.jsx"
 ).read_text(encoding="utf-8")
 
 

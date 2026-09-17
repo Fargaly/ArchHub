@@ -236,8 +236,10 @@ function ScaleLadder(_ref) {
   }
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      alignSelf: 'center',
-      pointerEvents: 'auto',
+      position: 'absolute',
+      top: 54,
+      left: '50%',
+      transform: 'translateX(-50%)',
       display: 'flex',
       alignItems: 'center',
       padding: '4px 6px',
@@ -3002,6 +3004,167 @@ function AtlasCockpit() {
     }
   }, counts.vision), "V")), /*#__PURE__*/React.createElement("div", {
     style: {
+      marginLeft: 16,
+      flex: '1 1 0',
+      minWidth: 0,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    title: mapMeta.live ? 'Drawn from the projection your running ArchHub pushed to the cloud.' : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub and it will appear here.',
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      padding: '6px 10px',
+      borderRadius: 8,
+      background: HB.card,
+      border: "1px solid ".concat(mapMeta.live ? HB.line : HB.amber),
+      flexShrink: 1,
+      minWidth: 0,
+      overflow: 'hidden',
+      whiteSpace: 'nowrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 7,
+      height: 7,
+      borderRadius: '50%',
+      flexShrink: 0,
+      background: mapMeta.live ? HB.green : HB.amber
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: HB.ink
+    }
+  }, mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: HB.inkMute,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      minWidth: 0
+    }
+  }, '· taken ' + new Date(mapMeta.at).toLocaleTimeString()), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10,
+      color: appSeen.at ? HB.inkSoft : HB.inkMute,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      minWidth: 0
+    }
+  }, !appSeen.loaded ? '· checking the app…' : appSeen.at ? '· app answered ' + agoText(appSeen.at) : '· app has not answered yet'), /*#__PURE__*/React.createElement("button", {
+    onClick: reloadMap,
+    title: "Fetch the projection again from the cloud",
+    style: {
+      border: "1px solid ".concat(HB.line),
+      background: 'transparent',
+      color: HB.inkSoft,
+      borderRadius: 5,
+      padding: '2px 7px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      flexShrink: 0
+    }
+  }, "refresh")), /*#__PURE__*/React.createElement("div", {
+    title: M.offer ? 'The offer record your app published with this map.' : 'Your app has not published an offer record.',
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      padding: '6px 10px',
+      borderRadius: 8,
+      background: HB.card,
+      border: "1px solid ".concat(HB.line),
+      flexShrink: 1,
+      minWidth: 0,
+      overflow: 'hidden',
+      whiteSpace: 'nowrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      color: HB.inkMute,
+      letterSpacing: '0.12em'
+    }
+  }, "OFFER"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 11,
+      color: M.offer ? HB.ink : HB.inkMute,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      minWidth: 0
+    }
+  }, M.offer ? M.offer.public_label : 'not declared'), M.offer && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      color: HB.inkMute,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      minWidth: 0
+    }
+  }, M.offer.pricing_visible ? '· pricing shown' : '· pricing hidden'), offerEdit === null ? /*#__PURE__*/React.createElement("button", {
+    onClick: function onClick() {
+      return setOfferEdit(M.offer ? M.offer.public_label : '');
+    },
+    title: "Change what the product is offered as",
+    style: {
+      border: "1px solid ".concat(HB.line),
+      background: 'transparent',
+      color: HB.inkSoft,
+      borderRadius: 5,
+      padding: '2px 7px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      flexShrink: 0
+    }
+  }, "edit") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    value: offerEdit,
+    onChange: function onChange(e) {
+      return setOfferEdit(e.target.value);
+    },
+    onKeyDown: function onKeyDown(e) {
+      if (e.key === 'Enter') saveOffer();
+      if (e.key === 'Escape') setOfferEdit(null);
+    },
+    style: {
+      width: 150,
+      border: "1px solid ".concat(HB.line),
+      background: HB.paper2,
+      color: HB.ink,
+      borderRadius: 5,
+      padding: '2px 6px',
+      fontFamily: HB.mono,
+      fontSize: 11,
+      outline: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: saveOffer,
+    style: {
+      border: "1px solid ".concat(HB.accent),
+      background: 'transparent',
+      color: HB.accent,
+      borderRadius: 5,
+      padding: '2px 7px',
+      cursor: 'pointer',
+      fontFamily: HB.mono,
+      fontSize: 9.5,
+      flexShrink: 0
+    }
+  }, "save")))), /*#__PURE__*/React.createElement("div", {
+    style: {
       marginLeft: 'auto',
       display: 'flex',
       alignItems: 'stretch',
@@ -3637,22 +3800,12 @@ function AtlasCockpit() {
       position: 'absolute',
       top: 12,
       left: 14,
-      right: 14,
-      zIndex: 6,
+      right: 372,
       display: 'flex',
-      flexDirection: 'column',
-      gap: 8,
-      minWidth: 0,
-      pointerEvents: 'none'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexWrap: 'wrap',
       alignItems: 'center',
       gap: 8,
       minWidth: 0,
-      maxWidth: 'calc(100% - 358px)'
+      pointerEvents: 'none'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3687,140 +3840,6 @@ function AtlasCockpit() {
       whiteSpace: 'nowrap'
     }
   }, "\xB7 ", M.domains.length, " domains")), /*#__PURE__*/React.createElement("div", {
-    title: mapMeta.live ? 'Drawn from the projection your running ArchHub pushed to the cloud.' : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub and it will appear here.',
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 7,
-      padding: '6px 10px',
-      borderRadius: 8,
-      background: HB.card,
-      border: "1px solid ".concat(mapMeta.live ? HB.line : HB.amber),
-      flexShrink: 0,
-      pointerEvents: 'auto',
-      whiteSpace: 'nowrap'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 7,
-      height: 7,
-      borderRadius: '50%',
-      flexShrink: 0,
-      background: mapMeta.live ? HB.green : HB.amber
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: HB.mono,
-      fontSize: 10,
-      color: HB.ink
-    }
-  }, mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: HB.mono,
-      fontSize: 10,
-      color: HB.inkMute
-    }
-  }, '· taken ' + new Date(mapMeta.at).toLocaleTimeString()), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: HB.mono,
-      fontSize: 10,
-      color: appSeen.at ? HB.inkSoft : HB.inkMute
-    }
-  }, !appSeen.loaded ? '· checking the app…' : appSeen.at ? '· app answered ' + agoText(appSeen.at) : '· app has not answered yet'), /*#__PURE__*/React.createElement("button", {
-    onClick: reloadMap,
-    title: "Fetch the projection again from the cloud",
-    style: {
-      border: "1px solid ".concat(HB.line),
-      background: 'transparent',
-      color: HB.inkSoft,
-      borderRadius: 5,
-      padding: '2px 7px',
-      cursor: 'pointer',
-      fontFamily: HB.mono,
-      fontSize: 9.5
-    }
-  }, "refresh")), /*#__PURE__*/React.createElement("div", {
-    title: M.offer ? 'The offer record your app published with this map.' : 'Your app has not published an offer record.',
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 7,
-      padding: '6px 10px',
-      borderRadius: 8,
-      background: HB.card,
-      border: "1px solid ".concat(HB.line),
-      flexShrink: 0,
-      pointerEvents: 'auto',
-      whiteSpace: 'nowrap'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: HB.mono,
-      fontSize: 9.5,
-      color: HB.inkMute,
-      letterSpacing: '0.12em'
-    }
-  }, "OFFER"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: HB.mono,
-      fontSize: 11,
-      color: M.offer ? HB.ink : HB.inkMute
-    }
-  }, M.offer ? M.offer.public_label : 'not declared'), M.offer && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: HB.mono,
-      fontSize: 9.5,
-      color: HB.inkMute
-    }
-  }, M.offer.pricing_visible ? '· pricing shown' : '· pricing hidden'), offerEdit === null ? /*#__PURE__*/React.createElement("button", {
-    onClick: function onClick() {
-      return setOfferEdit(M.offer ? M.offer.public_label : '');
-    },
-    title: "Change what the product is offered as",
-    style: {
-      border: "1px solid ".concat(HB.line),
-      background: 'transparent',
-      color: HB.inkSoft,
-      borderRadius: 5,
-      padding: '2px 7px',
-      cursor: 'pointer',
-      fontFamily: HB.mono,
-      fontSize: 9.5
-    }
-  }, "edit") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
-    autoFocus: true,
-    value: offerEdit,
-    onChange: function onChange(e) {
-      return setOfferEdit(e.target.value);
-    },
-    onKeyDown: function onKeyDown(e) {
-      if (e.key === 'Enter') saveOffer();
-      if (e.key === 'Escape') setOfferEdit(null);
-    },
-    style: {
-      width: 150,
-      border: "1px solid ".concat(HB.line),
-      background: HB.paper2,
-      color: HB.ink,
-      borderRadius: 5,
-      padding: '2px 6px',
-      fontFamily: HB.mono,
-      fontSize: 11,
-      outline: 'none'
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: saveOffer,
-    style: {
-      border: "1px solid ".concat(HB.accent),
-      background: 'transparent',
-      color: HB.accent,
-      borderRadius: 5,
-      padding: '2px 7px',
-      cursor: 'pointer',
-      fontFamily: HB.mono,
-      fontSize: 9.5
-    }
-  }, "save"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -3861,7 +3880,7 @@ function AtlasCockpit() {
     level: scaleLevel,
     onClimb: climbTo,
     depth: modelDepth
-  })), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'absolute',
       top: 12,

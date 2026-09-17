@@ -20,7 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CLOUD = ROOT / "cloud_backend" / "cockpit_assets"
 APP = ROOT.parent / "13.NODE-LANGUAGE" / "nodelang" / "studio"
-COCKPIT = (CLOUD / "atlas-cockpit.jsx").read_text(encoding="utf-8")
+COCKPIT = (APP / "atlas-cockpit.jsx").read_text(encoding="utf-8")   # the one source
 
 
 def _merge_body() -> str:
@@ -52,10 +52,9 @@ def test_the_content_comes_from_the_live_push():
     assert "const wires = (L.wires || []);" in body
 
 
-def test_both_cockpit_copies_are_the_same_file():
-    """Two served surfaces, one behaviour."""
-    app_copy = (APP / "atlas-cockpit.jsx").read_text(encoding="utf-8")
-    assert app_copy.replace("\r\n", "\n") == COCKPIT.replace("\r\n", "\n")
+def test_the_cloud_serves_the_build_of_the_one_source():
+    """Two served surfaces, one source: the cloud keeps no .jsx copy of the cockpit."""
+    assert not (CLOUD / "atlas-cockpit.jsx").exists(), "a second atlas-cockpit.jsx sits in the cloud tree"
 
 
 def test_the_page_loads_what_was_actually_built():

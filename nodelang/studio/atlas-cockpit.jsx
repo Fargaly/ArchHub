@@ -86,7 +86,7 @@ function ScaleLadder({ level, onClimb, depth }) {
     rungs.push(['field' + t, 'FIELD' + (SUP[t] != null ? SUP[t] : '^' + t), 'group of fields ×' + (t - 1)]);
   }
   return (
-    <div style={{ alignSelf: 'center', pointerEvents: 'auto', display: 'flex', alignItems: 'center', padding: '4px 6px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 10, boxShadow: '0 3px 12px rgba(0,0,0,.08)', fontFamily: HB.mono, zIndex: 6 }}>
+    <div style={{ position: 'absolute', top: 54, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', padding: '4px 6px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 10, boxShadow: '0 3px 12px rgba(0,0,0,.08)', fontFamily: HB.mono, zIndex: 6 }}>
       <span style={{ fontSize: 7.5, color: HB.inkMute, letterSpacing: '0.18em', padding: '0 9px 0 5px' }}>SCALE</span>
       {rungs.map(([k, l, sub], i) => {
         const on = level === k;
@@ -882,6 +882,53 @@ function AtlasCockpit() {
           </div>
           <span style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkSoft }}><b style={{ color: HB.green }}>{counts.live}</b>L · <b style={{ color: HB.amber }}>{counts.partial}</b>P · <b style={{ color: HB.accent }}>{counts.vision}</b>V</span>
         </div>
+        {/* WHERE THIS MAP CAME FROM, AND WHAT ARCHHUB IS OFFERED AS. His map corner holds only the
+            model chip and find, with the scale ladder under them; these two chips carry what the
+            design did not have to say, so they sit in the masthead's open span (2026-09-17). */}
+        <div style={{ marginLeft: 16, flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+        {/* WHERE THIS MAP CAME FROM AND WHEN. A pushed projection with no stamp beside it
+            is indistinguishable from a stale one, so state the source, the moment this
+            page took delivery of it, and when the app was last seen answering. */}
+        <div title={mapMeta.live
+              ? 'Drawn from the projection your running ArchHub pushed to the cloud.'
+              : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub and it will appear here.'}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${mapMeta.live ? HB.line : HB.amber}`, flexShrink: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: mapMeta.live ? HB.green : HB.amber }}/>
+          <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink }}>{mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'}</span>
+          <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+            {'· taken ' + new Date(mapMeta.at).toLocaleTimeString()}
+          </span>
+          <span style={{ fontFamily: HB.mono, fontSize: 10, color: appSeen.at ? HB.inkSoft : HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+            {!appSeen.loaded ? '· checking the app…'
+              : appSeen.at ? '· app answered ' + agoText(appSeen.at)
+              : '· app has not answered yet'}
+          </span>
+          <button onClick={reloadMap} title="Fetch the projection again from the cloud"
+            style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5, flexShrink: 0 }}>refresh</button>
+        </div>
+        {/* WHAT ARCHHUB IS OFFERED AS. One record in the app travels with the push;
+            the cockpit states it and edits it through the same door the ask bar uses.
+            No declared offer is drawn as absent, never as a price. */}
+        <div title={M.offer ? 'The offer record your app published with this map.' : 'Your app has not published an offer record.'}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flexShrink: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+          <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, letterSpacing: '0.12em' }}>OFFER</span>
+          <span style={{ fontFamily: HB.mono, fontSize: 11, color: M.offer ? HB.ink : HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+            {M.offer ? M.offer.public_label : 'not declared'}
+          </span>
+          {M.offer && <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute , overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+            {M.offer.pricing_visible ? '· pricing shown' : '· pricing hidden'}
+          </span>}
+          {offerEdit === null
+            ? <button onClick={() => setOfferEdit(M.offer ? M.offer.public_label : '')} title="Change what the product is offered as"
+                style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5, flexShrink: 0 }}>edit</button>
+            : <React.Fragment>
+                <input autoFocus value={offerEdit} onChange={e => setOfferEdit(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveOffer(); if (e.key === 'Escape') setOfferEdit(null); }}
+                  style={{ width: 150, border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.ink, borderRadius: 5, padding: '2px 6px', fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
+                <button onClick={saveOffer} style={{ border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5, flexShrink: 0 }}>save</button>
+              </React.Fragment>}
+        </div>
+        </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'stretch', border: `1px solid ${HB.line}`, borderRadius: 6, overflow: 'hidden', fontFamily: HB.mono }}>
           {[['NODES', total], ['DOMAINS', M.domains.length], ['WIRES', M.wires.length], ['SHEET', 'GA-01'], ['DRAWN', 'FOUNDER']].map(([k, v], i) => (
             <div key={k} style={{ padding: '4px 11px', borderLeft: i ? `1px solid ${HB.line}` : 'none', textAlign: 'center' }}>
@@ -1018,56 +1065,12 @@ function AtlasCockpit() {
             </div>
           )}
 
-          {/* corner controls, with the scale ladder under them in one column: a chip row that
-              wraps pushes the ladder down instead of sliding beneath it */}
-          <div style={{ position: 'absolute', top: 12, left: 14, right: 14, zIndex: 6, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, pointerEvents: 'none' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, minWidth: 0, maxWidth: 'calc(100% - 358px)' }}>
+          {/* corner controls */}
+          <div style={{ position: 'absolute', top: 12, left: 14, right: 372, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, pointerEvents: 'none' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, boxShadow: '0 3px 12px rgba(0,0,0,.08)', flexShrink: 0, pointerEvents: 'auto' }}>
               <CKIcon name="map" size={13} color={HB.accent}/>
               <span style={{ fontFamily: HB.mono, fontSize: 11.5, color: HB.ink, whiteSpace: 'nowrap', flexShrink: 0 }}>Federated model</span>
               <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute, whiteSpace: 'nowrap' }}>· {M.domains.length} domains</span>
-            </div>
-            {/* WHERE THIS MAP CAME FROM AND WHEN. A pushed projection with no stamp beside it
-                is indistinguishable from a stale one, so state the source, the moment this
-                page took delivery of it, and when the app was last seen answering. */}
-            <div title={mapMeta.live
-                  ? 'Drawn from the projection your running ArchHub pushed to the cloud.'
-                  : 'Your app has not pushed a projection, so there is no map to draw. Open ArchHub and it will appear here.'}
-              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${mapMeta.live ? HB.line : HB.amber}`, flexShrink: 0, pointerEvents: 'auto', whiteSpace: 'nowrap' }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: mapMeta.live ? HB.green : HB.amber }}/>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.ink }}>{mapMeta.live ? 'LIVE PUSH' : 'NO LIVE PUSH'}</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute }}>
-                {'· taken ' + new Date(mapMeta.at).toLocaleTimeString()}
-              </span>
-              <span style={{ fontFamily: HB.mono, fontSize: 10, color: appSeen.at ? HB.inkSoft : HB.inkMute }}>
-                {!appSeen.loaded ? '· checking the app…'
-                  : appSeen.at ? '· app answered ' + agoText(appSeen.at)
-                  : '· app has not answered yet'}
-              </span>
-              <button onClick={reloadMap} title="Fetch the projection again from the cloud"
-                style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5 }}>refresh</button>
-            </div>
-            {/* WHAT ARCHHUB IS OFFERED AS. One record in the app travels with the push;
-                the cockpit states it and edits it through the same door the ask bar uses.
-                No declared offer is drawn as absent, never as a price. */}
-            <div title={M.offer ? 'The offer record your app published with this map.' : 'Your app has not published an offer record.'}
-              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flexShrink: 0, pointerEvents: 'auto', whiteSpace: 'nowrap' }}>
-              <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute, letterSpacing: '0.12em' }}>OFFER</span>
-              <span style={{ fontFamily: HB.mono, fontSize: 11, color: M.offer ? HB.ink : HB.inkMute }}>
-                {M.offer ? M.offer.public_label : 'not declared'}
-              </span>
-              {M.offer && <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>
-                {M.offer.pricing_visible ? '· pricing shown' : '· pricing hidden'}
-              </span>}
-              {offerEdit === null
-                ? <button onClick={() => setOfferEdit(M.offer ? M.offer.public_label : '')} title="Change what the product is offered as"
-                    style={{ border: `1px solid ${HB.line}`, background: 'transparent', color: HB.inkSoft, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5 }}>edit</button>
-                : <React.Fragment>
-                    <input autoFocus value={offerEdit} onChange={e => setOfferEdit(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') saveOffer(); if (e.key === 'Escape') setOfferEdit(null); }}
-                      style={{ width: 150, border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.ink, borderRadius: 5, padding: '2px 6px', fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
-                    <button onClick={saveOffer} style={{ border: `1px solid ${HB.accent}`, background: 'transparent', color: HB.accent, borderRadius: 5, padding: '2px 7px', cursor: 'pointer', fontFamily: HB.mono, fontSize: 9.5 }}>save</button>
-                  </React.Fragment>}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: HB.card, border: `1px solid ${HB.line}`, flex: '0 1 160px', minWidth: 92, boxSizing: 'border-box', pointerEvents: 'auto' }}>
               <CKIcon name="search" size={12} color={HB.inkMute} style={{ flexShrink: 0 }}/>
@@ -1077,7 +1080,6 @@ function AtlasCockpit() {
 
           {/* SCALE LADDER — the recursive primitive, named and climbable */}
           <ScaleLadder level={scaleLevel} onClimb={climbTo} depth={modelDepth}/>
-          </div>
 
           {/* LOD hint */}
           <div style={{ position: 'absolute', top: 12, right: 14, fontFamily: HB.mono, fontSize: 9.5, color: HB.inkSoft, letterSpacing: '0.1em', whiteSpace: 'nowrap', padding: '6px 11px', background: HB.card, border: `1px solid ${HB.line}`, borderRadius: 8 }}>

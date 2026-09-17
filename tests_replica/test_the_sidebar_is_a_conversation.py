@@ -54,8 +54,6 @@ def test_each_exchange_is_a_card_that_folds_open():
     assert "seedSessions" not in text
 
 
-def test_the_cloud_sidebar_is_the_same_file():
-    if not CLOUD.is_file():
-        return
-    lf = lambda p: p.read_text(encoding="utf-8").replace(chr(13) + chr(10), chr(10))
-    assert lf(SIDE) == lf(CLOUD), "the cockpit is one surface in two places"
+def test_the_cloud_holds_no_second_sidebar():
+    """One surface, one file: the cloud build compiles this one."""
+    assert not CLOUD.is_file(), "a second atlas-side.jsx sits in the cloud tree"

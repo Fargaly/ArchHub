@@ -118,7 +118,7 @@ function AgenticPanel({ M, DB, assign, attention, onGoto, onTuneAttention, attNo
                   <button key={r.id} onClick={() => onGoto({ nodeId: r.node.id, dom: r.node.dom })} className="hb-rowh" style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '8px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: 'none', background: 'transparent' }}>
                     <span style={{ width: 18, height: 18, borderRadius: 5, marginTop: 1, display: 'grid', placeItems: 'center', background: (r.ok ? HB.green : HB.red) + '1e', color: r.ok ? HB.green : HB.red, flexShrink: 0, fontSize: 10 }}>{r.ok ? '✓' : '✗'}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 12, color: HB.ink, display: 'block' }}><b style={{ fontWeight: 600 }}>{ags[0] ? ags[0].name : 'System'}</b> ran <span style={{ color: HB.inkSoft }}>{r.node.title}</span></span>
+                      <span style={{ fontSize: 12, color: HB.ink, display: 'block' }}><b style={{ fontWeight: 600 }}>{ags[0] ? ags[0].name : r.app ? 'Your app' : 'System'}</b> ran <span style={{ color: HB.inkSoft }}>{r.node.title}</span></span>
                       <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{r.result}{r.ms ? ' · ' + r.ms + 'ms' : ''} · {ago(r.t)} ago</span>
                     </span>
                   </button>

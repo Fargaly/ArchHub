@@ -43,6 +43,16 @@ BETA_OFFER = {
 }
 OFFER_FIELDS = tuple(BETA_OFFER)
 
+# The cockpit's one offer command form, and the words that state a price.
+_OFFER_COMMAND = re.compile(r'\s*set\s+offer\s+([a-z][a-z-]*)\s+to\s+"(.*)"\s*', re.I | re.S)
+_MONEY = re.compile(
+    r"[$\u20ac\u00a3\u00a5\u20b9]"
+    r"|\b(?:usd|eur|gbp|aed|sar|egp|qar|kwd|bhd|omr|dollars?|euros?|pounds?|dirhams?|riyals?)\b"
+    r"|\bper\s+(?:month|year|seat|user|day)\b"
+    r"|/\s*(?:mo|month|yr|year|seat|user)\b",
+    re.I,
+)
+
 
 def _terminal(root_id, value):
     return Cell(root_id, NULL_CELL_ID, NULL_CELL_ID, str(value).encode("utf-8"))
@@ -248,6 +258,8 @@ def _offer_value(field, value):
         value = value.strip()
         if not value or len(value) > 80 or any(ord(ch) < 32 for ch in value):
             raise InvalidCell("offer public label must be 1-80 printable characters")
+        if _MONEY.search(value):
+            raise InvalidCell("offer public label must not state a price; pricing is hidden")
     return value
 
 
@@ -307,9 +319,52 @@ def published_offer(snapshot):
     }
 
 
+def parse_offer_command(utterance):
+    """The (field, value) of a cockpit offer command, or None for any other words.
+
+    Words that start like an offer command but do not follow its one form are
+    refused, so a typo is never passed on to BABOOM as some other request.
+    """
+    if not isinstance(utterance, str) or not re.match(r"\s*set\s+offer\b", utterance, re.I):
+        return None
+    match = _OFFER_COMMAND.fullmatch(utterance)
+    if match is None:
+        raise InvalidCell('an offer command reads: set offer <field> to "<value>"')
+    return match.group(1).lower(), match.group(2)
+
+
+def apply_offer_command(store, utterance, *, founder_account, execute):
+    """Answer a cockpit offer command from the one offer record.
+
+    Returns None for words that are not an offer command. Otherwise the account
+    must be a founder. Unconfirmed words only preview; a confirmed change is one
+    new revision of the record, and an undeclared offer is declared first.
+    """
+    parsed = parse_offer_command(utterance)
+    if parsed is None:
+        return None
+    field, value = parsed
+    snapshot = store.snapshot()
+    if not is_founder(snapshot, founder_account):
+        raise InvalidCell("only a founder account can change the offer")
+    value = _offer_value(field, value)
+    if not execute:
+        return {
+            "kind": "offer-preview",
+            "summary": "Confirm to set the offer %s to %s." % (field, json.dumps(value)),
+            "data": {"field": field, "value": value},
+        }
+    if OFFER_ROOT not in snapshot.cells:
+        declare_offer(store, founder_account=founder_account)
+    offer = set_offer_field(store, field, value, founder_account=founder_account)
+    return {
+        "kind": "offer-updated",
+        "summary": "The offer %s is now %s." % (field, json.dumps(offer[field])),
+        "data": {"field": field, "value": offer[field]},
+    }
 __all__ = [
     "ACCOUNTS_ROOT", "BETA_OFFER", "FOUNDER_EMAILS", "FOUNDERS_ROOT", "OFFER_FIELDS",
-    "OFFER_ROOT", "TIERS", "declare_offer", "ensure_accounts", "founder_email",
-    "founder_emails", "is_founder", "published_offer", "read_accounts", "read_offer",
+    "OFFER_ROOT", "TIERS", "apply_offer_command", "declare_offer", "ensure_accounts", "founder_email",
+    "founder_emails", "is_founder", "parse_offer_command", "published_offer", "read_accounts", "read_offer",
     "set_offer_field", "set_tier", "upsert_account",
 ]

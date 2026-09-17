@@ -216,16 +216,16 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
           {d.grouped && onUngroup && <HBtn onClick={() => onUngroup(domKey)} style={{ flex: 1, justifyContent: 'center' }}><CKIcon name="grid" size={13}/>Ungroup</HBtn>}
         </div>
         <div style={{ display: 'flex', gap: 4, marginTop: 11 }}>
-          {[['control', 'Control'], ['params', `Params ${params.length}`], ['links', `Interface ${ifaceCount}`]].map(([k, l]) => (
+          {[['control', 'Control'], ['live', M.control ? 'Live ●' : 'Live'], ['params', `Params ${params.length}`], ['links', `Interface ${ifaceCount}`]].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '6px 0', borderRadius: 7, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, border: `1px solid ${tab === k ? HB.accent : HB.line}`, background: tab === k ? HB.accentSoft : 'transparent', color: tab === k ? HB.accentHi : HB.inkSoft }}>{l}</button>
           ))}
         </div>
       </div>
 
       <div style={{ padding: 0 }}>
+        {tab === 'live' && <LiveDomainControl M={M} d={d} members={members} onRelay={onRelay}/>}
         {tab === 'control' && (
           <div>
-            <LiveDomainControl M={M} d={d} members={members} onRelay={onRelay}/>
             <div style={secStyle}>
               <div style={insLabel}>INTENT</div>
               <textarea value={d.sub || ''} onChange={e => patchDomain(domKey, { sub: e.target.value })} rows={2} placeholder="What this domain owns…" style={insInput()}/>
@@ -243,10 +243,11 @@ function DomainPanel({ M, domKey, DB, counts, STATUS, CATS, macro, patchDomain, 
             <div style={secStyle}>
               <div style={insLabel}>OWNED BY AGENTS · WHOLE DOMAIN</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {DB.agents.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>Your app has not reported any agents yet.</div>}
                 {DB.agents.map(a => { const on = myAgents.includes(a.id); return (
                   <button key={a.id} onClick={() => toggleAgent(domKey, a.id)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: `1px solid ${on ? HB.accent : HB.line}`, background: on ? HB.accentSoft : HB.paper2 }}>
                     <span style={{ position: 'relative', flexShrink: 0, display: 'grid', placeItems: 'center' }}><HAvatar name={a.name} size={26}/>{on && <span style={{ position: 'absolute', inset: -2, borderRadius: '50%', border: `2px solid ${HB.accent}` }}/>}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{(DB.models.find(m => m.id === a.model) || {}).name}</span></span>
+                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: 9.5, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span></span>
                     {on ? <span style={{ color: HB.accent }}><CKIcon name="check" size={15}/></span> : <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, letterSpacing: '0.1em' }}>ASSIGN</span>}
                   </button>
                 ); })}
@@ -339,12 +340,14 @@ function BulkPanel({ sel, selNodes, M, DB, STATUS, bulkStatus, bulkDomain, bulkA
       </div>
 
       <div style={secStyle}>
-        <div style={insLabel}>ASSIGN AGENT · ALL · WIRED TO FOUNDER BRAIN</div>
+        <div style={insLabel}>ASSIGN AGENT · ALL · AGENTS YOUR APP REPORTED</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {DB.agents.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>Your app has not reported any agents yet.</div>}
           {DB.agents.map(a => (
             <button key={a.id} onClick={() => bulkAgent(a.id)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: `1px solid ${HB.line}`, background: HB.paper2, color: HB.ink }}>
               <span style={{ width: 22, height: 22, borderRadius: 6, display: 'grid', placeItems: 'center', background: HB.accentSoft, color: HB.accent, flexShrink: 0 }}><CKIcon name="agent" size={12}/></span>
-              <span style={{ fontSize: 12.5 }}>{a.name}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>{a.name}</span>
+              <span style={{ fontFamily: HB.mono, fontSize: 9.5, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span>
             </button>
           ))}
         </div>
@@ -519,12 +522,13 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
               </div>
             </div>
             <div>
-              <div style={insLabel}>OWNED BY AGENTS · WIRED TO FOUNDER BRAIN</div>
+              <div style={insLabel}>OWNED BY AGENTS · AGENTS YOUR APP REPORTED</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {DB.agents.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 13, color: HB.inkMute }}>Your app has not reported any agents yet.</div>}
                 {DB.agents.map(a => { const on = myAgents.includes(a.id); return (
                   <button key={a.id} onClick={() => toggleAgent(node.id, a.id)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', border: `1px solid ${on ? HB.accent : HB.line}`, background: on ? HB.accentSoft : HB.paper2 }}>
                     <span style={{ position: 'relative', flexShrink: 0, display: 'grid', placeItems: 'center' }}><HAvatar name={a.name} size={26}/>{on && <span style={{ position: 'absolute', inset: -2, borderRadius: '50%', border: `2px solid ${HB.accent}` }}/>}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: 9.5, color: HB.inkMute }}>{(DB.models.find(m => m.id === a.model) || {}).name}</span></span>
+                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontSize: 12.5, fontWeight: 500, display: 'block' }}>{a.name}</span><span style={{ fontFamily: HB.mono, fontSize: 9.5, color: a.status === 'online' ? HB.green : HB.inkMute }}>{[a.runtime, a.status].filter(Boolean).join(' · ') || 'reported by your app'}</span></span>
                     {on ? <span style={{ color: HB.accent }}><CKIcon name="check" size={15}/></span> : <span style={{ fontFamily: HB.mono, fontSize: 9, color: HB.inkMute, letterSpacing: '0.1em' }}>ASSIGN</span>}
                   </button>
                 ); })}
@@ -752,7 +756,8 @@ function MultiFieldPanel({ M, ids, onGroup, clearSel }) {
 // definition the app's inspector uses, so a connection means one thing in both graphs.
 const WIRE_PARAM_DEFS = () => (window.WIRE_PARAMS || []).map(p => ({
   k: p.k, v: p.def, t: p.type === 'toggle' ? 'boolean' : p.type === 'number' ? 'number' : 'string',
-  opts: p.opts, help: p.help, label: p.label,
+  socket: p.type, opts: p.opts, help: p.help, label: p.label,
+  unit: p.unit, min: p.min, max: p.max, step: p.step,
 }));
 
 function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
@@ -799,7 +804,7 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
               <div key={p.k} title={p.k + (p.help ? ' — ' + p.help : '')}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 34, paddingLeft: 8,
                   borderLeft: `2px solid ${changed ? HB.accent : 'transparent'}`, borderBottom: `1px solid ${HB.lineSoft}` }}>
-                {ptypeSocket(p.t, false)}
+                {ptypeSocket(p.socket || p.t, false)}
                 <span style={{ flex: 1, minWidth: 0, fontFamily: HB.sans, fontSize: 12.5, color: HB.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {p.label || p.k}
                 </span>
@@ -819,8 +824,11 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
                 ) : (
                   <input value={val} onChange={e => setWP(p.k, p.t === 'number' ? (+e.target.value || 0) : e.target.value)}
                     type={p.t === 'number' ? 'number' : 'text'} placeholder={p.k === 'condition' ? 'always' : 'value…'}
-                    style={{ width: 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${HB.line}`, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
+                    min={p.min} max={p.max} step={p.step}
+                    title={p.unit && p.max != null ? (p.min || 0) + '–' + p.max + ' ' + p.unit : undefined}
+                    style={{ width: p.unit ? 80 : 104, boxSizing: 'border-box', padding: '4px 7px', borderRadius: 4, border: `1px solid ${HB.line}`, background: HB.paper, color: HB.ink, fontFamily: HB.mono, fontSize: 11, outline: 'none' }}/>
                 )}
+                {p.unit && <span style={{ fontFamily: HB.mono, fontSize: 10, color: HB.inkMute, width: 18 }}>{p.unit}</span>}
               </div>
             );
           })}

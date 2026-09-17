@@ -1117,6 +1117,23 @@ def _cockpit_offer():
     return published_offer(server.universal_store.snapshot())
 
 
+def _cockpit_offer_command(utterance, execute):
+    # The cockpit's offer control changes the one offer record, as the founder
+    # the cloud session on this machine was issued to. Any other words return
+    # None and go to BABOOM exactly as before.
+    from nodelang.cell_accounts import apply_offer_command, parse_offer_command
+    from nodelang.cloud_session import signed_in_cloud_account
+    if parse_offer_command(utterance) is None:
+        return None
+    if _baboom_stop.is_set():
+        raise RuntimeError("ArchHub is closing; the request was not performed")
+    with server.mutation_lock:
+        return apply_offer_command(
+            server.universal_store, utterance,
+            founder_account=signed_in_cloud_account(), execute=execute,
+        )
+
+
 cloud_relay = None
 try:
     from nodelang.cloud_relay import start_cloud_relay as _start_relay
@@ -1127,6 +1144,7 @@ try:
         map_script=lambda: _atlas(server.universal_store, server.universal_registry),
         hosts=lambda: server._host_rows(),
         offer=_cockpit_offer,
+        offer_command=_cockpit_offer_command,
     )
     print("  cockpit    :", "relay on (actions wait for signed BABOOM attachment)"
           if cloud_relay else "relay off (no cloud session or consent)", flush=True)

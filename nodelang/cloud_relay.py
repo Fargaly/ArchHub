@@ -140,6 +140,7 @@ class CloudRelay:
         map_script: Optional[Callable[[], str]] = None,
         hosts: Optional[Callable[[], object]] = None,
         offer: Optional[Callable[[], object]] = None,
+        offer_command: Optional[Callable[[str, bool], object]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.token = str(token)
@@ -151,6 +152,7 @@ class CloudRelay:
         self.map_script = map_script
         self.hosts = hosts
         self.offer = offer
+        self.offer_command = offer_command
         self.last_error: str = ""
         self.answered = 0
         self._map_digest = ""
@@ -212,8 +214,16 @@ class CloudRelay:
         if not isinstance(task, Mapping) or not task.get("id"):
             return None
         utterance = str(task.get("directive") or "").strip()
+        execute = task.get("kind") == "app-execute"
+        handled = None
         try:
-            if task.get("kind") == "app-execute":
+            # The offer is one record in this application, so its command is
+            # answered from that record here and never handed to BABOOM.
+            if callable(self.offer_command):
+                handled = self.offer_command(utterance, execute)
+            if handled is not None:
+                result = handled
+            elif execute:
                 result = self.execute(utterance)
             else:
                 result = self.respond(utterance)
@@ -222,6 +232,12 @@ class CloudRelay:
             ok, text = False, "%s: %s" % (type(exc).__name__, exc)
         self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
         self.answered += 1
+        if ok and isinstance(handled, Mapping) and handled.get("kind") == "offer-updated":
+            # Republish at once, so the cockpit states the changed offer.
+            try:
+                self.push_map(force=True)
+            except Exception as exc:
+                self.last_error = "%s: %s" % (type(exc).__name__, exc)
         return {"task": str(task["id"]), "ok": ok, "result": text}
 
     def push_map(self, *, force: bool = False, min_interval: float = 60.0) -> Optional[dict]:
@@ -336,6 +352,7 @@ def start_cloud_relay(
     map_script: Optional[Callable[[], str]] = None,
     hosts: Optional[Callable[[], object]] = None,
     offer: Optional[Callable[[], object]] = None,
+    offer_command: Optional[Callable[[str, bool], object]] = None,
 ) -> Optional[CloudRelay]:
     """Start the relay thread when the founder's session and consent exist."""
     from .cloud_publish_consent import cloud_publish_allowed
@@ -349,6 +366,7 @@ def start_cloud_relay(
         base_url=session["base_url"], token=session["token"],
         respond=respond, execute=execute, map_script=map_script, hosts=hosts,
         offer=offer,
+        offer_command=offer_command,
     )
     return relay.start()
 

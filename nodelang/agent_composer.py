@@ -504,6 +504,17 @@ def _apply_draft_actions(
                     store, registry, authentication_context=authentication_context,
                 )
                 visible = {str(node["id"]): node for node in fresh.get("nodes", ())}
+                from .universal_application import _governed_work_owned_root  # noqa: PLC0415
+                snapshot = store.snapshot()
+                if any(
+                    root not in visible
+                    and _governed_work_owned_root(snapshot, registry, root)
+                    for root in (source, target)
+                ):
+                    # Work lives in the Workshop; this canvas does not draw it.
+                    raise InvalidCell(
+                        "Work is not on this canvas: open the Workshop to connect it"
+                    )
                 if source not in visible or target not in visible:
                     raise InvalidCell("draft wire endpoint is outside the active canvas")
                 source_interface = _draft_port(visible[source], "source", action.get("source_port"))

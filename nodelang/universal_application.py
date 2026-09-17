@@ -19082,6 +19082,86 @@ def _canvas_roots(
     )
 
 
+def _registered_governed_work_root(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root_id: str,
+) -> bool:
+    """Whether one root is Work held by the Governed Work registry.
+
+    Registration mints exactly one membership wire per Work, so this is one
+    keyed read of that wire, never a scan of the registry.
+    """
+    wire_root = "app:relation:governed-work:%s" % _part(root_id)
+    if wire_root not in snapshot.cells:
+        return False
+    members = _relation_members_or_none(snapshot, wire_root)
+    return bool(members) and (
+        _one_for_role(members, registry.roles["source"])
+        == registry.governed_work_registry_root
+        and _one_for_role(members, registry.roles["target"]) == root_id
+    )
+
+
+def _governed_work_owned_root(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root_id: str,
+) -> bool:
+    """Registered Work, or a <work>:data:<name> value node that Work owns."""
+    if _registered_governed_work_root(snapshot, registry, root_id):
+        return True
+    owner_root, separator, name = root_id.partition(":data:")
+    return bool(separator and owner_root and name) and (
+        _registered_governed_work_root(snapshot, registry, owner_root)
+    )
+
+
+def _governed_work_home_trail(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    scope_trail: tuple[str, ...],
+) -> bool:
+    """Whether a scope trail passes through a home of Work.
+
+    Work lives in the Workshop. Its homes are the Governed Work registry, the
+    Workshop, its Workbench, or a Work itself. The Brain domain and every
+    product scope are not Work homes.
+    """
+    homes = {
+        registry.governed_work_registry_root,
+        registry.workshop_root,
+        registry.workshop_workbench_root,
+    }
+    return any(
+        scope_root in homes
+        or _registered_governed_work_root(snapshot, registry, scope_root)
+        for scope_root in scope_trail
+    )
+
+
+def _product_canvas_roots(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    scope_trail: tuple[str, ...],
+    roots: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Draw Work and its value nodes only in a Work home.
+
+    Creating Work places it on the application canvas, and that placement is
+    also its Workshop access boundary, so the graph keeps it. The canvas lens
+    draws registered Work and its <work>:data:<name> value nodes only when
+    the scope trail passes through a Work home. Everything else draws
+    unchanged. The lens writes nothing.
+    """
+    if _governed_work_home_trail(snapshot, registry, tuple(scope_trail)):
+        return tuple(roots)
+    return tuple(
+        root_id for root_id in roots
+        if not _governed_work_owned_root(snapshot, registry, root_id)
+    )
+
+
 def _require_resource_audience_authority(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -20335,7 +20415,23 @@ def _apply_view_scope_exposure(
             raise InvalidCell("scope exposure overlaps composition members")
         covered.update(leaves)
     if covered != direct:
-        raise InvalidCell("scope exposure is not a lossless parent partition")
+        # Work and its value nodes are placed directly on this scope, and
+        # the canvas lens does not draw them outside a Work home. An exposure
+        # written before they arrived is still a lossless partition of
+        # everything else; they stay in scope after it, uncovered.
+        uncovered_work = frozenset(
+            root_id for root_id in direct - covered
+            if _governed_work_owned_root(snapshot, registry, root_id)
+        )
+        if covered != direct - uncovered_work:
+            raise InvalidCell(
+                "scope exposure is not a lossless parent partition"
+            )
+        visible_roots = (
+            *visible_roots,
+            *(root_id for root_id in direct_roots
+              if root_id in uncovered_work),
+        )
 
     visible_set = set(visible_roots)
     projected_relations = []
@@ -22412,6 +22508,17 @@ def _project_universal_canvas_interpreter(
     ):
         raise InvalidCell("Properties lens does not point to the active view focus")
     selected_root = focus_projection.primary_root
+    # Authority and focus above were checked over every assigned root; the
+    # nodes, wires, selection and counts below are the product canvas lens.
+    # A root that the lens hides is Work, and Work lives in the Workshop.
+    assigned_visible_roots = visible_roots
+    visible_roots = _product_canvas_roots(
+        snapshot, registry, tuple(scope_trail), assigned_visible_roots
+    )
+    lens_hidden_roots = frozenset(assigned_visible_roots).difference(
+        visible_roots
+    )
+    selection_hidden = selected_root in lens_hidden_roots
     selection_members = read_relation(
         snapshot, view_session.selection_state_root, budget=100_000
     )
@@ -22419,6 +22526,7 @@ def _project_universal_canvas_interpreter(
         member.participant_id
         for member in selection_members
         if member.role_id == registry.roles["selected"]
+        and member.participant_id not in lens_hidden_roots
     )
     reusable_nodes = None
     reusable_wires = None
@@ -23827,6 +23935,31 @@ def _project_universal_canvas_interpreter(
                 "observed_revision": snapshot.revision,
             }
 
+    retained_hidden_titles = {
+        row.get("id"): row.get("title")
+        for row in (
+            reusable_scope_projection.get("hidden_work", ())
+            if reusable_scope_projection is not None else ()
+        )
+        if isinstance(row, Mapping)
+    }
+    hidden_work = []
+    for root_id in assigned_visible_roots:
+        if root_id not in lens_hidden_roots or not (
+            _registered_governed_work_root(snapshot, registry, root_id)
+        ):
+            continue
+        hidden_title_row = _rows_by_label(
+            snapshot, property_index.get(root_id, ())
+        ).get("title")
+        hidden_title = (
+            _text(snapshot, hidden_title_row.value_root)
+            if hidden_title_row
+            else retained_hidden_titles.get(root_id)
+        )
+        if type(hidden_title) is not str:
+            hidden_title = _scope_label(snapshot, registry, root_id)
+        hidden_work.append({"id": root_id, "title": hidden_title})
     title = next(
         (node["label"] for node in nodes if node["id"] == selected_root),
         None,
@@ -24785,6 +24918,13 @@ def _project_universal_canvas_interpreter(
         "selected": selected_root,
         "selection": sorted(selected_roots),
         "selected_title": title or selected_root,
+        # A delta carries only the boolean and the count, when they change;
+        # the Workshop reads the hidden Work list from the full projection.
+        **({"selection_hidden": True} if selection_hidden else {}),
+        **({
+            "hidden_work": hidden_work,
+            "hidden_work_count": len(hidden_work),
+        } if hidden_work else {}),
         "focus": {
             "root": focus_projection.root_id,
             "actor": focus_projection.actor_root,
@@ -24871,7 +25011,7 @@ def _project_universal_canvas_interpreter(
             "session": view_session.root_id,
             "browser_sessions": browser_sessions,
             "visibility": view_session.visibility_root,
-            "assigned_canvas_roots": len(visible_roots),
+            "assigned_canvas_roots": len(assigned_visible_roots),
             "tenant_membership": view_session.tenant_membership_root,
             "tenant_role_membership": (
                 view_session.tenant_role_membership_root
@@ -43026,12 +43166,18 @@ def _set_universal_scope_execution(
             )
             and all(root_id in candidate.cells for root_id in identity_roots)
             and isinstance(candidate_nodes, list)
+            and all(isinstance(node, Mapping) for node in candidate_nodes)
+            # The retained nodes are the product canvas lens of the identity.
             and tuple(
                 node.get("id")
                 for node in candidate_nodes
                 if isinstance(node, Mapping)
-            ) == candidate_visible
-            and len(candidate_nodes) == len(candidate_visible)
+            ) == _product_canvas_roots(
+                candidate,
+                registry,
+                tuple(trail[:target_index + 1]),
+                candidate_visible,
+            )
             and isinstance(candidate_wires, list)
             and all(
                 isinstance(wire, Mapping)

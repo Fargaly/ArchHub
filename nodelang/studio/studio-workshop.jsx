@@ -29,7 +29,12 @@ const workshopWorkSelectionIdentity = (state, root) => {
 };
 const workshopProjectedNodes = state => {
   const nodes = state?.topology?.graph?.nodes ?? state?.topology?.canvas?.nodes ?? state?.graph?.nodes ?? state?.canvas?.nodes;
-  return Array.isArray(nodes) ? nodes : [];
+  const drawn = Array.isArray(nodes) ? nodes : [];
+  // Work lives in the Workshop: the product canvas does not draw it, and its full projection still names it here.
+  const hidden = state?.topology?.canvas?.hidden_work;
+  if (!Array.isArray(hidden) || !hidden.length) return drawn;
+  const ids = new Set(drawn.map(node => node?.id));
+  return [...drawn, ...hidden.filter(row => typeof row?.id === 'string' && !ids.has(row.id))];
 };
 const workshopProjectedWires = state => {
   const wires = state?.topology?.graph?.wires ?? state?.graph?.wires;

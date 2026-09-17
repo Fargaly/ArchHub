@@ -1468,6 +1468,11 @@ UNIVERSAL_CANVAS_SCRIPT = r"""
       if (heldWhenAbsent.has(field) && !(field in result)) return;
       merged[field]=result[field];
     });
+    // The product canvas lens: a boolean and a count, sent only when they
+    // change, so an absent field keeps the held value.
+    ['selection_hidden','hidden_work_count'].forEach(field => {
+      if (field in result) merged[field]=result[field];
+    });
     merged.configuration={
       ...baseProjection.configuration,
       ...result.configuration_state,

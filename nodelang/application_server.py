@@ -402,6 +402,13 @@ _INTERACTION_DELTA_FIELDS = (
     "canvas_heading_descriptor",
     "canvas_signature",
 )
+# The product canvas lens sends a boolean and a count, never the hidden Work
+# list, and only when they differ from what the client holds. The client
+# keeps its held value when a field is absent.
+_LENS_DELTA_DEFAULTS = (
+    ("selection_hidden", False),
+    ("hidden_work_count", 0),
+)
 
 
 def _native_hook_receipt_idempotency_key(actor_root, caller_key):
@@ -666,6 +673,14 @@ def _interaction_canvas_delta(
         for field in _INTERACTION_DELTA_FIELDS
         if field in projection and projection[field] is not None
     })
+    held_lens = (
+        previous_projection is not None
+        and previous_projection.get("revision") == base_revision
+    )
+    for field, default in _LENS_DELTA_DEFAULTS:
+        current = projection.get(field, default)
+        if not held_lens or previous_projection.get(field, default) != current:
+            delta[field] = current
     return delta
 
 
@@ -15054,10 +15069,19 @@ class ApplicationServer:
                         "interface"
                     )
                 )
-                visible_roots = tuple(
+                assigned_visible_roots = tuple(
                     member.participant_id
                     for member in visibility_members
                     if member.role_id == self.universal_registry.roles["visible"]
+                )
+                from .universal_application import _product_canvas_roots
+                # The projection draws the product canvas lens, so the
+                # projected nodes are compared with that same lens.
+                visible_roots = _product_canvas_roots(
+                    self.universal_store.snapshot(),
+                    self.universal_registry,
+                    (self.universal_registry.canvas_root,),
+                    assigned_visible_roots,
                 )
                 relation_roots = tuple(
                     member.participant_id
@@ -15108,6 +15132,14 @@ class ApplicationServer:
                                 [root[:12] for root in extra[:4]],
                             )
                         )
+                # The retained identity keeps every assigned root: Work the
+                # lens does not draw follows the drawn order.
+                drawn_roots = frozenset(visible_roots)
+                visible_roots = (
+                    *visible_roots,
+                    *(root for root in assigned_visible_roots
+                      if root not in drawn_roots),
+                )
                 scope_identity = (
                     visible_roots,
                     relation_roots,

@@ -1347,7 +1347,10 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
       ) : (
         <>
           <NodeCanvas key={JSON.stringify([session.id, studioCanvasScope(authorityState?.canvas)])} focusId={focusId} setFocusId={setFocusId} setLibraryOpen={setLibraryOpen} userNodes={userNodes} addNodeFromLibrary={addNodeFromLibrary} model={model}/>
-          <NodeRail node={focusNode}/>
+          <NodeRail node={focusNode} hiddenWork={!focusNode && authorityState?.canvas?.selection_hidden === true}
+            workshopRoom={workshopModeRoom(workshops, workshop?.root || '')}
+            onOpenWorkshop={() => chooseWorkshopMode('workshop', {mode, conversationRoot:workshop?.root || '', workshops, setMode,
+              setConversationRoot:root => updateView({conversationRoot:root, mode:'chat', target:''})})}/>
         </>
       )}
     </main>
@@ -3747,7 +3750,17 @@ const NodeModelConversation = ({node}) => {
   </section>;
 };
 
-const NodeRail = ({ node }) => {
+const NodeRail = ({ node, hiddenWork = false, workshopRoom = '', onOpenWorkshop }) => {
+  // Work lives in the Workshop. A selection the canvas does not draw points there instead of an empty panel.
+  if (!node && hiddenWork) return (
+    <aside role="status" style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`,
+      padding:'14px 16px 20px', display:'flex', flexDirection:'column', gap:LM.sp.md }}>
+      <div style={{ fontFamily:LM.serif, fontSize:19, lineHeight:1.1, color:LM.ink }}>Selected Work is in the Workshop</div>
+      <div style={{ fontSize:12, lineHeight:1.5, color:LM.inkSoft }}>
+        {workshopRoom ? 'Work is reviewed and edited in the Workshop, not on this canvas.' : 'No Workshop conversation is in this scope.'}</div>
+      <div><HoverBtn primary disabled={!workshopRoom} onClick={onOpenWorkshop}>Open the Workshop</HoverBtn></div>
+    </aside>
+  );
   if (!node) return <aside style={{ gridColumn:'2', gridRow:'2', background:LM.bgPanel, borderLeft:`1px solid ${LM.line}` }}/>;
   // AI node gets a dedicated conversation rail — full scrollback + composer
   if (node.cat === 'ai' && !node.live) return <ConversationRail node={node}/>;

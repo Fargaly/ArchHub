@@ -190,6 +190,10 @@ def test_workshop_has_one_root_in_application_brain_and_restart(tmp_path):
     ).allowed
     work_projection = project_universal_canvas(store, registry)
     assert work_projection["selected"] == work_root
+    # Work lives in the Workshop: the product canvas does not draw it, and
+    # the selection it holds points to the Workshop.
+    assert work_root not in {node["id"] for node in work_projection["nodes"]}
+    assert work_projection["selection_hidden"] is True
     interfaces = {
         item["name"]: item
         for item in work_projection["selected_assembly"]["interfaces"]
@@ -260,6 +264,12 @@ def test_workshop_has_one_root_in_application_brain_and_restart(tmp_path):
         restored.governed_work_claim_binding_registry_root,
     }.isdisjoint(restored_brain_members)
     set_universal_scope(reopened, restored, brain_root)
+    # Brain is not a Work home: after restart Work draws in the Workbench.
+    assert work_root not in {
+        item["id"]
+        for item in project_universal_canvas(reopened, restored)["nodes"]
+    }
+    set_universal_scope(reopened, restored, restored.workshop_workbench_root)
     restored_projection = project_universal_canvas(reopened, restored)
     restored_node = next(
         item for item in restored_projection["nodes"] if item["id"] == work_root

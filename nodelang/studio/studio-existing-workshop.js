@@ -941,7 +941,9 @@
       selectTopology(root) {
         return runTopology(JSON.stringify(['select', root]), async (identity, command) => {
           const value = await readTopology(identity);
-          if (!text(root) || ![...value.nodes, ...value.wires].some(row => row.id === root)) {
+          // Work the canvas does not draw is still selectable for its Workshop review.
+          const hiddenWork = Array.isArray(value.hidden_work) ? value.hidden_work : [];
+          if (!text(root) || ![...value.nodes, ...value.wires, ...hiddenWork].some(row => row?.id === root)) {
             fail('Choose a node in the current canvas scope.');
           }
           if (value.selected === root) return value;

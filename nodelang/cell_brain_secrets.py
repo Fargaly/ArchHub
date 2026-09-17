@@ -11,7 +11,9 @@ is refused, because a vault that quietly accepts one has already failed.
 """
 from __future__ import annotations
 
+import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Callable, Mapping
@@ -43,6 +45,87 @@ _LOOKS_LIKE_A_SECRET = re.compile(
 )
 _HIGH_ENTROPY = re.compile(r"^[A-Za-z0-9+/=_-]{40,}$")
 
+# A credential can sit inside a sentence. These are searched ANYWHERE in the
+# text, never anchored to its start or end.
+_CREDENTIAL_IN_TEXT = (
+    # personal-brain-mcp personal_cloud_sync.py _SECRET_TOKEN_RE (127-132).
+    re.compile(
+        r"(?<![A-Za-z0-9_\-])"
+        r"(?:(?:sk-|sk_live_|sk_test_|rk_live_|rk_test_|AKIA|AIza|gh[pousr]_|xox[bpars]-)"
+        r"[A-Za-z0-9_\-]{8,}"
+        r"|eyJ[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,})"
+    ),
+    # personal-brain-mcp redaction.py _PATTERNS, the secret rows (47-59).
+    re.compile(r"\b(?:sk|ghp|gho|ghu|ghs|ghr)[_\-][A-Za-z0-9_\-]{16,}"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}"),
+    re.compile(r"\bya29\.[A-Za-z0-9_-]+"),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"),
+    re.compile(r"\bxox[bpars]-[0-9A-Za-z\-]{10,}"),
+    re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{6,}"),
+    # A private key block, whatever the key type.
+    re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"),
+    # Authorization header values anywhere in the text.
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}"),
+    re.compile(r"(?i)\bbasic\s+[A-Za-z0-9+/]{12,}={0,2}"),
+    # A password in a URL: scheme://user:password@host
+    re.compile(r"(?i)\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:[^\s/@]+@"),
+    # "<name>=value" / "<name>: value", where the name may carry a prefix as in
+    # PGPASSWORD or DB_PASSWORD or OPENAI_API_KEY.
+    re.compile(
+        r"(?i)(?<![A-Za-z0-9])[A-Za-z0-9]*[_\-]?(?:api[_\- ]?key|access[_\- ]?token"
+        r"|refresh[_\- ]?token|password|passwd|pwd|passphrase|secret|token)"
+        r"\s*[:=]\s*\S{4,}"
+    ),
+    # "<name> is value": a value with a digit, or one long unbroken word, so
+    # "the wifi password is on the fridge" stays a memory.
+    re.compile(
+        r"(?i)(?<![A-Za-z0-9])[A-Za-z0-9]*[_\-]?(?:api[_\- ]?key|access[_\- ]?token"
+        r"|refresh[_\- ]?token|password|passwd|pwd|passphrase|secret|token)"
+        r"\s+is\s+(?:(?=\S*\d)\S{6,}|\S{12,})"
+    ),
+)
+# Candidate secret words: runs of the base64 alphabet. '-', '_' and '.' break a
+# run, so identifiers like claude-codex-link-20260914 never form one.
+_WORD = re.compile(r"[A-Za-z0-9+/=]{32,}")
+_URL_TOKEN = re.compile(r"(?i)\b[a-z][a-z0-9+.\-]*://\S+")
+_SRI = re.compile(r"(?i)\bsha(?:256|384|512)-[A-Za-z0-9+/=]+")
+# Format (zero-width) and non-spacing marks (a combining grapheme joiner) are
+# invisible; so are the Hangul and Braille fillers, which are letters.
+_INVISIBLE = {"Cf", "Mn"}
+_FILLERS = frozenset("\u115f\u1160\u2800\u3164\uffa0")
+_WORD_SEGMENT = re.compile(r"[A-Z]?[a-z]{3,}")
+
+
+def _normalised(value: str) -> str:
+    """Fold look-alikes and drop invisible format characters before matching."""
+    folded = unicodedata.normalize("NFKC", value)
+    return "".join(c for c in folded
+                   if unicodedata.category(c) not in _INVISIBLE and c not in _FILLERS)
+
+
+def _high_entropy_word(word: str) -> bool:
+    """A random-looking key half: mixed case and digits, near-random entropy, and
+    less than half of it made of word segments ([A-Z]?[a-z]{3,}).
+
+    Measured 2026-09-17 on 5000 seeded random keys each: a lower-case-run limit
+    of 4 admitted 1196 of 40-char base64 and 2337 of 32-char base62 keys; this
+    rule admits 37 and 139. camelCase identifiers are mostly word segments.
+    """
+    classes = sum((
+        any(c.islower() for c in word),
+        any(c.isupper() for c in word),
+        any(c.isdigit() for c in word),
+    ))
+    if classes < 3:
+        return False
+    counts = {}
+    for c in word:
+        counts[c] = counts.get(c, 0) + 1
+    entropy = -sum(n / len(word) * math.log2(n / len(word)) for n in counts.values())
+    words = sum(len(segment) for segment in _WORD_SEGMENT.findall(word))
+    return entropy >= min(4.5, math.log2(len(word)) - 1.0) and words * 2 < len(word)
+
 
 @dataclass(frozen=True, slots=True)
 class SecretEntry:
@@ -66,6 +149,25 @@ def assert_not_a_secret(value: str, label: str) -> None:
     """Refuse anything that reads like the secret itself."""
     if _LOOKS_LIKE_A_SECRET.search(value) or _HIGH_ENTROPY.match(value):
         raise InvalidCell("%s looks like a credential, not a reference" % label)
+
+
+def assert_no_credential_in_text(value: str, label: str) -> None:
+    """Refuse prose that carries a credential anywhere inside it.
+
+    ``assert_not_a_secret`` judges a value that should be a reference. Memory
+    text is a sentence, and a key pasted mid-sentence is still a key. A long
+    word mixing lower case, upper case and digits is refused too: that is how a
+    secret half of a key pair looks when no prefix names it.
+    """
+    if not isinstance(value, str):
+        raise InvalidCell("%s must be text" % label)
+    text = _normalised(value)
+    for pattern in _CREDENTIAL_IN_TEXT:
+        if pattern.search(text):
+            raise InvalidCell("%s carries a credential" % label)
+    words = _SRI.sub(" ", _URL_TOKEN.sub(" ", text))
+    if any(_high_entropy_word(word) for word in _WORD.findall(words)):
+        raise InvalidCell("%s carries a credential-shaped word" % label)
 
 
 def _entry_root(name: str) -> str:

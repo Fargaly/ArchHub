@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .cell_protocols import prepare_append_relation_members, read_relation
+from .cell_protocols import (
+    compose_relation_cells,
+    prepare_append_relation_members,
+    read_relation,
+)
 from .universal_cell import NULL_CELL_ID, Cell, InvalidCell
 
 REGISTRY_ROOT = "app:brain:ownership"
@@ -27,6 +31,13 @@ class Ownership:
     subject_root: str
     owner_root: str
     consent_roots: tuple
+
+
+@dataclass(frozen=True, slots=True)
+class BindingPatch:
+    binding_root: str
+    create: tuple
+    replace: tuple
 
 
 def _terminal(root_id, value):
@@ -70,6 +81,34 @@ def _read(snapshot, binding_root):
     )
 
 
+def prepare_bind_owner(snapshot, *, subject_root, owner_root):
+    """The Cells that give a root its one owner, for the caller's own commit.
+
+    The subject may be created in that same commit, so only the owner, the
+    registry and the absence of a binding are checked here. Committing the
+    patch against ``snapshot.revision`` makes the binding and the registry
+    entry land together or not at all.
+    """
+    if owner_root not in snapshot.cells:
+        raise InvalidCell("ownership owner is not a root the graph holds")
+    if REGISTRY_ROOT not in snapshot.cells:
+        raise InvalidCell("the ownership registry does not exist yet")
+    binding = _binding_root(subject_root)
+    if binding in snapshot.cells:
+        raise InvalidCell("root already has an owner: %s" % subject_root)
+    relation = compose_relation_cells(
+        ((SUBJECT_ROLE, subject_root), (OWNER_ROLE, owner_root)),
+        relation_id=binding,
+    )
+    registry = prepare_append_relation_members(
+        snapshot, REGISTRY_ROOT, ((BINDING_ROLE, binding),), budget=100_000)
+    return BindingPatch(
+        binding,
+        tuple(relation.cells) + tuple(registry.create),
+        tuple(registry.replace),
+    )
+
+
 def bind_owner(store, *, subject_root, owner_root):
     """Give a root exactly one owner. A second one is refused."""
     snapshot = store.snapshot()
@@ -78,23 +117,10 @@ def bind_owner(store, *, subject_root, owner_root):
             raise InvalidCell("ownership %s is not a root the graph holds" % label)
     ensure_registry(store)
     snapshot = store.snapshot()
-    binding = _binding_root(subject_root)
-    if binding in snapshot.cells:
-        raise InvalidCell("root already has an owner: %s" % subject_root)
-    store.commit(snapshot.revision, create=(
-        Cell(binding, NULL_CELL_ID, NULL_CELL_ID, b"relation"),
-    ))
-    snapshot = store.snapshot()
-    patch = prepare_append_relation_members(snapshot, binding, (
-        (SUBJECT_ROLE, subject_root),
-        (OWNER_ROLE, owner_root),
-    ), budget=10_000)
+    patch = prepare_bind_owner(
+        snapshot, subject_root=subject_root, owner_root=owner_root)
     store.commit(snapshot.revision, create=patch.create, replace=patch.replace)
-    snapshot = store.snapshot()
-    registry = prepare_append_relation_members(
-        snapshot, REGISTRY_ROOT, ((BINDING_ROLE, binding),), budget=100_000)
-    store.commit(snapshot.revision, create=registry.create, replace=registry.replace)
-    return binding
+    return patch.binding_root
 
 
 def read_owner(snapshot, subject_root):

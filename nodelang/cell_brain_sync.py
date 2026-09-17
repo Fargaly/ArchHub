@@ -70,6 +70,25 @@ def held(snapshot, root_id):
     )
 
 
+def fragment_cells(fragment):
+    """The value, clock and origin Cells that hold one fragment.
+
+    Public so an owner that must create a new root in ONE commit together with
+    other Cells can carry the fragment under sync authority without a second
+    commit. Only a root this replica does not hold yet may be created this way.
+    """
+    if not isinstance(fragment, Fragment):
+        raise InvalidCell("only a fragment has sync cells")
+    return (
+        Cell(fragment.root_id, NULL_CELL_ID, NULL_CELL_ID,
+             fragment.value.encode("utf-8")),
+        Cell(_clock_root(fragment.root_id), NULL_CELL_ID, NULL_CELL_ID,
+             str(fragment.clock).encode("ascii")),
+        Cell(_origin_root(fragment.root_id), NULL_CELL_ID, NULL_CELL_ID,
+             fragment.origin.encode("utf-8")),
+    )
+
+
 def apply_fragments(store, fragments):
     """Merge a batch. Order-independent, and applying it twice changes nothing."""
     accepted = 0
@@ -80,24 +99,11 @@ def apply_fragments(store, fragments):
         current = held(snapshot, fragment.root_id)
         if current is not None and not fragment.wins_over(current):
             continue
-        value_cell = Cell(
-            fragment.root_id, NULL_CELL_ID, NULL_CELL_ID,
-            fragment.value.encode("utf-8"),
-        )
-        clock_cell = Cell(
-            _clock_root(fragment.root_id), NULL_CELL_ID, NULL_CELL_ID,
-            str(fragment.clock).encode("ascii"),
-        )
-        origin_cell = Cell(
-            _origin_root(fragment.root_id), NULL_CELL_ID, NULL_CELL_ID,
-            fragment.origin.encode("utf-8"),
-        )
+        cells = fragment_cells(fragment)
         if current is None:
-            store.commit(snapshot.revision, create=(
-                value_cell, clock_cell, origin_cell))
+            store.commit(snapshot.revision, create=cells)
         else:
-            store.commit(snapshot.revision, replace=(
-                value_cell, clock_cell, origin_cell))
+            store.commit(snapshot.revision, replace=cells)
         accepted += 1
     return accepted
 

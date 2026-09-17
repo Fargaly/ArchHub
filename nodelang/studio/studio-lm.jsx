@@ -75,6 +75,35 @@ const selectedWorkshopWork = (state, root, nodes = workshopProjectedNodes(state)
     (state?.topology?.selected ?? state?.canvas?.selected);
   return admittedWorkshopWork(state, key, candidate, nodes) ? candidate : '';
 };
+// Workshop task cards read from the transcript only: a message that names a Work id is an event of that
+// Work, and every event of one Work folds into one card at the place its first event appeared. The card's
+// state is the verb of its latest event. No progress, tool count or task id is authored.
+const WORKSHOP_WORK_REF = /\b((?:assembly-instance|work):[A-Za-z0-9_-]{6,})/;
+const WORKSHOP_TASK_STATES = [
+  [/\b(fail(?:ed|s)?|refused|rejected|blocked|error|needs? (?:you|review|input|approval))\b/i, 'block'],
+  [/^\s*(delivered|accepted|completed|merged)\b/i, 'done'],
+  [/^\s*(submitted)\b/i, 'review'],
+  [/^\s*(claimed|started|running|working on|assigned)\b/i, 'run'],
+];
+const workshopTaskItems = (messages, nodes) => {
+  const byId = new Map((Array.isArray(nodes) ? nodes : []).map(node => [node.id, node]));
+  const cards = new Map(), items = [];
+  (Array.isArray(messages) ? messages : []).forEach(message => {
+    const match = WORKSHOP_WORK_REF.exec(String(message?.body || ''));
+    if (!match) { items.push({kind:'message', message}); return; }
+    let card = cards.get(match[1]);
+    if (!card) { card = {kind:'task', work:match[1], node:byId.get(match[1]) || null, events:[]}; cards.set(match[1], card); items.push(card); }
+    card.events.push(message);
+  });
+  cards.forEach(card => {
+    const latest = String(card.events[card.events.length - 1].body || '');
+    card.state = (WORKSHOP_TASK_STATES.find(([pattern]) => pattern.test(latest)) || [null, 'open'])[1];
+    const [kind, id] = card.work.split(':');
+    card.title = card.node?.title || `${kind} · ${id.slice(0, 8)}`;
+    card.owner = card.events[card.events.length - 1].sender_root;
+  });
+  return items;
+};
 const LM_SESSIONS = (window.ARCHHUB_LIVE?.sessions) || [];
 const _SEED_SESSIONS = [
   { id:'walls',   title:'Schedule wall types',   state:'running',  host:'revit',
@@ -1635,18 +1664,7 @@ const workshopAgentTone = (root, self) => {
 };
 const WorkshopLayoutPane = ({layout, native, nodes, target, setMode}) => {
   const paneLabel = {fontFamily:LM.mono, fontSize:9, letterSpacing:'0.18em', color:LM.inkMuted, fontWeight:400, margin:0};
-  if (layout === 'board') return <section aria-label="Workshop task board" style={{marginBottom:24, display:'flex', flexDirection:'column', gap:10}}>
-    <div style={{display:'flex', alignItems:'center', gap:7, paddingBottom:8, borderBottom:`1px solid ${LM.lineSoft}`}}>
-      <span style={{width:6, height:6, borderRadius:'50%', background:LM.inkMuted, flex:'none'}}/>
-      <h3 style={paneLabel}>TASK BOARD</h3>
-    </div>
-    <div style={{background:LM.bgPanel, borderRadius:9, border:`1px dashed ${LM.line}`, opacity:.75, padding:'11px 13px'}}>
-      <p role="status" style={{fontSize:12.5, color:LM.inkSoft, lineHeight:1.55, margin:0}}>
-        Not available in this connection. This Workshop projects one native Work at a time{native?.state ? ` (state: ${native.state})` : ''};
-        no task-list projection exists, so nothing is grouped or counted here.
-      </p>
-    </div>
-  </section>;
+  // The task board draws in the stream column (design studio-workshop.jsx:554-569), from WorkshopTaskBoard.
   if (layout !== 'graph') return null;
   const all = Array.isArray(nodes) ? nodes : [], shown = all.slice(0, 64);
   // Design GraphPane (studio-workshop.jsx:279-330): gridded canvas, node cards, live chip, open-as-nodes.
@@ -1673,6 +1691,94 @@ const WorkshopLayoutPane = ({layout, native, nodes, target, setMode}) => {
         </div>}
     </div>
     {all.length > shown.length && <p style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>{all.length - shown.length} more on the Canvas.</p>}
+  </section>;
+};
+
+// ── Task cards (design studio-workshop.jsx:161-237, "task card is the container for its own thread") ──
+// The cards come from workshopTaskItems (beside the other Workshop helpers above).
+const workshopTaskChip = state => ({
+  block:{c:LM.err, l:'NEEDS YOU'}, run:{c:LM.warn, l:'RUNNING'}, review:{c:LM.cyan, l:'SUBMITTED'},
+  done:{c:LM.ok, l:'DELIVERED'}, open:{c:LM.inkMuted, l:'OPEN'},
+}[state] || {c:LM.inkMuted, l:'OPEN'});
+const WorkshopTaskCard = ({card, names, self, selected, onSelect, compact}) => {
+  const [all, setAll] = React.useState(false);
+  const chip = workshopTaskChip(card.state);
+  const latest = card.events[card.events.length - 1];
+  const thread = all ? card.events : card.events.slice(-2);
+  const avatar = (root, size) => {
+    const tone = workshopAgentTone(root, root === self), name = names.get(root) || root || '?';
+    return <span aria-hidden="true" title={name} style={{width:size, height:size, borderRadius:root === self ? '50%' : Math.round(size / 4), background:tone.bg, color:tone.fg,
+      display:'grid', placeItems:'center', fontSize:Math.round(size * .45), fontWeight:600, flex:'none', fontFamily:LM.sans}}>{String(name).trim().charAt(0).toUpperCase()}</span>;
+  };
+  return <article data-workshop-task={card.work} data-workshop-message={latest.root} aria-current={selected ? 'true' : undefined}
+    onClick={() => onSelect && onSelect(card.work)}
+    style={{background:LM.bgPanel, borderRadius:9, cursor:onSelect ? 'pointer' : 'default', overflow:'hidden', fontSize:12.5,
+      border:`1px solid ${card.state === 'block' ? LM.err + '66' : LM.line}`, boxShadow:selected ? `0 0 0 3px ${LM.accent}1a` : 'none'}}>
+    <div style={{display:'flex', alignItems:'center', gap:9, padding:'10px 13px', borderBottom:`1px solid ${LM.lineSoft}`, flexWrap:'wrap'}}>
+      <span style={{width:6, height:6, borderRadius:'50%', background:chip.c, flex:'none', animation:card.state === 'run' ? 'lmPulse 1.3s infinite' : 'none'}}/>
+      <span title={card.work} style={{fontSize:13, fontWeight:500, letterSpacing:'-0.005em', color:LM.ink, overflowWrap:'anywhere'}}>{card.title}</span>
+      {avatar(card.owner, 18)}
+      <div style={{flex:1}}/>
+      <span style={{fontFamily:LM.mono, fontSize:9, letterSpacing:'0.1em', padding:'2px 6px', borderRadius:3, background:chip.c + '1f', color:chip.c}}>{chip.l}</span>
+    </div>
+    <div style={{padding:'11px 13px', display:'flex', flexDirection:'column', gap:11}}>
+      {thread.map(message => <div key={message.root} style={{display:'flex', gap:9, lineHeight:1.55, color:LM.inkSoft, overflowWrap:'anywhere'}}>
+        {avatar(message.sender_root, 18)}
+        <div><b style={{color:LM.ink, fontWeight:500}}>{names.get(message.sender_root) || message.sender_root}</b>{' · '}{message.body}</div>
+      </div>)}
+      {card.events.length > 2 && <button type="button" onClick={event => { event.stopPropagation(); setAll(!all); }}
+        style={{alignSelf:'flex-start', padding:0, margin:0, border:0, background:'transparent', fontFamily:LM.mono, fontSize:10, color:LM.accent, cursor:'pointer'}}>
+        {all ? '▴ collapse thread' : `▾ ${card.events.length - 2} more in this thread`}</button>}
+    </div>
+    <div style={{display:'flex', alignItems:'center', gap:9, padding:'8px 13px', borderTop:`1px solid ${LM.lineSoft}`, background:LM.bgSoft, flexWrap:'wrap',
+      fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em', color:LM.inkMuted}}>
+      <span>{card.events.length} {card.events.length === 1 ? 'event' : 'events'}</span>
+      <div style={{flex:1}}/><span>{latest.state}{latest.category ? ` · ${latest.category}` : ''}</span>
+    </div>
+  </article>;
+};
+const WorkshopTaskContext = ({card, names, self}) => {
+  const latest = card.events[card.events.length - 1], chip = workshopTaskChip(card.state);
+  const owner = names.get(card.owner) || card.owner, tone = workshopAgentTone(card.owner, card.owner === self);
+  const label = {fontFamily:LM.mono, fontSize:9, letterSpacing:'0.18em', color:LM.inkMuted};
+  const row = (key, value, color, last) => <div key={key} style={{display:'flex', justifyContent:'space-between', gap:10, padding:'5px 0',
+    borderBottom:last ? 0 : `1px solid ${LM.lineSoft}`, fontSize:11.5}}>
+    <span style={{fontFamily:LM.mono, fontSize:10, letterSpacing:'0.04em', color:LM.inkMuted}}>{key}</span>
+    <span style={{color:color || LM.ink, textAlign:'right', overflowWrap:'anywhere'}}>{value}</span></div>;
+  return <section aria-label="Selected task" style={{margin:'0 -16px 16px', borderBottom:`1px solid ${LM.lineSoft}`}}>
+    <div style={{padding:'0 16px 12px', display:'flex', gap:10, alignItems:'flex-start'}}>
+      <span aria-hidden="true" style={{width:28, height:28, borderRadius:card.owner === self ? '50%' : 7, background:tone.bg, color:tone.fg,
+        display:'grid', placeItems:'center', fontSize:13, fontWeight:600, flex:'none'}}>{String(owner || '?').trim().charAt(0).toUpperCase()}</span>
+      <div style={{minWidth:0}}><div style={{fontSize:14, fontWeight:500, color:LM.ink, overflowWrap:'anywhere'}}>{card.title}</div>
+        <div style={{fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, marginTop:2}}>latest: {owner}</div></div>
+    </div>
+    <div style={{padding:'12px 16px', borderTop:`1px solid ${LM.lineSoft}`, fontSize:12, lineHeight:1.55, color:LM.inkSoft, overflowWrap:'anywhere'}}>{latest.body}</div>
+    <div style={{padding:'12px 16px', borderTop:`1px solid ${LM.lineSoft}`}}>
+      <span style={label}>TASK</span>
+      <div style={{marginTop:8}}>
+        {row('work', card.work)}
+        {row('events', String(card.events.length))}
+        {row('node', card.node ? (card.node.status || 'on the canvas') : 'not in this projection')}
+        {row('state', chip.l, chip.c, true)}
+      </div>
+    </div>
+  </section>;
+};
+const WORKSHOP_BOARD_COLUMNS = [['block', 'NEEDS YOU'], ['run', 'RUNNING'], ['review', 'SUBMITTED'], ['done', 'DELIVERED']];
+const WorkshopTaskBoard = ({cards, names, self, selected, onSelect}) => {
+  const columns = WORKSHOP_BOARD_COLUMNS.map(([state, label]) => [state, label,
+    cards.filter(card => card.state === state || (state === 'run' && card.state === 'open'))]).filter(([state, , rows]) => rows.length || state !== 'done');
+  return <section aria-label="Workshop task board" style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(252px,1fr))', gap:12, alignContent:'start'}}>
+    {!cards.length && <p role="status" style={{gridColumn:'1 / -1', fontSize:12.5, color:LM.inkSoft, margin:0}}>No message on this page names a Work, so there is nothing to group.</p>}
+    {cards.length > 0 && columns.map(([state, label, rows]) => { const chip = workshopTaskChip(state); return (
+      <div key={state} style={{display:'flex', flexDirection:'column', gap:10, minWidth:0}}>
+        <div style={{display:'flex', alignItems:'center', gap:7, paddingBottom:8, borderBottom:`1px solid ${LM.lineSoft}`}}>
+          <span style={{width:6, height:6, borderRadius:'50%', background:chip.c, flex:'none'}}/>
+          <h3 style={{fontFamily:LM.mono, fontSize:9, letterSpacing:'0.18em', color:chip.c, fontWeight:400, margin:0}}>{label}</h3>
+          <div style={{flex:1}}/><span style={{fontFamily:LM.mono, fontSize:9, color:LM.inkMuted}}>{rows.length}</span>
+        </div>
+        {rows.map(card => <WorkshopTaskCard key={card.work} card={card} names={names} self={self} selected={selected === card.work} onSelect={onSelect} compact/>)}
+      </div>); })}
   </section>;
 };
 
@@ -2293,6 +2399,11 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
   }, [descriptor.root, modelAgent?.root, target]);
   const names = new Map(participants.map(row => [row.root, row.label]));
   const messages = transcript?.messages || [];
+  const taskItems = workshopTaskItems(messages, projectedWorkNodes);
+  const taskCards = taskItems.filter(item => item.kind === 'task');
+  const [selectedTask, setSelectedTask] = React.useState('');
+  const selectedCard = taskCards.find(card => card.work === selectedTask) || null;
+  const taskCount = state => taskCards.filter(card => card.state === state).length;
   const messagePageIdentity = JSON.stringify([state?.canvas?.graph_id, state?.canvas?.root,
     descriptor.root, feed, page?.before ?? null, transcript?.owner ?? null, transcript?.view ?? null]);
   React.useLayoutEffect(() => {
@@ -2367,6 +2478,9 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
           </span>
           <span style={{fontFamily:LM.mono, fontSize:10.5, color:LM.inkSoft, letterSpacing:'0.04em', overflowWrap:'anywhere'}}>{descriptor.label}</span>
           <span style={{width:1, height:16, background:LM.line}}/>
+          {taskCards.length > 0 && <span style={{fontFamily:LM.mono, fontSize:10, color:LM.inkMuted}}>
+            {`${taskCount('block')} needs you · ${taskCount('run') + taskCount('open')} running · ${taskCount('review')} submitted · ${taskCount('done')} delivered`}
+          </span>}
           <span role={transcript?.error ? 'alert' : 'status'} style={{fontFamily:LM.mono, fontSize:10, color:transcript?.error ? LM.err : LM.inkMuted}}>
             {transcript?.error || (paging ? 'Loading message page\u2026' : refreshing ? 'Updating messages\u2026' :
               transcript ? (olderPage ? 'Earlier messages synchronized' : 'Messages synchronized') : 'Loading messages\u2026')}
@@ -2405,7 +2519,12 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
         <div ref={messageContent} style={{...wsColumn, display:'flex', flexDirection:'column', gap:20}}>
         {!content && transcript?.has_older && <p style={{color:LM.inkSoft, margin:0}}>Showing the available recent messages.</p>}
         {transcript && !transcript.error && !messages.length && <p style={{fontFamily:LM.serif, color:LM.inkSoft, margin:0}}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</p>}
-        {messages.map(message => {
+        {layout === 'board' && <WorkshopTaskBoard cards={taskCards} names={names} self={transcript?.self}
+          selected={selectedTask} onSelect={work => setSelectedTask(value => value === work ? '' : work)}/>}
+        {layout !== 'board' && taskItems.map(item => {
+          if (item.kind === 'task') return <WorkshopTaskCard key={'task:' + item.work} card={item} names={names} self={transcript?.self}
+            selected={selectedTask === item.work} onSelect={work => setSelectedTask(value => value === work ? '' : work)} compact={layout === 'graph'}/>;
+          const message = item.message;
           const mine = message.sender_root === transcript?.self;
           const sender = names.get(message.sender_root) || message.sender_root;
           const tone = workshopAgentTone(message.sender_root, mine);
@@ -2490,8 +2609,10 @@ const WorkshopConversation = ({descriptor, target, setTarget, setMode}) => {
     <aside aria-label="Workshop participants" className="ah-scroll" style={{gridColumn:'2', gridRow:'2', minHeight:0,
       background:LM.bgPanel, borderLeft:`1px solid ${LM.line}`, padding:'0 16px 16px', overflow:'auto', fontSize:12, color:LM.inkSoft}}>
       <div style={{display:'flex', alignItems:'center', gap:8, margin:'0 -16px 12px', padding:'11px 16px', borderBottom:`1px solid ${LM.lineSoft}`}}>
-        <span style={wsLabel}>{nativeTarget ? 'SELECTED \u00b7 WORK' : 'SELECTED \u00b7 WORKSHOP'}</span><div style={{flex:1}}/>
+        <span style={wsLabel}>{selectedCard ? 'SELECTED · TASK' : nativeTarget ? 'SELECTED \u00b7 WORK' : 'SELECTED \u00b7 WORKSHOP'}</span><div style={{flex:1}}/>
       </div>
+      {/* Design ContextPanel (studio-workshop.jsx:333-381) for the selected task card: every row is read from its events. */}
+      {selectedCard && <WorkshopTaskContext card={selectedCard} names={names} self={transcript?.self}/>}
       {/* Layout presets B/C (design studio-workshop.jsx:554-569, 275-330) on the real snapshot only. */}
       <WorkshopLayoutPane layout={layout} native={native} nodes={projectedWorkNodes} target={nativeTarget} setMode={setMode}/>
       {nativeAvailable && <section aria-label="Native Workshop review" style={{marginBottom:24}}>

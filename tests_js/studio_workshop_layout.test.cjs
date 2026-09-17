@@ -81,21 +81,63 @@ test('Workshop is Chat with the held room, else the general room, else the first
   assert.deepEqual(calls, [['root', 'general-a'], ['root', 'child-a'], ['root', ''], ['mode', 'canvas'], ['root', 'only-a']]);
 });
 
-test('Task board renders an explicit absent state when the snapshot holds one native Work and no task list', async () => {
-  const {draw, close} = await mount('Pane');
+// Transcript rows in the shipped shape (Workshop messages projection): agents write notes that name a Work id.
+const note = (root, sender, body) => ({root, sender_root:sender, body, state:'recorded', category:'note', recipient_roots:[]});
+const transcriptRows = [
+  note('m1', 'agent-a', 'Claimed Work assembly-instance:aaaaaaaa11112222.'),
+  note('m2', 'agent-b', 'Please look at the export when you can.'),
+  note('m3', 'agent-a', 'Submitted Work assembly-instance:aaaaaaaa11112222.'),
+  note('m4', 'agent-b', 'Claimed Work assembly-instance:bbbbbbbb33334444.'),
+  note('m5', 'agent-a', 'Claimed Work work:repair-export'),
+  note('m6', 'agent-a', 'Gate failed for Work work:repair-export: pytest exit 1'),
+];
+
+test('task cards fold every event of one named Work into one card whose state is its latest verb', () => {
+  {
+    const context = vm.createContext({});
+    const helpers = source.slice(source.indexOf('const WORKSHOP_WORK_REF ='), source.indexOf('const LM_SESSIONS ='));
+    vm.runInContext(helpers + '\nglobalThis.items = workshopTaskItems;', context);
+    const items = context.items(transcriptRows, [{id:'work:repair-export', title:'Repair export', status:'OPEN'}]);
+    assert.deepEqual(Array.from(items, item => item.kind === 'task' ? `${item.title}|${item.state}|${item.events.map(e => e.root).join(',')}` : item.message.root), [
+      'assembly-instance · aaaaaaaa|review|m1,m3', 'm2', 'assembly-instance · bbbbbbbb|run|m4', 'Repair export|block|m5,m6']);
+    assert.equal(context.items([], []).length, 0);
+    assert.equal(context.items([note('x', 'a', 'No Work named here.')], []).map(item => item.kind).join(), 'message');
+  }
+});
+
+test('the task board draws the transcript-derived cards in state columns and an absent state without them', async () => {
+  const {JSDOM} = await import('jsdom');
+  const React = require('react');
+  const {createRoot} = require('react-dom/client');
+  const {transformSync} = require('esbuild');
+  const dom = new JSDOM('<div id="root"></div>');
+  const oldWindow = global.window, oldDocument = global.document;
+  global.window = dom.window; global.document = dom.window.document; global.IS_REACT_ACT_ENVIRONMENT = true;
   try {
-    const doc = await draw({layout:'board', native:nativeWork, nodes:[{id:'work-a', title:'Repair export'}], target:''});
-    const board = doc.querySelector('[aria-label="Workshop task board"]');
-    assert.ok(board, 'the board preset renders its own section');
-    const status = board.querySelector('[role="status"]').textContent;
-    assert.equal(status, 'Not available in this connection. This Workshop projects one native Work at a time (state: idle); no task-list projection exists, so nothing is grouped or counted here.');
-    assert.doesNotMatch(board.textContent, /needs you|running|delivered|paused|T-0\d|\d+ \/ \d+|%/i);
-    assert.equal(board.querySelectorAll('button, progress, [data-node]').length, 0);
-    assert.equal(doc.querySelector('[aria-label="Workshop live graph"]'), null);
-    const unread = await draw({layout:'board', native:null, nodes:[], target:''});
-    assert.doesNotMatch(unread.querySelector('[role="status"]').textContent, /state:/);
-    assert.equal((await draw({layout:'conversation', native:nativeWork, nodes:[], target:''})).querySelector('section'), null);
-  } finally { await close(); }
+    const context = vm.createContext({React, LM});
+    vm.runInContext(transformSync(source.slice(source.indexOf('const WORKSHOP_WORK_REF ='), source.indexOf('const LM_SESSIONS =')) +
+      source.slice(source.indexOf('const WORKSHOP_LAYOUTS ='), source.indexOf('const WorkshopConversation =')) +
+      '\nglobalThis.Board = WorkshopTaskBoard; globalThis.items = workshopTaskItems; globalThis.Pane = WorkshopLayoutPane;', {loader:'jsx', format:'cjs'}).code, context);
+    const root = createRoot(dom.window.document.getElementById('root'));
+    const names = new Map([['agent-a', 'Codex'], ['agent-b', 'BABOOM']]);
+    const picked = [];
+    const cards = context.items(transcriptRows, []).filter(item => item.kind === 'task');
+    await React.act(async () => root.render(React.createElement(context.Board, {cards, names, self:'', selected:'', onSelect:work => picked.push(work)})));
+    const board = dom.window.document.querySelector('[aria-label="Workshop task board"]');
+    assert.deepEqual([...board.querySelectorAll('h3')].map(h => h.textContent), ['NEEDS YOU', 'RUNNING', 'SUBMITTED']);
+    assert.deepEqual([...board.querySelectorAll('[data-workshop-task]')].map(card => card.getAttribute('data-workshop-task')),
+      ['work:repair-export', 'assembly-instance:bbbbbbbb33334444', 'assembly-instance:aaaaaaaa11112222']);
+    await React.act(async () => { board.querySelector('[data-workshop-task]').click(); });
+    assert.deepEqual(picked, ['work:repair-export']);
+    await React.act(async () => root.render(React.createElement(context.Board, {cards:[], names, self:'', selected:'', onSelect:() => {}})));
+    assert.equal(dom.window.document.querySelector('[role="status"]').textContent, 'No message on this page names a Work, so there is nothing to group.');
+    await React.act(async () => root.render(React.createElement(context.Pane, {layout:'board', native:nativeWork, nodes:[], target:''})));
+    assert.equal(dom.window.document.querySelector('section'), null, 'the board no longer draws in the participants column');
+    await React.act(async () => root.unmount());
+  } finally {
+    dom.window.close(); global.window = oldWindow; global.document = oldDocument;
+    delete global.IS_REACT_ACT_ENVIRONMENT;
+  }
 });
 
 test('Chat + live graph draws only projected nodes, marks the admitted Work, and opens the Canvas only when it can', async () => {
@@ -149,7 +191,7 @@ test('the shipped conversation mounts the strip in its header and the pane besid
   assert.match(header, /chooseWorkshopMode\(segment\.key, \{mode, conversationRoot, workshops, setMode, setConversationRoot\}\)/);
   // The design's authored scene (studio-workshop.jsx WS_AGENTS / WS_RUN / WS_FLOW / seedTasks / activity log / wsNode)
   // is not defined or bound anywhere in the shipped Studio: nothing seeded can render as if it were live.
-  for (const scene of [/\bWS_(AGENTS|RUN|SCOPE|FLOW|WIRES)\s*=/, /\bseedTasks\s*=/, /window\.wsNode\b/, /NEEDS YOU/, /ACTIVITY · LAST/]) {
+  for (const scene of [/\bWS_(AGENTS|RUN|SCOPE|FLOW|WIRES)\s*=/, /\bseedTasks\s*=/, /window\.wsNode\b/, /ACTIVITY · LAST/]) {
     assert.doesNotMatch(source, scene);
   }
 });

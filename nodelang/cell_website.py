@@ -111,6 +111,9 @@ ROLE_NAMES = (
     "page",
     "http-route",
     "domain-binding",
+    # "card" named the home card a binding pointed at. The grid came off the
+    # public home on 2026-09-17; the role stays declared so a website
+    # published before that still projects from its own graph.
     "card",
     "domain",
     "key",
@@ -180,15 +183,6 @@ WEBSITE_CSS = r"""
 .site-hosts{display:flex;flex-wrap:wrap;gap:8px;list-style:none;margin:0;padding:0}
 .site-host{display:inline-flex;align-items:baseline;gap:7px;padding:5px 11px;border:1px solid var(--line);border-radius:6px;font-family:var(--serif);font-size:19px;color:var(--ink-soft)}
 .site-host-ops{font-family:var(--mono);font-size:10.5px;color:var(--ink-muted)}
-.site-graph{background:var(--bg-deep);border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);padding:72px 0}
-.site-graph-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:22px}
-.site-graph-label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-muted)}
-.site-graph-state{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ok)}
-.site-domain-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
-.site-domain-card{min-height:104px;border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:7px;background:var(--panel);padding:14px;display:flex;flex-direction:column;justify-content:space-between}
-.site-domain-card:nth-child(3n+2){border-top-color:var(--ok)}.site-domain-card:nth-child(3n){border-top-color:var(--ink-muted)}
-.site-domain-kind{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted)}
-.site-domain-title{font-family:var(--serif);font-size:19px;line-height:1.25;margin:16px 0 0;font-weight:400}
 .site-section{padding:88px 0}
 .site-section-title{font-family:var(--serif);font-size:56px;line-height:1;letter-spacing:-.03em;margin:0 0 8px;font-weight:400;max-width:820px}
 .site-dim{display:flex;align-items:center;width:100%;color:var(--ink-muted)}
@@ -318,8 +312,8 @@ WEBSITE_CSS = r"""
 .site-dv-bad{color:var(--err)}.site-dv-good{color:var(--ok)}.site-dv-pending{color:var(--ink-muted)}
 .site-heal-footer{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:12px}.site-heal-clock{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink-muted)}
 .site-price-note{max-width:640px;margin:-16px 0 0;font-size:15px;line-height:1.6;color:var(--ink-soft)}
-@media(max-width:1100px){.site-hero{grid-template-columns:1fr}.site-hero-art{padding:0 7vw 72px}.site-domain-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.site-title{font-size:68px}.site-split,.site-boundary,.site-boundary-foot,.site-foot-grid{grid-template-columns:1fr}.site-boundary-gap{height:60px}.site-boundary-wire{width:2px;height:100%;background:linear-gradient(180deg,var(--ok),var(--accent))}.site-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.site-nav{position:static;height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 12px}.site-nav-links{order:3;width:100%;flex-wrap:wrap;gap:0 18px;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto;padding:8px 12px}.site-access+.site-access{margin-left:0}.site-hero-copy{padding:72px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:19px}.site-hero-art{padding:0 24px 56px}.site-canvas-body{padding:22px 16px 26px}.site-canvas-body{height:auto;padding:18px 14px}.site-node{position:relative;left:auto;top:auto;width:100%}.site-node+.site-node{margin-top:16px}.site-canvas-hint{position:static;display:block;margin-top:12px}.site-wires{display:none}.site-trust-n{font-size:36px}.site-trust-note{margin-left:0}.site-graph{padding:56px 0}.site-domain-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-section{padding:56px 0}.site-section-title,.site-heal-title,.site-split-title{font-size:38px}.site-pillar-grid{grid-template-columns:1fr}.site-pillar{border-right:0;border-bottom:1px solid var(--line)}.site-heal{padding:24px}.site-closing{padding:72px 0}.site-closing-title{font-size:48px}.site-page-main{padding:56px 24px 70px}.site-page-grid{grid-template-columns:1fr}.site-page-card{border-right:0}.site-page-title{font-size:40px}.site-footer{padding:40px 24px 48px}}
+@media(max-width:1100px){.site-hero{grid-template-columns:1fr}.site-hero-art{padding:0 7vw 72px}.site-title{font-size:68px}.site-split,.site-boundary,.site-boundary-foot,.site-foot-grid{grid-template-columns:1fr}.site-boundary-gap{height:60px}.site-boundary-wire{width:2px;height:100%;background:linear-gradient(180deg,var(--ok),var(--accent))}.site-page-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.site-nav{position:static;height:auto;min-height:64px;padding:10px 18px;flex-wrap:wrap;gap:8px 12px}.site-nav-links{order:3;width:100%;flex-wrap:wrap;gap:0 18px;margin:0}.site-nav-link{white-space:nowrap}.site-access{margin-left:auto;padding:8px 12px}.site-access+.site-access{margin-left:0}.site-hero-copy{padding:72px 24px 56px}.site-title{font-size:48px}.site-lede{font-size:19px}.site-hero-art{padding:0 24px 56px}.site-canvas-body{padding:22px 16px 26px}.site-canvas-body{height:auto;padding:18px 14px}.site-node{position:relative;left:auto;top:auto;width:100%}.site-node+.site-node{margin-top:16px}.site-canvas-hint{position:static;display:block;margin-top:12px}.site-wires{display:none}.site-trust-n{font-size:36px}.site-trust-note{margin-left:0}.site-section{padding:56px 0}.site-section-title,.site-heal-title,.site-split-title{font-size:38px}.site-pillar-grid{grid-template-columns:1fr}.site-pillar{border-right:0;border-bottom:1px solid var(--line)}.site-heal{padding:24px}.site-closing{padding:72px 0}.site-closing-title{font-size:48px}.site-page-main{padding:56px 24px 70px}.site-page-grid{grid-template-columns:1fr}.site-page-card{border-right:0}.site-page-title{font-size:40px}.site-footer{padding:40px 24px 48px}}
 """
 
 _UNSAFE_CSS = ("</style", "@import", "url(", "expression(", "javascript:")
@@ -347,8 +341,16 @@ class WebsiteProtocol:
 
 @dataclass(frozen=True, slots=True)
 class WebsiteDomainBinding:
+    """The public website is published from this Grand Map domain.
+
+    The home drew one card per domain until the founder read the live
+    site against the design on 2026-09-17: the design carries no such
+    section, so the grid came off. The binding stays, because it is
+    what ties the public site to the map it is published from, and it
+    is now a graph fact only - no card, nothing on any page.
+    """
+
     root_id: str
-    card_root: str
     domain_root: str
 
 
@@ -436,26 +438,6 @@ def project_website_protocol(snapshot: Snapshot) -> WebsiteProtocol:
         if _text(snapshot, role_id) != name:
             raise InvalidCell("website protocol role label drifted")
     return WebsiteProtocol(root_id, MappingProxyType(roles))
-
-
-def _domain_property_value_root(
-    snapshot: Snapshot,
-    map_registry: UniversalMapRegistry,
-    domain_root: str,
-    label: str,
-) -> str:
-    matches = []
-    for relation_root in map_registry.root_properties[domain_root]:
-        members = read_relation(snapshot, relation_root, budget=16)
-        labels = _many(members, map_registry.roles["label"])
-        values = _many(members, map_registry.roles["value"])
-        if len(labels) == 1 and _text(snapshot, labels[0]) == label:
-            if len(values) != 1:
-                raise InvalidCell("Grand Map domain property is ambiguous")
-            matches.append(values[0])
-    if len(matches) != 1:
-        raise InvalidCell("Grand Map domain lacks one %s property" % label)
-    return matches[0]
 
 
 OFFER_DEFAULT_DISPLAY = "Free during beta"
@@ -877,38 +859,6 @@ def build_universal_website(
             element("span", text="Windows"),
         )),
     ))
-
-    domain_cards: dict[str, str] = {}
-    card_roots = []
-    for key, domain_root in map_registry.domains.items():
-        title_root = _domain_property_value_root(
-            snapshot, map_registry, domain_root, "title"
-        )
-        card_root = "app:website:domain-card:%s" % _part(key)
-        card = element(
-            "article", "site-domain-card", children=(
-                element("span", "site-domain-kind", text="Grand Map domain"),
-                element("h3", "site-domain-title", text_root=title_root),
-            ),
-            root_id=card_root,
-        )
-        domain_cards[key] = card_root
-        card_roots.append(card)
-    graph_panel = element(
-        "section", "site-graph", attrs={"aria-label": "Grand Map domains"},
-        children=(
-            element("div", "site-wrap", children=(
-                element("div", "site-graph-head", children=(
-                    element("span", "site-graph-label", text="The Grand Map"),
-                    element(
-                        "span", "site-graph-state", text="Every domain is a node",
-                    ),
-                )),
-                element("div", "site-domain-grid", children=card_roots),
-            )),
-        ),
-        root_id="app:website:domain-graph",
-    )
 
     operation_labels = {
         str(record.get("op_id")): str(record.get("label"))
@@ -1370,7 +1320,6 @@ def build_universal_website(
             self_heal,
             divider(("Every step is a node",)),
             graph_split,
-            graph_panel,
             divider(("The brain", "Skills you own")),
             brain_split,
             boundary,
@@ -1614,12 +1563,11 @@ def build_universal_website(
         binding_root = "app:website:domain-binding:%s" % _part(key)
         relation_batch.relation((
             (protocol.role("website"), WEBSITE_ROOT),
-            (protocol.role("card"), domain_cards[key]),
             (protocol.role("domain"), domain_root),
             (protocol.role("key"), key_root),
         ), relation_id=binding_root)
         domain_binding_roots[key] = WebsiteDomainBinding(
-            binding_root, domain_cards[key], domain_root
+            binding_root, domain_root
         )
     relation_batch.commit()
 
@@ -1677,30 +1625,6 @@ def build_universal_website(
         published_lifecycle_root=published_lifecycle_root,
         read_action_root=read_action_root,
     )
-
-
-def _collect_ui_roots(
-    snapshot: Snapshot,
-    ui_protocol: UIProtocol,
-    root_id: str,
-    *,
-    budget: int = 20_000,
-) -> frozenset[str]:
-    pending = [root_id]
-    seen = set()
-    while pending:
-        if len(seen) >= budget:
-            raise InvalidCell("website UI traversal exceeded its budget")
-        current = pending.pop()
-        if current in seen:
-            raise InvalidCell("website UI tree reuses or cycles an element")
-        seen.add(current)
-        members = read_relation(snapshot, current, budget=256)
-        pending.extend(
-            member.participant_id for member in members
-            if member.role_id == ui_protocol.role("child")
-        )
-    return frozenset(seen)
 
 
 def read_universal_website(
@@ -1803,9 +1727,6 @@ def read_universal_website(
     if set(routes) not in (set(PUBLIC_WEBSITE_ROUTES), set(CORE_WEBSITE_ROUTES)):
         raise InvalidCell("website public route set drifted")
 
-    home_ui = _collect_ui_roots(
-        snapshot, ui_protocol, pages["/website"], budget=20_000
-    )
     binding_roots = _many(members, protocol.role("domain-binding"))
     domain_bindings = {}
     for binding_root in binding_roots:
@@ -1813,17 +1734,16 @@ def read_universal_website(
         if _one(binding, protocol.role("website"), "binding website") != root_id:
             raise InvalidCell("domain binding belongs to another website")
         key = _text(snapshot, _one(binding, protocol.role("key"), "domain key"))
-        card_root = _one(binding, protocol.role("card"), "domain card")
         domain_root = _one(binding, protocol.role("domain"), "domain root")
         if key in domain_bindings or map_registry.domains.get(key) != domain_root:
             raise InvalidCell("website domain binding is unknown or ambiguous")
-        if card_root not in home_ui:
-            raise InvalidCell("website domain binding card is not visible")
-        domain_bindings[key] = WebsiteDomainBinding(
-            binding_root, card_root, domain_root
-        )
+        domain_bindings[key] = WebsiteDomainBinding(binding_root, domain_root)
     if set(domain_bindings) != set(map_registry.domains):
-        raise InvalidCell("website does not bind every Grand Map domain")
+        raise InvalidCell(
+            "website does not bind every Grand Map domain; a domain "
+            "binding is a graph fact and no longer has to be visible "
+            "on the home page"
+        )
 
     return UniversalWebsiteBuild(
         protocol,

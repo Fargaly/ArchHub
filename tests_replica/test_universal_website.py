@@ -16,6 +16,7 @@ from nodelang.application_server import ApplicationServer  # noqa: E402
 from nodelang.cell_protocols import read_relation  # noqa: E402
 from nodelang.cell_website import (  # noqa: E402
     PUBLIC_WEBSITE_ROUTES,
+    WebsiteDomainBinding,
     project_universal_website_document,
     read_universal_website,
 )
@@ -70,7 +71,10 @@ def test_website_is_the_same_application_graph_with_exact_routes(application):
     )
 
 
-def test_every_public_domain_card_is_explicitly_bound_to_the_real_domain(application):
+def test_every_grand_map_domain_stays_bound_with_no_card(application):
+    # The grid came off the public home on 2026-09-17, so a binding is
+    # a graph fact and names no card. It still binds every domain, so
+    # the published site cannot drift from the map it comes from.
     store, registry = application
     website = read_universal_website(
         store.snapshot(), registry.website.protocol, registry.website.root_id,
@@ -89,9 +93,12 @@ def test_every_public_domain_card_is_explicitly_bound_to_the_real_domain(applica
         key: binding.domain_root
         for key, binding in website.domain_binding_roots.items()
     } == dict(registry.map.domains)
-    assert len({
-        binding.card_root for binding in website.domain_binding_roots.values()
-    }) == len(registry.map.domains)
+    assert WebsiteDomainBinding.__slots__ == ("root_id", "domain_root")
+    card_role = registry.website.protocol.role("card")
+    snapshot = store.snapshot()
+    for binding in website.domain_binding_roots.values():
+        members = read_relation(snapshot, binding.root_id, budget=32)
+        assert all(member.role_id != card_role for member in members)
 
 
 def test_graph_text_edit_changes_the_public_projection(application):

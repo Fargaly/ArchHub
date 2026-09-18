@@ -69,6 +69,11 @@ def test_http_server_serves_the_universal_app_and_website_lenses(website):
         assert 'class="site-shell"' in web
         assert 'class="archhub-app"' not in web
         assert 'Drafted, not generated.' in web
+        # The Grand Map domain grid came off the public home on
+        # 2026-09-17; the design the home answers to has no such
+        # section and nothing replaced it.
+        assert 'site-domain-card' not in web
+        assert 'The Grand Map' not in web
         for route, expected in (
                 ('/website/features', 'One canvas. Every tool you already use.'),
                 ('/website/pricing', 'Free during beta'),

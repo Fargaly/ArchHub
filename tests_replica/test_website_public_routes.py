@@ -2,10 +2,11 @@
 
 Every public route is projected through the Cell website from the public
 map: the one price sentence is the offer display, the privacy sentence is
-verbatim on the security page and inside the home boundary, every Grand
-Map domain card is on the home, none of the design's unproven
-literals survive, and no sentence claims a completeness the code does
-not prove. This court never imports application_server.
+verbatim on the security page and inside the home boundary, the home
+draws no Grand Map domain grid because the design has none, none of the
+design's unproven literals survive, and no sentence claims a
+completeness the code does not prove. This court never imports
+application_server.
 """
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from nodelang.cell_ui import render_ui  # noqa: E402
 from nodelang.cell_website import (  # noqa: E402
     OFFER_DEFAULT_DISPLAY,
     PUBLIC_WEBSITE_ROUTES,
@@ -134,16 +134,21 @@ def test_no_unproven_design_literal_survives(documents, path):
     assert found == []
 
 
-def test_every_grand_map_domain_card_is_on_the_home(application, documents):
-    store, registry = application
-    home = documents["/website"]
+def test_the_home_draws_no_grand_map_domain_grid(application, documents):
+    # The founder read the live site against the design on 2026-09-17.
+    # The design has no domain grid, so the public home draws none and
+    # nothing takes its place. The bindings stay in the graph, one per
+    # domain, with nothing to see on any page.
+    _store, registry = application
+    for path, document in documents.items():
+        assert "site-domain-card" not in document, path
+        assert "site-domain-grid" not in document, path
+        assert "site-graph" not in document, path
+        assert "The Grand Map" not in document, path
+        assert "Grand Map domain" not in document, path
     bindings = registry.website.domain_binding_roots
     assert set(bindings) == set(registry.map.domains)
-    assert home.count('class="site-domain-card"') == len(bindings)
-    snapshot = store.snapshot()
-    for binding in bindings.values():
-        card = render_ui(snapshot, registry.ui_protocol, binding.card_root)
-        assert card in home
+    assert not any(hasattr(b, "card_root") for b in bindings.values())
 
 
 @pytest.mark.parametrize("path", PUBLIC_WEBSITE_ROUTES)

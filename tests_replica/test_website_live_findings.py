@@ -622,7 +622,10 @@ def test_finding_8_the_hero_is_the_node_canvas_not_the_grand_map_grid(documents)
     host_ports = ports[:2]
     assert len(host_ports) == 2
     assert set(host_ports) <= labels
-    assert "site-domain-grid" in home
+    # Finding 8 moved the map out of the hero. The founder read the live
+    # site against the design on 2026-09-17 and took the grid off the
+    # public home altogether, so it is nowhere on the page now.
+    assert "site-domain-grid" not in home
 
 
 def test_finding_8_the_trust_strip_counts_the_host_operation_catalogue(documents):

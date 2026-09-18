@@ -1988,12 +1988,16 @@
         const category = held?.send_category || workshops.find(row => row.root === root)?.send_category;
         if (!held || held.root !== root || held.error || !text(held.owner) || !text(held.view) ||
             !text(held.self) || !text(category) || held.can_send !== true) fail('Refresh the Workshop before sending.');
-        if (!text(details.target) || !held.participants.some(row => row.root === details.target && row.attached) ||
+        // No target is the Workshop itself: every attached participant reads it. The owner
+        // records that as a message with no named recipient, which is what the transcript
+        // shows as "to Everyone". A named target still addresses exactly that participant.
+        const everyone = details.target === '' || details.target === undefined || details.target === null;
+        if ((!everyone && (!text(details.target) || !held.participants.some(row => row.root === details.target && row.attached))) ||
             typeof details.message !== 'string' || !details.message.trim() || details.message.length > 12000) {
           fail('Choose a current participant and enter a bounded message.');
         }
         const body = {root, scope:stamp.scope, category, text:details.message.trim(),
-          refs:[], evidence:[], recipients:[details.target], reply_to:null, created_at:null};
+          refs:[], evidence:[], recipients:everyone ? [] : [details.target], reply_to:null, created_at:null};
         const pendingKey = await hash(JSON.stringify({graph:stamp.graph, owner:held.owner, view:held.view, body}));
         if (!/^[a-f0-9]{64}$/.test(pendingKey)) fail('Message identity could not be prepared.');
         if (!current(stamp, root) || workshop !== held) fail('The Workshop changed before sending. Refresh and retry.');

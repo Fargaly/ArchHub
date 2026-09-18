@@ -1198,12 +1198,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const contactTarget = nativeContacts.find(row => 'contact:' + row.root === target) || null;
   const modelAgent = existing ? transcript?.model_agent : null;
   const modelTarget = modelAgent && target === 'model:' + modelAgent.root ? modelAgent : null;
-  const defaultRecipient = React.useRef(null);
-  React.useEffect(() => {
-    if (!modelAgent || defaultRecipient.current === descriptor.root) return;
-    defaultRecipient.current = descriptor.root;
-    if (!target) setTarget('model:' + modelAgent.root);
-  }, [descriptor.root, modelAgent?.root, target]);
+  // The Workshop itself is the default recipient (design studio-workshop.jsx composer,
+  // "to: Workshop"): opening a room no longer pre-addresses one model agent.
   const names = new Map(participants.map(row => [row.root, row.label]));
   const messages = transcript?.messages || [];
   // THE LIVE SCENE: every design surface below reads these, never a seed.
@@ -1302,7 +1298,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const sendDisabled = busy || !editorsReady || !joined;
   const send = () => {
     if (sendDisabled || !draft.trim()) return;
-    if (!target) { setActionError('Choose a participant before sending.'); return; }
+    // No target is the design's default: the message goes to the Workshop, and every
+    // attached participant reads it. Picking one agent addresses only that agent.
     if ((target.startsWith('contact:') && (!contactTarget || contactTarget.connected === false)) ||
         (target.startsWith('model:') && !modelTarget)) { setActionError('Refresh this recipient before sending.'); return; }
     act('send');
@@ -1803,7 +1800,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
             <select aria-label="Recipient" value={target} disabled={busy || !joined} onChange={e => setTarget(e.target.value)} style={{ padding:'3px 8px', borderRadius:5, background:W.accentDim,
               border:`1px solid ${W.accentSoft}`, color:W.accent, fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'min(100%, 240px)' }}>
-              <option value="">to: choose a participant</option>
+              <option value="">to: Workshop (everyone)</option>
               {modelAgent && <option value={'model:' + modelAgent.root}>{`to: @Agent · ${modelAgent.model}`}</option>}
               {nativeContacts.length > 0 && <optgroup label="Connected agent environments">
                 {nativeContacts.map(row => <option key={row.root} value={'contact:' + row.root}>

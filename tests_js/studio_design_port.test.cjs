@@ -112,9 +112,11 @@ test('header: the design row ends at save as skill; three-segment switch, New se
     const header = segmented.parentElement;
     assert.equal(header.querySelector('[aria-label="Conversations"]') === null, true,
       'Chat draws the design row: no conversation menu beside the switch (design studio-lm.jsx:1099-1150)');
-    assert.equal(header.querySelector('section[aria-label="Application release updates"]') === null, true,
-      'no release update controls in the header: Settings > About and the status strip hold them');
-    assert.equal(header.lastElementChild.textContent.trim(), 'save as skill', 'save as skill closes the header row as designed');
+    // Founder, 2026-09-18: the update icons belong in the header, where he sees them.
+    assert.ok(header.querySelector('section[aria-label="Application release updates"]'),
+      'the release update icons close the header row');
+    assert.equal([...header.querySelectorAll('button')].some(button => button.textContent.trim() === 'save as skill'), true,
+      'save as skill is still drawn, before the update icons');
 
     const tab = [...header.querySelectorAll('span')].find(span => span.textContent === 'ArchHub');
     assert.ok(tab, 'the open graph tab is drawn from the projected session list');

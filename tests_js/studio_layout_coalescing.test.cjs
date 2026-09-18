@@ -76,7 +76,7 @@ const NODES = [
   {id:'two', cat:'logic', live:true, x:400, y:60, w:200, h:90, title:'Two', sub:'node', params:[], ins:[], outs:[]},
 ];
 
-async function mount({refuse = null} = {}) {
+async function mount({refuse = null, hold = null} = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
@@ -94,6 +94,8 @@ async function mount({refuse = null} = {}) {
     moveTopologyNodes:async (positions, expectedRevision, expectedPositions) => {
       saves.push({positions:JSON.parse(JSON.stringify(positions)), expectedRevision,
         expectedPositions:JSON.parse(JSON.stringify(expectedPositions))});
+      // A save the court can hold open, so a burst can be armed while one is in flight.
+      if (hold && saves.length === 1) await hold.promise;
       if (refuse) throw new Error(refuse);
       snapshot = {...snapshot, canvas:{...snapshot.canvas, revision:snapshot.canvas.revision + 1},
         graph:{...snapshot.graph, nodes:snapshot.graph.nodes.map(node =>
@@ -220,6 +222,19 @@ test('closing the window writes the pending burst before anything is lost', asyn
   } finally { await view.close(); }
 });
 
+test('the held save answers and the canvas goes quiet', async () => {
+  const wait = coalesceWindow();
+  const hold = {}; hold.promise = new Promise(resolve => { hold.release = resolve; });
+  const view = await mount({hold});
+  await view.drag('one', 40, 40);
+  await view.settle(wait * 2);
+  assert.equal(view.saves.length, 1);
+  hold.release();
+  await view.settle(wait * 2);
+  assert.equal(view.chip(), '', 'the save answered, so nothing is pending');
+  await view.close();
+});
+
 test('leaving the canvas writes the pending burst', async () => {
   const view = await mount();
   await view.drag('one', 40, 40);
@@ -251,8 +266,8 @@ test('the shipped source arms a burst on mouseup and never writes from the drag 
     'a mouseup no longer publishes its own revision');
   assert.match(text, /window\.addEventListener\('beforeunload', leave\)/);
   assert.match(text, /window\.addEventListener\('pagehide', leave\)/);
-  assert.match(text, /return \(\) => \{ flushRef\.current\(\); alive\.current = false;/,
-    'leaving the canvas flushes while the canvas can still write');
+  assert.match(text, /return \(\) => \{ flushRef\.current\(true\); alive\.current = false;/,
+    'leaving the canvas forces the flush, so a burst behind an in-flight save is not dropped');
 });
 test('one undo of a burst lands on the pre-burst layout', async () => {
   const wait = coalesceWindow();

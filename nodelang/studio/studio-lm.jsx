@@ -2358,24 +2358,31 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   }, [allNodes, layoutBusy]);
   React.useEffect(() => {
     alive.current = true;
-    return () => { flushRef.current(); alive.current = false; dragRef.current = null; };
+    return () => { flushRef.current(true); alive.current = false; dragRef.current = null; };
   }, []);
 
   // A drag that ends while the previous save is still in flight is queued, not
   // dropped: on a large graph a save takes long enough that the next drag used
   // to land inside it and vanish with "Wait for the current change".
   const queuedSave = React.useRef(null);
-  const savePositions = async (next, before, expectedRevision, remember = true) => {
+  // `force` marks a save handed over on the way out (unmount, window close). It still
+  // queues behind the save in flight, but it is not dropped when this canvas stops
+  // being alive: the transport outlives the component.
+  const savePositions = async (next, before, expectedRevision, remember = true, force = false) => {
     if (!scopeStillCurrent()) return false;
     const entries = Object.entries(next).filter(([id, point]) => before[id]?.x !== point.x || before[id]?.y !== point.y);
     if (!entries.length) return true;
     const restore = () => setPositions(held => ({...held, ...before}));
-    if (saving.current && canSaveLayout && entries.length <= MAX_LAYOUT_NODES) {
+    // A save handed over on the way out queues behind whatever is busy rather than
+    // being refused with "Wait for the current change": there is no later drag to retry it.
+    if ((saving.current || (force && blocked)) && canSaveLayout && entries.length <= MAX_LAYOUT_NODES) {
       // The preview already shows the new place; the save runs right after the current one.
-      queuedSave.current = {next, before, expectedRevision, remember};
+      queuedSave.current = {next, before, expectedRevision, remember, force};
       return true;
     }
-    if (!canSaveLayout || blocked || saving.current || entries.length > MAX_LAYOUT_NODES) {
+    // `blocked` is React state, so it still reads busy for one turn after the save that
+    // set it answered. A forced save (the way out) must not be refused by that echo.
+    if (!canSaveLayout || (blocked && !force) || saving.current || entries.length > MAX_LAYOUT_NODES) {
       restore();
       setLayoutError(entries.length > MAX_LAYOUT_NODES ? 'Move or arrange at most 256 nodes at a time.' :
         blocked || saving.current ? 'Wait for the current change, then try again.' : 'This connection cannot save node positions.');
@@ -2417,10 +2424,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       if (alive.current) setLayoutBusy(false);
       const queued = queuedSave.current;
       queuedSave.current = null;
-      if (queued && alive.current && scopeStillCurrent()) {
+      if (queued && (alive.current || queued.force) && scopeStillCurrent()) {
         // Run the queued drag against the canvas as it is now; its `before` is the
         // preview the drag started from, which is what the server holds after the save.
-        setTimeout(() => saveRef.current && saveRef.current(queued.next, queued.before, queued.expectedRevision, queued.remember), 0);
+        setTimeout(() => saveRef.current && saveRef.current(queued.next, queued.before, queued.expectedRevision, queued.remember, queued.force), 0);
       }
     }
   };
@@ -2432,11 +2439,15 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // One write for everything moved in the burst, against the points the burst
   // started from. A save already in flight is not interrupted: the burst waits
   // one more window and goes out whole after it.
-  const flushLayoutBurst = () => {
+  // `force` is the leave path: unmount, window close, tab hide. Re-arming a timer
+  // there drops the burst, because nothing is left alive to fire it (verification,
+  // 2026-09-18). Forced, the burst goes to savePositions, which parks it behind the
+  // save in flight and sends it when that one answers.
+  const flushLayoutBurst = (force = false) => {
     clearLayoutBurstTimer();
     const burst = burstRef.current;
     if (!burst) return false;
-    if ((saving.current || blocked) && alive.current) {
+    if ((saving.current || blocked) && alive.current && !force) {
       burstTimer.current = setTimeout(() => flushRef.current(), CANVAS_LAYOUT_COALESCE_MS);
       return false;
     }
@@ -2444,7 +2455,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (alive.current) setBurstPending(false);
     const moves = canvasLayoutBurstMoves(burst);
     if (!moves.length) return false;
-    saveRef.current(Object.fromEntries(moves), burst.before, burst.revision);
+    saveRef.current(Object.fromEntries(moves), burst.before, burst.revision, true, force);
     return true;
   };
   const flushRef = React.useRef(null);
@@ -2461,7 +2472,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   armLayoutRef.current = armLayoutBurst;
   // Leaving the canvas, closing the window and a quit request all write first.
   React.useEffect(() => {
-    const leave = () => flushRef.current();
+    const leave = () => flushRef.current(true);
     window.addEventListener('beforeunload', leave);
     window.addEventListener('pagehide', leave);
     return () => {

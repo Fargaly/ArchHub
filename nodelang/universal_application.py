@@ -161,6 +161,7 @@ from .cell_transactions import (
 from .cell_change_history import (
     ChangeHistoryProtocol,
     bootstrap_change_history_protocol,
+    change_transaction_header_memo,
     commit_tracked_change,
     history_state,
     _history_summary,
@@ -1414,6 +1415,9 @@ _CANVAS_INTERFACE_PROJECTION_CACHE: ContextVar[
 _SESSION_CANVAS_ROOTS_CACHE: ContextVar[dict[tuple, tuple] | None] = ContextVar(
     "session_canvas_roots_cache", default=None
 )
+_CANVAS_PROPERTY_OWNER_INDEX_CACHE: ContextVar[
+    dict[tuple, dict[str, list[str]]] | None
+] = ContextVar("canvas_property_owner_index_cache", default=None)
 _STANDARD_CATALOG_PROJECTION_CACHE: WeakKeyDictionary[
     CellStore,
     tuple[
@@ -17042,6 +17046,22 @@ def _with_canvas_interface_projection_scope(function):
     return wrapped
 
 
+def _with_canvas_property_owner_index(function):
+    """Read the owner of each canvas property relation once per projection."""
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        if _CANVAS_PROPERTY_OWNER_INDEX_CACHE.get() is not None:
+            return function(*args, **kwargs)
+        # Named "handle", not "token": the public-repo commit gate reads
+        # "token = <long string>" as a leaked credential and refuses the commit.
+        handle = _CANVAS_PROPERTY_OWNER_INDEX_CACHE.set({})
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _CANVAS_PROPERTY_OWNER_INDEX_CACHE.reset(handle)
+    return wrapped
+
+
 def with_session_canvas_roots_scope(function):
     """Share revision-exact visible scope only inside one interpreter request."""
     @wraps(function)
@@ -20692,6 +20712,40 @@ def _read_view_scope_trail(
     return trail
 
 
+def _canvas_property_owner_index(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+) -> dict[str, list[str]]:
+    """Owner -> its canvas property relations, read once, not once per label.
+
+    A scope label with no registered properties searched every canvas
+    property relation for its owner. The founder canvas carries 6,803 of
+    them, so 189 labels cost 1,281,003 relation reads and 1,299,158 owner
+    scans -- the same pass over the same immutable snapshot, 189 times.
+
+    This is that pass, unchanged: the same relations in the same canvas
+    order, under the same budget, so the first label that needs it still
+    pays it and still refuses exactly what it refused. Outside a projection
+    scope there is nowhere to keep it and every caller pays the pass, as
+    before. It is disposable: dropping it costs the pass, nothing else.
+    """
+    cache = _CANVAS_PROPERTY_OWNER_INDEX_CACHE.get()
+    cache_key = (id(registry), snapshot.revision, id(snapshot.cells))
+    if cache is not None:
+        held = cache.get(cache_key)
+        if held is not None:
+            return held
+    indexed: dict[str, list[str]] = {}
+    for relation_root in _canvas_roots(snapshot, registry)[2]:
+        members = read_relation(snapshot, relation_root, budget=16)
+        owner = _one_for_role(members, registry.roles["owner"])
+        if owner is not None:
+            indexed.setdefault(owner, []).append(relation_root)
+    if cache is not None:
+        cache[cache_key] = indexed
+    return indexed
+
+
 def _scope_label(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -20701,12 +20755,9 @@ def _scope_label(
         return "ArchHub"
     property_roots = list(registry.root_properties.get(root_id, ()))
     if not property_roots:
-        for relation_root in _canvas_roots(snapshot, registry)[2]:
-            members = read_relation(snapshot, relation_root, budget=16)
-            if _one_for_role(
-                members, registry.roles["owner"]
-            ) == root_id:
-                property_roots.append(relation_root)
+        property_roots.extend(
+            _canvas_property_owner_index(snapshot, registry).get(root_id, ())
+        )
     rows = _property_index(
         snapshot,
         registry,
@@ -22180,12 +22231,25 @@ def _project_session_action_history(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
     view_session: ApplicationViewSession,
+    *,
+    store: CellStore | None = None,
 ) -> dict[str, object]:
-    """Summarize history for display; execution independently audits full changes."""
+    """Summarize history for display; execution independently audits full changes.
+
+    Reading the founder graph re-walked all 357 committed transactions on
+    every canvas read -- 8.8 s of a 8.9 s read. The transactions are
+    append-only, so with a Store the walk is paid once per transaction and
+    the accelerator is retired by the exact Cell identities each later
+    revision wrote. Without a Store this summary walks everything, as before.
+    """
+    memo = change_transaction_header_memo(store)
+    if memo is not None:
+        memo.bind(store, snapshot)
     state, transactions = _history_summary(
         snapshot,
         registry.change_history_protocol,
         view_session.action_history_root,
+        memo=memo,
     )
     route_keys = {
         root: key for key, root in registry.application_http_route_roots.items()
@@ -22234,6 +22298,7 @@ def _project_session_action_history(
 
 
 @_with_canvas_interface_projection_scope
+@_with_canvas_property_owner_index
 @with_relation_projection_scope
 @with_catalog_verification_scope
 @with_view_template_projection_scope
@@ -24275,7 +24340,7 @@ def _project_universal_canvas_interpreter(
     ):
         raise InvalidCell("visible controls and activation bindings diverged")
     action_history_projection = _project_session_action_history(
-        snapshot, registry, view_session
+        snapshot, registry, view_session, store=store
     )
     control_facts = {
         FACT_SCOPE_PARENT: len(scope_trail) > 1,

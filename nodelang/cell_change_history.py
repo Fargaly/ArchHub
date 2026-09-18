@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Iterable, Mapping
+from weakref import WeakKeyDictionary, ref
+import threading
 import uuid
 
 from .cell_protocols import (
@@ -26,6 +28,7 @@ from .universal_cell import (
     CellStore,
     Conflict,
     InvalidCell,
+    MatchBudgetExceeded,
     Snapshot,
 )
 
@@ -118,6 +121,159 @@ class HistoryState:
     redo_root: str | None
     applied_roots: tuple[str, ...]
     redo_roots: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _HeaderReuse:
+    """One header a walk already proved, with the walk length it cost."""
+    header: _ChangeTransactionHeader
+    steps: int
+
+
+class ChangeTransactionHeaderMemo:
+    """Disposable reuse of headers of transactions the Store cannot rewrite.
+
+    commit_tracked_change writes a transaction once and never again: every
+    Cell it mints carries the transaction identity as its prefix -- the
+    relation root itself, its <token>:chain:<n> and <token>:incidence:<n>
+    Cells, <token>:base-revision, <token>:result-revision, <token>:timestamp
+    and <token>:change:<n>[:before|:after] -- and appending the transaction to
+    the history relation replaces only history-relation Cells. The header is
+    therefore a function of Cells under one prefix, and a Store advance that
+    touches none of them cannot change it.
+
+    This is acceleration in the SPEC 3.1.6-7 sense and nothing else. It holds
+    only what a generic walk already returned, it is bound to the exact
+    published head mapping it was proved against, a commit drops every entry
+    whose prefix that commit wrote, and a revision the memo cannot account
+    for one revision at a time empties it. Deleting the memo costs a walk and
+    changes no projected byte and no refusal: a hit re-applies the same
+    traversal budget the walk would have applied.
+    """
+
+    MAX_ACCOUNTED_REVISIONS = 4096
+
+    __slots__ = (
+        "_lock", "_cells", "_revision", "_entries", "hits", "misses",
+        "__weakref__",
+    )
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._cells = None
+        self._revision = None
+        self._entries: dict[str, _HeaderReuse] = {}
+        self.hits = 0
+        self.misses = 0
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def forget(self, touched: Iterable[str]) -> None:
+        """Drop every memoised transaction one commit wrote under."""
+        with self._lock:
+            if not self._entries:
+                return
+            doomed = set()
+            for cell_id in touched:
+                prefix = cell_id
+                while True:
+                    if prefix in self._entries:
+                        doomed.add(prefix)
+                    cut = prefix.rfind(":")
+                    if cut < 0:
+                        break
+                    prefix = prefix[:cut]
+            for root_id in doomed:
+                del self._entries[root_id]
+
+    def bind(self, store: CellStore, snapshot: Snapshot) -> None:
+        """Account for every revision between this memo and one snapshot.
+
+        A memo already bound to this exact published mapping is already
+        proved. Otherwise each intervening revision is retired by the exact
+        Cell identities it wrote; anything this cannot account for -- a
+        rewind, a reload, a gap wider than the accounted window -- empties
+        the memo instead of guessing.
+        """
+        with self._lock:
+            if snapshot.cells is self._cells:
+                return
+            revision = snapshot.revision
+            if (
+                self._revision is None
+                or type(revision) is not int
+                or revision <= self._revision
+                or revision - self._revision > self.MAX_ACCOUNTED_REVISIONS
+            ):
+                self._entries = {}
+            else:
+                try:
+                    for step in range(self._revision + 1, revision + 1):
+                        self.forget(store.revision_changes(step))
+                except Exception:
+                    self._entries = {}
+            self._cells = snapshot.cells
+            self._revision = revision
+
+    def get(self, snapshot: Snapshot, transaction_root: str, budget: int):
+        with self._lock:
+            if snapshot.cells is not self._cells:
+                return None
+            reuse = self._entries.get(transaction_root)
+        if reuse is None:
+            self.misses += 1
+            return None
+        # The walk this stands in for would have refused first.
+        if reuse.steps > budget:
+            raise MatchBudgetExceeded(
+                "relation projection exceeded %s chain cells" % budget
+            )
+        if reuse.header.change_count > budget:
+            raise InvalidCell("change transaction has an invalid change count")
+        self.hits += 1
+        return reuse.header
+
+    def put(self, snapshot, transaction_root, header, steps) -> None:
+        with self._lock:
+            if snapshot.cells is not self._cells:
+                return
+            self._entries[transaction_root] = _HeaderReuse(header, steps)
+
+
+_CHANGE_TRANSACTION_HEADER_MEMOS: WeakKeyDictionary[
+    CellStore, ChangeTransactionHeaderMemo
+] = WeakKeyDictionary()
+_CHANGE_TRANSACTION_HEADER_MEMO_LOCK = threading.RLock()
+
+
+def change_transaction_header_memo(
+    store: CellStore | None,
+) -> ChangeTransactionHeaderMemo | None:
+    """Return one Store's header memo, minting and arming it on demand."""
+    if store is None:
+        return None
+    with _CHANGE_TRANSACTION_HEADER_MEMO_LOCK:
+        memo = _CHANGE_TRANSACTION_HEADER_MEMOS.get(store)
+        if memo is not None:
+            return memo
+        memo = ChangeTransactionHeaderMemo()
+        _CHANGE_TRANSACTION_HEADER_MEMOS[store] = memo
+        memo_ref = ref(memo)
+
+        def invalidate(event) -> None:
+            active = memo_ref()
+            if active is not None:
+                active.forget(event.touched)
+
+        store.subscribe(invalidate)
+        return memo
+
+
+def forget_change_transaction_header_memo(store: CellStore) -> None:
+    """Delete one Store accelerator; the next projection rebuilds it."""
+    with _CHANGE_TRANSACTION_HEADER_MEMO_LOCK:
+        _CHANGE_TRANSACTION_HEADER_MEMOS.pop(store, None)
 
 
 def bootstrap_change_history_protocol(
@@ -300,16 +456,26 @@ def read_change_transaction(
     return _read_change_transaction(snapshot, protocol, transaction_root, budget=budget)
 
 
-def _read_change_transaction_header(snapshot, protocol, transaction_root, *, budget):
+def _read_change_transaction_header(
+    snapshot, protocol, transaction_root, *, budget, memo=None,
+    protocol_verified=False,
+):
+    """Read one presentation header, or reuse the walk that already proved it."""
+    if memo is not None:
+        reused = memo.get(snapshot, transaction_root, budget)
+        if reused is not None:
+            return reused
     return _read_change_transaction(
-        snapshot, protocol, transaction_root, budget=budget, summary_only=True
+        snapshot, protocol, transaction_root, budget=budget, summary_only=True,
+        protocol_verified=protocol_verified, memo=memo,
     )
 
 
 def _read_change_transaction(
     snapshot, protocol, transaction_root, *, budget, summary_only=False,
+    protocol_verified=False, memo=None,
 ):
-    if project_change_history_protocol(
+    if not protocol_verified and project_change_history_protocol(
         snapshot, protocol.root_id, budget=min(budget, 256)
     ) != protocol:
         raise InvalidCell("change-history protocol authority drifted")
@@ -376,12 +542,17 @@ def _read_change_transaction(
     if summary_only:
         if len(change_roots) != len(set(change_roots)):
             raise InvalidCell("change transaction repeats a change")
-        return _ChangeTransactionHeader(
+        header = _ChangeTransactionHeader(
             transaction_root, actor_root, session_root, operation_root,
             authority_root, scope_roots, interface_root, base_revision,
             result_revision, _terminal_text(snapshot, timestamp_root, "timestamp"),
             len(change_roots), undo_of, redo_of,
         )
+        if memo is not None:
+            # One chain Cell per member is exactly what this walk stepped
+            # through, so a reused header refuses the same budget it would.
+            memo.put(snapshot, transaction_root, header, len(members) or 1)
+        return header
     changes: list[CellChange] = []
     targets: set[str] = set()
     for change_root in change_roots:
@@ -480,15 +651,35 @@ def _history_summary(
     history_root: str,
     *,
     budget: int = 10_000,
+    memo: ChangeTransactionHeaderMemo | None = None,
 ) -> tuple[HistoryState, dict[str, _ChangeTransactionHeader]]:
     """Describe history candidates without materializing historical Cell images.
 
     Header and compensation order are validated here. Full change-body checks
     remain in history_state/read_change_transaction and every undo/redo path.
     This summary grants no execution authority and retains no projection cache.
+
+    The protocol authority is proved once, where the first transaction would
+    have proved it, and then holds for every transaction of this one summary:
+    they all read the same immutable snapshot. With a memo, that proof is the
+    only reason a reused header still answers for this revision.
     """
+    verified = []
+
+    def reader(snapshot_, protocol_, transaction_root, *, budget):
+        if not verified:
+            if project_change_history_protocol(
+                snapshot_, protocol_.root_id, budget=min(budget, 256)
+            ) != protocol_:
+                raise InvalidCell("change-history protocol authority drifted")
+            verified.append(True)
+        return _read_change_transaction_header(
+            snapshot_, protocol_, transaction_root, budget=budget, memo=memo,
+            protocol_verified=True,
+        )
+
     return _read_history_projection(
-        snapshot, protocol, history_root, budget, _read_change_transaction_header
+        snapshot, protocol, history_root, budget, reader
     )
 
 

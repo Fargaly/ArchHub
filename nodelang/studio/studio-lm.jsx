@@ -2263,6 +2263,26 @@ const canvasArrangePositions = (ids, positions, sizes, allIds, wires) => {
   return Object.fromEntries(stable.map(id => [id, {x:originX + local[id].x, y:originY + local[id].y}]));
 };
 
+// A drag is a gesture, not a save. Every mouseup used to publish its own signed
+// revision, so a burst of ten drags cost ten commits and ten receipts on the
+// founder graph. A burst is written ONCE now, after the canvas has been still
+// for this long; a drag inside the window extends it and merges into it.
+const CANVAS_LAYOUT_COALESCE_MS = 500;
+// The merged burst keeps the point each node started the BURST at, so a refusal
+// restores the last confirmed layout and one undo reverses the whole burst.
+const mergeCanvasLayoutBurst = (pending, drag) => {
+  if (!drag || !drag.next || !drag.before) return pending || null;
+  if (!pending) return {next:{...drag.next}, before:{...drag.before}, revision:drag.revision};
+  return {
+    next:{...pending.next, ...drag.next},
+    before:Object.fromEntries([...Object.entries(drag.before), ...Object.entries(pending.before)]),
+    revision:pending.revision,
+  };
+};
+// Nothing is written for a node the burst put back where it started.
+const canvasLayoutBurstMoves = burst => Object.entries(burst?.next || {})
+  .filter(([id, point]) => burst.before[id]?.x !== point.x || burst.before[id]?.y !== point.y);
+
 const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model }) => {
   const authorityState = useStudioProjection();
   const graph = authorityState?.graph || LM_GRAPH;
@@ -2300,6 +2320,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const dragRef = React.useRef(null);
   const wrapRef = React.useRef(null);
   const saveRef = React.useRef(null);
+  // What a burst of drags holds until the canvas goes still, and whether the chip
+  // must say so. Nothing here blocks the canvas: the preview is already drawn.
+  const burstRef = React.useRef(null);
+  const burstTimer = React.useRef(null);
   const suppressNodeClick = React.useRef(false);
   const MAX_LAYOUT_NODES = 256;
   const [selectedIds, setSelectedIds] = React.useState([]);
@@ -2308,6 +2332,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const [layoutError, setLayoutError] = React.useState('');
   const [layoutNeedsRefresh, setLayoutNeedsRefresh] = React.useState(false);
   const [undoLayout, setUndoLayout] = React.useState(null);
+  const [burstPending, setBurstPending] = React.useState(false);
   const revision = authorityState?.canvas?.revision;
   const scopeStillCurrent = () => alive.current && mountedScope.current === scopeKey &&
     studioCanvasScope(authority ? authority.getSnapshot()?.canvas : normal?.getSnapshot()?.topology?.canvas) === scopeKey;
@@ -2322,7 +2347,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       const next = {};
       let changed = Object.keys(p).length !== allNodes.length;
       allNodes.forEach(n => {
-        const held = p[n.id], protectedPreview = saving.current || !!dragRef.current?.before?.[n.id];
+        const held = p[n.id], protectedPreview = saving.current
+          || !!dragRef.current?.before?.[n.id] || !!burstRef.current?.next?.[n.id];
         next[n.id] = protectedPreview && held ? held : {x:n.x, y:n.y};
         if (!held || held.x !== next[n.id].x || held.y !== next[n.id].y) changed = true;
       });
@@ -2332,7 +2358,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   }, [allNodes, layoutBusy]);
   React.useEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; dragRef.current = null; };
+    return () => { flushRef.current(); alive.current = false; dragRef.current = null; };
   }, []);
 
   // A drag that ends while the previous save is still in flight is queued, not
@@ -2368,6 +2394,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     } catch (error) {
       if (scopeStillCurrent()) {
         restore(); setUndoLayout(null); queuedSave.current = null;
+        burstRef.current = null; clearLayoutBurstTimer(); setBurstPending(false);
         // A refused save used to lock every later save behind a manual refresh.
         // Refresh once here instead; the next drag starts from the reconciled canvas.
         let recovered = false;
@@ -2378,7 +2405,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         } catch (refreshError) { recovered = false; }
         if (scopeStillCurrent()) {
           setLayoutNeedsRefresh(!recovered);
-          setLayoutError((error.message || 'Positions could not be confirmed.') + (recovered
+          setLayoutError((error.message || 'Positions could not be confirmed.')
+            + ' The last confirmed layout was restored.' + (recovered
             ? ' The canvas was reloaded; move the node again.'
             : ' Refresh the canvas to reconcile any saved positions.'));
         }
@@ -2397,6 +2425,50 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     }
   };
   saveRef.current = savePositions;
+
+  const clearLayoutBurstTimer = () => {
+    if (burstTimer.current) { clearTimeout(burstTimer.current); burstTimer.current = null; }
+  };
+  // One write for everything moved in the burst, against the points the burst
+  // started from. A save already in flight is not interrupted: the burst waits
+  // one more window and goes out whole after it.
+  const flushLayoutBurst = () => {
+    clearLayoutBurstTimer();
+    const burst = burstRef.current;
+    if (!burst) return false;
+    if ((saving.current || blocked) && alive.current) {
+      burstTimer.current = setTimeout(() => flushRef.current(), CANVAS_LAYOUT_COALESCE_MS);
+      return false;
+    }
+    burstRef.current = null;
+    if (alive.current) setBurstPending(false);
+    const moves = canvasLayoutBurstMoves(burst);
+    if (!moves.length) return false;
+    saveRef.current(Object.fromEntries(moves), burst.before, burst.revision);
+    return true;
+  };
+  const flushRef = React.useRef(null);
+  flushRef.current = flushLayoutBurst;
+  // The canvas stays interactive: the drag is merged and the window restarted,
+  // and the write happens in the background when the canvas goes still.
+  const armLayoutBurst = drag => {
+    burstRef.current = mergeCanvasLayoutBurst(burstRef.current, drag);
+    setBurstPending(!!canvasLayoutBurstMoves(burstRef.current).length);
+    clearLayoutBurstTimer();
+    burstTimer.current = setTimeout(() => flushRef.current(), CANVAS_LAYOUT_COALESCE_MS);
+  };
+  const armLayoutRef = React.useRef(null);
+  armLayoutRef.current = armLayoutBurst;
+  // Leaving the canvas, closing the window and a quit request all write first.
+  React.useEffect(() => {
+    const leave = () => flushRef.current();
+    window.addEventListener('beforeunload', leave);
+    window.addEventListener('pagehide', leave);
+    return () => {
+      window.removeEventListener('beforeunload', leave);
+      window.removeEventListener('pagehide', leave);
+    };
+  }, []);
 
   const [pan, setPan] = React.useState({ x: 14, y: 12 });
   const [zoom, setZoom] = React.useState(0.66);
@@ -2494,7 +2566,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       setLayoutError(!canSaveLayout ? 'This connection cannot save node positions.' : 'Move or arrange at most 256 nodes at a time.');
       return;
     }
-    if (!saving.current && ids.some(root => !allNodes.some(node => node.id === root && node.x === positions[root]?.x && node.y === positions[root]?.y))) {
+    const ourPreview = root => {
+      const pending = burstRef.current?.next?.[root];
+      return !!pending && pending.x === positions[root]?.x && pending.y === positions[root]?.y;
+    };
+    if (!saving.current && ids.some(root => !ourPreview(root) && !allNodes.some(node => node.id === root && node.x === positions[root]?.x && node.y === positions[root]?.y))) {
       setLayoutError('The canvas is receiving new positions. Try the drag again.'); return;
     }
     const before = Object.fromEntries(ids.filter(root => positions[root]).map(root => [root, {...positions[root]}]));
@@ -2521,7 +2597,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       const drag = dragRef.current;
       dragRef.current = null;
       if (drag?.mode === 'nodes' && drag.last) {
-        saveRef.current(drag.last, drag.before, drag.revision);
+        armLayoutRef.current({next:drag.last, before:drag.before, revision:drag.revision});
       }
     };
     document.addEventListener('mousemove', onMove);
@@ -2649,6 +2725,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     setSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
   };
   const arrangeIds = async ids => {
+    if (flushLayoutBurst()) {
+      setLayoutError('Saving the moved nodes first. Try Arrange again.'); return;
+    }
     if (!scopeStillCurrent() || blocked || saving.current || !ids.length) return;
     if (allNodes.some(node => positions[node.id]?.x !== node.x || positions[node.id]?.y !== node.y)) {
       setLayoutError('The canvas is receiving new positions. Try Arrange again.'); return;
@@ -2664,6 +2743,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     allNodes.some(node => node.id === id && node.x === point.x && node.y === point.y) &&
     positions[id]?.x === point.x && positions[id]?.y === point.y);
   const undoPositions = () => {
+    if (flushLayoutBurst()) {
+      setLayoutError('Saving the moved nodes first. Try Reset positions again.'); return;
+    }
     if (undoAvailable && !blocked) savePositions(undoLayout.before, undoLayout.after, revision, false);
   };
   const refreshCanvas = async () => {
@@ -2805,12 +2887,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       </details>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
-      {(layoutError || authorityState?.error || wireError || layoutBusy || authorityState?.pending || wireStart) &&
+      {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart) &&
       <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
         display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
         <span role={authorityState?.error || wireError || layoutError ? 'alert' : 'status'} style={{fontSize:12,
           color:authorityState?.error || wireError || layoutError ? LM.err : LM.inkSoft, overflowWrap:'anywhere'}}>
-          {layoutError || authorityState?.error || wireError || (layoutBusy ? 'Saving positions…' :
+          {layoutError || authorityState?.error || wireError || (layoutBusy || burstPending ? 'Saving positions…' :
             authorityState?.pending ? 'Saving…' : 'Choose an input for ' + wireStart.port.label)}
         </span>
         {wireStart && <button disabled={blocked} onClick={() => setWireStart(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>✕</button>}

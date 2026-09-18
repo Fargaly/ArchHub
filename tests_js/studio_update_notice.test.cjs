@@ -120,7 +120,8 @@ async function mountStrip(server) {
 async function mountHeaderControls(server) {
   const jsx = read('nodelang/studio/studio-lm.jsx');
   const header = jsx.slice(jsx.indexOf('\nconst WsHeader = '), jsx.indexOf('\nconst WsTab = '));
-  assert.equal(/<ApplicationUpdateControls/.test(header), false, 'the Workspace header draws no update controls');
+  assert.match(header, /<ApplicationUpdateControls compact\/>/,
+    'the Workspace header draws the compact update icons (founder, 2026-09-18)');
   assert.match(definition(jsx, 'SettingsAbout'), /<ApplicationUpdateControls\/>/, 'Settings > About carries the update controls');
   const names = ['smallBtn', 'visuallyHiddenStyle', 'StudioHeaderIcon', 'ApplicationUpdateControls'];
   if (jsx.includes('\nconst useRestartConfirmation = ')) names.unshift('useRestartConfirmation');

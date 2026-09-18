@@ -219,8 +219,8 @@ test('canvas menu: the design rows in order with their shortcuts; rows without a
 test('update controls: not in the Workspace header; in Settings > About a pending request and an unavailable restart are dashed and say why', async () => {
   const header = studio => {
     const canvas = [...studio.doc.querySelectorAll('button[aria-pressed]')].find(button => button.textContent.trim() === 'Canvas');
-    assert.equal(canvas.parentElement.parentElement.querySelector('section[aria-label="Application release updates"]') === null, true,
-      'the Workspace header draws no update controls (design studio-lm.jsx:1146-1148)');
+    assert.ok(canvas.parentElement.parentElement.querySelector('section[aria-label="Application release updates"]'),
+      'the Workspace header draws the update icons (founder, 2026-09-18: bring them back)');
     if (!studio.doc.querySelector('section[aria-label="Application release updates"]')) {
       studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:',', ctrlKey:true, bubbles:true})));
       const about = [...studio.doc.querySelectorAll('button')].find(button => button.textContent.trim().startsWith('About'));

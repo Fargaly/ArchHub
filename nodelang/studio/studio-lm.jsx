@@ -2070,6 +2070,9 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
     {/* fork and save as skill have no binding in this build: drawn, disabled, and saying so. */}
     <HoverBtn disabled title="Fork is not available in this build">fork</HoverBtn>
     <HoverBtn primary disabled title="Save as skill is not available in this build">save as skill</HoverBtn>
+    {/* The update icons stay in the header (founder, 2026-09-18: "just bring the update icons back").
+        Settings > About keeps the full controls; the restart still needs the confirming second click. */}
+    <ApplicationUpdateControls compact/>
   </div>
 );
 

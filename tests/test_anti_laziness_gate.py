@@ -74,7 +74,9 @@ def test_local_verdict_blocks_lazy():
 
 def test_local_verdict_allows_proven():
     ev = {
-        "last_message": "Done. Endpoint returns 200, tests green.",
+        # v2: proof satisfies the proof-demand; the anti-sycophancy tax also
+        # needs a limitation / all-clear, so this proven claim states one.
+        "last_message": "Done. Endpoint returns 200, tests green; verified end-to-end.",
         "touched_files": ["app/x.py"],
         "session_signals": {"ran_tests": True, "wrote_files": True},
         "file_contents": {"app/x.py": "def x():\n    return 1\n"},
@@ -105,7 +107,7 @@ def test_main_allows_diligent_transcript(tmp_path, monkeypatch, capsys):
     tpath = tmp_path / "ok.jsonl"
     tpath.write_text("\n".join(json.dumps(e) for e in [
         _assistant_tool("Bash", {"command": "python -m pytest -q"}),
-        _assistant_text("Done. Tests green."),
+        _assistant_text("Done. Tests green; nothing outstanding."),
     ]), encoding="utf-8")
     payload = {"session_id": "t-ok", "transcript_path": str(tpath),
                "cwd": str(tmp_path), "stop_hook_active": False}

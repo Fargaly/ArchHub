@@ -120,6 +120,10 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'nodelang/assets/lucide-icons-1.25.0.json', 'nodelang/data/public_runtime_map.json',
             'nodelang/samples/sample-plan.dxf'
         )) { return $true }
+        # The public website the app serves carries brand files and the three OFL faces it
+        # renders with, beside their licences. They are data, not code: named exactly, so the
+        # generic allowlist never turns into "any binary under nodelang".
+        if ($Path -cmatch '^nodelang/data/website/(favicon\.(ico|svg)|og\.png|fonts/[A-Za-z0-9][A-Za-z0-9._-]*\.(woff2|txt))$') { return $true }
         return $Path -cmatch '^nodelang/.+\.(py|jsx|js|mjs|cjs|html|png)$'
     }
     return $false

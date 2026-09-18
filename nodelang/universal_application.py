@@ -15704,6 +15704,7 @@ def restore_universal_application(
             standard_library.lifecycle_protocol.states["published"]
         ),
         read_action_root=authorization.protocol.actions["read"],
+        adopt=True,
     )
     snapshot = store.snapshot()
     projected_routes = {
@@ -15711,7 +15712,14 @@ def restore_universal_application(
         for route in list_cloud_routes(snapshot, cloud_route_protocol)
     }
     active_route_keys = set(projected_routes) - _RETIRED_APPLICATION_HTTP_ROUTE_KEYS
-    if active_route_keys != expected_active_route_keys | website_route_keys:
+    # A website adopts the current definition through its own revision
+    # path above. A graph that still holds an earlier published revision
+    # is read as it stands, exactly as the check before the website build
+    # reads it, and is never refused for holding the pages it published.
+    if active_route_keys not in (
+        expected_active_route_keys | website_route_keys,
+        expected_active_route_keys | core_website_route_keys,
+    ):
         raise InvalidCell("persisted public website route graph drifted")
     active_projected_routes = {
         key: root

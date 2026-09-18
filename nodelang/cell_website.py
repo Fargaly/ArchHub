@@ -613,6 +613,218 @@ def _page_specs(offer_display=OFFER_DEFAULT_DISPLAY, releases=()):
     }
 
 
+NAV_LABELS = (
+    ("Features", "/website/features"),
+    ("Connectors", "/website/docs/connectors"),
+    ("Brain", "/website/docs/brain"),
+    ("Security", "/website/security"),
+    ("Pricing", "/website/pricing"),
+)
+
+
+def _site_brand(element) -> str:
+    return element(
+        "a", "site-brand", attrs={"href": "/website"},
+        children=(
+            element("span", "site-logo", attrs={"aria-hidden": "true"}, children=(
+                element("span", "site-logo-eye"),
+            )),
+            element("span", "site-brand-word", children=(
+                element("span", text="Arch"),
+                element("span", "site-brand-mark", text="Hub"),
+            )),
+        ),
+    )
+
+
+def _site_navigation(element, path: str, token: str, release_label: str) -> str:
+    links = []
+    for index, (label, href) in enumerate(NAV_LABELS):
+        attributes = {"href": href}
+        if path == href:
+            attributes["aria-current"] = "page"
+        link = element(
+            "a", "site-nav-link", text=label, attrs=attributes,
+        )
+        links.append(element("li", children=(link,)))
+    nav_list = element("ul", "site-nav-links", children=links)
+    access_attributes = {"href": "/website/signin"}
+    if path == "/website/signin":
+        access_attributes["aria-current"] = "page"
+    access = element(
+        "a", "site-access", text="Sign in", attrs=access_attributes,
+    )
+    create = element(
+        "a", "site-access site-access-primary", text="Create account",
+        attrs={"href": "/website/signin"},
+    )
+    version = (
+        (element("span", "site-ver", text=release_label),)
+        if release_label else ()
+    )
+    return element(
+        "nav", "site-nav", attrs={"aria-label": "Primary"},
+        children=(_site_brand(element), nav_list, *version, access, create),
+        root_id="app:website:nav:%s" % token,
+    )
+
+
+def _docs_inline(element, value: str) -> tuple[str, ...]:
+    """Plain text and code spans, in reading order."""
+    parts = value.split(_CODE_MARK)
+    if len(parts) % 2 == 0:
+        raise InvalidCell("docs text has an unclosed code span")
+    return tuple(
+        element("span", "site-doc-code" if index % 2 else "", text=part)
+        for index, part in enumerate(parts)
+        if part
+    )
+
+
+def _docs_blocks(element, text: str) -> tuple[str, ...]:
+    """The docs text as headings, paragraphs, lists and a table."""
+    def inline(value: str) -> tuple[str, ...]:
+        return _docs_inline(element, value)
+
+    lines = text.split(chr(10))
+    blocks = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.strip():
+            index += 1
+        elif line.startswith("## "):
+            blocks.append(element("h2", "site-doc-h2", text=line[3:]))
+            index += 1
+        elif line.startswith("|"):
+            rows = []
+            while index < len(lines) and lines[index].startswith("|"):
+                cells = [
+                    cell.strip()
+                    for cell in lines[index].strip().strip("|").split("|")
+                ]
+                if not all(set(cell) <= set("- :") for cell in cells):
+                    rows.append(cells)
+                index += 1
+            blocks.append(element(
+                "div", "site-doc-table", attrs={"role": "table"},
+                children=tuple(
+                    element(
+                        "div",
+                        "site-doc-row site-doc-row-head" if number == 0
+                        else "site-doc-row",
+                        attrs={"role": "row"},
+                        children=tuple(
+                            element(
+                                "span", "site-doc-cell",
+                                attrs={"role": (
+                                    "columnheader" if number == 0 else "cell"
+                                )},
+                                children=inline(cell),
+                            )
+                            for cell in row
+                        ),
+                    )
+                    for number, row in enumerate(rows)
+                ),
+            ))
+        elif line.startswith("- ") or _DOC_STEP.match(line):
+            steps = bool(_DOC_STEP.match(line))
+            items = []
+            while index < len(lines) and (
+                lines[index].startswith("- ") or _DOC_STEP.match(lines[index])
+            ):
+                item = lines[index]
+                if steps:
+                    number, _, body = item.partition(". ")
+                    children = (
+                        element("span", "site-doc-step", text=number),
+                        *inline(body),
+                    )
+                else:
+                    children = inline(item[2:])
+                items.append(element("li", "site-doc-item", children=children))
+                index += 1
+            blocks.append(element(
+                "ul",
+                "site-doc-list site-doc-list-steps" if steps else "site-doc-list",
+                children=tuple(items),
+            ))
+        else:
+            paragraph = []
+            while index < len(lines) and lines[index].strip() and not (
+                lines[index].startswith(("## ", "|", "- "))
+                or _DOC_STEP.match(lines[index])
+            ):
+                paragraph.append(lines[index].strip())
+                index += 1
+            blocks.append(element(
+                "p", "site-doc-p", children=inline(" ".join(paragraph)),
+            ))
+    return tuple(blocks)
+
+
+def _compose_docs_pages(
+    element,
+    scalar,
+    *,
+    footer: str,
+    release_label: str,
+    page_roots: dict,
+    route_title_roots: dict,
+    route_path_roots: dict,
+    wanted=None,
+) -> None:
+    """Compose one page per docs text; wanted limits which pages are built."""
+    docs = _docs_pages()
+    for key, (doc_title, description, text) in docs.items():
+        path = "/website/docs/%s" % key
+        if wanted is not None and path not in wanted:
+            continue
+        token = _part(path)
+        title_root = scalar("app:website:text:%s:title" % token, doc_title)
+        path_root = scalar("app:website:path:%s" % token, path)
+        route_title_roots[path] = title_root
+        route_path_roots[path] = path_root
+        index_links = []
+        for other_key, (other_title, _, _) in docs.items():
+            other_path = "/website/docs/%s" % other_key
+            attributes = {"href": other_path}
+            if other_path == path:
+                attributes["aria-current"] = "page"
+            index_links.append(element("li", children=(
+                element("a", "site-doc-link", text=other_title, attrs=attributes),
+            )))
+        main = element(
+            "main", "site-page-main", children=(
+                element("header", "site-page-header", children=(
+                    element("p", "site-kicker", text="ArchHub / docs"),
+                    element("h1", "site-page-title", text_root=title_root),
+                    element("p", "site-page-lede", text=description),
+                )),
+                element("div", "site-doc-layout", children=(
+                    element(
+                        "nav", "site-doc-nav", attrs={"aria-label": "Docs"},
+                        children=(
+                            element("p", "site-doc-index-head", text="Docs"),
+                            element("ul", "site-doc-index", children=tuple(index_links)),
+                        ),
+                    ),
+                    element(
+                        "article", "site-doc-body",
+                        children=_docs_blocks(element, text),
+                    ),
+                )),
+            ),
+            root_id="app:website:main:%s" % token,
+        )
+        page_roots[path] = element(
+            "div", "site-shell", children=(
+                _site_navigation(element, path, token, release_label), main, footer,
+            ),
+            root_id="app:website:page:%s" % token,
+        )
+
 def build_universal_website(
     store: CellStore,
     *,
@@ -680,58 +892,11 @@ def build_universal_website(
             attr_roots={"href": download.artifact_root},
         ),)
 
-    nav_labels = (
-        ("Features", "/website/features"),
-        ("Connectors", "/website/docs/connectors"),
-        ("Brain", "/website/docs/brain"),
-        ("Security", "/website/security"),
-        ("Pricing", "/website/pricing"),
-    )
-
     def brand() -> str:
-        return element(
-            "a", "site-brand", attrs={"href": "/website"},
-            children=(
-                element("span", "site-logo", attrs={"aria-hidden": "true"}, children=(
-                    element("span", "site-logo-eye"),
-                )),
-                element("span", "site-brand-word", children=(
-                    element("span", text="Arch"),
-                    element("span", "site-brand-mark", text="Hub"),
-                )),
-            ),
-        )
+        return _site_brand(element)
 
     def navigation(path: str, token: str) -> str:
-        links = []
-        for index, (label, href) in enumerate(nav_labels):
-            attributes = {"href": href}
-            if path == href:
-                attributes["aria-current"] = "page"
-            link = element(
-                "a", "site-nav-link", text=label, attrs=attributes,
-            )
-            links.append(element("li", children=(link,)))
-        nav_list = element("ul", "site-nav-links", children=links)
-        access_attributes = {"href": "/website/signin"}
-        if path == "/website/signin":
-            access_attributes["aria-current"] = "page"
-        access = element(
-            "a", "site-access", text="Sign in", attrs=access_attributes,
-        )
-        create = element(
-            "a", "site-access site-access-primary", text="Create account",
-            attrs={"href": "/website/signin"},
-        )
-        version = (
-            (element("span", "site-ver", text=release_label),)
-            if release_label else ()
-        )
-        return element(
-            "nav", "site-nav", attrs={"aria-label": "Primary"},
-            children=(brand(), nav_list, *version, access, create),
-            root_id="app:website:nav:%s" % token,
-        )
+        return _site_navigation(element, path, token, release_label)
 
     def link(class_name: str, text: str, href: str) -> str:
         return element("a", class_name, text=text, attrs={"href": href})
@@ -1386,138 +1551,15 @@ def build_universal_website(
             root_id="app:website:page:%s" % token,
         )
 
-    docs = _docs_pages()
-
-    def inline(value: str) -> tuple[str, ...]:
-        """Plain text and code spans, in reading order."""
-        parts = value.split(_CODE_MARK)
-        if len(parts) % 2 == 0:
-            raise InvalidCell("docs text has an unclosed code span")
-        return tuple(
-            element("span", "site-doc-code" if index % 2 else "", text=part)
-            for index, part in enumerate(parts)
-            if part
-        )
-
-    def docs_blocks(text: str) -> tuple[str, ...]:
-        """The docs text as headings, paragraphs, lists and a table."""
-        lines = text.split(chr(10))
-        blocks = []
-        index = 0
-        while index < len(lines):
-            line = lines[index]
-            if not line.strip():
-                index += 1
-            elif line.startswith("## "):
-                blocks.append(element("h2", "site-doc-h2", text=line[3:]))
-                index += 1
-            elif line.startswith("|"):
-                rows = []
-                while index < len(lines) and lines[index].startswith("|"):
-                    cells = [
-                        cell.strip()
-                        for cell in lines[index].strip().strip("|").split("|")
-                    ]
-                    if not all(set(cell) <= set("- :") for cell in cells):
-                        rows.append(cells)
-                    index += 1
-                blocks.append(element(
-                    "div", "site-doc-table", attrs={"role": "table"},
-                    children=tuple(
-                        element(
-                            "div",
-                            "site-doc-row site-doc-row-head" if number == 0
-                            else "site-doc-row",
-                            attrs={"role": "row"},
-                            children=tuple(
-                                element(
-                                    "span", "site-doc-cell",
-                                    attrs={"role": (
-                                        "columnheader" if number == 0 else "cell"
-                                    )},
-                                    children=inline(cell),
-                                )
-                                for cell in row
-                            ),
-                        )
-                        for number, row in enumerate(rows)
-                    ),
-                ))
-            elif line.startswith("- ") or _DOC_STEP.match(line):
-                steps = bool(_DOC_STEP.match(line))
-                items = []
-                while index < len(lines) and (
-                    lines[index].startswith("- ") or _DOC_STEP.match(lines[index])
-                ):
-                    item = lines[index]
-                    if steps:
-                        number, _, body = item.partition(". ")
-                        children = (
-                            element("span", "site-doc-step", text=number),
-                            *inline(body),
-                        )
-                    else:
-                        children = inline(item[2:])
-                    items.append(element("li", "site-doc-item", children=children))
-                    index += 1
-                blocks.append(element(
-                    "ul",
-                    "site-doc-list site-doc-list-steps" if steps else "site-doc-list",
-                    children=tuple(items),
-                ))
-            else:
-                paragraph = []
-                while index < len(lines) and lines[index].strip() and not (
-                    lines[index].startswith(("## ", "|", "- "))
-                    or _DOC_STEP.match(lines[index])
-                ):
-                    paragraph.append(lines[index].strip())
-                    index += 1
-                blocks.append(element(
-                    "p", "site-doc-p", children=inline(" ".join(paragraph)),
-                ))
-        return tuple(blocks)
-
-    for key, (doc_title, description, text) in docs.items():
-        path = "/website/docs/%s" % key
-        token = _part(path)
-        title_root = scalar("app:website:text:%s:title" % token, doc_title)
-        path_root = scalar("app:website:path:%s" % token, path)
-        route_title_roots[path] = title_root
-        route_path_roots[path] = path_root
-        index_links = []
-        for other_key, (other_title, _, _) in docs.items():
-            other_path = "/website/docs/%s" % other_key
-            attributes = {"href": other_path}
-            if other_path == path:
-                attributes["aria-current"] = "page"
-            index_links.append(element("li", children=(
-                element("a", "site-doc-link", text=other_title, attrs=attributes),
-            )))
-        main = element(
-            "main", "site-page-main", children=(
-                element("header", "site-page-header", children=(
-                    element("p", "site-kicker", text="ArchHub / docs"),
-                    element("h1", "site-page-title", text_root=title_root),
-                    element("p", "site-page-lede", text=description),
-                )),
-                element("div", "site-doc-layout", children=(
-                    element(
-                        "nav", "site-doc-nav", attrs={"aria-label": "Docs"},
-                        children=(
-                            element("p", "site-doc-index-head", text="Docs"),
-                            element("ul", "site-doc-index", children=tuple(index_links)),
-                        ),
-                    ),
-                    element("article", "site-doc-body", children=docs_blocks(text)),
-                )),
-            ),
-            root_id="app:website:main:%s" % token,
-        )
-        page_roots[path] = element(
-            "div", "site-shell", children=(navigation(path, token), main, footer),
-            root_id="app:website:page:%s" % token,
-        )
+    _compose_docs_pages(
+        element,
+        scalar,
+        footer=footer,
+        release_label=release_label,
+        page_roots=page_roots,
+        route_title_roots=route_title_roots,
+        route_path_roots=route_path_roots,
+    )
     ui.commit()
 
     placeholder = CellBatch(store)
@@ -1763,6 +1805,192 @@ def read_universal_website(
     )
 
 
+# The route sets this graph has ever published, oldest first. A persisted
+# website matches exactly one of them. Anything else was changed by hand,
+# outside the revision path, and is refused rather than repaired.
+WEBSITE_DEFINITION_REVISIONS = (CORE_WEBSITE_ROUTES, PUBLIC_WEBSITE_ROUTES)
+WEBSITE_REVISION_PREFIX = "app:website:definition:revision"
+
+
+def website_definition_revisions(snapshot: Snapshot) -> tuple[str, ...]:
+    """Every website revision this graph records, oldest first."""
+    records = []
+    index = 1
+    while True:
+        root_id = "%s:%d" % (WEBSITE_REVISION_PREFIX, index)
+        if root_id not in snapshot.cells:
+            return tuple(records)
+        records.append(_text(snapshot, root_id))
+        index += 1
+
+
+def _website_revision_record(index, *, previous, base_revision, routes, adopted):
+    return chr(10).join((
+        "website definition revision %d" % index,
+        "previous: %s" % (previous or "-"),
+        "base-revision: %d" % base_revision,
+        "routes: %s" % ",".join(routes),
+        "adopted: %s" % (",".join(adopted) or "-"),
+    ))
+
+
+def _published_website_revision(paths) -> int:
+    for index, routes in enumerate(WEBSITE_DEFINITION_REVISIONS, start=1):
+        if set(paths) == set(routes):
+            return index
+    raise InvalidCell(
+        "persisted website is not a published website revision; a website "
+        "changed outside the revision path is refused, never repaired"
+    )
+
+
+def adopt_website_definition_revision(
+    store: CellStore,
+    website: UniversalWebsiteBuild,
+    *,
+    application_root: str,
+    application_member_role: str,
+    cloud_route_protocol: CloudRouteProtocol,
+    published_lifecycle_root: str,
+    read_action_root: str,
+) -> tuple[str, ...]:
+    """Publish the current definition over a persisted website, as a revision.
+
+    The pages the graph already published are never rewritten. They stay the
+    Cells of the revision that published them and remain readable at their own
+    Store revision; this only adds the pages the newer revision declares, and
+    records what it added. A website that does not match a published revision
+    is refused, so a hand edit is never adopted as if it were one.
+    """
+    snapshot = store.snapshot()
+    protocol = website.protocol
+    index = _published_website_revision(tuple(website.route_roots))
+    target = len(WEBSITE_DEFINITION_REVISIONS)
+    if index == target:
+        return ()
+    wanted = tuple(
+        path for path in WEBSITE_DEFINITION_REVISIONS[target - 1]
+        if path not in website.route_roots
+    )
+    if any(path not in DOCS_WEBSITE_ROUTES for path in wanted):
+        raise InvalidCell(
+            "website revision adds a page this adoption cannot compose"
+        )
+    footer_root = "app:website:footer"
+    if footer_root not in snapshot.cells:
+        raise InvalidCell("persisted website has no footer to publish under")
+    ui = UIBuilder(store, website.ui_protocol)
+
+    def scalar(root_id: str, value: str) -> str:
+        ui.batch.add(_terminal(root_id, value))
+        return root_id
+
+    def element(tag, class_name="", text=None, text_root=None, attrs=None,
+                children=(), root_id=None, attr_roots=None):
+        return ui.element(
+            tag,
+            class_name=class_name,
+            text=text,
+            text_root=text_root,
+            attributes=attrs,
+            attribute_roots=attr_roots,
+            children=children,
+            element_id=root_id,
+        )
+
+    released = tuple(changelog(snapshot))
+    release_label = released[-1].revision if released else ""
+    page_roots: dict[str, str] = {}
+    route_title_roots: dict[str, str] = {}
+    route_path_roots: dict[str, str] = {}
+    _compose_docs_pages(
+        element,
+        scalar,
+        footer=footer_root,
+        release_label=release_label,
+        page_roots=page_roots,
+        route_title_roots=route_title_roots,
+        route_path_roots=route_path_roots,
+        wanted=frozenset(wanted),
+    )
+    previous_root = None
+    for number in range(1, index + 1):
+        root_id = "%s:%d" % (WEBSITE_REVISION_PREFIX, number)
+        if root_id not in snapshot.cells:
+            scalar(root_id, _website_revision_record(
+                number,
+                previous=previous_root,
+                base_revision=snapshot.revision,
+                routes=WEBSITE_DEFINITION_REVISIONS[number - 1],
+                adopted=(),
+            ))
+        previous_root = root_id
+    scalar("%s:%d" % (WEBSITE_REVISION_PREFIX, target), _website_revision_record(
+        target,
+        previous=previous_root,
+        base_revision=snapshot.revision,
+        routes=WEBSITE_DEFINITION_REVISIONS[target - 1],
+        adopted=wanted,
+    ))
+    ui.commit()
+
+    cloud_route_roots = {}
+    for path in wanted:
+        cloud_route_roots[path] = build_cloud_route(
+            store,
+            cloud_route_protocol,
+            route_id="app:website:http-route:%s" % _part(path),
+            method="GET",
+            path_template=path,
+            action_root=read_action_root,
+            object_root=page_roots[path],
+            interface_root=website.ui_protocol.root_id,
+            purpose_root=WEBSITE_PURPOSE_ROOT,
+            audience_root=WEBSITE_AUDIENCE_ROOT,
+            classification_root=WEBSITE_CLASSIFICATION_ROOT,
+            lifecycle_state_root=published_lifecycle_root,
+            resource_lineage_roots=(application_root, WEBSITE_ROOT),
+        )
+    relation_batch = CellBatch(store)
+    route_roots = {}
+    for path in wanted:
+        root_id = "app:website:route:%s" % _part(path)
+        route_roots[path] = root_id
+        relation_batch.relation((
+            (protocol.role("website"), WEBSITE_ROOT),
+            (protocol.role("path"), route_path_roots[path]),
+            (protocol.role("page"), page_roots[path]),
+            (protocol.role("http-route"), cloud_route_roots[path]),
+            (protocol.role("title"), route_title_roots[path]),
+        ), relation_id=root_id)
+    relation_batch.commit()
+
+    snapshot = store.snapshot()
+    website_patch = prepare_append_relation_members(
+        snapshot,
+        WEBSITE_ROOT,
+        ((protocol.role("route"), root) for root in route_roots.values()),
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision,
+        create=website_patch.create,
+        replace=website_patch.replace,
+    )
+    snapshot = store.snapshot()
+    application_patch = prepare_append_relation_members(
+        snapshot,
+        application_root,
+        ((application_member_role, root) for root in cloud_route_roots.values()),
+        budget=100_000,
+    )
+    store.commit(
+        snapshot.revision,
+        create=application_patch.create,
+        replace=application_patch.replace,
+    )
+    return wanted
+
 def ensure_universal_website(
     store: CellStore,
     *,
@@ -1774,6 +2002,10 @@ def ensure_universal_website(
     published_lifecycle_root: str,
     read_action_root: str,
     offer=None,
+    # Adoption is a separate act, never a side effect of reading the
+    # graph: a caller that only wants the persisted website leaves this
+    # alone and the graph is not written to at all.
+    adopt: bool = False,
 ) -> UniversalWebsiteBuild:
     snapshot = store.snapshot()
     if WEBSITE_ROOT not in snapshot.cells:
@@ -1793,18 +2025,38 @@ def ensure_universal_website(
             read_action_root=read_action_root,
             offer=offer,
         )
-    return read_universal_website(
-        snapshot,
-        project_website_protocol(snapshot),
-        WEBSITE_ROOT,
-        ui_protocol=ui_protocol,
+    def projected(at) -> UniversalWebsiteBuild:
+        return read_universal_website(
+            at,
+            project_website_protocol(at),
+            WEBSITE_ROOT,
+            ui_protocol=ui_protocol,
+            application_root=application_root,
+            application_member_role=application_member_role,
+            map_registry=map_registry,
+            cloud_route_protocol=cloud_route_protocol,
+            published_lifecycle_root=published_lifecycle_root,
+            read_action_root=read_action_root,
+        )
+
+    # The persisted website is verified as it stands before anything is
+    # written, so a website changed outside the revision path is refused
+    # and nothing is adopted over it.
+    website = projected(snapshot)
+    if not adopt:
+        return website
+    adopted = adopt_website_definition_revision(
+        store,
+        website,
         application_root=application_root,
         application_member_role=application_member_role,
-        map_registry=map_registry,
         cloud_route_protocol=cloud_route_protocol,
         published_lifecycle_root=published_lifecycle_root,
         read_action_root=read_action_root,
     )
+    if not adopted:
+        return website
+    return projected(store.snapshot())
 
 
 def project_universal_website_document(
@@ -1860,9 +2112,11 @@ __all__ = [
     "PUBLIC_RELEASE",
     "PUBLIC_WEBSITE_ROUTES",
     "REPOSITORY_URL",
+    "WEBSITE_DEFINITION_REVISIONS",
     "UniversalWebsiteBuild",
     "WebsiteDomainBinding",
     "WebsiteProtocol",
+    "adopt_website_definition_revision",
     "build_universal_website",
     "ensure_universal_website",
     "host_operation_counts",
@@ -1870,6 +2124,7 @@ __all__ = [
     "project_universal_website_document",
     "project_website_protocol",
     "read_universal_website",
+    "website_definition_revisions",
     "website_download",
     "website_external_links",
 ]

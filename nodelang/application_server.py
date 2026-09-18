@@ -918,6 +918,17 @@ class _BrowserCanvasProjectionBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class _BrowserCanvasLayoutLease:
+    """Exactly the canvas facts a layout precondition reads, at one revision."""
+    session_root: str
+    subject_root: str
+    view_root: str
+    tenant_root: str
+    assurance_root: str
+    layout: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
 class _CleanBrowserSessionBinding:
     session_root: str
     subject_root: str
@@ -928,6 +939,22 @@ class _CleanBrowserSessionBinding:
 
 class CleanGestureRefused(Exception):
     """A gesture carrying facts this path has no signed command for."""
+
+
+def _canvas_layout_facts(projection):
+    """Keep only what a layout precondition compares: scope and node points."""
+    scope = projection.get('scope')
+    return {
+        'revision': projection.get('revision'),
+        'scope': {
+            'current': scope.get('current') if isinstance(scope, dict) else None,
+        },
+        'nodes': [
+            {'id': node.get('id'), 'x': node.get('x'), 'y': node.get('y')}
+            for node in (projection.get('nodes') or ())
+            if isinstance(node, dict)
+        ],
+    }
 
 
 def _validate_layout_preconditions(body, projection, *, scope):
@@ -4950,6 +4977,12 @@ class ApplicationServer:
         self._browser_canvas_projections: dict[
             str, _BrowserCanvasProjectionBinding
         ] = {}
+        # A drag reads two canvas facts: where the moved nodes are and which
+        # scope holds them. This keeps those two, revision-stamped, so the save
+        # stops projecting the whole canvas to read them back.
+        self._browser_canvas_layout_leases: dict[
+            str, _BrowserCanvasLayoutLease
+        ] = {}
         self._browser_scope_canvas_projections: dict[
             tuple[str, str], _BrowserCanvasProjectionBinding
         ] = {}
@@ -7198,15 +7231,25 @@ class ApplicationServer:
                             projection_mode = body.get('projection_mode')
                             projection_revision = body.get('projection_revision')
                             layout_projection = None
+                            layout_facts = None
                             if 'expected_positions' in body:
                                 if self.path != '/api/universal/gesture':
                                     raise InvalidCell('layout preconditions require a canvas gesture')
-                                layout_projection = owner.project_interaction_canvas(binding)
-                                _validate_layout_preconditions(body, layout_projection,
-                                    scope=layout_projection['scope']['current'])
+                                # The precondition compares node points and the scope,
+                                # not the whole canvas, so read those two from the
+                                # revision-exact lease this session already holds. Any
+                                # other commit moves the revision and the full
+                                # projection below answers the check instead.
+                                layout_facts = owner._cached_browser_canvas_layout(
+                                    binding, projection_revision)
+                                if layout_facts is None:
+                                    layout_projection = owner.project_interaction_canvas(binding)
+                                    layout_facts = _canvas_layout_facts(layout_projection)
+                                _validate_layout_preconditions(body, layout_facts,
+                                    scope=layout_facts['scope']['current'])
                                 # The lease and receipt describe this actual commit base.
                                 # Node-specific preconditions preserve concurrent moves.
-                                projection_revision = layout_projection['revision']
+                                projection_revision = layout_facts['revision']
                             if projection_mode is not None:
                                 if (
                                     projection_mode not in (
@@ -7256,6 +7299,7 @@ class ApplicationServer:
                                     _RECEIPT_MODE,
                                 )
                                 and previous_projection is None
+                                and layout_facts is None
                             ):
                                 raise InvalidCell(
                                     'interaction projection cache is unavailable'
@@ -7667,6 +7711,14 @@ class ApplicationServer:
                                     consent_evidence_root=binding.session_root,
                                     authentication_context=binding.context,
                                     leased_projection=previous_projection)
+                                if layout_facts is not None:
+                                    # The committed points are the only canvas facts
+                                    # this gesture changed, so the next drag reads
+                                    # them from here instead of a projection.
+                                    owner._advance_browser_canvas_layout(
+                                        binding, layout_facts,
+                                        body.get('positions'),
+                                        owner.universal_store.revision)
                             elif self.path == '/api/universal/instantiate':
                                 raw_bindings = body.get('bindings')
                                 if body.get('primitive') is True:
@@ -15162,6 +15214,16 @@ class ApplicationServer:
                 self._browser_canvas_projections[
                     binding.session_root
                 ] = projected_binding
+                self._browser_canvas_layout_leases[
+                    binding.session_root
+                ] = _BrowserCanvasLayoutLease(
+                    binding.session_root,
+                    binding.subject_root,
+                    binding.view_root,
+                    binding.tenant_root,
+                    binding.assurance_root,
+                    _canvas_layout_facts(projection),
+                )
                 if (
                     isinstance(projected_scope, dict)
                     and type(projected_scope.get("current")) is str
@@ -15317,6 +15379,88 @@ class ApplicationServer:
         ):
             return None
         return cached.projection
+
+    def _cached_browser_canvas_layout(
+        self,
+        binding: _BrowserSessionBinding,
+        revision,
+    ) -> dict[str, object] | None:
+        """Return this session layout facts at the exact live revision."""
+        # Every commit moves the Store revision, so a lease that still names the
+        # live revision cannot describe a canvas anybody has changed since.
+        if type(revision) is not int or revision != self.universal_store.revision:
+            return None
+        with self._browser_session_lock:
+            cached = self._browser_canvas_layout_leases.get(
+                binding.session_root
+            )
+        if (
+            cached is None
+            or cached.session_root != binding.session_root
+            or cached.subject_root != binding.subject_root
+            or cached.view_root != binding.view_root
+            or cached.tenant_root != binding.tenant_root
+            or cached.assurance_root != binding.assurance_root
+            or cached.layout.get('revision') != revision
+            or type(cached.layout['scope'].get('current')) is not str
+        ):
+            return None
+        return cached.layout
+
+    def _advance_browser_canvas_layout(
+        self,
+        binding: _BrowserSessionBinding,
+        layout: dict[str, object],
+        positions,
+        revision,
+    ) -> None:
+        """Carry one committed layout forward instead of re-reading the canvas."""
+        with self._browser_session_lock:
+            self._browser_canvas_layout_leases.pop(binding.session_root, None)
+        if (
+            type(revision) is not int
+            or revision != self.universal_store.revision
+            or type(positions) is not dict
+            or not positions
+        ):
+            return
+        moved = {}
+        for root, point in positions.items():
+            if (
+                type(root) is not str
+                or type(point) is not dict
+                or type(point.get('x')) not in (int, float)
+                or type(point.get('y')) not in (int, float)
+            ):
+                return
+            moved[root] = (point['x'], point['y'])
+        nodes = []
+        held = set()
+        for node in layout['nodes']:
+            root = node.get('id')
+            held.add(root)
+            point = moved.get(root)
+            nodes.append(
+                node if point is None
+                else {'id': root, 'x': point[0], 'y': point[1]}
+            )
+        if any(root not in held for root in moved):
+            return
+        with self._browser_session_lock:
+            self._browser_canvas_layout_leases[binding.session_root] = (
+                _BrowserCanvasLayoutLease(
+                    binding.session_root,
+                    binding.subject_root,
+                    binding.view_root,
+                    binding.tenant_root,
+                    binding.assurance_root,
+                    {
+                        'revision': revision,
+                        'scope': dict(layout['scope']),
+                        'nodes': nodes,
+                    },
+                )
+            )
 
     def project_runtime_state(self, *, authentication_context: object):
         """Project application status from the universal graph authority."""
@@ -16162,6 +16306,7 @@ class ApplicationServer:
                 bindings = tuple(self._browser_sessions.values())
                 self._browser_sessions.clear()
                 self._browser_canvas_projections.clear()
+                self._browser_canvas_layout_leases.clear()
                 self._browser_scope_canvas_projections.clear()
                 self._browser_scope_canvas_identities.clear()
                 self._browser_scope_projection_lineage.clear()

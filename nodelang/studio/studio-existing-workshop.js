@@ -212,6 +212,21 @@
       if (value.workshop_scope) api.setCanvas(value.workshop_scope);
       publish(); return value;
     };
+    // One committed drag is the held canvas with the admitted points at the
+    // receipted revision. Reading the whole canvas back only to learn the two
+    // facts the receipt already states cost the drag a second full projection.
+    const acceptTopologyLayout = (identity, moved, committedRevision) => {
+      const value = topologyCanvas;
+      if (!value || topologyIdentity(value) !== identity || !revision(committedRevision) ||
+          committedRevision < value.revision ||
+          Object.keys(moved).some(root => !value.nodes.some(node => node.id === root))) {
+        fail('The saved positions could not be confirmed. Refresh the canvas.');
+      }
+      return acceptTopology({...value, revision:committedRevision,
+        nodes:value.nodes.map(node => moved[node.id]
+          ? {...node, x:moved[node.id].x, y:moved[node.id].y} : node),
+        interaction_projection:{...value.interaction_projection, revision:committedRevision}});
+    };
     const readTopology = async identity => {
       const value = acceptTopology(await get('/api/universal/canvas'));
       if (identity && topologyIdentity(value) !== identity) fail('The canvas scope changed. Choose the connection again.');
@@ -969,7 +984,12 @@
           fail('Choose nodes with valid canvas positions.');
         }
         return runTopology(JSON.stringify(['positions', copy, bases]), async (identity, command) => {
-          const value = await readTopology(identity);
+          // The canvas the drag started from is the one the owner checks the save
+          // against: it carries expected_positions and the scope, and the owner
+          // refuses under its lock if either moved. Re-reading the whole canvas
+          // first only asked again what the write itself answers.
+          const value = topologyCanvas;
+          if (!value || topologyIdentity(value) !== identity) fail('The canvas scope changed. Choose the node again.');
           if (!revision(expectedRevision) || value.revision < expectedRevision) fail('The layout revision is invalid. Refresh the canvas.');
           if (roots.some(root => !value.nodes.some(node => node.id === root))) fail('A moved node is no longer on this canvas.');
           if (roots.length > 256 || Object.keys(bases).length !== roots.length || roots.some(root => {
@@ -983,11 +1003,7 @@
           if (!result || result.ok !== true || result.projection_mode !== 'receipt-v1' ||
               !revision(result.base_revision) || result.base_revision < value.revision || !revision(result.committed_revision) ||
               result.committed_revision < result.base_revision) fail('The layout save needs reconciliation.');
-          const latest = await readTopology(identity);
-          if (latest.revision < result.committed_revision || roots.some(root => {
-            const node = latest.nodes.find(node => node.id === root);
-            return !node || node.x !== copy[root].x || node.y !== copy[root].y;
-          })) fail('The saved positions could not be confirmed. Refresh the canvas.');
+          acceptTopologyLayout(identity, copy, result.committed_revision);
           return result;
         });
       },

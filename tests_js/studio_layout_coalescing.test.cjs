@@ -34,14 +34,21 @@ const slice = () => {
   return source.slice(start, end);
 };
 
-// The window this build coalesces a burst over, read from the shipped constant.
+// The window this build coalesces a burst over. A build that does not name the constant is
+// not what the courts below are about: they mount the canvas and judge what it WRITES, so
+// the window falls back to the shipped default and every RED they produce is behavioural.
+// The constant itself is one court of its own, right here.
 function coalesceWindow() {
+  const match = /const CANVAS_LAYOUT_COALESCE_MS = (\d+);/.exec(source);
+  return match ? Number(match[1]) : 500;
+}
+
+test('the coalescing window is one named constant between 400 and 600 ms', () => {
   const match = /const CANVAS_LAYOUT_COALESCE_MS = (\d+);/.exec(source);
   assert.ok(match, 'studio-lm.jsx names one coalescing window constant');
   const value = Number(match[1]);
   assert.ok(value >= 400 && value <= 600, 'the coalescing window is 400-600 ms, is ' + value);
-  return value;
-}
+});
 
 function pureHarness() {
   const context = vm.createContext({});
@@ -76,12 +83,16 @@ const NODES = [
   {id:'two', cat:'logic', live:true, x:400, y:60, w:200, h:90, title:'Two', sub:'node', params:[], ins:[], outs:[]},
 ];
 
-async function mount({refuse = null, hold = null} = {}) {
+const TRACE_KEY = 'archhub.canvas.unwritten-layout';
+
+async function mount({refuse = null, hold = null, seedTrace = null} = {}) {
   const {JSDOM} = await import('jsdom');
   const React = require('react');
   const {createRoot} = require('react-dom/client');
   const {transformSync} = require('esbuild');
-  const dom = new JSDOM('<div id="root"></div>');
+  // A real origin: sessionStorage is where the unwritten burst leaves its trace.
+  const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53912/'});
+  if (seedTrace) dom.window.sessionStorage.setItem(TRACE_KEY, JSON.stringify(seedTrace));
   const oldWindow = global.window, oldDocument = global.document;
   global.window = dom.window; global.document = dom.window.document;
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -131,6 +142,16 @@ async function mount({refuse = null, hold = null} = {}) {
       const status = dom.window.document.querySelector('[role="status"],[role="alert"]');
       return status ? status.textContent : '';
     },
+    grab: async (id, dx, dy) => {
+      const handle = card(id).children[0];
+      await React.act(async () => {
+        fire(handle, 'mousedown', {button:0, clientX:0, clientY:0});
+      });
+      await React.act(async () => {
+        fire(dom.window.document, 'mousemove', {clientX:dx, clientY:dy});
+      });
+    },
+    drop: async () => { await React.act(async () => { fire(dom.window.document, 'mouseup', {}); }); },
     drag: async (id, dx, dy) => {
       const handle = card(id).children[0];
       await React.act(async () => {
@@ -143,8 +164,10 @@ async function mount({refuse = null, hold = null} = {}) {
     },
     settle: async ms => { await React.act(async () => {
       await new Promise(done => dom.window.setTimeout(done, ms)); }); },
-    leave: async () => { await React.act(async () => {
-      dom.window.dispatchEvent(new dom.window.Event('beforeunload')); }); },
+    leave: async (type = 'beforeunload') => { await React.act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event(type)); }); },
+    trace: () => { try { return JSON.parse(dom.window.sessionStorage.getItem(TRACE_KEY) || 'null'); }
+      catch (error) { return null; } },
     reset: async () => {
       const region = dom.window.document.querySelector('[role="region"][aria-label="Workflow canvas"]');
       assert.ok(region, 'the canvas region is drawn');
@@ -285,5 +308,213 @@ test('one undo of a burst lands on the pre-burst layout', async () => {
     assert.equal(view.saves.length, 2, 'the undo is its own act');
     assert.deepEqual(view.saves[1].positions.one, started.one, 'one is back where the burst started');
     assert.deepEqual(view.saves[1].positions.two, started.two, 'two is back where the burst started');
+  } finally { await view.close(); }
+});
+
+/* A save on the founder graph takes long enough that "a burst pending while a save is in
+   flight" is the ordinary state of continuous dragging, not an edge case. These courts hold
+   that case: the burst behind the save is written when that save answers, on the leave path
+   as well, and two handovers inside one save do not eat each other. */
+
+test('a burst armed while a save is in flight is written when that save answers', async () => {
+  const wait = coalesceWindow();
+  const hold = {}; hold.promise = new Promise(resolve => { hold.release = resolve; });
+  const view = await mount({hold});
+  try {
+    const started = view.point('two');
+    await view.drag('one', 40, 40);
+    // The second drag is already under the hand when the first burst leaves. That is the
+    // reachable case: a canvas refuses to START a drag while a save is in flight.
+    await view.grab('two', 80, 0);
+    await view.settle(wait * 2);
+    assert.equal(view.saves.length, 1, 'the first burst is out and held open');
+    await view.drop();
+    await view.settle(wait * 2);
+    assert.equal(view.saves.length, 1, 'the second burst waits behind the save in flight');
+    assert.match(view.chip(), /Saving positions/, 'and the founder is told a write is owed');
+    hold.release();
+    await view.settle(wait * 6);
+    assert.equal(view.saves.length, 2, 'the waiting burst goes out when the held save answers');
+    assert.deepEqual(Object.keys(view.saves[1].positions), ['two']);
+    assert.deepEqual(view.saves[1].expectedPositions.two, started, 'against the point that burst started from');
+    assert.equal(view.chip(), '', 'nothing is left pending');
+  } finally { await view.close(); }
+});
+
+for (const leaving of ['beforeunload', 'pagehide']) {
+  test(leaving + ' with a save in flight still writes the burst behind it', async () => {
+    const wait = coalesceWindow();
+    const hold = {}; hold.promise = new Promise(resolve => { hold.release = resolve; });
+    const view = await mount({hold});
+    try {
+      await view.drag('one', 40, 40);
+      await view.grab('two', 80, 0);
+      await view.settle(wait * 2);
+      assert.equal(view.saves.length, 1, 'the first burst is out and held open');
+      await view.drop();
+      await view.leave(leaving);
+      hold.release();
+      await view.settle(wait * 6);
+      assert.equal(view.saves.length, 2, 'the handed-over burst is written, not swallowed');
+      assert.deepEqual(Object.keys(view.saves[1].positions), ['two']);
+    } finally { await view.close(); }
+  });
+}
+
+/* Unwritten movement now has a durable trace: a burst is on the session storage from the
+   moment it is armed until a write is confirmed, so a canvas that comes back after a kill,
+   a crash or a closed window REPORTS what was never saved instead of losing it in silence.
+   It is reported, never replayed: the founder moves it again, the canvas does not guess. */
+
+test('an armed burst is on the session until the write is confirmed', async () => {
+  const wait = coalesceWindow();
+  const view = await mount();
+  try {
+    assert.equal(view.trace(), null, 'a quiet canvas leaves nothing behind');
+    await view.drag('one', 40, 40);
+    const held = view.trace();
+    assert.ok(held, 'the unwritten burst is durable before it is written');
+    assert.deepEqual(Object.keys(held.next), ['one']);
+    assert.deepEqual(held.next.one, view.point('one'));
+    await view.settle(wait * 2);
+    assert.equal(view.saves.length, 1);
+    assert.equal(view.trace(), null, 'a confirmed write leaves nothing to report');
+  } finally { await view.close(); }
+});
+
+test('a canvas that opens on an unwritten burst says so and replays nothing', async () => {
+  const view = await mount({seedTrace:{scope:'scope', next:{one:{x:180, y:200}},
+    before:{one:{x:40, y:60}}, revision:3, at:1}});
+  try {
+    assert.match(view.chip(), /never confirmed \(1\)/);
+    assert.equal(view.saves.length, 0, 'what was not written is reported, never replayed');
+    assert.deepEqual(view.point('one'), {x:40, y:60}, 'the canvas draws what the owner confirmed');
+  } finally { await view.close(); }
+});
+
+/* Everything above counts calls into a fake. This one counts what the SHIPPED transport
+   (nodelang/studio/studio-existing-workshop.js) puts on the wire: the canvas is mounted on
+   the real adapter, its POST is held open, and the court reads the request bodies. A flush
+   on the way out is only worth anything if the write reaches the transport, not the
+   component. What still cannot be proven here is named in the report, not in a court:
+   whether the desktop shell lets the page run its unload handlers at all. */
+const transportSource = fs.readFileSync(path.join(root, 'nodelang/studio/studio-existing-workshop.js'), 'utf8');
+const CARD = {cat:'logic', live:true, w:200, h:90, sub:'node', params:[], ins:[], outs:[]};
+
+async function mountOnTransport({hold = null} = {}) {
+  const {JSDOM} = await import('jsdom');
+  const React = require('react');
+  const {createRoot} = require('react-dom/client');
+  const {transformSync} = require('esbuild');
+  const dom = new JSDOM('<div id="root"></div>', {url:'http://127.0.0.1:53912/'});
+  const oldWindow = global.window, oldDocument = global.document;
+  global.window = dom.window; global.document = dom.window.document;
+  global.IS_REACT_ACT_ENVIRONMENT = true;
+  const transport = vm.createContext({URLSearchParams});
+  vm.runInContext(transportSource, transport);
+  const posts = [];
+  let held = {ok:true, application_root:'app', revision:3, authorization:{subject:'founder', session:'view'},
+    scope:{current:'scope'}, nodes:[{id:'one', title:'One', x:40, y:60}, {id:'two', title:'Two', x:400, y:60}],
+    wires:[], interaction_projection:{revision:3, bindings:[]}};
+  const api = transport.ArchHubExistingWorkshop.create({
+    get:async () => JSON.parse(JSON.stringify(held)),
+    post:async (url, body) => {
+      posts.push({url, body:JSON.parse(JSON.stringify(body))});
+      if (hold && posts.length === 1) await hold.promise;
+      const committed = held.revision + 1;
+      held = {...held, revision:committed, interaction_projection:{revision:committed, bindings:[]},
+        nodes:held.nodes.map(node => body.positions?.[node.id] ? {...node, ...body.positions[node.id]} : node)};
+      return {ok:true, projection_mode:'receipt-v1', base_revision:committed - 1, committed_revision:committed};
+    },
+    projectCanvas:value => ({nodes:value.nodes.map(node => ({...CARD, ...node})), wires:value.wires})});
+  api.setTopologyCanvas(held);
+  dom.window.ARCHHUB_EXISTING_WORKSHOP = api;
+  const useProjection = () => {
+    const [state, setState] = React.useState(() => api.getSnapshot().topology);
+    React.useEffect(() => {
+      const off = api.subscribe(() => setState(api.getSnapshot().topology));
+      return () => { if (typeof off === 'function') off(); };
+    }, []);
+    return state;
+  };
+  const context = vm.createContext({React, LM, window:dom.window, document:dom.window.document,
+    useStudioProjection:useProjection, LM_GRAPH:{nodes:[], wires:[]}, studioCanvasScope:() => 'scope',
+    studioCategory:cat => ({col:'token-cat', icon:'+', label:String(cat).toUpperCase()}), WIRE:{},
+    NodeBody:() => null, CanvasToolbar:() => null, FloatingComposer:() => null, MiniMap:() => null,
+    nodeModelRow:() => null, smallBtn:() => ({}), toolBtn:() => ({}), kbd:() => ({}),
+    setTimeout:dom.window.setTimeout.bind(dom.window), clearTimeout:dom.window.clearTimeout.bind(dom.window)});
+  vm.runInContext(transformSync(slice() + '\nglobalThis.NodeCanvas = NodeCanvas;',
+    {loader:'jsx', format:'cjs'}).code, context);
+  const reactRoot = createRoot(dom.window.document.getElementById('root'));
+  await React.act(async () => reactRoot.render(React.createElement(context.NodeCanvas,
+    {focusId:null, setFocusId:() => {}, setLibraryOpen:() => {}, userNodes:[],
+      addNodeFromLibrary:() => {}, model:null})));
+  const card = id => dom.window.document.querySelector('.lm-node[data-node-id="' + id + '"]');
+  const fire = (target, type, init) => target.dispatchEvent(
+    new dom.window.MouseEvent(type, {bubbles:true, cancelable:true, ...init}));
+  return {
+    posts,
+    point: id => ({x:parseFloat(card(id).style.left), y:parseFloat(card(id).style.top)}),
+    grab: async (id, dx, dy) => {
+      const handle = card(id).children[0];
+      await React.act(async () => { fire(handle, 'mousedown', {button:0, clientX:0, clientY:0}); });
+      await React.act(async () => { fire(dom.window.document, 'mousemove', {clientX:dx, clientY:dy}); });
+    },
+    drop: async () => { await React.act(async () => { fire(dom.window.document, 'mouseup', {}); }); },
+    drag: async (id, dx, dy) => {
+      const handle = card(id).children[0];
+      await React.act(async () => { fire(handle, 'mousedown', {button:0, clientX:0, clientY:0}); });
+      await React.act(async () => { fire(dom.window.document, 'mousemove', {clientX:dx, clientY:dy}); });
+      await React.act(async () => { fire(dom.window.document, 'mouseup', {}); });
+    },
+    settle: async ms => { await React.act(async () => {
+      await new Promise(done => dom.window.setTimeout(done, ms)); }); },
+    leave: async (type = 'beforeunload') => { await React.act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event(type)); }); },
+    close: async () => {
+      await React.act(async () => reactRoot.unmount());
+      dom.window.close(); global.window = oldWindow; global.document = oldDocument;
+      delete global.IS_REACT_ACT_ENVIRONMENT;
+    },
+  };
+}
+
+test('through the shipped transport, one burst is one gesture request', async () => {
+  const wait = coalesceWindow();
+  const view = await mountOnTransport();
+  try {
+    const started = view.point('one');
+    await view.drag('one', 40, 40);
+    await view.drag('one', 120, 120);
+    await view.settle(wait * 2);
+    assert.equal(view.posts.length, 1, 'the burst is one request on the wire, not one per drag');
+    assert.equal(view.posts[0].url, '/api/universal/gesture');
+    assert.deepEqual(view.posts[0].body.expected_positions, {one:started});
+    assert.equal(view.posts[0].body.expected_scope, 'scope');
+    assert.equal(view.posts[0].body.projection_revision, 3);
+  } finally { await view.close(); }
+});
+
+test('through the shipped transport, leaving with a save in flight still puts the burst on the wire', async () => {
+  const wait = coalesceWindow();
+  const hold = {}; hold.promise = new Promise(resolve => { hold.release = resolve; });
+  const view = await mountOnTransport({hold});
+  try {
+    const started = view.point('two');
+    await view.drag('one', 40, 40);
+    // Already under the hand when the first burst leaves: the shipped transport publishes
+    // pending while its write is out, and the canvas refuses to START a drag on that.
+    await view.grab('two', 80, 0);
+    await view.settle(wait * 2);
+    assert.equal(view.posts.length, 1, 'the first burst is on the wire and held open');
+    await view.drop();
+    await view.leave();
+    hold.release();
+    await view.settle(wait * 6);
+    assert.equal(view.posts.length, 2, 'the handed-over burst reached the transport, not just the component');
+    assert.equal(view.posts[1].url, '/api/universal/gesture');
+    assert.deepEqual(Object.keys(view.posts[1].body.positions), ['two']);
+    assert.deepEqual(view.posts[1].body.expected_positions, {two:started});
+    assert.equal(view.posts[1].body.expected_scope, 'scope');
   } finally { await view.close(); }
 });

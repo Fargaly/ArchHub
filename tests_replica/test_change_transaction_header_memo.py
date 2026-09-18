@@ -3,7 +3,11 @@
 Reading the founder graph re-walked all 357 committed change transactions on
 every canvas read: 8.8 s of a 8.9 s read (3ca3205, 7.08 GB store, revision
 112817). These courts hold the accelerator to SPEC 3.1.6-7 -- disposable,
-revision-bound, meaning-preserving -- and to the SPEC 11.14 bar of 0.150 s.
+revision-bound, meaning-preserving. They do NOT hold it to the SPEC 11.14 bar
+of 0.150 s, and no court in this file asserts that bar: it is missed on both
+real stores (see the latency court below for the measured numbers). A fixture
+that is built fresh in the same process cannot fail the way those stores fail,
+so a fixture green is not evidence that the bar is met.
 """
 from __future__ import annotations
 
@@ -212,11 +216,21 @@ def test_a_reused_header_refuses_the_budget_the_walk_would_have_refused():
         )
 
 
-def test_the_grown_action_history_projection_meets_the_latency_bar(tmp_path):
-    """SPEC 11.14: a grown journal-backed history projects inside 0.150 s.
+def test_the_memo_cuts_the_fixture_walk_while_both_real_stores_miss_the_bar(tmp_path):
+    """What this court measures: the memo's own cost on a 300x30 tmp fixture.
 
-    Journal-backed on purpose. The founder cost is Cell reads that miss the
-    head reader cache and reach sqlite, which an in-memory Store never pays.
+    It does NOT measure SPEC 11.14 and it does not assert the 0.150 s bar. That
+    bar is missed on every real store this accelerator was run against: warm
+    median 3891.3 ms on the founder store (7.08 GB, revision 112817) and 218.3
+    ms on the grown store, 25.9x and 1.46x over, independently re-measured in
+    verification journal wf_430e9985-8f2 (2026-09-18) where the builder's own
+    run of the founder store reported 4280.4 ms. Asserting the bar against a
+    fixture built fresh in this process would report a pass for a claim the
+    real stores refuse, so this court asserts only the ratio a fixture can
+    honestly carry: the warm read costs a small fraction of the walk it
+    replaces. Journal-backed on purpose -- the founder cost is Cell reads that
+    miss the head reader cache and reach sqlite, which an in-memory Store never
+    pays -- but journal-backed is still not the founder store.
     """
     store, protocol = _grown(
         transactions=300, width=30,
@@ -237,10 +251,12 @@ def test_the_grown_action_history_projection_meets_the_latency_bar(tmp_path):
             assert again == first == walked
         median = statistics.median(warm)
         assert len(walked["transactions"]) == 300
-        assert median <= BAR_SECONDS, (
-            "warm median %.4fs over the %.3fs bar "
-            "(cold %.3fs, same projection unaccelerated %.3fs)"
-            % (median, BAR_SECONDS, cold, walk_seconds)
+        assert median * 20 <= walk_seconds, (
+            "the memo did not pay for itself on the fixture: warm median "
+            "%.4fs against the same projection unaccelerated %.4fs (cold "
+            "%.4fs). The SPEC 11.14 bar of %.3fs is NOT under test here and "
+            "is not met on either real store."
+            % (median, walk_seconds, cold, BAR_SECONDS)
         )
     finally:
         store.close()

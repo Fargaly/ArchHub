@@ -2282,6 +2282,24 @@ const mergeCanvasLayoutBurst = (pending, drag) => {
 // Nothing is written for a node the burst put back where it started.
 const canvasLayoutBurstMoves = burst => Object.entries(burst?.next || {})
   .filter(([id, point]) => burst.before[id]?.x !== point.x || burst.before[id]?.y !== point.y);
+// A burst is movement the store has not been told about yet. That is cheap to leave a
+// trace of: the merged burst is mirrored into sessionStorage on every arm and removed
+// only when a write is confirmed, so a canvas that comes back after a crash, a kill or a
+// closed window says which positions were never saved instead of losing them in silence.
+const CANVAS_LAYOUT_TRACE_KEY = 'archhub.canvas.unwritten-layout';
+const readCanvasLayoutTrace = scope => {
+  try {
+    const held = JSON.parse(window.sessionStorage.getItem(CANVAS_LAYOUT_TRACE_KEY) || 'null');
+    return held && held.scope === scope && Object.keys(held.next || {}).length ? held : null;
+  } catch (error) { return null; }
+};
+const writeCanvasLayoutTrace = (scope, burst) => {
+  try {
+    if (!burst) window.sessionStorage.removeItem(CANVAS_LAYOUT_TRACE_KEY);
+    else window.sessionStorage.setItem(CANVAS_LAYOUT_TRACE_KEY, JSON.stringify(
+      {scope, next:burst.next, before:burst.before, revision:burst.revision, at:Date.now()}));
+  } catch (error) { /* a session with no storage still draws and still saves the canvas */ }
+};
 
 const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model }) => {
   const authorityState = useStudioProjection();
@@ -2337,6 +2355,21 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const scopeStillCurrent = () => alive.current && mountedScope.current === scopeKey &&
     studioCanvasScope(authority ? authority.getSnapshot()?.canvas : normal?.getSnapshot()?.topology?.canvas) === scopeKey;
   const blocked = layoutBusy || layoutNeedsRefresh || !!authorityState?.pending || !!authorityState?.requires_refresh;
+  // `blocked` is a render snapshot, and the write path must not read it. The save it is
+  // waiting on answers before React commits the render that clears it, so a burst parked
+  // on `blocked` waits on something that has already stopped being true, and is then
+  // either re-armed for ever or re-parked in a queue with nothing left to drain it
+  // (verification, 2026-09-18: a burst armed during an in-flight save left saves == 1
+  // with the chip still on; the same burst on the leave path wrote nothing at all).
+  // The transport answers now, and `saving.current` already says whether OUR save is out;
+  // the render snapshot stays exactly where it belongs, on the controls it disables.
+  const needsRefresh = React.useRef(false);
+  const transportBusy = () => {
+    const held = authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology;
+    return needsRefresh.current || !!held?.pending || !!held?.requires_refresh;
+  };
+  const [unwrittenLayout, setUnwrittenLayout] = React.useState(() => readCanvasLayoutTrace(scopeKey));
+  React.useEffect(() => { setUnwrittenLayout(readCanvasLayoutTrace(scopeKey)); }, [scopeKey]);
   const canSaveLayout = !!(authority?.moveMany || normal?.moveTopologyNodes) && Number.isSafeInteger(revision);
   // These positions are a gesture preview; the owner commits every completed map.
   const [positions, setPositions] = React.useState(() =>
@@ -2364,6 +2397,9 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // A drag that ends while the previous save is still in flight is queued, not
   // dropped: on a large graph a save takes long enough that the next drag used
   // to land inside it and vanish with "Wait for the current change".
+  // A burst handed over while a save is in flight waits here and goes out when that save
+  // answers. One slot is enough: a drag cannot START while a save is in flight, so only
+  // the drag already under the hand when the save left can arm a burst behind it.
   const queuedSave = React.useRef(null);
   // `force` marks a save handed over on the way out (unmount, window close). It still
   // queues behind the save in flight, but it is not dropped when this canvas stops
@@ -2373,19 +2409,21 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const entries = Object.entries(next).filter(([id, point]) => before[id]?.x !== point.x || before[id]?.y !== point.y);
     if (!entries.length) return true;
     const restore = () => setPositions(held => ({...held, ...before}));
-    // A save handed over on the way out queues behind whatever is busy rather than
-    // being refused with "Wait for the current change": there is no later drag to retry it.
-    if ((saving.current || (force && blocked)) && canSaveLayout && entries.length <= MAX_LAYOUT_NODES) {
+    // A save that arrives while one is in flight queues behind it rather than being
+    // refused with "Wait for the current change"; on the way out there is no later drag
+    // to retry it, and a save behind a save is exactly what a burst needs to survive.
+    if (saving.current && canSaveLayout && entries.length <= MAX_LAYOUT_NODES) {
       // The preview already shows the new place; the save runs right after the current one.
       queuedSave.current = {next, before, expectedRevision, remember, force};
       return true;
     }
-    // `blocked` is React state, so it still reads busy for one turn after the save that
-    // set it answered. A forced save (the way out) must not be refused by that echo.
-    if (!canSaveLayout || (blocked && !force) || saving.current || entries.length > MAX_LAYOUT_NODES) {
+    // The transport, never the render snapshot: the echo of a save that has just answered
+    // must not refuse the burst that was waiting for exactly that save.
+    const busy = transportBusy();
+    if (!canSaveLayout || (busy && !force) || saving.current || entries.length > MAX_LAYOUT_NODES) {
       restore();
       setLayoutError(entries.length > MAX_LAYOUT_NODES ? 'Move or arrange at most 256 nodes at a time.' :
-        blocked || saving.current ? 'Wait for the current change, then try again.' : 'This connection cannot save node positions.');
+        busy || saving.current ? 'Wait for the current change, then try again.' : 'This connection cannot save node positions.');
       return false;
     }
     const changes = Object.fromEntries(entries);
@@ -2397,6 +2435,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       else await normal.moveTopologyNodes(changes, expectedRevision, expectedPositions);
       if (!scopeStillCurrent()) return false;
       setUndoLayout(remember ? {before:Object.fromEntries(entries.map(([id]) => [id, before[id]])), after:changes} : null);
+      // Confirmed, and nothing else is owed: there is no unwritten movement left to report.
+      if (!burstRef.current && !queuedSave.current) writeCanvasLayoutTrace(scopeKey, null);
       return true;
     } catch (error) {
       if (scopeStillCurrent()) {
@@ -2411,7 +2451,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           recovered = !!(authority || normal);
         } catch (refreshError) { recovered = false; }
         if (scopeStillCurrent()) {
-          setLayoutNeedsRefresh(!recovered);
+          needsRefresh.current = !recovered; setLayoutNeedsRefresh(!recovered);
           setLayoutError((error.message || 'Positions could not be confirmed.')
             + ' The last confirmed layout was restored.' + (recovered
             ? ' The canvas was reloaded; move the node again.'
@@ -2421,10 +2461,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       return false;
     } finally {
       saving.current = false;
-      if (alive.current) setLayoutBusy(false);
       const queued = queuedSave.current;
       queuedSave.current = null;
-      if (queued && (alive.current || queued.force) && scopeStillCurrent()) {
+      const handOver = !!queued && (alive.current || queued.force) && scopeStillCurrent();
+      // The receipt does not blink off while a handed-over save is still owed.
+      if (alive.current) setLayoutBusy(handOver);
+      if (handOver) {
         // Run the queued drag against the canvas as it is now; its `before` is the
         // preview the drag started from, which is what the server holds after the save.
         setTimeout(() => saveRef.current && saveRef.current(queued.next, queued.before, queued.expectedRevision, queued.remember, queued.force), 0);
@@ -2436,18 +2478,19 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const clearLayoutBurstTimer = () => {
     if (burstTimer.current) { clearTimeout(burstTimer.current); burstTimer.current = null; }
   };
-  // One write for everything moved in the burst, against the points the burst
-  // started from. A save already in flight is not interrupted: the burst waits
-  // one more window and goes out whole after it.
-  // `force` is the leave path: unmount, window close, tab hide. Re-arming a timer
-  // there drops the burst, because nothing is left alive to fire it (verification,
-  // 2026-09-18). Forced, the burst goes to savePositions, which parks it behind the
-  // save in flight and sends it when that one answers.
+  // One write for everything moved in the burst, against the points the burst started
+  // from. A save already in flight is NOT a reason to wait another window: the burst is
+  // handed to savePositions, which parks it behind that save and sends it when that save
+  // answers. Waiting instead meant waiting on a render snapshot that had already stopped
+  // being true, and the burst was never written at all (verification, 2026-09-18).
+  // Only a canvas that cannot take a write -- a refresh is owed, or the transport is busy
+  // with something that is not our save -- waits, and only while the canvas is still there
+  // to fire the timer. `force` is the leave path: unmount, window close, tab hide.
   const flushLayoutBurst = (force = false) => {
     clearLayoutBurstTimer();
     const burst = burstRef.current;
     if (!burst) return false;
-    if ((saving.current || blocked) && alive.current && !force) {
+    if (transportBusy() && alive.current && !force) {
       burstTimer.current = setTimeout(() => flushRef.current(), CANVAS_LAYOUT_COALESCE_MS);
       return false;
     }
@@ -2464,6 +2507,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // and the write happens in the background when the canvas goes still.
   const armLayoutBurst = drag => {
     burstRef.current = mergeCanvasLayoutBurst(burstRef.current, drag);
+    writeCanvasLayoutTrace(scopeKey, burstRef.current);
+    setUnwrittenLayout(null);
     setBurstPending(!!canvasLayoutBurstMoves(burstRef.current).length);
     clearLayoutBurstTimer();
     burstTimer.current = setTimeout(() => flushRef.current(), CANVAS_LAYOUT_COALESCE_MS);
@@ -2898,13 +2943,16 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       </details>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
-      {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart) &&
+      {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout) &&
       <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
         display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
         <span role={authorityState?.error || wireError || layoutError ? 'alert' : 'status'} style={{fontSize:12,
           color:authorityState?.error || wireError || layoutError ? LM.err : LM.inkSoft, overflowWrap:'anywhere'}}>
           {layoutError || authorityState?.error || wireError || (layoutBusy || burstPending ? 'Saving positions…' :
-            authorityState?.pending ? 'Saving…' : 'Choose an input for ' + wireStart.port.label)}
+            authorityState?.pending ? 'Saving…' : unwrittenLayout ?
+              'Positions moved in the last session were never confirmed (' +
+              Object.keys(unwrittenLayout.next).length + '). Move them again to save them.' :
+            'Choose an input for ' + wireStart.port.label)}
         </span>
         {wireStart && <button disabled={blocked} onClick={() => setWireStart(null)} title="Cancel wire" aria-label="Cancel wire" style={toolBtn()}>✕</button>}
         <button disabled={layoutBusy || !!authorityState?.pending || (!authority && !normal)} onClick={refreshCanvas}
@@ -5232,6 +5280,13 @@ const pickerTag = tag => ({
   background: tag==='CLOUD'?LM.accentDim : tag==='LOCAL'?LM.ok+'22' : LM.cyan+'22',
   color:       tag==='CLOUD'?LM.accent    : tag==='LOCAL'?LM.ok      : LM.cyan,
 });
+// Neither discovery waits for the other, and neither may leave the panel saying
+// "Discovering..." for ever: whatever has not answered by the deadline says so
+// in its own place, and a late answer still draws when it arrives (2026-09-18).
+const DISCOVERY_DEADLINE_MS = 8000;
+// A stale list is drawn at once; this is when the refresh running behind it is
+// collected, without clearing the rows already on screen.
+const STALE_REDRAW_MS = 2500;
 const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
   const note = { margin:0, padding:'6px 10px', fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5, letterSpacing:'0.02em' };
   const onFill = (window.AH && window.AH.onFill) || '#180f08';
@@ -5263,15 +5318,23 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
     setCatalogueError(''); setNativeError('');
     const s = window.__archhubSession || {};
     const headers = { 'X-ArchHub-Session': s.token || '', 'X-ArchHub-CSRF': s.csrf || '' };
+    let models = false, agents = false, redraw = 0;
     fetch('/api/universal/models', { signal:controller.signal, headers })
       .then(r => { if (!r.ok) throw new Error('Catalogue unavailable'); return r.json(); })
-      .then(d => { if (!d || d.ok === false || !Array.isArray(d.groups)) throw new Error('Invalid catalogue'); setLive(d); })
+      .then(d => { if (!d || d.ok === false || !Array.isArray(d.groups)) throw new Error('Invalid catalogue');
+        models = true; setCatalogueError(''); setLive(d);
+        if (d.stale && d.refreshing) redraw = setTimeout(() => setDiscovery(value => value + 1), STALE_REDRAW_MS); })
       .catch(() => { if (!controller.signal.aborted) setCatalogueError('Model discovery is unavailable. Check the provider connection and refresh.'); });
     if (onNativeSelect) fetch('/api/universal/native-agents?apps=claude,codex,opencode,antigravity,antigravity-ide', { signal:controller.signal, headers })
       .then(r => { if (!r.ok) throw new Error('Native discovery unavailable'); return r.json(); })
-      .then(d => { if (!d || d.ok === false || !Array.isArray(d.rows)) throw new Error('Invalid native discovery'); setNative(d); })
+      .then(d => { if (!d || d.ok === false || !Array.isArray(d.rows)) throw new Error('Invalid native discovery'); agents = true; setNativeError(''); setNative(d); })
       .catch(() => { if (!controller.signal.aborted) setNativeError('Native session discovery is unavailable. Start the client and refresh.'); });
-    return () => controller.abort();
+    const deadline = setTimeout(() => {
+      const late = ' did not answer within ' + Math.round(DISCOVERY_DEADLINE_MS / 1000) + ' seconds. It is still being asked; use Refresh to ask again.';
+      if (!models) setCatalogueError('Model discovery' + late);
+      if (onNativeSelect && !agents) setNativeError('Native session discovery' + late);
+    }, DISCOVERY_DEADLINE_MS);
+    return () => { controller.abort(); clearTimeout(deadline); clearTimeout(redraw); };
   }, [discovery, !!onNativeSelect]);
   const matches = text => !q || String(text).toLowerCase().includes(q.toLowerCase());
   const groups = (live?.groups || []).map(g => ({ ...g, items: (g.items || []).filter(m => matches(m.name + ' ' + m.route + ' ' + (m.vendor||''))).slice(0, q ? 60 : 40) })).filter(g => g.items.length);
@@ -5297,6 +5360,7 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
           {selectionError && <p role="alert" style={{...note,color:LM.err}}>{selectionError}</p>}
           {saving && <p role="status" style={note}>Saving model selection…</p>}
           {!live && <p role="status" style={note}>{catalogueError || 'Discovering models from connected providers…'}</p>}
+          {live?.stale && <p role="status" data-picker-stale="" style={note}>Showing the list last discovered{live.age_seconds ? ' · ' + Math.round(live.age_seconds) + 's old' : ''}{live.refreshing ? ' · refreshing now' : ''}</p>}
           {live && !live.groups.some(group => group.items?.length) && <p role="status" style={note}>
             No models were discovered. Connect an online provider or start a local model service.</p>}
           {groups.map(g => (
@@ -5316,6 +5380,12 @@ const ModelPicker = ({ setModel, onClose, model, onNativeSelect }) => {
                   </div>
                 );
               })}
+            </div>
+          ))}
+          {Object.keys(live?.source_notes || {}).filter(name => !groups.some(g => g.name === name)).map(name => (
+            <div key={name} data-picker-source-note={name} style={{ marginTop:LM.sp.sm }}>
+              <div style={pickerGroupLabel()}>{name}</div>
+              <p role="status" style={note}>{live.source_notes[name]}</p>
             </div>
           ))}
           {onNativeSelect && <div data-picker-native="" style={{ marginTop:LM.sp.sm }}>

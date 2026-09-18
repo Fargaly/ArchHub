@@ -1,0 +1,133 @@
+name: Selected ArchHub installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish this reviewed build as the latest updater release'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selected-archhub-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    outputs:
+      build_id: ${{ steps.identity.outputs.build_id }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Check out selected runtime and installer
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: selected
+          persist-credentials: false
+      - name: Use the reviewed Studio build runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.13.0'
+          package-manager-cache: false
+      - name: Assign immutable build identity
+        id: identity
+        shell: pwsh
+        run: |
+          $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
+          $buildId = "$stamp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$($env:GITHUB_SHA.Substring(0,12))"
+          "build_id=$buildId" >> $env:GITHUB_OUTPUT
+      - name: Compile Studio and installer from verified source snapshots
+        shell: pwsh
+        env:
+          BUILD_ID: ${{ steps.identity.outputs.build_id }}
+        run: |
+          ./selected/installer/build_release.ps1 `
+            -BuildId $env:BUILD_ID `
+            -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
+      - name: Retain exact installer and metadata for review
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: archhub-installer-${{ steps.identity.outputs.build_id }}
+          path: |
+            release-output/ArchHub-Setup-0.exe
+            release-output/release.json
+            release-output/release-notes.md
+            release-output/source-manifest.tsv
+            release-output/studio-build.json
+            release-output/BUILD_METADATA.json
+          if-no-files-found: error
+          compression-level: 0
+      - name: Retain failed snapshot and partial build for inspection
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: archhub-failed-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-output/
+          if-no-files-found: ignore
+          compression-level: 0
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download this run's exact build artifact
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: release-output
+      - name: Verify and publish complete updater release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_ID: ${{ needs.build.outputs.build_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content -LiteralPath release-output/release.json -Raw | ConvertFrom-Json
+          $asset = 'release-output/ArchHub-Setup-0.exe'
+          $sha = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceSha = (Get-FileHash -LiteralPath release-output/source-manifest.tsv -Algorithm SHA256).Hash.ToLowerInvariant()
+          $studioSha = (Get-FileHash -LiteralPath release-output/studio-build.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          $buildMetadataSha = (Get-FileHash -LiteralPath release-output/BUILD_METADATA.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          $buildMetadata = Get-Content -LiteralPath release-output/BUILD_METADATA.json -Raw | ConvertFrom-Json
+          $notes = Get-Content -LiteralPath release-output/release-notes.md -Raw
+          if ($manifest.format -ne 1 -or $manifest.build_id -cne $env:BUILD_ID -or
+              $manifest.source_revision -cne $env:GITHUB_SHA -or
+              $manifest.asset_name -cne 'ArchHub-Setup-0.exe' -or
+              $manifest.asset_sha256 -cne $sha -or
+              $manifest.asset_bytes -ne (Get-Item -LiteralPath $asset).Length -or
+              $manifest.payload_manifest -cne 'source-manifest.tsv' -or
+              $manifest.payload_manifest_sha256 -cne $sourceSha -or
+              $manifest.studio_manifest -cne 'studio-build.json' -or
+              $manifest.studio_manifest_sha256 -cne $studioSha -or
+              $manifest.studio_files -ne 10 -or
+              $manifest.build_metadata_sha256 -cne $buildMetadataSha -or
+              $buildMetadata.format -ne 1 -or $buildMetadata.build_id -cne $env:BUILD_ID -or
+              $manifest.built_at -cne $buildMetadata.built_at -or
+              $manifest.built_at -cnotmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' -or
+              -not $notes.Contains("BUILD_ID: $env:BUILD_ID`n") -or
+              -not $notes.Contains("BUILT_AT: $($manifest.built_at)`n") -or
+              -not $notes.Contains("SHA256 ArchHub-Setup-0.exe: $sha`n")) {
+            throw 'Release artifact or updater metadata did not reconcile.'
+          }
+          $tag = "build-$env:BUILD_ID"
+          # Upload while draft so an incomplete upload never becomes latest.
+          gh release create $tag $asset release-output/release.json `
+            release-output/source-manifest.tsv release-output/studio-build.json `
+            release-output/BUILD_METADATA.json `
+            --draft --target $env:GITHUB_SHA --title "ArchHub $env:BUILD_ID" `
+            --notes-file release-output/release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed; nothing was promoted.' }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release promotion did not complete; inspect its current state before retrying.' }

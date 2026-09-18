@@ -93,6 +93,10 @@ def published_offer_form(value: object) -> Optional[dict]:
     return {key: value[key] for key in OFFER_KEYS}
 
 
+# What a person can actually do about a sign-in the cloud refuses or this
+# machine never had. The model picker's cloud group says exactly this, so it
+# is written once and read from here.
+SIGN_IN_AGAIN = "Sign in again under Settings, Account."
 MODEL_LIMIT = 40
 # The cloud refuses an expired or revoked sign-in with 401 (API) or 403 (founder routes). The relay then
 # asks again only this often, instead of every poll: on 2026-09-17 it had asked every ~5 s for four days.
@@ -433,7 +437,7 @@ class CloudRelay:
             return 0.0
         self.last_error = (
             "the cloud refused this machine's sign-in (HTTP %d): it expired or was revoked. "
-            "Sign in again under Settings, Account." % exc.code)
+            % exc.code) + SIGN_IN_AGAIN
         return REFUSED_BACKOFF
 
 

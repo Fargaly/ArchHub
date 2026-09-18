@@ -3334,6 +3334,26 @@ class _CleanAuthorityHttpServer:
             ),
         )
 
+    @contextmanager
+    def _brief_mutation_lock(self, seconds: float = 0.02):
+        """Take the writer's lock only while it is free; never queue behind it.
+
+        The read this guards resolves a browser session and a scope off an
+        immutable snapshot, so it never needed this lock at all -- and waiting
+        for it is what put the model picker behind whatever the canvas was
+        doing. On the founder's graph one projection holds it 4.3s, so the
+        panel sat on "Discovering models from connected providers..." until his
+        drawing finished (2026-09-18). Uncontended, the read still serialises
+        exactly as it did; contended, it proceeds on the snapshot it would have
+        read anyway.
+        """
+        held = self._mutation_lock.acquire(timeout=seconds)
+        try:
+            yield held
+        finally:
+            if held:
+                self._mutation_lock.release()
+
     def _make_handler(self):
         owner = self
 
@@ -3505,15 +3525,29 @@ class _CleanAuthorityHttpServer:
                     return
                 if request_path == "/api/universal/models":
                     try:
-                        with owner._mutation_lock:
+                        # Discovery must never wait on canvas work: both reads
+                        # here read an immutable snapshot, and the recheck that
+                        # the scope did not change is unchanged below. See
+                        # _brief_mutation_lock.
+                        with owner._brief_mutation_lock():
                             binding = owner._resolve_binding(self._token())
                             scope = owner._standing_scope(binding)
-                        from .model_catalogue import groups_with_routes, live_model_groups
+                        from .model_catalogue import (groups_with_routes, held_model_groups,
+                                                      live_model_groups)
                         from .model_router import default_cloud_session
-                        payload = groups_with_routes(live_model_groups(default_cloud_session()))
+                        session = default_cloud_session()
+                        # What is already held answers at once and is refreshed
+                        # behind the answer; only a machine with nothing held
+                        # pays the three-source read here.
+                        held = held_model_groups(session)
+                        payload = (groups_with_routes(held) if held is not None
+                                   else groups_with_routes(live_model_groups(session)))
                         payload['source_errors'] = {name: 'Provider catalogue unavailable'
                             for name in payload.get('source_errors', {})}
-                        with owner._mutation_lock:
+                        # payload['source_notes'] is the catalogue's own fixed
+                        # vocabulary, never exception text, so it goes out as
+                        # it stands: the cloud group can say to sign in again.
+                        with owner._brief_mutation_lock():
                             current = owner._resolve_binding(self._token())
                             if current.session_root != binding.session_root or owner._standing_scope(current) != scope:
                                 raise AuthorizationDenied('Canvas scope changed during model discovery')
@@ -10653,11 +10687,18 @@ class ApplicationServer:
             if not models:
                 from .model_router import provider_rows
                 return {'ok': True, 'providers': provider_rows(cloud_session=session)}
-            from .model_catalogue import groups_with_routes, live_model_groups
-            result = groups_with_routes(live_model_groups(session))
+            from .model_catalogue import (groups_with_routes, held_model_groups,
+                                          live_model_groups)
+            # The held answer for this account is served at once and refreshed
+            # behind it; only a machine with nothing held reads live here.
+            held = held_model_groups(session)
+            result = (groups_with_routes(held) if held is not None
+                      else groups_with_routes(live_model_groups(session)))
             result['selected_route'] = selected_route
             # Source exceptions can contain authenticated URLs. Keep availability
             # visible without forwarding exception text or cloud credentials.
+            # result['source_notes'] is the catalogue's own fixed vocabulary,
+            # never exception text, so it is forwarded as it stands.
             if result.get('source_errors'):
                 result['source_errors'] = {
                     source: 'Catalogue source unavailable'

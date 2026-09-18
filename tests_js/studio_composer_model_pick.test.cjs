@@ -186,8 +186,10 @@ test('the rendered picker saves the clicked row and shows a refusal in place', a
       const picked = wiring({session:{id:'graph-a'}, modelTarget:null, window:log.window, setModel:log.setModel, setHomeNative:log.setHomeNative});
       const fetch = async url => ({ok:true, json:async () => String(url).startsWith('/api/universal/models')
         ? {ok:true, live:true, count:1, groups:[{name:'BYO', items:[ROW]}], selected_route:''} : {ok:false}});
+      // The picker now keeps a discovery deadline, so its sandbox owns a clock.
       const context = vm.createContext({React, LM, window:{__archhubSession:{}, AH:{}}, fetch, AbortController,
-        kbd:() => ({}), console, Promise, JSON, String, Error});
+        kbd:() => ({}), console, Promise, JSON, String, Error, Math, Object,
+        setTimeout, clearTimeout});
       vm.runInContext(transformSync(slice('const modelRoute = ', 'const nodeModelRow = ') +
         slice('const pickerSwatch = ', DOCS) + '\nglobalThis.ModelPicker = ModelPicker;',
         {loader:'jsx', format:'cjs'}).code, context);

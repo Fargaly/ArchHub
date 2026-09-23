@@ -6,6 +6,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {stateDir} from './paths.mjs';
+import {validateModel,sendSelectedOpenCode} from './opencode-model.mjs';
 const root=stateDir();
 const ps=path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
 const execute=promisify(execFile);
@@ -54,16 +55,18 @@ export async function discoverExtra({apps=['opencode','antigravity','antigravity
  }}catch{result.adapterStatus.antigravity='discovery unavailable';}
  return result;
 }
-export async function sendExtra(endpoint,text,{onDispatch=()=>{}}={}){
+export async function sendExtra(endpoint,text,{onDispatch=()=>{},model}={}){
+ validateModel(model);
+ if(model!==undefined && endpoint.app!=='opencode')throw new Error('Explicit model selection is OpenCode-only; not sent');
  const lockDir=path.join(root,'dispatch-locks');fs.mkdirSync(lockDir,{recursive:true});
  const lock=path.join(lockDir,crypto.createHash('sha256').update(endpoint.app+'|'+endpoint.id).digest('hex')+'.json');
  let fd;try{fd=fs.openSync(lock,'wx');}catch(e){if(e.code==='EEXIST')throw new Error('Another request owns this session dispatch lock; message not sent. If its process exited, inspect the stale lock before recovery.');throw e;}
  fs.writeFileSync(fd,JSON.stringify({pid:process.pid,app:endpoint.app,session:endpoint.id,started:new Date().toISOString()}));fs.closeSync(fd);
  const cleanup=()=>{try{fs.rmSync(lock,{force:true});}catch{}};process.once('exit',cleanup);
- try{return await sendExtraLocked(endpoint,text,onDispatch);}finally{cleanup();process.removeListener('exit',cleanup);}
+ try{return await sendExtraLocked(endpoint,text,onDispatch,model);}finally{cleanup();process.removeListener('exit',cleanup);}
 }
-async function sendExtraLocked(endpoint,text,onDispatch){
- if(endpoint.app==='opencode'){onDispatch();return await pluginRpc({operation:'send',id:endpoint.id,directory:endpoint.cwd,text},endpoint.runtimeId);}
+async function sendExtraLocked(endpoint,text,onDispatch,model){
+ if(endpoint.app==='opencode')return await sendSelectedOpenCode(r=>pluginRpc(r,endpoint.runtimeId),{operation:'send',id:endpoint.id,directory:endpoint.cwd,text},model,onDispatch);
  const all=await agCall(endpoint,'GetAllCascadeTrajectories');
  if(!all.trajectorySummaries?.[endpoint.id])throw new Error('Exact Antigravity conversation unavailable');
  const baseline=all.trajectorySummaries[endpoint.id].stepCount||0;

@@ -61,6 +61,56 @@ not permission to borrow an identity. Antigravity uses an internal API and reuse
 the exact native model/permission configuration. Native busy sessions are refused.
 The caller must prevent synchronous requests to its own waiting session.
 
+## Explicit free OpenCode model selection (source; activation required)
+
+The compatibility CLI can request one approved free OpenRouter model for one
+prompt in an existing OpenCode session:
+
+```powershell
+& $sessionLink ask --app opencode --session $existingSessionId --file $messageFile --provider openrouter --model 'qwen/qwen3.8-27b:free'
+& $sessionLink send $existingConnectionId --file $messageFile --provider openrouter --model 'nex-agi/nex-n2.5-pro:free'
+```
+
+Use the installed `session-link.ps1` path, an exact discovered session or saved
+connection ID, and a UTF-8 message file. Both provider and model are required for
+selection. Omitting both retains the original SDK prompt behavior. No global or
+session configuration is written; native last-used-model behavior is not controlled
+by this adapter. This option is not yet exposed by the product Python worker API.
+
+The approved IDs are declared in `opencode-model.mjs`. Immediately before prompting,
+the plugin reads the public OpenRouter catalogue with an eight-second timeout and
+an eight-MiB response cap. It requires tool support and zero prices for every
+reported pricing field, including prompt/completion. Missing, null, malformed,
+negative or nonzero prices refuse the request. There is no paid fallback.
+
+The [official OpenCode SDK](https://opencode.ai/docs/sdk/) documents
+`session.prompt` with `body.model: {providerID, modelID}`. No output-token option
+is added. Give free workers sufficient task context and output room; resource
+limits and one-local-job scheduling still apply.
+
+An explicit request checks the running plugin's capability before sending. Old
+bridges reject `send-model`; old plugins reject `capabilities`. Never retry a
+timed-out or uncertain request automatically. A locally queued message or an
+`onDispatch` callback establishes at most a plugin RPC attempt, not that a native
+prompt ran: catalogue validation may still refuse inside the plugin.
+
+The receipt contains requested and actual provider/model for **every assistant
+message in the exact completed turn**. Missing or mismatched identity yields
+`model_selection_failed`, not proof the requested model ran. `ask` prints the
+receipt and exits nonzero on mismatch; the persistent bridge forwards the status
+and receipt visibly to the bound Codex task and records them in its delivery log.
+
+Packaging already includes this entire asset directory (`ArchHub.spec`). Activation
+also requires a deployment-owned OpenCode entry importing the installed plugin
+factory. An existing inline personal plugin does not acquire these changes from
+a package update. The [plugin documentation](https://opencode.ai/docs/plugins/)
+loads local plugins at startup. The current plugin retains its server in a process
+global singleton and exposes no hot-reload/teardown operation; a supported in-process
+upgrade has not been established. Coordinate a normal OpenCode process restart
+only after its work and uncertain requests are reconciled, retain the same native
+session, then resume the exact saved binding and verify one new reply/receipt.
+Do not kill the process or restart other apps to activate this feature.
+
 ## Installed host attachment gap
 
 The standalone installed application cannot currently promise Codex-to-Claude

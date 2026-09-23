@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import hashlib
 import math
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping
 
 from .cell_protocols import (
     CellBatch,
@@ -58,6 +58,7 @@ class BaboomActivityProtocol:
     root_id: str
     roles: Mapping[str, str]
     app_roots: Mapping[str, str]
+    activity_storage: Any = None
 
     def role(self, name: str) -> str:
         try:
@@ -143,14 +144,67 @@ def _app_roots(prefix: str) -> Mapping[str, str]:
     })
 
 
+def ensure_store_baboom_activity_storage(
+    store: CellStore,
+    activity_storage: Any = None,
+) -> Any:
+    """Ensure one instance-owned activity storage attached to the CellStore."""
+    from pathlib import Path
+    from .runtime_presence_lease_storage import RuntimePresenceLeaseStorage
+
+    storage = getattr(store, "_runtime_presence_lease_storage", None)
+    if activity_storage is not None:
+        if not isinstance(activity_storage, RuntimePresenceLeaseStorage) or activity_storage._closed:
+            raise InvalidCell("BABOOM activity storage is invalid or closed")
+        expected_path = str(Path(store.database_path).expanduser().resolve()) if store.database_path is not None else None
+        if activity_storage._database_path != expected_path:
+            raise InvalidCell("BABOOM activity storage belongs to another database")
+        if storage is not None and not storage._closed and activity_storage is not storage:
+            raise InvalidCell("BABOOM activity storage conflicts with the instance owner")
+    if storage is None or getattr(storage, "_closed", False):
+        if activity_storage is not None:
+            storage = activity_storage
+        else:
+            storage = RuntimePresenceLeaseStorage(store.database_path)
+        store._runtime_presence_lease_storage = storage
+    return storage
+
+
+def _projection_from_activity_row(
+    protocol: BaboomActivityProtocol,
+    row: dict[str, Any],
+) -> BaboomActivityProjection:
+    app = row["app"]
+    if app not in protocol.app_roots:
+        raise InvalidCell("BABOOM activity app is not released")
+    observed_at = float(row["observed_at"])
+    expires_at = float(row["expires_at"])
+    if not (math.isfinite(observed_at) and math.isfinite(expires_at)):
+        raise InvalidCell("BABOOM activity timestamps are not finite")
+    if not observed_at < expires_at:
+        raise InvalidCell("BABOOM activity timestamps are invalid")
+    return BaboomActivityProjection(
+        row["activity_root"],
+        row["agent_session_root"],
+        row["device_custody_root"],
+        app,
+        observed_at,
+        expires_at,
+    )
+
+
 def bootstrap_baboom_activity_protocol(
     store: CellStore,
     *,
     prefix: str = "baboom-activity-protocol",
+    activity_storage: Any = None,
 ) -> BaboomActivityProtocol:
+    storage = ensure_store_baboom_activity_storage(store, activity_storage)
     root_id = prefix + ":root"
     if root_id in store.snapshot().cells:
-        return project_baboom_activity_protocol(store.snapshot(), prefix=prefix)
+        return project_baboom_activity_protocol(
+            store.snapshot(), prefix=prefix, activity_storage=storage, store=store
+        )
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     app_roots = _app_roots(prefix)
     batch = CellBatch(store)
@@ -166,14 +220,19 @@ def bootstrap_baboom_activity_protocol(
         relation_id=root_id,
     )
     batch.commit()
-    return BaboomActivityProtocol(root_id, MappingProxyType(roles), app_roots)
+    return BaboomActivityProtocol(root_id, MappingProxyType(roles), app_roots, storage)
 
 
 def project_baboom_activity_protocol(
     snapshot: Snapshot,
     *,
     prefix: str = "baboom-activity-protocol",
+    activity_storage: Any = None,
+    store: CellStore | None = None,
 ) -> BaboomActivityProtocol:
+    storage = activity_storage
+    if store is not None:
+        storage = ensure_store_baboom_activity_storage(store, activity_storage)
     root_id = prefix + ":root"
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     app_roots = _app_roots(prefix)
@@ -190,7 +249,7 @@ def project_baboom_activity_protocol(
     }
     if vocabulary != {*roles.values(), *app_roots.values()}:
         raise InvalidCell("BABOOM activity protocol vocabulary drifted")
-    return BaboomActivityProtocol(root_id, MappingProxyType(roles), app_roots)
+    return BaboomActivityProtocol(root_id, MappingProxyType(roles), app_roots, storage)
 
 
 def read_baboom_activity(
@@ -198,6 +257,11 @@ def read_baboom_activity(
     protocol: BaboomActivityProtocol,
     activity_root: str,
 ) -> BaboomActivityProjection:
+    storage = protocol.activity_storage
+    if storage is not None:
+        row = storage.read_baboom_activity_row(activity_root)
+        if row is not None:
+            return _projection_from_activity_row(protocol, row)
     members = read_relation(snapshot, activity_root, budget=128)
     allowed = {
         protocol.role(name)
@@ -243,6 +307,11 @@ def list_baboom_activities(
     snapshot: Snapshot,
     protocol: BaboomActivityProtocol,
 ) -> tuple[BaboomActivityProjection, ...]:
+    storage = protocol.activity_storage
+    rows = {}
+    if storage is not None:
+        for row in storage.list_baboom_activity_rows(limit=1001):
+            rows[row["activity_root"]] = row
     roots = tuple(
         member.participant_id
         for member in read_relation(snapshot, protocol.root_id, budget=100_000)
@@ -250,7 +319,16 @@ def list_baboom_activities(
     )
     if len(roots) != len(set(roots)):
         raise InvalidCell("BABOOM activity registry contains a duplicate")
-    return tuple(read_baboom_activity(snapshot, protocol, root) for root in roots)
+    ordered = tuple(dict.fromkeys([*rows.keys(), *roots]))
+    if len(ordered) > 1000:
+        raise InvalidCell("BABOOM activity listing exceeds its 1000-record bound")
+    out = []
+    for root in ordered:
+        if root in rows:
+            out.append(_projection_from_activity_row(protocol, rows[root]))
+        else:
+            out.append(read_baboom_activity(snapshot, protocol, root))
+    return tuple(out)
 
 
 def list_active_baboom_activities(
@@ -260,10 +338,27 @@ def list_active_baboom_activities(
     now: float,
 ) -> tuple[BaboomActivityProjection, ...]:
     current_time = _validate_now(now, "current time")
-    return tuple(
-        activity for activity in list_baboom_activities(snapshot, protocol)
-        if current_time < activity.expires_at
+    storage = protocol.activity_storage
+    active = {}
+    if storage is not None:
+        for row in storage.list_active_baboom_activity_rows(current_time, limit=1001):
+            active[row["activity_root"]] = _projection_from_activity_row(protocol, row)
+    roots = tuple(
+        member.participant_id
+        for member in read_relation(snapshot, protocol.root_id, budget=100_000)
+        if member.role_id == protocol.role("activity-member")
     )
+    if len(roots) != len(set(roots)):
+        raise InvalidCell("BABOOM activity registry contains a duplicate")
+    for root in roots:
+        if root not in active:
+            # Read by identity so an expired indexed row still shadows legacy Cells.
+            activity = read_baboom_activity(snapshot, protocol, root)
+            if current_time < activity.expires_at:
+                active[root] = activity
+    if len(active) > 1000:
+        raise InvalidCell("BABOOM active activity listing exceeds its 1000-record bound")
+    return tuple(active.values())
 
 
 def renew_baboom_activity(
@@ -295,6 +390,30 @@ def renew_baboom_activity(
         raise InvalidCell(
             "BABOOM activity session and device custody must already exist"
         )
+
+    storage = protocol.activity_storage
+    if storage is not None:
+        existing_row = storage.read_baboom_activity_row(root_id)
+        if existing_row is None and root_id in snapshot.cells:
+            legacy = read_baboom_activity(snapshot, protocol, root_id)
+            if (
+                legacy.agent_session_root != session
+                or legacy.device_custody_root != custody
+            ):
+                raise InvalidCell("BABOOM activity binding drifted")
+            if observed_at < legacy.observed_at:
+                raise InvalidCell("BABOOM activity observation is stale")
+        stored = storage.record_baboom_activity({
+            "activity_root": root_id,
+            "agent_session_root": session,
+            "device_custody_root": custody,
+            "app": app,
+            "observed_at": observed_at,
+            "expires_at": expires_at,
+            "authority_revision": snapshot.revision,
+        })
+        return _projection_from_activity_row(protocol, stored), snapshot.revision
+
     relation = compose_relation_cells(
         (
             (protocol.role("activity-agent-session"), session),
@@ -341,6 +460,7 @@ __all__ = [
     "BaboomActivityProtocol",
     "FOREGROUND_APP_LABELS",
     "bootstrap_baboom_activity_protocol",
+    "ensure_store_baboom_activity_storage",
     "list_active_baboom_activities",
     "list_baboom_activities",
     "project_baboom_activity_protocol",

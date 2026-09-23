@@ -76,10 +76,59 @@ sys.excepthook = _tell_the_person
 print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
 faulthandler.enable(file=_log)
 
+def _windows_desktop_name():
+    """Read this thread's desktop; do not switch or close its borrowed handle."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentThreadId.argtypes = []
+    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+    user32.GetThreadDesktop.argtypes = [wintypes.DWORD]
+    user32.GetThreadDesktop.restype = wintypes.HANDLE
+    user32.GetUserObjectInformationW.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+        wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetUserObjectInformationW.restype = wintypes.BOOL
+    handle = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    name = ctypes.create_unicode_buffer(256)
+    needed = wintypes.DWORD()
+    if not user32.GetUserObjectInformationW(
+            handle, 2, name, ctypes.sizeof(name), ctypes.byref(needed)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if not name.value:
+        raise RuntimeError("Windows desktop identity is unavailable")
+    return name.value
+
+
+def _require_desktop_state_custody(selected_state, normal_state):
+    """Automation desktops may open isolated state, never normal user custody."""
+    if os.name != "nt":
+        return
+    desktop = _windows_desktop_name()
+    if desktop.casefold() == "default":
+        return
+    selected, normal = Path(selected_state).resolve(), Path(normal_state).resolve()
+    if (selected == normal or selected.is_relative_to(normal)
+            or normal.is_relative_to(selected)):
+        raise RuntimeError(
+            "ArchHub refused normal user state on an isolated Windows desktop. "
+            "Open ArchHub from the Windows Start menu on your normal desktop. "
+            "Automation requires a separate ARCHHUB_TEST_STATE_DIR outside user state.")
+
+
 state_dir = Path(
     os.environ.get("ARCHHUB_TEST_STATE_DIR")
     or (Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
 )
+try:
+    _require_desktop_state_custody(
+        state_dir, Path(os.environ["LOCALAPPDATA"]) / "ArchHub-Test")
+except Exception as refusal:
+    print("  desktop    : launch refused: %s" % refusal, flush=True)
+    raise SystemExit(4)
 state_dir.mkdir(parents=True, exist_ok=True)
 state_path = state_dir / "archhub-test.universal.sqlite3"
 
@@ -172,13 +221,13 @@ def _held_port_outcome(port, front_running_archhub, tell_the_person):
         + "Nothing was found to bring to the front, so ArchHub stopped here "
           "rather than fight the other copy for the same graph."
         + chr(10) + chr(10)
-        + "If ArchHub is not already open, wait a few seconds and open it "
-          "again. If it still refuses, set the environment variable "
-          "ARCHHUB_TEST_LOCK_PORT to a free port number (%d, for example) "
-          "and open ArchHub again." % (port + 1)
+        + "Open the existing ArchHub from its tray icon. If its window and "
+          "tray are missing, the background instance needs recovery before "
+          "another launch. Do not change the lock port or start another copy "
+          "against the same user data."
     )
     return ("port %d is held and no ArchHub window answered; the person was told "
-            "about ARCHHUB_TEST_LOCK_PORT" % port)
+            "to recover the existing instance without changing its lock port" % port)
 
 
 # ONE app. A second double-click fronts nothing and starts nothing --
@@ -526,16 +575,37 @@ def _publish_map_to_cloud():
         return json.loads(answer.read().decode("utf-8"))
 
 
-try:
-    print("  cloud map  :", _publish_map_to_cloud(), flush=True)
-except Exception as _refusal:
-    if getattr(_refusal, "code", None) in (401, 403):
-        # The token in cloud.json lives 90 days on the cloud; a bare "HTTP 403" hid that it had ended.
-        print("  cloud map  : not published (HTTP %s): the cloud refused this machine's sign-in, "
-              "which ends 90 days after it was made. Sign in again under Settings, Account."
-              % _refusal.code, flush=True)
-    else:
-        print("  cloud map  : not published (%s)" % str(_refusal)[:90], flush=True)
+import threading as _threading
+
+_cloud_publish_stop = _threading.Event()
+_cloud_publish_thread = None
+
+
+def _publish_map_quietly():
+    """Attempt one bounded background publication without blocking window or tray display."""
+    if _cloud_publish_stop.is_set():
+        return
+    try:
+        outcome = _publish_map_to_cloud()
+        if not _cloud_publish_stop.is_set():
+            print("  cloud map  :", outcome, flush=True)
+    except Exception as _refusal:
+        if _cloud_publish_stop.is_set():
+            return
+        if getattr(_refusal, "code", None) in (401, 403):
+            print("  cloud map  : not published (HTTP %s): the cloud refused this request. "
+                  "Check sign-in and access under Settings, Account."
+                  % _refusal.code, flush=True)
+        else:
+            print("  cloud map  : not published (%s)" % str(_refusal)[:90], flush=True)
+
+
+_cloud_publish_thread = _threading.Thread(
+    target=_publish_map_quietly,
+    name="archhub-cloud-map-publish",
+    daemon=True,
+)
+_cloud_publish_thread.start()
 
 # Announce THIS runtime as the machine's active universal runtime, so
 # the brain, BABOOM and any governed agent reach the founder's live
@@ -1324,6 +1394,15 @@ def _finish_application_shutdown():
         cloud_relay.request_stop()
     _baboom_stop.set()
     _update_stop.set()
+    _cloud_publish_stop_event = globals().get("_cloud_publish_stop")
+    if _cloud_publish_stop_event is not None:
+        _cloud_publish_stop_event.set()
+    _cloud_pub_thread = globals().get("_cloud_publish_thread")
+    if _cloud_pub_thread is not None and hasattr(_cloud_pub_thread, "join"):
+        try:
+            _cloud_pub_thread.join(timeout=1.0)
+        except Exception:
+            pass
     if not server.application_update.close(timeout_seconds=6.0):
         print("  shutdown   : INCOMPLETE (update download still active); "
               "descriptor and graph retained for recovery", flush=True)

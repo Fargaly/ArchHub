@@ -406,7 +406,190 @@ def _relay_native_recipients(owner, space_root, message_id, sender_root, recipie
     return {} if rows is None else {"native_delivery": rows}
 
 
-def send_browser_workshop(owner, binding, body):
+def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
+    """Freeze one broadcast in indexed history, then use admitted delivery paths.
+
+    A per-target reservation precedes each call. A crash after that reservation
+    is uncertain, never permission to resend. No network call holds the owner lock.
+    """
+    from .native_contact import project_native_contacts, read_contact
+    from .workshop_session_start import project_workshop_model_agent, send_workshop_model_message
+    from .universal_application import validate_universal_workshop_entry_content
+    from .conversation_history import _MAX_BODY
+
+    root, scope = body['root'], body['scope']
+    text = validate_universal_workshop_entry_content(body['text'])
+    registry, store, service = owner.universal_registry, owner.universal_store, owner.conversation_content
+    if service is None or not service.belongs_to(store, registry):
+        raise InvalidCell('Workshop broadcast requires its existing indexed history')
+    prefix = 'workshop-broadcast:' + hashlib.sha256(
+        (binding.subject_root + '\x1f' + body['idempotency_key']).encode()).hexdigest()
+    intent = hashlib.sha256(json.dumps([root, scope, binding.subject_root, text],
+        separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+
+    def guard():
+        if browser_guard is not None:
+            browser_guard()
+        return _admit(owner, binding, root, scope, allow_child=True)
+
+    def history():
+        guard()
+        content_binding = service._authorize_content_read(store.snapshot(), registry,
+            space_root=root, authentication_context=binding.context,
+            principal=binding.subject_root, machine=False)
+        return service._history_for(content_binding)
+
+    def lookup(suffix):
+        return history().get_by_idempotency(root, prefix + suffix, principal=binding.subject_root)
+
+    def append(content, suffix, *, refs=(), reply_to=None, category='tool', require_new=False,
+               recipients=None):
+        guard()
+        return service.append_authenticated(space_root=root, actor_root=binding.subject_root,
+            category_root=registry.workshop_category_roots[category], content=content,
+            idempotency_key=prefix + suffix,
+            recipient_roots=(binding.subject_root,) if recipients is None else recipients,
+            reference_roots=refs, reply_to_root=reply_to, require_new=require_new,
+            authentication_context=binding.context, expected_revision=store.revision)['message']
+
+    with owner.mutation_lock:
+        snapshot, space = guard()
+        held = lookup(':targets')
+        if held is None:
+            targets = []
+            with owner._machine_agent_session_lock:
+                for participant in space.participant_roots:
+                    if participant == binding.subject_root or not participant.startswith('app:agent-session:runtime:'):
+                        continue
+                    native = owner._machine_agent_sessions.get(participant) or {}
+                    targets.append({'kind':'session', 'root':participant,
+                        'runtime':native.get('runtime'),
+                        'fingerprint':native.get('external_session_fingerprint')})
+                    if len(targets) > 64:
+                        raise InvalidCell('Workshop broadcast exceeds 64 recipients')
+            contacts = project_native_contacts(owner, binding, root=root, scope=scope,
+                discovery={}, maximum=65)
+            if len(targets) + len(contacts) > 64:
+                raise InvalidCell('Workshop broadcast exceeds 64 recipient bindings')
+            # Multiple graph addresses may point at one native session. Prefer
+            # its user-bound contact and retain aliases; prompt that session once.
+            from .application_server import _NATIVE_RELAY_APPS
+            contact_destinations = {}
+            for row in sorted(contacts, key=lambda item: item['root']):
+                if row['root'] == binding.subject_root:
+                    continue
+                destination = (row['app'], hashlib.sha256(row['session_id'].encode()).hexdigest())
+                if destination in contact_destinations:
+                    contact_destinations[destination]['aliases'].append(row['root'])
+                else:
+                    contact_destinations[destination] = {'kind':'contact', 'root':row['root'],
+                        'binding_digest':row['binding_digest'], 'aliases':[]}
+            distinct_sessions = []
+            session_destinations = {}
+            for target in targets:
+                runtime = target['runtime']
+                native_app = 'codex' if runtime == 'codex' else _NATIVE_RELAY_APPS.get(runtime)
+                destination = (native_app, target['fingerprint'])
+                contact = contact_destinations.get(destination)
+                if contact is not None:
+                    contact['aliases'].append(target['root'])
+                elif native_app and target['fingerprint'] and destination in session_destinations:
+                    session_destinations[destination].setdefault('aliases', []).append(target['root'])
+                else:
+                    distinct_sessions.append(target)
+                    if native_app and target['fingerprint']:
+                        session_destinations[destination] = target
+            targets = distinct_sessions + list(contact_destinations.values())
+            model = project_workshop_model_agent(owner, binding, root, scope)
+            if model is not None and model['root'] != binding.subject_root:
+                targets.append({'kind':'model', **model})
+            if not targets:
+                raise InvalidCell('Connect an agent to this Workshop before sending to Everyone')
+            if len(targets) > 64:
+                raise InvalidCell('Workshop broadcast exceeds 64 recipients')
+            encoded = json.dumps({'version':1, 'intent':intent, 'targets':targets,
+                'revision':snapshot.revision}, separators=(',', ':'), ensure_ascii=False)
+            # This is generated routing metadata, not user prose. Use the
+            # existing history-record bound; user text retains its stricter gate.
+            if len(encoded.encode('utf-8')) > _MAX_BODY:
+                raise InvalidCell('Workshop recipient snapshot exceeds the history record limit; reduce its scope')
+            held = append(encoded, ':targets', require_new=True)
+        frozen = json.loads(held['content'])
+        if (frozen.get('version') != 1 or frozen.get('intent') != intent
+                or type(frozen.get('targets')) is not list or not 1 <= len(frozen['targets']) <= 64):
+            raise InvalidCell('The saved Workshop broadcast differs from this request')
+        targets = frozen['targets']
+        # Shared conversation content remains visible to admitted participants;
+        # delivery bindings/receipts remain private to the requesting user.
+        message = append(text, ':user', category='note', recipients=())
+
+    deliveries = []
+    for target in targets:
+        recipient = target['root']
+        suffix = ':target:' + hashlib.sha256(
+            (target['kind'] + '\x1f' + recipient).encode()).hexdigest()
+        with owner.mutation_lock:
+            prior = lookup(suffix + ':outcome')
+            if prior is not None:
+                deliveries.append(json.loads(prior['content']))
+                continue
+            if lookup(suffix + ':started') is not None:
+                deliveries.append({'recipient':recipient, 'state':'uncertain',
+                    'reason':'prior_attempt_unsettled'})
+                continue
+            append('Delivery attempt reserved; an unrecorded outcome is uncertain.',
+                suffix + ':started', reply_to=message['id'], require_new=True)
+        try:
+            if target['kind'] in ('session', 'contact') and getattr(owner, 'native_recipient_relay', None) is None:
+                delivery = {'state':'not_sent', 'reason':'transport_unavailable'}
+            elif target['kind'] == 'session':
+                with owner.mutation_lock:
+                    _, current_space = guard()
+                    with owner._machine_agent_session_lock:
+                        current = dict(owner._machine_agent_sessions.get(recipient) or {})
+                    if (recipient not in current_space.participant_roots
+                            or current.get('runtime') != target['runtime']
+                            or current.get('external_session_fingerprint') != target['fingerprint']):
+                        raise AuthorizationDenied('Workshop recipient binding changed')
+                    rows = owner.native_recipient_relay.request(space_root=root,
+                        message_id=message['id'], sender_root=binding.subject_root,
+                        recipient_roots=(recipient,), text=text)
+                    delivery = rows[0] if rows else {'state':'not_sent', 'reason':'transport_unavailable'}
+            elif target['kind'] == 'contact':
+                def revalidate(target=target):
+                    guard()
+                    return read_contact(owner, binding, target['root'], target['binding_digest'], root, scope)
+                with owner.mutation_lock:
+                    endpoint = revalidate()
+                    delivery = owner.native_recipient_relay.request_contact(space_root=root,
+                        message_id=message['id'], sender_root=binding.subject_root,
+                        contact_root=recipient, endpoint=endpoint, revalidate=revalidate, text=text)
+            elif target['kind'] == 'model':
+                result = send_workshop_model_message(owner, binding, {
+                    'root':root, 'scope':scope, 'node':recipient,
+                    'binding_digest':target['binding_digest'], 'prompt':text,
+                    'idempotency_key':hashlib.sha256((prefix + suffix).encode()).hexdigest()},
+                    browser_guard=guard)
+                delivery = result['delivery']
+            else:
+                raise InvalidCell('Workshop recipient kind is invalid')
+            row = {'recipient':recipient, **delivery}
+        except (InvalidCell, AuthorizationDenied) as exc:
+            row = {'recipient':recipient, 'state':'not_sent', 'reason':'recipient_admission_refused',
+                'message':str(exc)[:500]}
+        except Exception:
+            row = {'recipient':recipient, 'state':'uncertain', 'reason':'delivery_outcome_unconfirmed'}
+        if target.get('aliases'):
+            row['aliases'] = target['aliases']
+        with owner.mutation_lock:
+            append(json.dumps(row, separators=(',', ':')), suffix + ':outcome', reply_to=message['id'])
+        deliveries.append(row)
+    return {'ok':True, 'workshop':root, 'root':message['id'], 'message_id':message['id'],
+        'storage':'conversation-content', 'idempotency_key':body['idempotency_key'],
+        'revision':store.revision, 'native_delivery':deliveries}
+
+
+def send_browser_workshop(owner, binding, body, *, browser_guard=None):
     from .universal_application import append_universal_workshop_entry, validate_universal_workshop_entry_content
     from .conversation_content import workshop_message_identity
     expected = {"root", "scope", "category", "text", "refs", "evidence", "recipients",
@@ -415,10 +598,12 @@ def send_browser_workshop(owner, binding, body):
         raise InvalidCell("Workshop message fields are invalid")
     if (body["category"] != "note" or body["refs"] != [] or body["evidence"] != [] or
             body["reply_to"] is not None or body["created_at"] is not None or
-            type(body["recipients"]) is not list or len(body["recipients"]) != 1 or
+            type(body["recipients"]) is not list or len(body["recipients"]) not in (0, 1) or
             any(type(value) is not str or not value for value in body["recipients"]) or
             type(body["idempotency_key"]) is not str or not 1 <= len(body["idempotency_key"]) <= 128):
         raise InvalidCell("Workshop message values are invalid")
+    if not body['recipients']:
+        return _send_browser_workshop_everyone(owner, binding, body, browser_guard)
     _snapshot, _space = _admit(owner, binding, body["root"], body["scope"], allow_child=True)
     registry = owner.universal_registry
     if body["root"] != registry.workshop_root:

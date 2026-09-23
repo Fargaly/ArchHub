@@ -203,7 +203,9 @@ def send_native_contact(owner,browser,body,*,browser_guard):
             'revision':owner.universal_store.revision,'execution_authority':False}
 
 
-def project_native_contacts(owner,browser,*,root,scope,discovery):
+def project_native_contacts(owner,browser,*,root,scope,discovery,maximum=64):
+    if type(maximum) is not int or not 1 <= maximum <= 65:
+        raise InvalidCell('Native contact projection limit is invalid')
     from .existing_workshop_conversation import _admit
     from .universal_pipeline import _owner_properties
     contacts=[]
@@ -220,7 +222,7 @@ def project_native_contacts(owner,browser,*,root,scope,discovery):
             contacts.append({'root':node,'label':str(endpoint.get('title') or endpoint['app'])[:200],
                 'app':endpoint['app'],'session_id':endpoint['id'],'binding_digest':_digest(value),
                 'connected':native_contact_presence(discovery,endpoint['app'],endpoint['id'])})
-            if len(contacts)>=64:break
+            if len(contacts)>=maximum:break
     return contacts
 
 

@@ -277,6 +277,7 @@ from .cell_cde_authority import (
     CdeWriteAuthorityProtocol,
     authorize_cde_container_write,
     bootstrap_cde_write_authority_protocol,
+    ensure_store_cde_storage,
     project_cde_write_authority_protocol,
 )
 from .cell_cloud_routes import (
@@ -11913,7 +11914,9 @@ def build_universal_application(
         store, prefix="app:runtime-presence-protocol"
     )
     baboom_activity_protocol = bootstrap_baboom_activity_protocol(
-        store, prefix="app:baboom-activity-protocol"
+        store,
+        prefix="app:baboom-activity-protocol",
+        activity_storage=runtime_presence_protocol.lease_storage,
     )
     baboom_meeting_notes_protocol = bootstrap_baboom_meeting_notes_protocol(
         store, prefix="app:baboom-meeting-notes-protocol"
@@ -11936,7 +11939,7 @@ def build_universal_application(
         store, prefix="app:cde-signing-authority-protocol"
     )
     cde_write_authority_protocol = bootstrap_cde_write_authority_protocol(
-        store, prefix="app:cde-write-authority-protocol"
+        store, prefix="app:cde-write-authority-protocol", operational_storage=ensure_store_cde_storage(store)
     )
     native_authentication_protocol = bootstrap_native_authentication_protocol(
         store, prefix="app:native-authentication-protocol"
@@ -15209,7 +15212,7 @@ def restore_universal_application(
     runtime_presence_root = runtime_presence_prefix + ":root"
     if runtime_presence_root in snapshot.cells:
         runtime_presence_protocol = project_runtime_presence_protocol(
-            snapshot, prefix=runtime_presence_prefix
+            snapshot, prefix=runtime_presence_prefix, store=store
         )
     else:
         runtime_presence_protocol = bootstrap_runtime_presence_protocol(
@@ -15244,11 +15247,16 @@ def restore_universal_application(
     baboom_activity_root = baboom_activity_prefix + ":root"
     if baboom_activity_root in snapshot.cells:
         baboom_activity_protocol = project_baboom_activity_protocol(
-            snapshot, prefix=baboom_activity_prefix
+            snapshot,
+            prefix=baboom_activity_prefix,
+            activity_storage=runtime_presence_protocol.lease_storage,
+            store=store,
         )
     else:
         baboom_activity_protocol = bootstrap_baboom_activity_protocol(
-            store, prefix=baboom_activity_prefix
+            store,
+            prefix=baboom_activity_prefix,
+            activity_storage=runtime_presence_protocol.lease_storage,
         )
         snapshot = store.snapshot()
     application_baboom_activity_members = [
@@ -15484,15 +15492,16 @@ def restore_universal_application(
             store, prefix=cde_signing_prefix
         )
         snapshot = store.snapshot()
+    cde_write_storage = ensure_store_cde_storage(store)
     cde_write_prefix = "app:cde-write-authority-protocol"
     cde_write_root = cde_write_prefix + ":root"
     if cde_write_root in snapshot.cells:
         cde_write_authority_protocol = project_cde_write_authority_protocol(
-            snapshot, prefix=cde_write_prefix
+            snapshot, prefix=cde_write_prefix, store=store, operational_storage=cde_write_storage
         )
     else:
         cde_write_authority_protocol = bootstrap_cde_write_authority_protocol(
-            store, prefix=cde_write_prefix
+            store, prefix=cde_write_prefix, operational_storage=cde_write_storage
         )
         snapshot = store.snapshot()
     cde_authority_roots = {
@@ -44236,6 +44245,9 @@ def ensure_universal_scope_interactions(
     interactions: dict[str, str] = {}
     interaction_batch = CellBatch(store)
     pending_interactions = False
+    # Builds below only stage cells. Read all existing definitions at the same
+    # revision, after event bootstrap, until the batch is published.
+    snapshot = store.snapshot()
     for control_root, target_root in sorted(targets.items()):
         token = hashlib.sha256(
             (subject_root + "\0" + control_root + "\0" + current_root
@@ -44252,7 +44264,6 @@ def ensure_universal_scope_interactions(
             operation_root,
             view_session.subject_root,
         )
-        snapshot = store.snapshot()
         if interaction_root not in snapshot.cells:
             build_interaction(
                 store,

@@ -2033,7 +2033,16 @@
             workshopNotice = 'Message accepted in the previous workspace. Open it to see the result.';
             publish(); return {...accepted, navigated:true};
           }
-          workshopNotice = warning;
+          const deliveryRows = Array.isArray(result.native_delivery) ? result.native_delivery : [];
+          const deliveryCounts = new Map();
+          for (const row of deliveryRows) {
+            const label = ({replied:'replied', started:'delivery started', not_sent:'not sent',
+              uncertain:'delivery uncertain', already_recorded:'previously recorded'})[row?.state] || 'needs review';
+            deliveryCounts.set(label, (deliveryCounts.get(label) || 0) + 1);
+          }
+          const deliveryNotice = deliveryRows.length ? 'Message saved. ' +
+            [...deliveryCounts].map(([label, count]) => `${count} ${label}`).join('; ') + '.' : '';
+          workshopNotice = [warning, deliveryNotice].filter(Boolean).join(' ');
           if (current(stamp, root)) {
             // Reconcile the accepted send without waiting on an obsolete poll.
             pageEpoch += 1; pageTarget = {root, before:null, feed:pageTarget?.feed || 'all',

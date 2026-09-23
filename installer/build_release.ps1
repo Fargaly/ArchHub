@@ -113,6 +113,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'personal_brain/__init__.py', 'personal_brain/hook_coverage.py',
             'personal_brain/installer.py', 'personal_brain/ambient_policy.py',
             'bridges/rhino/archhub_mcp.py', 'bridges/blender/archhub_mcp/__init__.py',
+            'bridges/sources/max_mcp/max_mcp_startup.py',
             'nodelang/session_link/vendor/LICENSE', 'nodelang/session_link/vendor/PROVENANCE.md',
             'nodelang/outlook_graph.ps1',
             'nodelang/session_link/README.md', 'nodelang/session_link/session-link.ps1',
@@ -540,7 +541,8 @@ $shippedCode = @(
     (Join-Path $selectedRoot 'app/secrets_store.py'),
     (Join-Path $selectedRoot 'app/credential_lock.py'),
     (Join-Path $selectedRoot 'bridges/rhino/archhub_mcp.py'),
-    (Join-Path $selectedRoot 'bridges/blender/archhub_mcp')
+    (Join-Path $selectedRoot 'bridges/blender/archhub_mcp'),
+    (Join-Path $selectedRoot 'bridges/sources/max_mcp/max_mcp_startup.py')
 )
 foreach ($codePath in $shippedCode) {
     $LASTEXITCODE = 0

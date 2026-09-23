@@ -95,7 +95,7 @@ def live_sessions() -> list[dict]:
 
 
 def _session_for(instance: object, sessions: list[dict]) -> dict:
-    """The session the caller asked for, or the most recent one.
+    """Resolve an explicit session, or the single open document.
 
     Naming a session that is not open is refused rather than silently
     answered by a different model: a read that quietly changes which
@@ -112,20 +112,24 @@ def _session_for(instance: object, sessions: list[dict]) -> dict:
         )
     wanted = str(instance or "").strip()
     if not wanted:
-        # A session with no model open is a Revit that is running and has
-        # nothing to answer about. Picking the newest one regardless meant
-        # a machine with four models open could still report that there is
-        # no document, so the newest session HOLDING a document wins.
-        for session in reversed(sessions):
-            if session.get("document"):
-                return session
+        opened = [session for session in sessions if session.get("document")]
+        if len(opened) == 1:
+            return opened[0]
+        if len(opened) > 1:
+            raise RevitUnreachable(
+                "multiple Revit documents are open; select an explicit session port: %s"
+                % ", ".join(str(session["port"]) for session in opened)
+            )
         raise RevitUnreachable(
             "%d Revit session(s) are running and none has a document open"
             % len(sessions)
         )
-    for session in sessions:
-        if wanted in (str(session["pid"]), str(session["port"])):
-            return session
+    matches = [session for session in sessions
+               if wanted in (str(session["pid"]), str(session["port"]))]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RevitUnreachable("Revit session identity is ambiguous; select its unique port")
     raise RevitUnreachable(
         "no Revit session matches %r; open sessions are %s"
         % (wanted, ", ".join(str(s["pid"]) for s in sessions))

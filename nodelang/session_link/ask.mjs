@@ -9,14 +9,17 @@ import {sendExtra} from './extra-apps.mjs';
 import {postCodex} from './native.mjs';
 import {catalog} from './bridge.mjs';
 import {stateDir} from './paths.mjs';
+import {modelFromArgs,validateModel} from './opencode-model.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 const psQuote=value=>"'"+String(value).replaceAll("'","''")+"'";
 const args=process.argv.slice(2),opt=n=>{const i=args.indexOf('--'+n);return i<0?undefined:args[i+1];};
 const validate=text=>{if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Text must contain 1–32000 characters');return text;};
 // Any shell-capable agent can use this request/reply interface. It neither
 // starts a second model session nor writes into another terminal's stdin.
-export async function ask(app,session,text,permissionMode='prompting',{expected,onDispatch=()=>{}}={}){
+export async function ask(app,session,text,permissionMode='prompting',{expected,onDispatch=()=>{},model}={}){
  validate(text);
+ validateModel(model);
+ if(model!==undefined && app!=='opencode')throw new Error('Explicit model selection is OpenCode-only; not sent');
  if(!['claude','codex','opencode','antigravity','antigravity-ide'].includes(app))throw new Error('Unsupported target app');
  if(!['prompting','bypass'].includes(permissionMode))throw new Error('Invalid sender permission mode');
  const all=await catalog({apps:[app]});
@@ -24,7 +27,7 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
  if(matches.length!==1)throw new Error('Target must resolve to exactly one live session; use its exact ID');
  const target=matches[0];
  if(expected){for(const field of ['app','id','pid','port','socket','cwd','runtimeId'])if(expected[field]!==target[field])throw new Error('Recipient binding changed before dispatch: '+field);}
- if(app!=='claude'&&app!=='codex')return await sendExtra(target,text,{onDispatch});
+ if(app!=='claude'&&app!=='codex')return await sendExtra(target,text,{onDispatch,model});
  if(app==='codex'&&target.id===process.env.CODEX_THREAD_ID)throw new Error('Synchronous self-request would deadlock; use another existing task');
  const id=crypto.randomUUID(),peer=new PeerEndpoint({name:'session-link-request-'+id.slice(0,8),cwd:process.cwd()});
  peer.permissionMode=permissionMode;
@@ -69,5 +72,5 @@ async function answer(id,text){
  return await new Promise((resolve,reject)=>{const s=net.connect(r.control);let data='';s.setEncoding('utf8');s.setTimeout(10000,()=>{s.destroy();reject(new Error('Answer timeout; delivery uncertain'));});s.on('error',reject);s.on('connect',()=>s.write(JSON.stringify({token,session:process.env.CODEX_THREAD_ID,text})+'\n'));s.on('data',c=>{data+=c;if(data.includes('\n')){s.destroy();try{const v=JSON.parse(data);v.ok?resolve({delivered:true}):reject(new Error(v.error));}catch(e){reject(e);}}});});
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- try{const text=validate(fs.readFileSync(opt('file'),'utf8'));const result=args[0]==='answer'?await answer(args[1],text):await ask(opt('app'),opt('session'),text,opt('permission-mode'));console.log(JSON.stringify(result,null,2));}catch(e){console.error(e.message);process.exitCode=1;}
+ try{const model=modelFromArgs(args);const text=validate(fs.readFileSync(opt('file'),'utf8'));if(args[0]==='answer'&&model)throw new Error('Answer cannot select a model');const result=args[0]==='answer'?await answer(args[1],text):await ask(opt('app'),opt('session'),text,opt('permission-mode'),{model});console.log(JSON.stringify(result,null,2));if(result.status==='model_selection_failed')process.exitCode=1;}catch(e){console.error(e.message);process.exitCode=1;}
 }

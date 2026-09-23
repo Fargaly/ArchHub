@@ -2394,7 +2394,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   }, [allNodes, layoutBusy]);
   React.useEffect(() => {
     alive.current = true;
-    return () => { flushRef.current(true); alive.current = false; dragRef.current = null; };
+    return () => { flushRef.current(true); alive.current = false; pendingArrange.current = null; dragRef.current = null; };
   }, []);
 
   // A drag that ends while the previous save is still in flight is queued, not
@@ -2404,11 +2404,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // answers. One slot is enough: a drag cannot START while a save is in flight, so only
   // the drag already under the hand when the save left can arm a burst behind it.
   const queuedSave = React.useRef(null);
+  const pendingArrange = React.useRef(null);
+  const arrangeRunning = React.useRef(false);
   // `force` marks a save handed over on the way out (unmount, window close). It still
   // queues behind the save in flight, but it is not dropped when this canvas stops
   // being alive: the transport outlives the component.
   const savePositions = async (next, before, expectedRevision, remember = true, force = false) => {
-    if (!scopeStillCurrent()) return false;
+    if (!scopeStillCurrent()) { pendingArrange.current = null; return false; }
     const entries = Object.entries(next).filter(([id, point]) => before[id]?.x !== point.x || before[id]?.y !== point.y);
     if (!entries.length) return true;
     const restore = () => setPositions(held => ({...held, ...before}));
@@ -2424,6 +2426,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     // must not refuse the burst that was waiting for exactly that save.
     const busy = transportBusy();
     if (!canSaveLayout || (busy && !force) || saving.current || entries.length > MAX_LAYOUT_NODES) {
+      pendingArrange.current = null;
       restore();
       setLayoutError(entries.length > MAX_LAYOUT_NODES ? 'Move or arrange at most 256 nodes at a time.' :
         busy || saving.current ? 'Wait for the current change, then try again.' : 'This connection cannot save node positions.');
@@ -2443,7 +2446,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       return true;
     } catch (error) {
       if (scopeStillCurrent()) {
-        restore(); setUndoLayout(null); queuedSave.current = null;
+        restore(); setUndoLayout(null); queuedSave.current = null; pendingArrange.current = null;
         burstRef.current = null; clearLayoutBurstTimer(); setBurstPending(false);
         // A refused save used to lock every later save behind a manual refresh.
         // Refresh once here instead; the next drag starts from the reconciled canvas.
@@ -2633,7 +2636,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       setLayoutError('The canvas is receiving new positions. Try the drag again.'); return;
     }
     const before = Object.fromEntries(ids.filter(root => positions[root]).map(root => [root, {...positions[root]}]));
-    dragRef.current = {mode:'nodes', sx:e.clientX, sy:e.clientY, before, zoom, revision, scope:scopeKey};
+    dragRef.current = {mode:'nodes', sx:e.clientX, sy:e.clientY, before, zoom, revision, scope:scopeKey, lead:id};
   };
 
   React.useEffect(() => {
@@ -2647,8 +2650,19 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       } else if (d.scope === mountedScope.current) {
         const mx = Math.round(dx / d.zoom), my = Math.round(dy / d.zoom);
         const place = value => snapRef.current ? Math.round(value / CANVAS_GRID) * CANVAS_GRID : value;
-        d.last = Object.fromEntries(Object.entries(d.before).map(([id, point]) => [id, {x:place(point.x + mx), y:place(point.y + my)}]));
-        if (mx || my) suppressNodeClick.current = true;
+        const origin = d.before[d.lead];
+        if (!origin) return;
+        // Snap the grabbed member once, then translate the whole selection.
+        // Returning to the pointer origin restores off-grid positions exactly.
+        const tx = mx || my ? place(origin.x + mx) - origin.x : 0;
+        const ty = mx || my ? place(origin.y + my) - origin.y : 0;
+        if (!tx && !ty) {
+          delete d.last;
+          setPositions(p => ({...p, ...d.before}));
+          return;
+        }
+        d.last = Object.fromEntries(Object.entries(d.before).map(([id, point]) => [id, {x:point.x + tx, y:point.y + ty}]));
+        suppressNodeClick.current = true;
         setPositions(p => ({ ...p, ...d.last }));
       }
     };
@@ -2783,19 +2797,105 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       : selected.size ? [...selected] : nodeIds.includes(focusId) ? [focusId] : [];
     setSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
   };
-  const arrangeIds = async ids => {
-    if (flushLayoutBurst()) {
-      setLayoutError('Saving the moved nodes first. Try Arrange again.'); return;
+  const runPendingArrangeRef = React.useRef(null);
+  const arrangeNeedsRefresh = () => needsRefresh.current || layoutNeedsRefresh ||
+    !!(authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology)?.requires_refresh;
+  // Single-flight drain. Order matters: stale-scope, refresh-owed, auth, nodes,
+  // wires, MAX all DISCARD; only our own in-flight save/burst/queue WAITS.
+  const runPendingArrange = async () => {
+    const wanted = pendingArrange.current;
+    if (!wanted || arrangeRunning.current) return false;
+    if (!alive.current || !scopeStillCurrent()) { pendingArrange.current = null; return false; }
+    if (arrangeNeedsRefresh()) {
+      pendingArrange.current = null;
+      if (scopeStillCurrent()) setLayoutError('Refresh the canvas to reconcile any saved positions.');
+      return false;
     }
-    if (!scopeStillCurrent() || blocked || saving.current || !ids.length) return;
+    if (!canSaveLayout) {
+      pendingArrange.current = null;
+      if (scopeStillCurrent()) setLayoutError('This connection cannot save node positions.');
+      return false;
+    }
+    const liveIds = wanted.ids.filter(id => allNodes.some(node => node.id === id));
+    if (!liveIds.length || liveIds.length !== wanted.ids.length) {
+      pendingArrange.current = null;
+      if (scopeStillCurrent() && liveIds.length !== wanted.ids.length)
+        setLayoutError('Arrange was discarded: some nodes are no longer on this canvas.');
+      return false;
+    }
+    if (graph.wires.length > 4096) {
+      pendingArrange.current = null;
+      if (scopeStillCurrent()) setLayoutError('Arrange supports up to 4096 visible wires. Open a smaller scope.');
+      return false;
+    }
+    if (liveIds.length > MAX_LAYOUT_NODES) {
+      pendingArrange.current = null;
+      if (scopeStillCurrent()) setLayoutError('Move or arrange at most 256 nodes at a time.');
+      return false;
+    }
+    if (saving.current || burstRef.current || queuedSave.current || transportBusy()) return false;
+    const sizes = measureCards();
+    if (!sizes) return false;
+    if (allNodes.some(node => positions[node.id]?.x !== node.x || positions[node.id]?.y !== node.y)) return false;
+    pendingArrange.current = null;
+    arrangeRunning.current = true;
+    setLayoutError('');
+    try {
+      const before = Object.fromEntries(liveIds.map(id => [id, {...positions[id]}]));
+      const next = canvasArrangePositions(liveIds, positions, sizes, allNodes.map(node => node.id), graph.wires);
+      await savePositions(next, before, revision);
+      return true;
+    } catch (error) {
+      if (scopeStillCurrent()) setLayoutError(error.message || 'Arrange could not be confirmed.');
+      return false;
+    } finally {
+      arrangeRunning.current = false;
+    }
+  };
+  runPendingArrangeRef.current = runPendingArrange;
+  // Backstop: re-fire after reconciliation (positions/allNodes/permission/pending
+  // are deps so a mismatch-parked slot drains; guard exits fast with no slot).
+  React.useEffect(() => {
+    if (!pendingArrange.current || arrangeRunning.current) return;
+    if (layoutBusy || burstPending || saving.current) return;
+    if (!scopeStillCurrent()) { pendingArrange.current = null; return; }
+    runPendingArrangeRef.current && runPendingArrangeRef.current();
+  }, [layoutBusy, burstPending, revision, scopeKey, positions, allNodes, canSaveLayout, !!authorityState?.pending, !!authorityState?.requires_refresh]);
+  // Scope change discards the remembered click; refs die with unmount anyway.
+  React.useEffect(() => {
+    pendingArrange.current = null;
+    arrangeRunning.current = false;
+  }, [scopeKey]);
+  const arrangeIds = async ids => {
+    if (!alive.current || !scopeStillCurrent() || !ids.length) return;
+    if (!canSaveLayout) { setLayoutError('This connection cannot save node positions.'); return; }
+    const liveIds = ids.filter(id => allNodes.some(node => node.id === id));
+    if (!liveIds.length) return;
+    if (liveIds.length > MAX_LAYOUT_NODES) {
+      setLayoutError('Move or arrange at most 256 nodes at a time.'); return;
+    }
+    if (arrangeNeedsRefresh()) {
+      pendingArrange.current = null;
+      setLayoutError('Refresh the canvas to reconcile any saved positions.'); return;
+    }
+    // Foreign-busy (transport held by what is not our save): refuse, never queue.
+    if (transportBusy() && !saving.current && !queuedSave.current && !burstRef.current) {
+      setLayoutError('Wait for the current change, then try again.'); return;
+    }
+    // Our-save busy: remember one click (latest intent wins, runs once).
+    if (flushLayoutBurst() || saving.current || queuedSave.current || burstRef.current) {
+      pendingArrange.current = {ids: [...liveIds]};
+      setLayoutError('Arrange will run after the current save finishes.');
+      return;
+    }
     if (allNodes.some(node => positions[node.id]?.x !== node.x || positions[node.id]?.y !== node.y)) {
       setLayoutError('The canvas is receiving new positions. Try Arrange again.'); return;
     }
     if (graph.wires.length > 4096) { setLayoutError('Arrange supports up to 4096 visible wires. Open a smaller scope.'); return; }
     const expectedRevision = revision, sizes = measureCards();
     if (!sizes) return;
-    const before = Object.fromEntries(ids.map(id => [id, {...positions[id]}]));
-    const next = canvasArrangePositions(ids, positions, sizes, allNodes.map(node => node.id), graph.wires);
+    const before = Object.fromEntries(liveIds.map(id => [id, {...positions[id]}]));
+    const next = canvasArrangePositions(liveIds, positions, sizes, allNodes.map(node => node.id), graph.wires);
     await savePositions(next, before, expectedRevision);
   };
   const undoAvailable = !!undoLayout && Object.entries(undoLayout.after).every(([id, point]) =>
@@ -2833,7 +2933,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     {sep:true},
     {i:'·', t:'Snap to grid', toggle:true, on:snap, action:() => setSnap(value => !value)},
     {i:'⧉', t:'Auto-layout', k:'⌘⇧L', keys:'shift+l', action:() => arrangeIds(selected.size ? [...selected] : allIds),
-      disabled:blocked || !canSaveLayout || !allIds.length, why:layoutWhy(noNodesWhy)},
+      disabled:layoutNeedsRefresh || !canSaveLayout || !allIds.length, why:layoutWhy(noNodesWhy)},
     {sep:true},
     {i:'↻', t:'Reset positions', k:'⌘⇧R', keys:'shift+r', action:undoPositions, disabled:blocked || !undoAvailable,
       why:blocked ? busyWhy : 'No layout change to reset'},
@@ -2850,7 +2950,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     {sep:true},
     {i:'⌴', t:'Fit selection', action:() => fitIds([...selected]), disabled:!selected.size, why:noSelectionWhy},
     {i:'⧉', t:'Auto-layout selection', action:() => arrangeIds([...selected]),
-      disabled:blocked || !canSaveLayout || !selected.size, why:layoutWhy(noSelectionWhy)},
+      disabled:layoutNeedsRefresh || !canSaveLayout || !selected.size, why:layoutWhy(noSelectionWhy)},
     {sep:true},
     {i:'↻', t:'Refresh canvas', action:refreshCanvas, disabled:layoutBusy || !!authorityState?.pending || (!authority && !normal),
       why:!authority && !normal ? 'Refresh is not available in this connection' : 'Wait for the canvas to finish saving'},

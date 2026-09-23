@@ -57,6 +57,9 @@ _RELATION_PROJECTION_CACHE: ContextVar[
 _RELATION_PROJECTION_BATCH_SEALS: ContextVar[
     dict[int, tuple[tuple["RelationProjectionReuse", ...], str]] | None
 ] = ContextVar("relation_projection_batch_seals", default=None)
+_RESTORE_RELATION_PREFETCH: ContextVar[bool] = ContextVar(
+    "restore_relation_prefetch", default=False
+)
 
 # Graph restore re-walks the same relations many times on one revision
 # (boot-profile.log 2026-09-14: restore 80.2%, read_relation 79.7% of samples).
@@ -252,10 +255,14 @@ def with_restore_relation_projection_scope(function):
     """Run graph restore with bounded relation reuse: fast boot, capped RAM."""
     @wraps(function)
     def wrapped(*args, **kwargs):
-        with relation_projection_scope(
-                max_retained_bytes=RESTORE_RELATION_PROJECTION_MAX_BYTES,
-                max_entries=RESTORE_RELATION_PROJECTION_MAX_ENTRIES):
-            return function(*args, **kwargs)
+        prefetch_handle = _RESTORE_RELATION_PREFETCH.set(True)
+        try:
+            with relation_projection_scope(
+                    max_retained_bytes=RESTORE_RELATION_PROJECTION_MAX_BYTES,
+                    max_entries=RESTORE_RELATION_PROJECTION_MAX_ENTRIES):
+                return function(*args, **kwargs)
+        finally:
+            _RESTORE_RELATION_PREFETCH.reset(prefetch_handle)
     return wrapped
 
 
@@ -433,6 +440,14 @@ def read_relation(
 
 def _read_relation_walk(snapshot, relation_root, budget, cache, cache_key):
     """Walk one relation inside its snapshot's physical read scope."""
+    # Batching helps cold restore but regresses short, warm admission walks.
+    # Keep interactive reads on the existing point/cache path.
+    prefetch = (
+        getattr(snapshot.cells, "prefetch", None)
+        if _RESTORE_RELATION_PREFETCH.get() else None
+    )
+    if prefetch is not None:
+        prefetch([relation_root])
     if relation_root not in snapshot.cells:
         raise InvalidCell("relation root is missing")
 
@@ -459,11 +474,30 @@ def _read_relation_walk(snapshot, relation_root, budget, cache, cache_key):
             if chain.link1 != NULL_CELL_ID:
                 raise InvalidCell("empty relation root has a non-empty tail")
             break
+
+        if prefetch is not None:
+            initial_fetch = [chain.link0]
+            if chain.link1 != NULL_CELL_ID and chain.link1 not in seen and steps < budget:
+                initial_fetch.append(chain.link1)
+            prefetch(initial_fetch)
+
         incidence = snapshot.cells.get(chain.link0)
         if incidence is None:
             raise InvalidCell("relation incidence is missing")
         if cache is not None:
             source_cells.append(incidence)
+
+        if prefetch is not None:
+            to_fetch = [incidence.link0, incidence.link1]
+            if chain.link1 != NULL_CELL_ID and chain.link1 not in seen and steps < budget:
+                next_chain = snapshot.cells.get(chain.link1)
+                if next_chain is not None:
+                    if next_chain.link0 != NULL_CELL_ID:
+                        to_fetch.append(next_chain.link0)
+                    if next_chain.link1 != NULL_CELL_ID and next_chain.link1 not in seen and steps + 1 < budget:
+                        to_fetch.append(next_chain.link1)
+            prefetch(to_fetch)
+
         if (
             incidence.link0 not in snapshot.cells
             or incidence.link1 not in snapshot.cells

@@ -176,7 +176,8 @@ def finalize_recovery_close(owner, directory, *, authentication_context, timeout
 
     Called only after the owner has proved worker/transport quiescence, revoked
     browser sessions and flushed its final snapshot. Reservation or backup
-    failure deliberately leaves the databases open and fenced; it never undoes
+    failure deliberately leaves the primary graph/content handles open and fenced
+    (the quiesced CDE auxiliary handle is closed before reservation); it never undoes
     a committed release or claims that a shutdown completed.
 
     An explicit prepared destination adds a full physical copy, hashing and
@@ -197,6 +198,12 @@ def finalize_recovery_close(owner, directory, *, authentication_context, timeout
                     registry.ownership_protocol.states["draining"],
                     registry.ownership_protocol.states["released"])):
             raise InvalidCell("recovery close requires this owner's drained runtime")
+        # Workers are quiesced. Release the auxiliary same-database connection
+        # before reserving the graph's exclusive recovery lock. Keep the main
+        # graph/content handles and ownership fence on preservation failure.
+        cde_storage = getattr(store, "_cde_operational_storage", None)
+        if cde_storage is not None:
+            cde_storage.close()
         _reserve_graph(graph, store.revision)
         if history is not None:
             # The inner backup sees EXCLUSIVE as its previous mode, so its

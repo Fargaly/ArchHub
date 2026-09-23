@@ -10,6 +10,7 @@ import {nativeCall,hasAttachment,attachmentCall} from './native.mjs';
 import {discoverExtra,sendExtra} from './extra-apps.mjs';
 import {ScopedAttachments} from './scoped-attachment.mjs';
 import {resumeSaved,confirmsSavedChild} from './resume.mjs';
+import {modelFromArgs,validateModel,formatModelReceipt} from './opencode-model.mjs';
 const root=stateDir(),dir=path.join(root,'connections');
 fs.mkdirSync(dir,{recursive:true});
 const argv=process.argv.slice(2),cmd=argv[0]||'help';
@@ -94,7 +95,7 @@ async function resumeCatalog(bindings){
    const file=path.join(dir,b.id+'.runtime.json');
    if(!fs.existsSync(file))continue;
    const config=read(file);if(!alive(config.pid))continue;
-   try{supplied=await rpc(config,{operation:'resume-catalog',apps},{timeoutMs:1500});break;}catch{}
+   try{supplied=await rpc(config,{operation:'resume-catalog',apps},{timeoutMs:5000});break;}catch{}
   }
   if(!supplied)throw new Error('required_endpoint_discovery_unavailable');
   return supplied;
@@ -229,12 +230,14 @@ async function serve(binding){
         else if(r.operation==='list')result=await catalog();
         else if(r.operation==='connect')result=await connect(r);
         else if(r.operation==='reply'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');rate();await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[Local shell relay for ${b.claude.app}: ${b.claude.title}; link ${b.id}; caller agent identity not independently verified]\n${r.text}`},b.executor);forwarded++;result={delivered:true};}
-        else if(r.operation==='send'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');rate();
+        else if(r.operation==='send'||r.operation==='send-model'){if(typeof r.text!=='string'||!r.text.trim()||r.text.length>32000)throw new Error('Invalid text');rate();
+          const model=r.operation==='send-model'?validateModel(r.model):undefined;
+          if(r.operation==='send-model'&&(!model||b.claude.app!=='opencode'))throw new Error('Explicit model selection requires OpenCode and exact selection; not sent');
           const senderMode=r.permissionMode??peer.permissionMode;
           if(!['prompting','bypass'].includes(senderMode))throw new Error('Invalid explicit sender permission mode');
           if(b.claude.app!=='claude'){
             const messageId=crypto.randomUUID();log('queued',{messageId});
-            chain=chain.then(async()=>{try{sent++;const answer=await sendExtra(b.claude,r.text);if(!answer.text)throw new Error('No response text returned');await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[From ${b.claude.app}: ${b.claude.title}; link ${b.id}; reply ${answer.id}]\n${answer.text}`},b.executor);forwarded++;lastError=null;log('delivered',{messageId,direction:'app-to-codex'});}catch(e){lastError=e.message;log('error',{error:lastError});}});
+            chain=chain.then(async()=>{try{sent++;const answer=await sendExtra(b.claude,r.text,{model});if(!answer.text)throw new Error('No response text returned');const receipt=formatModelReceipt(answer);await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[From ${b.claude.app}: ${b.claude.title}; link ${b.id}; reply ${answer.id}]${receipt}\n${answer.text}`},b.executor);forwarded++;lastError=answer.status==='model_selection_failed'?'Explicit model selection failed; inspect receipt; do not resend':null;log('delivered',{messageId,direction:'app-to-codex',...(answer.model_receipt?{status:answer.status,model_receipt:answer.model_receipt}:{})});}catch(e){lastError=e.message;log('error',{error:lastError});}});
             result={messageId,status:'queued locally; check status and native chat for delivery'};
           }else{
             const recipient=target();
@@ -305,7 +308,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
    result=await rpc(matches[0],{operation:'delivery',messageId:argv[2]});
  }
- else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:cmd,text:cmd==='send'||cmd==='reply'?fs.readFileSync(option('file'),'utf8'):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
+ else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?fs.readFileSync(option('file'),'utf8'):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
  else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE','answer REQUEST_ID --file UTF8_FILE','status','send CONNECTION_ID --file UTF8_FILE','reply CONNECTION_ID --file UTF8_FILE','disconnect CONNECTION_ID','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}

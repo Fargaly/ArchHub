@@ -1,4 +1,4 @@
-"""Signed, one-use CDE write permits composed entirely from Universal Cells.
+"""Signed, one-use CDE permits with graph authority and indexed operational evidence.
 
 The permit is a policy-enforcement artifact, not authority by itself. It binds
 the subject, Work, WIP CDE container, operation, logical path, content digest,
@@ -26,7 +26,9 @@ from .cell_protocols import (
     prepare_append_relation_member,
     read_relation,
 )
+from .cde_operational_storage import CdeOperationalDenied, CdeOperationalStorage
 from .cell_signing_authority import (
+    SignatureEnvelopeProjection,
     SigningAuthorityDenied,
     SigningAuthorityProtocol,
     SigningAuthorityProvider,
@@ -114,12 +116,27 @@ class CdeWriteDenied(PermissionError):
     """One exact graph-held write permit did not authorize the request."""
 
 
+def ensure_store_cde_storage(
+    store: CellStore,
+    operational_storage: CdeOperationalStorage | None = None,
+) -> CdeOperationalStorage:
+    storage = getattr(store, "_cde_operational_storage", None)
+    if storage is None or storage.is_closed:
+        if operational_storage is not None:
+            storage = operational_storage
+        else:
+            storage = CdeOperationalStorage(store.database_path)
+        store._cde_operational_storage = storage
+    return storage
+
+
 @dataclass(frozen=True, slots=True)
 class CdeWriteAuthorityProtocol:
     root_id: str
     roles: Mapping[str, str]
     states: Mapping[str, str]
     receipt_kinds: Mapping[str, str]
+    operational_storage: CdeOperationalStorage | None = None
 
     def role(self, name: str) -> str:
         try:
@@ -149,6 +166,70 @@ class CdeWritePermitProjection:
     signature_envelope_root: str
     state_root: str
     state_incidence: str
+    envelope_projection: SignatureEnvelopeProjection | None = None
+
+
+def _permit_projection_from_storage(
+    protocol: CdeWriteAuthorityProtocol,
+    data: Mapping[str, Any],
+) -> CdeWritePermitProjection:
+    permit_root = data["permit_root"]
+    envelope_data = data["envelope_data"]
+    if isinstance(envelope_data, str):
+        try:
+            envelope_data = json.loads(envelope_data)
+        except Exception:
+            envelope_data = {}
+    envelope_root = data["signature_envelope_root"]
+    envelope_projection = SignatureEnvelopeProjection(
+        envelope_root,
+        MappingProxyType({k: f"{envelope_root}:{k}" for k in envelope_data}),
+        MappingProxyType(envelope_data),
+    )
+    fields = {
+        name: f"{permit_root}:{name}"
+        for name in PERMIT_FIELDS
+        if name not in {"signature-envelope", "state"}
+    }
+    state_name = data.get("state", "active")
+    state_root = protocol.states.get(state_name, state_name)
+    return CdeWritePermitProjection(
+        permit_root,
+        MappingProxyType(fields),
+        data["runtime"],
+        data["agent_session_root"],
+        data["work_root"],
+        data["container_root"],
+        data["container_id"],
+        data["container_digest"],
+        data["operation"],
+        data["path"],
+        data["content_digest"],
+        data["request_id"],
+        data["nonce"],
+        int(data["authority_revision"]),
+        float(data["issued_at"]),
+        float(data["expires_at"]),
+        envelope_root,
+        state_root,
+        f"{permit_root}:state:incidence",
+        envelope_projection=envelope_projection,
+    )
+
+
+def _receipt_projection_from_storage(
+    protocol: CdeWriteAuthorityProtocol,
+    data: Mapping[str, Any],
+) -> CdeWriteReceiptProjection:
+    kind_name = data["kind"]
+    kind_root = protocol.receipt_kinds.get(kind_name, kind_name)
+    return CdeWriteReceiptProjection(
+        data["receipt_root"],
+        data["permit_root"],
+        kind_root,
+        data["digest"],
+        float(data["recorded_at"]),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,11 +473,19 @@ def _iso_timestamp(value: float) -> str:
 
 
 def bootstrap_cde_write_authority_protocol(
-    store: CellStore, *, prefix: str = "cde-write-authority-protocol"
+    store: CellStore,
+    *,
+    prefix: str = "cde-write-authority-protocol",
+    operational_storage: CdeOperationalStorage | None = None,
 ) -> CdeWriteAuthorityProtocol:
     root_id = prefix + ":root"
     if root_id in store.snapshot().cells:
-        return project_cde_write_authority_protocol(store.snapshot(), prefix=prefix)
+        return project_cde_write_authority_protocol(
+            store.snapshot(),
+            prefix=prefix,
+            store=store,
+            operational_storage=operational_storage,
+        )
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     states = {name: "%s:state:%s" % (prefix, name) for name in STATE_NAMES}
     kinds = {
@@ -419,11 +508,16 @@ def bootstrap_cde_write_authority_protocol(
         MappingProxyType(roles),
         MappingProxyType(states),
         MappingProxyType(kinds),
+        operational_storage=operational_storage,
     )
 
 
 def project_cde_write_authority_protocol(
-    snapshot: Snapshot, *, prefix: str = "cde-write-authority-protocol"
+    snapshot: Snapshot,
+    *,
+    prefix: str = "cde-write-authority-protocol",
+    store: CellStore | None = None,
+    operational_storage: CdeOperationalStorage | None = None,
 ) -> CdeWriteAuthorityProtocol:
     root_id = prefix + ":root"
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
@@ -451,11 +545,14 @@ def project_cde_write_authority_protocol(
     for name, root in (*roles.items(), *states.items(), *kinds.items()):
         if _text(snapshot, root, "vocabulary") != name:
             raise InvalidCell("CDE write-authority vocabulary drifted")
+    if operational_storage is None and store is not None:
+        operational_storage = getattr(store, "_cde_operational_storage", None)
     return CdeWriteAuthorityProtocol(
         root_id,
         MappingProxyType(roles),
         MappingProxyType(states),
         MappingProxyType(kinds),
+        operational_storage=operational_storage,
     )
 
 
@@ -558,12 +655,152 @@ def issue_cde_write_permit(
     issued_at: float,
     expires_at: float,
     authorization_evidence: str,
+    operational_storage: CdeOperationalStorage | None = None,
 ) -> tuple[CdeWritePermitProjection, int]:
+    active_storage = (
+        operational_storage
+        if operational_storage is not None
+        else (
+            protocol.operational_storage
+            if protocol.operational_storage is not None
+            else getattr(store, "_cde_operational_storage", None)
+        )
+    )
     permit_id = _root(permit_id, "identity")
     base = store.snapshot()
     authorization_evidence = _root(
         authorization_evidence, "authorization evidence", maximum=1024
     )
+
+    if active_storage is not None:
+        existing_permit_data = active_storage.get_permit(permit_id)
+        if existing_permit_data is not None:
+            existing = _permit_projection_from_storage(protocol, existing_permit_data)
+            verified = verify_cde_write_permit(
+                base,
+                protocol,
+                signing_protocol,
+                provider,
+                permit_id,
+                runtime=runtime,
+                agent_session_root=agent_session_root,
+                work_root=work_root,
+                container_root=container_root,
+                container_id=container_id,
+                container_digest=container_digest,
+                operation=operation,
+                path=path,
+                content_digest=content_digest,
+                request_id=request_id,
+                authorization_evidence=authorization_evidence,
+                authority_revision=base.revision,
+                now=_time(issued_at, "issued at"),
+                operational_storage=active_storage,
+            )
+            if not hmac.compare_digest(
+                existing.nonce, _root(nonce, "nonce", maximum=512)
+            ):
+                raise CdeWriteDenied("CDE write permit nonce mismatched")
+            return existing, base.revision
+
+        values = _permit_values(
+            runtime=runtime,
+            agent_session_root=agent_session_root,
+            work_root=work_root,
+            container_root=container_root,
+            container_id=container_id,
+            container_digest=container_digest,
+            operation=operation,
+            path=path,
+            content_digest=content_digest,
+            request_id=request_id,
+            nonce=nonce,
+            authority_revision=base.revision,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+        for label, root in (
+            ("agent session", values["agent-session"]),
+            ("Work", values["work"]),
+            ("container root", values["container-root"]),
+            ("authorization evidence", authorization_evidence),
+        ):
+            if root not in base.cells:
+                raise CdeWriteDenied(
+                    "CDE write permit %s is not graph-held" % label
+                )
+
+        registered_permits = tuple(
+            member.participant_id
+            for member in read_relation(base, protocol.root_id, budget=100_000)
+            if member.role_id == protocol.role("permit-member")
+        )
+        for existing_root in registered_permits:
+            legacy_permit = _decode_cde_write_permit_fields(
+                base, protocol, existing_root
+            )
+            if hmac.compare_digest(legacy_permit.nonce, values["nonce"]):
+                raise CdeWriteDenied("CDE write permit nonce was replayed")
+            if hmac.compare_digest(legacy_permit.request_id, values["request-id"]):
+                raise CdeWriteDenied("CDE write permit request was replayed")
+
+        descriptor = read_signing_key_descriptor(
+            base, signing_protocol, descriptor_root
+        )
+        if descriptor.values["purpose"] != "cde-write-permit":
+            raise CdeWriteDenied("signing descriptor has the wrong purpose")
+
+        envelope_root = permit_id + ":signature"
+        envelope_cells = prepare_signature_envelope(
+            base,
+            signing_protocol,
+            provider,
+            descriptor_root,
+            envelope_id=envelope_root,
+            statement_protocol=STATEMENT_PROTOCOL,
+            context=STATEMENT_CONTEXT,
+            payload=_canonical_payload(values),
+            authorization_evidence=authorization_evidence,
+            issued_at=_iso_timestamp(float(issued_at)),
+            request_id=request_id,
+        )
+        envelope_fields = {
+            cell.id.removeprefix(envelope_root + ":"): cell.atom.decode("utf-8")
+            for cell in envelope_cells
+            if cell.id.startswith(envelope_root + ":")
+            and cell.link0 == NULL_CELL_ID
+            and cell.link1 == NULL_CELL_ID
+        }
+
+        permit_record = {
+            "permit_root": permit_id,
+            "runtime": values["runtime"],
+            "agent_session_root": values["agent-session"],
+            "work_root": values["work"],
+            "container_root": values["container-root"],
+            "container_id": values["container-id"],
+            "container_digest": values["container-digest"],
+            "operation": values["operation"],
+            "path": values["path"],
+            "content_digest": values["content-digest"],
+            "request_id": values["request-id"],
+            "nonce": values["nonce"],
+            "authority_revision": base.revision,
+            "issued_at": float(values["issued-at"]),
+            "expires_at": float(values["expires-at"]),
+            "authorization_evidence": authorization_evidence,
+            "signature_envelope_root": envelope_root,
+            "state": "active",
+            "envelope_data": envelope_fields,
+        }
+        try:
+            active_storage.record_permit(permit_record)
+        except CdeOperationalDenied as exc:
+            raise CdeWriteDenied(str(exc)) from exc
+
+        projection = _permit_projection_from_storage(protocol, permit_record)
+        return projection, base.revision
+
     if permit_id in base.cells:
         existing = verify_cde_write_permit(
             base,
@@ -623,7 +860,7 @@ def issue_cde_write_permit(
         if member.role_id == protocol.role("permit-member")
     )
     for existing_root in registered_permits:
-        existing = _read_cde_write_permit_unchecked(
+        existing = _decode_cde_write_permit_fields(
             base, protocol, existing_root
         )
         if hmac.compare_digest(existing.nonce, values["nonce"]):
@@ -706,6 +943,7 @@ def issue_cde_write_permit(
             issued_at=issued_at,
             expires_at=expires_at,
             authorization_evidence=authorization_evidence,
+            operational_storage=operational_storage,
         )
     if revision != accepted_revision:
         raise CdeWriteDenied("CDE write permit accepted revision drifted")
@@ -734,8 +972,20 @@ def verify_cde_write_permit(
     now: float,
     _allow_consumed: bool = False,
     _allow_expired_receipt: bool = False,
+    operational_storage: CdeOperationalStorage | None = None,
 ) -> CdeWritePermitProjection:
-    permit = _read_cde_write_permit_unchecked(snapshot, protocol, permit_root)
+    active_storage = (
+        operational_storage
+        if operational_storage is not None
+        else getattr(protocol, "operational_storage", None)
+    )
+    permit = None
+    if active_storage is not None:
+        permit_data = active_storage.get_permit(permit_root)
+        if permit_data is not None:
+            permit = _permit_projection_from_storage(protocol, permit_data)
+    if permit is None:
+        permit = _read_cde_write_permit_unchecked(snapshot, protocol, permit_root)
     if (
         permit.state_root == protocol.states["consumed"]
         and not _allow_consumed
@@ -811,12 +1061,17 @@ def verify_cde_write_permit(
         "issued-at": "%.6f" % permit.issued_at,
         "expires-at": "%.6f" % permit.expires_at,
     }
+    envelope_target = (
+        permit.envelope_projection
+        if permit.envelope_projection is not None
+        else permit.signature_envelope_root
+    )
     try:
         envelope = verify_signature_envelope(
             snapshot,
             signing_protocol,
             provider,
-            permit.signature_envelope_root,
+            envelope_target,
             payload=_canonical_payload(values),
             expected_statement_protocol=STATEMENT_PROTOCOL,
             expected_context=STATEMENT_CONTEXT,
@@ -854,6 +1109,15 @@ def _read_cde_write_permit_unchecked(
     }
     if permit_root not in registered:
         raise InvalidCell("CDE write permit is not registered")
+    return _decode_cde_write_permit_fields(snapshot, protocol, permit_root)
+
+
+def _decode_cde_write_permit_fields(
+    snapshot: Snapshot,
+    protocol: CdeWriteAuthorityProtocol,
+    permit_root: str,
+) -> CdeWritePermitProjection:
+    """Decode fields after membership was checked against this same snapshot."""
     members = read_relation(snapshot, permit_root, budget=128)
     declared = {protocol.role(name) for name in PERMIT_FIELDS}
     if any(member.role_id not in declared for member in members):
@@ -913,7 +1177,18 @@ def read_cde_write_permit(
     snapshot: Snapshot,
     protocol: CdeWriteAuthorityProtocol,
     permit_root: str,
+    *,
+    operational_storage: CdeOperationalStorage | None = None,
 ) -> CdeWritePermitProjection:
+    storage = (
+        operational_storage
+        if operational_storage is not None
+        else getattr(protocol, "operational_storage", None)
+    )
+    if storage is not None:
+        permit_data = storage.get_permit(permit_root)
+        if permit_data is not None:
+            return _permit_projection_from_storage(protocol, permit_data)
     return _read_cde_write_permit_unchecked(snapshot, protocol, permit_root)
 
 
@@ -921,8 +1196,19 @@ def read_cde_write_receipt(
     snapshot: Snapshot,
     protocol: CdeWriteAuthorityProtocol,
     receipt_root: str,
+    *,
+    operational_storage: CdeOperationalStorage | None = None,
 ) -> CdeWriteReceiptProjection:
     """Read one registered receipt and re-derive every encoded claim."""
+    storage = (
+        operational_storage
+        if operational_storage is not None
+        else getattr(protocol, "operational_storage", None)
+    )
+    if storage is not None:
+        receipt_data = storage.get_receipt(receipt_root)
+        if receipt_data is not None:
+            return _receipt_projection_from_storage(protocol, receipt_data)
     registered = {
         member.participant_id
         for member in read_relation(snapshot, protocol.root_id, budget=100_000)
@@ -1127,8 +1413,71 @@ def consume_cde_write_permit(
     signing_protocol: SigningAuthorityProtocol,
     provider: SigningAuthorityProvider,
     permit_root: str,
+    operational_storage: CdeOperationalStorage | None = None,
     **request,
 ) -> tuple[CdeWriteReceiptProjection, int]:
+    active_storage = (
+        operational_storage
+        if operational_storage is not None
+        else (
+            protocol.operational_storage
+            if protocol.operational_storage is not None
+            else getattr(store, "_cde_operational_storage", None)
+        )
+    )
+    if active_storage is not None and active_storage.get_permit(permit_root) is not None:
+        snapshot = store.snapshot()
+        permit = verify_cde_write_permit(
+            snapshot,
+            protocol,
+            signing_protocol,
+            provider,
+            permit_root,
+            _allow_consumed=True,
+            _allow_expired_receipt=True,
+            operational_storage=active_storage,
+            **request,
+        )
+        now = _time(request["now"], "receipt time")
+        evidence_digest = hashlib.sha256(
+            permit.content_digest.encode("utf-8")
+        ).hexdigest()
+        receipt_root = "%s:receipt:consumed:%s" % (
+            permit.root_id,
+            evidence_digest,
+        )
+        digest_fields = {
+            "permit": permit.root_id,
+            "kind": "consumed",
+            "evidence": evidence_digest,
+            "recorded-at": "%.6f" % now,
+        }
+        receipt_digest = hashlib.sha256(json.dumps(
+            digest_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")).hexdigest()
+        receipt_record = {
+            "receipt_root": receipt_root,
+            "permit_root": permit.root_id,
+            "kind": "consumed",
+            "digest": receipt_digest,
+            "evidence_digest": evidence_digest,
+            "recorded_at": now,
+            "authority_revision": snapshot.revision,
+        }
+        try:
+            stored_receipt = active_storage.consume_permit(
+                permit.root_id,
+                receipt_record,
+                expected_content_digest=permit.content_digest,
+                now=now,
+            )
+        except CdeOperationalDenied as exc:
+            raise CdeWriteDenied(str(exc)) from exc
+        return (
+            _receipt_projection_from_storage(protocol, stored_receipt),
+            snapshot.revision,
+        )
+
     snapshot = store.snapshot()
     permit = _read_cde_write_permit_unchecked(
         snapshot, protocol, permit_root
@@ -1142,6 +1491,7 @@ def consume_cde_write_permit(
             permit_root,
             _allow_consumed=True,
             _allow_expired_receipt=True,
+            operational_storage=active_storage,
             **request,
         )
         evidence_digest = hashlib.sha256(
@@ -1152,7 +1502,9 @@ def consume_cde_write_permit(
             evidence_digest,
         )
         return (
-            read_cde_write_receipt(snapshot, protocol, receipt_root),
+            read_cde_write_receipt(
+                snapshot, protocol, receipt_root, operational_storage=active_storage
+            ),
             snapshot.revision,
         )
     patch = prepare_cde_write_consumption(
@@ -1178,7 +1530,68 @@ def revoke_cde_write_permit(
     *,
     reason: str,
     recorded_at: float | None = None,
+    operational_storage: CdeOperationalStorage | None = None,
 ) -> tuple[CdeWriteReceiptProjection, int]:
+    active_storage = (
+        operational_storage
+        if operational_storage is not None
+        else (
+            protocol.operational_storage
+            if protocol.operational_storage is not None
+            else getattr(store, "_cde_operational_storage", None)
+        )
+    )
+    if active_storage is not None and active_storage.get_permit(permit_root) is not None:
+        snapshot = store.snapshot()
+        permit = read_cde_write_permit(
+            snapshot,
+            protocol,
+            permit_root,
+            operational_storage=active_storage,
+        )
+        if permit.state_root == protocol.states["consumed"]:
+            raise CdeWriteDenied("consumed CDE write permit cannot be revoked")
+        if permit.state_root == protocol.states["revoked"]:
+            raise CdeWriteDenied("CDE write permit was already revoked")
+        now = time.time() if recorded_at is None else recorded_at
+        reason = _root(reason, "revocation reason", maximum=1024)
+        evidence_digest = hashlib.sha256(reason.encode("utf-8")).hexdigest()
+        receipt_root = "%s:receipt:revoked:%s" % (
+            permit.root_id,
+            evidence_digest,
+        )
+        digest_fields = {
+            "permit": permit.root_id,
+            "kind": "revoked",
+            "evidence": evidence_digest,
+            "recorded-at": "%.6f" % now,
+        }
+        receipt_digest = hashlib.sha256(json.dumps(
+            digest_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")).hexdigest()
+        receipt_record = {
+            "receipt_root": receipt_root,
+            "permit_root": permit.root_id,
+            "kind": "revoked",
+            "digest": receipt_digest,
+            "evidence_digest": evidence_digest,
+            "recorded_at": now,
+            "authority_revision": snapshot.revision,
+        }
+        try:
+            stored_receipt = active_storage.revoke_permit(
+                permit.root_id,
+                receipt_record,
+                reason=reason,
+                now=now,
+            )
+        except CdeOperationalDenied as exc:
+            raise CdeWriteDenied(str(exc)) from exc
+        return (
+            _receipt_projection_from_storage(protocol, stored_receipt),
+            snapshot.revision,
+        )
+
     permit = read_cde_write_permit(store.snapshot(), protocol, permit_root)
     if permit.state_root == protocol.states["consumed"]:
         raise CdeWriteDenied("consumed CDE write permit cannot be revoked")
@@ -1196,6 +1609,8 @@ def revoke_cde_write_permit(
 
 
 __all__ = [
+    "CdeOperationalDenied",
+    "CdeOperationalStorage",
     "CdeWriteAuthorityProtocol",
     "CdeWriteDenied",
     "CdeWritePermitProjection",
@@ -1205,6 +1620,7 @@ __all__ = [
     "bootstrap_cde_write_authority_protocol",
     "cde_write_permit_identity",
     "consume_cde_write_permit",
+    "ensure_store_cde_storage",
     "issue_cde_write_permit",
     "prepare_cde_write_consumption",
     "project_cde_write_authority_protocol",

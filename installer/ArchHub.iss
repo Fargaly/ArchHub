@@ -30,6 +30,7 @@
 #ifndef NodeLicensePath
 #error Build with installer/build_release.ps1: NodeLicensePath is required.
 #endif
+#define BundledNodeSha256 GetSHA256OfFile(NodeRuntimePath)
 #define PayloadExcludes "__pycache__\*,*.pyc,*.pyo,.env,.env.*,*.sqlite3,*.sqlite3-*,*.db,*.db-*,*.key,*.pem"
 #define AppPublisher "Fargaly"
 ; Every shortcut opens ArchHub.vbs: it resolves the installed pythonw itself
@@ -73,7 +74,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion
+Source: "{#NodeRuntimePath}"; DestDir: "{app}\runtime"; DestName: "node.exe"; Flags: ignoreversion; Check: NodeRuntimeNeedsInstall
 Source: "{#NodeLicensePath}"; DestDir: "{app}\runtime"; DestName: "Node-LICENSE.txt"; Flags: ignoreversion
 Source: "..\nodelang\*"; DestDir: "{app}\nodelang"; Excludes: "{#PayloadExcludes}"; Flags: recursesubdirs ignoreversion
 Source: "..\launch_archhub_test.py"; DestDir: "{app}"; Flags: ignoreversion
@@ -91,6 +92,7 @@ Source: "..\personal_brain\installer.py"; DestDir: "{app}\personal_brain"; Flags
 Source: "..\personal_brain\ambient_policy.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
 Source: "..\bridges\rhino\archhub_mcp.py"; DestDir: "{app}\bridges\rhino"; Flags: ignoreversion
 Source: "..\bridges\blender\archhub_mcp\__init__.py"; DestDir: "{app}\bridges\blender\archhub_mcp"; Flags: ignoreversion
+Source: "..\bridges\sources\max_mcp\max_mcp_startup.py"; DestDir: "{app}\bridges\max"; Flags: ignoreversion
 Source: "..\colleague_setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -126,6 +128,22 @@ Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}
 Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open installs what it needs, in a window you can read)"; Flags: shellexec postinstall nowait skipifsilent
 
 [Code]
+function NodeRuntimeNeedsInstall(): Boolean;
+var
+  InstalledRuntime: String;
+begin
+  InstalledRuntime := ExpandConstant('{app}\runtime\node.exe');
+  Result := True;
+  if FileExists(InstalledRuntime) then
+  begin
+    { Session Link may still use this executable after the desktop closes.
+      Keep identical bytes in place; an unreadable file fails installation. }
+    Result := CompareText(GetSHA256OfFile(InstalledRuntime), '{#BundledNodeSha256}') <> 0;
+    if not Result then
+      Log('Bundled Node runtime already matches SHA-256; preserving active Session Link processes.');
+  end;
+end;
+
 function VersionScore(Name: String): Integer;
 var
   I, Major, Minor: Integer;

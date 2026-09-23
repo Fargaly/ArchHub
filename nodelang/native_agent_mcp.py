@@ -99,6 +99,21 @@ def _validate_index(result, client):
     return result
 
 
+def attach_workshop_tools(owner, selected_work: str):
+    """Attach task tools to an already bound native hook owner.
+
+    Embedded clients such as OpenCode must share their hook's owner. This does
+    not construct a session, enroll, claim Work, or grant a file permission.
+    Retain the returned server for the owner's lifetime: its selected-Work
+    adapter retains uncertain effects for work_reconcile.
+    """
+    from .native_workshop_tools import build_workshop_task_server, validate_selected_work
+    validate_selected_work(selected_work)
+    with owner.bound_client() as client:
+        control = _OwnedWorkshopClient(owner, client)
+        return build_workshop_task_server(control, selected_work)
+
+
 def build_server(*, session=None, workshop_task: str | None = None):
     """Enroll once at explicit construction; every call rechecks that owner."""
     if workshop_task is not None:
@@ -106,10 +121,9 @@ def build_server(*, session=None, workshop_task: str | None = None):
         validate_selected_work(workshop_task)
     owner = session if session is not None else NativeAgentSession()
     client = owner.connect()
-    control = _OwnedWorkshopClient(owner, client)
     if workshop_task is not None:
-        from .native_workshop_tools import build_workshop_task_server
-        return build_workshop_task_server(control, workshop_task)
+        return attach_workshop_tools(owner, workshop_task)
+    control = _OwnedWorkshopClient(owner, client)
     server = build_coordination_server(client=control)
 
     @server.tool(name='native.hook_stop')

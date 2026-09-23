@@ -770,14 +770,17 @@ def verify_signature_envelope(
     snapshot: Snapshot,
     protocol: SigningAuthorityProtocol,
     provider: SigningAuthorityProvider,
-    envelope_root: str,
+    envelope_root: str | SignatureEnvelopeProjection,
     *,
     payload: bytes,
     expected_statement_protocol: str | None = None,
     expected_context: str | None = None,
     require_current_authority: bool = True,
 ) -> SignatureEnvelopeProjection:
-    envelope = read_signature_envelope(snapshot, protocol, envelope_root)
+    if isinstance(envelope_root, SignatureEnvelopeProjection):
+        envelope = envelope_root
+    else:
+        envelope = read_signature_envelope(snapshot, protocol, envelope_root)
     descriptor = verify_signing_key_descriptor(
         snapshot,
         protocol,

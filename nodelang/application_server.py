@@ -230,6 +230,7 @@ from .cell_signing_authority import (
 from .cell_cde_authority import (
     cde_write_permit_identity,
     consume_cde_write_permit,
+    ensure_store_cde_storage,
     issue_cde_write_permit,
 )
 from .cell_external_graph_binding import bind_external_signing_authority
@@ -5208,6 +5209,7 @@ class ApplicationServer:
                 owns_signing_authority = True
 
         owns_universal_store = universal_store is None
+        self._owns_universal_store = owns_universal_store
         if (
             universal_store is not None
             and universal_store.supports_shared_writers
@@ -5392,6 +5394,9 @@ class ApplicationServer:
             )
         self.universal_store = universal_store
         self.universal_registry = universal_registry
+        self.runtime_presence_lease_storage = getattr(
+            self.universal_registry.runtime_presence_protocol, "lease_storage", None
+        )
         # Bind migration admission to this owner's restored authority. Merely
         # constructing the gate performs no signing, hashing, or graph writes.
         from .authority_adoption import ApplicationAdoptionGate
@@ -5461,6 +5466,7 @@ class ApplicationServer:
                         self.cde_write_signing_provider,
                     )
                 )
+                ensure_store_cde_storage(self.universal_store)
             if self._fresh_content_bootstrap:
                 self.conversation_content.initialize_fresh_workshop()
         except Exception:
@@ -5471,6 +5477,9 @@ class ApplicationServer:
             if self.universal_checkpoint_guard is not None:
                 self.universal_checkpoint_guard.close()
             if owns_universal_store:
+                cde_storage = getattr(self.universal_store, "_cde_operational_storage", None)
+                if cde_storage is not None:
+                    cde_storage.close()
                 self.universal_store.close()
             if (
                 owns_signing_authority
@@ -6648,8 +6657,22 @@ class ApplicationServer:
                                 browser_guard=disconnect_guard))
                             return
                         from .existing_workshop_conversation import send_browser_workshop
-                        with owner.mutation_lock:
-                            payload = send_browser_workshop(owner, binding, body)
+                        def workshop_send_guard():
+                            current, current_token = self._browser_session_binding(unsafe=True)
+                            if current != binding or current_token != _session_token:
+                                raise AuthorizationDenied('Workshop send browser changed')
+                            owner.require_universal_http_route('POST', self.path,
+                                authentication_context=binding.context, revalidate=True)
+                        if type(body) is dict and body.get('recipients') == []:
+                            # Broadcast may invoke a model. Its own admission/storage
+                            # sections lock; external work must not hold mutation_lock.
+                            with _composer_planning(owner):
+                                payload = send_browser_workshop(owner, binding, body,
+                                    browser_guard=workshop_send_guard)
+                        else:
+                            with owner.mutation_lock:
+                                workshop_send_guard()
+                                payload = send_browser_workshop(owner, binding, body)
                         self._json(200, payload)
                         return
                     if self.path == '/api/universal/baboom-command':
@@ -9527,8 +9550,14 @@ class ApplicationServer:
         issue/consume call, including an uncertain commit; release projections
         can then survive unrelated graph writes while refusing this actor's race.
         """
-        with self._machine_agent_session_lock:
-            binding = self._machine_agent_sessions.get(session_root)
+        lock = getattr(self, "_machine_agent_session_lock", None)
+        if lock is None:
+            return
+        with lock:
+            sessions = getattr(self, "_machine_agent_sessions", None)
+            if sessions is None:
+                return
+            binding = sessions.get(session_root)
             if binding is None:
                 raise AuthorizationDenied("CDE owner capability is no longer bound")
             binding["cde_activity"] = binding.get("cde_activity", 0) + 1
@@ -9797,6 +9826,36 @@ class ApplicationServer:
             raise AuthorizationDenied(
                 "runtime presence Agent Session is not device-proofed"
             )
+        expected_generation = None
+        has_supplied_generation = False
+        supplied_generation = None
+        if isinstance(request, dict):
+            if "expected_generation" in request:
+                has_supplied_generation = True
+                supplied_generation = request["expected_generation"]
+            elif isinstance(request.get("body"), dict) and "expected_generation" in request["body"]:
+                has_supplied_generation = True
+                supplied_generation = request["body"]["expected_generation"]
+
+        if has_supplied_generation:
+            if (
+                type(supplied_generation) is bool
+                or not isinstance(supplied_generation, int)
+                or supplied_generation <= 0
+            ):
+                raise InvalidCell(
+                    "runtime presence expected_generation must be a positive integer"
+                )
+            bound_gen = binding.get("presence_generation")
+            if bound_gen is not None and supplied_generation != bound_gen:
+                raise InvalidCell(
+                    f"stale runtime presence lease writer: generation mismatch (expected {supplied_generation}, found {bound_gen})"
+                )
+            expected_generation = supplied_generation
+        else:
+            with self._machine_agent_session_lock:
+                expected_generation = binding.get("presence_generation")
+
         presence, revision = renew_runtime_presence(
             self.universal_store,
             self.universal_registry.runtime_presence_protocol,
@@ -9805,12 +9864,19 @@ class ApplicationServer:
             runtime=runtime,
             now=time.time(),
             lease_seconds=RUNTIME_PRESENCE_LEASE_SECONDS,
+            expected_generation=expected_generation,
+            lease_storage=getattr(self, "runtime_presence_lease_storage", None),
         )
+        with self._machine_agent_session_lock:
+            if session_root in self._machine_agent_sessions:
+                self._machine_agent_sessions[session_root]["presence_generation"] = presence.generation
+
         return {
             "agent_session": session_root,
             "runtime": runtime,
             "expires_at": presence.expires_at,
             "revision": revision,
+            "generation": presence.generation,
         }
 
     def _enroll_universal_machine_agent_session(
@@ -10946,12 +11012,20 @@ class ApplicationServer:
                 and request.get("path") == "/api/universal/browser-handoff"
                 and type(request.get("body")) is dict and not request["body"]
             )
+            unbound_runtime_backend = (
+                type(session) is dict and not session
+                and request.get("method") == "GET"
+                and request.get("path") == "/api/universal/runtime-backend"
+                and type(request.get("body")) is dict and not request["body"]
+            )
             # Desktop handoff authenticates its physical launch and graph
             # authority downstream; it has no Agent Session to count here.
             # These routes authenticate native enrollment/recovery themselves.
             # An exactly unbound request has no actor to count yet. Never skip
             # proof verification for a claimed actor or an ordinary route.
-            if session is not None and not (unbound_enrollment or unbound_desktop_handoff):
+            if session is not None and not (
+                unbound_enrollment or unbound_desktop_handoff or unbound_runtime_backend
+            ):
                 # Authenticate before attributing activity. Keep admission and
                 # increment atomic against capability retirement, using the
                 # same lock order as release. Normal route checks still run.
@@ -12319,10 +12393,12 @@ class ApplicationServer:
                     )
                 return self._renew_universal_machine_agent_session(request)
             if path == "/api/universal/runtime-presence":
-                if direct or body:
+                if direct or (body and set(body) != {"expected_generation"}):
                     raise AuthorizationDenied(
                         "runtime presence requires its bound empty request"
                     )
+                if body and "expected_generation" in body and "expected_generation" not in request:
+                    request["expected_generation"] = body["expected_generation"]
                 return self._renew_universal_runtime_presence(request)
             if path == "/api/universal/runtime-handoff":
                 expected_shape = {
@@ -16367,6 +16443,10 @@ class ApplicationServer:
                     reason="Application server closed",
                 )
         self.flush_snapshot()
+        # Keep presence available until admitted requests and workers drain.
+        lease_storage = getattr(self, "runtime_presence_lease_storage", None)
+        if self._owns_universal_store and lease_storage is not None:
+            lease_storage.close()
         if recovery_directory is not None:
             from .application_recovery_close import finalize_recovery_close
             return finalize_recovery_close(self, recovery_directory,
@@ -16383,6 +16463,9 @@ class ApplicationServer:
         if self.universal_checkpoint_guard is not None:
             self.universal_checkpoint_guard.close()
         self.conversation_content.close()
+        cde_storage = getattr(self.universal_store, "_cde_operational_storage", None)
+        if self._owns_universal_store and cde_storage is not None:
+            cde_storage.close()
         self.universal_store.close()
         if (
             self._owns_universal_checkpoint_signing_authority

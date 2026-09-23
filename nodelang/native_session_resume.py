@@ -29,7 +29,7 @@ def resume_existing_links(environment=None, *, required_connections=None):
         return {'status':'recovery_required','reason':'current_required_connections_not_configured'}
     try:
         result=subprocess.run([node,str(Path(__file__).parent/'session_link'/'bridge.mjs'),
-            'resume','--current','--connections',','.join(required)],env=env,capture_output=True,text=True,timeout=4,
+            'resume','--current','--connections',','.join(required)],env=env,capture_output=True,text=True,timeout=8,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         if result.returncode:
             reason='required_endpoint_discovery_unavailable' if result.stderr.strip()=='required_endpoint_discovery_unavailable' else 'transport_resume_failed'
@@ -54,7 +54,7 @@ def resume_existing_links(environment=None, *, required_connections=None):
                 raise ValueError('Resume result does not belong to current native session')
         return {'status':'observed','connections':rows,'work_recovery_required':True}
     except subprocess.TimeoutExpired:
-        return {'status':'recovery_required','reason':'transport_resume_timeout','timeout_seconds':4}
+        return {'status':'recovery_required','reason':'transport_resume_timeout','timeout_seconds':8}
     except Exception:
         # Timeout never triggers another start or message replay.
         return {'status':'recovery_required','reason':'transport_resume_unconfirmed'}

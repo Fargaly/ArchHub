@@ -21,6 +21,7 @@ from .cell_protocols import (
     prepare_append_relation_member,
     read_relation,
 )
+from .runtime_presence_lease_storage import RuntimePresenceLeaseStorage
 from .universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell, Snapshot
 
 
@@ -40,10 +41,26 @@ _MIN_LEASE_SECONDS = 15.0
 _MAX_LEASE_SECONDS = 900.0
 
 
+def ensure_store_lease_storage(
+    store: CellStore,
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
+) -> RuntimePresenceLeaseStorage:
+    """Ensure one instance-owned lease storage attached to the CellStore without globals or monkeypatches."""
+    storage = getattr(store, "_runtime_presence_lease_storage", None)
+    if storage is None or storage._closed:
+        if lease_storage is not None:
+            storage = lease_storage
+        else:
+            storage = RuntimePresenceLeaseStorage(store.database_path)
+        store._runtime_presence_lease_storage = storage
+    return storage
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimePresenceProtocol:
     root_id: str
     roles: Mapping[str, str]
+    lease_storage: RuntimePresenceLeaseStorage | None = None
 
     def role(self, name: str) -> str:
         try:
@@ -61,6 +78,7 @@ class RuntimePresenceProjection:
     issued_at: float
     refreshed_at: float
     expires_at: float
+    generation: int = 1
 
 
 def _terminal(root_id: str, value: str) -> Cell:
@@ -131,10 +149,17 @@ def bootstrap_runtime_presence_protocol(
     store: CellStore,
     *,
     prefix: str = "runtime-presence-protocol",
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
 ) -> RuntimePresenceProtocol:
+    storage = ensure_store_lease_storage(store, lease_storage)
     root_id = prefix + ":root"
     if root_id in store.snapshot().cells:
-        return project_runtime_presence_protocol(store.snapshot(), prefix=prefix)
+        return project_runtime_presence_protocol(
+            store.snapshot(),
+            prefix=prefix,
+            lease_storage=storage,
+            store=store,
+        )
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     batch = CellBatch(store)
     for name, root in roles.items():
@@ -144,14 +169,20 @@ def bootstrap_runtime_presence_protocol(
         relation_id=root_id,
     )
     batch.commit()
-    return RuntimePresenceProtocol(root_id, MappingProxyType(roles))
+    return RuntimePresenceProtocol(
+        root_id, MappingProxyType(roles), lease_storage=storage
+    )
 
 
 def project_runtime_presence_protocol(
     snapshot: Snapshot,
     *,
     prefix: str = "runtime-presence-protocol",
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
+    store: CellStore | None = None,
 ) -> RuntimePresenceProtocol:
+    if lease_storage is None and store is not None:
+        lease_storage = ensure_store_lease_storage(store)
     root_id = prefix + ":root"
     roles = {name: "%s:role:%s" % (prefix, name) for name in ROLE_NAMES}
     if any(_root not in snapshot.cells for _root in {root_id, *roles.values()}):
@@ -167,13 +198,21 @@ def project_runtime_presence_protocol(
     }
     if vocabulary != set(roles.values()):
         raise InvalidCell("runtime-presence protocol vocabulary drifted")
-    return RuntimePresenceProtocol(root_id, MappingProxyType(roles))
+    protocol = RuntimePresenceProtocol(
+        root_id, MappingProxyType(roles), lease_storage=lease_storage
+    )
+    if lease_storage is not None:
+        import time as _time
+        lease_storage.migrate_legacy_leases(snapshot, protocol, now=_time.time())
+    return protocol
 
 
 def read_runtime_presence(
     snapshot: Snapshot,
     protocol: RuntimePresenceProtocol,
     presence_root: str,
+    *,
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
 ) -> RuntimePresenceProjection:
     members = read_relation(snapshot, presence_root, budget=128)
     allowed = {
@@ -195,15 +234,24 @@ def read_runtime_presence(
     )
     runtime_root = _one(members, protocol.role("presence-runtime"), "runtime")
     issued_root = _one(members, protocol.role("presence-issued-at"), "issued-at")
-    refreshed_root = _one(
-        members, protocol.role("presence-refreshed-at"), "refreshed-at"
-    )
-    expires_root = _one(members, protocol.role("presence-expires-at"), "expires-at")
     runtime = _validate_runtime(_text(snapshot, runtime_root, "runtime"))
     issued_at = _time(snapshot, issued_root, "issued-at")
-    refreshed_at = _time(snapshot, refreshed_root, "refreshed-at")
-    expires_at = _time(snapshot, expires_root, "expires-at")
-    if not issued_at <= refreshed_at < expires_at:
+
+    active_storage = (
+        lease_storage if lease_storage is not None else protocol.lease_storage
+    )
+    if active_storage is None:
+        raise InvalidCell("runtime presence protocol has no active lease storage: fail closed")
+
+    lease = active_storage.get_lease(presence_root)
+    if lease is None:
+        raise InvalidCell("runtime presence lease not found: fail closed")
+
+    refreshed_at, expires_at, generation, owner_token = lease
+    if owner_token != session:
+        raise InvalidCell("runtime presence lease owner mismatch: fail closed")
+
+    if not (issued_at - 1e-5 <= refreshed_at < expires_at):
         raise InvalidCell("runtime presence timestamps are invalid")
     return RuntimePresenceProjection(
         presence_root,
@@ -213,12 +261,15 @@ def read_runtime_presence(
         issued_at,
         refreshed_at,
         expires_at,
+        generation=generation,
     )
 
 
 def list_runtime_presences(
     snapshot: Snapshot,
     protocol: RuntimePresenceProtocol,
+    *,
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
 ) -> tuple[RuntimePresenceProjection, ...]:
     roots = tuple(
         member.participant_id
@@ -227,7 +278,17 @@ def list_runtime_presences(
     )
     if len(roots) != len(set(roots)):
         raise InvalidCell("runtime-presence registry contains a duplicate")
-    return tuple(read_runtime_presence(snapshot, protocol, root) for root in roots)
+    results = []
+    for root in roots:
+        try:
+            results.append(
+                read_runtime_presence(
+                    snapshot, protocol, root, lease_storage=lease_storage
+                )
+            )
+        except InvalidCell:
+            continue
+    return tuple(results)
 
 
 def list_active_runtime_presences(
@@ -235,10 +296,14 @@ def list_active_runtime_presences(
     protocol: RuntimePresenceProtocol,
     *,
     now: float,
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
 ) -> tuple[RuntimePresenceProjection, ...]:
     current_time = _validate_now(now, "current time")
     return tuple(
-        presence for presence in list_runtime_presences(snapshot, protocol)
+        presence
+        for presence in list_runtime_presences(
+            snapshot, protocol, lease_storage=lease_storage
+        )
         if current_time < presence.expires_at
     )
 
@@ -252,6 +317,8 @@ def renew_runtime_presence(
     runtime: str,
     now: float,
     lease_seconds: float,
+    expected_generation: int | None = None,
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
 ) -> tuple[RuntimePresenceProjection, int]:
     """Create or refresh one immutable-binding runtime presence lease."""
     session = _validate_identity(
@@ -265,8 +332,8 @@ def renew_runtime_presence(
         prefix="device-custody:sha256:",
     )
     runtime = _validate_runtime(runtime)
-    refreshed_at = _validate_now(now, "renewal time")
-    expires_at = refreshed_at + _validate_lease_seconds(lease_seconds)
+    refreshed_at = float("%.6f" % _validate_now(now, "renewal time"))
+    expires_at = float("%.6f" % (refreshed_at + _validate_lease_seconds(lease_seconds)))
     root_id = _presence_root(session)
     snapshot = store.snapshot()
     if session not in snapshot.cells or custody not in snapshot.cells:
@@ -274,20 +341,56 @@ def renew_runtime_presence(
             "runtime presence session and device custody must already exist"
         )
 
+    active_storage = (
+        lease_storage
+        if lease_storage is not None
+        else (
+            protocol.lease_storage
+            if protocol.lease_storage is not None
+            else ensure_store_lease_storage(store)
+        )
+    )
+
     if root_id in snapshot.cells:
-        existing = read_runtime_presence(snapshot, protocol, root_id)
+        members = read_relation(snapshot, root_id, budget=128)
+        existing_session = _one(members, protocol.role("presence-agent-session"), "agent session")
+        existing_custody = _one(members, protocol.role("presence-device-custody"), "device custody")
+        runtime_root = _one(members, protocol.role("presence-runtime"), "runtime")
+        existing_runtime = _validate_runtime(_text(snapshot, runtime_root, "runtime"))
+
         if (
-            existing.agent_session_root != session
-            or existing.device_custody_root != custody
-            or existing.runtime != runtime
+            existing_session != session
+            or existing_custody != custody
+            or existing_runtime != runtime
         ):
             raise InvalidCell("runtime presence binding drifted")
-        replacements = (
-            _terminal(root_id + ":refreshed-at", "%.6f" % refreshed_at),
-            _terminal(root_id + ":expires-at", "%.6f" % expires_at),
+
+        existing_lease = active_storage.get_lease(root_id)
+        if existing_lease is None:
+            if expected_generation is not None:
+                raise InvalidCell(
+                    f"stale runtime presence lease writer: lease not found (expected {expected_generation})"
+                )
+            active_storage.create_initial_lease(root_id, session, refreshed_at, expires_at)
+        else:
+            active_storage.renew_lease(
+                root_id,
+                session,
+                refreshed_at,
+                expires_at,
+                expected_generation=expected_generation,
+            )
+        return (
+            read_runtime_presence(
+                snapshot, protocol, root_id, lease_storage=active_storage
+            ),
+            store.revision,
         )
-        revision = store.commit(snapshot.revision, replace=replacements)
-        return read_runtime_presence(store.snapshot(), protocol, root_id), revision
+
+    if expected_generation is not None:
+        raise InvalidCell(
+            f"stale runtime presence lease writer: lease not found (expected {expected_generation})"
+        )
 
     values = {
         "runtime": runtime,
@@ -323,13 +426,20 @@ def renew_runtime_presence(
         ),
         replace=registry_patch.replace,
     )
-    return read_runtime_presence(store.snapshot(), protocol, root_id), revision
+    active_storage.create_initial_lease(root_id, session, refreshed_at, expires_at)
+    return (
+        read_runtime_presence(
+            store.snapshot(), protocol, root_id, lease_storage=active_storage
+        ),
+        revision,
+    )
 
 
 __all__ = [
     "RuntimePresenceProjection",
     "RuntimePresenceProtocol",
     "bootstrap_runtime_presence_protocol",
+    "ensure_store_lease_storage",
     "list_active_runtime_presences",
     "list_runtime_presences",
     "project_runtime_presence_protocol",

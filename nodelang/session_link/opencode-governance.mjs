@@ -1,17 +1,30 @@
 import {spawn} from 'node:child_process';
 import path from 'node:path';
+import {randomUUID} from 'node:crypto';
 
 const fail = reason => {throw new Error('ArchHub OpenCode governance: '+reason);};
 class NativeNotDelivered extends Error {}
 const notDelivered = reason => {throw new NativeNotDelivered('ArchHub OpenCode governance: '+reason+'; tool not delivered');};
 const object = value => value && typeof value==='object' && !Array.isArray(value);
+const readTools = new Set(['read','glob','grep','list','skill']);
 const stringify = value => JSON.stringify(value, (_key,item)=>object(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 
 // The private installed loader supplies the existing admitted gate command.
 // No shell, Bun global, source-checkout lookup, enrollment or fallback service.
-export function createNativeGateRunner(command,args) {
+export function createNativeGateRunner(command,args,{expectedSessions={},selectedWorks={},sessionLink=null}={}) {
  if(!path.isAbsolute(command)||!Array.isArray(args)||args.some(a=>typeof a!=='string'))fail('trusted native gate command required');
+ if(!object(expectedSessions)||Object.keys(expectedSessions).length>128||Object.entries(expectedSessions).some(([session,actor])=>
+    !/^ses_[A-Za-z0-9]+$/.test(session)||typeof actor!=='string'||!/^app:agent-session:runtime:[a-f0-9]{32}$/.test(actor)))fail('exact recovery session identities required');
  const workers=new Map(),lineages=new Map(),queues=new Map(),quarantined=new Set();
+ if(!object(selectedWorks)||Object.keys(selectedWorks).length>128||Object.entries(selectedWorks).some(([session,work])=>
+    !/^ses_[A-Za-z0-9]+$/.test(session)||typeof work!=='string'||!work.startsWith('assembly-instance:')||work.length>512||work.trim()!==work))fail('trusted selected Work identities required');
+ if(sessionLink!==null&&(!object(sessionLink)||typeof sessionLink.node!=='string'||!path.isAbsolute(sessionLink.node)||
+    typeof sessionLink.stateDirectory!=='string'||!path.isAbsolute(sessionLink.stateDirectory)||!object(sessionLink.connections)||
+    Object.keys(sessionLink.connections).length>128||Object.entries(sessionLink.connections).some(([session,ids])=>
+     !/^ses_[A-Za-z0-9]+$/.test(session)||!Array.isArray(ids)||!ids.length||ids.length>16||new Set(ids).size!==ids.length||
+     ids.some(id=>typeof id!=='string'||!/^[a-f0-9]{16}$/.test(id)))))fail('exact Session Link recovery configuration required');
+ if(Object.keys(selectedWorks).some(session=>!sessionLink?.connections[session]))fail('selected Work requires its native Session Link configuration');
+ for(const [session,actor] of Object.entries(expectedSessions))lineages.set(session,actor);
  let next=0;
  const dispatch=event=>{
   // Reject local input before acquiring a child, actor slot or lineage.
@@ -31,7 +44,12 @@ export function createNativeGateRunner(command,args) {
    if(!lineages.has(event.session_id))lineages.set(event.session_id,null);
    const child=spawn(command,args,{shell:false,windowsHide:true,cwd:event.cwd,stdio:['pipe','pipe','pipe'],env:{...process.env,
     ARCHHUB_COORDINATION_VENDOR:'opencode',ARCHHUB_AGENT_RUNTIME:'opencode',ARCHHUB_EXTERNAL_SESSION_ID:event.session_id,
-    OPENCODE_SESSION_ID:event.session_id,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'}});
+    OPENCODE_SESSION_ID:event.session_id,
+    ARCHHUB_EXPECTED_AGENT_SESSION:lineages.get(event.session_id)||'',
+    ARCHHUB_SELECTED_WORK:selectedWorks[event.session_id]||'',
+    ...(sessionLink?{SESSION_LINK_NODE:sessionLink.node,SESSION_LINK_STATE_DIR:sessionLink.stateDirectory,
+      SESSION_LINK_REQUIRED_CONNECTIONS:(sessionLink.connections[event.session_id]||[]).join(',')}:{}),
+    PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'}});
    state={child,cwd:event.cwd,failed:false,pending:null,buffer:Buffer.alloc(0),stderrBytes:0};workers.set(event.session_id,state);
    const abort=reason=>{
     state.failed=true;state.buffer=Buffer.alloc(0);
@@ -83,7 +101,7 @@ export function createNativeGateRunner(command,args) {
         (lineages.get(event.session_id)!==reply.agent_session||reply.continued!==true))){abort('native graph identity changed');return;}
     state.actor=reply.agent_session;lineages.set(event.session_id,state.actor);
     state.lastCompleted=held.id;
-    clearTimeout(held.timer);state.pending=null;held.resolve({allow:reply.decision==='allow'});
+    clearTimeout(held.timer);state.pending=null;held.resolve({allow:reply.decision==='allow',toolOutput:reply.tool_output});
    };
    child.stdout.on('data',data=>{
     if(state.failed)return;
@@ -131,14 +149,19 @@ export function createNativeGateRunner(command,args) {
 
 function normalized(tool,args) {
  if(!object(args))fail('native tool arguments unavailable');
+ if(tool==='skill'&&(Object.keys(args).length!==1||typeof args.name!=='string'||!args.name.trim()||args.name.length>256))fail('native skill arguments unavailable');
  if(tool==='write')return {tool_name:'Write',tool_input:{file_path:args.filePath,content:args.content}};
  if(tool==='edit')return {tool_name:'Edit',tool_input:{file_path:args.filePath,old_string:args.oldString,new_string:args.newString,replace_all:args.replaceAll===true}};
- if(['read','glob','grep','list'].includes(tool))return {tool_name:tool,tool_input:args};
+ if(tool==='archhub_work'){
+  if(Object.keys(args).sort().join(',')!=='arguments,operation'||typeof args.operation!=='string'||!object(args.arguments))fail('selected Work arguments unavailable');
+  return {tool_name:tool,tool_input:args};
+ }
+ if(readTools.has(tool))return {tool_name:tool,tool_input:args};
  fail('tool has no verified governance mapping: '+String(tool));
 }
 
-export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner}) {
- const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs);
+export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink}) {
+ const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,sessionLink});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
  const pending=new Map();
  return async ({directory})=>{
@@ -149,17 +172,39 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner}) {
    return input.sessionID+'\0'+input.callID;
   };
   return {
+   ...(workToolFactory?{tool:{archhub_work:workToolFactory({
+    description:'Use this native session’s configured Workshop task. Attachment does not grant execution or file permission.',
+    args:{operation:workToolFactory.schema.string(),arguments:workToolFactory.schema.object({}).passthrough(),_archhub_call:workToolFactory.schema.string().optional()},
+    execute:async(args,context)=>{
+     const record=[...pending.values()].find(p=>p.session===context.sessionID&&p.stamp===args._archhub_call);
+     const {_archhub_call,...original}=args;
+     if(!record||record.tool!=='archhub_work'||record.state!=='admitted'||record.args!==stringify(original)||context.directory!==directory)fail('selected Work execution has no matching native admission');
+     record.state='executing';
+     try{
+      const result=await invoke({...record.event,hook_event_name:'NativeToolExecute'});
+      if(!result.allow||typeof result.toolOutput!=='string')fail('selected Work output unavailable; reconcile before retry');
+      record.state='executed';return result.toolOutput;
+     }catch(error){record.state='uncertain';throw error;}
+    },
+   })}}:{}),
    dispose:async()=>{if(pending.size)fail('native receipts remain unresolved');await invoke.close?.();},
    'tool.execute.before':async(input,output)=>{
     const key=identity(input);
-    const read=['read','glob','grep','list'].includes(input.tool);
-    if(pending.has(key)||[...pending.values()].some(p=>p.session===input.sessionID&&
-       (!read||!p.read||!['preparing','admitted','settling'].includes(p.state))))fail('earlier tool admission or receipt unresolved');
+    const read=readTools.has(input.tool);
+    const blocking=pending.get(key)||[...pending.values()].find(p=>p.session===input.sessionID&&
+       (!read||!p.read||!['preparing','admitted','settling'].includes(p.state)));
+    // Identify the exact retained call without exposing arguments, file content,
+    // credentials or another session's state. Diagnostics never clear custody.
+    if(blocking)fail('earlier tool admission or receipt unresolved '+JSON.stringify({
+     session: blocking.session, call: blocking.call, tool: blocking.tool,
+     state: blocking.state, phase: blocking.event.hook_event_name,
+    }));
     if(pending.size>=64)fail('pending capacity reached');
     const args=JSON.parse(JSON.stringify(output?.args));
+    if(input.tool==='archhub_work'&&(!workToolFactory||!selectedWorks[input.sessionID]))fail('this native session has no configured Work; no claim or permission granted');
     const event={...normalized(input.tool,args),session_id:input.sessionID,tool_use_id:input.callID,
      cwd:directory,vendor:'opencode',hook_event_name:'PreToolUse'};
-    const record={session:input.sessionID,tool:input.tool,read,args:stringify(args),event,state:'preparing'};
+    const record={session:input.sessionID,call:input.callID,tool:input.tool,read,args:stringify(args),event,state:'preparing'};
     pending.set(key,record);
     let result;
     try{result=await invoke(event);}catch(error){
@@ -169,13 +214,23 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner}) {
     }
     if(!result.allow){pending.delete(key);fail(result.notDelivered?'native owner released before admission; tool not delivered':'prewrite admission denied');}
     record.state='admitted';
+    if(input.tool==='archhub_work'){
+     record.stamp=randomUUID();output.args._archhub_call=record.stamp;
+    }
    },
    'tool.execute.after':async(input,_output)=>{
     const key=identity(input),record=pending.get(key);
-    if(!record||record.state!=='admitted'||record.tool!==input.tool||record.args!==stringify(input.args)||record.event.cwd!==directory)fail('postwrite identity or arguments differ');
+    const supplied={...input.args};
+    if(record?.tool==='archhub_work'){
+     if(supplied._archhub_call!==record.stamp)fail('selected Work receipt stamp differs');
+     delete supplied._archhub_call;
+    }
+    const skipped=input.tool==='archhub_work'&&record?.state==='admitted';
+    if(!record||(!skipped&&record.state!==(input.tool==='archhub_work'?'executed':'admitted'))||record.tool!==input.tool||record.args!==stringify(supplied)||record.event.cwd!==directory)fail('postwrite identity or arguments differ');
     record.state='settling';
+    record.event={...record.event,hook_event_name:'PostToolUse'};
     let result;
-    try{result=await invoke({...record.event,hook_event_name:'PostToolUse',tool_response:{status:'completed'}});}
+    try{result=await invoke({...record.event,hook_event_name:'PostToolUse',tool_response:{status:skipped?'skipped':'completed'}});}
     catch(error){record.state='uncertain';throw error;}
     if(!result.allow){record.state='uncertain';fail('postwrite receipt denied; continuation blocked');}
     pending.delete(key);

@@ -565,8 +565,11 @@ def _material(server, work_root, session_root, context, *, publication=False):
         targets[name] = {"root": target, "digest": _digest(value)}
     request, _ = native_material_from_values(values["inputs"], values["requirements"],
         title=values["title"], description=values["description"])
-    _require(len(WORKSHOP_TASK_TOOL_NAMES) == 18 and len(set(WORKSHOP_TASK_TOOL_NAMES)) == 18,
-             "Native Workshop tool inventory changed")
+    # The admitted profile is sealed below from the canonical tool inventory.
+    # A duplicated historical count must not reject newly integrated tools.
+    _require(bool(WORKSHOP_TASK_TOOL_NAMES)
+             and len(set(WORKSHOP_TASK_TOOL_NAMES)) == len(WORKSHOP_TASK_TOOL_NAMES),
+             "Native Workshop tool inventory is empty or duplicated")
     value = {"contract": PROFILE_VERSION, "application": registry.application_root,
         "workshop": registry.workshop_root, "work": work_root, "session": session_root,
         "assignment": assigned[0].root_id, "agent_body": session.body_root,

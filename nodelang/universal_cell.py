@@ -664,26 +664,45 @@ class _HeadRowReader:
             wanted = list(dict.fromkeys(key for key in batch if key not in self._cache and key not in self._missing))
             if not wanted:
                 return
+            resolved = set()
             placeholders = ",".join("(?)" for _ in wanted)
-            sql = (
+            current_sql = (
                 "WITH requested(cell_id) AS (VALUES " + placeholders + ") "
-                "SELECT v.cell_id, v.link0, v.link1, v.atom FROM requested AS r "
-                "JOIN cell_versions AS v ON v.cell_id = r.cell_id AND v.revision = "
-                "(SELECT MAX(newer.revision) FROM cell_versions AS newer "
-                "WHERE newer.cell_id = r.cell_id AND newer.revision <= ?)"
+                "SELECT c.cell_id, c.link0, c.link1, c.atom, c.revision "
+                "FROM requested AS r "
+                "JOIN current_cells AS c ON c.cell_id = r.cell_id"
             )
-            cursor = self._connection.execute(sql, (*wanted, self._base_revision))
-            seen = set()
+            cursor = self._connection.execute(current_sql, tuple(wanted))
             try:
-                # One row at a time: large atom sizes do not multiply by batch.
-                for cell_id, link0, link1, atom in cursor:
+                for cell_id, link0, link1, atom, revision in cursor:
                     key = str(cell_id)
-                    seen.add(key)
-                    self._remember(key, Cell(key, str(link0), str(link1), bytes(atom)))
+                    if int(revision) <= self._base_revision:
+                        resolved.add(key)
+                        self._remember(key, Cell(key, str(link0), str(link1), bytes(atom)))
             finally:
                 cursor.close()
+
+            remaining = [key for key in wanted if key not in resolved]
+            if remaining:
+                hist_placeholders = ",".join("(?)" for _ in remaining)
+                hist_sql = (
+                    "WITH requested(cell_id) AS (VALUES " + hist_placeholders + ") "
+                    "SELECT v.cell_id, v.link0, v.link1, v.atom FROM requested AS r "
+                    "JOIN cell_versions AS v ON v.cell_id = r.cell_id AND v.revision = "
+                    "(SELECT MAX(newer.revision) FROM cell_versions AS newer "
+                    "WHERE newer.cell_id = r.cell_id AND newer.revision <= ?)"
+                )
+                hist_cursor = self._connection.execute(hist_sql, (*remaining, self._base_revision))
+                try:
+                    for cell_id, link0, link1, atom in hist_cursor:
+                        key = str(cell_id)
+                        resolved.add(key)
+                        self._remember(key, Cell(key, str(link0), str(link1), bytes(atom)))
+                finally:
+                    hist_cursor.close()
+
             for key in wanted:
-                if key not in seen:
+                if key not in resolved:
                     self._remember_missing(key)
 
     def prefetch(self, cell_ids):

@@ -1695,6 +1695,7 @@ class UniversalRuntimeClient:
         self._agent_session_capability_id = ""
         self._agent_session_access = "full"
         self._runtime_presence_expires_at = 0.0
+        self._runtime_presence_generation: int | None = None
         self._continuation_request = None
         self._request_lock = threading.RLock()
         self._cancellation_event = cancellation_event
@@ -2010,27 +2011,35 @@ class UniversalRuntimeClient:
         return clean
 
     def renew_runtime_presence(self) -> dict[str, object]:
-        """Refresh this device-proofed session's graph-held presence lease."""
+        """Refresh this device-proofed session's indexed runtime presence lease."""
         with self._request_lock:
             if not self.agent_session_root or not self._agent_session_token:
                 raise MachineTransportError(
                     "runtime presence requires a bound Agent Session"
                 )
+            body = {}
+            if self._runtime_presence_generation is not None:
+                body["expected_generation"] = self._runtime_presence_generation
             result = self._request_once(
-                "POST", "/api/universal/runtime-presence", {}
+                "POST", "/api/universal/runtime-presence", body
             )
             expires_at = result.get("expires_at")
+            generation = result.get("generation")
             if (
                 result.get("agent_session") != self.agent_session_root
                 or type(result.get("runtime")) is not str
                 or type(expires_at) not in (int, float)
                 or float(expires_at) <= time.time()
                 or type(result.get("revision")) is not int
+                or type(generation) is bool
+                or not isinstance(generation, int)
+                or generation <= 0
             ):
                 raise MachineTransportError(
                     "runtime presence response is invalid"
                 )
             self._runtime_presence_expires_at = float(expires_at)
+            self._runtime_presence_generation = generation
             return result
 
     def runtime_backend_generation(self) -> BackendGeneration:

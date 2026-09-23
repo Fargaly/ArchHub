@@ -82,15 +82,27 @@ def live_sessions() -> list[dict]:
         if document is None and info.get("status") == "ok":
             # A title, or nothing. The whole /info dict used to stand in here
             # and carried document_path and username into every status line
-            # and onto BABOOM's face (audit 2026-09-06).
-            document = info.get("document_title") or info.get("title") or info.get("doc") or None
-        found.append({
+            # and onto BABOOM's face (audit 2026-09-06). AutoCAD's /info names
+            # its drawing document_name.
+            document = (info.get("document_title") or info.get("title") or info.get("doc")
+                        or info.get("document_name") or None)
+        session = {
             "port": port,
             "pid": answer.get("pid"),
             "revit_version": answer.get("revit_version"),
             "service_version": answer.get("version"),
             "document": document,
-        })
+        }
+        # The AutoCAD broker shares this port range. It names itself on /ping
+        # (service "acad-mcp") and its version on /info (acad_version); the
+        # title-only document above dropped that dict, so AutoCAD read as
+        # absent and was counted as Revit (founder report 2026-09-23).
+        service = answer.get("service")
+        if isinstance(service, str) and service:
+            session["service"] = service
+        if service == "acad-mcp" and info.get("status") == "ok" and info.get("acad_version"):
+            session["acad_version"] = str(info["acad_version"])
+        found.append(session)
     return found
 
 

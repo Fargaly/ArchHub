@@ -167,8 +167,12 @@ def read_contact(owner,browser,contact,binding_digest,root,scope):
         row=_property(owner,contact,browser.context)
         if row is None:raise InvalidCell('Native contact is not bound')
         value=json.loads(row[1])
+        registry=owner.universal_registry
+        # A general Workshop contact is bound to the application Workshop home
+        # (bind_native_contact requires it); the browser may stand on any canvas.
+        home=getattr(registry,'workshop_workbench_root',None) if root==registry.workshop_root else None
         if (set(value)!={'kind','version','endpoint','conversation','scope','owner'} or value['kind']!='native-contact' or value['version']!=1
-                or value['owner']!=browser.subject_root or value['conversation']!=root or value['scope']!=scope
+                or value['owner']!=browser.subject_root or value['conversation']!=root or value['scope']!=(home or scope)
                 or _digest(value)!=binding_digest):raise AuthorizationDenied('Native contact selection changed')
         return _endpoint(value['endpoint'])
 

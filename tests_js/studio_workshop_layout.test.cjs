@@ -26,9 +26,9 @@ function modeHarness() {
 }
 const rooms = [{root:'child-a', label:'Child', is_general:false}, {root:'general-a', label:'General', is_general:true}];
 
-test('Workshop is Chat with the held room, else the general room, else the first; no room disables the segment', () => {
+test('Workshop is Chat with the held room, else the general room, else the first; no room marks the segment unavailable', () => {
   const {segments, choose} = modeHarness();
-  const labels = view => segments(view).map(row => `${row.label}${row.active ? '*' : ''}${row.disabled ? '!' : ''}`).join(' ');
+  const labels = view => segments(view).map(row => `${row.label}${row.active ? '*' : ''}${row.disabled || row.unavailable ? '!' : ''}`).join(' ');
   assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms}), 'Chat* Workshop Canvas');
   assert.equal(labels({mode:'chat', conversationRoot:'child-a', workshops:rooms}), 'Chat Workshop* Canvas');
   assert.equal(labels({mode:'canvas', conversationRoot:'child-a', workshops:rooms}), 'Chat Workshop Canvas*');

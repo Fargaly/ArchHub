@@ -323,7 +323,11 @@ def run_agent_composer(
             text = text[text.index("{"):text.rindex("}") + 1]
         plan = json.loads(text)
     except (AttributeError, TypeError, ValueError) as exc:
-        raise InvalidCell("agent reply was not the admitted JSON shape") from exc
+        # A plain-text reply is an answer with no proposed actions: nothing
+        # is drafted or executed, the text is shown as the model's reply.
+        if type(raw) is not str or not raw.strip():
+            raise InvalidCell("agent reply was not the admitted JSON shape") from exc
+        plan = {"answer": raw.strip(), "actions": []}
     if type(plan) is not dict or type(plan.get("answer", "")) is not str:
         raise InvalidCell("agent reply must contain a draft action list and text answer")
     actions = plan.get("actions", [])

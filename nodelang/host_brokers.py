@@ -23,7 +23,15 @@ import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 
-MAX_URL = "http://127.0.0.1:48886/max-mcp"
+# MaxMCP (bridges/sources/max_mcp/max_mcp_startup.py) binds the first free
+# port from 48886 to 48899 -- the range the AutoCAD and Revit brokers share --
+# and answers /max-mcp/ping with service "max-mcp". A port is not an identity:
+# 48886 was hard-coded here and is where AutoCAD's broker listens, so MAXScript
+# went to AutoCAD (founder report 2026-09-23). Max is only a listener that
+# answers as MaxMCP.
+MAX_PORTS = range(48886, 48900)
+MAX_ROUTE = "/max-mcp"
+MAX_SERVICE = "max-mcp"
 RHINO_URL = "http://127.0.0.1:9879"
 BLENDER_URL = "http://127.0.0.1:9876"
 NOTION_URL = "https://api.notion.com/v1"
@@ -52,6 +60,21 @@ def _http(url: str, body: Mapping[str, object] | None = None, headers: Mapping[s
         return json.loads(text)
     except json.JSONDecodeError:
         return {"raw": text}
+
+
+def _max_endpoint(timeout: float = 1.5) -> str | None:
+    """The base URL of the MaxMCP that answers with its own identity, or None."""
+    for port in MAX_PORTS:
+        if not _port_open(port):
+            continue
+        base = "http://127.0.0.1:%d%s" % (port, MAX_ROUTE)
+        try:
+            answer = _http(base + "/ping", timeout=timeout)
+        except Exception:
+            continue
+        if isinstance(answer, Mapping) and answer.get("service") == MAX_SERVICE:
+            return base
+    return None
 
 
 class ProcessEnumerationUnavailable(RuntimeError):
@@ -190,10 +213,12 @@ def _dropbox_root() -> Path | None:
 def probe_host_rows() -> list[dict]:
     """Rows for every non-Revit/AutoCAD host, each with its real state now."""
     rows: list[dict] = []
-    max_up = _port_open(48886)
+    max_url = _max_endpoint()
+    max_up = max_url is not None
     rows.append({"id": "max", "name": "3ds Max", "drive": "max.exec",
                  "state": "connected" if max_up else ("running" if _running(("3dsmax.exe",)) else ("installed" if _installed((r"C:\Program Files\Autodesk\3ds Max 2026\3dsmax.exe", r"C:\Program Files\Autodesk\3ds Max 2025\3dsmax.exe")) else "absent")),
-                 "detail": "MaxMCP on :48886" if max_up else "open Max with the ArchHub MaxMCP plug-in loaded (:48886)"})
+                 "detail": ("MaxMCP on :%s" % max_url.split(":")[2].split("/")[0]) if max_up
+                 else "open Max with the ArchHub MaxMCP plug-in loaded (it answers as max-mcp on 48886-48899)"})
     rhino_up = _port_open(9879)
     rows.append({"id": "rhino", "name": "Rhino", "drive": "rhino.exec",
                  "state": "connected" if rhino_up else ("running" if _running(("Rhino.exe",)) else ("installed" if _installed((r"C:\Program Files\Rhino 8\System\Rhino.exe", r"C:\Program Files\Rhino 7\System\Rhino.exe")) else "absent")),
@@ -283,13 +308,15 @@ def _honest(reason: str):
 
 
 def max_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
-    """MAXScript in the open 3ds Max scene through MaxMCP (:48886)."""
+    """MAXScript in the open 3ds Max scene through MaxMCP, found by its identity."""
     code = str(params.get("code") or "")
-    if not _port_open(48886):
-        return _honest("3ds Max is not listening on :48886 (open Max with MaxMCP loaded)")
+    base = _max_endpoint()
+    if base is None:
+        return _honest("no MaxMCP answers as max-mcp on 48886-48899 (open Max with MaxMCP loaded)")
     if not code:
-        return {"out": _http(MAX_URL + "/ping", timeout=8)}, "MaxMCP answers"
-    return {"out": _http(MAX_URL + "/exec_maxscript", {"code": code})}, "ran in 3ds Max"
+        return {"out": _http(base + "/ping", timeout=8)}, "MaxMCP answers"
+    # MaxMCP reads the MAXScript from "script" (max_mcp_startup.py _run_kind).
+    return {"out": _http(base + "/exec_maxscript", {"script": code})}, "ran in 3ds Max"
 
 
 def rhino_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -531,5 +558,5 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
         popen([exe, "--python-expr", boot], close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return {"ok": True, "host": host, "action": "launched with the ArchHub add-on (:9876)", "state": "launching"}
     if host == "max":
-        return {"ok": False, "host": host, "error": "3ds Max connects through the MaxMCP plug-in on :48886, which this build does not ship"}
+        return {"ok": False, "host": host, "error": "3ds Max connects through the MaxMCP plug-in (it answers as max-mcp on 48886-48899), which this build does not install"}
     return {"ok": False, "host": host, "error": "no way to open %r from ArchHub" % host}

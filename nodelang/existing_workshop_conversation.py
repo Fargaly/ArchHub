@@ -10,26 +10,64 @@ from .cell_protocols import read_relation
 from .universal_cell import InvalidCell
 
 
-def canvas_workshop_scope(registry, projection, *, snapshot=None, subject_root=None):
-    """Describe admitted Workshop spaces actually in this canvas projection."""
+def _general_workshop_attached(registry, workbench_members):
+    """The general Workshop is a scope of this application's Workshop Workbench."""
+    return any(member.role_id == registry.roles["scope"] and member.participant_id == registry.workshop_root
+        for member in workbench_members)
+
+
+def _general_workshop_refusal(registry, snapshot, authentication_context, workbench_members):
+    """Why this subject cannot open the general Workshop, or None when it can.
+
+    SPEC section 6: "The same semantic root MUST be traversable, subject to
+    authority and the definition/instance boundaries in section 1, from every
+    applicable lens." The Workshop lens therefore follows the subject's read
+    authority on the Workshop root, not the canvas level the Canvas lens draws.
+    """
+    from .universal_application import _require_application_authorization
+    if workbench_members is not None and not _general_workshop_attached(registry, workbench_members):
+        return "The Workshop is not attached to this application."
+    try:
+        _require_application_authorization(snapshot, registry, "read", registry.workshop_root,
+            authentication_context=authentication_context)
+    except AuthorizationDenied:
+        return "This account has no read access to the Workshop."
+    return None
+
+
+def canvas_workshop_scope(registry, projection, *, snapshot=None, subject_root=None,
+                          authentication_context=None):
+    """Describe admitted Workshop spaces for this canvas projection.
+
+    With the viewer's authentication context the general Workshop is listed by
+    read authority on its root, from any canvas level, and a refusal says why.
+    Descriptor-only callers without a context keep the drawn-card listing.
+    """
     scope = projection["scope"]["current"]
     workbench = getattr(registry, "workshop_workbench_root", None)
+    workbench_members = (read_relation(snapshot, workbench, budget=100_000)
+        if snapshot is not None and workbench is not None else None)
     node = next((row for row in projection.get("nodes", ())
         if row.get("id") in (registry.workshop_root, workbench)), None)
     if node is None and workbench is not None and scope == workbench:
         node = {"id":workbench, "label":"Workshop"}
-    if node is not None and node["id"] == workbench:
-        attached = snapshot is not None and any(
-            member.role_id == registry.roles["scope"] and member.participant_id == registry.workshop_root
-            for member in read_relation(snapshot, workbench, budget=100_000))
-        if not attached:
+    unavailable = None
+    if authentication_context is not None and snapshot is not None:
+        unavailable = _general_workshop_refusal(registry, snapshot, authentication_context,
+            workbench_members)
+        if unavailable is not None:
+            node = None
+        elif node is None:
+            node = {"id":registry.workshop_root, "label":"Workshop"}
+    elif node is not None and node["id"] == workbench:
+        if workbench_members is None or not _general_workshop_attached(registry, workbench_members):
             node = None
     workshops = [] if node is None else [{
             "root":registry.workshop_root, "label":node.get("label") or "Workshop",
             "node_root":node["id"],
             "send_category":"note", "is_general":True, "native_work_available":True}]
     if snapshot is not None and workbench is not None:
-        registered = {member.participant_id for member in read_relation(snapshot, workbench, budget=100_000)
+        registered = {member.participant_id for member in workbench_members
             if member.role_id == registry.roles["scope"]}
         from .workshop_conversation_catalog import validate_workshop_conversation_scope
         candidates = {row["id"]:row for row in projection.get("nodes", ())
@@ -47,8 +85,11 @@ def canvas_workshop_scope(registry, projection, *, snapshot=None, subject_root=N
                 continue
             workshops.append({"root":root, "label":space.title, "node_root":root,
                 "send_category":"note", "is_general":False, "native_work_available":False})
-    return {"graph_id":registry.application_root, "root":scope,
+    result = {"graph_id":registry.application_root, "root":scope,
         "revision":projection["revision"], "workshops":workshops}
+    if unavailable is not None:
+        result["unavailable"] = unavailable
+    return result
 
 
 def _admit(owner, binding, root, scope, *, allow_child=False):
@@ -67,13 +108,24 @@ def _admit(owner, binding, root, scope, *, allow_child=False):
     visible, _relations, _properties, trail = _session_canvas_roots(snapshot, registry, view,
         include_trail=True, authority_snapshot=_cached_authority_snapshot(snapshot, registry.authorization))
     workbench = getattr(registry, "workshop_workbench_root", None)
-    workbench_visible = workbench is not None and (workbench in visible or scope == workbench
-        or (allow_child and root != registry.workshop_root and scope == root and workbench in trail))
-    if workbench_visible:
-        workbench_visible = any(member.role_id == registry.roles["scope"] and member.participant_id == root
-            for member in read_relation(snapshot, workbench, budget=100_000))
-    if not trail or trail[-1] != scope or not (root in visible or workbench_visible):
-        raise AuthorizationDenied("Workshop is no longer on this canvas")
+    if root == registry.workshop_root:
+        # SPEC section 6: the general Workshop is reachable from every canvas
+        # level, subject to the read authority required above. The view binding
+        # and its current scope still bind the request; the drawn card does not.
+        if not trail or trail[-1] != scope:
+            raise AuthorizationDenied("Workshop scope changed; refresh the canvas")
+        if workbench is not None and not _general_workshop_attached(registry,
+                read_relation(snapshot, workbench, budget=100_000)):
+            raise AuthorizationDenied("The Workshop is not attached to this application")
+        workbench_visible = False
+    else:
+        workbench_visible = workbench is not None and (workbench in visible or scope == workbench
+            or (allow_child and scope == root and workbench in trail))
+        if workbench_visible:
+            workbench_visible = any(member.role_id == registry.roles["scope"] and member.participant_id == root
+                for member in read_relation(snapshot, workbench, budget=100_000))
+        if not trail or trail[-1] != scope or not (root in visible or workbench_visible):
+            raise AuthorizationDenied("Workshop is no longer on this canvas")
     space = read_deliberation_space(snapshot, registry.deliberation_protocol, root)
     if root != registry.workshop_root:
         from .conversation_content import read_content_binding

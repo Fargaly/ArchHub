@@ -4278,7 +4278,7 @@ def _answer_open_question(owner, utterance, context, payload, *, revalidate=None
         # the composer model the founder picked in the studio, which the
         # graph holds. With none picked, the composer refuses and names the
         # picker.
-        model=owner._read_agent_model(),
+        model=owner._read_agent_model() or owner._default_agent_model()[0],
         effect_engines=owner.pipeline_effect_engines,
         authentication_context=context,
         mutation_lock=owner.mutation_lock,
@@ -6537,6 +6537,7 @@ class ApplicationServer:
                                     model = (
                                         str(body.get('model') or '').strip()
                                         or owner._read_agent_model()
+                                        or owner._default_agent_model()[0]
                                     )
                             try:
                                 agent_result = run_agent_composer(
@@ -9726,6 +9727,35 @@ class ApplicationServer:
         except (OSError, ValueError):
             return ""
 
+    def _default_agent_model(self) -> tuple:
+        """The model the founder configured, used only while nothing is picked.
+
+        Founder 2026-09-23: Chat could not send because no pick had been
+        saved. Only the model he already configured (settings default_model,
+        a concrete route) is used; no model is ever chosen for him. A pick
+        always wins, and so does an explicit clear: this answers only while
+        the graph holds no pick and no older build's record exists.
+        """
+        store = getattr(self, "universal_store", None)
+        registry = getattr(self, "universal_registry", None)
+        if store is not None and registry is not None:
+            from .universal_application import read_universal_composer_model
+            try:
+                if read_universal_composer_model(store.snapshot(), registry)["source"] == "graph":
+                    return "", ""
+            except Exception:
+                return "", ""
+        try:
+            if self._agent_model_path().exists():
+                return "", ""
+        except (OSError, ValueError):
+            return "", ""
+        from .model_router import default_composer_route
+        try:
+            return default_composer_route()
+        except Exception:
+            return "", ""
+
     def _host_rows(self) -> list:
         """probe_connectors rows, refreshed every 30 s off the request path."""
         value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
@@ -10746,6 +10776,8 @@ class ApplicationServer:
         # A saved composer preference is not a node binding or proof that a
         # provider is reachable. Preserve it even while discovery is unavailable.
         selected_route = self._read_agent_model() if models else ''
+        default_route, default_source = (self._default_agent_model()
+            if models and not selected_route else ('', ''))
         try:
             from .cloud_relay import load_cloud_session
             appdata = os.environ.get('APPDATA', '')
@@ -10761,6 +10793,8 @@ class ApplicationServer:
             result = (groups_with_routes(held) if held is not None
                       else groups_with_routes(live_model_groups(session)))
             result['selected_route'] = selected_route
+            result['default_route'] = default_route
+            result['default_source'] = default_source
             # Source exceptions can contain authenticated URLs. Keep availability
             # visible without forwarding exception text or cloud credentials.
             # result['source_notes'] is the catalogue's own fixed vocabulary,
@@ -10774,6 +10808,7 @@ class ApplicationServer:
             if models:
                 return {'ok': False, 'live': False, 'groups': [], 'count': 0,
                         'selected_route': selected_route,
+                        'default_route': default_route, 'default_source': default_source,
                         'error': 'Model catalogue unavailable'}
             return {'ok': False, 'providers': [], 'error': 'Provider discovery unavailable'}
 
@@ -15318,7 +15353,8 @@ class ApplicationServer:
             from .existing_workshop_conversation import canvas_workshop_scope
             projection['workshop_scope'] = canvas_workshop_scope(
                 self.universal_registry, projection,
-                snapshot=self.universal_store.snapshot(), subject_root=binding.subject_root)
+                snapshot=self.universal_store.snapshot(), subject_root=binding.subject_root,
+                authentication_context=binding.context)
             projected_binding = _BrowserCanvasProjectionBinding(
                 binding.session_root,
                 binding.subject_root,

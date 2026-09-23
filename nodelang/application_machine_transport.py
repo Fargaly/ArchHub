@@ -163,6 +163,11 @@ def _desktop_launch_is_admitted(peer, *, product_root=None, python_executable=No
         # Exact installed VBS launch. Forwarded Qt/plugin or Python options are
         # not application arguments and do not gain Desktop mint authority.
         return canonical(args[2]) == canonical(root / "launch_archhub_test.py")
+    if (len(args) == 4 and args[:2] == ("-E", "-s") and args[3] == "--silent"
+            and Path(args[2]).is_absolute()):
+        # The Startup shortcut runs the same installed VBS launch with --silent.
+        # That flag only hides the first window; it gains no other authority.
+        return canonical(args[2]) == canonical(root / "launch_archhub_test.py")
     return args == ("-m", "nodelang.desktop") and canonical(peer.cwd) == canonical(root)
 
 

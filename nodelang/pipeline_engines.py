@@ -111,7 +111,7 @@ def revit_sessions(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Every Revit session listening right now, or the honest zero."""
     from .clean_revit_adapter import live_sessions
 
-    sessions = live_sessions()
+    sessions = [s for s in live_sessions() if is_revit_session(s)]
     if not sessions:
         return {"out": []}, "no Revit session is listening"
     label = ", ".join(
@@ -404,16 +404,25 @@ def revit_read(params: Mapping[str, object], feeds: Mapping[str, object]):
     return {"out": rows}, "%d row(s) from %s" % (len(rows), op)
 
 
+def is_autocad_session(session: Mapping[str, object]) -> bool:
+    """An AutoCAD broker names itself on /ping: service "acad-mcp"."""
+    return session.get("service") == "acad-mcp"
+
+
+def is_revit_session(session: Mapping[str, object]) -> bool:
+    """Only a session that names its Revit version is a Revit session.
+
+    Other brokers in the shared port range (AutoCAD, 3ds Max) are not Revit.
+    """
+    return bool(session.get("revit_version")) and not is_autocad_session(session)
+
+
 def cad_lines_from_host(params: Mapping[str, object],
                         feeds: Mapping[str, object]):
     """Read line work from the LIVE AutoCAD session, not a file."""
     from .clean_revit_adapter import _call, live_sessions
 
-    acad = [
-        s for s in live_sessions()
-        if isinstance(s.get("document"), dict)
-        and s["document"].get("acad_version")
-    ]
+    acad = [s for s in live_sessions() if is_autocad_session(s)]
     if not acad:
         raise ValueError("no AutoCAD session is listening")
     layer = str(params.get("layer") or "").strip()
@@ -673,10 +682,9 @@ def probe_connectors():
     acad = []
     try:
         for session in live_sessions():
-            document = session.get("document")
-            if isinstance(document, dict) and document.get("acad_version"):
+            if is_autocad_session(session):
                 acad.append(session)
-            else:
+            elif is_revit_session(session):
                 revit.append(session)
     except Exception:
         pass

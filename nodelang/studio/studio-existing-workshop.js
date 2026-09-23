@@ -1178,7 +1178,8 @@
             ? {...pageTarget} : null;
           pageEpoch += 1;
         }
-        canvas = {graph_id:value.graph_id, root:value.root, revision:value.revision};
+        canvas = {graph_id:value.graph_id, root:value.root, revision:value.revision,
+          unavailable:typeof value.unavailable === 'string' ? value.unavailable.slice(0, 300) : ''};
         workshops = value.workshops.map(row => ({...row}));
         if (workshop && !workshops.some(row => row.root === workshop.root)) { epoch += 1; workshop = null; }
         publish();

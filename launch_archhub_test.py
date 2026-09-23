@@ -401,6 +401,24 @@ def _startup_backup_bytes(*paths):
                 pass
     return total
 
+def _prune_backups(directory, verified):
+    """After a new verified backup: keep only the last three days of backups.
+
+    Founder 2026-09-23: backups piled to 220 GB. Age is the date in each
+    folder name; undated folders, the new backup and staging folders stay.
+    A retention failure never fails the backup or the shutdown it belongs to.
+    """
+    try:
+        from nodelang.backup_retention import prune_backups
+        result = prune_backups(directory, keep=verified)
+    except Exception as refusal:
+        print("  backup     : retention not applied (%s); every backup kept" % type(refusal).__name__, flush=True)
+        return
+    print("  backup     : kept the last 3 days (from %s); removed %d older backup(s)%s" % (
+        result["kept_from"], len(result["removed"]),
+        "; %d undated kept" % len(result["undated_kept"]) if result["undated_kept"] else ""), flush=True)
+
+
 def _boot():
     # The boot is sampled while it runs: boot-profile.log beside launcher.log
     # says where the seconds went (the founder's boot reached 694s and nobody
@@ -448,6 +466,7 @@ def _boot_unsampled():
                 authentication_context=server.universal_registry.authorization.session.context(),
                 timeout_seconds=2.0)
             print("  backup     : checked post-construction recovery saved: " + recovery.name, flush=True)
+            _prune_backups(state_dir / "backups", recovery)
         except Exception as refusal:
             print("  backup     : not completed (%s); existing backups retained" % type(refusal).__name__, flush=True)
             if isinstance(refusal, TimeoutError):
@@ -636,6 +655,26 @@ else:
     except OSError as _refusal:
         _previous_active = None
         print("  runtime    : could not announce (%s)" % _refusal, flush=True)
+
+
+def _ensure_brain():
+    # Founder 2026-09-23: the Brain stopped answering on 09-21 and nothing
+    # started it again. Ask once per start, off the boot path. Only the
+    # existing supervisor is started; a Brain is never stopped, and the
+    # ambient suspension marker is read, never released.
+    try:
+        from nodelang.brain_supervisor_start import ensure_brain_supervisor
+        outcome = ensure_brain_supervisor()
+    except Exception as refusal:
+        outcome = {"action": "not started", "reason": type(refusal).__name__}
+    print("  brain      : %s (%s)%s" % (outcome["action"], outcome["reason"],
+          "; ambient services stay paused by the suspension marker"
+          if outcome.get("ambient_suspended") else ""), flush=True)
+
+
+if _announced_active is not None:
+    # A verification run never starts the machine's Brain.
+    _threading.Thread(target=_ensure_brain, name="archhub-brain-start", daemon=True).start()
 
 def _initialize_startup_pipeline(owner, *, first_boot):
     """Seed a new graph only; opening an application never invokes its effects."""
@@ -1434,6 +1473,7 @@ def _finish_application_shutdown():
                 recovery_timeout_seconds=300.0)
             arm_update(state_dir, Path(__file__).resolve().parent, state_path,
                 content_path if content_path is not None and content_path.is_file() else None, recovery)
+            _prune_backups(state_dir / "backups", recovery)
         else:
             server.close()
     except Exception as refusal:

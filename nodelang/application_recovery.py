@@ -267,7 +267,9 @@ def backup_application_recovery(service, directory, *, authentication_context,
 
                         directory = Path(directory).resolve()
                         directory.mkdir(parents=True, exist_ok=True)
-                        target = directory / ("application-recovery-" + uuid.uuid4().hex)
+                        # The date in the name is what backup retention reads.
+                        from .backup_retention import backup_name_stamp
+                        target = directory / ("application-recovery-%s-%s" % (backup_name_stamp(), uuid.uuid4().hex))
                         return publish_application_recovery(sources, target,
                             verify_copies=verify, before_publish=before_publish, deadline=deadline)
                     except sqlite3.OperationalError as error:

@@ -520,6 +520,31 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
     return rows
 
 
+def default_composer_route(*, settings_loader=None) -> tuple:
+    """The model the founder already configured, used only while nothing is picked.
+
+    Founder 2026-09-23: Chat could not send with no saved pick. Coordination
+    review: never pick an arbitrary model and never fall back to a paid model
+    on his behalf. Only the settings default_model counts, and only when it
+    names a concrete routable model he chose ("auto" does not). Otherwise
+    ("", ""): the composer refuses and the Studio asks him to choose a model.
+    """
+    if settings_loader is None:
+        def settings_loader(name):
+            return _application_secrets_store().load_setting(name)
+    try:
+        configured = str(settings_loader("default_model") or "").strip()
+    except Exception:
+        return "", ""
+    if not configured:
+        return "", ""
+    try:
+        resolve_model_route(configured)
+    except ModelRouteRefused:
+        return "", ""
+    return configured, "settings default_model"
+
+
 def default_cloud_session() -> Optional[dict]:
     """The founder's recorded cloud session, or nothing on a machine without one."""
     appdata = os.environ.get("APPDATA", "")
@@ -907,6 +932,7 @@ __all__ = [
     "OLLAMA_CHAT",
     "OPENROUTER_CHAT",
     "default_cloud_session",
+    "default_composer_route",
     "discover_key",
     "founder_secrets_key",
     "resolve_model_route",

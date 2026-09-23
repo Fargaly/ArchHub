@@ -289,12 +289,17 @@ const StudioLM = () => {
       headers:{'X-ArchHub-Session':session.token || '', 'X-ArchHub-CSRF':session.csrf || ''}})
       .then(response => { if (!response.ok) throw new Error('Model selection unavailable'); return response.json(); })
       .then(result => {
-        const route = typeof result.selected_route === 'string' ? result.selected_route.trim() : '';
+        const saved = typeof result.selected_route === 'string' ? result.selected_route.trim() : '';
+        // No saved pick: the owner names the model he already configured (settings
+        // default_model); with none the Studio keeps asking him to choose one.
+        const fallback = !saved && typeof result.default_route === 'string' ? result.default_route.trim() : '';
+        const route = saved || fallback;
         if (!route || controller.signal.aborted) return;
         const selected = (result.groups || []).flatMap(group => group.items || [])
           .find(item => (item.routed || item.route) === route);
         setModel(current => current.routed || current.route ? current : selected || {
-          name:route, route, routed:route, vendor:'Saved selection', tag:'Availability not verified',
+          name:route, route, routed:route, vendor:fallback ? 'Configured default' : 'Saved selection',
+          tag:fallback ? 'settings default_model' : 'Availability not verified',
           ctx:'', col:LM.inkMuted, latency:null});
       }).catch(() => {});
     return () => controller.abort();
@@ -1330,6 +1335,7 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
         session={session} model={model} openTabs={openTabs}
         setOpenId={setOpenId} closeTab={closeTab} mode={mode} setMode={setMode}
         workshops={workshops} conversationRoot={workshop?.root || ''} conversationNotice={view.notice}
+        workshopUnavailable={workshopState?.canvas?.unavailable || ''}
         workshopModel={workshopState?.nativeWork?.model}
         setConversationRoot={root => updateView({conversationRoot:root, mode:'chat', target:''})}
         setPickerOpen={setPickerOpen} setSettingsOpen={setSettingsOpen} onHome={onHome}/>
@@ -1339,7 +1345,7 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
           setTarget={target => updateView({target})} setMode={setMode} setFocusId={setFocusId}
           onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
           sel={wsSel} setSel={setWsSel} externalRail/> : <>
-          <ChatView session={session} model={model} setMode={setMode}
+          <ChatView session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
             workshopRoom={workshopModeRoom(workshops, '')}
             openWorkshop={root => updateView({conversationRoot:root, mode:'chat', target:''})}/>
           <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
@@ -1424,7 +1430,7 @@ const chatConnectors = () => (window.ARCHHUB_LIVE?.connectors || []).map(c => ({
 }));
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
-const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop }) => {
+const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel }) => {
   const {me, answerer} = chatPeople(model);
   const routed = !!modelRoute(model);
   const conv = LM_GRAPH.nodes.find(n => n.cat === 'ai')
@@ -1435,6 +1441,9 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop }) 
   const stamp = () => new Date().toTimeString().slice(0, 5);
   const send = async () => {
     const text = draft.trim();
+    // No model picked or configured: nothing is sent and no model is chosen for
+    // him; the picker opens instead (founder 2026-09-23, coordination review).
+    if (!routed && !/^\/remember\s+/s.test(text)) { if (typeof onPickModel === 'function') onPickModel(); return; }
     if (!text || busy || !window.ARCHHUB_AGENT) return;
     setMessages(m => [...m, { me:true, time:stamp(), text }]);
     // /remember <fact> is a command, not a question: it lands in the brain.
@@ -1545,11 +1554,15 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop }) 
                   ellipsizes, so the chips beside it keep their one-line size. */}
               <span title={modelRoute(model) || undefined} style={{ flex:'1 1 0', minWidth:0, textAlign:'right', fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{routed ? model.name.split(' ').slice(0,2).join(' ') : model.name}{model.latency != null ? ' · ~' + model.latency + 'ms' : ''}</span>
               {/* While an answer is out Send is disabled: a dashed border, never alpha (DECISIONS.md). */}
-              <button onClick={send} disabled={busy} style={{
+              {routed ? <button onClick={send} disabled={busy} style={{
                 padding: busy ? '6px 13px' : '7px 14px', background: busy ? 'transparent' : LM.accent,
                 color: busy ? LM.inkMuted : onFill, border: busy ? `1px dashed ${LM.line}` : 0,
                 borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor: busy ? 'default' : 'pointer',
-              }}>Send ↵</button>
+              }}>Send ↵</button> : <button type="button" onClick={() => typeof onPickModel === 'function' && onPickModel()}
+                title="No model is picked: choose one to send" style={{
+                padding:'6px 13px', background:'transparent', color:LM.ink, border:`1px dashed ${LM.line}`,
+                borderRadius:LM.rad.sm, fontSize:12.5, fontWeight:500, cursor:'pointer',
+              }}>Choose a model</button>}
             </div>
           </div>
         </div>
@@ -1981,24 +1994,38 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
 // progress is inferred from the choice.
 const workshopModeRoom = (workshops, conversationRoot) => conversationRoot ||
   workshops.find(row => row?.is_general === true && row.root)?.root || workshops.find(row => row?.root)?.root || '';
-const workshopModeSegments = ({mode, conversationRoot = '', workshops = []}) => {
+// The owner states why no Workshop room is available (workshop_scope.unavailable).
+const workshopUnavailableText = reason => (typeof reason === 'string' && reason.trim()) ||
+  'No Workshop conversation in this scope';
+// Workshop is never disabled into silence: without a room the click answers with that reason.
+const workshopModeSegments = ({mode, conversationRoot = '', workshops = [], unavailable = ''}) => {
   const room = workshopModeRoom(workshops, conversationRoot);
   const active = mode === 'chat' ? (conversationRoot ? 'workshop' : 'chat') : mode;
   return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas']].map(([key, label]) => ({
-    key, label, active:active === key, disabled:key === 'workshop' && !room,
-    title:key === 'workshop' && !room ? 'No Workshop conversation in this scope' : undefined,
+    key, label, active:active === key, disabled:false, unavailable:key === 'workshop' && !room,
+    title:key === 'workshop' && !room ? workshopUnavailableText(unavailable) : undefined,
   }));
 };
-const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot}) => {
+const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot,
+  unavailable = '', onUnavailable}) => {
   if (key === 'canvas' || typeof setConversationRoot !== 'function') return setMode(key === 'canvas' ? 'canvas' : 'chat');
   const room = key === 'workshop' ? workshopModeRoom(workshops, conversationRoot) : '';
-  if (key === 'workshop' && !room) return;
+  if (key === 'workshop' && !room) {
+    const reason = workshopUnavailableText(unavailable);
+    if (typeof onUnavailable === 'function') onUnavailable(reason);
+    return reason;
+  }
+  if (typeof onUnavailable === 'function') onUnavailable('');
   if (mode !== 'chat' || room !== conversationRoot) setConversationRoot(room);
 };
 
 // Workspace header uses workspace tabs and one compact conversation menu.
 const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode, setPickerOpen, setSettingsOpen, onHome,
-  workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '' }) => (
+  workshops = [], conversationRoot = '', setConversationRoot, workshopModel, conversationNotice = '',
+  workshopUnavailable = '' }) => {
+  const [workshopRefusal, setWorkshopRefusal] = React.useState('');
+  const workshopRefused = workshopRefusal && !workshopModeRoom(workshops, conversationRoot) ? workshopRefusal : '';
+  return (
   <div style={{
     gridColumn:'1 / -1', gridRow:'1',
     borderBottom:`1px solid ${LM.line}`, background:LM.bgDeep,
@@ -2047,18 +2074,23 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
       display:'flex', alignItems:'center', gap:1, padding:2, background:LM.bg,
       border:`1px solid ${LM.line}`, borderRadius:LM.rad.md, flexShrink:0,
     }}>
-      {workshopModeSegments({mode, conversationRoot, workshops}).map(segment => (
+      {workshopModeSegments({mode, conversationRoot, workshops, unavailable:workshopUnavailable}).map(segment => (
         <button key={segment.key} type="button" disabled={segment.disabled} title={segment.title} aria-pressed={segment.active}
-          onClick={() => chooseWorkshopMode(segment.key, {mode, conversationRoot, workshops, setMode, setConversationRoot})} style={{
+          aria-disabled={segment.unavailable ? 'true' : undefined}
+          onClick={() => chooseWorkshopMode(segment.key, {mode, conversationRoot, workshops, setMode, setConversationRoot,
+            unavailable:workshopUnavailable, onUnavailable:setWorkshopRefusal})} style={{
           padding:'4px 11px', borderRadius:LM.rad.sm, border:0, cursor:segment.disabled ? 'default' : 'pointer',
           background:segment.active ? LM.accentDim : 'transparent',
-          outline:segment.disabled ? `1px dashed ${LM.line}` : 'none', outlineOffset:-1,
+          outline:segment.disabled || segment.unavailable ? `1px dashed ${LM.line}` : 'none', outlineOffset:-1,
           color:segment.active ? LM.accent : LM.inkSoft,
           fontFamily:LM.sans, fontSize:11.5, fontWeight:segment.active ? 500 : 400,
         }}>{segment.label}</button>
       ))}
     </div>
 
+    {workshopRefused && <span role="alert" title={workshopRefused} style={{fontSize:11,
+      color:LM.ink, maxWidth:320, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+      {workshopRefused}</span>}
     {conversationNotice && <span role="status" title={conversationNotice} style={{fontSize:11,
       color:LM.inkSoft, maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
       {conversationNotice}</span>}
@@ -2074,7 +2106,8 @@ const WsHeader = ({ session, model, openTabs, setOpenId, closeTab, mode, setMode
         Settings > About keeps the full controls; the restart still needs the confirming second click. */}
     <ApplicationUpdateControls compact/>
   </div>
-);
+  );
+};
 
 const WsTab = ({ s, a, sm, onClick, onClose }) => {
   const [h, setH] = React.useState(false);

@@ -151,3 +151,12 @@ def no_live_hosts(monkeypatch):
     monkeypatch.setattr(_hosts, "_port_open", lambda *_a, **_k: False)
     monkeypatch.setattr(_library, "_OUTLOOK", [lambda: None])
     monkeypatch.setattr(_library, "_NOTIFY_SURFACE", [])
+
+
+@_pytest.fixture(autouse=True)
+def no_configured_model_default(monkeypatch):
+    # Courts never read this machine's real settings default_model: with no pick,
+    # the composer's default route (2026-09-23) would otherwise send with it.
+    # Courts that need it restore it with a fixture settings store.
+    import nodelang.model_router as _router
+    monkeypatch.setattr(_router, "default_composer_route", lambda **_kwargs: ("", ""), raising=False)

@@ -158,9 +158,11 @@ test('header: the design row ends at save as skill; three-segment switch, New se
   const empty = await mountStudio({workshops:[]});
   try {
     const workshop = [...segmentedControl(empty).children].find(child => child.textContent.trim() === 'Workshop');
-    assert.equal(workshop.disabled, true, 'no room in scope disables Workshop');
-    assert.equal(workshop.style.opacity, '', 'the disabled segment carries no alpha');
-    assert.match(workshop.style.outline, /dashed/, 'the disabled segment is dashed');
+    // Founder 2026-09-23: no silent Workshop. No room marks it unavailable; the click says why.
+    assert.equal(workshop.disabled, false, 'Workshop stays clickable so it can say why');
+    assert.equal(workshop.getAttribute('aria-disabled'), 'true', 'no room in scope marks Workshop unavailable');
+    assert.equal(workshop.style.opacity, '', 'the unavailable segment carries no alpha');
+    assert.match(workshop.style.outline, /dashed/, 'the unavailable segment is dashed');
   } finally { empty.close(); }
 });
 

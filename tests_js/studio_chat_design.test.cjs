@@ -175,7 +175,15 @@ test('Chat with a conversation: Send asks the agent route, turns carry the accou
     studio.type(input, 'Dimension all walls in active view at 1:50.');
     studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
     await studio.settle();
-    assert.deepEqual(studio.agent, [['Dimension all walls in active view at 1:50.', '']], 'the typed text goes to the agent route with the chosen route');
+    // Founder 2026-09-23: no model is ever chosen for him. Unrouted, nothing is sent; the picker opens.
+    assert.deepEqual(studio.agent, [], 'no model picked: nothing is sent');
+    const dialog = studio.doc.querySelector('[role="dialog"][aria-label="Choose a model"]');
+    assert.ok(dialog, 'Send without a model opens the picker');
+    studio.flush(() => studio.exact('DeepSeek R1', dialog)[0].closest('[style]').parentElement.click());
+    await studio.settle();
+    studio.flush(() => input.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Enter', bubbles:true})));
+    await studio.settle();
+    assert.deepEqual(studio.agent, [['Dimension all walls in active view at 1:50.', 'deepseek/deepseek-r1']], 'the typed text goes to the agent route with the chosen route');
     const [send] = studio.buttons('Send \u21b5');
     assert.ok(send && send.disabled, 'Send is disabled while the answer is out');
     assert.equal(send.style.opacity, '', 'disabled without alpha');
@@ -187,8 +195,8 @@ test('Chat with a conversation: Send asks the agent route, turns carry the accou
     assert.notEqual(send.style.borderStyle, 'dashed', 'and it returns to the design primary');
     const names = studio.exact('Ana').filter(node => node.tagName === 'SPAN');
     assert.ok(names.length >= 1, 'the question is signed with the account name');
-    assert.ok(studio.exact('ArchHub').some(node => node.tagName === 'SPAN' && node.nextElementSibling),
-      'unrouted, the answer is signed by the application composer');
+    assert.ok(studio.exact('DeepSeek R1').some(node => node.tagName === 'SPAN' && node.nextElementSibling),
+      'the answer is signed by the chosen model');
     assert.ok(studio.exact('Prepared an editable change on the canvas for review.').length, 'the answer is drawn as a turn');
   } finally { studio.close(); }
 });

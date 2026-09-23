@@ -1273,21 +1273,23 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     return () => observer.disconnect();
   }, [preset]);
   const act = async (action) => {
-    if (busyRef.current || (action === 'send' && !editorsReady)) return;
+    // Sending never waits for draft protection: the message route stands on its own,
+    // and a protected editor is used only once it is ready.
+    if (busyRef.current) return;
     const details = action === 'send' ? {target, message:draft.trim(), ...(execution ? {execution_root:execution} : {})} : {};
     busyRef.current = true; setBusy(true); setActionError('');
     try {
       if (action === 'send' && target.startsWith('contact:')) {
         if (!contactTarget || contactTarget.connected === false) throw new Error('Refresh this agent connection before sending.');
         await authority.sendNativeContact(descriptor.root, contactTarget, draft.trim(),
-          protectedEditors ? editors.current.message : null);
+          protectedEditors && editorsReady ? editors.current.message : null);
       } else if (action === 'send' && target.startsWith('model:')) {
         if (!modelTarget) throw new Error('Refresh this conversation and its model node before sending.');
         await authority.sendModelConversation(descriptor.root, modelTarget, draft.trim(),
-          protectedEditors ? editors.current.message : null);
+          protectedEditors && editorsReady ? editors.current.message : null);
       } else {
         await authority.workshopAction(descriptor.root, action, null, details,
-          protectedEditors ? editors.current.message : null);
+          protectedEditors && editorsReady ? editors.current.message : null);
       }
       if (action === 'send' && mounted.current) setDraft('');
     } catch (error) { setActionError(error.message || 'The action could not be confirmed. Retry to reconcile it.'); }
@@ -1295,7 +1297,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   };
   // The design's Send stays drawn as the primary action; an empty draft sends nothing, and a recipient that
   // cannot receive says why instead of a silent no-op.
-  const sendDisabled = busy || !editorsReady || !joined;
+  const sendDisabled = busy || !joined;
   const send = () => {
     if (sendDisabled || !draft.trim()) return;
     // No target is the design's default: the message goes to the Workshop, and every
@@ -1793,8 +1795,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         {state?.workshopNotice && <div role="status" style={{ fontSize:11.5, color:W.inkSoft, marginBottom:8 }}>{state.workshopNotice}</div>}
         <div style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:9, padding:'11px 13px' }}>
           {!joined && !existing ? <Btn pri disabled={busy || !transcript?.can_join} onClick={() => act('attach')}>{busy ? 'Joining\u2026' : 'Join Workshop'}</Btn> : <>
-          <input aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !editorsReady || !joined}
-            onChange={e => { protectDraft('message'); setDraft(e.target.value); }} onKeyDown={e => { if (e.key === 'Enter') send(); }}
+          <input aria-label="Workshop message" value={draft} maxLength={12000} disabled={busy || !joined}
+            onChange={e => { if (editorsReady) protectDraft('message'); setDraft(e.target.value); }} onKeyDown={e => { if (e.key === 'Enter') send(); }}
             placeholder={!joined ? 'Messaging requires an admitted Workshop participant.' : !target ? 'Reply to the Workshop…' : `Message ${targetName}…`}
             style={{ width:'100%', border:0, background:'transparent', outline:'none', color:W.ink, fontFamily:W.serif, fontSize:16.5, letterSpacing:'-0.01em', padding:'2px 0 9px' }}/>
           <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>

@@ -514,6 +514,11 @@ def _send_browser_workshop_everyone(owner, binding, body, browser_guard):
                     if participant == binding.subject_root or not participant.startswith('app:agent-session:runtime:'):
                         continue
                     native = owner._machine_agent_sessions.get(participant) or {}
+                    expiry = native.get('expires_at')
+                    # Deliver only to sessions bound and live now. A retired runtime
+                    # session keeps its place in the history but has no channel left.
+                    if not native or type(expiry) not in (int, float) or expiry <= time.time():
+                        continue
                     targets.append({'kind':'session', 'root':participant,
                         'runtime':native.get('runtime'),
                         'fingerprint':native.get('external_session_fingerprint')})

@@ -15,6 +15,11 @@ from nodelang.cell_exclusive_ownership import (
     verify_ownership_authority,
 )
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
+from nodelang.runtime_ownership_records import (
+    list_runtime_ownerships,
+    read_runtime_ownership,
+)
+from nodelang.runtime_presence_lease_storage import RuntimePresenceLeaseStorage
 from nodelang.map_import import resolve_map_path
 from nodelang.universal_application import build_universal_application
 from nodelang.universal_application import restore_universal_application
@@ -41,57 +46,38 @@ def test_persistent_server_records_signed_active_drain_release(tmp_path):
         universal_registry=registry,
     ).start()
     ownership_root = server._runtime_ownership_root
+    revision = server.universal_store.revision
     try:
-        ownership = read_ownership(
-            server.universal_store.snapshot(),
-            registry.ownership_protocol,
-            ownership_root,
+        # SPEC 3.3: a process lifetime's ownership is a signed operational
+        # record in the same database, not a graph revision.
+        ownership = read_runtime_ownership(
+            server._ownership_record_storage(), ownership_root
         )
         assert ownership.resource_root == registry.application_root
         assert ownership.holder_root == server._runtime_holder_root
         assert ownership.generation == 1
-        assert ownership.state_root == registry.ownership_protocol.states["active"]
-        attestation = read_court_attestation(
-            server.universal_store.snapshot(),
-            registry.attestation_protocol,
-            ownership.evidence_roots[0],
-        )
-        assert attestation.court_root == registry.runtime_ownership_court_root
-        assert attestation.result_root == registry.attestation_protocol.states["passed"]
+        assert ownership.state == "active"
+        assert ownership.evidence["court"] == registry.runtime_ownership_court_root
+        assert ownership.evidence["result"] == "pass"
     finally:
         server.close()
 
     reopened = CellStore(path)
-    ownerships = verify_ownership_authority(
-        reopened.snapshot(), registry.ownership_protocol
-    )
+    assert reopened.revision == revision
+    reopened.close()
+    records = RuntimePresenceLeaseStorage(path)
+    try:
+        ownerships = list_runtime_ownerships(records, registry.application_root)
+    finally:
+        records.close()
     assert len(ownerships) == 1
     released = ownerships[0]
     assert released.root_id == ownership_root
-    assert released.state_root == registry.ownership_protocol.states["released"]
-    transitions = tuple(
-        read_ownership_transition(
-            reopened.snapshot(), registry.ownership_protocol, root
-        )
-        for root in released.transition_roots
+    assert released.state == "released"
+    assert tuple((item["from"], item["to"]) for item in released.transitions) == (
+        ("active", "draining"), ("draining", "released"),
     )
-    assert tuple(item.from_state_root for item in transitions) == (
-        registry.ownership_protocol.states["active"],
-        registry.ownership_protocol.states["draining"],
-    )
-    assert tuple(item.to_state_root for item in transitions) == (
-        registry.ownership_protocol.states["draining"],
-        registry.ownership_protocol.states["released"],
-    )
-    assert all(
-        read_court_attestation(
-            reopened.snapshot(),
-            registry.attestation_protocol,
-            item.evidence_root,
-        ).result_root == registry.attestation_protocol.states["passed"]
-        for item in transitions
-    )
-    reopened.close()
+    assert all(item["evidence"]["result"] == "pass" for item in released.transitions)
 
 
 def test_in_memory_second_server_is_denied_before_graph_mutation():
@@ -146,17 +132,15 @@ def test_worker_handoff_preserves_browser_session_and_advances_owner(tmp_path):
         assert second.browser_session_token == credentials.token
         assert second._resolve_browser_session(credentials.token).session_root \
             == session_root
-        ownerships = verify_ownership_authority(
-            second.universal_store.snapshot(), restored.ownership_protocol
+        ownerships = list_runtime_ownerships(
+            second._ownership_record_storage(), restored.application_root
         )
         assert len(ownerships) == 2
         assert ownerships[0].root_id == first_owner
-        assert ownerships[0].state_root \
-            == restored.ownership_protocol.states["released"]
+        assert ownerships[0].state == "released"
         assert ownerships[1].root_id == second._runtime_ownership_root
         assert ownerships[1].generation == 2
-        assert ownerships[1].state_root \
-            == restored.ownership_protocol.states["active"]
+        assert ownerships[1].state == "active"
     finally:
         second.close()
 
@@ -179,16 +163,12 @@ def test_runtime_backend_generation_is_exact_signed_owner(tmp_path):
         backend = UniversalRuntimeClient(
             descriptor_path, provider
         ).runtime_backend_generation()
-        ownership = read_ownership(
-            server.universal_store.snapshot(),
-            registry.ownership_protocol,
-            backend.ownership_root,
+        ownership = read_runtime_ownership(
+            server._ownership_record_storage(), backend.ownership_root
         )
         assert backend.url == server.url
         assert backend.generation == ownership.generation == 1
-        assert ownership.state_root == registry.ownership_protocol.states[
-            "active"
-        ]
+        assert ownership.state == "active"
     finally:
         server.close()
 
@@ -285,15 +265,13 @@ def test_stable_gateway_holds_browser_request_across_real_worker_handoff(tmp_pat
         assert held["payload"]["universal_runtime_ownership"] \
             == second_backend.ownership_root
 
-        ownerships = verify_ownership_authority(
-            second.universal_store.snapshot(), restored.ownership_protocol
+        ownerships = list_runtime_ownerships(
+            second._ownership_record_storage(), restored.application_root
         )
         assert [item.generation for item in ownerships] == [1, 2]
         assert ownerships[0].root_id == first_owner
-        assert ownerships[0].state_root \
-            == restored.ownership_protocol.states["released"]
-        assert ownerships[1].state_root \
-            == restored.ownership_protocol.states["active"]
+        assert ownerships[0].state == "released"
+        assert ownerships[1].state == "active"
     finally:
         if second is not None:
             second.close()

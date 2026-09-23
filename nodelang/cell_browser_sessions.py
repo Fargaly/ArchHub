@@ -34,6 +34,12 @@ ROLE_NAMES = (
 )
 STATE_NAMES = ("active", "revoked")
 MAX_SESSION_SECONDS = 3600.0
+# SPEC 3.3: the session identity (subject, view, tenant, assurance, state)
+# is graph authority; the per-process credential digests, issue time and
+# expiry are a bounded lease record keyed by the session root. A lease is
+# opened at sign-in or launch, renewed and closed without a graph revision.
+LEASE_KIND = "browser-session"
+LEASE_STATES = ("active", "closed")
 
 
 class BrowserSessionDenied(PermissionError):
@@ -287,6 +293,246 @@ def list_browser_session_roots(
     return roots
 
 
+@dataclass(frozen=True, slots=True)
+class BrowserSessionLease:
+    session_root: str
+    subject_root: str
+    view_root: str
+    tenant_root: str
+    assurance_root: str
+    issued_at: float
+    expires_at: float
+    token_digest: str
+    csrf_digest: str
+    state: str
+    generation: int
+
+
+def _digest(value: object) -> str:
+    if type(value) is not str or len(value) != 64 or any(
+        char not in "0123456789abcdef" for char in value
+    ):
+        raise InvalidCell("browser-session credential digest is invalid")
+    return value
+
+
+def read_browser_session_lease(
+    storage, session_root: str
+) -> BrowserSessionLease | None:
+    row = storage.get_record(LEASE_KIND, session_root)
+    if row is None:
+        return None
+    payload = row["payload"]
+    try:
+        lease = BrowserSessionLease(
+            row["record_root"],
+            row["owner_root"],
+            str(payload["view"]),
+            str(payload["tenant"]),
+            str(payload["assurance"]),
+            float(payload["issued_at"]),
+            float(payload["expires_at"]),
+            _digest(payload["token_digest"]),
+            _digest(payload["csrf_digest"]),
+            str(row["state"]),
+            int(row["generation"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InvalidCell("browser-session lease is malformed") from exc
+    if lease.state not in LEASE_STATES:
+        raise InvalidCell("browser-session lease state is unknown")
+    return lease
+
+
+def list_browser_session_leases(
+    storage, *, subject_root: str | None = None, states=None
+) -> tuple[BrowserSessionLease, ...]:
+    return tuple(
+        read_browser_session_lease(storage, row["record_root"])
+        for row in storage.list_records(
+            LEASE_KIND, owner_root=subject_root, states=states, limit=10_000
+        )
+    )
+
+
+def _lease_payload(
+    *, view_root, tenant_root, assurance_root, issued_at, expires_at,
+    token_digest, csrf_digest,
+) -> dict:
+    return {
+        "view": view_root,
+        "tenant": tenant_root,
+        "assurance": assurance_root,
+        "issued_at": float(issued_at),
+        "expires_at": float(expires_at),
+        "token_digest": _digest(token_digest),
+        "csrf_digest": _digest(csrf_digest),
+    }
+
+
+def open_browser_session_lease(
+    store: CellStore,
+    protocol: BrowserSessionProtocol,
+    storage,
+    *,
+    subject_root: str,
+    view_root: str,
+    tenant_root: str,
+    assurance_root: str,
+    token_digest: str,
+    csrf_digest: str,
+    issued_at: float | None = None,
+    lifetime_seconds: float = 900.0,
+) -> tuple[str, int]:
+    """Open a credential lease on a reusable session identity.
+
+    An existing active graph session for the same exact authority whose lease
+    is closed or expired is reused. Only when none exists is a new graph
+    session identity composed (the caller supplies the admitted intent).
+    """
+    now = time.time() if issued_at is None else float(issued_at)
+    if lifetime_seconds <= 0 or lifetime_seconds > MAX_SESSION_SECONDS:
+        raise ValueError("browser session lifetime must be within one hour")
+    payload = _lease_payload(
+        view_root=view_root, tenant_root=tenant_root,
+        assurance_root=assurance_root, issued_at=now,
+        expires_at=now + lifetime_seconds, token_digest=token_digest,
+        csrf_digest=csrf_digest,
+    )
+    snapshot = store.snapshot()
+    for lease in list_browser_session_leases(storage, subject_root=subject_root):
+        if (
+            (lease.view_root, lease.tenant_root, lease.assurance_root)
+            != (view_root, tenant_root, assurance_root)
+            or (lease.state == "active" and lease.expires_at > now)
+        ):
+            continue
+        try:
+            session = read_browser_session(snapshot, protocol, lease.session_root)
+        except (InvalidCell, KeyError):
+            continue
+        if (
+            session.state_root != protocol.states["active"]
+            or (session.subject_root, session.view_root, session.tenant_root,
+                session.assurance_root)
+            != (subject_root, view_root, tenant_root, assurance_root)
+        ):
+            continue
+        storage.put_record(
+            LEASE_KIND, lease.session_root, owner_root=subject_root,
+            state="active", payload=payload,
+            authority_revision=snapshot.revision, updated_at=now,
+            expected_generation=lease.generation, event="open",
+        )
+        return lease.session_root, snapshot.revision
+    session_root, revision = issue_browser_session(
+        store, protocol, subject_root=subject_root, view_root=view_root,
+        tenant_root=tenant_root, assurance_root=assurance_root,
+        token_digest=token_digest, csrf_digest=csrf_digest, issued_at=now,
+        lifetime_seconds=lifetime_seconds,
+    )
+    storage.put_record(
+        LEASE_KIND, session_root, owner_root=subject_root, state="active",
+        payload=payload, authority_revision=revision, updated_at=now,
+        create_only=True, event="open", retire_states=("closed",),
+    )
+    return session_root, revision
+
+
+def adopt_browser_session_lease(
+    store: CellStore,
+    protocol: BrowserSessionProtocol,
+    storage,
+    session_root: str,
+    *,
+    state: str,
+) -> BrowserSessionLease:
+    """Carry a pre-lease graph session into a lease record, without a revision.
+
+    Graphs written before leases hold the credential scalars as Cells; the
+    lease starts from exactly those values and owns them from then on.
+    """
+    if state not in LEASE_STATES:
+        raise InvalidCell("browser-session lease state is unknown")
+    snapshot = store.snapshot()
+    session = read_browser_session(snapshot, protocol, session_root)
+    try:
+        issued_at = float(_text(snapshot, session.issued_at_root))
+        expires_at = float(_text(snapshot, session.expires_at_root))
+    except ValueError as exc:
+        raise InvalidCell("browser-session time is invalid") from exc
+    storage.put_record(
+        LEASE_KIND, session_root, owner_root=session.subject_root, state=state,
+        payload=_lease_payload(
+            view_root=session.view_root, tenant_root=session.tenant_root,
+            assurance_root=session.assurance_root, issued_at=issued_at,
+            expires_at=expires_at,
+            token_digest=_text(snapshot, session.token_digest_root),
+            csrf_digest=_text(snapshot, session.csrf_digest_root),
+        ),
+        authority_revision=snapshot.revision, updated_at=time.time(),
+        create_only=True, event="adopt", retire_states=("closed",),
+    )
+    return read_browser_session_lease(storage, session_root)
+
+
+def renew_browser_session_lease(
+    store: CellStore,
+    storage,
+    session_root: str,
+    *,
+    issued_at: float,
+    expires_at: float,
+    expected_generation: int,
+) -> BrowserSessionLease:
+    lease = read_browser_session_lease(storage, session_root)
+    if lease is None or lease.state != "active":
+        raise BrowserSessionDenied("browser session lease is not active")
+    if not 0 < float(expires_at) - float(issued_at) <= MAX_SESSION_SECONDS:
+        raise ValueError("browser session lifetime must be within one hour")
+    storage.put_record(
+        LEASE_KIND, session_root, owner_root=lease.subject_root,
+        state="active",
+        payload=_lease_payload(
+            view_root=lease.view_root, tenant_root=lease.tenant_root,
+            assurance_root=lease.assurance_root, issued_at=issued_at,
+            expires_at=expires_at, token_digest=lease.token_digest,
+            csrf_digest=lease.csrf_digest,
+        ),
+        authority_revision=store.revision, updated_at=float(issued_at),
+        expected_generation=expected_generation, event="renew",
+    )
+    return read_browser_session_lease(storage, session_root)
+
+
+def close_browser_session_lease(
+    store: CellStore, storage, session_root: str, *, reason: str
+) -> bool:
+    """End the credential lease; the reusable graph identity is unchanged."""
+    reason = str(reason).strip()
+    if not reason or len(reason.encode("utf-8")) > 1024:
+        raise ValueError("browser-session close reason is required")
+    lease = read_browser_session_lease(storage, session_root)
+    if lease is None or lease.state == "closed":
+        return False
+    storage.put_record(
+        LEASE_KIND, session_root, owner_root=lease.subject_root,
+        state="closed",
+        payload={
+            **_lease_payload(
+                view_root=lease.view_root, tenant_root=lease.tenant_root,
+                assurance_root=lease.assurance_root, issued_at=lease.issued_at,
+                expires_at=lease.expires_at, token_digest=lease.token_digest,
+                csrf_digest=lease.csrf_digest,
+            ),
+            "reason": reason,
+        },
+        authority_revision=store.revision, updated_at=time.time(),
+        expected_generation=lease.generation, event="close",
+    )
+    return True
+
+
 def verify_browser_session(
     snapshot: Snapshot,
     protocol: BrowserSessionProtocol,
@@ -296,6 +542,7 @@ def verify_browser_session(
     csrf_token: str | None = None,
     require_csrf: bool = False,
     now: float | None = None,
+    lease_storage=None,
 ) -> BrowserSessionProjection:
     registered = [
         member.participant_id for member in read_relation(
@@ -309,22 +556,37 @@ def verify_browser_session(
     if session.state_root != protocol.states["active"]:
         raise BrowserSessionDenied("browser session is revoked")
     current = time.time() if now is None else float(now)
-    try:
-        issued_at = float(_text(snapshot, session.issued_at_root))
-        expires_at = float(_text(snapshot, session.expires_at_root))
-    except ValueError as exc:
-        raise BrowserSessionDenied("browser-session time is invalid") from exc
+    lease = (
+        None if lease_storage is None
+        else read_browser_session_lease(lease_storage, session_root)
+    )
+    if lease is not None:
+        if lease.state != "active":
+            raise BrowserSessionDenied("browser session lease is closed")
+        if (lease.subject_root, lease.view_root, lease.tenant_root,
+                lease.assurance_root) != (
+                session.subject_root, session.view_root,
+                session.tenant_root, session.assurance_root):
+            raise BrowserSessionDenied("browser session lease authority drifted")
+        issued_at, expires_at = lease.issued_at, lease.expires_at
+        token_digest, csrf_digest = lease.token_digest, lease.csrf_digest
+    else:
+        try:
+            issued_at = float(_text(snapshot, session.issued_at_root))
+            expires_at = float(_text(snapshot, session.expires_at_root))
+        except ValueError as exc:
+            raise BrowserSessionDenied("browser-session time is invalid") from exc
+        token_digest = _text(snapshot, session.token_digest_root)
+        csrf_digest = _text(snapshot, session.csrf_digest_root)
     if issued_at > current + 5 or expires_at <= current:
         raise BrowserSessionDenied("browser session expired or not yet valid")
     expected_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    if not secrets.compare_digest(
-        expected_token, _text(snapshot, session.token_digest_root)
-    ):
+    if not secrets.compare_digest(expected_token, token_digest):
         raise BrowserSessionDenied("browser credential digest drifted")
     if require_csrf:
         if csrf_token is None or not secrets.compare_digest(
             hashlib.sha256(csrf_token.encode("utf-8")).hexdigest(),
-            _text(snapshot, session.csrf_digest_root),
+            csrf_digest,
         ):
             raise BrowserSessionDenied("browser CSRF digest drifted")
     return session
@@ -370,14 +632,22 @@ def revoke_browser_session(
 
 __all__ = [
     "BrowserSessionDenied",
+    "BrowserSessionLease",
     "BrowserSessionProjection",
     "BrowserSessionProtocol",
+    "LEASE_KIND",
+    "adopt_browser_session_lease",
     "bootstrap_browser_session_protocol",
+    "close_browser_session_lease",
     "compose_browser_session_protocol",
     "issue_browser_session",
+    "list_browser_session_leases",
     "list_browser_session_roots",
+    "open_browser_session_lease",
     "project_browser_session_protocol",
     "read_browser_session",
+    "read_browser_session_lease",
+    "renew_browser_session_lease",
     "revoke_browser_session",
     "verify_browser_session",
 ]

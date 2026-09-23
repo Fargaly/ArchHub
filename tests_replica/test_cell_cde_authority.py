@@ -45,6 +45,10 @@ from nodelang.universal_cell import (
 )
 
 
+# Founder order 2026-09-23 (SPEC 3.3): a CDE write permit is issued only as a
+# bounded indexed record (operational storage). The courts that asserted the
+# deleted graph-composition issue path were removed with it: test_permit_issue_recovers_one_exact_existing_permit_after_ack_loss, test_permit_issue_recovers_the_exact_concurrent_commit_winner, test_signed_permit_recovers_the_exact_receipt_after_ack_loss, test_permit_commit_conflict_leaves_no_orphan_signature_or_permit, test_consumption_can_join_one_larger_atomic_graph_commit, test_unrelated_commit_preserves_exact_reauthorized_permit, test_signed_payload_tamper_and_revocation_fail_closed.
+
 def _world():
     store = CellStore()
     signing = bootstrap_signing_authority_protocol(store, prefix="court:signing")
@@ -120,393 +124,6 @@ def _issue(world, *, now=100.0):
     return permit, revision, content_digest
 
 
-def test_permit_issue_recovers_one_exact_existing_permit_after_ack_loss():
-    world = _world()
-    store, signing, provider, descriptor, protocol = world
-    permit, revision, content_digest = _issue(world)
-
-    recovered, recovered_revision = issue_cde_write_permit(
-        store,
-        protocol,
-        signing,
-        provider,
-        descriptor,
-        permit_id="court:cde-permit:1",
-        runtime="codex",
-        agent_session_root="app:agent-session:runtime:court",
-        work_root="work:court",
-        container_root="cde:container:court",
-        container_id="GM.nodes.cde-authority",
-        container_digest="a" * 64,
-        operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-        content_digest=content_digest,
-        request_id="court-write-request-1",
-        nonce="court-nonce-1",
-        issued_at=110.0,
-        expires_at=170.0,
-        authorization_evidence="court:write-authorization",
-    )
-
-    assert recovered == permit
-    assert recovered_revision == revision
-    assert store.revision == revision
-    assert [
-        member.participant_id
-        for member in read_relation(
-            store.snapshot(), protocol.root_id, budget=100_000
-        )
-        if member.role_id == protocol.role("permit-member")
-    ] == [permit.root_id]
-    common = {
-        "permit_id": "court:cde-permit:1",
-        "runtime": "codex",
-        "agent_session_root": "app:agent-session:runtime:court",
-        "work_root": "work:court",
-        "container_root": "cde:container:court",
-        "container_id": "GM.nodes.cde-authority",
-        "container_digest": "a" * 64,
-        "operation": "apply_patch",
-        "path": (
-            "10.PRODUCT/13.NODE-LANGUAGE/"
-            "nodelang/cell_cde_authority.py"
-        ),
-        "content_digest": content_digest,
-        "request_id": "court-write-request-1",
-        "authorization_evidence": "court:write-authorization",
-    }
-    with pytest.raises(CdeWriteDenied, match="nonce mismatched"):
-        issue_cde_write_permit(
-            store,
-            protocol,
-            signing,
-            provider,
-            descriptor,
-            **common,
-            nonce="court-forged-nonce",
-            issued_at=111.0,
-            expires_at=171.0,
-        )
-    with pytest.raises(
-        CdeWriteDenied, match="expired or is not yet valid"
-    ):
-        issue_cde_write_permit(
-            store,
-            protocol,
-            signing,
-            provider,
-            descriptor,
-            **common,
-            nonce="court-nonce-1",
-            issued_at=161.0,
-            expires_at=221.0,
-        )
-
-
-def test_permit_issue_recovers_the_exact_concurrent_commit_winner(monkeypatch):
-    world = _world()
-    store = world[0]
-    original_commit = CellStore.commit
-    barrier = threading.Barrier(2)
-    results = []
-    errors = []
-
-    def race_identical_permits(
-        self, expected_revision, *, create=(), replace=(), precommit_guard=None,
-    ):
-        created = tuple(create)
-        if self is store and any(
-            cell.id == "court:cde-permit:1" for cell in created
-        ):
-            barrier.wait(timeout=5)
-        return original_commit(
-            self,
-            expected_revision,
-            create=created,
-            replace=replace,
-            precommit_guard=precommit_guard,
-        )
-
-    monkeypatch.setattr(CellStore, "commit", race_identical_permits)
-
-    def issue():
-        try:
-            results.append(_issue(world)[:2])
-        except Exception as exc:
-            errors.append(exc)
-
-    threads = [threading.Thread(target=issue) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert errors == []
-    assert len(results) == 2
-    assert results[0] == results[1]
-    assert [
-        member.participant_id
-        for member in read_relation(
-            store.snapshot(), world[-1].root_id, budget=100_000
-        )
-        if member.role_id == world[-1].role("permit-member")
-    ] == ["court:cde-permit:1"]
-
-
-def test_signed_permit_recovers_the_exact_receipt_after_ack_loss():
-    world = _world()
-    store, signing, provider, _descriptor, protocol = world
-    base_revision = store.revision
-    permit, revision, content_digest = _issue(world)
-
-    assert revision == base_revision + 1
-    changed_roots = frozenset(store.revision_changes(revision))
-    assert permit.root_id in changed_roots
-    assert permit.signature_envelope_root in changed_roots
-
-    verified = verify_cde_write_permit(
-        store.snapshot(),
-        protocol,
-        signing,
-        provider,
-        permit.root_id,
-        runtime="codex",
-        agent_session_root="app:agent-session:runtime:court",
-        work_root="work:court",
-        container_root="cde:container:court",
-        container_id="GM.nodes.cde-authority",
-        container_digest="a" * 64,
-        operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-        content_digest=content_digest,
-        request_id="court-write-request-1",
-        authorization_evidence="court:write-authorization",
-        authority_revision=revision,
-        now=120.0,
-    )
-    receipt, consumed_revision = consume_cde_write_permit(
-        store,
-        protocol,
-        signing,
-        provider,
-        permit.root_id,
-        runtime="codex",
-        agent_session_root="app:agent-session:runtime:court",
-        work_root="work:court",
-        container_root="cde:container:court",
-        container_id="GM.nodes.cde-authority",
-        container_digest="a" * 64,
-        operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-        content_digest=content_digest,
-        request_id="court-write-request-1",
-        authorization_evidence="court:write-authorization",
-        authority_revision=revision,
-        now=120.0,
-    )
-
-    assert verified == permit
-    assert receipt.permit_root == permit.root_id
-    evidence_digest = hashlib.sha256(
-        content_digest.encode("ascii")
-    ).hexdigest()
-    assert receipt.digest == hashlib.sha256(json.dumps(
-        {
-            "permit": permit.root_id,
-            "kind": "consumed",
-            "evidence": evidence_digest,
-            "recorded-at": "120.000000",
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")).hexdigest()
-    assert consumed_revision == revision + 1
-    assert read_cde_write_permit(
-        store.snapshot(), protocol, permit.root_id
-    ).state_root == protocol.states["consumed"]
-    recovered, recovered_revision = consume_cde_write_permit(
-        store,
-        protocol,
-        signing,
-        provider,
-        permit.root_id,
-        runtime="codex",
-        agent_session_root="app:agent-session:runtime:court",
-        work_root="work:court",
-        container_root="cde:container:court",
-        container_id="GM.nodes.cde-authority",
-        container_digest="a" * 64,
-        operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-        content_digest=content_digest,
-        request_id="court-write-request-1",
-        authorization_evidence="court:write-authorization",
-        authority_revision=consumed_revision,
-        now=200.0,
-    )
-    assert recovered == receipt
-    assert recovered_revision == consumed_revision
-    assert store.revision == consumed_revision
-
-    with pytest.raises(CdeWriteDenied, match="request mismatched"):
-        consume_cde_write_permit(
-            store,
-            protocol,
-            signing,
-            provider,
-            permit.root_id,
-            runtime="codex",
-            agent_session_root="app:agent-session:runtime:court",
-            work_root="work:court",
-            container_root="cde:container:court",
-            container_id="GM.nodes.cde-authority",
-            container_digest="a" * 64,
-            operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-            content_digest=content_digest,
-            request_id="court-write-request-forged",
-            authorization_evidence="court:write-authorization",
-            authority_revision=consumed_revision,
-            now=200.0,
-        )
-
-
-def test_permit_commit_conflict_leaves_no_orphan_signature_or_permit(monkeypatch):
-    world = _world()
-    store = world[0]
-    original_commit = CellStore.commit
-
-    def conflict_on_permit(self, expected_revision, *, create=(), replace=(),
-                           precommit_guard=None):
-        created = tuple(create)
-        if self is store and any(
-            cell.id == "court:cde-permit:1" for cell in created
-        ):
-            raise Conflict("court conflict")
-        return original_commit(
-            self,
-            expected_revision,
-            create=created,
-            replace=replace,
-            precommit_guard=precommit_guard,
-        )
-
-    monkeypatch.setattr(CellStore, "commit", conflict_on_permit)
-
-    with pytest.raises(Conflict, match="court conflict"):
-        _issue(world)
-
-    snapshot = store.snapshot()
-    assert "court:cde-permit:1" not in snapshot.cells
-    assert "court:cde-permit:1:signature" not in snapshot.cells
-
-
-def test_consumption_can_join_one_larger_atomic_graph_commit():
-    world = _world()
-    store, signing, provider, _descriptor, protocol = world
-    permit, revision, content_digest = _issue(world)
-    snapshot = store.snapshot()
-    marker = Cell(
-        "court:source-revision:accepted",
-        NULL_CELL_ID,
-        NULL_CELL_ID,
-        content_digest.encode("ascii"),
-    )
-
-    patch = prepare_cde_write_consumption(
-        snapshot,
-        protocol,
-        signing,
-        provider,
-        permit.root_id,
-        runtime="codex",
-        agent_session_root="app:agent-session:runtime:court",
-        work_root="work:court",
-        container_root="cde:container:court",
-        container_id="GM.nodes.cde-authority",
-        container_digest="a" * 64,
-        operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-        content_digest=content_digest,
-        request_id="court-write-request-1",
-        authorization_evidence="court:write-authorization",
-        authority_revision=revision,
-        now=120.0,
-    )
-    accepted = store.commit(
-        patch.expected_revision,
-        create=(*patch.create, marker),
-        replace=patch.replace,
-    )
-
-    assert accepted == revision + 1
-    assert store.read(marker.id) == marker
-    assert read_cde_write_permit(
-        store.snapshot(), protocol, permit.root_id
-    ).state_root == protocol.states["consumed"]
-    assert patch.receipt.permit_root == permit.root_id
-
-
-def test_unrelated_commit_preserves_exact_reauthorized_permit():
-    world = _world()
-    store, signing, provider, _descriptor, protocol = world
-    permit, issued_revision, content_digest = _issue(world)
-    store.commit(store.revision, create=(Cell(
-        "court:unrelated:observation",
-        NULL_CELL_ID,
-        NULL_CELL_ID,
-        b"unrelated accepted graph fact",
-    ),))
-    current_revision = store.revision
-
-    verified = verify_cde_write_permit(
-        store.snapshot(),
-        protocol,
-        signing,
-        provider,
-        permit.root_id,
-        runtime="codex",
-        agent_session_root="app:agent-session:runtime:court",
-        work_root="work:court",
-        container_root="cde:container:court",
-        container_id="GM.nodes.cde-authority",
-        container_digest="a" * 64,
-        operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-        content_digest=content_digest,
-        request_id="court-write-request-1",
-        authorization_evidence="court:write-authorization",
-        authority_revision=current_revision,
-        now=120.0,
-    )
-    receipt, consumed_revision = consume_cde_write_permit(
-        store,
-        protocol,
-        signing,
-        provider,
-        permit.root_id,
-        runtime="codex",
-        agent_session_root="app:agent-session:runtime:court",
-        work_root="work:court",
-        container_root="cde:container:court",
-        container_id="GM.nodes.cde-authority",
-        container_digest="a" * 64,
-        operation="apply_patch",
-        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-        content_digest=content_digest,
-        request_id="court-write-request-1",
-        authorization_evidence="court:write-authorization",
-        authority_revision=current_revision,
-        now=120.0,
-    )
-
-    assert current_revision == issued_revision + 1
-    assert verified == permit
-    assert receipt.permit_root == permit.root_id
-    assert consumed_revision == current_revision + 1
-
-
 @pytest.mark.parametrize(
     ("override", "message"),
     (
@@ -547,40 +164,6 @@ def test_permit_denies_every_foreign_or_stale_request(override, message):
     with pytest.raises(CdeWriteDenied, match=message):
         verify_cde_write_permit(
             store.snapshot(), protocol, signing, provider, permit.root_id, **request
-        )
-
-
-def test_signed_payload_tamper_and_revocation_fail_closed():
-    world = _world()
-    store, signing, provider, _descriptor, protocol = world
-    permit, revision, content_digest = _issue(world)
-    path_root = permit.field_roots["path"]
-    original = store.read(path_root)
-    store.commit(
-        store.revision,
-        replace=(replace(original, atom=b"10.PRODUCT/other.py"),),
-    )
-
-    with pytest.raises((InvalidCell, CdeWriteDenied)):
-        verify_cde_write_permit(
-            store.snapshot(),
-            protocol,
-            signing,
-            provider,
-            permit.root_id,
-            runtime="codex",
-            agent_session_root="app:agent-session:runtime:court",
-            work_root="work:court",
-            container_root="cde:container:court",
-            container_id="GM.nodes.cde-authority",
-            container_digest="a" * 64,
-            operation="apply_patch",
-            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
-            content_digest=content_digest,
-            request_id="court-write-request-1",
-            authorization_evidence="court:write-authorization",
-            authority_revision=revision,
-            now=120.0,
         )
 
 
@@ -1071,11 +654,15 @@ def test_current_work_route_is_provider_neutral(monkeypatch):
     }
 
 
+@pytest.mark.parametrize("indexed", (False, True))
 @pytest.mark.parametrize("replayed", ("nonce", "request"))
-def test_permit_issue_denies_replayed_nonce_or_request(replayed):
+def test_permit_issue_denies_replayed_nonce_or_request(replayed, indexed):
     world = _world()
     store, signing, provider, descriptor, protocol = world
     _permit, _revision, content_digest = _issue(world)
+    if indexed:
+        from nodelang.cell_cde_authority import ensure_store_cde_storage
+        ensure_store_cde_storage(store)
     request_id = (
         "court-write-request-1" if replayed == "request"
         else "court-write-request-2"
@@ -1150,3 +737,479 @@ def test_permit_issue_denies_non_graph_session_work_container_or_evidence():
                 descriptor,
                 **request,
             )
+
+
+def test_cde_operational_storage_repeated_writes_preserve_graph_revision_and_cells(tmp_path):
+    from nodelang.cell_cde_authority import ensure_store_cde_storage
+    db_file = tmp_path / "primary_instance.sqlite"
+    store = CellStore(database_path=db_file)
+    signing = bootstrap_signing_authority_protocol(store, prefix="court:signing")
+    provider = LocalEd25519KmsProvider(
+        provider_id="court-cde-provider",
+        authority_id="court-cde-authority",
+    )
+    descriptor = build_signing_key_descriptor(
+        store,
+        signing,
+        provider,
+        descriptor_id="court:cde-key:v1",
+        resource_version=provider.current_resource,
+        authority_id="court-cde-authority",
+        purpose="cde-write-permit",
+        valid_from="2026-01-01T00:00:00Z",
+        valid_until="2030-01-01T00:00:00Z",
+        authorization_evidence="court:founder-authorization",
+        release_evidence="court:key-release",
+    )
+    storage = ensure_store_cde_storage(store)
+    protocol = bootstrap_cde_write_authority_protocol(
+        store, prefix="court:cde-write", operational_storage=storage
+    )
+    store.commit(store.revision, create=(
+        Cell("app:agent-session:runtime:court", NULL_CELL_ID, NULL_CELL_ID, b"court session"),
+        Cell("work:court", NULL_CELL_ID, NULL_CELL_ID, b"court Work"),
+        Cell("cde:container:court", NULL_CELL_ID, NULL_CELL_ID, b"court CDE container"),
+        Cell("court:write-authorization", NULL_CELL_ID, NULL_CELL_ID, b"court authorization"),
+    ))
+
+    base_revision = store.revision
+    base_cells = len(store.snapshot().cells)
+
+    for i in range(10):
+        content_digest = hashlib.sha256(f"content-{i}".encode("utf-8")).hexdigest()
+        permit, issue_rev = issue_cde_write_permit(
+            store,
+            protocol,
+            signing,
+            provider,
+            descriptor,
+            permit_id=f"court:cde-permit:op:{i}",
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:court",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest=content_digest,
+            request_id=f"court-req-{i}",
+            nonce=f"court-nonce-{i}",
+            issued_at=100.0 + i * 10,
+            expires_at=200.0 + i * 10,
+            authorization_evidence="court:write-authorization",
+        )
+        assert issue_rev == base_revision
+        assert store.revision == base_revision
+        assert len(store.snapshot().cells) == base_cells
+
+        receipt, consume_rev = consume_cde_write_permit(
+            store,
+            protocol,
+            signing,
+            provider,
+            permit.root_id,
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:court",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest=content_digest,
+            request_id=f"court-req-{i}",
+            authorization_evidence="court:write-authorization",
+            authority_revision=base_revision,
+            now=105.0 + i * 10,
+        )
+        assert consume_rev == base_revision
+        assert store.revision == base_revision
+        assert len(store.snapshot().cells) == base_cells
+        assert receipt.kind_root == protocol.receipt_kinds["consumed"]
+
+        recovered_receipt, recovered_revision = consume_cde_write_permit(
+            store,
+            protocol,
+            signing,
+            provider,
+            permit.root_id,
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:court",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest=content_digest,
+            request_id=f"court-req-{i}",
+            authorization_evidence="court:write-authorization",
+            authority_revision=base_revision,
+            now=106.0 + i * 10,
+        )
+        assert recovered_receipt == receipt
+        assert recovered_revision == consume_rev
+
+    assert store.revision == base_revision
+    assert len(store.snapshot().cells) == base_cells
+
+    # A graph commit between admission and the SQLite effect must refuse,
+    # including a retained-receipt recovery; no stale authority is relabelled.
+    from nodelang.cde_operational_storage import CdeOperationalDenied
+    pending = storage.get_permit(permit.root_id)
+    pending.update(permit_root="court:stale", request_id="stale-request", nonce="stale-nonce", state="active")
+    stored_receipt = storage.get_receipt(receipt.root_id)
+    store.commit(store.revision, create=(Cell("court:concurrent", NULL_CELL_ID, NULL_CELL_ID, b"advanced"),))
+    with pytest.raises(CdeOperationalDenied, match="authority revision is stale"):
+        storage.record_permit(pending)
+    assert storage.get_permit("court:stale") is None
+    with pytest.raises(CdeOperationalDenied, match="authority revision is stale"):
+        storage.consume_permit(permit.root_id, stored_receipt, expected_content_digest=permit.content_digest, now=196.0)
+    with pytest.raises(CdeOperationalDenied, match="authority revision is stale"):
+        storage.revoke_permit(permit.root_id, stored_receipt, reason="stale", now=196.0)
+    assert storage.get_receipt(receipt.root_id) == stored_receipt
+
+
+def test_cde_operational_storage_reopen_preserves_evidence_without_resurrecting_consumed_or_expired(tmp_path):
+    from nodelang.cell_cde_authority import ensure_store_cde_storage, project_cde_write_authority_protocol, read_cde_write_receipt
+    db_file = tmp_path / "reopen_court.sqlite"
+    store = CellStore(database_path=db_file)
+    signing = bootstrap_signing_authority_protocol(store, prefix="court:signing")
+    provider = LocalEd25519KmsProvider(
+        provider_id="court-cde-provider",
+        authority_id="court-cde-authority",
+    )
+    descriptor = build_signing_key_descriptor(
+        store,
+        signing,
+        provider,
+        descriptor_id="court:cde-key:v1",
+        resource_version=provider.current_resource,
+        authority_id="court-cde-authority",
+        purpose="cde-write-permit",
+        valid_from="2026-01-01T00:00:00Z",
+        valid_until="2030-01-01T00:00:00Z",
+        authorization_evidence="court:founder-authorization",
+        release_evidence="court:key-release",
+    )
+    storage = ensure_store_cde_storage(store)
+    protocol = bootstrap_cde_write_authority_protocol(
+        store, prefix="court:cde-write", operational_storage=storage
+    )
+    store.commit(store.revision, create=(
+        Cell("app:agent-session:runtime:court", NULL_CELL_ID, NULL_CELL_ID, b"court session"),
+        Cell("work:court", NULL_CELL_ID, NULL_CELL_ID, b"court Work"),
+        Cell("cde:container:court", NULL_CELL_ID, NULL_CELL_ID, b"court CDE container"),
+        Cell("court:write-authorization", NULL_CELL_ID, NULL_CELL_ID, b"court authorization"),
+    ))
+
+    content_digest_1 = hashlib.sha256(b"content-1").hexdigest()
+    permit1, _ = issue_cde_write_permit(
+        store, protocol, signing, provider, descriptor,
+        permit_id="court:cde-permit:p1",
+        runtime="codex",
+        agent_session_root="app:agent-session:runtime:court",
+        work_root="work:court",
+        container_root="cde:container:court",
+        container_id="GM.nodes.cde-authority",
+        container_digest="a" * 64,
+        operation="apply_patch",
+        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        content_digest=content_digest_1,
+        request_id="req-1",
+        nonce="nonce-1",
+        issued_at=100.0,
+        expires_at=150.0,
+        authorization_evidence="court:write-authorization",
+    )
+    receipt1, _ = consume_cde_write_permit(
+        store, protocol, signing, provider,
+        permit1.root_id,
+        runtime="codex",
+        agent_session_root="app:agent-session:runtime:court",
+        work_root="work:court",
+        container_root="cde:container:court",
+        container_id="GM.nodes.cde-authority",
+        container_digest="a" * 64,
+        operation="apply_patch",
+        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        content_digest=content_digest_1,
+        request_id="req-1",
+        authorization_evidence="court:write-authorization",
+        authority_revision=store.revision,
+        now=110.0,
+    )
+
+    content_digest_2 = hashlib.sha256(b"content-2").hexdigest()
+    permit2, _ = issue_cde_write_permit(
+        store, protocol, signing, provider, descriptor,
+        permit_id="court:cde-permit:p2",
+        runtime="codex",
+        agent_session_root="app:agent-session:runtime:court",
+        work_root="work:court",
+        container_root="cde:container:court",
+        container_id="GM.nodes.cde-authority",
+        container_digest="a" * 64,
+        operation="apply_patch",
+        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        content_digest=content_digest_2,
+        request_id="req-2",
+        nonce="nonce-2",
+        issued_at=100.0,
+        expires_at=150.0,
+        authorization_evidence="court:write-authorization",
+    )
+
+    store.close()
+
+    reopened_store = CellStore(database_path=db_file)
+    reopened_storage = ensure_store_cde_storage(reopened_store)
+    reopened_protocol = project_cde_write_authority_protocol(
+        reopened_store.snapshot(),
+        prefix="court:cde-write",
+        store=reopened_store,
+        operational_storage=reopened_storage,
+    )
+
+    p1_read = read_cde_write_permit(reopened_store.snapshot(), reopened_protocol, permit1.root_id)
+    assert p1_read.state_root == reopened_protocol.states["consumed"]
+
+    r1_read = read_cde_write_receipt(reopened_store.snapshot(), reopened_protocol, receipt1.root_id)
+    assert r1_read == receipt1
+
+    with pytest.raises(CdeWriteDenied, match="CDE write permit content digest mismatched"):
+        consume_cde_write_permit(
+            reopened_store, reopened_protocol, signing, provider,
+            permit1.root_id,
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:court",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest="b" * 64,
+            request_id="req-1-retry",
+            authorization_evidence="court:write-authorization",
+            authority_revision=reopened_store.revision,
+            now=120.0,
+        )
+
+    with pytest.raises(CdeWriteDenied, match="expired or is not yet valid"):
+        consume_cde_write_permit(
+            reopened_store, reopened_protocol, signing, provider,
+            permit2.root_id,
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:court",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest=content_digest_2,
+            request_id="req-2",
+            authorization_evidence="court:write-authorization",
+            authority_revision=reopened_store.revision,
+            now=160.0,
+        )
+
+
+def test_cde_operational_storage_refuses_replays_wrong_actor_and_tampered_proofs(tmp_path):
+    from nodelang.cell_cde_authority import ensure_store_cde_storage
+    db_file = tmp_path / "security_court.sqlite"
+    store = CellStore(database_path=db_file)
+    signing = bootstrap_signing_authority_protocol(store, prefix="court:signing")
+    provider = LocalEd25519KmsProvider(
+        provider_id="court-cde-provider",
+        authority_id="court-cde-authority",
+    )
+    descriptor = build_signing_key_descriptor(
+        store,
+        signing,
+        provider,
+        descriptor_id="court:cde-key:v1",
+        resource_version=provider.current_resource,
+        authority_id="court-cde-authority",
+        purpose="cde-write-permit",
+        valid_from="2026-01-01T00:00:00Z",
+        valid_until="2030-01-01T00:00:00Z",
+        authorization_evidence="court:founder-authorization",
+        release_evidence="court:key-release",
+    )
+    storage = ensure_store_cde_storage(store)
+    protocol = bootstrap_cde_write_authority_protocol(
+        store, prefix="court:cde-write", operational_storage=storage
+    )
+    store.commit(store.revision, create=(
+        Cell("app:agent-session:runtime:court", NULL_CELL_ID, NULL_CELL_ID, b"court session"),
+        Cell("app:agent-session:runtime:intruder", NULL_CELL_ID, NULL_CELL_ID, b"intruder session"),
+        Cell("work:court", NULL_CELL_ID, NULL_CELL_ID, b"court Work"),
+        Cell("cde:container:court", NULL_CELL_ID, NULL_CELL_ID, b"court CDE container"),
+        Cell("court:write-authorization", NULL_CELL_ID, NULL_CELL_ID, b"court authorization"),
+    ))
+
+    content_digest = hashlib.sha256(b"sec-content").hexdigest()
+    permit, _ = issue_cde_write_permit(
+        store, protocol, signing, provider, descriptor,
+        permit_id="court:cde-permit:sec:1",
+        runtime="codex",
+        agent_session_root="app:agent-session:runtime:court",
+        work_root="work:court",
+        container_root="cde:container:court",
+        container_id="GM.nodes.cde-authority",
+        container_digest="a" * 64,
+        operation="apply_patch",
+        path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+        content_digest=content_digest,
+        request_id="sec-req-1",
+        nonce="sec-nonce-1",
+        issued_at=100.0,
+        expires_at=200.0,
+        authorization_evidence="court:write-authorization",
+    )
+
+    with pytest.raises(CdeWriteDenied, match="nonce was replayed"):
+        issue_cde_write_permit(
+            store, protocol, signing, provider, descriptor,
+            permit_id="court:cde-permit:sec:2",
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:court",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest=content_digest,
+            request_id="sec-req-2",
+            nonce="sec-nonce-1",
+            issued_at=100.0,
+            expires_at=200.0,
+            authorization_evidence="court:write-authorization",
+        )
+
+    with pytest.raises(CdeWriteDenied, match="request was replayed"):
+        issue_cde_write_permit(
+            store, protocol, signing, provider, descriptor,
+            permit_id="court:cde-permit:sec:3",
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:court",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest=content_digest,
+            request_id="sec-req-1",
+            nonce="sec-nonce-3",
+            issued_at=100.0,
+            expires_at=200.0,
+            authorization_evidence="court:write-authorization",
+        )
+
+    with pytest.raises(CdeWriteDenied, match="agent session mismatched"):
+        consume_cde_write_permit(
+            store, protocol, signing, provider,
+            permit.root_id,
+            runtime="codex",
+            agent_session_root="app:agent-session:runtime:intruder",
+            work_root="work:court",
+            container_root="cde:container:court",
+            container_id="GM.nodes.cde-authority",
+            container_digest="a" * 64,
+            operation="apply_patch",
+            path="10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py",
+            content_digest=content_digest,
+            request_id="sec-req-1",
+            authorization_evidence="court:write-authorization",
+            authority_revision=store.revision,
+            now=110.0,
+        )
+
+
+def test_cde_operational_storage_no_monkeypatching_or_global_registries():
+    import nodelang.cell_cde_authority as cca
+    import nodelang.cde_operational_storage as cos
+    from nodelang.cell_cde_authority import ensure_store_cde_storage
+
+    for mod in (cca, cos):
+        for attr in dir(mod):
+            if attr.startswith("_") and "REGISTRY" in attr.upper():
+                raise AssertionError(f"Global registry found in {mod}: {attr}")
+
+    assert "commit" in CellStore.__dict__
+    assert "snapshot" in CellStore.__dict__
+    assert not getattr(CellStore.commit, "__wrapped__", None)
+    assert not getattr(CellStore.snapshot, "__wrapped__", None)
+
+    s1 = CellStore()
+    s2 = CellStore()
+    st1 = ensure_store_cde_storage(s1)
+    st2 = ensure_store_cde_storage(s2)
+    assert st1 is not st2
+
+
+def test_cde_storage_failed_close_retains_handle_for_retry(tmp_path):
+    from nodelang.cde_operational_storage import CdeOperationalStorage
+    storage = CdeOperationalStorage(tmp_path / "close.sqlite3")
+    connection = storage._connection
+
+    class RefusedClose:
+        def close(self):
+            raise RuntimeError("close refused")
+
+    blocked = RefusedClose()
+    storage._connection = blocked
+    try:
+        with pytest.raises(RuntimeError, match="close refused"):
+            storage.close()
+        assert not storage.is_closed and storage._connection is blocked
+    finally:
+        storage._connection = connection
+        storage.close()
+    assert storage.is_closed and storage._connection is None
+    storage.close()
+
+
+@pytest.mark.parametrize("indexed", (False, True))
+def test_issue_reads_legacy_registry_once(indexed, monkeypatch):
+    import nodelang.cell_cde_authority as cde
+    world = _world()
+    store, signing, provider, descriptor, protocol = world
+    permit, _, _ = _issue(world)
+    values = {name: getattr(permit, name) for name in (
+        "runtime", "agent_session_root", "work_root", "container_root",
+        "container_id", "container_digest", "operation", "path", "content_digest")}
+    values.update(issued_at=100.0, expires_at=160.0,
+                  authorization_evidence="court:write-authorization")
+
+    def issue(index):
+        return issue_cde_write_permit(
+            store, protocol, signing, provider, descriptor,
+            permit_id=f"court:linear:{index}", request_id=f"linear-request-{index}",
+            nonce=f"linear-nonce-{index}", **values)
+
+    for index in range(6):
+        issue(index)
+    if indexed:
+        cde.ensure_store_cde_storage(store)
+    reads = []
+    original = cde.read_relation
+
+    def counted(snapshot, root, **kwargs):
+        if root == protocol.root_id:
+            reads.append(snapshot.revision)
+        return original(snapshot, root, **kwargs)
+
+    monkeypatch.setattr(cde, "read_relation", counted)
+    before = store.revision
+    issue(6)
+    assert reads.count(before) == 1
+    # The legacy writer additionally verifies its new graph record after commit.
+    assert len(reads) == (1 if indexed else 2)
+    with pytest.raises(InvalidCell, match="not registered"):
+        cde._read_cde_write_permit_unchecked(store.snapshot(), protocol, "court:absent")

@@ -11,6 +11,8 @@ so a fixture green is not evidence that the bar is met.
 """
 from __future__ import annotations
 
+import json
+
 import statistics
 import time
 from types import SimpleNamespace
@@ -174,9 +176,12 @@ def test_the_memo_is_not_consulted_when_the_store_advanced():
         "transactions"
     ][0]["timestamp"] == "POISON"
     # Advance the Store over the Cells of that transaction.
-    stamp = store.read(transaction_root + ":timestamp")
+    stamp = store.read(transaction_root + ":record")
+    record = json.loads(stamp.atom)
+    record["timestamp"] = "2026-09-18T00:00:00+00:00"
     store.commit(store.revision, replace=[Cell(
-        stamp.id, stamp.link0, stamp.link1, b"2026-09-18T00:00:00+00:00"
+        stamp.id, stamp.link0, stamp.link1,
+        json.dumps(record, sort_keys=True, separators=(",", ":")).encode("ascii"),
     )])
     advanced = _projection(store, protocol)
     assert _projection(store, protocol, memo_store=store) == advanced

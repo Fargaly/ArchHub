@@ -68,8 +68,9 @@ def test_change_is_a_graph_transaction_and_undo_redo_append_revisions():
 
     forward = _set_value(store, protocol, "two")
     assert store.read("test:value").atom == b"two"
+    # A compact record reads its before/after images from revision history.
     transaction = read_change_transaction(
-        store.snapshot(), protocol, forward.root_id
+        store.snapshot(), protocol, forward.root_id, history=store.at
     )
     assert transaction.actor_root == "test:actor"
     assert transaction.session_root == "test:session"

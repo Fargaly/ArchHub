@@ -7,6 +7,7 @@ param(
     [string]$OutputDirectory,
     [string]$IsccPath,
     [string]$NodePath,
+    [string]$PythonPath,
     [switch]$PrepareCandidateManifest,
     [string]$LocalCandidateManifest,
     [ValidatePattern('^[0-9a-fA-F]{64}$')]
@@ -548,6 +549,24 @@ foreach ($codePath in $shippedCode) {
     $LASTEXITCODE = 0
     & $portabilityGate -SourceRoot $codePath
     if ($LASTEXITCODE -ne 0) { throw 'A shipped input failed the source portability gate.' }
+}
+
+# Release gate (founder order 2026-09-23): an old graph opened by these exact
+# snapshot bytes must not grow while idle, and its old undo records must still
+# undo. The court lives in the checkout; the code it judges is the snapshot.
+if (-not $PythonPath) {
+    $PythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+}
+$zeroIdleCourt = Join-Path $snapshot.SelectedCheckout 'tests/test_zero_idle_growth.py'
+if (-not (Test-Path -LiteralPath $zeroIdleCourt -PathType Leaf)) { throw 'The zero-idle-growth release court is missing.' }
+$priorCourtSource = $env:ARCHHUB_COURT_SOURCE
+$env:ARCHHUB_COURT_SOURCE = $selectedRoot
+try {
+    $LASTEXITCODE = 0
+    & $PythonPath -m pytest -q -p no:cacheprovider $zeroIdleCourt
+    if ($LASTEXITCODE -ne 0) { throw 'Release refused: the zero-idle-growth court is red.' }
+} finally {
+    $env:ARCHHUB_COURT_SOURCE = $priorCourtSource
 }
 
 Assert-BuildSnapshot $snapshot

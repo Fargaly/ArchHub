@@ -26,6 +26,7 @@ from .baboom_native_runtime import (
     create_baboom_native_projection,
 )
 from .cell_cloud_sessions import device_root_for_thumbprint
+from . import commit_intent
 from .cell_device_custody import register_device_custody
 from .cell_device_keys import DeviceProofKeyReference, PLATFORM_PROVIDER
 from .universal_application import (
@@ -178,7 +179,16 @@ def prepare_baboom_host(
     try:
         check_cancelled()
         key, reference = _machine_device_key(state_dir)
-        custody_root = _ensure_device_custody(server, reference)
+        # Registering this machine's BABOOM device is its install: the first
+        # launch on a machine (or after its device key was replaced) commits
+        # the custody under the admitted migration/install intent
+        # (commit_intent.py). An already registered device commits nothing.
+        with commit_intent.declare(
+            commit_intent.MIGRATION,
+            actor=server.universal_registry.application_root,
+            reason="install this machine's BABOOM device custody",
+        ):
+            custody_root = _ensure_device_custody(server, reference)
     finally:
         server.mutation_lock.release()
 

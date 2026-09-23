@@ -417,7 +417,32 @@ class CourtAttestationBroker:
         subject_content: bytes,
         external_parameters: Mapping[str, str],
     ) -> str:
-        snapshot = store.snapshot()
+        record = self.sign_record(
+            store.snapshot(),
+            protocol,
+            court_root,
+            subject_name=subject_name,
+            subject_content=subject_content,
+            external_parameters=external_parameters,
+        )
+        return self._commit_record(store, protocol, record)
+
+    def sign_record(
+        self,
+        snapshot: Snapshot,
+        protocol: AttestationProtocol,
+        court_root: str,
+        *,
+        subject_name: str,
+        subject_content: bytes,
+        external_parameters: Mapping[str, str],
+    ) -> Mapping[str, object]:
+        """Run the admitted court and return its signed statement as data.
+
+        The same DSSE-signed statement ``run`` publishes as Cells, for
+        operational evidence that SPEC 3.3 keeps in indexed records. The
+        court definition, signer and verification stay graph-governed.
+        """
         definition = verify_court_definition(snapshot, protocol, court_root)
         with self._lock:
             admitted = self._courts.get(court_root)
@@ -497,6 +522,33 @@ class CourtAttestationBroker:
             key_material.version,
             _dsse_pae(DSSE_PAYLOAD_TYPE, payload),
         )
+        return MappingProxyType({
+            "court": court_root,
+            "subject_name": subject_name,
+            "subject_digest": subject_digest,
+            "payload": payload.decode("utf-8"),
+            "signature": str(signature),
+            "result": "pass" if passed else "fail",
+            "issued_at": finished_at,
+            "key_reference": key_material.key_id,
+            "key_version": int(key_material.version),
+        })
+
+    def _commit_record(
+        self,
+        store: CellStore,
+        protocol: AttestationProtocol,
+        record: Mapping[str, object],
+    ) -> str:
+        subject_name = str(record["subject_name"])
+        subject_digest = str(record["subject_digest"])
+        payload = str(record["payload"]).encode("utf-8")
+        signature = str(record["signature"])
+        passed = record["result"] == "pass"
+        finished_at = str(record["issued_at"])
+        court_root = str(record["court"])
+        key_reference = str(record["key_reference"])
+        key_version = int(record["key_version"])
         token = uuid.uuid4().hex
         evidence_root = "attestation:evidence:" + token
         batch = CellBatch(store)
@@ -516,10 +568,10 @@ class CourtAttestationBroker:
             batch, evidence_root + ":issued-at", finished_at
         )
         key_reference_root = _terminal(
-            batch, evidence_root + ":key-reference", key_material.key_id
+            batch, evidence_root + ":key-reference", key_reference
         )
         key_version_root = _terminal(
-            batch, evidence_root + ":key-version", str(key_material.version)
+            batch, evidence_root + ":key-version", str(key_version)
         )
         batch.relation([
             (protocol.role("court"), court_root),
@@ -588,7 +640,109 @@ class CourtAttestationBroker:
         if expected_result not in {"pass", "fail"}:
             raise ValueError("expected court result must be pass or fail")
         evidence = read_court_attestation(snapshot, protocol, evidence_root)
-        if evidence.court_root != expected_court_root:
+        try:
+            key_version = int(_atom(snapshot, evidence.key_version_root))
+            key_reference = _atom(snapshot, evidence.key_reference_root)
+        except Exception as exc:
+            raise CourtEvidenceDenied(
+                "attestation signing key is unavailable"
+            ) from exc
+        if evidence.result_root == protocol.states["passed"]:
+            result = "pass"
+        elif evidence.result_root == protocol.states["failed"]:
+            result = "fail"
+        else:
+            raise CourtEvidenceDenied("attestation result state is unknown")
+        return self._verify_statement(
+            snapshot,
+            protocol,
+            {
+                "court": evidence.court_root,
+                "subject_name": _atom(snapshot, evidence.subject_name_root),
+                "subject_digest": _atom(snapshot, evidence.subject_digest_root),
+                "payload": snapshot.cells[evidence.payload_root].atom,
+                "signature": _atom(snapshot, evidence.signature_root),
+                "result": result,
+                "issued_at": _atom(snapshot, evidence.issued_at_root),
+                "key_reference": key_reference,
+                "key_version": key_version,
+            },
+            expected_court_root=expected_court_root,
+            expected_subject_name=expected_subject_name,
+            expected_subject_digest=expected_subject_digest,
+            expected_parameters=expected_parameters,
+            expected_result=expected_result,
+            max_age_seconds=max_age_seconds,
+        )
+
+    def verify_record(
+        self,
+        snapshot: Snapshot,
+        protocol: AttestationProtocol,
+        record: Mapping[str, object],
+        *,
+        expected_court_root: str,
+        expected_subject_name: str,
+        expected_subject_digest: str,
+        expected_parameters: Mapping[str, str],
+        expected_result: str = "pass",
+        max_age_seconds: float | None = None,
+    ) -> Mapping[str, object]:
+        """Verify a signed statement held as an indexed record.
+
+        The admitted court definition and signing key are resolved from the
+        graph snapshot exactly as for Cell-held evidence.
+        """
+        if expected_result not in {"pass", "fail"}:
+            raise ValueError("expected court result must be pass or fail")
+        if max_age_seconds is not None and (
+            isinstance(max_age_seconds, bool)
+            or not isinstance(max_age_seconds, (int, float))
+            or not math.isfinite(max_age_seconds) or max_age_seconds <= 0
+        ):
+            raise ValueError("fresh evidence requires a finite positive age limit")
+        try:
+            fields = {
+                "court": str(record["court"]),
+                "subject_name": str(record["subject_name"]),
+                "subject_digest": str(record["subject_digest"]),
+                "payload": str(record["payload"]).encode("utf-8"),
+                "signature": str(record["signature"]),
+                "result": str(record["result"]),
+                "issued_at": str(record["issued_at"]),
+                "key_reference": str(record["key_reference"]),
+                "key_version": int(record["key_version"]),
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CourtEvidenceDenied("attestation record is incomplete") from exc
+        if fields["result"] not in {"pass", "fail"}:
+            raise CourtEvidenceDenied("attestation record result is unknown")
+        return self._verify_statement(
+            snapshot,
+            protocol,
+            fields,
+            expected_court_root=expected_court_root,
+            expected_subject_name=expected_subject_name,
+            expected_subject_digest=expected_subject_digest,
+            expected_parameters=expected_parameters,
+            expected_result=expected_result,
+            max_age_seconds=max_age_seconds,
+        )
+
+    def _verify_statement(
+        self,
+        snapshot: Snapshot,
+        protocol: AttestationProtocol,
+        evidence: Mapping[str, object],
+        *,
+        expected_court_root: str,
+        expected_subject_name: str,
+        expected_subject_digest: str,
+        expected_parameters: Mapping[str, str],
+        expected_result: str,
+        max_age_seconds: float | None,
+    ) -> Mapping[str, object]:
+        if evidence["court"] != expected_court_root:
             raise CourtEvidenceDenied("attestation came from the wrong court")
         definition = verify_court_definition(
             snapshot, protocol, expected_court_root
@@ -599,19 +753,12 @@ class CourtAttestationBroker:
             admitted.definition_digest, _atom(snapshot, definition.digest_root)
         ):
             raise CourtEvidenceDenied("court signer-builder pair is not admitted")
-        payload = snapshot.cells[evidence.payload_root].atom
-        try:
-            key_version = int(_atom(snapshot, evidence.key_version_root))
-            key_reference = _atom(snapshot, evidence.key_reference_root)
-        except Exception as exc:
-            raise CourtEvidenceDenied(
-                "attestation signing key is unavailable"
-            ) from exc
+        payload = evidence["payload"]
         if not self._key_provider.verify(
-            key_reference,
-            key_version,
+            evidence["key_reference"],
+            evidence["key_version"],
             _dsse_pae(DSSE_PAYLOAD_TYPE, payload),
-            _atom(snapshot, evidence.signature_root),
+            evidence["signature"],
         ):
             raise CourtEvidenceDenied("attestation signature is invalid")
         try:
@@ -625,9 +772,7 @@ class CourtAttestationBroker:
         try:
             subject = statement["subject"]
             predicate = statement["predicate"]
-            issued_at = datetime.fromisoformat(
-                _atom(snapshot, evidence.issued_at_root)
-            )
+            issued_at = datetime.fromisoformat(str(evidence["issued_at"]))
             finished_at = datetime.fromisoformat(predicate["finishedAt"])
         except (KeyError, TypeError, ValueError) as exc:
             raise CourtEvidenceDenied("attestation statement is incomplete") from exc
@@ -648,13 +793,9 @@ class CourtAttestationBroker:
             == _atom(snapshot, definition.policy_digest_root)
             and predicate.get("invocation") == expected_parameters
             and predicate.get("result") == expected_result
-            and evidence.result_root == protocol.states[
-                "passed" if expected_result == "pass" else "failed"
-            ]
-            and _atom(snapshot, evidence.subject_name_root)
-            == expected_subject_name
-            and _atom(snapshot, evidence.subject_digest_root)
-            == expected_subject_digest
+            and evidence["result"] == expected_result
+            and evidence["subject_name"] == expected_subject_name
+            and evidence["subject_digest"] == expected_subject_digest
         )
         if not expected_statement:
             raise CourtEvidenceDenied("attestation does not match exact promotion")

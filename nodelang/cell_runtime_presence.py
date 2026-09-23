@@ -207,6 +207,56 @@ def project_runtime_presence_protocol(
     return protocol
 
 
+# SPEC 3.3: a runtime presence is a heartbeat. Its binding (agent session,
+# device custody, runtime, first-seen time) and its lease are indexed records
+# referenced by the graph-held agent session; no graph composition per
+# presence. Presences composed as Cells by earlier releases remain readable.
+BINDING_KIND = "runtime-presence"
+
+
+def _read_presence_binding(storage, presence_root: str):
+    if storage is None:
+        return None
+    row = storage.get_record(BINDING_KIND, presence_root)
+    if row is None:
+        return None
+    payload = row["payload"]
+    try:
+        return (
+            _validate_identity(
+                str(payload["session"]), "agent session",
+                prefix="app:agent-session:runtime:",
+            ),
+            _validate_identity(
+                str(payload["custody"]), "device custody",
+                prefix="device-custody:sha256:",
+            ),
+            _validate_runtime(str(payload["runtime"])),
+            float(payload["issued_at"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InvalidCell("runtime presence binding record is malformed") from exc
+
+
+def _presence_projection(
+    presence_root, session, custody, runtime, issued_at, storage
+) -> RuntimePresenceProjection:
+    if storage is None:
+        raise InvalidCell("runtime presence protocol has no active lease storage: fail closed")
+    lease = storage.get_lease(presence_root)
+    if lease is None:
+        raise InvalidCell("runtime presence lease not found: fail closed")
+    refreshed_at, expires_at, generation, owner = lease
+    if owner != session:
+        raise InvalidCell("runtime presence lease owner mismatch: fail closed")
+    if not (issued_at - 1e-5 <= refreshed_at < expires_at):
+        raise InvalidCell("runtime presence timestamps are invalid")
+    return RuntimePresenceProjection(
+        presence_root, session, custody, runtime, issued_at, refreshed_at,
+        expires_at, generation=generation,
+    )
+
+
 def read_runtime_presence(
     snapshot: Snapshot,
     protocol: RuntimePresenceProtocol,
@@ -214,6 +264,16 @@ def read_runtime_presence(
     *,
     lease_storage: RuntimePresenceLeaseStorage | None = None,
 ) -> RuntimePresenceProjection:
+    active_storage = (
+        lease_storage if lease_storage is not None else protocol.lease_storage
+    )
+    if presence_root not in snapshot.cells:
+        if active_storage is None:
+            raise InvalidCell("runtime presence protocol has no active lease storage: fail closed")
+        binding = _read_presence_binding(active_storage, presence_root)
+        if binding is None:
+            raise InvalidCell("runtime presence is unknown")
+        return _presence_projection(presence_root, *binding, active_storage)
     members = read_relation(snapshot, presence_root, budget=128)
     allowed = {
         protocol.role(name)
@@ -278,6 +338,15 @@ def list_runtime_presences(
     )
     if len(roots) != len(set(roots)):
         raise InvalidCell("runtime-presence registry contains a duplicate")
+    active_storage = (
+        lease_storage if lease_storage is not None else protocol.lease_storage
+    )
+    if active_storage is not None:
+        roots = roots + tuple(
+            row["record_root"]
+            for row in active_storage.list_records(BINDING_KIND, limit=10_000)
+            if row["record_root"] not in roots
+        )
     results = []
     for root in roots:
         try:
@@ -387,51 +456,55 @@ def renew_runtime_presence(
             store.revision,
         )
 
+    binding = _read_presence_binding(active_storage, root_id)
+    if binding is not None:
+        if binding[:3] != (session, custody, runtime):
+            raise InvalidCell("runtime presence binding drifted")
+        if active_storage.get_lease(root_id) is None:
+            if expected_generation is not None:
+                raise InvalidCell(
+                    f"stale runtime presence lease writer: lease not found (expected {expected_generation})"
+                )
+            active_storage.create_initial_lease(root_id, session, refreshed_at, expires_at)
+        else:
+            active_storage.renew_lease(
+                root_id, session, refreshed_at, expires_at,
+                expected_generation=expected_generation,
+            )
+        return (
+            _presence_projection(root_id, *binding, active_storage),
+            store.revision,
+        )
+
     if expected_generation is not None:
         raise InvalidCell(
             f"stale runtime presence lease writer: lease not found (expected {expected_generation})"
         )
 
-    values = {
-        "runtime": runtime,
-        "issued-at": "%.6f" % refreshed_at,
-        "refreshed-at": "%.6f" % refreshed_at,
-        "expires-at": "%.6f" % expires_at,
-    }
-    relation = compose_relation_cells(
-        (
-            (protocol.role("presence-agent-session"), session),
-            (protocol.role("presence-device-custody"), custody),
-            (protocol.role("presence-runtime"), root_id + ":runtime"),
-            (protocol.role("presence-issued-at"), root_id + ":issued-at"),
-            (protocol.role("presence-refreshed-at"), root_id + ":refreshed-at"),
-            (protocol.role("presence-expires-at"), root_id + ":expires-at"),
-        ),
-        relation_id=root_id,
-    )
-    registry_patch = prepare_append_relation_member(
-        snapshot,
-        protocol.root_id,
-        protocol.role("presence-member"),
+    # The first heartbeat of a session records its binding and lease; the
+    # graph gains nothing. There is no graph-composition fallback.
+    active_storage.put_record(
+        BINDING_KIND,
         root_id,
-        budget=100_000,
-    )
-    revision = store.commit(
-        snapshot.revision,
-        create=(
-            *(_terminal(root_id + ":" + name, value)
-              for name, value in values.items()),
-            *relation.cells,
-            *registry_patch.create,
-        ),
-        replace=registry_patch.replace,
+        owner_root=session,
+        state="bound",
+        payload={
+            "session": session,
+            "custody": custody,
+            "runtime": runtime,
+            "issued_at": refreshed_at,
+        },
+        authority_revision=snapshot.revision,
+        updated_at=refreshed_at,
+        create_only=True,
+        retire_states=("bound",),
     )
     active_storage.create_initial_lease(root_id, session, refreshed_at, expires_at)
     return (
-        read_runtime_presence(
-            store.snapshot(), protocol, root_id, lease_storage=active_storage
+        _presence_projection(
+            root_id, session, custody, runtime, refreshed_at, active_storage
         ),
-        revision,
+        store.revision,
     )
 
 

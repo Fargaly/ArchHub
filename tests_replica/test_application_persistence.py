@@ -130,23 +130,22 @@ def test_server_mutations_survive_a_real_server_restart(
     finally:
         server.close()
     closed_revision = server.universal_store.revision
-    assert closed_revision > universal_revision
-    closed_session = read_browser_session(
-        server.universal_store.snapshot(),
-        server.universal_registry.browser_session_protocol,
-        browser_session_root,
-    )
-    assert closed_session.state_root == (
-        server.universal_registry.browser_session_protocol.states['revoked']
-    )
-    closed_owner = read_ownership(
-        server.universal_store.snapshot(),
-        server.universal_registry.ownership_protocol,
-        runtime_ownership_root,
-    )
-    assert closed_owner.state_root == (
-        server.universal_registry.ownership_protocol.states['released']
-    )
+    # SPEC 3.3: closing publishes no graph revision. The browser credential
+    # lease closes and the runtime ownership is released as indexed records.
+    assert closed_revision == universal_revision
+    from nodelang.cell_browser_sessions import read_browser_session_lease
+    from nodelang.runtime_ownership_records import read_runtime_ownership
+    from nodelang.runtime_presence_lease_storage import RuntimePresenceLeaseStorage
+    records = RuntimePresenceLeaseStorage(path)
+    try:
+        assert read_browser_session_lease(
+            records, browser_session_root
+        ).state == 'closed'
+        assert read_runtime_ownership(
+            records, runtime_ownership_root
+        ).state == 'released'
+    finally:
+        records.close()
 
     restarted = ApplicationServer(
         universal_state_path=path,
@@ -188,16 +187,16 @@ def test_server_mutations_survive_a_real_server_restart(
         }
         # Restart creates a signed next owner generation and, without shared
         # browser custody in this test, issues a fresh browser session.
-        assert state['universal_revision'] > closed_revision
-        ownerships = verify_ownership_authority(
-            restarted.universal_store.snapshot(),
-            restarted.universal_registry.ownership_protocol,
+        # A restart publishes nothing (zero idle growth, SPEC 3.3).
+        assert state['universal_revision'] == closed_revision
+        from nodelang.runtime_ownership_records import list_runtime_ownerships
+        ownerships = list_runtime_ownerships(
+            restarted._ownership_record_storage(),
+            restarted.universal_registry.application_root,
         )
         assert len(ownerships) == 2
         assert ownerships[-1].generation == 2
-        assert ownerships[-1].state_root == (
-            restarted.universal_registry.ownership_protocol.states['active']
-        )
+        assert ownerships[-1].state == 'active'
         assert restarted.universal_store.read(
             restarted.universal_registry.viewport_properties['pan_x'].value_root
         ).atom == b'73.0'

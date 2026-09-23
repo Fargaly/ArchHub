@@ -680,14 +680,23 @@ def _initialize_startup_pipeline(owner, *, first_boot):
     """Seed a new graph only; opening an application never invokes its effects."""
     if not first_boot:
         return None
+    from nodelang import commit_intent
     from nodelang.universal_pipeline import seed_wall_pipeline
     authority = owner.universal_registry.authorization
     # The owner already serves requests. Use its ordinary mutation admission,
     # minting the existing process context before taking the mutation lock.
+    # The first-run seed is the install of a new graph: it commits under the
+    # admitted migration/install intent (nodelang/commit_intent.py), which the
+    # commit gate otherwise refuses once construction has finished.
     for attempt in range(10):
         try:
             context = authority.session.context(minimum_validity_seconds=5)
-            with owner.mutation_lock, authority.broker.live_context(context):
+            with owner.mutation_lock, authority.broker.live_context(context), \
+                    commit_intent.declare(
+                        commit_intent.MIGRATION,
+                        actor=owner.universal_registry.application_root,
+                        reason="install the first-run pipeline seed of a new graph",
+                    ):
                 return seed_wall_pipeline(owner.universal_store, owner.universal_registry,
                     authentication_context=context)
         except Exception as clash:

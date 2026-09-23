@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Iterable, Mapping
 import uuid
 
+from . import commit_intent
 from .cell_catalog import AssemblyProtocol
 from .cell_protocols import (
     CellBatch,
@@ -581,7 +582,16 @@ class ReactionEngine:
             if self._unsubscribe is not None:
                 raise RuntimeError("Reaction startup cleanup must finish before restart")
             self._stop.clear()
-            self._unsubscribe = self.store.subscribe(lambda event: self._wake.set())
+            # A reaction continues the causal work of the commit that woke
+            # it, under that commit's admitted intent (commit_intent.py). The
+            # initial drain has no cause and therefore cannot publish.
+            cause = {"declaration": None}
+
+            def wake(event) -> None:
+                cause["declaration"] = getattr(event, "declaration", None)
+                self._wake.set()
+
+            self._unsubscribe = self.store.subscribe(wake)
 
             def run() -> None:
                 self._wake.set()
@@ -591,8 +601,10 @@ class ReactionEngine:
                     self._wake.clear()
                     if self._stop.is_set():
                         break
+                    declaration, cause["declaration"] = cause["declaration"], None
                     try:
-                        self.drain()
+                        with commit_intent.resume(declaration):
+                            self.drain()
                     except Exception as exc:
                         self._failures.append("%s: %s" % (type(exc).__name__, exc))
                         if len(self._failures) > 100:

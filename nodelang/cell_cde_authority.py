@@ -508,7 +508,13 @@ def bootstrap_cde_write_authority_protocol(
         MappingProxyType(roles),
         MappingProxyType(states),
         MappingProxyType(kinds),
-        operational_storage=operational_storage,
+        # Permits and receipts are indexed records (SPEC 3.3); a protocol
+        # bound to a store always carries that store's record storage.
+        operational_storage=(
+            operational_storage
+            if operational_storage is not None
+            else ensure_store_cde_storage(store)
+        ),
     )
 
 
@@ -546,7 +552,7 @@ def project_cde_write_authority_protocol(
         if _text(snapshot, root, "vocabulary") != name:
             raise InvalidCell("CDE write-authority vocabulary drifted")
     if operational_storage is None and store is not None:
-        operational_storage = getattr(store, "_cde_operational_storage", None)
+        operational_storage = ensure_store_cde_storage(store)
     return CdeWriteAuthorityProtocol(
         root_id,
         MappingProxyType(roles),
@@ -666,6 +672,10 @@ def issue_cde_write_permit(
             else getattr(store, "_cde_operational_storage", None)
         )
     )
+    if active_storage is None:
+        # SPEC 3.3: a per-write permit is an indexed record. There is no
+        # graph-composition fallback for a new permit.
+        active_storage = ensure_store_cde_storage(store)
     permit_id = _root(permit_id, "identity")
     base = store.snapshot()
     authorization_evidence = _root(
@@ -800,154 +810,6 @@ def issue_cde_write_permit(
 
         projection = _permit_projection_from_storage(protocol, permit_record)
         return projection, base.revision
-
-    if permit_id in base.cells:
-        existing = verify_cde_write_permit(
-            base,
-            protocol,
-            signing_protocol,
-            provider,
-            permit_id,
-            runtime=runtime,
-            agent_session_root=agent_session_root,
-            work_root=work_root,
-            container_root=container_root,
-            container_id=container_id,
-            container_digest=container_digest,
-            operation=operation,
-            path=path,
-            content_digest=content_digest,
-            request_id=request_id,
-            authorization_evidence=authorization_evidence,
-            authority_revision=base.revision,
-            now=_time(issued_at, "issued at"),
-        )
-        if not hmac.compare_digest(
-            existing.nonce, _root(nonce, "nonce", maximum=512)
-        ):
-            raise CdeWriteDenied("CDE write permit nonce mismatched")
-        return existing, base.revision
-    accepted_revision = base.revision + 1
-    values = _permit_values(
-        runtime=runtime,
-        agent_session_root=agent_session_root,
-        work_root=work_root,
-        container_root=container_root,
-        container_id=container_id,
-        container_digest=container_digest,
-        operation=operation,
-        path=path,
-        content_digest=content_digest,
-        request_id=request_id,
-        nonce=nonce,
-        authority_revision=accepted_revision,
-        issued_at=issued_at,
-        expires_at=expires_at,
-    )
-    for label, root in (
-        ("agent session", values["agent-session"]),
-        ("Work", values["work"]),
-        ("container root", values["container-root"]),
-        ("authorization evidence", authorization_evidence),
-    ):
-        if root not in base.cells:
-            raise CdeWriteDenied(
-                "CDE write permit %s is not graph-held" % label
-            )
-    registered_permits = tuple(
-        member.participant_id
-        for member in read_relation(base, protocol.root_id, budget=100_000)
-        if member.role_id == protocol.role("permit-member")
-    )
-    for existing_root in registered_permits:
-        existing = _decode_cde_write_permit_fields(
-            base, protocol, existing_root
-        )
-        if hmac.compare_digest(existing.nonce, values["nonce"]):
-            raise CdeWriteDenied("CDE write permit nonce was replayed")
-        if hmac.compare_digest(existing.request_id, values["request-id"]):
-            raise CdeWriteDenied("CDE write permit request was replayed")
-    descriptor = read_signing_key_descriptor(
-        base, signing_protocol, descriptor_root
-    )
-    if descriptor.values["purpose"] != "cde-write-permit":
-        raise CdeWriteDenied("signing descriptor has the wrong purpose")
-    envelope_root = permit_id + ":signature"
-    envelope_cells = prepare_signature_envelope(
-        base,
-        signing_protocol,
-        provider,
-        descriptor_root,
-        envelope_id=envelope_root,
-        statement_protocol=STATEMENT_PROTOCOL,
-        context=STATEMENT_CONTEXT,
-        payload=_canonical_payload(values),
-        authorization_evidence=authorization_evidence,
-        issued_at=_iso_timestamp(float(issued_at)),
-        request_id=request_id,
-    )
-    values["signature-envelope"] = envelope_root
-    values["state"] = protocol.states["active"]
-    fields = {
-        name: permit_id + ":" + name
-        for name in PERMIT_FIELDS
-        if name not in {"signature-envelope", "state"}
-    }
-    relation = compose_relation_cells(
-        (
-            *((protocol.role(name), root) for name, root in fields.items()),
-            (protocol.role("signature-envelope"), envelope_root),
-            (protocol.role("state"), protocol.states["active"]),
-        ),
-        relation_id=permit_id,
-    )
-    append = prepare_append_relation_member(
-        base,
-        protocol.root_id,
-        protocol.role("permit-member"),
-        permit_id,
-        budget=100_000,
-    )
-    try:
-        revision = store.commit(
-            base.revision,
-            create=(
-                *envelope_cells,
-                *(_terminal(fields[name], values[name]) for name in fields),
-                *relation.cells,
-                *append.create,
-            ),
-            replace=append.replace,
-        )
-    except Conflict:
-        if permit_id not in store.snapshot().cells:
-            raise
-        return issue_cde_write_permit(
-            store,
-            protocol,
-            signing_protocol,
-            provider,
-            descriptor_root,
-            permit_id=permit_id,
-            runtime=runtime,
-            agent_session_root=agent_session_root,
-            work_root=work_root,
-            container_root=container_root,
-            container_id=container_id,
-            container_digest=container_digest,
-            operation=operation,
-            path=path,
-            content_digest=content_digest,
-            request_id=request_id,
-            nonce=nonce,
-            issued_at=issued_at,
-            expires_at=expires_at,
-            authorization_evidence=authorization_evidence,
-            operational_storage=operational_storage,
-        )
-    if revision != accepted_revision:
-        raise CdeWriteDenied("CDE write permit accepted revision drifted")
-    return read_cde_write_permit(store.snapshot(), protocol, permit_id), revision
 
 
 def verify_cde_write_permit(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import contextlib
 from contextvars import ContextVar
 
 _VERIFIED_MACHINE_RECOVERY_CONTEXT = ContextVar("verified_machine_recovery_context", default=None)
@@ -285,11 +286,56 @@ from .unified_authority import (
 
 
 RUNTIME_PRESENCE_LEASE_SECONDS = 300.0
+
+
+def _with_commit_request_scope(method):
+    """Open one HTTP request's commit admission (commit_intent.py).
+
+    A request may publish a graph revision only after it authenticates as a
+    user or an admitted agent; the authenticated path fills the scope.
+    """
+    def scoped(*args, **kwargs):
+        with commit_intent.request_scope():
+            return method(*args, **kwargs)
+
+    scoped.__name__ = getattr(method, "__name__", "scoped")
+    scoped.__doc__ = getattr(method, "__doc__", None)
+    scoped.__wrapped__ = method
+    return scoped
+
+
+# Machine routes that are operational by kind (SPEC 3.3): whatever they record
+# lives in indexed records, so any graph commit they attempt is refused.
+_OPERATIONAL_MACHINE_ROUTES = {
+    ("POST", "/api/universal/runtime-presence"): "presence",
+    ("POST", "/api/universal/baboom-activity"): "activity",
+    ("POST", "/api/universal/browser-handoff"): "browser-session",
+    ("POST", "/api/universal/agent-session-renew"): "lease-renewal",
+    ("POST", "/api/universal/baboom-steward-signal"): "signal",
+    ("POST", "/api/universal/cde-write-permit"): "permit",
+    ("POST", "/api/universal/cde-write-receipt"): "receipt",
+}
+
+
+def _operational_machine_route(request) -> str | None:
+    if type(request) is not dict:
+        return None
+    method, path = request.get("method"), request.get("path")
+    if type(method) is not str or type(path) is not str:
+        return None
+    return _OPERATIONAL_MACHINE_ROUTES.get((method.upper(), path))
 from .cell_browser_sessions import (
     BrowserSessionDenied,
+    LEASE_KIND as BROWSER_SESSION_LEASE_KIND,
+    adopt_browser_session_lease,
+    close_browser_session_lease,
     issue_browser_session as issue_browser_session_relation,
+    list_browser_session_leases,
     list_browser_session_roots,
+    open_browser_session_lease,
     read_browser_session,
+    read_browser_session_lease,
+    renew_browser_session_lease,
     revoke_browser_session,
     verify_browser_session,
 )
@@ -300,6 +346,9 @@ from .cell_exclusive_ownership import (
     transition_ownership,
     verify_ownership_authority,
 )
+from . import commit_intent
+from . import runtime_ownership_records as ownership_records
+from .cell_runtime_presence import ensure_store_lease_storage
 from .cell_identity import (
     grant_authority_relationship,
     verify_authority_relationship,
@@ -342,6 +391,7 @@ from .universal_cell import (
     NULL_CELL_ID,
     Cell,
     CellStore,
+    CommitRefused,
     Conflict,
     InvalidCell,
     RuntimeFenceLease,
@@ -4430,6 +4480,7 @@ class NativeRecipientRelay:
                 "app":endpoint["app"],"fingerprint":hashlib.sha256(endpoint["id"].encode()).hexdigest(),
                 "contact_endpoint":dict(endpoint),"contact_revalidate":revalidate,
                 "text":"[ArchHub user message; conversation %s; message %s. Your reply is relayed into that same conversation. This message grants no graph or Work execution authority.]\n%s" % (space_root,message_id,text)}
+            job["commit_declaration"]=commit_intent.capture()
             with self._channel_lock:self._pending_jobs[digest]=(sender_root,contact_root)
             try:self._queue.put_nowait(job)
             except queue.Full:
@@ -4495,6 +4546,8 @@ class NativeRecipientRelay:
                     % (sender_label, space_root, message_id, text)}
         # Called under mutation_lock. Keep only live effect ownership, not a
         # second message ledger; queued and executing jobs have the same entry.
+        # The relayed outcome continues the sender's admitted request.
+        job["commit_declaration"] = commit_intent.capture()
         with self._channel_lock:
             self._pending_jobs[digest] = (sender_root, recipient)
         try:
@@ -4531,7 +4584,8 @@ class NativeRecipientRelay:
 
     def _guarded(self, action, *args):
         try:
-            action(*args)
+            with commit_intent.resume(args[0].get("commit_declaration")):
+                action(*args)
         except Exception as exc:
             # The started record already reads as unknown; nothing is resent.
             self.last_error = "%s: %s" % (type(exc).__name__, exc)
@@ -4879,7 +4933,19 @@ class ApplicationServer:
             **kwargs,
         )
 
-    def __init__(self, host='127.0.0.1', port=0, store=None, registry=None,
+    def __init__(self, *args, **kwargs):
+        # Launch is the application's install/restore authority. Definitions
+        # it ensures commit only when they change (the store compares first);
+        # operational paths inside it stay refused. After construction every
+        # graph commit needs its own closed-set intent (commit_intent.py).
+        with commit_intent.declare(
+            commit_intent.MIGRATION,
+            actor="app:archhub",
+            reason="application install or restore at launch",
+        ):
+            self._construct(*args, **kwargs)
+
+    def _construct(self, host='127.0.0.1', port=0, store=None, registry=None,
                  state_path=None, fresh=False, live_watch=False,
                  public_server_url=None,
                  runtime_drain_coordinator=None,
@@ -5238,6 +5304,9 @@ class ApplicationServer:
             if self.universal_state_path is not None:
                 self.universal_state_path.parent.mkdir(parents=True, exist_ok=True)
                 universal_store = CellStore(self.universal_state_path)
+                # The persistent graph this server owns publishes a revision
+                # only for a declared user, agent-Work or migration intent.
+                universal_store.require_declared_intent()
                 if universal_key_provider is None:
                     universal_key_provider = WindowsDpapiSigningKeyProvider(
                         WindowsDpapiSigningKeyProvider.default_path()
@@ -5668,6 +5737,7 @@ class ApplicationServer:
                     return False
                 return True
 
+            @_with_commit_request_scope
             @with_relation_projection_scope
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
@@ -6427,6 +6497,7 @@ class ApplicationServer:
                     return
                 self._json(404, {'ok': False, 'error': 'not found'})
 
+            @_with_commit_request_scope
             @with_relation_projection_scope
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
@@ -8148,10 +8219,191 @@ class ApplicationServer:
         )
         return evidence_root
 
+    # -- Runtime ownership as bounded operational records (SPEC 3.3) --------
+    # A process lifetime is operational. Its acquisition, drain and release
+    # are signed by the graph-held runtime-ownership court and kept in the
+    # primary database's record table. Shared-writer authorities keep the
+    # graph protocol until a shared record table exists for them.
+
+    def _ownership_record_storage(self):
+        if self.universal_store.supports_shared_writers:
+            return None
+        storage = getattr(self, "runtime_presence_lease_storage", None)
+        if storage is None or getattr(storage, "_closed", False):
+            storage = ensure_store_lease_storage(self.universal_store)
+        return storage
+
+    def _runtime_owner_evidence_record(self, phase: str) -> dict:
+        parameters, content = self._runtime_owner_attestation_inputs(phase)
+        broker = self.universal_registry.attestation_broker
+        snapshot = self.universal_store.snapshot()
+        record = broker.sign_record(
+            snapshot,
+            self.universal_registry.attestation_protocol,
+            self.universal_registry.runtime_ownership_court_root,
+            subject_name=self._runtime_holder_root,
+            subject_content=content,
+            external_parameters=parameters,
+        )
+        broker.verify_record(
+            snapshot,
+            self.universal_registry.attestation_protocol,
+            record,
+            expected_court_root=(
+                self.universal_registry.runtime_ownership_court_root
+            ),
+            expected_subject_name=self._runtime_holder_root,
+            expected_subject_digest=hashlib.sha256(content).hexdigest(),
+            expected_parameters=parameters,
+            expected_result="pass",
+            max_age_seconds=60.0,
+        )
+        return dict(record)
+
+    def _verify_runtime_owner_evidence_record(self, record, phase: str) -> None:
+        parameters, content = self._runtime_owner_attestation_inputs(phase)
+        self.universal_registry.attestation_broker.verify_record(
+            self.universal_store.snapshot(),
+            self.universal_registry.attestation_protocol,
+            record,
+            expected_court_root=(
+                self.universal_registry.runtime_ownership_court_root
+            ),
+            expected_subject_name=self._runtime_holder_root,
+            expected_subject_digest=hashlib.sha256(content).hexdigest(),
+            expected_parameters=parameters,
+            expected_result="pass",
+        )
+
+    def _claim_runtime_ownership_record(self, storage) -> None:
+        application_root = self.universal_registry.application_root
+        with commit_intent.operational("runtime-ownership"):
+            stale = ownership_records.list_runtime_ownerships(
+                storage, application_root,
+                states=ownership_records.LIVE_STATES,
+            )
+            if stale and not self.universal_store.is_durable:
+                raise InvalidCell(
+                    "in-memory application already has a live runtime owner"
+                )
+            evidence = self._runtime_owner_evidence_record("acquire")
+            if stale:
+                recovery = self._runtime_owner_evidence_record("recover")
+                for ownership in stale:
+                    ownership_records.transition_runtime_ownership(
+                        storage,
+                        ownership.root_id,
+                        event=(
+                            "fail-active" if ownership.state == "active"
+                            else "fail-draining"
+                        ),
+                        evidence=recovery,
+                        authority_revision=self.universal_store.revision,
+                        now=time.time(),
+                    )
+            ownership = ownership_records.acquire_runtime_ownership(
+                storage,
+                resource_root=application_root,
+                holder_root=self._runtime_holder_root,
+                evidence=evidence,
+                authority_revision=self.universal_store.revision,
+                now=time.time(),
+            )
+        self._runtime_ownership_root = ownership.root_id
+
+    def _transition_runtime_ownership_record(
+        self, storage, *, source: str, event: str, phase: str
+    ) -> None:
+        with commit_intent.operational("runtime-ownership"):
+            ownership = ownership_records.read_runtime_ownership(
+                storage, self._runtime_ownership_root
+            )
+            if ownership is None or ownership.state != source:
+                return
+            ownership_records.transition_runtime_ownership(
+                storage,
+                ownership.root_id,
+                event=event,
+                evidence=self._runtime_owner_evidence_record(phase),
+                authority_revision=self.universal_store.revision,
+                now=time.time(),
+            )
+
+    def _prove_runtime_ownership_record(
+        self, storage, state: str
+    ) -> BackendGeneration:
+        ownership = ownership_records.read_runtime_ownership(
+            storage, self._runtime_ownership_root
+        ) if self._runtime_ownership_root else None
+        if ownership is None:
+            raise InvalidCell("runtime ownership root is not authoritative")
+        live = ownership_records.list_runtime_ownerships(
+            storage, self.universal_registry.application_root,
+            states=ownership_records.LIVE_STATES,
+        )
+        if len(live) > 1:
+            raise InvalidCell("resource has multiple live owners")
+        if (
+            ownership.resource_root != self.universal_registry.application_root
+            or ownership.holder_root != self._runtime_holder_root
+            or ownership.state != state
+        ):
+            raise InvalidCell("runtime ownership state does not match this worker")
+        self._verify_runtime_owner_evidence_record(ownership.evidence, "acquire")
+        expected_phases = {
+            "active": (),
+            "draining": ("drain",),
+            "released": ("drain", "release"),
+        }[state]
+        if tuple(item.get("event") for item in ownership.transitions) != (
+            expected_phases
+        ):
+            raise InvalidCell("runtime ownership transition history drifted")
+        for transition, phase in zip(ownership.transitions, expected_phases):
+            self._verify_runtime_owner_evidence_record(
+                transition["evidence"], phase
+            )
+        if (
+            self.universal_store.is_durable
+            and not self.universal_store.has_exclusive_database_owner
+        ):
+            raise InvalidCell("runtime durable authority is not admitted")
+        return BackendGeneration(
+            self.url, ownership.generation, ownership.root_id
+        )
+
+    def runtime_ownership_state(self) -> tuple[str, str, str] | None:
+        """(resource, holder, state name) of this worker's ownership."""
+        if self._runtime_ownership_root is None:
+            return None
+        storage = self._ownership_record_storage()
+        if storage is not None:
+            ownership = ownership_records.read_runtime_ownership(
+                storage, self._runtime_ownership_root
+            )
+            if ownership is None:
+                raise InvalidCell("runtime ownership record is missing")
+            return (ownership.resource_root, ownership.holder_root,
+                    ownership.state)
+        ownership = read_ownership(
+            self.universal_store.snapshot(),
+            self.universal_registry.ownership_protocol,
+            self._runtime_ownership_root,
+        )
+        names = {
+            root: name for name, root in
+            self.universal_registry.ownership_protocol.states.items()
+        }
+        return (ownership.resource_root, ownership.holder_root,
+                names.get(ownership.state_root, "unknown"))
+
     def prove_runtime_backend_generation(self) -> BackendGeneration:
         """Read and verify the active Cell owner before gateway admission."""
         if self.thread is None or not self.thread.is_alive():
             raise InvalidCell("runtime backend is not serving")
+        storage = self._ownership_record_storage()
+        if storage is not None:
+            return self._prove_runtime_ownership_record(storage, "active")
         if self.universal_store.supports_shared_writers:
             self.universal_store.refresh()
         snapshot = self.universal_store.snapshot()
@@ -8200,6 +8452,9 @@ class ApplicationServer:
         )
 
     def _claim_runtime_ownership(self) -> None:
+        storage = self._ownership_record_storage()
+        if storage is not None:
+            return self._claim_runtime_ownership_record(storage)
         snapshot = self.universal_store.snapshot()
         live_states = {
             self.universal_registry.ownership_protocol.states["active"],
@@ -8255,6 +8510,11 @@ class ApplicationServer:
     def _begin_runtime_drain(self) -> None:
         if self._runtime_ownership_root is None:
             return
+        storage = self._ownership_record_storage()
+        if storage is not None:
+            return self._transition_runtime_ownership_record(
+                storage, source="active", event="drain", phase="drain"
+            )
         ownership = read_ownership(
             self.universal_store.snapshot(),
             self.universal_registry.ownership_protocol,
@@ -8276,6 +8536,11 @@ class ApplicationServer:
     def _release_runtime_ownership(self) -> None:
         if self._runtime_ownership_root is None:
             return
+        storage = self._ownership_record_storage()
+        if storage is not None:
+            return self._transition_runtime_ownership_record(
+                storage, source="draining", event="release", phase="release"
+            )
         ownership = read_ownership(
             self.universal_store.snapshot(),
             self.universal_registry.ownership_protocol,
@@ -8300,6 +8565,9 @@ class ApplicationServer:
             raise InvalidCell("runtime backend state is invalid")
         if self.thread is None or not self.thread.is_alive():
             raise InvalidCell("runtime backend is not serving")
+        storage = self._ownership_record_storage()
+        if storage is not None:
+            return self._prove_runtime_ownership_record(storage, state)
         if self.universal_store.supports_shared_writers:
             self.universal_store.refresh()
         snapshot = self.universal_store.snapshot()
@@ -8421,19 +8689,26 @@ class ApplicationServer:
         )
         if effective_lifetime <= 0:
             raise AuthorizationDenied("authenticated context expired")
+        lease_storage = self._browser_lease_storage()
         with self.mutation_lock:
-            session_root, _revision = issue_browser_session_relation(
-                self.universal_store,
-                self.universal_registry.browser_session_protocol,
-                subject_root=identity.subject_root,
-                view_root=view.root_id,
-                tenant_root=identity.tenant_root,
-                assurance_root=identity.assurance_root,
-                token_digest=self._browser_token_digest(token),
-                csrf_digest=self._browser_token_digest(csrf_token),
-                issued_at=now,
-                lifetime_seconds=effective_lifetime,
-            )
+            if lease_storage is not None:
+                session_root, _revision = self._open_browser_lease(
+                    lease_storage, identity, view, token, csrf_token,
+                    now, effective_lifetime,
+                )
+            else:
+                session_root, _revision = issue_browser_session_relation(
+                    self.universal_store,
+                    self.universal_registry.browser_session_protocol,
+                    subject_root=identity.subject_root,
+                    view_root=view.root_id,
+                    tenant_root=identity.tenant_root,
+                    assurance_root=identity.assurance_root,
+                    token_digest=self._browser_token_digest(token),
+                    csrf_digest=self._browser_token_digest(csrf_token),
+                    issued_at=now,
+                    lifetime_seconds=effective_lifetime,
+                )
             interaction_projection_handle = (
                 self.interaction_projection_broker.mint(
                     self.universal_store.snapshot(),
@@ -8468,10 +8743,21 @@ class ApplicationServer:
                 session = read_browser_session(
                     snapshot, protocol, candidate.session_root
                 )
+                lease = (
+                    None if lease_storage is None
+                    else read_browser_session_lease(
+                        lease_storage, candidate.session_root
+                    )
+                )
             except Exception:
                 stale.append(digest)
                 continue
-            if session.state_root != protocol.states["active"]:
+            if session.state_root != protocol.states["active"] or (
+                lease is not None and (
+                    lease.state != "active"
+                    or lease.token_digest != digest
+                )
+            ):
                 stale.append(digest)
         with self._browser_session_lock:
             for digest in stale:
@@ -8505,10 +8791,29 @@ class ApplicationServer:
         identity = authority.broker.resolve(context)
         view = self.universal_registry.view_sessions[identity.subject_root]
         recovered = []
-        for session_root in list_browser_session_roots(
+        lease_storage = self._browser_lease_storage()
+        candidates = list_browser_session_roots(
             self.universal_store.snapshot(),
             self.universal_registry.browser_session_protocol,
-        ):
+        )
+        if lease_storage is not None:
+            leased = tuple(
+                lease.session_root for lease in list_browser_session_leases(
+                    lease_storage, subject_root=identity.subject_root,
+                    states=("active",),
+                )
+            )
+            known = {
+                row["record_root"] for row in lease_storage.list_records(
+                    BROWSER_SESSION_LEASE_KIND, limit=10_000
+                )
+            }
+            # Leased identities first; a pre-lease graph session is still
+            # recoverable once and is adopted into its lease below.
+            candidates = leased + tuple(
+                root for root in candidates if root not in known
+            )
+        for session_root in candidates:
             try:
                 session = verify_browser_session(
                     self.universal_store.snapshot(),
@@ -8517,6 +8822,7 @@ class ApplicationServer:
                     token=self.browser_session_token,
                     csrf_token=self.browser_csrf_token,
                     require_csrf=True,
+                    lease_storage=lease_storage,
                 )
             except (BrowserSessionDenied, InvalidCell):
                 continue
@@ -8532,6 +8838,17 @@ class ApplicationServer:
         if not recovered:
             return None
         session = recovered[0]
+        if (
+            lease_storage is not None
+            and read_browser_session_lease(lease_storage, session.root_id) is None
+        ):
+            adopt_browser_session_lease(
+                self.universal_store,
+                self.universal_registry.browser_session_protocol,
+                lease_storage,
+                session.root_id,
+                state="active",
+            )
         interaction_handle = self.interaction_projection_broker.mint(
             self.universal_store.snapshot(),
             session_root=session.root_id,
@@ -8560,6 +8877,36 @@ class ApplicationServer:
     ) -> None:
         """Close sessions whose process-held credentials cannot survive restart."""
         protocol = self.universal_registry.browser_session_protocol
+        lease_storage = self._browser_lease_storage()
+        if lease_storage is not None:
+            # Credentials are process-held: their leases close, and the
+            # session identities stay reusable. No graph revision.
+            with commit_intent.operational("browser-session"):
+                for lease in list_browser_session_leases(
+                    lease_storage, states=("active",)
+                ):
+                    if lease.session_root != preserve_root:
+                        close_browser_session_lease(
+                            self.universal_store, lease_storage,
+                            lease.session_root,
+                            reason="Owning application process ended before recovery",
+                        )
+                for session_root in list_browser_session_roots(
+                    self.universal_store.snapshot(), protocol
+                ):
+                    if session_root == preserve_root or read_browser_session_lease(
+                        lease_storage, session_root
+                    ) is not None:
+                        continue
+                    session = read_browser_session(
+                        self.universal_store.snapshot(), protocol, session_root
+                    )
+                    if session.state_root == protocol.states["active"]:
+                        adopt_browser_session_lease(
+                            self.universal_store, protocol, lease_storage,
+                            session_root, state="closed",
+                        )
+            return
         for session_root in list_browser_session_roots(
             self.universal_store.snapshot(), protocol
         ):
@@ -8667,6 +9014,13 @@ class ApplicationServer:
             raise AuthorizationDenied("desktop browser session authority drifted")
         snapshot = self.universal_store.snapshot()
         protocol = self.universal_registry.browser_session_protocol
+        lease_storage = self._browser_lease_storage()
+        if lease_storage is not None:
+            with commit_intent.operational("browser-session"):
+                return self._refresh_desktop_browser_lease(
+                    lease_storage, snapshot, protocol, binding, digest,
+                    expected, view, authority, authentication_context,
+                )
         try:
             registered = list_browser_session_roots(snapshot, protocol)
             if registered.count(binding.session_root) != 1:
@@ -8745,6 +9099,124 @@ class ApplicationServer:
             self._browser_sessions[digest] = renewed
         return renewed
 
+    def _browser_lease_storage(self):
+        """Lease records for browser credentials; None keeps the graph path."""
+        if self.universal_store.supports_shared_writers:
+            return None
+        storage = getattr(self, "runtime_presence_lease_storage", None)
+        if storage is None or getattr(storage, "_closed", False):
+            storage = ensure_store_lease_storage(self.universal_store)
+        return storage
+
+    def _open_browser_lease(
+        self, lease_storage, identity, view, token, csrf_token, now, lifetime
+    ):
+        protocol = self.universal_registry.browser_session_protocol
+        arguments = dict(
+            subject_root=identity.subject_root,
+            view_root=view.root_id,
+            tenant_root=identity.tenant_root,
+            assurance_root=identity.assurance_root,
+            token_digest=self._browser_token_digest(token),
+            csrf_digest=self._browser_token_digest(csrf_token),
+            issued_at=now,
+            lifetime_seconds=lifetime,
+        )
+        try:
+            with commit_intent.operational("browser-session"):
+                return open_browser_session_lease(
+                    self.universal_store, protocol, lease_storage, **arguments
+                )
+        except CommitRefused:
+            # No reusable identity. Composing a session identity is an
+            # authority change: under the caller's admitted intent, or at
+            # launch as the install of this subject's browser access. It
+            # happens once per concurrent session, never per boot or renewal.
+            pass
+        if commit_intent.current_declaration() is not None:
+            return open_browser_session_lease(
+                self.universal_store, protocol, lease_storage, **arguments
+            )
+        with commit_intent.declare(
+            commit_intent.MIGRATION,
+            actor=identity.subject_root,
+            reason="install browser session identity for an authenticated subject",
+        ):
+            return open_browser_session_lease(
+                self.universal_store, protocol, lease_storage, **arguments
+            )
+
+    def _refresh_desktop_browser_lease(
+        self, lease_storage, snapshot, protocol, binding, digest, expected,
+        view, authority, authentication_context,
+    ):
+        try:
+            registered = list_browser_session_roots(snapshot, protocol)
+            if registered.count(binding.session_root) != 1:
+                raise AuthorizationDenied("desktop browser session is not uniquely registered")
+            session = read_browser_session(snapshot, protocol, binding.session_root)
+            if session.state_root != protocol.states["active"]:
+                raise AuthorizationDenied("browser session is revoked")
+            if session.revocation_reason_roots or (
+                session.subject_root, session.view_root,
+                session.tenant_root, session.assurance_root
+            ) != expected:
+                raise AuthorizationDenied("desktop browser session authority drifted")
+            lease = read_browser_session_lease(lease_storage, binding.session_root)
+            if lease is None or lease.state != "active":
+                raise AuthorizationDenied("browser session lease is closed")
+            if (lease.subject_root, lease.view_root, lease.tenant_root,
+                    lease.assurance_root) != expected:
+                raise AuthorizationDenied("desktop browser session authority drifted")
+            if (not secrets.compare_digest(lease.token_digest, digest)
+                    or not secrets.compare_digest(
+                        lease.csrf_digest,
+                        self._browser_token_digest(self.browser_csrf_token))):
+                raise AuthorizationDenied("desktop browser credential digest drifted")
+            for other in list_browser_session_leases(
+                lease_storage, states=("active",)
+            ):
+                if (other.session_root != binding.session_root
+                        and secrets.compare_digest(other.token_digest, digest)):
+                    raise AuthorizationDenied("desktop browser credential is ambiguous")
+            issued_at, expires_at = lease.issued_at, lease.expires_at
+        except (InvalidCell, KeyError, UnicodeDecodeError, ValueError) as exc:
+            raise AuthorizationDenied("desktop browser session is malformed") from exc
+        now = time.time()
+        if (not all(math.isfinite(value) for value in (issued_at, expires_at, now))
+                or issued_at > now + 5 or not 0 < expires_at - issued_at <= 3600):
+            raise AuthorizationDenied("desktop browser session time is invalid")
+        try:
+            prior_identity = authority.broker.resolve(binding.context)
+        except AuthorizationDenied:
+            prior_identity = None
+        if prior_identity is not None and (
+            prior_identity.subject_root, view.root_id,
+            prior_identity.tenant_root, prior_identity.assurance_root
+        ) != expected:
+            raise AuthorizationDenied("desktop browser session authority drifted")
+        renewal_lead = min(300.0, authority.session.lifetime_seconds / 4)
+        if (expires_at > now + renewal_lead and prior_identity is not None
+                and prior_identity.expires_at > now + renewal_lead):
+            return binding
+        with authority.broker.live_context(authentication_context) as live_identity:
+            now = time.time()
+            renewed_expiry = min(now + 3600, live_identity.expires_at)
+            if not math.isfinite(renewed_expiry) or renewed_expiry <= now:
+                raise AuthorizationDenied("authenticated context expired")
+            renew_browser_session_lease(
+                self.universal_store, lease_storage, binding.session_root,
+                issued_at=now, expires_at=renewed_expiry,
+                expected_generation=lease.generation,
+            )
+        renewed = _BrowserSessionBinding(
+            binding.session_root, *expected, authentication_context,
+            binding.csrf_token, binding.interaction_projection_handle,
+        )
+        with self._browser_session_lock:
+            self._browser_sessions[digest] = renewed
+        return renewed
+
     def _resolve_browser_session(
         self,
         token: str,
@@ -8765,6 +9237,7 @@ class ApplicationServer:
                 token=token,
                 csrf_token=csrf_token,
                 require_csrf=require_csrf,
+                lease_storage=self._browser_lease_storage(),
             )
         except (BrowserSessionDenied, InvalidCell) as exc:
             raise AuthorizationDenied(str(exc)) from exc
@@ -8793,6 +9266,13 @@ class ApplicationServer:
         )
         if actual != expected or identity_authority != expected:
             raise AuthorizationDenied("browser session authority drifted")
+        # An authenticated browser request acts for its user. Outside an
+        # HTTP request scope this admits nothing (commit_intent.admit).
+        commit_intent.admit(
+            commit_intent.USER_ACTION,
+            actor=binding.subject_root,
+            reason="authenticated browser request",
+        )
         return binding
 
     def _issue_universal_machine_agent_session_challenge(
@@ -9606,7 +10086,12 @@ class ApplicationServer:
     def enable_native_workshop_compliance(self):
         """Bind the separate restricted-profile court before transport starts."""
         from .native_workshop_compliance import install_native_workshop_compliance
-        return install_native_workshop_compliance(self)
+        with commit_intent.declare(
+            commit_intent.MIGRATION,
+            actor=self.universal_registry.application_root,
+            reason="install the native Workshop compliance court",
+        ):
+            return install_native_workshop_compliance(self)
 
     def _runtime_compliance_for_work_request(
         self,
@@ -11023,6 +11508,10 @@ class ApplicationServer:
 
     def _dispatch_verified_machine_route(self, request):
         """Only the authenticated, decoded local pipe calls this wrapper."""
+        with commit_intent.request_scope():
+            return self._dispatch_verified_machine_route_scoped(request)
+
+    def _dispatch_verified_machine_route_scoped(self, request):
         token = (_VERIFIED_MACHINE_RECOVERY_CONTEXT).set((self, request))
         peer_token = (_VERIFIED_MACHINE_PEER_CONTEXT).set(
             (self, request, _verified_machine_pipe_peer(request))
@@ -11077,6 +11566,21 @@ class ApplicationServer:
                     self._machine_agent_active_requests[checked_actor] = (
                         self._machine_agent_active_requests.get(checked_actor, 0) + 1)
                     actor = checked_actor
+                # An authenticated agent session acts on its admitted Work;
+                # route authority below still decides what it may change.
+                commit_intent.admit(
+                    commit_intent.AGENT_WORK,
+                    actor=checked_actor,
+                    reason="%s %s" % (request.get("method"), request.get("path")),
+                )
+            elif unbound_enrollment:
+                # Enrollment proves its device or native identity downstream
+                # and composes the admitted agent session itself.
+                commit_intent.admit(
+                    commit_intent.AGENT_WORK,
+                    actor="agent-enrollment",
+                    reason="%s %s" % (request.get("method"), request.get("path")),
+                )
             return self.dispatch_universal_machine_route(request)
         finally:
             with self._machine_agent_session_lock:
@@ -11094,6 +11598,28 @@ class ApplicationServer:
         self, request: dict[str, object]
     ) -> dict[str, object]:
         """Dispatch the narrow machine interface through graph route authority."""
+        kind = _operational_machine_route(request)
+        declaration = contextlib.nullcontext()
+        if (
+            type(request) is dict
+            and set(request) == {"method", "path", "body"}
+            and commit_intent.current_declaration() is None
+        ):
+            # A direct in-process call is the desktop owner acting.
+            declaration = commit_intent.declare(
+                commit_intent.USER_ACTION,
+                actor=self.universal_registry.authorization.subject_root,
+                reason="in-process desktop request",
+            )
+        with declaration, (
+            commit_intent.operational(kind) if kind is not None
+            else contextlib.nullcontext()
+        ):
+            return self._dispatch_universal_machine_route(request)
+
+    def _dispatch_universal_machine_route(
+        self, request: dict[str, object]
+    ) -> dict[str, object]:
         if type(request) is not dict:
             raise InvalidCell("machine route request is invalid")
         direct = set(request) == {"method", "path", "body"}
@@ -14437,6 +14963,57 @@ class ApplicationServer:
                     idempotency_key = _native_hook_receipt_idempotency_key(
                         actor_root, idempotency_key
                     )
+                    # SPEC 3.3: a session-start hook receipt is operational
+                    # audit evidence. It is a bounded indexed record keyed by
+                    # its idempotency digest, referenced by the brain control
+                    # ledger and the agent session; not a graph revision.
+                    records = self._ownership_record_storage()
+                    if records is not None:
+                        digest = hashlib.sha256(
+                            (space_root + "\0" + idempotency_key).encode("utf-8")
+                        ).hexdigest()
+                        receipt_root = "app:compliance-event:" + digest
+                        with commit_intent.operational("receipt"):
+                            held = records.get_record(
+                                "compliance-event", receipt_root
+                            )
+                            if held is None:
+                                held = records.put_record(
+                                    "compliance-event",
+                                    receipt_root,
+                                    owner_root=actor_root,
+                                    state="recorded",
+                                    payload={
+                                        "space": space_root,
+                                        "category": category_root,
+                                        "summary": summary.strip(),
+                                        "payload": body["payload"],
+                                        "idempotency_key": idempotency_key,
+                                        "created_at": (
+                                            datetime.now(timezone.utc).isoformat()
+                                            if created_at is None else created_at
+                                        ),
+                                    },
+                                    authority_revision=self.universal_store.revision,
+                                    updated_at=time.time(),
+                                    create_only=True,
+                                    retire_states=("recorded",),
+                                )
+                            elif held["owner_root"] != actor_root or (
+                                held["payload"].get("payload") != body["payload"]
+                            ):
+                                raise InvalidCell(
+                                    "runtime session receipt identity was reused"
+                                )
+                        return {
+                            "ok": True,
+                            "space": space_root,
+                            "root": receipt_root,
+                            "category_root": category_root,
+                            "payload_root": receipt_root,
+                            "sequence": held["generation"],
+                            "revision": self.universal_store.revision,
+                        }
                     entry_context = (
                         self.universal_registry.authorization.broker
                         .mint_authenticated_context(
@@ -16472,6 +17049,15 @@ class ApplicationServer:
                     and binding.session_root == self.browser_session_root
                 ):
                     continue
+                browser_leases = self._browser_lease_storage()
+                if browser_leases is not None:
+                    with commit_intent.operational("browser-session"):
+                        close_browser_session_lease(
+                            self.universal_store, browser_leases,
+                            binding.session_root,
+                            reason="Application server closed",
+                        )
+                    continue
                 revoke_browser_session(
                     self.universal_store,
                     protocol,
@@ -16479,11 +17065,12 @@ class ApplicationServer:
                     reason="Application server closed",
                 )
         self.flush_snapshot()
-        # Keep presence available until admitted requests and workers drain.
+        # Keep presence and operational records available until admitted
+        # requests and workers drain and this owner's release is recorded.
         lease_storage = getattr(self, "runtime_presence_lease_storage", None)
-        if self._owns_universal_store and lease_storage is not None:
-            lease_storage.close()
         if recovery_directory is not None:
+            if self._owns_universal_store and lease_storage is not None:
+                lease_storage.close()
             from .application_recovery_close import finalize_recovery_close
             return finalize_recovery_close(self, recovery_directory,
                 authentication_context=recovery_authentication_context,
@@ -16496,6 +17083,8 @@ class ApplicationServer:
             if self._runtime_fence_release is not None:
                 self._runtime_fence_release()
                 self._runtime_fence_release = None
+            if self._owns_universal_store and lease_storage is not None:
+                lease_storage.close()
         if self.universal_checkpoint_guard is not None:
             self.universal_checkpoint_guard.close()
         self.conversation_content.close()

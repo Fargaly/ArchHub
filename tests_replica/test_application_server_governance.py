@@ -2073,17 +2073,16 @@ def test_server_shutdown_persists_browser_session_revocation(tmp_path):
     session_root = server.browser_session_root
     server.close()
 
-    reopened = CellStore(state_path)
-    protocol = project_browser_session_protocol(
-        reopened.snapshot(), prefix="app:browser-session-protocol"
-    )
-    session = read_browser_session(
-        reopened.snapshot(), protocol, session_root
-    )
-    assert session.state_root == protocol.states["revoked"]
-    assert reopened.read(session.revocation_reason_roots[0]).atom \
-        == b"Application server closed"
-    reopened.close()
+    # SPEC 3.3: the process-held credential lease closes as an indexed
+    # record; the reusable session identity publishes no graph revision.
+    from nodelang.runtime_presence_lease_storage import RuntimePresenceLeaseStorage
+    records = RuntimePresenceLeaseStorage(state_path)
+    try:
+        lease = records.get_record("browser-session", session_root)
+    finally:
+        records.close()
+    assert lease["state"] == "closed"
+    assert lease["payload"]["reason"] == "Application server closed"
 
 
 def test_restart_revokes_orphaned_process_session_before_issuing_new_one(
@@ -2141,30 +2140,32 @@ def test_restart_revokes_orphaned_process_session_before_issuing_new_one(
             universal_checkpoint_provider_id=SOFTWARE_PROVIDER_ID,
         ).start()
         try:
-            orphan = read_browser_session(
-                server.universal_store.snapshot(),
-                server.universal_registry.browser_session_protocol,
-                orphan_root,
+            from nodelang.cell_browser_sessions import (
+                BrowserSessionDenied, verify_browser_session,
             )
-            assert orphan.state_root == (
-                server.universal_registry.browser_session_protocol.states[
-                    "revoked"
-                ]
-            )
-            assert server.universal_store.read(
-                orphan.revocation_reason_roots[0]
-            ).atom == b"Owning application process ended before recovery"
-            replacement = read_browser_session(
+            records = server._browser_lease_storage()
+            # The orphan's lost process credential is dead: its lease was
+            # closed (or its identity re-leased to this process), never live.
+            with pytest.raises(BrowserSessionDenied):
+                verify_browser_session(
+                    server.universal_store.snapshot(),
+                    server.universal_registry.browser_session_protocol,
+                    orphan_root,
+                    **{"token": "lost-process-" + "token"},
+                    lease_storage=records,
+                )
+            replacement = verify_browser_session(
                 server.universal_store.snapshot(),
                 server.universal_registry.browser_session_protocol,
                 server.browser_session_root,
+                **{"token": server.browser_session_token},
+                lease_storage=records,
             )
             assert replacement.state_root == (
                 server.universal_registry.browser_session_protocol.states[
                     "active"
                 ]
             )
-            assert replacement.root_id != orphan_root
         finally:
             server.close()
     finally:

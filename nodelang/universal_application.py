@@ -32268,38 +32268,52 @@ def record_universal_baboom_steward_signal(
     if source_root in snapshot.cells:
         raise InvalidCell("BABOOM Steward signal source collides with a missing signal")
 
-    payload = json.dumps(
-        {
-            "kind": "baboom-steward-observation/v1",
-            "source": source,
-            "summary": summary,
+    # SPEC 3.3: a steward observation is an operational signal. It is kept
+    # as a bounded indexed record referenced by the BABOOM body and policy;
+    # signals composed as Cells by earlier releases stay readable above.
+    storage = registry.runtime_presence_protocol.lease_storage
+    if storage is None:
+        raise InvalidCell("BABOOM Steward signal requires its indexed record storage")
+    observation = {
+        "kind": "baboom-steward-observation/v1",
+        "source": source,
+        "summary": summary,
+    }
+    held = storage.get_record("steward-signal", signal_root)
+    if held is not None:
+        recorded = held["payload"]
+        if (
+            recorded.get("observation") != observation
+            or recorded.get("observer") != entry.body_root
+            or recorded.get("trust") != entry.policy_root
+            or recorded.get("idempotency_key") != fingerprint
+        ):
+            raise InvalidCell("BABOOM Steward signal identity was reused")
+        # The first reporter stays recorded; a later one reads the same signal.
+        return signal_root, snapshot.revision
+    now = time.time()
+    storage.put_record(
+        "steward-signal",
+        signal_root,
+        owner_root=entry.body_root,
+        state="active",
+        payload={
+            "observation": observation,
+            "observer": entry.body_root,
+            "provenance": session.root_id,
+            "trust": entry.policy_root,
+            "affected": [registry.application_root, entry.grand_map_node_root],
+            "observed_at": "%.6f" % now,
+            "sensitivity": registry.authorization.classification_root,
+            "audience": registry.authorization.audience_root,
+            "idempotency_key": fingerprint,
         },
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
-    store.commit(
-        snapshot.revision,
-        create=(Cell(source_root, NULL_CELL_ID, NULL_CELL_ID, payload),),
+        authority_revision=snapshot.revision,
+        updated_at=now,
+        create_only=True,
+        retire_states=("active",),
     )
-    source_revision = store.revision
-    record_signal(
-        store,
-        registry.attention_protocol,
-        signal_id=signal_root,
-        source_root=source_root,
-        source_revision=source_revision,
-        observer_root=entry.body_root,
-        provenance_root=session.root_id,
-        trust_root=entry.policy_root,
-        affected_roots=(registry.application_root, entry.grand_map_node_root),
-        observed_at="%.6f" % time.time(),
-        sensitivity_root=registry.authorization.classification_root,
-        audience_root=registry.authorization.audience_root,
-        idempotency_key=fingerprint,
-        lifecycle_root=registry.attention_protocol.state("active"),
-    )
-    return signal_root, store.revision
+    return signal_root, snapshot.revision
 
 
 def _workshop_assignment_roots(
@@ -37754,27 +37768,51 @@ def project_universal_runtime_handoff_readiness(
         raise InvalidCell("runtime handoff readiness changed during work projection")
     work = _baboom_work_counts_from_index(work_index)
 
-    ownerships = tuple(
-        ownership for ownership in verify_ownership_authority(
-            snapshot, registry.ownership_protocol
+    owner_records = registry.runtime_presence_protocol.lease_storage
+    if owner_records is not None and not store.supports_shared_writers:
+        # SPEC 3.3: runtime ownership is an operational record.
+        from .runtime_ownership_records import (
+            LIVE_STATES as _LIVE_OWNER_STATES,
+            list_runtime_ownerships,
         )
-        if ownership.resource_root == registry.application_root
-    )
-    live_owner_states = {
-        registry.ownership_protocol.states["active"]: "active",
-        registry.ownership_protocol.states["draining"]: "draining",
-    }
-    live_owners = tuple(
-        ownership for ownership in ownerships
-        if ownership.state_root in live_owner_states
-    )
-    if len(live_owners) > 1:
-        raise InvalidCell("application has multiple live runtime owners")
-    latest_owner = max(ownerships, key=lambda item: item.generation, default=None)
-    owner_state = (
-        live_owner_states.get(latest_owner.state_root, "released")
-        if latest_owner is not None else "unclaimed"
-    )
+        recorded_owners = list_runtime_ownerships(
+            owner_records, registry.application_root
+        )
+        live_owners = tuple(
+            item for item in recorded_owners if item.state in _LIVE_OWNER_STATES
+        )
+        if len(live_owners) > 1:
+            raise InvalidCell("application has multiple live runtime owners")
+        latest_owner = recorded_owners[-1] if recorded_owners else None
+        owner_state = (
+            "unclaimed" if latest_owner is None
+            else latest_owner.state if latest_owner.state in _LIVE_OWNER_STATES
+            else "released"
+        )
+    else:
+        ownerships = tuple(
+            ownership for ownership in verify_ownership_authority(
+                snapshot, registry.ownership_protocol
+            )
+            if ownership.resource_root == registry.application_root
+        )
+        live_owner_states = {
+            registry.ownership_protocol.states["active"]: "active",
+            registry.ownership_protocol.states["draining"]: "draining",
+        }
+        live_owners = tuple(
+            ownership for ownership in ownerships
+            if ownership.state_root in live_owner_states
+        )
+        if len(live_owners) > 1:
+            raise InvalidCell("application has multiple live runtime owners")
+        latest_owner = max(
+            ownerships, key=lambda item: item.generation, default=None
+        )
+        owner_state = (
+            live_owner_states.get(latest_owner.state_root, "released")
+            if latest_owner is not None else "unclaimed"
+        )
 
     active_runtime_sessions: set[str] = set()
     for session_root in list_agent_session_roots(
@@ -49808,6 +49846,7 @@ def _authorize_universal_compensation(
         snapshot,
         registry.change_history_protocol,
         view_session.action_history_root,
+        history=store.at,
     )
     if direction == "undo":
         original_root = state.undo_root
@@ -49818,7 +49857,8 @@ def _authorize_universal_compensation(
     if original_root is None:
         raise Conflict("nothing to %s" % direction)
     original = read_change_transaction(
-        snapshot, registry.change_history_protocol, original_root
+        snapshot, registry.change_history_protocol, original_root,
+        history=store.at,
     )
     actor_root = registry.authorization.broker.resolve(context).subject_root
     if (

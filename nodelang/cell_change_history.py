@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from types import MappingProxyType
 from typing import Iterable, Mapping
 from weakref import WeakKeyDictionary, ref
@@ -51,7 +52,16 @@ ROLE_NAMES = (
     "after",
     "undo-of",
     "redo-of",
+    "record",
 )
+
+# A compact change record (founder order 2026-09-23): the transaction keeps
+# its actor, session, operation, authority, scope and interface links, and one
+# terminal "record" holds its base/result revisions, time and exact target
+# set. Before/after images are read from the revision history (cell_versions)
+# instead of being copied into the graph again for every changed Cell.
+# Transactions recorded with per-change images stay readable and undoable.
+COMPACT_RECORD_FORMAT = "archhub-change/compact-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,8 +462,41 @@ def read_change_transaction(
     transaction_root: str,
     *,
     budget: int = 10_000,
+    history=None,
 ) -> ChangeTransaction:
-    return _read_change_transaction(snapshot, protocol, transaction_root, budget=budget)
+    """Read one transaction with its exact before/after images.
+
+    ``history(revision) -> Snapshot`` (normally ``store.at``) supplies the
+    images of a compact record; a record with copied images needs none.
+    """
+    return _read_change_transaction(
+        snapshot, protocol, transaction_root, budget=budget, history=history
+    )
+
+
+def _compact_record(snapshot: Snapshot, record_root: str) -> dict:
+    try:
+        record = json.loads(_terminal_text(snapshot, record_root, "record"))
+    except ValueError as exc:
+        raise InvalidCell("compact change record is not JSON") from exc
+    if (
+        type(record) is not dict
+        or record.get("format") != COMPACT_RECORD_FORMAT
+        or set(record) != {"format", "base", "result", "timestamp", "targets", "created"}
+        or type(record["base"]) is not int
+        or type(record["result"]) is not int
+        or record["result"] != record["base"] + 1
+        or type(record["timestamp"]) is not str
+        or type(record["targets"]) is not list
+        or type(record["created"]) is not list
+        or not record["targets"]
+        or any(type(target) is not str or not target for target in record["targets"])
+        or len(set(record["targets"])) != len(record["targets"])
+        or not set(record["created"]) <= set(record["targets"])
+        or len(set(record["created"])) != len(record["created"])
+    ):
+        raise InvalidCell("compact change record is invalid")
+    return record
 
 
 def _read_change_transaction_header(
@@ -473,7 +516,7 @@ def _read_change_transaction_header(
 
 def _read_change_transaction(
     snapshot, protocol, transaction_root, *, budget, summary_only=False,
-    protocol_verified=False, memo=None,
+    protocol_verified=False, memo=None, history=None, header_without_history=False,
 ):
     if not protocol_verified and project_change_history_protocol(
         snapshot, protocol.root_id, budget=min(budget, 256)
@@ -493,9 +536,17 @@ def _read_change_transaction(
         protocol.role("change"),
         protocol.role("undo-of"),
         protocol.role("redo-of"),
+        protocol.role("record"),
     }
     if any(member.role_id not in admitted for member in members):
         raise InvalidCell("change transaction contains an undeclared role")
+    record_root = _optional(members, protocol.role("record"), "record")
+    if record_root is not None:
+        return _read_compact_change_transaction(
+            snapshot, protocol, transaction_root, members, record_root,
+            budget=budget, summary_only=summary_only, memo=memo,
+            history=history, header_without_history=header_without_history,
+        )
     actor_root = _single(members, protocol.role("actor"), "actor")
     session_root = _single(members, protocol.role("session"), "session")
     operation_root = _single(
@@ -604,6 +655,64 @@ def _read_change_transaction(
     )
 
 
+def _read_compact_change_transaction(
+    snapshot, protocol, transaction_root, members, record_root, *, budget,
+    summary_only, memo, history, header_without_history,
+):
+    for name in ("base-revision", "result-revision", "timestamp", "change"):
+        if any(member.role_id == protocol.role(name) for member in members):
+            raise InvalidCell("compact change record mixes record formats")
+    if record_root != transaction_root + ":record":
+        raise InvalidCell("compact change record ownership drifted")
+    actor_root = _single(members, protocol.role("actor"), "actor")
+    session_root = _single(members, protocol.role("session"), "session")
+    operation_root = _single(members, protocol.role("operation"), "operation")
+    authority_root = _optional(members, protocol.role("authority"), "authority")
+    scope_roots = _many(members, protocol.role("scope"), "scope")
+    interface_root = _optional(members, protocol.role("interface"), "interface")
+    undo_of = _optional(members, protocol.role("undo-of"), "undo source")
+    redo_of = _optional(members, protocol.role("redo-of"), "redo source")
+    if undo_of is not None and redo_of is not None:
+        raise InvalidCell("change transaction cannot be both undo and redo")
+    record = _compact_record(snapshot, record_root)
+    targets = tuple(record["targets"])
+    if len(targets) > budget:
+        raise InvalidCell("change transaction has an invalid change count")
+    if summary_only or (history is None and header_without_history):
+        header = _ChangeTransactionHeader(
+            transaction_root, actor_root, session_root, operation_root,
+            authority_root, scope_roots, interface_root, record["base"],
+            record["result"], record["timestamp"], len(targets), undo_of,
+            redo_of,
+        )
+        if summary_only and memo is not None:
+            memo.put(snapshot, transaction_root, header, len(members) or 1)
+        return header
+    if history is None:
+        raise InvalidCell("compact change record requires its revision history")
+    if record["result"] > snapshot.revision:
+        raise InvalidCell("compact change record is newer than its snapshot")
+    before_snapshot = history(record["base"])
+    after_snapshot = history(record["result"])
+    created = set(record["created"])
+    changes: list[CellChange] = []
+    for index, target_root in enumerate(targets):
+        if target_root not in snapshot.cells:
+            raise InvalidCell("change transaction target is missing")
+        after = after_snapshot.cells.get(target_root)
+        before = before_snapshot.cells.get(target_root)
+        if after is None or (before is None) != (target_root in created):
+            raise InvalidCell("compact change record disagrees with its revisions")
+        changes.append(CellChange(
+            "%s:change:%s" % (transaction_root, index), target_root, before, after,
+        ))
+    return ChangeTransaction(
+        transaction_root, actor_root, session_root, operation_root,
+        authority_root, scope_roots, interface_root, record["base"],
+        record["result"], record["timestamp"], tuple(changes), undo_of, redo_of,
+    )
+
+
 def _history_transaction_roots(
     snapshot: Snapshot,
     protocol: ChangeHistoryProtocol,
@@ -626,9 +735,10 @@ def history_state(
     history_root: str,
     *,
     budget: int = 10_000,
+    history=None,
 ) -> HistoryState:
     return _history_state_and_transactions(
-        snapshot, protocol, history_root, budget=budget
+        snapshot, protocol, history_root, budget=budget, history=history
     )[0]
 
 
@@ -638,10 +748,22 @@ def _history_state_and_transactions(
     history_root: str,
     *,
     budget: int = 10_000,
+    history=None,
 ) -> tuple[HistoryState, dict[str, ChangeTransaction]]:
-    """Return the state with the exact transactions validated to derive it."""
+    """Return the state with the exact transactions validated to derive it.
+
+    Records with copied images are validated in full here. A compact record
+    is validated in full when ``history`` is supplied, and otherwise by its
+    header; every undo/redo re-reads its one transaction with history.
+    """
+    def reader(snapshot_, protocol_, transaction_root, *, budget):
+        return _read_change_transaction(
+            snapshot_, protocol_, transaction_root, budget=budget,
+            history=history, header_without_history=True,
+        )
+
     return _read_history_projection(
-        snapshot, protocol, history_root, budget, read_change_transaction
+        snapshot, protocol, history_root, budget, reader
     )
 
 
@@ -813,51 +935,20 @@ def commit_tracked_change(
         )
 
     token = transaction_id or "change:%s" % uuid.uuid4().hex
-    base_revision_root = token + ":base-revision"
-    result_revision_root = token + ":result-revision"
-    timestamp_root = token + ":timestamp"
-    record_cells: list[Cell] = [
-        Cell(
-            base_revision_root,
-            NULL_CELL_ID,
-            NULL_CELL_ID,
-            str(snapshot.revision).encode("ascii"),
-        ),
-        Cell(
-            result_revision_root,
-            NULL_CELL_ID,
-            NULL_CELL_ID,
-            str(snapshot.revision + 1).encode("ascii"),
-        ),
-        Cell(
-            timestamp_root,
-            NULL_CELL_ID,
-            NULL_CELL_ID,
-            datetime.now(timezone.utc).isoformat().encode("ascii"),
-        ),
-    ]
-    change_roots: list[str] = []
-    for index, cell in enumerate((*replacements, *created)):
-        change_root = "%s:change:%s" % (token, index)
-        before_root = change_root + ":before"
-        after_root = change_root + ":after"
-        before = snapshot.cells.get(cell.id)
-        if before is not None:
-            record_cells.append(Cell(
-                before_root, before.link0, before.link1, before.atom
-            ))
-        record_cells.append(Cell(
-            after_root, cell.link0, cell.link1, cell.atom
-        ))
-        relation = compose_relation_cells((
-            (protocol.role("target"), cell.id),
-            *((
-                (protocol.role("before"), before_root),
-            ) if before is not None else ()),
-            (protocol.role("after"), after_root),
-        ), relation_id=change_root)
-        record_cells.extend(relation.cells)
-        change_roots.append(change_root)
+    record_root = token + ":record"
+    record_cells: list[Cell] = [Cell(
+        record_root,
+        NULL_CELL_ID,
+        NULL_CELL_ID,
+        json.dumps({
+            "format": COMPACT_RECORD_FORMAT,
+            "base": snapshot.revision,
+            "result": snapshot.revision + 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "targets": [cell.id for cell in (*replacements, *created)],
+            "created": [cell.id for cell in created],
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii"),
+    )]
 
     transaction = compose_relation_cells((
         (protocol.role("actor"), actor_root),
@@ -868,10 +959,7 @@ def commit_tracked_change(
         *((
             (protocol.role("interface"), interface_root),
         ) if interface_root is not None else ()),
-        (protocol.role("base-revision"), base_revision_root),
-        (protocol.role("result-revision"), result_revision_root),
-        (protocol.role("timestamp"), timestamp_root),
-        *((protocol.role("change"), root) for root in change_roots),
+        (protocol.role("record"), record_root),
         *((
             (protocol.role("undo-of"), undo_of),
         ) if undo_of is not None else ()),
@@ -970,11 +1058,11 @@ def undo_last_change(
     operation_root: str,
 ) -> ChangeCommit:
     snapshot = store.snapshot()
-    state = history_state(snapshot, protocol, history_root)
+    state = history_state(snapshot, protocol, history_root, history=store.at)
     if state.undo_root is None:
         raise Conflict("nothing to undo")
     original = read_change_transaction(
-        snapshot, protocol, state.undo_root
+        snapshot, protocol, state.undo_root, history=store.at
     )
     _require_transaction_context(
         original, actor_root=actor_root, session_root=session_root
@@ -1035,11 +1123,11 @@ def redo_last_change(
     operation_root: str,
 ) -> ChangeCommit:
     snapshot = store.snapshot()
-    state = history_state(snapshot, protocol, history_root)
+    state = history_state(snapshot, protocol, history_root, history=store.at)
     if state.redo_root is None:
         raise Conflict("nothing to redo")
     original = read_change_transaction(
-        snapshot, protocol, state.redo_root
+        snapshot, protocol, state.redo_root, history=store.at
     )
     _require_transaction_context(
         original, actor_root=actor_root, session_root=session_root

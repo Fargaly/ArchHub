@@ -26,6 +26,8 @@ import uuid
 
 from rpds import HashTrieMap
 
+from . import commit_intent
+
 
 NULL_CELL_ID = "00000000-0000-0000-0000-000000000000"
 _JOURNAL_REVISIONS_COLUMNS = frozenset(("revision", "committed_at"))
@@ -127,6 +129,9 @@ class CommitEvent:
 
     revision: int
     touched: frozenset[str]
+    # The admitted intent that produced this revision. A reaction that
+    # continues the same causal work resumes it (commit_intent.resume).
+    declaration: commit_intent.CommitDeclaration | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +155,14 @@ class Conflict(CellKernelError):
 
 class InvalidCell(CellKernelError):
     """A cell or commit would violate the physical substrate invariants."""
+
+
+class CommitRefused(InvalidCell):
+    """The commit gate refused a revision with no admitted reason.
+
+    See nodelang/commit_intent.py: operational paths and undeclared commits
+    to a gated store never publish a graph revision.
+    """
 
 
 class ReadOnlyJournalError(CellKernelError):
@@ -2696,6 +2709,21 @@ class CellStore:
         self._listeners: set[Callable[[CommitEvent], None]] = set()
         self._listener_failures: list[str] = []
         self._revision_chain_digests: dict[int, bytes] = {}
+        # Off for stores the caller owns in memory; the application turns it
+        # on for its persistent graph (require_declared_intent).
+        self._requires_declared_intent = False
+
+    def require_declared_intent(self) -> None:
+        """Refuse every later commit that has no closed-set intent.
+
+        One-way for this store object: nothing turns the gate back off.
+        """
+        with self._lock:
+            self._requires_declared_intent = True
+
+    @property
+    def requires_declared_intent(self) -> bool:
+        return self._requires_declared_intent
 
     def close(self) -> None:
         with self._lock:
@@ -3299,27 +3327,43 @@ class CellStore:
                 base = _compact_cell_map(base)
             delta: dict[str, Cell] = {}
             touched: set[str] = set()
+            named: set[str] = set()
 
             for cell in created:
                 _validate_cell(cell)
                 if cell.id in base or cell.id in touched:
                     raise InvalidCell("cannot create existing cell %r" % cell.id)
                 touched.add(cell.id)
+                named.add(cell.id)
                 delta[cell.id] = cell
 
+            changed_replacements: list[Cell] = []
             for cell in replaced:
                 _validate_cell(cell)
                 if cell.id == NULL_CELL_ID:
                     raise InvalidCell("the distinguished null cell is immutable")
                 if cell.id not in base:
                     raise InvalidCell("cannot replace missing cell %r" % cell.id)
-                if cell.id in touched:
+                if cell.id in named:
                     raise InvalidCell("cell %r is changed twice in one commit" % cell.id)
+                named.add(cell.id)
+                # Compare first: an identical version is not a change and
+                # never becomes a revision or a cell_versions row.
+                if base[cell.id] == cell:
+                    continue
                 touched.add(cell.id)
                 delta[cell.id] = cell
+                changed_replacements.append(cell)
 
-            if not touched:
+            if not named:
                 raise InvalidCell("empty commits are not transactions")
+            if not touched:
+                return self._revision
+            replaced = tuple(changed_replacements)
+            refused = commit_intent.refusal(self._requires_declared_intent)
+            if refused is not None:
+                raise CommitRefused(refused)
+            declaration = commit_intent.current_declaration()
 
             for cell_id in touched:
                 cell = delta[cell_id]
@@ -3434,7 +3478,9 @@ class CellStore:
                 if touched.intersection(dependencies):
                     self._fingerprints.pop(cache_key, None)
                     self._fingerprint_dependencies.pop(cache_key, None)
-            event = CommitEvent(next_revision, frozenset(touched))
+            event = CommitEvent(
+                next_revision, frozenset(touched), declaration
+            )
             listeners = tuple(self._listeners)
 
         for listener in listeners:

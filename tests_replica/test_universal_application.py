@@ -111,6 +111,56 @@ def application():
 	return build_universal_application(resolve_map_path())
 
 
+def test_scope_materialization_reuses_snapshot_and_repairs_membership(monkeypatch):
+	from nodelang.cell_protocols import remove_relation_member
+
+	store, registry = build_universal_application(resolve_map_path())
+	subject = registry.authorization.subject_root
+	projection = {
+		"scope": {"current": registry.application_root, "trail": []},
+		"nodes": [{"id": root, "openable": True}
+			for root in registry.map.domains.values()],
+		"configuration": {"design_system": {"control_catalog": {"controls": []}}},
+	}
+	ensure = universal_application_module.ensure_universal_scope_interactions
+	first = ensure(store, registry, subject, projection)
+	revision = store.revision
+	original_snapshot = store.snapshot
+	snapshots = []
+	def counted_snapshot():
+		result = original_snapshot()
+		snapshots.append(result)
+		return result
+	with monkeypatch.context() as scoped:
+		scoped.setattr(store, "snapshot", counted_snapshot)
+		assert ensure(store, registry, subject, projection) == first
+	assert store.revision == revision
+	# One bootstrap read, one batch baseline, one definition view, one registry
+	# view: adding visible controls must not add a snapshot per control.
+	assert len(snapshots) == 4
+	interaction_root = next(iter(first[1].values()))
+	membership = next(member for member in read_relation(
+		store.snapshot(), registry.application_root, budget=100_000
+	) if member.participant_id == interaction_root)
+	remove_relation_member(store, registry.application_root, membership.incidence_id,
+		budget=100_000)
+	assert ensure(store, registry, subject, projection) == first
+	assert interaction_root in {member.participant_id for member in read_relation(
+		store.snapshot(), registry.application_root, budget=100_000
+	)}
+	# Existing definition corruption must still refuse, rather than silently
+	# reusing a cached control or replacing its semantic identity.
+	members = read_relation(store.snapshot(), interaction_root, budget=512)
+	target = next(member for member in members
+		if member.role_id == registry.interaction_protocol.role("target"))
+	cell = store.snapshot().cells[target.incidence_id]
+	store.commit(store.revision, replace=(Cell(
+		cell.id, cell.link0, registry.application_root, cell.atom
+	),))
+	with pytest.raises(InvalidCell, match="scope interaction definition drifted"):
+		ensure(store, registry, subject, projection)
+
+
 def test_design_system_projects_the_cell_native_icon_catalog(application):
 	store, registry = application
 	projection = project_universal_canvas(store, registry)
@@ -279,6 +329,7 @@ def test_canvas_move_undo_and_redo_are_session_scoped_cell_transactions():
 		store.snapshot(),
 		registry.change_history_protocol,
 		transactions[0].participant_id,
+		history=store.at,
 	)
 	assert transaction.authority_root == registry.composer_protocol.command(
 		"canvas.arrange"
@@ -474,7 +525,8 @@ def test_property_compensation_rechecks_its_recorded_capability(monkeypatch):
 		store.snapshot(), view.action_history_root
 	)[-1].participant_id
 	transaction = read_change_transaction(
-		store.snapshot(), registry.change_history_protocol, transaction_root
+		store.snapshot(), registry.change_history_protocol, transaction_root,
+		history=store.at,
 	)
 	assert transaction.authority_root == registry.composer_protocol.command(
 		"catalog.configure"

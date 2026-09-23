@@ -92,6 +92,11 @@ def _template_broker_state_rolls_back():
             registry.authorization.relationship_broker,
         ):
             saved.append((broker, _mutable_state(broker)))
+        # Operational records (SPEC 3.3: ownership, browser leases, presence)
+        # live in the template's in-memory record storage that forks share.
+        records = getattr(registry.runtime_presence_protocol, "lease_storage", None)
+        if records is not None:
+            saved.append((records, _mutable_state(records)))
     # The verified-authority cache is keyed by id(authority) with a
     # 120-second TTL. Forks share the authorization object, so one
     # test's verified snapshot -- its relationships, its inspector, its

@@ -267,7 +267,8 @@ def test_legacy_duplicate_baboom_body_requires_explicit_graph_migration():
             for member in members
         )
     receipt = read_change_transaction(
-        snapshot, registry.change_history_protocol, result.receipt_root
+        snapshot, registry.change_history_protocol, result.receipt_root,
+        history=store.at,
     )
     assert _LEGACY_AGENT_BODY_BABOOM_EXECUTION_ROOT in receipt.scope_roots
     assert _AGENT_BODY_BABOOM_ROOT in receipt.scope_roots

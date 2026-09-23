@@ -16,7 +16,6 @@ import time
 from .application_recovery import _history_heads, _inventory, _lock_before
 from .application_recovery_restore_files import _plain_path
 from .cell_authorization import AuthorizationDenied
-from .cell_exclusive_ownership import read_ownership
 from .conversation_history import ConversationHistoryStore
 from .conversation_migration_activation import _authorize, _configured_target, _reserve
 from .universal_cell import InvalidCell, _SqliteJournal
@@ -190,13 +189,10 @@ def finalize_recovery_close(owner, directory, *, authentication_context, timeout
     with _owned_sources(owner, authentication_context, deadline) as sources:
         service, registry, store, graph, history = sources
         prepared = _prepared_destination(prepared_recovery_directory, supplied_directory, service, store)
-        ownership = read_ownership(store.snapshot(), registry.ownership_protocol,
-            owner._runtime_ownership_root)
-        if (ownership.resource_root != registry.application_root
-                or ownership.holder_root != owner._runtime_holder_root
-                or ownership.state_root not in (
-                    registry.ownership_protocol.states["draining"],
-                    registry.ownership_protocol.states["released"])):
+        ownership = owner.runtime_ownership_state()
+        if (ownership is None or ownership[0] != registry.application_root
+                or ownership[1] != owner._runtime_holder_root
+                or ownership[2] not in ("draining", "released")):
             raise InvalidCell("recovery close requires this owner's drained runtime")
         # Workers are quiesced. Release the auxiliary same-database connection
         # before reserving the graph's exclusive recovery lock. Keep the main

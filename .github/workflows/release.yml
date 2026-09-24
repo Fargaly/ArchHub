@@ -30,11 +30,28 @@ jobs:
           ref: ${{ github.sha }}
           path: selected
           persist-credentials: false
+          # The zero-idle-growth release court archives the old-graph release
+          # 9eefd81 from history; a shallow clone refuses every build.
+          fetch-depth: 0
       - name: Use the reviewed Studio build runtime
         uses: actions/setup-node@v7
         with:
           node-version: '24.13.0'
           package-manager-cache: false
+      - name: Use the Python that runs the release court and the update check
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install the release court's runtime and the installer compiler
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check -r selected/requirements.txt pytest
+          if ($LASTEXITCODE -ne 0) { throw 'Release court dependencies did not install.' }
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup 6 did not install.' }
+          }
       - name: Assign immutable build identity
         id: identity
         shell: pwsh
@@ -50,6 +67,12 @@ jobs:
           ./selected/installer/build_release.ps1 `
             -BuildId $env:BUILD_ID `
             -OutputDirectory "$env:GITHUB_WORKSPACE/release-output"
+      - name: Prove installed users' updater accepts this build (dry run)
+        shell: pwsh
+        run: |
+          ./selected/packaging/windows/publish_release.ps1 `
+            -ReleaseDirectory "$env:GITHUB_WORKSPACE/release-output" `
+            -ExpectedSourceRevision $env:GITHUB_SHA -DryRun
       - name: Retain exact installer and metadata for review
         id: upload
         uses: actions/upload-artifact@v7
@@ -81,6 +104,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out the publish check at the built revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: selected
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install the update parser's runtime
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check -r selected/requirements.txt
       - name: Download this run's exact build artifact
         uses: actions/download-artifact@v8
         with:
@@ -95,39 +130,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $manifest = Get-Content -LiteralPath release-output/release.json -Raw | ConvertFrom-Json
-          $asset = 'release-output/ArchHub-Setup-0.exe'
-          $sha = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-          $sourceSha = (Get-FileHash -LiteralPath release-output/source-manifest.tsv -Algorithm SHA256).Hash.ToLowerInvariant()
-          $studioSha = (Get-FileHash -LiteralPath release-output/studio-build.json -Algorithm SHA256).Hash.ToLowerInvariant()
-          $buildMetadataSha = (Get-FileHash -LiteralPath release-output/BUILD_METADATA.json -Algorithm SHA256).Hash.ToLowerInvariant()
-          $buildMetadata = Get-Content -LiteralPath release-output/BUILD_METADATA.json -Raw | ConvertFrom-Json
-          $notes = Get-Content -LiteralPath release-output/release-notes.md -Raw
-          if ($manifest.format -ne 1 -or $manifest.build_id -cne $env:BUILD_ID -or
-              $manifest.source_revision -cne $env:GITHUB_SHA -or
-              $manifest.asset_name -cne 'ArchHub-Setup-0.exe' -or
-              $manifest.asset_sha256 -cne $sha -or
-              $manifest.asset_bytes -ne (Get-Item -LiteralPath $asset).Length -or
-              $manifest.payload_manifest -cne 'source-manifest.tsv' -or
-              $manifest.payload_manifest_sha256 -cne $sourceSha -or
-              $manifest.studio_manifest -cne 'studio-build.json' -or
-              $manifest.studio_manifest_sha256 -cne $studioSha -or
-              $manifest.studio_files -ne 10 -or
-              $manifest.build_metadata_sha256 -cne $buildMetadataSha -or
-              $buildMetadata.format -ne 1 -or $buildMetadata.build_id -cne $env:BUILD_ID -or
-              $manifest.built_at -cne $buildMetadata.built_at -or
-              $manifest.built_at -cnotmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' -or
-              -not $notes.Contains("BUILD_ID: $env:BUILD_ID`n") -or
-              -not $notes.Contains("BUILT_AT: $($manifest.built_at)`n") -or
-              -not $notes.Contains("SHA256 ArchHub-Setup-0.exe: $sha`n")) {
-            throw 'Release artifact or updater metadata did not reconcile.'
-          }
-          $tag = "build-$env:BUILD_ID"
-          # Upload while draft so an incomplete upload never becomes latest.
-          gh release create $tag $asset release-output/release.json `
-            release-output/source-manifest.tsv release-output/studio-build.json `
-            release-output/BUILD_METADATA.json `
-            --draft --target $env:GITHUB_SHA --title "ArchHub $env:BUILD_ID" `
-            --notes-file release-output/release-notes.md
-          if ($LASTEXITCODE -ne 0) { throw 'Draft release upload failed; nothing was promoted.' }
-          gh release edit $tag --draft=false --latest
-          if ($LASTEXITCODE -ne 0) { throw 'Release promotion did not complete; inspect its current state before retrying.' }
+          if ($manifest.build_id -cne $env:BUILD_ID) { throw 'Downloaded artifact is not this run''s build.' }
+          # One reconciliation and publish path for CI and local builds: bytes,
+          # updater readability, newer than live latest, free tag, pushed source.
+          ./selected/packaging/windows/publish_release.ps1 `
+            -ReleaseDirectory release-output -ExpectedSourceRevision $env:GITHUB_SHA `
+            -Repository $env:GH_REPO

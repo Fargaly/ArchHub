@@ -695,7 +695,8 @@ def test_top_canvas_is_the_application_scope_and_every_wire_uses_real_interfaces
 		assert wire["id"] in source_port["relation_roots"]
 		assert wire["id"] in target_port["relation_roots"]
 		assert source_port["connectable"] is True
-		assert target_port["connectable"] is False
+		# An input a wire is dropped on is connectable unless read-only.
+		assert target_port["connectable"] is True
 		assert source_port["name"] == "Outgoing relations"
 		assert target_port["name"] == "Incoming relations"
 
@@ -780,7 +781,7 @@ def test_domain_public_interfaces_own_every_exact_visible_incidence(application)
 			port = ports[0]
 			assert port["id"] in registered_interfaces
 			assert port["name"] == expected_name
-			assert port["connectable"] is (side == "source")
+			assert port["connectable"] is True
 			assert set(port["relation_roots"]) == {
 				wire["id"] for wire in wires
 			}

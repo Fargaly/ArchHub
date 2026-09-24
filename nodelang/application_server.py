@@ -5463,6 +5463,25 @@ class ApplicationServer:
             )
         self.universal_store = universal_store
         self.universal_registry = universal_registry
+        # Engine out/in sockets placed before 2026-09-24 carry a read-only
+        # role that refuses every new wire. Every boot releases them; once
+        # none is left this reads the application root and commits nothing.
+        from .universal_pipeline import release_pipeline_socket_read_only
+        try:
+            with commit_intent.declare(
+                commit_intent.MIGRATION,
+                actor=universal_registry.application_root,
+                reason="release read-only engine sockets placed before 2026-09-24",
+            ):
+                released = release_pipeline_socket_read_only(
+                    universal_store, universal_registry
+                )
+            if released:
+                print("  sockets    : %d engine socket(s) made connectable" % released,
+                      flush=True)
+        except Exception as refused:
+            print("  sockets    : engine sockets left read-only -- %s" % refused,
+                  flush=True)
         self.runtime_presence_lease_storage = getattr(
             self.universal_registry.runtime_presence_protocol, "lease_storage", None
         )

@@ -636,12 +636,22 @@ def _wired_text(feeds: Mapping[str, object]) -> str:
     return json.dumps(held, default=str)[:12000]
 
 
+# Model cards whose blank "model" row the pipeline run fills from the graph's
+# composer pick (universal_pipeline.run_universal_pipeline) before it runs.
+MODEL_PICK_ENGINES = frozenset({"library.think", "library.vision"})
+
+
+def _model_route(params: Mapping[str, object]) -> str:
+    """The card's model (the graph pick when it was blank), else the declared env route."""
+    import os
+    return _text(params, "model") or os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+
+
 def think(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Reason with the picked model over the wired stream; never a hidden default."""
-    import os
     from . import model_router
     from .agent_composer import NO_MODEL_CHOSEN
-    route = _text(params, "model") or os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+    route = _model_route(params)
     if not route:
         return {"out": []}, NO_MODEL_CHOSEN
     prompt = _text(params, "prompt")
@@ -795,12 +805,11 @@ _IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"
 def vision(params: Mapping[str, object], feeds: Mapping[str, object]):
     """Read a sketch or screenshot with the picked model; the image travels as a data URL."""
     import base64
-    import os
     from pathlib import Path
     from . import model_router
     from .agent_composer import NO_MODEL_CHOSEN
     from .pipeline_engines import _local_input_path
-    route = _text(params, "model") or os.environ.get("ARCHHUB_AGENT_MODEL", "").strip()
+    route = _model_route(params)
     if not route:
         return {"out": []}, NO_MODEL_CHOSEN
     held = _wired(feeds, "in", "image_path", "path")

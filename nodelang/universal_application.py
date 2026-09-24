@@ -22797,10 +22797,7 @@ def _project_universal_canvas_interpreter(
         declared_ports = [
             {
                 **interface,
-                "connectable": (
-                    interface["side"] == "source"
-                    and not interface["read_only"]
-                ),
+                "connectable": not interface["read_only"],
             }
             for interface in interfaces_by_owner.get(root_id, ())
         ]
@@ -22864,8 +22861,9 @@ def _project_universal_canvas_interpreter(
             "assembly": assembly,
             # The design draws a node's defining parameters INSIDE the card
             # (k:v mono rows) -- content-first, like Revit's own parameter
-            # panel. Structural bookkeeping stays out; the first four real
-            # parameters travel with the node.
+            # panel. Structural bookkeeping stays out; every real parameter
+            # travels with the node (the parameter panel shows them all) and
+            # the card itself draws only its first few.
             "params": [
                 {
                     "label": name,
@@ -22879,9 +22877,9 @@ def _project_universal_canvas_interpreter(
                     "evidence_ref", "last_verified", "authority_source",
                     "bim_phase", "standard",
                 }
-            ][:4],
-            # The run wire reads which effect a node declares; the display
-            # cap above must not hide it, and status carries the last run
+            ],
+            # The run wire reads which effect a node declares; the card's
+            # display cap must not hide it, and status carries the last run
             # answer for surfaces that draw it on the card.
             "engine": (
                 str(effective_property_value(labelled["engine"]))

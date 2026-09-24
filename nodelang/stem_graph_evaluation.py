@@ -191,6 +191,10 @@ def _run_engine(
         return {}
     if engine in ("data.constant", "input.parameter"):
         value = params.get("value", "")
+        # The Parameter card declares "default", not "value"; a run with
+        # nothing bound reads the declared default instead of nothing.
+        if engine == "input.parameter" and value in ("", None):
+            value = params.get("default", "")
         display[root] = _display(value)
         return {"value": value}
     if engine == "output.parameter":

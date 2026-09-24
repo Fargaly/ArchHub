@@ -10,6 +10,7 @@ the result -- no agent required.
 """
 from __future__ import annotations
 
+import re
 import time
 
 from pathlib import Path as _Path
@@ -36,6 +37,7 @@ from .universal_application import (
     read_relation,
 )
 from .universal_cell import NULL_CELL_ID, Cell
+from .cell_protocols import prepare_remove_relation_members
 
 # Rows the graph keeps for its own bookkeeping: they name what a node IS
 # and what it last answered, never what its engine computes with, so they
@@ -208,6 +210,16 @@ def _pipeline_wire_enabled(wire):
     return True
 
 
+def _composer_pick(snapshot, registry) -> str:
+    """The composer model the graph holds; an unreadable pick is no pick."""
+    from .universal_application import read_universal_composer_model
+    try:
+        current = read_universal_composer_model(snapshot, registry)
+    except Exception:
+        return ""
+    return str(current["value"]).strip() if current["source"] == "graph" else ""
+
+
 def run_universal_pipeline(
     store,
     registry,
@@ -230,6 +242,8 @@ def run_universal_pipeline(
     node_ids = {str(node["id"]) for node in projection.get("nodes", ())}
     if only_roots is not None:
         node_ids &= {str(root) for root in only_roots}
+    from .library_engines import MODEL_PICK_ENGINES
+    picked: list[str] = []
     stem_nodes = []
     for root in node_ids:
         rows = owned.get(root) or {}
@@ -240,6 +254,15 @@ def run_universal_pipeline(
             label: value for label, (_rel, value) in rows.items()
             if label not in _STRUCTURAL
         }
+        # A model card left blank runs on the composer pick the graph holds,
+        # the one Send and BABOOM read; with no pick it keeps its refusal.
+        if engine in MODEL_PICK_ENGINES and not str(
+            parameters.get("model") or ""
+        ).strip():
+            if not picked:
+                picked.append(_composer_pick(snapshot, registry))
+            if picked[0]:
+                parameters["model"] = picked[0]
         stem_nodes.append(StemNode(root, engine, parameters))
     engine_roots = {node.root_id for node in stem_nodes}
     projected_nodes = {str(node["id"]): node for node in projection.get("nodes", ())}
@@ -322,13 +345,12 @@ def run_universal_pipeline(
 def _ensure_pipeline_node_interfaces(store, registry, owner_root: str):
     """Give one pipeline node its exact out/in canvas interfaces.
 
-    A node the founder wires must declare where a wire may land; these are
-    the same read-only interface relations a committed wire's endpoints
-    receive, registered on the application root like every other
-    application-level interface.
+    A node the founder wires must declare where a wire may land, registered
+    on the application root like every other application-level interface.
+    They carry no read-only role: an engine's out and in are sockets a new
+    wire is drawn from and dropped on, not a committed wire's endpoints.
     """
     protocol = registry.assembly_protocol
-    roles = registry.roles
     token = owner_root.rsplit(":", 1)[-1]
     created = []
     snapshot = store.snapshot()
@@ -356,7 +378,6 @@ def _ensure_pipeline_node_interfaces(store, registry, owner_root: str):
                 (protocol.role("name"), name_root),
                 (protocol.role("interface-contract"), protocol.root_id),
                 (protocol.role("interface-presentation"), presentation_root),
-                (roles["read-only"], roles["read-only"]),
             ),
             relation_id=interface_root,
         )
@@ -379,6 +400,45 @@ def _ensure_pipeline_node_interfaces(store, registry, owner_root: str):
         replace=registration.replace,
     )
     return created
+
+
+_PIPELINE_SOCKET = re.compile(r"app:pipeline-interface:[0-9A-Za-z_-]+:(?:source|target)")
+
+
+def release_pipeline_socket_read_only(store, registry) -> int:
+    """Admitted migration: drop the read-only role from engine out/in sockets.
+
+    Engine sockets placed before 2026-09-24 carried it, so no wire could be
+    dropped on them. Only interfaces this module mints (registered on the
+    application root under the pipeline-interface prefix) are touched, and
+    only their (read-only, read-only) member; a graph with none left makes
+    no commit. The caller declares the migration intent.
+    """
+    snapshot = store.snapshot()
+    interface_role = registry.assembly_protocol.role("interface")
+    read_only = registry.roles["read-only"]
+    replace: dict[str, Cell] = {}
+    released = 0
+    for member in read_relation(
+        snapshot, registry.application_root, budget=100_000
+    ):
+        root = member.participant_id
+        if member.role_id != interface_role or not _PIPELINE_SOCKET.fullmatch(root):
+            continue
+        held = read_relation(snapshot, root, budget=64)
+        drop = [
+            item.incidence_id for item in held
+            if item.role_id == read_only and item.participant_id == read_only
+        ]
+        if not drop:
+            continue
+        patch = prepare_remove_relation_members(snapshot, root, drop, budget=64)
+        for cell in patch.replace:
+            replace[cell.id] = cell
+        released += 1
+    if replace:
+        store.commit(snapshot.revision, replace=tuple(replace.values()))
+    return released
 
 
 # The parameters a real graph engine gives a connection, with the same
@@ -453,7 +513,7 @@ _SEED = (
         "engine": "vision.sketch_lines",
         "image_path": sample_input("sample-plan.png"),
         "mm_per_pixel": "10",
-        "threshold": "60", "min_length": "40",
+        "threshold": "60", "min_length": "40", "max_gap": "8",
     }),
     ("CAD Lines", 240.0, 380.0, {
         "seed": "cad-lines",
@@ -640,12 +700,19 @@ def seed_wall_pipeline(
     projection = project_universal_canvas(
         store, registry, authentication_context=authentication_context
     )
-    owned = _owner_properties(store.snapshot(), registry)
-    by_marker: dict[str, str] = {}
+    snapshot = store.snapshot()
+    owned = _owner_properties(snapshot, registry)
+    visible = [str(node["id"]) for node in projection.get("nodes", ())]
     by_title: dict[str, str] = {}
     for node in projection.get("nodes", ()):
-        root = str(node["id"])
-        by_title.setdefault(str(node.get("label") or ""), root)
+        by_title.setdefault(str(node.get("label") or ""), str(node["id"]))
+    # The marker is matched over the whole canvas, not the level on screen:
+    # a seed run while another scope is open used to find no marker there
+    # and place a second set of twelve cards. A card on screen is preferred
+    # only when a marker is already held twice.
+    members = _canvas_roots(snapshot, registry)[0]
+    by_marker: dict[str, str] = {}
+    for root in (*visible, *members):
         marker = (owned.get(root) or {}).get(_SEED_MARKER)
         if marker is not None and marker[1].strip():
             by_marker.setdefault(marker[1].strip(), root)
@@ -740,6 +807,7 @@ def seed_wall_pipeline(
         (str(wire.get("source") or ""), str(wire.get("target") or ""))
         for wire in fresh.get("wires", ())
     }
+    on_screen = {str(node["id"]) for node in fresh.get("nodes", ())}
     wired = []
     for source, target in (
         ("Sketch Lines", "Line Watcher"),
@@ -748,6 +816,10 @@ def seed_wall_pipeline(
         source_root = placed.get(source)
         target_root = placed.get(target)
         if not source_root or not target_root:
+            continue
+        # Cards adopted from another level were wired where they live; a
+        # connection is only drawn between cards on the open canvas.
+        if source_root not in on_screen or target_root not in on_screen:
             continue
         if (source_root, target_root) in wire_pairs:
             continue

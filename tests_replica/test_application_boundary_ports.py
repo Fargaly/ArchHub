@@ -146,7 +146,12 @@ def test_canvas_ports_are_real_interface_relations_with_exact_choices():
             )
         } == {port["presentation_root"]}
 
-    connectable = [port for port in ports if port["connectable"]]
+    # An input is connectable too (a wire is dropped on it); the connect
+    # command and its choices belong to the output a wire starts from.
+    connectable = [
+        port for port in ports
+        if port["connectable"] and port["side"] == "source"
+    ]
     assert connectable
     assert all(port["connect_control"] for port in connectable)
     for port in connectable:

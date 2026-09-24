@@ -3386,7 +3386,7 @@
    "domain": "Orchestration (Agent layer)",
    "name": "Slice 0 - Plan",
    "claimed_status": "partial",
-   "evidence_ref": "C:\\Users\\fargaly\\00.ARCHUB\\30.KNOWLEDGE\\grand-map\\data\\grand_domains.json",
+   "evidence_ref": "file:30.KNOWLEDGE/grand-map/data/grand_domains.json",
    "last_verified": "2026-06-30"
   },
   {

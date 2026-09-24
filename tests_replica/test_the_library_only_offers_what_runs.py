@@ -66,7 +66,7 @@ _PLACEMENTS = {
     "library.match_skill": ({"intent": "tag rooms"}, {}),
     "library.embed": ({}, {}),
     "library.notify": ({"message": "sheet set published"}, {}),
-    "library.draft_email": ({"to": "eng@firm.com"}, {}),
+    "library.draft_email": ({"to": "eng@firm.example.test"}, {}),
     "library.vision": ({"prompt": "what is this"}, {}),
     "library.publish_pdf": ({"sheets": "A101"}, {}),
     "library.tag_rooms": ({}, {}),

@@ -488,7 +488,7 @@ def main():
         result = install_requirements(root, pinned)
         if result.returncode != 0:
             print("  REFUSED: the install did not finish. Nothing was faked;")
-            print("  send this window's text to Ahmed.")
+            print("  send this window's text to your ArchHub administrator.")
             return result.returncode
     else:
         print("  packages   : already present")
@@ -499,7 +499,7 @@ def main():
             continue  # optional engine; the app reports it as absent
         if not _has(probe):
             print("  REFUSED: %s installed but cannot be imported." % probe)
-            print("  send this window text to Ahmed.")
+            print("  send this window text to your ArchHub administrator.")
             return 4
     print_host_installation_readiness(root)
     try:

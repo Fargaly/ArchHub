@@ -108,8 +108,8 @@ def test_draft_email_opens_a_draft_and_never_sends(monkeypatch):
 
     outlook = Outlook()
     monkeypatch.setattr(L, "_OUTLOOK", [lambda: outlook])
-    out, said = L.draft_email({"to": "eng@firm.com", "subject": "Sheets"}, {"in": "Set 03 attached"})
-    assert outlook.mail.To == "eng@firm.com" and outlook.mail.Body == "Set 03 attached"
+    out, said = L.draft_email({"to": "eng@firm.example.test", "subject": "Sheets"}, {"in": "Set 03 attached"})
+    assert outlook.mail.To == "eng@firm.example.test" and outlook.mail.Body == "Set 03 attached"
     assert outlook.mail.calls == ["Display"], "a draft on screen, never Send"
     assert out["out"]["chars"] == 15 and "you send it" in said
     monkeypatch.setattr(L, "_OUTLOOK", [lambda: None])

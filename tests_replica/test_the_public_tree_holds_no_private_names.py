@@ -103,3 +103,55 @@ def test_the_court_sees_a_planted_name(tmp_path):
         "sha256: 00sentinel7ff\n", encoding="utf-8")
     assert _leaks(planted, tmp_path, forbidden) == [
         "planted.txt:1", "planted.txt:2", "planted.txt:3"]
+
+
+# A Windows profile path names the person who owns the machine. A tracked
+# file may say C:\Users\<placeholder> (someone, founder, user ...) or a
+# generic %LOCALAPPDATA% / %USERPROFILE% / $env: reference, never a real
+# account name. Forms caught: C:\Users\<name>, the escaped double-backslash
+# form, C:/Users/<name> and the Git Bash form /c/Users/<name>.
+_PROFILE = re.compile(
+    r"(?i)(?:\b[a-z]:(?:\\{1,2}|/)|(?<![\w.])/[a-z]/)users(?:\\{1,2}|/)([^\\/\s\"'<>`|;,)]+)"
+)
+PLACEHOLDER_ACCOUNTS = frozenset({
+    "someone", "founder", "user", "username", "example", "public", "default",
+})
+
+
+def _profile_paths(path, base=ROOT):
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return []
+    if b"\0" in data[:8192]:
+        return []
+    text = data.decode("utf-8", errors="replace")
+    return [
+        "%s:%d" % (path.relative_to(base).as_posix(), number)
+        for number, line in enumerate(text.splitlines(), 1)
+        for match in _PROFILE.finditer(line)
+        if match.group(1).lower() not in PLACEHOLDER_ACCOUNTS
+        and match.group(1)[:1] not in "%$<{"
+    ]
+
+
+def test_no_tracked_file_holds_a_real_profile_path():
+    found = [hit for path in _tracked_files() for hit in _profile_paths(path)]
+    assert found == [], "machine profile paths in the public tree at: %s" % ", ".join(found[:50])
+
+
+def test_the_profile_rule_sees_every_form(tmp_path):
+    sep, name = "\\", "jdoe"
+    planted = tmp_path / "planted.txt"
+    planted.write_text("\n".join((
+        "a C:" + sep + "Users" + sep + name + sep + "x.txt",
+        '"d:' + sep * 2 + "users" + sep * 2 + name + sep * 2 + 'y"',
+        "C:/Users/" + name + "/z",
+        "cd /c/Users/" + name + "/repo",
+        "C:" + sep + "Users" + sep + "someone" + sep + "fixture.md",
+        "%LOCALAPPDATA%" + sep + "ArchHub",
+        "C:" + sep + "Users" + sep + "%USERNAME%" + sep + "AppData",
+        "https://host.example/c/users/" + name,
+    )) + "\n", encoding="utf-8")
+    assert _profile_paths(planted, tmp_path) == [
+        "planted.txt:1", "planted.txt:2", "planted.txt:3", "planted.txt:4"]

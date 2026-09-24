@@ -6172,7 +6172,7 @@ def test_machine_workshop_admission_rejects_protected_content_without_commit(tmp
         }
         for index, protected_text in enumerate((
             "Plan token=context-secret must not enter the Workshop graph.",
-            r"Review C:\\Users\\fargaly\\00.ARCHUB\\20.CLIENTS\\model.rvt",
+            r"Review D:\\Projects\\client-a\\model.rvt",
             "Bearer abcdefghijklmnopqrstuvwxyz",
         ), start=1):
             with pytest.raises(MachineTransportError, match="protected content"):

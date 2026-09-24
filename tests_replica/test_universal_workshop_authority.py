@@ -348,7 +348,7 @@ def test_founder_workshop_report_is_bounded_and_keeps_protected_entries_opaque(t
         assert report["entries"][-1]["text"].endswith("[path]")
         encoded = str(report)
         assert "50.TOOLING" not in encoded
-        assert "C:\\Users\\fargaly" not in encoded
+        assert "C:\\Users\\founder" not in encoded
         assert "actor_root" not in encoded
         assert "reference_roots" not in encoded
     finally:

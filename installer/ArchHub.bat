@@ -26,7 +26,7 @@ set "ARCHHUB_SETUP_RC=%errorlevel%"
 if not "%ARCHHUB_SETUP_RC%"=="0" (
   echo.
   echo ArchHub setup did not finish. Nothing was faked and nothing was marked ready.
-  echo Send this window text to Ahmed, then run ArchHub again once it is fixed.
+  echo Send this window text to your ArchHub administrator, then run ArchHub again once it is fixed.
   pause
   exit /b %ARCHHUB_SETUP_RC%
 )

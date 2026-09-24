@@ -10,9 +10,8 @@ verification still runs its structural and signature checks for real.
 """
 from pathlib import Path
 
-SOURCE = Path(
-    r"C:\Users\fargaly\00.ARCHUB\10.PRODUCT\13.NODE-LANGUAGE"
-    r"\nodelang\unified_authority.py"
+SOURCE = (
+    Path(__file__).resolve().parents[1] / "nodelang" / "unified_authority.py"
 ).read_text(encoding="utf-8")
 
 

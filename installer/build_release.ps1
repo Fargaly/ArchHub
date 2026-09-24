@@ -119,6 +119,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'nodelang/session_link/vendor/LICENSE', 'nodelang/session_link/vendor/PROVENANCE.md',
             'nodelang/outlook_graph.ps1',
             'nodelang/session_link/README.md', 'nodelang/session_link/session-link.ps1',
+            'nodelang/session_link/agent-skill.md',
             'nodelang/assets/LUCIDE-1.25.0-LICENSE.txt',
             'nodelang/assets/lucide-icons-1.25.0.json', 'nodelang/data/public_runtime_map.json',
             'nodelang/samples/sample-plan.dxf'
@@ -210,6 +211,8 @@ function Read-CandidateManifest([string]$Path) {
         'selected/nodelang/session_link/host-worker.mjs',
         'selected/nodelang/session_link_host.py',
         'selected/nodelang/session_link/session-link.ps1',
+        'selected/nodelang/session_link/agent-skill.md',
+        'selected/nodelang/session_link_config.py',
         'selected/nodelang/session_link/vendor/src/peer-protocol.mjs',
         'selected/nodelang/session_link/vendor/src/platform.mjs',
         'selected/nodelang/session_link/vendor/src/reload-control.mjs',

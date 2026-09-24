@@ -302,8 +302,7 @@ def host_installation_readiness(root: Path) -> list[dict]:
              "detail": "MCP import does not establish assistant registration, a session, or graph access."}]
     scripts = {"rhino": root / "bridges/rhino/archhub_mcp.py",
                "blender": root / "bridges/blender/archhub_mcp/__init__.py",
-               # installer/build_release.ps1 ships no 3ds Max script; bridges/sources is never payload.
-               "max": None}
+               "max": root / "bridges/max/max_mcp_startup.py"}
     for host, label in _HOST_SETUP_NAMES.items():
         for version in installations.get(host) or ["not-detected"]:
             row = {"host": label, "version": version,
@@ -325,11 +324,11 @@ def host_installation_readiness(root: Path) -> list[dict]:
                         row["deployment"] = "registration-present-unverified"
                         row["detail"] += " An existing Revit add-in registration was found; its ownership, version and load state were not verified."
             elif host in scripts:
-                row["packaged"] = ("script-packaged" if scripts[host] is not None and scripts[host].is_file()
-                                   else "not-packaged")
+                shipped = scripts[host].is_file()
+                row["packaged"] = "script-packaged" if shipped else "not-packaged"
                 row["deployment"] = "activation-unchecked"
-                row["detail"] = ("This build does not package an ArchHub script for this host." if scripts[host] is None
-                                 else "The host must explicitly load the ArchHub script; script presence does not establish activation.")
+                row["detail"] = ("The host must explicitly load the ArchHub script; script presence does not establish activation."
+                                 if shipped else "This build does not package an ArchHub script for this host.")
                 if host == "rhino":
                     row["detail"] += " The packaged script requires Rhino 8 CPython 3."
                     if version.isdigit() and int(version) < 8:

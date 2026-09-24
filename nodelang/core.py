@@ -167,9 +167,12 @@ def _run_host(port, code):
     # The bridge refuses an unsigned /exec, so the call goes through the one
     # authenticated client (host_bridge_auth.bridge_request); a refusal is a
     # host_error carrying the bridge's reason, not an unreachable host.
+    # The Revit and AutoCAD listeners register only http://localhost:<port>/
+    # (RevitMCPCore.cs, AcadMCPApp.cs); http.sys answers any other Host with
+    # 400, so the URL names localhost exactly as clean_revit_adapter does.
     from .host_bridge_auth import bridge_request
     try:
-        status, out = bridge_request('http://127.0.0.1:%d/exec' % int(port),
+        status, out = bridge_request('http://localhost:%d/exec' % int(port),
                                      {'code': code}, timeout=45)
         if status == 200 and out.get('status') == 'ok':
             return out.get('result')

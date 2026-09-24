@@ -3,7 +3,9 @@
 Founder report 2026-09-23: 3ds Max was hard-coded to 127.0.0.1:48886, the port AutoCAD's
 broker listens on, so MAXScript went to AutoCAD. MaxMCP binds the first free port from
 48886 to 48899 and answers /max-mcp/ping with service "max-mcp"
-(bridges/sources/max_mcp/max_mcp_startup.py). Sockets and HTTP answers are fixtures.
+(bridges/sources/max_mcp/max_mcp_startup.py). Sockets and HTTP answers are fixtures:
+the signed exec call (_bridge_call) is faked too, so no court reaches a live 3ds Max
+or the credential store the signing secret lives in.
 """
 from nodelang import host_brokers as hosts
 
@@ -23,8 +25,12 @@ def _fake(monkeypatch, listening):
         if url.endswith("/max-mcp/ping"):
             return {"status": "ok", "service": "max-mcp", "version": "0.2.0"}
         return {"status": "ok", "result": "ran"}
+
+    def bridge_call(url, body=None, timeout=20.0):
+        return http(url, body, timeout=timeout)
     monkeypatch.setattr(hosts, "_port_open", port_open)
     monkeypatch.setattr(hosts, "_http", http)
+    monkeypatch.setattr(hosts, "_bridge_call", bridge_call)
     monkeypatch.setattr(hosts, "_running", lambda names: False, raising=False)
     monkeypatch.setattr(hosts, "_installed", lambda paths: False, raising=False)
     return sent
@@ -46,6 +52,15 @@ def test_autocad_alone_is_not_3ds_max(monkeypatch):
     assert all(body is None for _url, body in sent), "no MAXScript was sent anywhere: %r" % sent
     row = next(row for row in hosts.probe_host_rows() if row["id"] == "max")
     assert row["state"] != "connected", row
+
+
+def test_a_court_signs_with_a_secret_held_in_memory_never_the_credential_store():
+    """conftest.no_real_credential_store: ensure_secret never reaches app.secrets_store in a court."""
+    from nodelang import host_bridge_auth as auth
+    store = auth._store()
+    assert type(store).__name__ == "_CourtCredentialStore", store
+    secret = auth.ensure_secret()
+    assert store.saved == {auth.PROVIDER: secret}
 
 
 def test_the_max_row_names_the_port_maxmcp_answers_on(monkeypatch):

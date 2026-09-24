@@ -158,6 +158,33 @@ def no_live_hosts(monkeypatch):
     monkeypatch.setattr(_library, "_NOTIFY_SURFACE", [])
 
 
+class _CourtCredentialStore:
+    """The host-bridge signing secret's store for one court, in memory."""
+
+    def __init__(self):
+        self.saved = {}
+
+    def load_api_key(self, name):
+        return self.saved.get(name)
+
+    def save_api_key(self, name, value):
+        self.saved[name] = value
+
+
+@_pytest.fixture(autouse=True)
+def no_real_credential_store(monkeypatch):
+    # host_bridge_auth.ensure_secret creates the bridge secret in the app's
+    # credential store -- on Windows the person's Credential Locker -- the
+    # first time anything signs a bridge call. A court that reached a signed
+    # call with nothing stubbed wrote the REAL entry. Every court signs with
+    # a secret held in memory for that test; a court that needs its own store
+    # replaces _store (or ensure_secret) with its own monkeypatch.
+    import nodelang.host_bridge_auth as _auth
+    store = _CourtCredentialStore()
+    monkeypatch.setattr(_auth, "_store", lambda: store)
+    return store
+
+
 @_pytest.fixture(autouse=True)
 def no_configured_model_default(monkeypatch):
     # Courts never read this machine's real settings default_model: with no pick,

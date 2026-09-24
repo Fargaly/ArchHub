@@ -506,6 +506,28 @@ def test_the_dotnet_guard_the_revit_and_autocad_add_ins_link(harness_exe, creden
         process.wait(timeout=10)
 
 
+def test_the_host_graph_node_reaches_a_listener_registered_on_localhost(harness_exe, credential, monkeypatch):
+    """nodelang/core.py _run_host against the one prefix the Revit and AutoCAD add-ins register.
+
+    RevitMCPCore.cs and AcadMCPApp.cs add only http://localhost:<port>/ to their
+    HttpListener; http.sys answers a request whose Host is 127.0.0.1:<port> with 400
+    before the add-in (or BridgeAuth) ever sees it.
+    """
+    from nodelang import core
+    port = _free_port()
+    process = subprocess.Popen([str(harness_exe), str(port), credential.service, USER],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert process.stdout.readline().strip() == "READY"
+        monkeypatch.setattr(auth, "ensure_secret", lambda: credential.secret)
+        assert core._run_host(port, "noop") == "ran"
+        # The address the node used to post to never reaches the add-in.
+        assert _raw("http://127.0.0.1:%d/ping" % port)[0] == 400
+    finally:
+        process.stdin.close()
+        process.wait(timeout=10)
+
+
 def test_every_dotnet_route_passes_the_guard_before_it_runs():
     core = (ROOT / "bridges/sources/revit_mcp_core/RevitMCPCore.cs").read_text(encoding="utf-8")
     acad = (ROOT / "bridges/sources/acad_mcp/AcadMCPApp.cs").read_text(encoding="utf-8")

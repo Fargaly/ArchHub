@@ -1,4 +1,5 @@
 """Passive setup evidence: fixtures never inspect or launch the user's hosts."""
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -73,6 +74,14 @@ class HostInstallationReadinessTests(unittest.TestCase):
         self.assertEqual("not-packaged", row["packaged"])
         self.assertIn("does not package", row["detail"])
 
+    def test_the_max_script_the_installer_ships_is_reported_as_packaged(self):
+        # installer/ArchHub.iss places bridges/sources/max_mcp/max_mcp_startup.py at {app}/bridges/max.
+        rows = self.rows({"max": ["2026"]}, files=("X:/archhub/bridges/max/max_mcp_startup.py",))
+        row = next(row for row in rows if row["host"] == "3ds Max")
+        self.assertEqual("script-packaged", row["packaged"])
+        self.assertEqual("activation-unchecked", row["deployment"])
+        self.assertNotIn("does not package", row["detail"])
+
     def test_every_packaged_script_probe_is_in_the_release_allowlist(self):
         import ast
         source = Path(setup.__file__).resolve()
@@ -84,8 +93,16 @@ class HostInstallationReadinessTests(unittest.TestCase):
                   if isinstance(node, ast.Constant) and isinstance(node.value, str)
                   and node.value.startswith("bridges/")}
         self.assertTrue(probes)
+        # A probe names where the installer puts a script under {app}; the release
+        # allowlist names the source file the installer copies there.
+        installer = (source.parent / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
+        placed = {}
+        for match in re.finditer(r'^Source: "\.\.\\([^"]+)"; DestDir: "\{app\}\\([^"]+)"', installer, re.M):
+            shipped = match.group(1).replace("\\", "/")
+            placed[match.group(2).replace("\\", "/") + "/" + shipped.rsplit("/", 1)[-1]] = shipped
         for probe in sorted(probes):
-            self.assertIn("'%s'" % probe, release)
+            self.assertIn(probe, placed)
+            self.assertIn("'%s'" % placed[probe], release)
 
     def test_missing_com_dependency_and_unchecked_assistant_registration_are_visible(self):
         rows = self.rows({"excel": ["version-unchecked"]}, dependency=False)

@@ -574,7 +574,8 @@ def _publish_map_to_cloud():
         return "no cloud session on this machine"
     held = json.loads(cloud.read_text(encoding="utf-8"))
     token = held.get("token")
-    base = held.get("cloud_base_url") or "https://archhub-cloud.fly.dev"
+    from nodelang.cloud_relay import pinned_cloud_base
+    base = pinned_cloud_base(held.get("cloud_base_url"))
     if not token:
         return "cloud session carries no token"
     from nodelang.universal_pipeline import project_atlas_map
@@ -1274,10 +1275,11 @@ def _cockpit_offer():
 
 def _cockpit_offer_command(utterance, execute):
     # The cockpit's offer control changes the one offer record, as the founder
-    # the cloud session on this machine was issued to. Any other words return
-    # None and go to BABOOM exactly as before.
+    # the CLOUD names for this machine's session (/v1/me + its founder-only
+    # route), never the email cloud.json holds: that file is editable. Any
+    # other words return None and go to BABOOM exactly as before.
     from nodelang.cell_accounts import apply_offer_command, parse_offer_command
-    from nodelang.cloud_session import signed_in_cloud_account
+    from nodelang.cloud_session import signed_in_founder_account
     if parse_offer_command(utterance) is None:
         return None
     if _baboom_stop.is_set():
@@ -1285,7 +1287,7 @@ def _cockpit_offer_command(utterance, execute):
     with server.mutation_lock:
         return apply_offer_command(
             server.universal_store, utterance,
-            founder_account=signed_in_cloud_account(), execute=execute,
+            founder_account=signed_in_founder_account(), execute=execute,
         )
 
 

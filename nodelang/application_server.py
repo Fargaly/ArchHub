@@ -403,16 +403,13 @@ from .runtime_credentials import (
 )
 from .runtime_compliance_adapter import run_physical_runtime_compliance_court
 from .runtime_gateway import BackendGeneration
-from .universal_cloud_gateway import (
-    UniversalCloudGateway,
-    create_application_cloud_gateway,
-    validate_universal_cloud_resource_origin,
-)
-from .universal_cloud_listener import (
-    UniversalCloudTlsListener,
-    create_universal_cloud_tls_server,
-    validate_universal_cloud_tls_listener,
-)
+# The cloud gateway (FastAPI) and its TLS listener (uvicorn) are imported
+# where a cloud deployment builds them, never at desktop boot: the desktop
+# setup installs no server packages (requirements-cloud.txt holds them).
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .universal_cloud_gateway import UniversalCloudGateway
 
 
 MAX_REQUEST_BODY_BYTES = 1_048_576
@@ -5021,6 +5018,13 @@ class ApplicationServer:
         self._validated_universal_cloud_origin = None
         self._validated_universal_cloud_listener = None
         if enable_universal_cloud_gateway:
+            from .universal_cloud_gateway import (
+                validate_universal_cloud_resource_origin,
+            )
+            from .universal_cloud_listener import (
+                UniversalCloudTlsListener,
+                validate_universal_cloud_tls_listener,
+            )
             # Deployment mistakes must fail before this process claims a graph
             # runtime owner or opens any listening socket.
             self._validated_universal_cloud_origin = (
@@ -6661,6 +6665,14 @@ class ApplicationServer:
                             payload = application_update_action(owner, body)
                         self._json(200, payload)
                         return
+                    if self.path == '/api/universal/cockpit-link':
+                        # The cockpit is a lens of this app: it opens on the
+                        # app's own session through the cloud's one-time
+                        # hand-off, here or on another device. The cloud call
+                        # never holds the mutation lock.
+                        from .cloud_signin import cockpit_link
+                        self._json(200, cockpit_link())
+                        return
                     if self.path == '/api/universal/workshop-native':
                         host = getattr(owner, '_existing_workshop_native_host', None)
                         if host is None:
@@ -7532,32 +7544,38 @@ class ApplicationServer:
                             elif self.path == '/api/universal/login':
                                 from .cell_accounts import (
                                     ensure_accounts,
-                                    founder_email,
                                     upsert_account,
-                                )
-                                ensure_accounts(
-                                    owner.universal_store,
-                                    founder_email=(
-                                        'ahmed.fargaly98@gmail.com'
-                                    ),
                                 )
                                 # Identity is an email account; the only proof of one on this
                                 # machine is the cloud session opened with Google. A typed
                                 # email that is not that account is refused.
-                                from .cloud_session import signed_in_cloud_account
+                                from .cloud_session import (
+                                    login_standing,
+                                    signed_in_cloud_account,
+                                    signed_in_founder_account,
+                                )
                                 wanted = str(body.get('email') or '').strip().casefold()
                                 if not wanted or wanted != signed_in_cloud_account():
                                     raise AuthorizationDenied(
                                         'sign in to the cloud with this account first')
-                                _root, mail, tier = upsert_account(
+                                # The founder is recorded only when THIS account is one;
+                                # a colleague's graph never names the founder.
+                                cloud_founder = signed_in_founder_account()
+                                ensure_accounts(
+                                    owner.universal_store,
+                                    founder_email=cloud_founder,
+                                )
+                                _root, mail, stored_tier = upsert_account(
                                     owner.universal_store,
                                     wanted,
                                 )
+                                # Founder and its tier come ONLY from the cloud's
+                                # answer now, never from what the graph recorded.
+                                tier, founder = login_standing(
+                                    mail, stored_tier, cloud_founder)
                                 self._json(200, {
                                     'ok': True, 'email': mail, 'tier': tier,
-                                    'founder': mail == founder_email(
-                                        owner.universal_store.snapshot()
-                                    ),
+                                    'founder': founder,
                                 })
                                 return
                             elif self.path == '/api/universal/accounts':
@@ -7565,13 +7583,13 @@ class ApplicationServer:
                                     ensure_accounts,
                                     read_accounts,
                                 )
+                                from .cloud_session import signed_in_founder_account
+                                # Refuse first: a refused request writes nothing.
+                                owner._require_founder_machine()
                                 ensure_accounts(
                                     owner.universal_store,
-                                    founder_email=(
-                                        'ahmed.fargaly98@gmail.com'
-                                    ),
+                                    founder_email=signed_in_founder_account(),
                                 )
-                                owner._require_founder_machine()
                                 self._json(200, {
                                     'ok': True,
                                     'accounts': read_accounts(
@@ -7678,6 +7696,7 @@ class ApplicationServer:
                             elif self.path == '/api/universal/brain-remember':
                                 import hashlib as _h
 
+                                from .cloud_session import signed_in_cloud_account
                                 from .pipeline_engines import _brain_call
                                 said = str(body.get('text') or '').strip()
                                 if not said:
@@ -7686,6 +7705,7 @@ class ApplicationServer:
                                         'error': 'nothing to remember',
                                     })
                                     return
+                                rememberer = signed_in_cloud_account() or 'local'
                                 _brain_call('brain.write', {'ops': [{
                                     'op': 'add',
                                     'fragment': {
@@ -7693,15 +7713,13 @@ class ApplicationServer:
                                             said.encode('utf-8')
                                         ).hexdigest(),
                                         'kind': 'fact', 'text': said,
-                                        'owner_user': (
-                                            'ahmed.fargaly98@gmail.com'
-                                        ),
-                                        'tags': ['founder'],
+                                        # The person signed in on this
+                                        # machine, never a fixed account.
+                                        'owner_user': rememberer,
+                                        'tags': ['user'],
                                         'provenance': {
                                             'contributing_agent': 'archhub',
-                                            'contributing_user': (
-                                                'ahmed.fargaly98@gmail.com'
-                                            ),
+                                            'contributing_user': rememberer,
                                         },
                                     },
                                 }]})
@@ -10167,11 +10185,10 @@ class ApplicationServer:
     def _require_founder_machine(self) -> None:
         """Account administration is the founder's alone: the cloud session on
         this machine must be the founder's own account."""
-        from .cell_accounts import founder_email
-        from .cloud_session import signed_in_cloud_account
-        who = signed_in_cloud_account()
-        founder = founder_email(self.universal_store.snapshot())
-        if not who or not founder or who != str(founder).strip().casefold():
+        # The cloud account decides, never the graph: a graph can hold no
+        # founder at all (a colleague's), and a machine is never a founder.
+        from .cloud_session import signed_in_founder_account
+        if not signed_in_founder_account():
             raise AuthorizationDenied("account administration is the founder's alone")
 
     # Brain health and host probes are read by every BABOOM frame. They are never
@@ -16921,6 +16938,7 @@ class ApplicationServer:
             key_id=nonce_key_id,
             audience=resource_origin,
         )
+        from .universal_cloud_gateway import create_application_cloud_gateway
         return create_application_cloud_gateway(
             self,
             session_broker=session_broker,
@@ -16951,6 +16969,10 @@ class ApplicationServer:
             resource_origin=resource_origin,
             nonce_key_provider=nonce_key_provider,
             nonce_key_id=nonce_key_id,
+        )
+        from .universal_cloud_listener import (
+            UniversalCloudTlsListener,
+            create_universal_cloud_tls_server,
         )
         listener = UniversalCloudTlsListener(
             host=self.cloud_host,

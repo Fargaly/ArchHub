@@ -147,7 +147,9 @@ def _destination(
         return ModelRoute(family, model, OLLAMA_CHAT, "Ollama", False)
     if family == "openrouter":
         return ModelRoute(family, model, OPENROUTER_CHAT, "OpenRouter", True)
-    base = str(cloud_base_url or _default_cloud_base()).rstrip("/")
+    from .cloud_relay import pinned_cloud_base  # noqa: PLC0415
+
+    base = pinned_cloud_base(cloud_base_url or _default_cloud_base())
     return ModelRoute(
         family, model, base + CLOUD_CHAT_PATH, "the ArchHub cloud", True
     )

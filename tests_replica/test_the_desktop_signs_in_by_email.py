@@ -81,8 +81,12 @@ class _FakeCloud(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def cloud():
+def cloud(monkeypatch):
     server = HTTPServer(("127.0.0.1", 0), _FakeCloud)
+    # The stand-in cloud is pinned for this court only; the app pins its hosts.
+    from nodelang import cloud_relay
+    monkeypatch.setattr(cloud_relay, "PINNED_BASES", cloud_relay.PINNED_BASES
+                        + ("http://127.0.0.1:%d" % server.server_port,))
     server.seen = []
     server.google_down = False
     server.refuse_exchange = False
@@ -198,19 +202,28 @@ def test_google_unavailable_is_named_before_any_browser_opens(cloud, tmp_path):
     assert opened == []
 
 
-def test_sign_out_forgets_the_session_and_keeps_the_rest(cloud, tmp_path):
+def test_sign_out_forgets_the_session_and_keeps_the_rest(tmp_path):
+    """The bearer goes only to a pinned cloud host, never to the base the file names."""
     record = tmp_path / "cloud.json"
-    base = f"http://127.0.0.1:{cloud.server_port}"
     cloud_signin.write_cloud_session(record, {
         "token": "ah_" + "y" * 40, "email": "ahmed@example.com", "user_id": "u-42",
-        "cloud_base_url": base, "sync_cursor": "hlc-17"})
-    assert cloud_signin.session_summary(record) == {"signed_in": True, "email": "ahmed@example.com"}
-    out = cloud_signin.sign_out(record, wait=True)
+        "cloud_base_url": "https://api.archhub.io", "sync_cursor": "hlc-17",
+        "expires_at": 4_000_000_000})
+    seen = []
+
+    def http(method, url, *, body=None, headers=None, timeout=15.0):
+        seen.append((method, url, (headers or {}).get("Authorization")))
+        return (200, {"email": "ahmed@example.com", "founder": False}) if url.endswith("/v1/me") else (200, {})
+
+    summary = cloud_signin.session_summary(record, http=http)
+    assert (summary["state"], summary["signed_in"], summary["email"]) == (
+        "signed_in", True, "ahmed@example.com")
+    out = cloud_signin.sign_out(record, wait=True, http=http)
     assert out == {"signed_in": False, "email": ""}
     held = json.loads(record.read_text(encoding="utf-8"))
     assert "token" not in held and "email" not in held and held["sync_cursor"] == "hlc-17"
     assert signed_in_cloud_account(record) is None
-    assert cloud.seen == [("logout", "Bearer ah_" + "y" * 40)]
+    assert seen[-1] == ("POST", "https://api.archhub.io/v1/auth/logout", "Bearer ah_" + "y" * 40)
 
 
 def test_a_second_click_joins_the_waiting_attempt(cloud, tmp_path, monkeypatch):

@@ -1246,16 +1246,13 @@ def create_baboom_native_companion_window(
             self._input.setCursorPosition(len(prefix))
 
         def _open_cockpit(self) -> None:
-            "Open the cockpit already signed in, never on a token form."
-            import os
+            "Open the cockpit on the app's own session, never on a sign-in page."
             import webbrowser
-            from pathlib import Path
             from .cloud_relay import cockpit_url
-            appdata = os.environ.get("LOCALAPPDATA") or ""
-            webbrowser.open(
-                cockpit_url(Path(appdata)) if appdata
-                else "https://api.archhub.io/founder"
-            )
+            from .cloud_signin import cloud_session_path
+            # cloud.json lives under APPDATA (Settings > Account writes it);
+            # the local (non-roaming) folder held no session, so the link never carried one.
+            webbrowser.open(cockpit_url(cloud_session_path().parents[2]))
 
         def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt callback name
             from PyQt6.QtWidgets import QMenu

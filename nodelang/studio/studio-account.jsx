@@ -523,6 +523,74 @@ function BrainFolderActions() {
   );
 }
 
+// The one sign-in record on this machine (cloud.json), as the app reads it:
+// signed in until a date, or expired with the way back in. The founder saw an
+// email and "Sign out" over a 90-day-old session the cloud refused (2026-09-24);
+// this panel now shows the session the app actually holds, never localStorage.
+function CloudSessionCard({ onSession }) {
+  const [s, setS] = React.useState(null);
+  const [cockpit, setCockpit] = React.useState({ busy: false, link: '', err: '', copied: false });
+  const read = async () => {
+    try {
+      const r = window.ARCHHUB_CLOUD_SESSION ? await window.ARCHHUB_CLOUD_SESSION() : null;
+      const next = r && r.ok !== false ? r : { state: 'unknown', error: (r && r.error) || 'the app did not answer' };
+      setS(next); onSession && onSession(next);
+    } catch (e) { setS({ state: 'unknown', error: String((e && e.message) || e) }); }
+  };
+  React.useEffect(() => { read(); }, []);
+  // One link, minted from this session by the cloud's hand-off: opened here it
+  // lands in an ArchHub window; copied, it opens the cockpit on another device.
+  const mint = async (here) => {
+    setCockpit({ busy: true, link: '', err: '', copied: false });
+    try {
+      const r = await window.ARCHHUB_COCKPIT_LINK();
+      if (!r || !r.ok || !r.url) {
+        setCockpit({ busy: false, link: '', err: (r && r.error) || 'the cockpit link was refused', copied: false });
+        if (r && (r.founder === false || (r.state && r.state !== 'signed_in'))) read();
+        return;
+      }
+      if (here) { window.open(r.url, '_blank'); setCockpit({ busy: false, link: '', err: '', copied: false }); }
+      else setCockpit({ busy: false, link: r.url, err: '', copied: false });
+    } catch (e) { setCockpit({ busy: false, link: '', err: String((e && e.message) || e), copied: false }); }
+  };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(cockpit.link); setCockpit(Object.assign({}, cockpit, { copied: true })); } catch (e) {}
+  };
+  const line = (color, text) => (
+    <div style={{ padding: '9px 11px', borderRadius: AC.rad.sm, border: `1px solid ${AC.line}`, background: AC.bg, fontFamily: AC.mono, fontSize: 12, color, marginBottom: 8 }}>{text}</div>
+  );
+  const until = s && s.expires_at ? new Date(s.expires_at * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+  if (!s) return line(AC.inkSoft, 'reading the sign-in on this machine');
+  if (s.state === 'signed_in') return (
+    <div style={{ marginBottom: 16 }}>
+      {line(AC.ok, (until ? 'Signed in until ' + until : 'Signed in') + ' · ' + s.email)}
+      {/* the cockpit is the owner's: offered only when the saved record or
+          the cloud's /v1/me says this account owns it */}
+      {s.founder === true && <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={() => mint(true)} disabled={cockpit.busy} style={smallBtn(true)}>Open the cockpit</button>
+        <button onClick={() => mint(false)} disabled={cockpit.busy} style={smallBtn()}>Link for another device</button>
+      </div>}
+      {cockpit.link && (
+        <div style={{ marginTop: 8, fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, lineHeight: 1.5 }}>
+          <div style={{ wordBreak: 'break-all', color: AC.ink }}>{cockpit.link}</div>
+          <button onClick={copy} style={Object.assign({}, smallBtn(), { marginTop: 6 })}>{cockpit.copied ? 'Copied' : 'Copy link'}</button>
+          <div style={{ marginTop: 4 }}>Opens once, within five minutes, on this account.</div>
+        </div>
+      )}
+      {cockpit.err && <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.err, marginTop: 6 }}>{cockpit.err}</div>}
+    </div>
+  );
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {s.state === 'expired'
+        ? line(AC.err, 'Sign-in expired, sign in again' + (s.email ? ' · ' + s.email : ''))
+        : s.state === 'unknown' ? line(AC.err, 'Sign-in state unavailable: ' + (s.error || 'no answer'))
+        : line(AC.inkSoft, 'Not signed in')}
+      <CloudSignIn email="" onSignedIn={() => read()}/>
+    </div>
+  );
+}
+
 function SettingsAccount({ account, setAccount, onSignOut }) {
   // Prefer the live record on disk when the passed snapshot predates a sign-up — this panel
   // states someone's plan and spend, so it must not render a stale one.
@@ -552,17 +620,17 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
         </div>
       </div>
 
-      {/* not signed in: the cloud signs the account in right here */}
-      {!a.signedIn && (
-        <CloudSignIn email="" onSignedIn={mail => {
-          patchA({ email: mail, signedIn: true, created: a.created || new Date().toISOString().slice(0, 10) });
-          if (window.ARCHHUB_LOGIN) {
-            window.ARCHHUB_LOGIN(mail).then(live => {
-              if (live && live.tier) patchA({ email: mail, signedIn: true, plan: live.tier, graphTier: live.tier, founder: !!live.founder });
-            }).catch(() => {});
-          }
-        }}/>
-      )}
+      {/* the one sign-in: what cloud.json holds, and the way back in when it lapsed */}
+      <CloudSessionCard onSession={session => {
+        const mail = session.state === 'signed_in' ? session.email : '';
+        if (!mail) { if (a.signedIn) patchA({ signedIn: false }); return; }
+        if (!a.signedIn || a.email !== mail) patchA({ email: mail, signedIn: true, created: a.created || new Date().toISOString().slice(0, 10) });
+        if (window.ARCHHUB_LOGIN) {
+          window.ARCHHUB_LOGIN(mail).then(live => {
+            if (live && live.tier) patchA({ email: mail, signedIn: true, plan: live.tier, graphTier: live.tier, founder: !!live.founder });
+          }).catch(() => {});
+        }
+      }}/>
 
       {/* usage meters — real numbers against the plan the account actually holds */}
       <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', marginBottom: 9 }}>THIS CYCLE</div>

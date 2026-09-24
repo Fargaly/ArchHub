@@ -25,7 +25,7 @@ _SECRET_PREFIXES = ("sk-", "ghp_", "github_pat_", "bearer ", "xoxb-")
 GRAND_MAP_CLOUD_SERVICES = (
     {
         "id": "cloud_fly_app", "title": "Cloud application host", "role": "host",
-        "endpoint": {"transport": "https", "address": "https://archhub-cloud.fly.dev", "enabled": True, "timeout_ms": 5000},
+        "endpoint": {"transport": "https", "address": "https://api.archhub.io", "enabled": True, "timeout_ms": 5000},
         "configuration": {"app": "archhub-cloud", "primary_region": "ord", "scale_mode": "scale-to-zero"},
     },
     {

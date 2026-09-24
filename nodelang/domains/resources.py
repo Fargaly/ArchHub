@@ -87,7 +87,7 @@ DEFAULT_RESOURCES = (
     {
         "id": "identity-database", "title": "User identity database",
         "resource_type": "urn:archhub:resource:identity-database",
-        "locator": "https://archhub-cloud.fly.dev/readyz", "privacy_tier": "T1 INTERNAL",
+        "locator": "https://api.archhub.io/readyz", "privacy_tier": "T1 INTERNAL",
         "lifecycle": "WIP", "schema_ref": "urn:archhub:schema:identity",
         "schema_version": "1", "read_enabled": True, "write_enabled": False,
         "founder_only": True, "probe": {
@@ -103,7 +103,7 @@ DEFAULT_RESOURCES = (
     {
         "id": "application-database", "title": "Application database",
         "resource_type": "urn:archhub:resource:database",
-        "locator": "https://archhub-cloud.fly.dev/readyz", "privacy_tier": "T1 INTERNAL",
+        "locator": "https://api.archhub.io/readyz", "privacy_tier": "T1 INTERNAL",
         "lifecycle": "WIP", "schema_ref": "urn:archhub:schema:application-data",
         "schema_version": "1", "read_enabled": True, "write_enabled": False,
         "founder_only": True, "probe": {
@@ -116,7 +116,7 @@ DEFAULT_RESOURCES = (
     {
         "id": "object-storage", "title": "Object storage",
         "resource_type": "urn:archhub:resource:content-store",
-        "locator": "https://archhub-cloud.fly.dev/readyz", "privacy_tier": "T1 INTERNAL",
+        "locator": "https://api.archhub.io/readyz", "privacy_tier": "T1 INTERNAL",
         "lifecycle": "WIP", "schema_ref": "urn:archhub:schema:content-descriptor",
         "schema_version": "1", "read_enabled": True, "write_enabled": False,
         "founder_only": True, "probe": {
@@ -129,7 +129,7 @@ DEFAULT_RESOURCES = (
     {
         "id": "billing-provider", "title": "Billing provider",
         "resource_type": "urn:archhub:resource:payment-provider",
-        "locator": "https://archhub-cloud.fly.dev/readyz", "privacy_tier": "T1 INTERNAL",
+        "locator": "https://api.archhub.io/readyz", "privacy_tier": "T1 INTERNAL",
         "lifecycle": "WIP", "schema_ref": "urn:archhub:schema:billing-event",
         "schema_version": "1", "read_enabled": True, "write_enabled": False,
         "founder_only": True, "probe": {
@@ -142,7 +142,7 @@ DEFAULT_RESOURCES = (
     {
         "id": "email-provider", "title": "Transactional email provider",
         "resource_type": "urn:archhub:resource:messaging-provider",
-        "locator": "https://archhub-cloud.fly.dev/readyz", "privacy_tier": "T1 INTERNAL",
+        "locator": "https://api.archhub.io/readyz", "privacy_tier": "T1 INTERNAL",
         "lifecycle": "WIP", "schema_ref": "urn:archhub:schema:message",
         "schema_version": "1", "read_enabled": True, "write_enabled": False,
         "founder_only": True, "probe": {

@@ -245,6 +245,13 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     };
     window.ARCHHUB_CLOUD_SIGNOUT = () =>
       jpost('/api/universal/cloud-signout', {});
+    // The cockpit opens on this session: a one-time link the app mints.
+    // Read as JSON either way: a refusal carries the state to show.
+    window.ARCHHUB_COCKPIT_LINK = async () => {
+      const r = await fetch('/api/universal/cockpit-link',
+        {method:'POST', headers:H(), body:'{}'});
+      return r.json();
+    };
     window.ARCHHUB_ACCOUNTS = async () =>
       (await jpost('/api/universal/accounts', {})).accounts || [];
     window.ARCHHUB_SET_TIER = (email, tier) =>

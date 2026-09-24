@@ -3444,6 +3444,7 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("GET", "/api/universal/cloud-signin", "read"),
     ("POST", "/api/universal/cloud-signin", "execute"),
     ("POST", "/api/universal/cloud-signout", "execute"),
+    ("POST", "/api/universal/cockpit-link", "execute"),
     ("POST", "/api/universal/pipeline-seed", "edit"),
     ("POST", "/api/universal/interaction", "edit"),
     ("POST", "/api/universal/instantiate", "create"),

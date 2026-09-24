@@ -4,8 +4,10 @@
 ; SHA-256, per-user, no PATH change) when the machine has no usable Python,
 ; and leaves a Start-menu and Desktop entry. It does NOT install the
 ; Python packages: the FIRST open of either shortcut runs ArchHub.bat, which
-; runs colleague_setup.py against requirements.txt in a window the person can
-; read, and only then opens the application. Saying the installer installed
+; runs colleague_setup.py against requirements.txt (the DESKTOP list; server
+; packages are in requirements-cloud.txt and never ship) in a window the
+; person can read, installing from the wheelhouse this installer carries, so
+; no internet or proxy is needed, and only then opens the application. Saying the installer installed
 ; them sent colleagues looking for a broken install when the real work had
 ; simply not run yet.
 ; Not signed (code-signing is geo-blocked for the founder's region);
@@ -29,6 +31,11 @@
 #endif
 #ifndef NodeLicensePath
 #error Build with installer/build_release.ps1: NodeLicensePath is required.
+#endif
+; Every desktop wheel for CPython 3.14 win_amd64, fetched by build_release.ps1
+; from requirements.txt; colleague_setup.py installs from it with --no-index.
+#ifndef WheelhousePath
+#error Build with installer/build_release.ps1: WheelhousePath is required.
 #endif
 #define BundledNodeSha256 GetSHA256OfFile(NodeRuntimePath)
 #define PayloadExcludes "__pycache__\*,*.pyc,*.pyo,.env,.env.*,*.sqlite3,*.sqlite3-*,*.db,*.db-*,*.key,*.pem"
@@ -95,6 +102,7 @@ Source: "..\bridges\blender\archhub_mcp\__init__.py"; DestDir: "{app}\bridges\bl
 Source: "..\bridges\sources\max_mcp\max_mcp_startup.py"; DestDir: "{app}\bridges\max"; Flags: ignoreversion
 Source: "..\colleague_setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#WheelhousePath}\*.whl"; DestDir: "{app}\wheelhouse"; Flags: ignoreversion
 Source: "ArchHub.bat"; DestDir: "{app}"; Flags: ignoreversion
 ; Replaces the previous launcher of the same name. Existing user state and
 ; old installation files are not recursively deleted by this package.
@@ -116,6 +124,8 @@ Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.py"
 Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.pyc"
 Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.pyo"
 Type: files; Name: "{app}\nodelang\__pycache__\cell_baboom_connector_execution.*.pyc"
+; The wheelhouse is this build's alone; an older build's wheels never mix in.
+Type: files; Name: "{app}\wheelhouse\*.whl"
 
 [Icons]
 Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"
@@ -128,6 +138,8 @@ Name: "{autodesktop}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}
 Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open installs what it needs, in a window you can read)"; Flags: shellexec postinstall nowait skipifsilent
 
 [Code]
+#include "legacy_sweep.iss"
+
 function NodeRuntimeNeedsInstall(): Boolean;
 var
   InstalledRuntime: String;
@@ -239,6 +251,8 @@ begin
     application files. The launcher independently validates the environment. }
   if CurStep = ssInstall then
   begin
+    { v1.x left its whole code tree beside this one; sweep it once, guarded. }
+    SweepLegacyV1(ExpandConstant('{app}'));
     ReadyPath := ExpandConstant('{app}\.archhub-ready');
     if FileExists(ReadyPath) then
       if (not LoadStringFromFile(ReadyPath, ReadyIdentity)) or

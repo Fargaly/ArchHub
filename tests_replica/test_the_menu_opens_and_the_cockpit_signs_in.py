@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from nodelang import baboom_native_companion as companion
-from nodelang import cloud_relay
+from nodelang import cloud_relay, cloud_signin
 
 
 def _menu_source() -> str:
@@ -54,62 +54,49 @@ def test_the_menu_asks_for_a_signed_in_cockpit_address():
     assert "cockpit_url" in helper
 
 
+def _session(appdata: Path, **fields) -> None:
+    record = appdata / "ArchHub" / "brain" / "cloud.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    held = {"token": "founder-session", "email": "founder@example.com",
+            "cloud_base_url": "https://api.archhub.io", "expires_at": 4_000_000_000}
+    held.update(fields)
+    record.write_text(json.dumps(held), encoding="utf-8")
+
+
+def _cloud(monkeypatch, answer):
+    seen: list = []
+
+    def http(method, url, *, body=None, headers=None, timeout=15.0):
+        seen.append({"method": method, "url": url, "auth": (headers or {}).get("Authorization")})
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(cloud_signin, "http_json", http)
+    return seen
+
+
 def test_a_signed_in_machine_gets_a_claim_link(monkeypatch, tmp_path):
     """The desktop spends its session once for a link the browser can open."""
-    monkeypatch.setattr(
-        cloud_relay, "load_cloud_session",
-        lambda appdata: {"token": "founder-session", "base_url": "https://cloud.test"},
-    )
-    seen: dict = {}
-
-    class _Answer:
-        def read(self):
-            return json.dumps(
-                {"claim_url": "https://cloud.test/founder/claim?code=abc"}
-            ).encode("utf-8")
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    def urlopen(request, timeout=None):
-        seen["url"] = request.full_url
-        seen["method"] = request.get_method()
-        seen["auth"] = request.get_header("Authorization")
-        return _Answer()
-
-    monkeypatch.setattr(cloud_relay.urllib.request, "urlopen", urlopen)
+    _session(tmp_path)
+    seen = _cloud(monkeypatch, (200, {"claim_url": "https://api.archhub.io/founder/claim?code=abc"}))
     url = cloud_relay.cockpit_url(tmp_path)
 
-    assert url == "https://cloud.test/founder/claim?code=abc"
-    assert seen["url"] == "https://cloud.test/founder/api/browser-code"
-    assert seen["method"] == "POST"
-    assert seen["auth"] == "Bearer founder-session"
+    assert url == "https://api.archhub.io/founder/claim?code=abc"
+    assert seen == [{"method": "POST", "url": "https://api.archhub.io/founder/api/browser-code",
+                     "auth": "Bearer founder-session"}]
 
 
 def test_a_signed_out_machine_still_gets_a_live_address(monkeypatch, tmp_path):
-    monkeypatch.setattr(cloud_relay, "load_cloud_session", lambda appdata: None)
-
-    def urlopen(request, timeout=None):
-        raise AssertionError("a signed-out machine must not call the cockpit")
-
-    monkeypatch.setattr(cloud_relay.urllib.request, "urlopen", urlopen)
+    seen = _cloud(monkeypatch, AssertionError("a signed-out machine must not call the cockpit"))
     assert cloud_relay.cockpit_url(tmp_path) == cloud_relay.DEFAULT_BASE + "/founder"
+    assert seen == []
 
 
 def test_a_refused_handoff_falls_back_rather_than_opening_nothing(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        cloud_relay, "load_cloud_session",
-        lambda appdata: {"token": "t", "base_url": "https://cloud.test"},
-    )
-
-    def urlopen(request, timeout=None):
-        raise OSError("cloud is unreachable")
-
-    monkeypatch.setattr(cloud_relay.urllib.request, "urlopen", urlopen)
-    assert cloud_relay.cockpit_url(tmp_path) == "https://cloud.test/founder"
+    _session(tmp_path)
+    _cloud(monkeypatch, OSError("cloud is unreachable"))
+    assert cloud_relay.cockpit_url(tmp_path) == "https://api.archhub.io/founder"
 
 
 @pytest.mark.parametrize(
@@ -117,23 +104,6 @@ def test_a_refused_handoff_falls_back_rather_than_opening_nothing(monkeypatch, t
 )
 def test_only_an_https_claim_link_is_opened(monkeypatch, tmp_path, claim):
     """A hand-off link is opened in a browser; it never leaves https."""
-    monkeypatch.setattr(
-        cloud_relay, "load_cloud_session",
-        lambda appdata: {"token": "t", "base_url": "https://cloud.test"},
-    )
-
-    class _Answer:
-        def read(self):
-            return json.dumps({"claim_url": claim}).encode("utf-8")
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    monkeypatch.setattr(
-        cloud_relay.urllib.request, "urlopen",
-        lambda request, timeout=None: _Answer(),
-    )
-    assert cloud_relay.cockpit_url(tmp_path) == "https://cloud.test/founder"
+    _session(tmp_path)
+    _cloud(monkeypatch, (200, {"claim_url": claim}))
+    assert cloud_relay.cockpit_url(tmp_path) == "https://api.archhub.io/founder"

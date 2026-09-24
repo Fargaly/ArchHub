@@ -32,7 +32,20 @@ from pathlib import Path
 MAX_PORTS = range(48886, 48900)
 MAX_ROUTE = "/max-mcp"
 MAX_SERVICE = "max-mcp"
+# The installer ships no MaxMCP startup script into 3ds Max: like the Revit
+# add-in it runs any script posted to its localhost port with no caller check.
+MAX_PLUGIN_ABSENT = (
+    "3ds Max connects through the ArchHub MaxMCP plug-in (it answers as max-mcp "
+    "on 48886-48899), which this build does not install. 3ds Max stays off on "
+    "this machine until the plug-in ships."
+)
 RHINO_URL = "http://127.0.0.1:9879"
+
+
+def _max_plugin_installed() -> bool:
+    """True when a 3ds Max startup folder of this user loads MaxMCP."""
+    base = Path(os.environ.get("LOCALAPPDATA", "")) / "Autodesk" / "3dsMax"
+    return any(base.glob("*/ENU/scripts/startup/max_mcp_startup.py"))
 BLENDER_URL = "http://127.0.0.1:9876"
 NOTION_URL = "https://api.notion.com/v1"
 
@@ -215,10 +228,13 @@ def probe_host_rows() -> list[dict]:
     rows: list[dict] = []
     max_url = _max_endpoint()
     max_up = max_url is not None
+    max_state = "connected" if max_up else ("running" if _running(("3dsmax.exe",)) else ("installed" if _installed((r"C:\Program Files\Autodesk\3ds Max 2026\3dsmax.exe", r"C:\Program Files\Autodesk\3ds Max 2025\3dsmax.exe")) else "absent"))
+    max_plugin = max_up or _max_plugin_installed()
     rows.append({"id": "max", "name": "3ds Max", "drive": "max.exec",
-                 "state": "connected" if max_up else ("running" if _running(("3dsmax.exe",)) else ("installed" if _installed((r"C:\Program Files\Autodesk\3ds Max 2026\3dsmax.exe", r"C:\Program Files\Autodesk\3ds Max 2025\3dsmax.exe")) else "absent")),
+                 "state": max_state if max_plugin or max_state == "absent" else "unavailable",
                  "detail": ("MaxMCP on :%s" % max_url.split(":")[2].split("/")[0]) if max_up
-                 else "open Max with the ArchHub MaxMCP plug-in loaded (it answers as max-mcp on 48886-48899)"})
+                 else "open Max with the ArchHub MaxMCP plug-in loaded (it answers as max-mcp on 48886-48899)"
+                 if max_plugin else MAX_PLUGIN_ABSENT})
     rhino_up = _port_open(9879)
     rows.append({"id": "rhino", "name": "Rhino", "drive": "rhino.exec",
                  "state": "connected" if rhino_up else ("running" if _running(("Rhino.exe",)) else ("installed" if _installed((r"C:\Program Files\Rhino 8\System\Rhino.exe", r"C:\Program Files\Rhino 7\System\Rhino.exe")) else "absent")),
@@ -280,6 +296,16 @@ _CATALOGUE = (
 )
 
 
+def revit_years() -> list[str]:
+    from .clean_revit_adapter import revit_addin_years
+    return revit_addin_years()
+
+
+def _revit_absent() -> str:
+    from .clean_revit_adapter import REVIT_ADDIN_ABSENT
+    return REVIT_ADDIN_ABSENT
+
+
 def probe_catalogue_rows() -> list[dict]:
     rows = []
     for host_id, name, processes, paths, port in _CATALOGUE:
@@ -287,6 +313,11 @@ def probe_catalogue_rows() -> list[dict]:
         # what is installed; the live session rows say what is running, and a
         # process name cannot tell one year from another.
         per_year = host_id.rsplit("-", 1)[-1].isdigit()
+        if (host_id.startswith("revit-") and paths and _installed(paths)
+                and host_id.split("-", 1)[1] not in revit_years()):
+            rows.append({"id": host_id, "name": name, "drive": "",
+                         "state": "unavailable", "detail": _revit_absent()})
+            continue
         if port and _port_open(port):
             state, detail = "connected", "answering on :%d" % port
         elif processes and not per_year and _running(processes):
@@ -558,5 +589,5 @@ def open_host(host: str, *, popen=None, com_alive=None, dispatch=None, wait_s: f
         popen([exe, "--python-expr", boot], close_fds=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return {"ok": True, "host": host, "action": "launched with the ArchHub add-on (:9876)", "state": "launching"}
     if host == "max":
-        return {"ok": False, "host": host, "error": "3ds Max connects through the MaxMCP plug-in (it answers as max-mcp on 48886-48899), which this build does not install"}
+        return {"ok": False, "host": host, "error": MAX_PLUGIN_ABSENT}
     return {"ok": False, "host": host, "error": "no way to open %r from ArchHub" % host}

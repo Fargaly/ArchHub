@@ -1,17 +1,16 @@
+# DESKTOP requirements: exactly what colleague_setup.py installs on a person's
+# machine (from the installer's bundled wheelhouse, offline). The server
+# packages FastAPI, psycopg, boto3 and OpenCV live in requirements-cloud.txt and
+# are never installed on a desktop. uvicorn and starlette ARE installed, as
+# dependencies of mcp (the personal brain), but the desktop never imports
+# them; a court holds the desktop boot to that.
 # JOSE verification for RFC 9449 DPoP and OIDC adapters. 1.4.2 fixed
 # GHSA-frfh-8v73-gjg4; the upper bound forces an explicit major-version court.
 joserfc>=1.4.2,<2
-# The cloud boundary is a thin FastAPI adapter over graph-defined routes.
-# Keep the major capped; route-wrapper behavior is covered by integration tests.
-fastapi>=0.136.1,<1
 httpx>=0.28.1,<1
 # Local asymmetric signing courts and provider-neutral KMS contract tests.
 # Cloud adapters remain optional integrations behind the same contract.
 cryptography>=48,<49
-# Shared Universal Cell authority. Credentials remain outside source and atoms.
-psycopg[binary]>=3.3,<4
-# Fly OIDC supplies short-lived AWS credentials; HMAC key bytes stay in KMS.
-boto3>=1.43,<2
 # Immutable HAMT backing for Universal Cell revision snapshots.
 rpds-py>=0.30,<1
 # Structured parsing of the normative Markdown specification before Cell import.
@@ -28,15 +27,10 @@ mcp>=1.27.2,<2
 # no window and no message.
 PyQt6>=6.11,<7
 PyQt6-WebEngine>=6.11,<7
-# The ASGI server the universal cloud listener imports at module scope, so it
-# is reached on every boot, not only when a cloud route is used.
-uvicorn>=0.46,<1
-# Pipeline effect engines: DXF drafting and image work. Their imports are
-# guarded, so a machine without them still boots and reports the engines as
-# absent; they are listed because the setup installs from this file alone.
+# Pipeline effect engine: DXF drafting. Its import is guarded, so a machine
+# without it still boots and reports the engine as absent.
 ezdxf>=1.4,<2
 numpy>=2.4,<3
-opencv-python-headless>=4.13,<5
 # Windows Office host brokers attach to Classic Outlook and other Office COM hosts.
 # Match the packaged Windows runtime; New Outlook does not expose this interface.
 pywin32==311; sys_platform == "win32"

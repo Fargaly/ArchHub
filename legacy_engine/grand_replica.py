@@ -54,7 +54,7 @@ def _real_kind_for(node, revit_port):
     if nid.startswith('brain_') and ('recall' in text or 'context' in text or 'memory' in text or 'find' in text):
         return ('brain_read', {'prompt': title or nid})
     if nid.startswith('cloud_') or 'cloud' in title:
-        return ('probe', {'kind': 'http_ok', 'spec': {'url': 'https://archhub-cloud.fly.dev/healthz', 'status': 200}})
+        return ('probe', {'kind': 'http_ok', 'spec': {'url': 'https://api.archhub.io/healthz', 'status': 200}})
     return None
 
 

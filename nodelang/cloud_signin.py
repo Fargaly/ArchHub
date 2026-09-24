@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from .cloud_relay import DEFAULT_BASE
+from .cloud_relay import DEFAULT_BASE, SIGN_IN_AGAIN as _SIGN_IN_AGAIN, pinned_cloud_base
 
 WAIT_SECONDS = 300.0
 METHODS = ("google", "magic")
@@ -156,7 +156,7 @@ class SignIn:
         if method not in METHODS:
             raise ValueError("sign-in method must be one of " + ", ".join(METHODS))
         self.method = method
-        self.base_url = (base_url or DEFAULT_BASE).rstrip("/")
+        self.base_url = pinned_cloud_base(base_url or DEFAULT_BASE)
         self.path = path or cloud_session_path()
         self._opener = opener
         self._http = http
@@ -280,6 +280,7 @@ class SignIn:
             "email": email,
             "user_id": me.get("user_id") or payload.get("user_id"),
             "cloud_base_url": self.base_url,
+            "refused_at": None,
         })
         self._set(phase="done", email=email)
 
@@ -315,7 +316,7 @@ def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict
     record = path or cloud_session_path()
     held = read_cloud_session(record)
     token = str(held.get("token") or "")
-    base = str(held.get("cloud_base_url") or DEFAULT_BASE).rstrip("/")
+    base = pinned_base(held)
     if token:
         def _tell_cloud() -> None:
             try:
@@ -329,22 +330,193 @@ def sign_out(path: Optional[Path] = None, *, http: Callable[..., tuple[int, dict
             threading.Thread(target=_tell_cloud, name="archhub-cloud-signout", daemon=True).start()
     if held:
         write_cloud_session(record, {"token": None, "expires_at": None,
-                                     "email": None, "user_id": None})
+                                     "email": None, "user_id": None, "refused_at": None})
     attempt = _CURRENT.get("attempt")
     if attempt is not None and not attempt.active:
         _CURRENT["attempt"] = None
     return {"signed_in": False, "email": ""}
 
 
-def session_summary(path: Optional[Path] = None) -> dict:
-    from .cloud_session import signed_in_cloud_account
+def pinned_base(held: dict) -> str:
+    """The pinned cloud base for a session record (cloud_relay.pinned_cloud_base)."""
+    return pinned_cloud_base(held.get("cloud_base_url"))
+
+
+# Whether the account owns the cockpit: only a live cloud answer, held in this
+# process for ten minutes, never read from or written to cloud.json.
+_FOUNDER_SECONDS = 600.0
+_FOUNDER: dict = {}
+
+
+def _founder_key(held: dict) -> str:
+    return hashlib.sha256(("%s|%s|%s" % (
+        pinned_base(held), str(held.get("email") or "").strip().casefold(),
+        _held_bearer(held))).encode("utf-8")).hexdigest()
+
+
+def _founder_cached(held: dict) -> Optional[bool]:
+    seen = _FOUNDER.get(_founder_key(held))
+    if seen is None or time.monotonic() - seen[0] >= _FOUNDER_SECONDS:
+        return None
+    return seen[1]
+
+
+def _remember_founder(held: dict, owns: bool) -> None:
+    _FOUNDER[_founder_key(held)] = (time.monotonic(), bool(owns))
+
+
+# How long a probe answer for a record with no expiry date is trusted.
+_PROBE_SECONDS = 600.0
+_PROBED: dict = {}
+
+
+def _held_bearer(held: dict) -> str:
+    return str(held.get("token") or "")
+
+
+def record_refusal(path: Optional[Path], refused_bearer: str, *,
+                   now: Optional[float] = None) -> None:
+    """The cloud refused this bearer as a session (401): mark the record expired.
+
+    Only the bearer that was refused is marked; a record already carrying a
+    newer sign-in is left alone. Sign-in clears the mark."""
     record = path or cloud_session_path()
-    email = signed_in_cloud_account(record)
-    return {"signed_in": bool(email), "email": email or ""}
+    held = read_cloud_session(record)
+    if refused_bearer and _held_bearer(held) == refused_bearer:
+        write_cloud_session(record, {"refused_at": int(now if now is not None else time.time())})
+
+
+def sign_in_state(path: Optional[Path] = None, *, now: Optional[float] = None) -> dict:
+    """What the one session record on this machine says, without the network.
+
+    signed_in: a bearer, an email and an expiry still ahead (or none recorded).
+    expired:   the expiry passed, or the cloud refused this bearer.
+    signed_out: no usable record."""
+    record = path or cloud_session_path()
+    held = read_cloud_session(record)
+    email = str(held.get("email") or "").strip().casefold()
+    if not _held_bearer(held) or "@" not in email:
+        return {"state": "signed_out", "signed_in": False, "email": "", "expires_at": None,
+                "founder": False}
+    moment = time.time() if now is None else now
+    expires = held.get("expires_at")
+    expires = int(expires) if isinstance(expires, (int, float)) and not isinstance(expires, bool) else None
+    lapsed = (expires is not None and expires <= moment) or bool(held.get("refused_at"))
+    return {"state": "expired" if lapsed else "signed_in", "signed_in": not lapsed,
+            "email": email, "expires_at": expires, "founder": _founder_cached(held) is True}
+
+
+def _session_invalid(status: int, payload: object) -> bool:
+    """Only a refused SESSION lapses the record: 401, or a 403 that says the
+    session is invalid. The cockpit's 403 founder_only is about the account,
+    never the session, and leaves the record alone."""
+    if status == 401:
+        return True
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return status == 403 and detail not in ("founder_only",)
+
+
+def confirm_with_cloud(path: Optional[Path], *, now: Optional[float] = None,
+                       http: Optional[Callable[..., tuple[int, dict]]] = None) -> Optional[str]:
+    """Ask GET /v1/me what this session is: "expired", "signed_in", or None
+    when the cloud did not answer. A live answer also records whether the
+    account owns the cockpit."""
+    record = path or cloud_session_path()
+    held = read_cloud_session(record)
+    bearer = _held_bearer(held)
+    if not bearer:
+        return None
+    base = pinned_base(held)
+    try:
+        status, me = (http or http_json)(
+            "GET", f"{base}/v1/me", headers={"Authorization": f"Bearer {bearer}"}, timeout=5.0)
+    except Exception:
+        return None
+    if _session_invalid(status, me):
+        record_refusal(record, bearer, now=now)
+        return "expired"
+    if status == 200:
+        owns = me.get("founder")
+        if not isinstance(owns, bool):
+            # A cloud without the /v1/me field: its founder-only route decides.
+            try:
+                code, _ignored = (http or http_json)(
+                    "GET", f"{base}/founder/api/system",
+                    headers={"Authorization": f"Bearer {bearer}"}, timeout=5.0)
+            except Exception:
+                code = None
+            owns = True if code == 200 else False if code == 403 else None
+        if isinstance(owns, bool):
+            _remember_founder(held, owns)
+        return "signed_in"
+    return None
+
+
+def session_summary(path: Optional[Path] = None, *, now: Optional[float] = None,
+                    http: Optional[Callable[..., tuple[int, dict]]] = None) -> dict:
+    """The state Settings > Account shows. A record missing its expiry or its
+    cockpit-owner answer is checked with the cloud once (GET /v1/me) and the
+    answer held."""
+    record = path or cloud_session_path()
+    state = sign_in_state(record, now=now)
+    held = read_cloud_session(record)
+    if state["state"] != "signed_in" or (
+            state["expires_at"] is not None and _founder_cached(held) is not None):
+        return state
+    fingerprint = hashlib.sha256(
+        (str(record) + "|" + _held_bearer(held)).encode("utf-8")).hexdigest()
+    moment = time.time() if now is None else now
+    seen = _PROBED.get(fingerprint)
+    if seen is not None and moment - seen < _PROBE_SECONDS:
+        return state
+    if confirm_with_cloud(record, now=moment, http=http) is not None:
+        _PROBED[fingerprint] = moment
+    return sign_in_state(record, now=now)
+
+
+def cockpit_link(path: Optional[Path] = None, *, now: Optional[float] = None,
+                 http: Optional[Callable[..., tuple[int, dict]]] = None) -> dict:
+    """A one-time link that opens the founder cockpit on THIS session.
+
+    The app spends its own session at the cloud's hand-off route
+    (POST /founder/api/browser-code) for a single-use, five-minute claim link;
+    the same link serves another device. No session, or an expired one, gets
+    no link and the state to show, never a cockpit sign-in page."""
+    record = path or cloud_session_path()
+    state = sign_in_state(record, now=now)
+    if state["state"] != "signed_in":
+        return {"ok": False, "state": state["state"], "error": _SIGN_IN_AGAIN}
+    held = read_cloud_session(record)
+    bearer = _held_bearer(held)
+    base = pinned_base(held)
+    try:
+        status, payload = (http or http_json)(
+            "POST", f"{base}/founder/api/browser-code", body={},
+            headers={"Authorization": f"Bearer {bearer}"}, timeout=10.0)
+    except Exception as unreachable:
+        return {"ok": False, "state": "signed_in",
+                "error": ("the cloud did not answer: %s" % unreachable)[:200]}
+    if status == 401 or (status == 403 and _session_invalid(status, payload)):
+        record_refusal(record, bearer, now=now)
+        return {"ok": False, "state": "expired", "error": _SIGN_IN_AGAIN}
+    if status == 403:
+        # founder_only: the cockpit answers a stale session and another
+        # account the same way. /v1/me tells them apart; only a refused
+        # session lapses the record.
+        if confirm_with_cloud(record, now=now, http=http) == "expired":
+            return {"ok": False, "state": "expired", "error": _SIGN_IN_AGAIN}
+        _remember_founder(held, False)
+        return {"ok": False, "state": "signed_in", "founder": False,
+                "error": "This account does not own the cockpit."}
+    claim = payload.get("claim_url")
+    if status != 200 or not isinstance(claim, str) or not claim.startswith("https://"):
+        return {"ok": False, "state": "signed_in",
+                "error": "the cloud gave no cockpit link (%s)" % status}
+    return {"ok": True, "state": "signed_in", "url": claim}
 
 
 __all__ = [
-    "METHODS", "SignIn", "begin", "cloud_session_path", "current_status",
-    "free_port", "http_json", "pkce_pair", "read_cloud_session",
-    "session_summary", "sign_out", "write_cloud_session",
+    "METHODS", "SignIn", "begin", "cloud_session_path", "cockpit_link", "confirm_with_cloud", "current_status",
+    "free_port", "http_json", "pkce_pair", "pinned_base", "read_cloud_session", "record_refusal",
+    "session_summary", "sign_in_state", "sign_out", "write_cloud_session",
 ]

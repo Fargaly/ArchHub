@@ -18,9 +18,11 @@ the address before the add-in ever sees it.
 from __future__ import annotations
 
 import json
+import os
 import socket
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Mapping
 
 BROKER_PORTS = range(48884, 48900)
@@ -32,6 +34,30 @@ _READ_TIMEOUT = 30.0
 
 class RevitUnreachable(RuntimeError):
     """No Revit session answered, and that is a fact worth recording."""
+
+
+# Said wherever Revit is offered on a machine that cannot connect it. The
+# installer ships no Revit add-in: the RevitMCP add-in compiles and runs any
+# C# posted to its localhost port with no caller check, so it is not handed to
+# colleagues until it authenticates its callers.
+REVIT_ADDIN_ABSENT = (
+    "Revit connects through the ArchHub Revit add-in, which this build does "
+    "not install. Revit stays off on this machine until the add-in ships."
+)
+
+
+def revit_addin_years() -> list[str]:
+    """Revit years whose per-user Addins folder registers the ArchHub add-in."""
+    base = Path(os.environ.get("APPDATA", "")) / "Autodesk" / "Revit" / "Addins"
+    years = set()
+    for manifest in base.glob("*/*.addin"):
+        try:
+            text = manifest.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        if "RevitMCP.RevitMCPApp" in text:
+            years.add(manifest.parent.name)
+    return sorted(years)
 
 
 def _call(port: int, route: str, body: Mapping[str, object] | None = None,
@@ -118,6 +144,8 @@ def _session_for(instance: object, sessions: list[dict]) -> dict:
     # session that names its Revit version is a Revit session.
     sessions = [s for s in sessions if s.get("revit_version")]
     if not sessions:
+        if not revit_addin_years():
+            raise RevitUnreachable(REVIT_ADDIN_ABSENT)
         raise RevitUnreachable(
             "no Revit session is listening on ports %d-%d"
             % (BROKER_PORTS.start, BROKER_PORTS.stop - 1)
@@ -886,4 +914,5 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     }
 
 
-__all__ = ["BROKER_PORTS", "RevitUnreachable", "invoke", "live_sessions"]
+__all__ = ["BROKER_PORTS", "REVIT_ADDIN_ABSENT", "RevitUnreachable", "invoke",
+           "live_sessions", "revit_addin_years"]

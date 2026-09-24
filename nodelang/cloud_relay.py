@@ -25,8 +25,18 @@ CLAIM_PATH = "/founder/api/agent-tasks/claim"
 RESULT_PATH = "/founder/api/agent-tasks/%s/result"
 MAP_PATH = "/founder/map-state"
 DEFAULT_BASE = "https://api.archhub.io"
+# The ONLY hosts a cloud session bearer is ever sent to. cloud.json is editable
+# by anyone at the machine, so a base it names outside these is ignored and the
+# one address is used. Every cloud reader goes through pinned_cloud_base().
+PINNED_BASES = ("https://api.archhub.io", "https://archhub-cloud.fly.dev")
 APP_KINDS = ("app", "app-execute")
 OFFER_KEYS = ("revision", "sha256", "availability", "pricing_visible", "public_label")
+
+
+def pinned_cloud_base(value: object) -> str:
+    """The cloud base a bearer may go to: a pinned host, else the one address."""
+    base = str(value or "").strip().rstrip("/")
+    return base if base in PINNED_BASES else DEFAULT_BASE
 
 
 def load_cloud_session(appdata: Path) -> Optional[dict]:
@@ -41,39 +51,24 @@ def load_cloud_session(appdata: Path) -> Optional[dict]:
     token = held.get("token") if isinstance(held, Mapping) else None
     if not token:
         return None
-    base = str(held.get("cloud_base_url") or DEFAULT_BASE).rstrip("/")
-    return {"token": str(token), "base_url": base}
+    return {"token": str(token), "base_url": pinned_cloud_base(held.get("cloud_base_url"))}
 
 
 def cockpit_url(appdata: Path) -> str:
-    """The cockpit address for THIS machine, signed in when it can be.
+    """The cockpit address for THIS machine, opened on the app's own session.
 
-    A browser carries none of the desktop's sign-in, so opening the cockpit
-    landed the founder on a token form he has no token for. When this
-    machine holds a founder session, spend it once here for a short-lived
-    claim link the browser can open already signed in; with no session, fall
-    back to the plain address so the link is never dead.
+    One hand-off, written once in cloud_signin.cockpit_link: the app spends
+    its session for a one-time claim link. With no usable session the plain
+    address is returned; the cloud's page there says to open the cockpit
+    from the app, and never offers a sign-in of its own.
     """
-    session = load_cloud_session(appdata)
-    base = (session or {}).get("base_url") or DEFAULT_BASE
-    plain = base.rstrip("/") + "/founder"
-    if not session:
-        return plain
-    request = urllib.request.Request(
-        base.rstrip("/") + "/founder/api/browser-code",
-        data=b"",
-        method="POST",
-        headers={
-            "Authorization": "Bearer " + session["token"],
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as answer:
-            claim = json.loads(answer.read().decode("utf-8")).get("claim_url")
-    except Exception:
-        return plain
-    return str(claim) if isinstance(claim, str) and claim.startswith("https://") else plain
+    from . import cloud_signin
+
+    record = Path(appdata) / "ArchHub" / "brain" / "cloud.json"
+    link = cloud_signin.cockpit_link(record)
+    if link.get("ok"):
+        return str(link["url"])
+    return cloud_signin.pinned_base(cloud_signin.read_cloud_session(record)) + "/founder"
 
 
 def published_offer_form(value: object) -> Optional[dict]:
@@ -198,6 +193,7 @@ class CloudRelay:
         offer_command: Optional[Callable[[str, bool], object]] = None,
         models: Optional[Callable[[], object]] = None,
         session_loader: Optional[Callable[[], Optional[Mapping[str, str]]]] = None,
+        session_path: Optional[Path] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.token = str(token)
@@ -212,6 +208,7 @@ class CloudRelay:
         self.offer_command = offer_command
         self.models = models
         self.session_loader = session_loader
+        self.session_path = session_path
         self.last_error: str = ""
         self.answered = 0
         self._map_digest = ""
@@ -440,6 +437,18 @@ class CloudRelay:
         self.last_error = (
             "the cloud refused this machine's sign-in (HTTP %d): it expired or was revoked. "
             % exc.code) + SIGN_IN_AGAIN
+        if self.session_path is not None:
+            # Settings > Account reads this record. A 401 is a refused session;
+            # a founder route's 403 may only mean another account, so /v1/me
+            # decides before the record says "sign-in expired".
+            from .cloud_signin import confirm_with_cloud, record_refusal
+            try:
+                if exc.code == 401:
+                    record_refusal(self.session_path, self.token)
+                else:
+                    confirm_with_cloud(self.session_path)
+            except OSError:
+                pass
         return REFUSED_BACKOFF
 
 
@@ -470,12 +479,14 @@ def start_cloud_relay(
         offer_command=offer_command,
         models=models,
         session_loader=lambda: load_cloud_session(appdata),
+        session_path=Path(appdata) / "ArchHub" / "brain" / "cloud.json",
     )
     return relay.start()
 
 
 __all__ = [
-    "CloudRelay", "load_cloud_session", "published_models_form", "published_offer_form",
+    "CloudRelay", "PINNED_BASES", "load_cloud_session", "pinned_cloud_base",
+    "published_models_form", "published_offer_form",
     "render_answer",
     "start_cloud_relay",
     "CLAIM_PATH", "RESULT_PATH", "MAP_PATH",

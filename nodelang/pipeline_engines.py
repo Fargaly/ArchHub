@@ -113,6 +113,9 @@ def revit_sessions(params: Mapping[str, object], feeds: Mapping[str, object]):
 
     sessions = [s for s in live_sessions() if is_revit_session(s)]
     if not sessions:
+        from .clean_revit_adapter import REVIT_ADDIN_ABSENT, revit_addin_years
+        if not revit_addin_years():
+            return {"out": []}, REVIT_ADDIN_ABSENT
         return {"out": []}, "no Revit session is listening"
     label = ", ".join(
         "%s:%s" % (s.get("document") or "no document", s["port"])

@@ -93,6 +93,9 @@ def launch_path_third_party():
                     statements(handler.body, True, package)
                 statements(node.orelse, True, package)
                 statements(node.finalbody, True, package)
+            elif (isinstance(node, ast.If) and isinstance(node.test, ast.Name)
+                  and node.test.id == "TYPE_CHECKING"):
+                continue  # read by type checkers only; never imported at run time
             elif isinstance(node, (ast.If, ast.With)):
                 statements(node.body, guarded, package)
                 statements(getattr(node, "orelse", []), guarded, package)
@@ -547,10 +550,24 @@ def test_the_installer_script_actually_compiles():
     compiler = shutil.which("ISCC") or "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
     if not os.path.isfile(compiler):
         pytest.skip("Inno Setup is not installed on this machine")
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node.exe is needed as the bundled runtime input")
     with tempfile.TemporaryDirectory() as out:
+        # Every define build_release.ps1 passes; placeholder metadata and one
+        # empty wheel stand in for the build's generated inputs.
+        meta = Path(out) / "BUILD_METADATA.json"
+        meta.write_text('{"format":1,"build_id":"court"}', encoding="ascii")
+        wheels = Path(out) / "wheelhouse"
+        wheels.mkdir()
+        (wheels / "court-0-py3-none-any.whl").write_bytes(b"")
         done = subprocess.run(
-            [compiler, "/DBuildId=court", "/O" + out, "/Q", str(ROOT / "installer" / "ArchHub.iss")],
-            capture_output=True, text=True, timeout=600,
+            [compiler, "/DBuildId=court", "/DRequirementsSha256=" + "0" * 64,
+             "/DBuildMetadataPath=" + str(meta), "/DNodeRuntimePath=" + node,
+             "/DNodeLicensePath=" + str(ROOT / "packaging" / "windows" / "licenses" / "Node-v24.13.0-LICENSE.txt"),
+             "/DWheelhousePath=" + str(wheels),
+             "/O" + out, "/Q", str(ROOT / "installer" / "ArchHub.iss")],
+            capture_output=True, text=True, timeout=900,
         )
     assert done.returncode == 0, (done.stdout or "") + (done.stderr or "")
 

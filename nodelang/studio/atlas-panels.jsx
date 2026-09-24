@@ -123,7 +123,7 @@ function LiveDomainControl({ M, d, members, onRelay }) {
       </div>}
       {ctl && isHosts && hosts.length > 0 && <div style={{ marginTop: 10 }}>
         <div style={{ ...small, marginBottom: 4 }}>HOSTS · {hosts.filter(h => h.state === 'connected').length} connected of {hosts.length}</div>
-        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name} <span style={small}>{h.state === 'connected' ? '' : (h.detail || '')}</span></span>{pill(h.state)}
+        {hosts.map(h => <div key={h.id} style={row}><span style={{ flex: 1, minWidth: 0, fontSize: 12, overflowWrap: 'anywhere', whiteSpace: 'normal' }}>{h.name} <span data-host-reason={h.id} style={{ ...small, whiteSpace: 'normal' }}>{h.state === 'connected' ? '' : (h.detail || '')}</span></span>{pill(h.state)}
           {OPENABLE.includes(h.id) && h.state !== 'connected' && <HBtn onClick={() => say('open ' + h.id, true)} disabled={busy}>▸ Open</HBtn>}</div>)}
       </div>}
       <div style={{ marginTop: 10 }}>

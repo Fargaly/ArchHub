@@ -107,6 +107,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'launch_archhub_test.py', 'colleague_setup.py', 'requirements.txt',
             'package.json', 'packaging/compile_studio.cjs',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
+            'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
             'packaging/windows/licenses/ArchHub-components-MIT.txt',
@@ -194,6 +195,7 @@ function Read-CandidateManifest([string]$Path) {
     $required = @(
         'selected/launch_archhub_test.py', 'selected/colleague_setup.py', 'selected/requirements.txt',
         'selected/installer/ArchHub.iss', 'selected/installer/ArchHub.bat', 'selected/installer/ArchHub.vbs',
+        'selected/installer/legacy_sweep.iss', 'selected/installer/legacy_v1_files.iss',
         'selected/installer/build_release.ps1', 'selected/packaging/windows/Test-SourcePortability.ps1',
         'selected/package.json', 'selected/packaging/compile_studio.cjs',
         'selected/packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
@@ -596,7 +598,26 @@ $buildMetadataSha = (Get-FileHash -LiteralPath $buildMetadataPath -Algorithm SHA
 $installer = Join-Path $selectedRoot 'installer/ArchHub.iss'
 $nodeLicense = Join-Path $selectedRoot 'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt'
 if (-not (Test-Path -LiteralPath $nodeLicense -PathType Leaf)) { throw 'Bundled Node license is missing.' }
-& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/O$output" $installer
+# The desktop wheelhouse: every wheel requirements.txt needs on the colleague's
+# CPython 3.14 x64, so setup installs with --no-index behind any proxy. Binary
+# wheels only; the desktop list carries no server package (requirements-cloud.txt).
+$wheelhouse = Join-Path $output 'wheelhouse'
+New-Item -ItemType Directory -Path $wheelhouse -ErrorAction Stop | Out-Null
+& $PythonPath -m pip download --disable-pip-version-check --only-binary=:all: `
+    --platform win_amd64 --python-version 3.14 --implementation cp `
+    -d $wheelhouse -r (Join-Path $selectedRoot 'requirements.txt')
+if ($LASTEXITCODE -ne 0) { throw 'The desktop wheelhouse could not be assembled.' }
+$wheels = @(Get-ChildItem -LiteralPath $wheelhouse -Filter '*.whl' -File)
+if ($wheels.Count -eq 0) { throw 'The desktop wheelhouse is empty.' }
+# uvicorn/starlette arrive only as dependencies of mcp (the personal brain);
+# the desktop never imports them. These are the cloud's alone.
+if (@($wheels | Where-Object { $_.Name -match '^(?i:psycopg|boto3|botocore|fastapi|opencv)' }).Count -ne 0) {
+    throw 'A server-only package reached the desktop wheelhouse.'
+}
+$wheelLines = @($wheels | Sort-Object Name | ForEach-Object {
+    "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)" })
+[IO.File]::WriteAllText((Join-Path $output 'wheelhouse.sha256'), ($wheelLines -join "`n") + "`n", $utf8)
+& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DWheelhousePath=$wheelhouse" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'

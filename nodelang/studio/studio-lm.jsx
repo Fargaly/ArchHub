@@ -1644,6 +1644,10 @@ const InferenceInspector = ({ model, setPickerOpen }) => {
           <span style={{ fontFamily:LM.mono, fontSize:9.5, color:c.col, letterSpacing:'0.06em', textTransform:'uppercase' }}>{c.state}</span>
         </div>
       ))}
+      {/* A host that cannot connect on this machine says why, in words, not on hover. */}
+      {connectors.filter(c => c.state === 'unavailable' && c.detail).map(c => (
+        <div key={c.id + ':why'} data-connector-reason={c.id} style={{ fontSize:11, color:LM.inkSoft, lineHeight:1.45, whiteSpace:'normal', overflowWrap:'anywhere', padding:'4px 0 6px 15px' }}>{c.name}: {c.detail}</div>
+      ))}
       {window.ARCHHUB_LIVE && !connectors.length &&
         <div role="status" style={{ fontFamily:LM.mono, fontSize:10.5, color:LM.inkMuted, lineHeight:1.5 }}>No host has answered a probe yet.</div>}
     </div>

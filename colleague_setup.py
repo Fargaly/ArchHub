@@ -31,17 +31,16 @@ from pathlib import Path
 # court holds this list against that measurement, so a dependency added to
 # the app cannot ship without landing here too. Before that court, rpds-py,
 # fastapi and uvicorn were missing and a first launch on a clean machine
-# died on import with no window and no message.
+# died on import with no window and no message. Server-only packages
+# (FastAPI, uvicorn, psycopg, boto3, OpenCV) are not the desktop's: they live
+# in requirements-cloud.txt and the desktop boot no longer imports them.
 PACKAGES = (
     ("PyQt6", "PyQt6"),
     ("PyQt6-WebEngine", "PyQt6.QtWebEngineWidgets"),
     ("cryptography", "cryptography"),
     ("httpx", "httpx"),
     ("joserfc", "joserfc"),
-    ("fastapi", "fastapi"),
-    ("uvicorn", "uvicorn"),
     ("rpds-py", "rpds"),
-    ("opencv-python-headless", "cv2"),
     ("ezdxf", "ezdxf"),
     ("numpy", "numpy"),
     ("psutil", "psutil"),
@@ -98,6 +97,28 @@ def _write_ready(root: Path, identity: str) -> None:
         os.replace(temporary, root / ".archhub-ready")
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def install_requirements(root: Path, pinned: Path):
+    """Install the desktop requirements, from the bundled wheelhouse first.
+
+    The installer carries every wheel the desktop needs (wheelhouse/), so a
+    machine behind a firm proxy or with no internet installs offline with
+    --no-index. Only when that fails (an incomplete wheelhouse, or a build
+    without one) does pip reach the package index.
+    """
+    base = [sys.executable, "-E", "-s", "-m", "pip", "--isolated", "install",
+            "--disable-pip-version-check"]
+    wheelhouse = root / "wheelhouse"
+    if wheelhouse.is_dir() and any(wheelhouse.glob("*.whl")):
+        print("  installing : from the bundled wheelhouse (no internet needed)")
+        result = subprocess.run(
+            base + ["--no-index", "--find-links", str(wheelhouse), "-r", str(pinned)],
+            env=clean_environment())
+        if result.returncode == 0:
+            return result
+        print("  wheelhouse : incomplete for this machine; trying the package index")
+    return subprocess.run(base + ["-r", str(pinned)], env=clean_environment())
 
 
 def clean_environment():
@@ -464,10 +485,7 @@ def main():
         # Apply the shipped version constraints even when old imports work.
         # Without this, an upgrade silently retained incompatible packages.
         pinned = root / "requirements.txt"
-        result = subprocess.run(
-            [sys.executable, "-E", "-s", "-m", "pip", "--isolated", "install",
-             "-r", str(pinned)], env=clean_environment()
-        )
+        result = install_requirements(root, pinned)
         if result.returncode != 0:
             print("  REFUSED: the install did not finish. Nothing was faked;")
             print("  send this window's text to Ahmed.")
@@ -477,8 +495,8 @@ def main():
     # Prove the boot imports resolve NOW, in this interpreter, so a failure
     # is a sentence on this screen rather than a window that never opens.
     for _pip_name, probe in PACKAGES:
-        if probe in ("cv2", "ezdxf", "numpy"):
-            continue  # optional engines; the app reports them as absent
+        if probe in ("ezdxf", "numpy"):
+            continue  # optional engine; the app reports it as absent
         if not _has(probe):
             print("  REFUSED: %s installed but cannot be imported." % probe)
             print("  send this window text to Ahmed.")

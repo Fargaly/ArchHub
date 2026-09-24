@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from typing import Callable, Mapping, Optional
 
-from .cloud_relay import SIGN_IN_AGAIN
+from .cloud_relay import SIGN_IN_AGAIN, pinned_cloud_base
 
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 LM_STUDIO_MODELS = "http://127.0.0.1:1234/v1/models"
@@ -104,7 +104,7 @@ def _source_note(group: str, error: BaseException) -> str:
 def cloud_models(session: Optional[Mapping[str, str]], *, opener: Callable, timeout: float) -> list[dict]:
     if not session or not session.get("token"):
         return []
-    data = _get_json(str(session["base_url"]).rstrip("/") + "/v1/models",
+    data = _get_json(pinned_cloud_base(session.get("base_url")) + "/v1/models",
                      headers={"Authorization": "Bearer " + str(session["token"]), "Accept": "application/json"},
                      timeout=timeout, opener=opener)
     rows = data.get("data") if isinstance(data, Mapping) else data

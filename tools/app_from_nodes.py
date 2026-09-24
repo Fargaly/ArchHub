@@ -75,7 +75,7 @@ def build():
                   floor={'op': 'host', 'port': REVIT, 'code': 'result=Doc.Title;'})
     cloud = s.add('op', 'cloud',
                   floor={'op': 'probe', 'kind': 'http_ok',
-                         'spec': {'url': 'https://archhub-cloud.fly.dev/healthz',
+                         'spec': {'url': 'https://api.archhub.io/healthz',
                                   'status': 200}})
 
     def card(st, ti, sn):

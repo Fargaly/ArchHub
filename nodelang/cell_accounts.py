@@ -87,8 +87,23 @@ def _founder_member_root(email):
 def ensure_accounts(store, *, founder_email):
     """The accounts registry, and the founders standing in it as founder.
 
-    This runs on every sign-in, so it never declares the offer.
+    `founder_email` is the account a cloud session on this machine proved to
+    be a founder, or None. Identity is an account, never a machine: a graph
+    whose person is not a founder records no founder at all -- not the
+    founder's addresses, not a founder relation -- so a colleague's graph
+    never names the founder. This runs on every sign-in, so it never declares
+    the offer.
     """
+    if founder_email is None:
+        snapshot = store.snapshot()
+        if ACCOUNTS_ROOT not in snapshot.cells:
+            store.commit(snapshot.revision, create=(
+                _terminal(ACCOUNT_ROLE, "account"),
+                _terminal(EMAIL_ROLE, "email"),
+                _terminal(TIER_ROLE, "tier"),
+                Cell(ACCOUNTS_ROOT, NULL_CELL_ID, NULL_CELL_ID, b"accounts"),
+            ))
+        return
     snapshot = store.snapshot()
     create = []
     if ACCOUNTS_ROOT not in snapshot.cells:
@@ -155,7 +170,9 @@ def _append_founders(store, emails):
 
 
 def founder_email(snapshot):
-    """The founder account recorded first; kept for existing callers."""
+    """The founder account recorded first, or None on a graph with no founder."""
+    if FOUNDER_EMAIL_ROOT not in snapshot.cells:
+        return None
     return _text(snapshot, FOUNDER_EMAIL_ROOT)
 
 

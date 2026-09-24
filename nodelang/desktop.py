@@ -434,9 +434,9 @@ class DesktopRuntime:
 
 
 def main():
-    from PyQt6.QtCore import QLockFile, QTimer, QUrl
+    from PyQt6.QtCore import QLockFile, Qt, QTimer, QUrl
     from PyQt6.QtWidgets import QApplication, QMainWindow, QStackedWidget
-    from PyQt6.QtWebEngineCore import QWebEngineProfile
+    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
     from PyQt6.QtWebEngineWidgets import QWebEngineView
 
     app = QApplication(sys.argv)
@@ -472,12 +472,35 @@ def main():
     loaded_schema = {'value': None}
     pending_schema = {'value': None}
     current_view = {'value': None}
+    opened_windows = []
+
+    class _AppPage(QWebEnginePage):
+        """window.open from the studio opens an ArchHub window.
+
+        Settings > Account opens the founder cockpit this way, on the
+        one-time link the app minted from its own session: the cockpit is a
+        lens of the app, inside the app, with no browser and no sign-in."""
+
+        def createWindow(self, _kind):
+            view = QWebEngineView()
+            view.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            view.setPage(_AppPage(profile, view))
+            view.setWindowTitle('ArchHub cockpit')
+            view.resize(1400, 900)
+            opened_windows.append(view)
+            view.destroyed.connect(
+                lambda *_: opened_windows.remove(view)
+                if view in opened_windows else None
+            )
+            view.show()
+            return view.page()
 
     def stage_schema(schema):
         if not schema or pending_schema['value'] == schema:
             return
         pending_schema['value'] = schema
         candidate = QWebEngineView(stack)
+        candidate.setPage(_AppPage(profile, candidate))
         stack.addWidget(candidate)
 
         def finished(ok):

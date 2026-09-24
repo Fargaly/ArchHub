@@ -14,6 +14,7 @@ from .cell_deliberation import (
 )
 from .cell_protocols import prepare_append_relation_members, read_relation
 from .conversation_content import CONTROL_BUDGET, read_content_binding, prepare_empty_content_binding
+from .conversation_pages import PAGE_PROTECTION_VERSION
 from .universal_cell import InvalidCell, overlay_read_snapshot
 
 
@@ -295,14 +296,20 @@ def create_workshop_conversation(owner, *, authentication_context, expected_revi
                         return {"created": False, "revision": snapshot.revision, **_row(snapshot, registry, root)}
                     if reservations:
                         status = history._retention_status(root)
-                        if (reservations[0]["last_sequence"] != 0 or status["activity_basis"] != "unknown"
-                                or status["activity_revision"] != 0 or status["archive_revision"] != 0
+                        # A reservation made in a page-protected store is born
+                        # tracked: one recorded activity and nothing else.
+                        born = history._born_tracked(root)
+                        if (reservations[0]["last_sequence"] != 0
+                                or status["activity_basis"] != ("owner-observed" if born else "unknown")
+                                or status["activity_revision"] != (1 if born else 0) or status["archive_revision"] != 0
                                 or status["content_generation"] != 0 or status["purged_messages"] != 0
                                 or history._db.execute("SELECT 1 FROM messages WHERE conversation_id=? LIMIT 1",
                                                        (root,)).fetchone() is not None):
                             raise InvalidCell("unpublished conversation reservation is not empty and protected")
                     else:
                         history._db.execute("INSERT INTO conversations(id) VALUES(?)", (root,))
+                        if history._db.execute("PRAGMA user_version").fetchone()[0] == PAGE_PROTECTION_VERSION:
+                            history._track_new_conversation(root)
 
                 creates, replacements, candidate = pending
                 guard()

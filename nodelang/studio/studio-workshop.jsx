@@ -14,6 +14,46 @@
 const W = window.AH;
 const derive = build => window.ArchHubTheme ? window.ArchHubTheme.derive(build) : build(W);
 
+// Conversation retention. After 20 idle days a conversation's messages move to
+// a file in the user's data folder; this notice says so on the conversation and
+// hands the archive back. It reads with a GET, so looking never delays retention.
+const archiveDay = seconds => (typeof seconds === 'number' && isFinite(seconds))
+  ? new Date(seconds * 1000).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'})
+  : 'an unknown date';
+const archiveButton = {padding:'4px 10px', border:`1px solid ${W.line}`, borderRadius:5, background:'transparent',
+  color:W.ink, fontFamily:W.sans, fontSize:12, cursor:'pointer', flex:'none'};
+const ConversationArchiveNotice = ({ root }) => {
+  const [row, setRow] = React.useState(null);
+  const [note, setNote] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const load = React.useCallback(() => {
+    if (!root || !window.ARCHHUB_CONVERSATION_RETENTION) return;
+    window.ARCHHUB_CONVERSATION_RETENTION()
+      .then(data => setRow((data.archived || []).find(item => item.conversation === root && item.archived_at) || null))
+      .catch(() => setRow(null));
+  }, [root]);
+  React.useEffect(load, [load]);
+  if (!row) return null;
+  const act = (call, done) => {
+    if (!call) return;
+    setBusy(true); setNote('');
+    call(row.conversation).then(done).catch(error => setNote(error.message || 'Refused.')).finally(() => setBusy(false));
+  };
+  const removed = row.removed_messages || 0;
+  return (
+    <div role="status" style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', border:`1px solid ${W.line}`,
+      borderRadius:7, background:W.bgPanel, fontSize:12.5, color:W.inkSoft }}>
+      <span style={{ flex:1, minWidth:0 }}>
+        Archived on {archiveDay(row.archived_at)}{removed ? ` · ${removed} message${removed === 1 ? '' : 's'} moved to the archive file` : ''}{note ? ` · ${note}` : ''}
+      </span>
+      <button disabled={busy || !row.archive_exists} style={archiveButton}
+        onClick={() => act(window.ARCHHUB_CONVERSATION_ARCHIVE_OPEN, () => setNote('opened in Explorer'))}>Open archive</button>
+      <button disabled={busy || !row.archive_exists} style={archiveButton}
+        onClick={() => act(window.ARCHHUB_CONVERSATION_RESTORE, result => { setNote(`restored ${result.restored}`); load(); })}>Restore</button>
+    </div>
+  );
+};
+
 // ═══════════════════════════════ LIVE SEAM ═══════════════════════════════
 // Work review and Canvas share the authenticated view's durable graph selection.
 const workshopSelectionId = value => typeof value === 'string' && value.length > 0 && value.length <= 1024;
@@ -611,6 +651,10 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   const busyRef = React.useRef(false);
   const mounted = React.useRef(true);
   const fileIntent = React.useRef(0);
+  // Retention: the first read after a person navigates to a room is an explicit
+  // open (open=1), marked BEFORE the request so a failed open is never retried
+  // as one. Timer polls and reads after an error are never opens.
+  const openedRoot = React.useRef('');
   const [actionError, setActionError] = React.useState('');
   const [nativeSyncError, setNativeSyncError] = React.useState('');
   const projectedWorkNodes = workshopProjectedNodes(state);
@@ -1123,7 +1167,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       try {
         let projection;
         try {
-          projection = await authority.refreshWorkshop(descriptor.root);
+          const opening = openedRoot.current !== descriptor.root && typeof authority.openWorkshop === 'function';
+          if (opening) openedRoot.current = descriptor.root;
+          projection = await (opening ? authority.openWorkshop(descriptor.root) : authority.refreshWorkshop(descriptor.root));
         } finally {
           if (!disposed) setRefreshing(false);
         }
@@ -1954,6 +2000,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         <div ref={messageContent} style={{ maxWidth: preset==='conversation' ? 760 : 'none', margin:'0 auto', padding:'0 26px', display:'flex', flexDirection:'column', gap:20 }}>
           {transcript?.error && <div role="alert" style={{ fontSize:12.5, color:W.err }}>{transcript.error}</div>}
           {!transcript && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
+          <ConversationArchiveNotice root={descriptor.root}/>
           {!content && transcript?.has_older && <div style={{ fontSize:12.5, color:W.inkSoft }}>Showing the available recent messages.</div>}
           {openingAsk < 0 && workflowCard}
           {workflowsPanel}

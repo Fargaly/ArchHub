@@ -5912,6 +5912,21 @@ class ApplicationServer:
                     except AuthorizationDenied as denied:
                         self._json(403, {'ok': False, 'error': str(denied)})
                     return
+                if parsed.path == '/api/universal/conversation-retention':
+                    # Settings > Storage: the retention policy, the last pass
+                    # and every archived conversation. Reads only.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route(
+                            'GET', parsed.path, authentication_context=binding.context)
+                        payload = owner.conversation_content.retention_overview(
+                            authentication_context=binding.context)
+                        self._json(200, {'ok': True, **payload})
+                    except (AuthorizationDenied, PermissionError) as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                    except (InvalidCell, ValueError, TimeoutError) as refusal:
+                        self._json(409, {'ok': False, 'error': str(refusal)})
+                    return
                 if parsed.path == '/api/universal/cloud-session':
                     # The account signed in on this machine: cloud.json, the
                     # record the relay and the brain already trust.
@@ -6388,9 +6403,10 @@ class ApplicationServer:
                             'scope_root':query['scope'][0]})
                         return
                     if (not {'root', 'scope'} <= set(query)
-                            or set(query) - {'root', 'scope', 'after', 'content_after', 'before', 'feed'}
+                            or set(query) - {'root', 'scope', 'after', 'content_after', 'before', 'feed', 'open'}
                             or any(len(values) != 1 or not values[0]
-                                   for values in query.values())):
+                                   for values in query.values())
+                            or query.get('open', ['1'])[0] != '1'):
                         self._json(400, {'ok':False, 'error':'Workshop query fields are invalid'})
                         return
                     try:
@@ -6407,6 +6423,11 @@ class ApplicationServer:
                         self._json(400, {'ok':False, 'error':str(exc)})
                         return
                     self._json(200, payload)
+                    if 'open' in query and payload.get('storage') == 'conversation-content':
+                        # A person opened this conversation (open=1, sent only on
+                        # navigation). Recorded after the page is sent and the
+                        # owner lock released; best effort, never delays a read.
+                        owner.conversation_content.note_open(query['root'][0])
                     return
                 if parsed.path == '/api/universal/work':
                     if not self._universal_route('GET', parsed.path, binding):
@@ -6673,6 +6694,36 @@ class ApplicationServer:
                         from .assistant_registration import register
                         self._json(200, {'ok': True, 'result': register(
                             str(body['client']), consent=True)})
+                        return
+                    # A browser POST is a person acting; retention waits for
+                    # an idle moment after the last one (reads and polls are GETs).
+                    owner.last_user_action_monotonic = time.monotonic()
+                    if self.path in ('/api/universal/conversation-restore',
+                                     '/api/universal/conversation-archive-open'):
+                        try:
+                            body = self._body(max_bytes=8192)
+                            if type(body) is not dict or set(body) != {'conversation'}:
+                                raise InvalidCell('conversation archive request names exactly one conversation')
+                            content = owner.conversation_content
+                            if self.path == '/api/universal/conversation-restore':
+                                payload = content.restore_from_archive(
+                                    body['conversation'], authentication_context=binding.context)
+                            else:
+                                import subprocess as _archive_subprocess
+                                payload = content.archive_location(
+                                    body['conversation'], authentication_context=binding.context)
+                                # Open a folder the APP owns, never a caller path.
+                                target = payload['path']
+                                _archive_subprocess.Popen(
+                                    ['explorer', '/select,' + target] if payload['exists'] else ['explorer', target],
+                                    creationflags=getattr(_archive_subprocess, 'CREATE_NO_WINDOW', 0))
+                            self._json(200, {'ok': True, **payload})
+                        except (AuthorizationDenied, PermissionError) as denied:
+                            self._json(403, {'ok': False, 'error': str(denied)})
+                        except FileNotFoundError:
+                            self._json(404, {'ok': False, 'error': 'This conversation has no archive file.'})
+                        except (InvalidCell, ValueError, TimeoutError) as refusal:
+                            self._json(409, {'ok': False, 'error': str(refusal)})
                         return
                     if self.path in ('/api/universal/provider-key', '/api/universal/social-credential', '/api/universal/social-credential-remove'):
                         from .model_router import ProviderCredentialError, save_provider_key

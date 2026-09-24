@@ -139,7 +139,8 @@
       return value;
     }
 
-    async function readWorkshop(root, before = null) {
+    // open: true only when a person navigates here; polls never set it.
+    async function readWorkshop(root, before = null, open = false) {
       const scope = canvas?.root, graph = identity, epoch = scopeEpoch;
       if (!snapshot?.workshops.some(row => row.root === root)) fail('This Workshop is no longer on the canvas.');
       if (!pageTarget || pageTarget.root !== root || pageTarget.before !== before) {
@@ -149,7 +150,7 @@
       const current = () => scopeEpoch === epoch && canvas.root === scope && identity === graph &&
         snapshot.workshops.some(row => row.root === root) && pageStamp === pageEpoch &&
         pageTarget?.root === root && pageTarget.before === before;
-      const key = JSON.stringify([epoch, pageStamp, root, before]);
+      const key = JSON.stringify([epoch, pageStamp, root, before, open === true]);
       if (workshopReads.has(key)) return workshopReads.get(key);
       const previous = workshop?.root === root && !workshop.error ? workshop : null;
       const ordinary = previous?.storage === 'conversation-content';
@@ -158,7 +159,8 @@
           const result = await get('/api/universal/workshop?root=' + encodeURIComponent(root) +
             '&scope=' + encodeURIComponent(scope) + (before === null ? '' : '&before=' + encodeURIComponent(before)) +
             (previous ? '&after=' + previous.revision : '') +
-            (ordinary ? '&content_after=' + encodeURIComponent(previous.content_cursor) : ''));
+            (ordinary ? '&content_after=' + encodeURIComponent(previous.content_cursor) : '') +
+            (open === true ? '&open=1' : ''));
           if (!current()) return null;
           if (!result || result.ok === false) fail(result?.error || 'Workshop history could not be read.');
           if (result.graph_id !== graph || result.root !== root || result.scope_root !== scope ||
@@ -245,6 +247,7 @@
         return accepted;
       },
       refreshWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null),
+      openWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null, true),
       async loadOlderWorkshop(root) {
         if (workshop?.root !== root || workshop.error || workshop.storage !== 'conversation-content' ||
             !text(workshop.next_before)) fail('No older Workshop page is available.');

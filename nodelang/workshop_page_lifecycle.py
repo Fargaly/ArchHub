@@ -99,13 +99,33 @@ def perform_browser_page_action(owner, binding, body, *, browser_guard):
                         expected_page_revision=body['page_revision'], before_commit=guard)
                 elif action in ('conversation-archive', 'conversation-purge'):
                     from .workshop_retention_guard import admit_conversation_retention
+                    extra = {}
+                    if action == 'conversation-purge':
+                        # The same archive the idle pass writes: the copy is
+                        # durable before any message is deleted.
+                        import time as _time
+                        from .conversation_archive import (ArchiveIndexStale, archive_directory, archive_file,
+                            export_messages, rebuild_index)
+                        if service._path is None:
+                            raise InvalidCell('Conversation archive folder is unavailable')
+                        archive = archive_file(archive_directory(service._path), body['root'])
+
+                        def export(messages):
+                            try:
+                                return export_messages(archive, body['root'], history.instance_id, messages)
+                            except ArchiveIndexStale:
+                                # An owner-requested purge waits for the index it needs.
+                                rebuild_index(archive, body['root'], history.instance_id,
+                                              deadline=_time.monotonic() + 20.0)
+                                return export_messages(archive, body['root'], history.instance_id, messages)
+                        extra['export'] = export
                     with admit_conversation_retention(owner, snapshot, body['root'], before_commit=guard) as commit_guard:
                         operation = history.archive if action == 'conversation-archive' else history.purge_archived
                         retention_result = operation(body['root'],
                             expected_activity_revision=body['activity_revision'],
                             expected_archive_revision=body['archive_revision'], expected_head=body['head'],
                             expected_content_generation=body['content_generation'],
-                            protected=False, before_commit=commit_guard)
+                            protected=False, before_commit=commit_guard, **extra)
                 else:
                     if body['disposition'] != 'discard-untracked-drafts':
                         raise InvalidCell('Untracked drafts require an explicit owner disposition')

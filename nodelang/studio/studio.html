@@ -229,6 +229,13 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       jpost('/api/universal/retract', {root});
     window.ARCHHUB_REVEAL = what =>
       jpost('/api/universal/reveal', {what});
+    // Conversation retention: the policy, the last pass and the archive.
+    window.ARCHHUB_CONVERSATION_RETENTION = () =>
+      jget('/api/universal/conversation-retention');
+    window.ARCHHUB_CONVERSATION_ARCHIVE_OPEN = conversation =>
+      jpost('/api/universal/conversation-archive-open', {conversation});
+    window.ARCHHUB_CONVERSATION_RESTORE = conversation =>
+      jpost('/api/universal/conversation-restore', {conversation});
     window.ARCHHUB_LOGIN = email =>
       jpost('/api/universal/login', {email});
     // Cloud sign-in: the app opens the browser on the cloud's own sign-in and

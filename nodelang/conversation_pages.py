@@ -11,6 +11,9 @@ import uuid
 
 
 PAGE_PROTECTION_VERSION = 5
+# Resolver for a conversation created inside a page-protected store: every page
+# it can ever have is tracked from its first moment, so it has no legacy drafts.
+BIRTH_IDENTITY = ('archhub:conversation-birth',) * 5
 IDENTITY_FIELDS = ('session_root', 'subject_root', 'view_root', 'tenant_root', 'assurance_root')
 TRACKING_FIELDS = ('conversation_id', 'state', 'resolver_identity', 'resolved_at',
                    'resolved_activity_revision', 'resolution_digest')
@@ -254,6 +257,50 @@ class ConversationPageProtection:
                 ','.join(field + '=excluded.' + field for field in TRACKING_FIELDS[1:]),
                 tuple(row[field] for field in TRACKING_FIELDS))
             return self._page_protection_status(conversation_id)
+
+    def born_tracked(self, conversation_id):
+        with self._transaction():
+            return self._born_tracked(conversation_id)
+
+    def _born_tracked(self, conversation_id):
+        if self._db.execute('PRAGMA user_version').fetchone()[0] != PAGE_PROTECTION_VERSION:
+            return False
+        row = self._db.execute('SELECT ' + ','.join(TRACKING_FIELDS) +
+            ' FROM conversation_page_tracking WHERE conversation_id=?', (conversation_id,)).fetchone()
+        if row is None:
+            return False
+        row = _valid_tracking(row)
+        return (row['state'] == 'ready' and row['resolved_activity_revision'] == 1
+                and row['resolver_identity'] == json.dumps(list(BIRTH_IDENTITY))
+                and row['resolution_digest'] == _digest((conversation_id, list(BIRTH_IDENTITY), 1, 'born-tracked')))
+
+    def track_new_conversation(self, conversation_id, *, before_commit=None):
+        """Record complete page tracking for a conversation created in this store.
+
+        Refused for any conversation that already has messages, pages, activity
+        or a tracking row: only a room with no history can be born tracked.
+        """
+        with self._transaction(write=True, before_commit=before_commit):
+            return self._track_new_conversation(conversation_id)
+
+    def _track_new_conversation(self, conversation_id):
+        self._require_page_version()
+        if self._born_tracked(conversation_id):
+            return self._page_protection_status(conversation_id)
+        status = self._retention_status(conversation_id, require_enabled=True)
+        if (status['last_sequence'] != 0 or status['activity_revision'] != 0
+                or self._db.execute('SELECT 1 FROM messages WHERE conversation_id=? LIMIT 1', (conversation_id,)).fetchone()
+                or self._db.execute('SELECT 1 FROM conversation_pages WHERE conversation_id=? LIMIT 1', (conversation_id,)).fetchone()
+                or self._db.execute('SELECT 1 FROM conversation_page_tracking WHERE conversation_id=?', (conversation_id,)).fetchone()):
+            raise ValueError('only a new, unused conversation is born with complete page tracking')
+        changed = self._record_activity(conversation_id)
+        row = dict(conversation_id=conversation_id, state='ready', resolver_identity=json.dumps(list(BIRTH_IDENTITY)),
+            resolved_at=changed['last_activity_at'], resolved_activity_revision=changed['activity_revision'],
+            resolution_digest=_digest((conversation_id, list(BIRTH_IDENTITY), changed['activity_revision'], 'born-tracked')))
+        _valid_tracking(row)
+        self._db.execute('INSERT INTO conversation_page_tracking(' + ','.join(TRACKING_FIELDS) +
+            ') VALUES(' + ','.join('?' for _ in TRACKING_FIELDS) + ')', tuple(row[field] for field in TRACKING_FIELDS))
+        return self._page_protection_status(conversation_id)
 
     def _get_page(self, conversation_id, page_id):
         row = self._db.execute('SELECT ' + ','.join(PAGE_FIELDS) +

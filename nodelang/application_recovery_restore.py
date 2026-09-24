@@ -16,7 +16,8 @@ from .application_recovery import _copied_snapshot, _history_heads, _inventory, 
 from .cell_authorization import AuthorizationDenied
 from .conversation_history import ConversationHistoryStore
 from .conversation_migration import _reconcile_database
-from .conversation_pages import PAGE_FIELDS, PAGE_PROTECTION_VERSION, TRACKING_FIELDS
+from .conversation_pages import (PAGE_FIELDS, PAGE_PROTECTION_VERSION, TRACKING_FIELDS,
+                                 normalize_schema_sql, page_schema_statements)
 from .conversation_migration_activation import _authorize, _configured_target
 from .universal_cell import InvalidCell, _SqliteJournal
 
@@ -59,7 +60,28 @@ def _equal_rows(source, copied, sql, parameters, check, label):
                 raise InvalidCell("application restore " + label + " differs from its current owner")
 
 
-def _schema(source, copied, check, *, optional=()):
+# Shapes one store legitimately moves between while its content stays the same:
+# retention tombstones gain a content digest at the first verified purge, and a
+# v4 store gains its draft-protection tables at an idle pass. A backup taken on
+# either side restores as-is; the next idle pass re-applies the upgrade.
+_PAGE_OBJECTS = frozenset(statement.split()[2].split('(', 1)[0] for statement in page_schema_statements())
+_TOMBSTONE_SHAPES = frozenset(normalize_schema_sql(statement) for statement in (
+    ConversationHistoryStore._retention_schema_statements()[1],
+    ConversationHistoryStore._with_content_digest(ConversationHistoryStore._retention_schema_statements()[1])))
+
+
+def _same_shape(name, expected_sql, actual_sql):
+    expected, actual = normalize_schema_sql(expected_sql), normalize_schema_sql(actual_sql)
+    return expected == actual or (name == "message_tombstones"
+                                  and {expected, actual} <= _TOMBSTONE_SHAPES)
+
+
+def _schema(source, copied, check, *, optional=(), extra=()):
+    """Structural comparison: every object has an accepted shape of its owner's.
+
+    ``optional`` objects may be absent from the copy; ``extra`` objects may be
+    present only in the copy. Anything else must match a known shape.
+    """
     def rows(database):
         values = {}
         for kind, name, table, sql in database.execute(
@@ -71,8 +93,15 @@ def _schema(source, copied, check, *, optional=()):
             values[name] = (kind, table, sql)
         return values
     expected, actual = rows(source), rows(copied)
-    if any(expected.get(name) != value for name, value in actual.items()) or (
-            set(expected) - set(actual) - set(optional)):
+    for name, (kind, table, sql) in actual.items():
+        if name not in expected:
+            if name in extra:
+                continue
+            raise InvalidCell("application restore schema differs from its current owner")
+        want_kind, want_table, want_sql = expected[name]
+        if (kind, table) != (want_kind, want_table) or not _same_shape(name, want_sql, sql):
+            raise InvalidCell("application restore schema differs from its current owner")
+    if set(expected) - set(actual) - set(optional):
         raise InvalidCell("application restore schema differs from its current owner")
 
 
@@ -101,13 +130,22 @@ def _graph_prefix(source, copied, revision, check):
 
 def _ordinary_prefix(source, copied, instance_id, bindings, check, deadline):
     version = copied.execute("PRAGMA user_version").fetchone()[0]
-    if source.execute("PRAGMA user_version").fetchone()[0] != version:
+    owner_version = source.execute("PRAGMA user_version").fetchone()[0]
+    if owner_version != version and {owner_version, version} != {4, PAGE_PROTECTION_VERSION}:
         raise InvalidCell("application restore history version differs from its current owner")
     # A fresh ordinary store may predate later migration ownership tables.
     # Existing records from those tables must still match if they were copied.
-    _schema(source, copied, check, optional=("migration_staging", "migration_publications"))
+    # A v4 backup of a store upgraded since (or the reverse) differs only by the
+    # draft-protection objects, which the next idle pass re-creates.
+    optional = ("migration_staging", "migration_publications")
+    extra = ()
+    if version == 4 and owner_version == PAGE_PROTECTION_VERSION:
+        optional += tuple(_PAGE_OBJECTS)
+    elif version == PAGE_PROTECTION_VERSION and owner_version == 4:
+        extra = tuple(_PAGE_OBJECTS)
+    _schema(source, copied, check, optional=optional, extra=extra)
     heads = _history_heads(copied, instance_id, bindings, check)
-    if version == PAGE_PROTECTION_VERSION:
+    if version == PAGE_PROTECTION_VERSION and owner_version == PAGE_PROTECTION_VERSION:
         # Page protection is current safety state, not a message prefix. Compare
         # both complete tables, including conversations absent from this copy,
         # so restoring cannot forget later drafts or unknown tracking state.
@@ -117,6 +155,11 @@ def _ordinary_prefix(source, copied, instance_id, bindings, check, deadline):
         _equal_rows(source, copied, "SELECT " + ','.join(TRACKING_FIELDS) +
             " FROM conversation_page_tracking ORDER BY conversation_id COLLATE BINARY",
             (), check, "page protection tracking")
+    # Compare the columns both shapes hold; the content digest only when both do.
+    tombstone_columns = "conversation_id,sequence,message_digest,idempotency_digest"
+    if version in (4, PAGE_PROTECTION_VERSION) and all("content_digest" in [row[1] for row in
+            database.execute("PRAGMA table_info(message_tombstones)")] for database in (source, copied)):
+        tombstone_columns += ",content_digest"
     for root, head in heads.items():
         current = source.execute("SELECT last_sequence FROM conversations WHERE id=?", (root,)).fetchone()
         if current is None or type(current[0]) is not int or current[0] < head:
@@ -130,7 +173,7 @@ def _ordinary_prefix(source, copied, instance_id, bindings, check, deadline):
             # A backup predating those changes needs a fresh compatible capture.
             _equal_rows(source, copied, "SELECT * FROM conversation_retention WHERE conversation_id=?",
                 (root,), check, "conversation lifecycle state")
-            _equal_rows(source, copied, "SELECT * FROM message_tombstones "
+            _equal_rows(source, copied, "SELECT " + tombstone_columns + " FROM message_tombstones "
                 "WHERE conversation_id=? AND sequence<=? ORDER BY sequence",
                 (root, head), check, "retained tombstone prefix")
     for table in ("migration_staging", "migration_publications"):

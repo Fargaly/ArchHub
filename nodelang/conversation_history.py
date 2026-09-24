@@ -4,7 +4,7 @@ The caller must authorize the current graph node/instance and derive principal
 and read_all. Neither an ID nor read_all is a credential. Legacy migration,
 cutover, and application integration remain separate work. No workers or replay.
 """
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -26,6 +26,11 @@ _RETENTION_SECONDS = 20 * 86400
 _RETENTION_FIELDS = ("last_activity_at", "activity_basis", "activity_revision",
                      "archive_revision", "archived_at", "content_generation", "purged_messages")
 _MAX_BODY = 65536
+# Added to message_tombstones by the first purge that needs it (ALTER TABLE ADD
+# COLUMN, O(1)); a store that never purges keeps its original shape.
+_CONTENT_DIGEST_COLUMN = "content_digest TEXT CHECK(content_digest IS NULL OR length(content_digest)=64)"
+_CANONICAL_FIELDS = ("id", "conversation_id", "sequence", "author", "content", "category",
+                     "recipients", "refs", "evidence", "reply_to", "created_at", "idempotency_key")
 _MAX_OUTPUT = 16 * 1024 * 1024
 
 
@@ -52,6 +57,13 @@ def _references(values, label):
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def message_content_digest(message):
+    """sha256 of one message's canonical content, identity and audience."""
+    canonical = {field: message[field] for field in _CANONICAL_FIELDS}
+    return hashlib.sha256(json.dumps(canonical, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def validate_message_fields(conversation_id, *, author, content, category="note", recipients=(),
@@ -113,7 +125,11 @@ class ConversationHistoryStore(ConversationPageProtection):
                                    check_same_thread=False, cached_statements=64,
                                    uri=not create)
         self._db.row_factory = sqlite3.Row
+        self._database_uri = None
         try:
+            listed = self._db.execute("PRAGMA database_list").fetchone()
+            if listed is not None and listed[2]:
+                self._database_uri = Path(listed[2]).as_uri()
             self._db.execute("PRAGMA foreign_keys=ON")
             self._db.execute("PRAGMA cache_size=-2048")
             with self._transaction(write=True):
@@ -316,11 +332,15 @@ class ConversationHistoryStore(ConversationPageProtection):
         if version in (_RETENTION_VERSION, PAGE_PROTECTION_VERSION):
             required.update({statement.split()[2].split('(', 1)[0]:statement
                              for statement in self._retention_schema_statements()})
+        accepted = {name: {normalized(statement)} for name, statement in required.items()}
+        if "message_tombstones" in required:
+            # The same table after the first content-verified purge added its digest.
+            accepted["message_tombstones"].add(normalized(self._with_content_digest(required["message_tombstones"])))
         for name, expected in required.items():
             actual = declarations.get(name)
             expected_type = "index" if " INDEX " in expected else "table"
             if (actual is None or actual["type"] != expected_type
-                    or normalized(actual["sql"]) != normalized(expected)):
+                    or normalized(actual["sql"]) not in accepted[name]):
                 raise ValueError("unsupported retention source schema: " + name)
         migration_tables = {
             "migration_staging": "CREATE TABLE migration_staging(singleton INTEGER PRIMARY KEY CHECK(singleton=1), ticket_digest TEXT NOT NULL, destination TEXT NOT NULL, stage_id TEXT NOT NULL)",
@@ -344,6 +364,23 @@ class ConversationHistoryStore(ConversationPageProtection):
             validate_page_schema(self._db)
         if set(declarations) - permitted:
             raise ValueError("unknown retention source schema objects")
+
+    @staticmethod
+    def _with_content_digest(statement):
+        anchor = "CHECK(length(idempotency_digest)=64),"
+        if statement.count(anchor) != 1:
+            raise ValueError("tombstone schema anchor is missing")
+        return statement.replace(anchor, anchor[:-1] + ", " + _CONTENT_DIGEST_COLUMN + ",")
+
+    def _has_content_digests(self):
+        columns = [row[1] for row in self._db.execute("PRAGMA table_info(message_tombstones)")]
+        return "content_digest" in columns
+
+    def _ensure_content_digests(self):
+        # Inside the purge write transaction: the column exists before the first
+        # tombstone that must carry a digest, or neither does.
+        if not self._has_content_digests():
+            self._db.execute("ALTER TABLE message_tombstones ADD COLUMN " + _CONTENT_DIGEST_COLUMN)
 
     def _retention_active(self):
         version = self._db.execute("PRAGMA user_version").fetchone()[0]
@@ -410,9 +447,52 @@ class ConversationHistoryStore(ConversationPageProtection):
         return status
 
     def record_activity(self, conversation_id, *, before_commit=None):
-        """Record an admitted open/resume/close, never a poll or imported time."""
+        """Record an admitted owner lifecycle event (restore, resolution), never imported time."""
         with self._transaction(write=True, before_commit=before_commit):
             return self._record_activity(conversation_id)
+
+    def note_open(self, conversation_id, *, min_interval_seconds=3600.0, busy_timeout_ms=0):
+        """A person explicitly opening a conversation keeps it: record activity.
+
+        Best effort and bounded: the last activity is read with a plain read;
+        a write happens only when it is older than the interval, waits at most
+        busy_timeout_ms for the history and its write lock, and is skipped
+        (None) when either is busy. Page open/change and every new message
+        record activity themselves. Returns the new status, or None.
+        """
+        # The plain read uses its own short-lived read-only connection: it never
+        # holds the history lock, so no reader queues behind it, and it makes one
+        # attempt (a busy store is skipped, not waited for).
+        if self._database_uri is None or not 0 <= busy_timeout_ms <= 50:
+            return None
+        try:
+            with closing(sqlite3.connect(self._database_uri + "?mode=ro", uri=True, isolation_level=None,
+                                         timeout=busy_timeout_ms / 1000)) as reader:
+                if reader.execute("PRAGMA user_version").fetchone()[0] not in (_RETENTION_VERSION,
+                                                                               PAGE_PROTECTION_VERSION):
+                    return None
+                row = reader.execute("SELECT last_activity_at FROM conversation_retention WHERE conversation_id=?",
+                                     (conversation_id,)).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is not None and row[0] is not None and self._retention_now() - row[0] < min_interval_seconds:
+            return None
+        if not self._lock.acquire(timeout=0.05):
+            return None
+        try:
+            if self._db.in_transaction or self._operation_cancelled is not None:
+                return None
+            previous = self._db.execute("PRAGMA busy_timeout").fetchone()[0]
+            self._db.execute("PRAGMA busy_timeout=%d" % busy_timeout_ms)
+            try:
+                with self._transaction(write=True):
+                    return self._record_activity(conversation_id)
+            except (sqlite3.OperationalError, TimeoutError):
+                return None
+            finally:
+                self._db.execute("PRAGMA busy_timeout=%d" % previous)
+        finally:
+            self._lock.release()
 
     @staticmethod
     def _retention_guard(protected, before_commit):
@@ -449,13 +529,18 @@ class ConversationHistoryStore(ConversationPageProtection):
 
     def purge_archived(self, conversation_id, *, expected_activity_revision, expected_archive_revision,
                        expected_head, expected_content_generation, protected=True, before_commit=None,
-                       max_messages=100, max_bytes=262144):
+                       max_messages=100, max_bytes=262144, export=None):
         """Delete one bounded newest-first batch, preserving sequence identities.
 
         The owner guard must reject active work, unsaved drafts or uncertain
         protection. It runs again immediately before commit. No graph is touched.
+        ``export`` receives the whole batch and must make it durable before any
+        row is deleted; if it raises, nothing is deleted. A crash after export
+        and before commit leaves the rows here and the copy in the archive.
         """
         self._retention_guard(protected, before_commit)
+        if not callable(export):
+            raise ValueError("retention requires an archive export before delete")
         _integer(max_messages, "purge message limit", 1, 100)
         _integer(max_bytes, "purge byte limit", 1, 1024 * 1024)
         with self._transaction(write=True, before_commit=before_commit):
@@ -475,7 +560,8 @@ class ConversationHistoryStore(ConversationPageProtection):
                 sequences = [row[0] for row in cursor.fetchall()]
             finally:
                 cursor.close()
-            removed = removed_bytes = 0
+            batch = []
+            removed_bytes = 0
             for sequence in sequences:
                 row = self._db.execute("SELECT rowid,* FROM messages WHERE conversation_id=? AND sequence=?",
                                        (conversation_id, sequence)).fetchone()
@@ -488,17 +574,26 @@ class ConversationHistoryStore(ConversationPageProtection):
                     raise ValueError("invalid retained message audience")
                 size = len(_json(message).encode("utf-8"))
                 if removed_bytes + size > max_bytes:
-                    if removed == 0:
+                    if not batch:
                         raise ValueError("message exceeds the purge byte budget")
                     break
+                batch.append((row["rowid"], message))
+                removed_bytes += size
+            if batch:
+                self._ensure_content_digests()
+                # The archive copy is durable before the first DELETE runs.
+                export([dict(message) for _rowid, message in batch])
+            removed = 0
+            for rowid, message in batch:
                 if self._db.execute("SELECT 1 FROM messages WHERE conversation_id=? AND reply_to=? LIMIT 1",
                                     (conversation_id, message["id"])).fetchone():
                     raise ValueError("purge would orphan a retained reply")
-                self._db.execute("INSERT INTO message_tombstones VALUES(?,?,?,?)", (
+                self._db.execute("INSERT INTO message_tombstones(conversation_id,sequence,message_digest,"
+                    "idempotency_digest,content_digest) VALUES(?,?,?,?,?)", (
                     conversation_id, message["sequence"], self._identity_digest(message["id"]),
-                    self._identity_digest(message["idempotency_key"])))
+                    self._identity_digest(message["idempotency_key"]), message_content_digest(message)))
                 self._db.execute("INSERT INTO message_search(message_search,rowid,content) VALUES('delete',?,?)",
-                                 (row["rowid"], message["content"]))
+                                 (rowid, message["content"]))
                 audiences = [("all", "")]
                 if not message["recipients"]:
                     audiences.append(("public", ""))
@@ -517,7 +612,6 @@ class ConversationHistoryStore(ConversationPageProtection):
                 self._db.execute("DELETE FROM messages WHERE conversation_id=? AND id=?",
                                  (conversation_id, message["id"]))
                 removed += 1
-                removed_bytes += size
             if removed:
                 status.update(content_generation=status["content_generation"] + 1,
                               purged_messages=status["purged_messages"] + removed)
@@ -529,6 +623,65 @@ class ConversationHistoryStore(ConversationPageProtection):
     @staticmethod
     def _identity_digest(value):
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    def restore_archived(self, conversation_id, messages, *, before_commit, max_messages=100):
+        """Re-import archived messages at their original sequences.
+
+        Only a message whose tombstone digests match its id, idempotency key and
+        sha256 of its canonical content is admitted, so an archive restores
+        exactly what retention removed: an edited line is refused. A message
+        still present is skipped. Restoring counts as owner activity.
+        """
+        if not callable(before_commit):
+            raise ValueError("restore requires an owner commit guard")
+        _integer(max_messages, "restore message limit", 1, 500)
+        if not isinstance(messages, (list, tuple)) or len(messages) > max_messages:
+            raise ValueError("restore batch is invalid or exceeds its limit")
+        batch = sorted(messages, key=lambda row: row["sequence"])
+        with self._transaction(write=True, before_commit=before_commit):
+            before_commit()
+            status = self._retention_status(conversation_id, require_enabled=True)
+            restored = 0
+            for message in batch:
+                validated = validate_message_fields(conversation_id, author=message["author"],
+                    content=message["content"], category=message["category"],
+                    recipients=message["recipients"], refs=message["refs"], evidence=message["evidence"],
+                    reply_to=message["reply_to"], idempotency_key=message["idempotency_key"],
+                    message_id=message["id"], created_at=message["created_at"])
+                sequence = _integer(message["sequence"], "message sequence", 1, status["last_sequence"])
+                present = self._db.execute("SELECT id FROM messages WHERE conversation_id=? AND sequence=?",
+                                           (conversation_id, sequence)).fetchone()
+                if present is not None:
+                    if present[0] != validated["id"]:
+                        raise ValueError("archive record conflicts with a retained message")
+                    continue
+                tombstone = None
+                if self._has_content_digests():
+                    tombstone = self._db.execute("SELECT message_digest,idempotency_digest,content_digest "
+                        "FROM message_tombstones WHERE conversation_id=? AND sequence=?",
+                        (conversation_id, sequence)).fetchone()
+                if tombstone is None or tuple(tombstone[:2]) != (self._identity_digest(validated["id"]),
+                        self._identity_digest(validated["idempotency_key"])):
+                    raise ValueError("archive record does not match the message retention removed")
+                if tombstone[2] is None or tombstone[2] != message_content_digest(
+                        {**validated, "sequence": sequence}):
+                    raise ValueError("archive record content differs from the message retention removed")
+                if validated["reply_to"] is not None and not self._db.execute(
+                        "SELECT 1 FROM messages WHERE conversation_id=? AND id=?",
+                        (conversation_id, validated["reply_to"])).fetchone():
+                    raise ValueError("restore needs the replied-to message first")
+                self._db.execute("DELETE FROM message_tombstones WHERE conversation_id=? AND sequence=?",
+                                 (conversation_id, sequence))
+                self._insert_indexed(validated, validated["id"], sequence, validated["created_at"])
+                restored += 1
+            if restored:
+                status.update(content_generation=status["content_generation"] + 1,
+                              purged_messages=max(0, status["purged_messages"] - restored))
+                self._put_retention(status)
+            status = self._record_activity(conversation_id)
+            remaining = self._db.execute("SELECT count(*) FROM message_tombstones WHERE conversation_id=?",
+                                         (conversation_id,)).fetchone()[0]
+            return {**status, "restored": restored, "tombstones": remaining}
 
     def conversation_head(self, conversation_id):
         """Read admitted conversation metadata; never create a missing record."""
@@ -627,14 +780,25 @@ class ConversationHistoryStore(ConversationPageProtection):
                 "SELECT 1 FROM messages WHERE conversation_id=? AND id=?", (conversation_id, reply_to)).fetchone():
             raise ValueError("reply target is not in this conversation")
         stamp = created_at or datetime.now(timezone.utc).isoformat()
+        self._insert_indexed(validated, identifier, head + 1, stamp)
+        self._db.execute("UPDATE conversations SET last_sequence=? WHERE id=?", (head + 1, conversation_id))
+        return dict(id=identifier, conversation_id=conversation_id, sequence=head + 1,
+                    created_at=stamp, idempotency_key=idempotency_key, **fields)
+
+    def _insert_indexed(self, validated, identifier, sequence, stamp):
+        """One message row with its search, recipient and count indexes."""
+        conversation_id, author, content, category = (validated[key] for key in
+            ("conversation_id", "author", "content", "category"))
+        recipients = validated["recipients"]
         cursor = self._db.execute(
             "INSERT INTO messages(id,conversation_id,sequence,author,content,category,recipients,refs,evidence,reply_to,created_at,idempotency_key,public) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (identifier, conversation_id, head + 1, author, content, category, _json(recipients),
-             _json(refs), _json(evidence), reply_to, stamp, idempotency_key, int(not recipients)))
+            (identifier, conversation_id, sequence, author, content, category, _json(recipients),
+             _json(validated["refs"]), _json(validated["evidence"]), validated["reply_to"], stamp,
+             validated["idempotency_key"], int(not recipients)))
         self._db.execute("INSERT INTO message_search(rowid,content) VALUES(?,?)", (cursor.lastrowid, content))
         for recipient in recipients:
             self._db.execute("INSERT INTO recipients VALUES(?,?,?,?,?)",
-                (conversation_id, identifier, recipient, head + 1, category))
+                (conversation_id, identifier, recipient, sequence, category))
         audiences = [("all", "")]
         if not recipients:
             audiences.append(("public", ""))
@@ -644,9 +808,6 @@ class ConversationHistoryStore(ConversationPageProtection):
             self._db.execute(
                 "INSERT INTO category_counts VALUES(?,?,?,?,1) ON CONFLICT(conversation_id,audience_kind,principal,category) DO UPDATE SET amount=amount+1",
                 (conversation_id, kind, principal, category))
-        self._db.execute("UPDATE conversations SET last_sequence=? WHERE id=?", (head + 1, conversation_id))
-        return dict(id=identifier, conversation_id=conversation_id, sequence=head + 1,
-                    created_at=stamp, idempotency_key=idempotency_key, **fields)
 
     @staticmethod
     def _audience(principal, read_all):

@@ -25,7 +25,15 @@ _log_dir = Path(
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
 _log_path = _log_dir / "launcher.log"
-_log = open(_log_path, "a", encoding="utf-8", buffering=1)
+# Size-capped with three older copies (launcher.log.1..3); it grew forever.
+try:
+    from nodelang.log_rotation import LAUNCHER_LOG_BYTES, LOG_KEEP, RotatingLog, rotate as _rotate_log
+    _log = RotatingLog(_log_path)
+    # brain.log has no writer in this release; an old one is capped, never grown.
+    _rotate_log(_log_dir / "brain.log", LAUNCHER_LOG_BYTES, LOG_KEEP)
+except Exception:
+    # A half-applied update still leaves a log to read (the check below names it).
+    _log = open(_log_path, "a", encoding="utf-8", buffering=1)
 sys.stdout = _log
 sys.stderr = _log
 
@@ -75,6 +83,8 @@ def _tell_the_person(kind, value, tb):
 sys.excepthook = _tell_the_person
 print("=== launch", time.strftime("%Y-%m-%d %H:%M:%S"), "===")
 faulthandler.enable(file=_log)
+if hasattr(_log, "on_rotate"):
+    _log.on_rotate = lambda stream: faulthandler.enable(file=stream)
 
 def _windows_desktop_name():
     """Read this thread's desktop; do not switch or close its borrowed handle."""
@@ -1391,7 +1401,8 @@ def _maintain_conversations():
         if result['archived'] or result['purged']:
             print('  conversation storage : archived %d; removed %d expired messages' %
                 (result['archived'], result['purged']), flush=True)
-        elif status != _retention_status and status not in ('idle', 'not-enabled', 'deferred'):
+        elif status != _retention_status and status not in ('idle', 'not-enabled', 'deferred',
+                                                             'waiting-for-idle'):
             print('  conversation storage : %s' % status, flush=True)
     except Exception as refusal:
         status = type(refusal).__name__

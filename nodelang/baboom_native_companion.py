@@ -325,6 +325,15 @@ class BaboomNativeCompanionController:
             return
         try:
             import time as _t
+            from pathlib import Path as _Path
+            from .log_rotation import GEOMETRY_LOG_BYTES, LOG_KEEP, LogRotator
+            # Capped: 6.9 MB of geometry lines on one machine, 2026-09-24. A
+            # refused rotation (file held open) backs off instead of retrying
+            # on every receipt.
+            rotator = getattr(self, "_geometry_rotator", None)
+            if rotator is None or rotator.path != _Path(self._geometry_log):
+                rotator = self._geometry_rotator = LogRotator(self._geometry_log, GEOMETRY_LOG_BYTES, LOG_KEEP)
+            rotator()
             with open(self._geometry_log, "a", encoding="utf-8") as sink:
                 sink.write("%s %s" % (_t.strftime("%H:%M:%S"), line) + chr(10))
         except Exception:

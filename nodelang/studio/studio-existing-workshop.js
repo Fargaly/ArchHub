@@ -335,8 +335,10 @@
       }
       return held;
     };
+    // open: true only when a person navigates to this conversation (retention
+    // counts it as activity). Refresh polls, retries and error recovery never set it.
     async function readWorkshop(root, before = null, feed = (pageTarget?.root === root ? pageTarget.feed : 'all') || 'all',
-        feedInitialized = pageTarget?.root === root && pageTarget.feedInitialized === true) {
+        feedInitialized = pageTarget?.root === root && pageTarget.feedInitialized === true, open = false) {
       if (!['all', 'messages', 'activity'].includes(feed)) fail('Choose a valid Workshop feed.');
       const stamp = stampFor(root);
       const contentKnown = (workshop?.root === root && workshop.storage === 'conversation-content') ||
@@ -350,7 +352,7 @@
       const pageStamp = pageEpoch;
       const isCurrent = () => current(stamp, root) && pageStamp === pageEpoch &&
         pageTarget?.root === root && pageTarget.before === before && pageTarget.feed === feed;
-      const key = JSON.stringify([stamp.epoch, stamp.membership, pageStamp, root, before, feed]);
+      const key = JSON.stringify([stamp.epoch, stamp.membership, pageStamp, root, before, feed, open === true]);
       if (reads.has(key)) return reads.get(key);
       const previous = workshop?.root === root && !workshop.error ? workshop : null;
       const ordinary = previous?.storage === 'conversation-content';
@@ -361,7 +363,8 @@
             (feed === 'all' ? '' : '&feed=' + feed) +
             (before === null ? '' : '&before=' + encodeURIComponent(before)) +
             (previous ? '&after=' + previous.revision : '') +
-            (ordinary ? '&content_after=' + encodeURIComponent(previous.content_cursor) : ''));
+            (ordinary ? '&content_after=' + encodeURIComponent(previous.content_cursor) : '') +
+            (open === true ? '&open=1' : ''));
           if (!isCurrent()) return null;
           if (!result || result.ok === false) fail(result?.error || 'Workshop history was refused.');
           if (result.graph_id !== stamp.graph || result.root !== root || result.scope_root !== stamp.scope ||
@@ -1266,6 +1269,8 @@
         publish();
       },
       refreshWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null),
+      openWorkshop: root => readWorkshop(root, pageTarget?.root === root ? pageTarget.before : null,
+        undefined, undefined, true),
       async loadOlderWorkshop(root) {
         if (workshop?.root !== root || workshop.error || workshop.storage !== 'conversation-content' ||
             !text(workshop.next_before)) fail('No older Workshop page is available.');

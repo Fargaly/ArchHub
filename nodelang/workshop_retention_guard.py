@@ -19,7 +19,6 @@ _MAX_CELL_READS = 65_536
 _MAX_ATOM_BYTES = 8 * 1024 * 1024
 _MAX_READ_SECONDS = 2.0
 _STATES = frozenset(('open', 'claimed', 'blocked', 'review', 'complete', 'cancelled'))
-_TERMINAL = frozenset(('complete', 'cancelled'))
 
 
 class _Refusal(InvalidCell):
@@ -122,8 +121,10 @@ def _work_scopes(snapshot, registry, conversation_root):
         state = state_cell.atom.decode('utf-8').casefold()
         if state not in _STATES:
             raise _Refusal('Retention found an unknown Work state; reconcile its state machine')
-        if scope == conversation_root and state not in _TERMINAL:
-            raise _Refusal('Retention is protected by nonterminal Work in this conversation')
+        if scope == conversation_root:
+            # A workflow keeps the conversation it references, finished or not:
+            # its review trail and delivery states live in this history.
+            raise _Refusal('Retention is protected by Work in this conversation')
     return scopes
 
 
@@ -250,7 +251,7 @@ def admit_conversation_retention(owner, snapshot, conversation_root, *, before_c
     """Yield the final admission callback, retaining runtime exclusion until exit.
 
     Generic active model work has no proven room pointer and protects all rooms.
-    Durable Work with a validated scope protects its own room; unmapped or malformed
+    Durable Work with a validated scope, open or finished, protects its own room; unmapped or malformed
     evidence protects all rooms. Expiry never proves that an invocation settled.
     """
     if type(conversation_root) is not str or not conversation_root or not callable(before_commit):

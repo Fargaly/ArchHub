@@ -379,6 +379,10 @@ class ApplicationConversationContent:
                     lock_mode = _reserve(history)
                     history.ensure_conversation(registry.workshop_root)
                     history.initialize_retention()
+                    # A fresh store is born with draft protection, and its first
+                    # room with complete page tracking: retention works from day one.
+                    history.initialize_page_protection()
+                    history.track_new_conversation(registry.workshop_root)
                     self._require_live_owner()
                     if reservation != _physical_file_id(self._path):
                         raise InvalidCell("fresh conversation recovery required: reserved content file changed")
@@ -458,6 +462,22 @@ class ApplicationConversationContent:
         return maintain_conversation_retention(self, authentication_context=authentication_context,
             after_conversation_id=after_conversation_id, cancellation_event=cancellation_event,
             timeout_seconds=timeout_seconds)
+
+    def retention_overview(self, *, authentication_context):
+        """Settings: the retention policy, the last pass and archived conversations."""
+        from .conversation_retention_maintenance import conversation_retention_overview
+        return conversation_retention_overview(self, authentication_context=authentication_context)
+
+    def archive_location(self, conversation_id, *, authentication_context):
+        from .conversation_retention_maintenance import conversation_archive_location
+        return conversation_archive_location(self, conversation_id,
+            authentication_context=authentication_context)
+
+    def restore_from_archive(self, conversation_id, *, authentication_context):
+        """Re-import one archived conversation into this content store."""
+        from .conversation_retention_maintenance import restore_conversation_from_archive
+        return restore_conversation_from_archive(self, conversation_id,
+            authentication_context=authentication_context)
 
     def prepare_recovery_restore(self, recovery_directory, destination, *,
                                  authentication_context, timeout_seconds=30.0):
@@ -595,6 +615,23 @@ class ApplicationConversationContent:
             _route_path="/api/universal/workshop", _translate_content_errors=True,
             _include_visible_head=True, _if_visible_head=if_visible_head,
             _if_content_generation=if_content_generation, _category=category)
+
+    def note_open(self, space_root):
+        """A person explicitly opened this conversation: keep it from retention.
+
+        Called only for an explicit open (the browser's open=1), never for a
+        refresh poll or background read (SPEC 3.6), and only AFTER the page was
+        sent and the owner lock released. Best effort: a busy store skips it;
+        it can never fail or delay the page. The retention pass's activity
+        compare-and-set guards the race with a concurrent purge.
+        """
+        history = self._history
+        if history is None or getattr(self._owner.mutation_lock, "_is_owned", lambda: False)():
+            return None
+        try:
+            return history.note_open(space_root)
+        except (sqlite3.Error, ValueError, InvalidCell, TimeoutError):
+            return None
 
     def page_for_workshop_machine(self, request, *, agent_session_root,
                                   authentication_context, expected_revision, project, limit=50):

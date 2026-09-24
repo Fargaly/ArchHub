@@ -3425,6 +3425,11 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/wire-property", "edit"),
     ("POST", "/api/universal/pick-file", "inspect"),
     ("POST", "/api/universal/reveal", "inspect"),
+    # Conversation retention: Settings reads the policy and the archive,
+    # opens one archive file, and restores a conversation from it.
+    ("GET", "/api/universal/conversation-retention", "read"),
+    ("POST", "/api/universal/conversation-archive-open", "inspect"),
+    ("POST", "/api/universal/conversation-restore", "edit"),
     ("POST", "/api/universal/retract", "edit"),
     ("POST", "/api/universal/brain-remember", "execute"),  # owner-only: the founder's memory
     ("POST", "/api/universal/brain-forget", "execute"),  # owner-only: the founder's memory

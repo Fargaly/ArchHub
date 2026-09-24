@@ -5192,11 +5192,98 @@ const SettingsShortcuts = () => (
   </div>
 );
 
+// Conversation retention (Settings > Storage). Everything shown is read from
+// /api/universal/conversation-retention: the policy the idle maintenance pass
+// runs under, its last pass, and each archived conversation with its file.
+const retentionWhen = seconds => (typeof seconds === 'number' && isFinite(seconds))
+  ? new Date(seconds * 1000).toLocaleString(undefined, {year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})
+  : null;
+const retentionPass = run => run
+  ? `${retentionWhen(run.at)} · ${run.status} · ${run.inspected} checked · ${run.protected} kept · ${run.archived} archived · ${run.purged} messages moved`
+  : null;
+const SettingsRetention = () => {
+  const [state, setState] = React.useState({loading:true, error:'', data:null});
+  const [busy, setBusy] = React.useState('');
+  const [note, setNote] = React.useState('');
+  const load = React.useCallback(() => {
+    if (!window.ARCHHUB_CONVERSATION_RETENTION) {
+      setState({loading:false, error:'Conversation retention is not available in this window.', data:null});
+      return;
+    }
+    setState(current => Object.assign({}, current, {loading:true, error:''}));
+    window.ARCHHUB_CONVERSATION_RETENTION()
+      .then(data => setState({loading:false, error:'', data}))
+      .catch(error => setState({loading:false, error:error.message || 'Conversation retention could not be read.', data:null}));
+  }, []);
+  React.useEffect(load, [load]);
+  const act = (kind, row) => {
+    const call = kind === 'restore' ? window.ARCHHUB_CONVERSATION_RESTORE : window.ARCHHUB_CONVERSATION_ARCHIVE_OPEN;
+    if (!call) return;
+    setBusy(kind + ':' + row.conversation); setNote('');
+    call(row.conversation)
+      .then(result => {
+        if (kind === 'restore') {
+          setNote(`Restored ${result.restored} message${result.restored === 1 ? '' : 's'} to ${row.title || 'the conversation'}.`);
+          load();
+        } else setNote('Opened ' + result.path);
+      })
+      .catch(error => setNote(error.message || 'Refused.'))
+      .finally(() => setBusy(''));
+  };
+  const data = state.data;
+  const policy = data && data.policy;
+  const rows = (data && data.archived) || [];
+  const change = data && data.last_change;
+  return (
+    <div style={{ marginBottom:18 }}>
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:6 }}>CONVERSATION RETENTION</div>
+      {state.loading && !data && <SettingsEmpty>Reading the retention policy…</SettingsEmpty>}
+      {/* retry only where a read exists to retry: never an inert action */}
+      {state.error && <SettingsEmpty role="alert" action={window.ARCHHUB_CONVERSATION_RETENTION
+        ? <button onClick={load} style={smallBtn()}>retry</button> : null}>{state.error}</SettingsEmpty>}
+      {policy && (
+        <div style={{ padding:'12px 14px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:7, fontSize:13, lineHeight:1.55, color:LM.inkSoft }}>
+          <div style={{ color:LM.ink }}>
+            A conversation with no activity for {policy.inactive_days} days is written to its archive file, then removed from the working store,
+            {' '}{policy.messages_per_pass} messages at a time, only after {policy.idle_seconds} seconds without a click.
+          </div>
+          <div style={{ marginTop:4 }}>{policy.preserved}</div>
+          {data.reason && <div style={{ marginTop:4, color:LM.ink }}>{data.reason}</div>}
+          <div style={{ fontFamily:LM.mono, fontSize:10.5, marginTop:6, wordBreak:'break-all' }}>{policy.archive_folder || 'No archive folder: conversation content is not enabled.'}</div>
+          <div style={{ fontFamily:LM.mono, fontSize:10.5, marginTop:6 }}>
+            Last pass: {retentionPass(data.last_run) || 'none since ArchHub started'}
+          </div>
+          {change && <div style={{ fontFamily:LM.mono, fontSize:10.5, marginTop:2 }}>
+            Last removal: {retentionWhen(change.at)} · {change.purged} messages moved · {change.exported} written to the archive
+          </div>}
+        </div>
+      )}
+      {data && !rows.length && <SettingsEmpty>No conversation has been archived.</SettingsEmpty>}
+      {rows.map(row => (
+        <div key={row.conversation} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', marginTop:6,
+          background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div title={row.conversation} style={{ fontSize:13, color:LM.ink, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{row.title || row.conversation}</div>
+            <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>
+              {row.archived_at ? 'archived on ' + (retentionWhen(row.archived_at) || 'an unknown date') : 'restored'} · {row.removed_messages} in the archive file{row.archive_exists ? '' : ' · file missing'}
+            </div>
+          </div>
+          <button disabled={!!busy || !row.archive_exists} onClick={() => act('open', row)} style={smallBtn()}>open archive</button>
+          <button disabled={!!busy || !row.archive_exists} onClick={() => act('restore', row)} style={smallBtn(true)}>{busy === 'restore:' + row.conversation ? 'restoring…' : 'restore'}</button>
+        </div>
+      ))}
+      {data && data.more && <SettingsEmpty>More archived conversations are in the archive folder.</SettingsEmpty>}
+      {note && <SettingsEmpty>{note}</SettingsEmpty>}
+    </div>
+  );
+};
+
 // Storage (design studio-lm.jsx:3039-3072). The session count is the graph index; nothing measures
 // sizes, a training queue or a model cache, so those tiles state no number.
 const SettingsStorage = () => (
   <div>
     <SHead title="Storage" sub="Sessions, training queue, cache. Everything is local first."/>
+    <SettingsRetention/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:14 }}>
       {[
         ['Sessions', String(LM_SESSIONS.length), 'size not measured'],

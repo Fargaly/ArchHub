@@ -157,12 +157,12 @@ def test_governance_lane_folders_render_round_trip_and_refuse_unsafe(install, tm
     assert "laneFolders" not in spec  # an existing loader re-renders byte-identically
     plain = slc.render_governance_loader(spec, install_root=root, state_dir=state)
     assert "laneFolders" not in plain
-    lane = "C:/Users/x/00.ARCHUB/70.HANDOFFS/repair/work/opencode-canvas"
+    lane = "C:/Users/someone/00.ARCHUB/70.HANDOFFS/repair/work/opencode-canvas"
     spec["laneFolders"] = {"ses_A1": lane}
     out = slc.render_governance_loader(spec, install_root=root, state_dir=state)
     assert slc.spec_from_loader(out)["laneFolders"] == {"ses_A1": lane}
-    for bad in ("C:/Users/x/10.PRODUCT/13.NODE-LANGUAGE", "relative/70.HANDOFFS/r/work/l",
-                "C:/Users/x/70.HANDOFFS/r/work/l','evil"):
+    for bad in ("C:/Users/someone/10.PRODUCT/13.NODE-LANGUAGE", "relative/70.HANDOFFS/r/work/l",
+                "C:/Users/someone/70.HANDOFFS/r/work/l','evil"):
         with pytest.raises(slc.SessionLinkConfigRefused):
             slc.render_governance_loader({**spec, "laneFolders": {"ses_A1": bad}}, install_root=root, state_dir=state)
     with pytest.raises(slc.SessionLinkConfigRefused):

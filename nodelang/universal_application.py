@@ -3426,13 +3426,13 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/pick-file", "inspect"),
     ("POST", "/api/universal/reveal", "inspect"),
     ("POST", "/api/universal/retract", "edit"),
-    ("POST", "/api/universal/brain-remember", "edit"),
-    ("POST", "/api/universal/brain-forget", "edit"),
-    ("POST", "/api/universal/brain-edit", "edit"),
+    ("POST", "/api/universal/brain-remember", "execute"),  # owner-only: the founder's memory
+    ("POST", "/api/universal/brain-forget", "execute"),  # owner-only: the founder's memory
+    ("POST", "/api/universal/brain-edit", "execute"),  # owner-only: the founder's memory
     ("POST", "/api/universal/node-create", "edit"),
     ("POST", "/api/universal/graph-create", "edit"),
     ("POST", "/api/universal/graph-open", "inspect"),
-    ("POST", "/api/universal/brain-export", "read"),
+    ("POST", "/api/universal/brain-export", "execute"),  # owner-only: the founder's memory
     ("POST", "/api/universal/skills", "read"),
     ("POST", "/api/universal/login", "edit"),
     ("POST", "/api/universal/accounts", "inspect"),

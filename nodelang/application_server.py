@@ -5686,6 +5686,29 @@ class ApplicationServer:
                         return
                     remaining -= len(chunk)
 
+            def _brain_owner_admitted(self, owner, binding):
+                """The Brain routes admit what POST /api/universal/terminal admits.
+
+                The binding this request was admitted with is still the
+                browser's, still holds the route's right (execute), and is the
+                application owner -- checked while the context is held live.
+                Anything else is a 403 JSON refusal before the Brain is touched.
+                """
+                try:
+                    with owner.universal_registry.authorization.broker.live_context(binding.context):
+                        current_binding, _ = self._browser_session_binding(unsafe=True)
+                        if current_binding.context is not binding.context:
+                            raise AuthorizationDenied('Browser binding changed before Brain admission')
+                        owner.require_universal_http_route(
+                            'POST', self.path, authentication_context=binding.context,
+                            revalidate=True)
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('The Brain belongs to this application owner')
+                except AuthorizationDenied as denied:
+                    self._json(403, {'ok': False, 'error': str(denied)})
+                    return False
+                return True
+
             def _browser_session_binding(self, *, unsafe=False):
                 supplied = self.headers.get('X-ArchHub-Session') or ''
                 cookie_session = ''
@@ -7561,6 +7584,8 @@ class ApplicationServer:
                         self._json(200, payload)
                         return
                     if self.path == '/api/universal/brain-export':
+                        if not self._brain_owner_admitted(owner, binding):
+                            return
                         # Outside the graph lock: the brain is another process,
                         # and a silent brain held every graph route for up to
                         # 30 s. The Brain tab asks with a short budget and says
@@ -7859,6 +7884,8 @@ class ApplicationServer:
                                     })
                                 return
                             elif self.path == '/api/universal/brain-forget':
+                                if not self._brain_owner_admitted(owner, binding):
+                                    return
                                 from .pipeline_engines import _brain_call
                                 fact_id = str(body.get('id') or '').strip()
                                 if not fact_id:
@@ -7869,6 +7896,8 @@ class ApplicationServer:
                                 self._json(200, {'ok': True})
                                 return
                             elif self.path == '/api/universal/brain-edit':
+                                if not self._brain_owner_admitted(owner, binding):
+                                    return
                                 from .pipeline_engines import _brain_call
                                 fact_id = str(body.get('id') or '').strip()
                                 said = str(body.get('text') or '').strip()
@@ -7906,6 +7935,8 @@ class ApplicationServer:
                                 self._json(200, created)
                                 return
                             elif self.path == '/api/universal/brain-remember':
+                                if not self._brain_owner_admitted(owner, binding):
+                                    return
                                 import hashlib as _h
 
                                 from .cloud_session import signed_in_cloud_account

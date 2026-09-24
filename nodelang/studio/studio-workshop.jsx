@@ -1760,9 +1760,106 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
     </div>
   );
 
+  // Delivery state, relayed replies, agent-proposed workflows and independent review
+  // (workshop_workflow.py). Every state shown here is read from the Workshop's own
+  // receipts; a stored message is only stored until a receipt says otherwise.
+  const DELIVERY_TONE = {replied:W.ok, started:W.cyan, unavailable:W.err, uncertain:W.warn, stored:W.inkMuted};
+  const contactLabel = root => (nativeContacts.find(row => row.root === root) || {}).label || names.get(root) || String(root || 'agent');
+  const workflowApi = authority && typeof authority.workshopWorkflow === 'function' ? authority : null;
+  const wfAct = async (action, fields) => {
+    if (busyRef.current || !workflowApi) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try { await workflowApi.workshopWorkflow(descriptor.root, action, fields); }
+    catch (error) { setActionError(error.message || 'The workflow action could not be confirmed.'); }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const saveParam = async (relation, value) => {
+    if (busyRef.current || !workflowApi) return;
+    busyRef.current = true; setBusy(true); setActionError('');
+    try { await workflowApi.workshopWorkflowParam(descriptor.root, relation, value); }
+    catch (error) { setActionError(error.message || 'The parameter was not saved.'); }
+    finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const chip = (label, tone, title, key) => <span key={key} title={title} style={{ fontFamily:W.mono, fontSize:9.5, letterSpacing:'0.04em',
+    color:tone, border:`1px solid ${tone}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>{label}</span>;
+  const deliveryChips = message => {
+    if (!Array.isArray(message.delivery)) return null;
+    const rows = message.delivery.length ? message.delivery : [{recipient:null, state:message.state}];
+    return <div aria-label="Delivery state" style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:6 }}>
+      {rows.map((row, index) => chip((row.recipient ? contactLabel(row.recipient) + ' · ' : '') + String(row.state).toUpperCase(),
+        DELIVERY_TONE[row.state] || W.inkMuted, row.reason || (row.state === 'uncertain' ? 'Delivery may have happened; it is never resent automatically.' : ''),
+        (row.recipient || 'stored') + ':' + index))}
+    </div>;
+  };
+  const relayedActions = message => {
+    if (!workflowApi) return null;
+    const reviewers = nativeContacts.filter(row => row.root !== message.relayed_from).slice(0, 3);
+    const proposal = /"actions"\s*:/.test(message.agent_text);
+    if (!proposal && !reviewers.length) return null;
+    return <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', marginTop:8 }}>
+      {chip('sha256 ' + String(message.artifact_digest || '').slice(0, 12), W.inkMuted, 'Artifact digest of this reply', 'digest')}
+      {proposal && <Btn sm disabled={busy} onClick={() => wfAct('workflow-draft', {message:message.root})}>Draft as workflow</Btn>}
+      {reviewers.map(row => <Btn sm key={row.root} disabled={busy} title="A different agent reviews this reply; its verdict is evidence, not a court pass."
+        onClick={() => wfAct('artifact-review', {artifact:message.root, reviewer:row.root})}>{'Review with ' + row.label}</Btn>)}
+    </div>;
+  };
+  const HIDDEN_PARAMS = new Set(['engine', 'definition', 'version']);
+  const proposedWorkflows = Array.isArray(transcript?.workflows) ? transcript.workflows : [];
+  const artifactReviews = Array.isArray(transcript?.reviews) ? transcript.reviews : [];
+  const workflowsPanel = (proposedWorkflows.length > 0 || artifactReviews.length > 0) && (
+    <div aria-label="Agent-proposed workflows and reviews" style={{ display:'flex', flexDirection:'column', gap:12 }}>
+      {proposedWorkflows.map(wf => {
+        const approved = wf.approval && wf.approval.current === true;
+        const status = approved ? chip('APPROVED · READY TO RUN', W.ok, 'Approval ' + String(wf.approval.digest).slice(0, 12), 's')
+          : wf.approval ? chip('CHANGED SINCE APPROVAL', W.warn, 'Review and approve again before it runs.', 's')
+          : chip('AWAITING YOUR APPROVAL', W.err, 'A proposal is not approval.', 's');
+        return <div key={wf.root} style={{ background:W.bgPanel, border:`1px solid ${W.line}`, borderRadius:7, padding:'12px 13px' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:8 }}>
+            <span style={{ fontSize:12.5, fontWeight:500 }}>{wf.title}</span>
+            {chip('proposed by ' + contactLabel(wf.proposed_by), W.inkMuted, wf.proposed_by, 'p')}
+            {status}
+          </div>
+          {wf.reason && <div role="status" style={{ fontSize:11.5, color:W.warn, marginBottom:8 }}>{wf.reason}</div>}
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {(wf.nodes || []).map(node => <div key={node.root} style={{ border:`1px solid ${W.lineSoft}`, borderRadius:5, padding:'7px 9px' }}>
+              <div style={{ fontSize:11.5, marginBottom:4 }}>{node.title} <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted }}>{node.engine}</span></div>
+              {Object.entries(node.params || {}).filter(([label]) => !HIDDEN_PARAMS.has(label)).map(([label, param]) =>
+                <form key={param.relation + ':' + param.value} onSubmit={e => { e.preventDefault(); if (param.editable) saveParam(param.relation, e.currentTarget.elements.value.value); }}
+                  style={{ display:'flex', alignItems:'center', gap:6, margin:'3px 0' }}>
+                  <span style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, minWidth:88 }}>{label}</span>
+                  {param.editable
+                    ? <><input name="value" aria-label={label} defaultValue={param.value} disabled={busy} maxLength={12000}
+                        style={{ flex:1, minWidth:0, border:`1px solid ${W.line}`, borderRadius:4, background:W.bg, color:W.ink, fontSize:11.5, padding:'3px 6px' }}/>
+                      <Btn sm disabled={busy} onClick={e => saveParam(param.relation, e.currentTarget.form.elements.value.value)}>Save</Btn></>
+                    : <span style={{ fontSize:11.5, color:W.inkSoft, overflowWrap:'anywhere' }}>{label === 'agent' || label === 'reviewer' ? contactLabel(param.value) : param.value}</span>}
+                </form>)}
+            </div>)}
+          </div>
+          <div style={{ display:'flex', gap:8, marginTop:10, alignItems:'center' }}>
+            <span style={{ fontFamily:W.mono, fontSize:9, color:W.inkMuted }}>{wf.digest ? 'behavior ' + wf.digest.slice(0, 12) : ''}</span>
+            <div style={{ flex:1 }}/>
+            <Btn sm disabled={busy || !wf.digest || approved} onClick={() => wfAct('workflow-approve', {workflow:wf.root, digest:wf.digest})}>Approve</Btn>
+            <Btn sm pri disabled={busy || !approved} onClick={() => wfAct('workflow-execute', {workflow:wf.root})}>Run approved</Btn>
+          </div>
+        </div>;
+      })}
+      {artifactReviews.map(review => <div key={review.review} style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center', fontSize:11.5 }}>
+        <span>Independent review of {String(review.artifact_digest).slice(0, 12)}</span>
+        {chip('judged by ' + contactLabel(review.judged_by), W.cyan, review.judged_by, 'j')}
+        {chip('produced by ' + contactLabel(review.claimed_by), W.inkMuted, review.claimed_by, 'c')}
+        {chip(String(review.state).toUpperCase(), DELIVERY_TONE[review.state] || W.inkMuted, '', 'st')}
+        {review.verdict && chip('VERDICT ' + String(review.verdict).toUpperCase(), review.verdict === 'pass' ? W.ok : review.verdict === 'fail' ? W.err : W.warn,
+          'Review evidence from the reviewer; not a court pass.', 'v')}
+      </div>)}
+    </div>
+  );
+
   const msgRow = message => {
-    const isUser = message.sender_root === transcript?.self;
-    const a = agent(message.sender_root);
+    const relayed = typeof message.relayed_from === 'string' && typeof message.agent_text === 'string';
+    // A relayed reply is recorded by this application, but it is the agent's own text.
+    const isUser = !relayed && message.sender_root === transcript?.self;
+    const a = relayed ? {...agent(message.relayed_from), name:contactLabel(message.relayed_from),
+      ini:(contactLabel(message.relayed_from).trim().charAt(0) || 'A').toUpperCase()} : agent(message.sender_root);
     const to = Array.isArray(message.recipient_roots) ?
       (message.recipient_roots.length ? message.recipient_roots.map(root => names.get(root) || root).join(', ') : 'Workshop') :
       (names.get(message.recipient_root) || message.recipient_root || 'Workshop');
@@ -1776,9 +1873,11 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
               style={{ fontFamily:W.mono, fontSize:9.5, color:W.inkMuted, border:`1px solid ${W.line}`, borderRadius:3, padding:'1px 5px', overflowWrap:'anywhere' }}>to {to}</span>
           </div>
           <div style={{ fontSize:messageTextSize, lineHeight:1.6, fontFamily: isUser ? W.sans : W.serif, letterSpacing: isUser ? 0 : '-0.003em', whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>
-            {String(message.body || '').startsWith('Model review evidence. Independent review is still required.\n') ?
+            {relayed ? message.agent_text :
+              String(message.body || '').startsWith('Model review evidence. Independent review is still required.\n') ?
               <WorkshopReview text={message.body.slice(message.body.indexOf('\n') + 1)}/> : message.body}
           </div>
+          {relayed ? relayedActions(message) : deliveryChips(message)}
         </div>
       </div>
     );
@@ -1857,6 +1956,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
           {!transcript && <div role="status" style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>Loading messages…</div>}
           {!content && transcript?.has_older && <div style={{ fontSize:12.5, color:W.inkSoft }}>Showing the available recent messages.</div>}
           {openingAsk < 0 && workflowCard}
+          {workflowsPanel}
           {transcript && !transcript.error && !messages.length && <div style={{ fontFamily:W.serif, fontSize:15, color:W.inkSoft }}>{olderPage ? 'No messages on this page.' : 'No messages have been sent in this Workshop yet.'}</div>}
           {taskItems.map((item, index) => {
             if (item.kind !== 'task') return msgRow(item.message);

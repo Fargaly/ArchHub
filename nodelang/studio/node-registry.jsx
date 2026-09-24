@@ -24,6 +24,7 @@ const AH_CAT = derive((LM) => ({
   logic:     { col:LM.purple,  icon:'\u2325', label:'LOGIC',     role:'Branch / loop / switch' },
   ai:        { col:LM.purple,  icon:'\u2726', label:'AI',        role:'LLM reasoning, vision, match' },
   output:    { col:LM.ok,      icon:'\u2197', label:'OUTPUT',    role:'Publishes / saves / notifies' },
+  workshop:  { col:LM.purple,  icon:'◎', label:'WORKSHOP',  role:'Agents, Workshop and independent review' },
 }));
 
 // COLOUR IS THE SIGNAL - two ports of the same colour can be wired together.
@@ -102,6 +103,13 @@ const AH_LIBRARY = [
     { id:'i_vis',   title:'vision', sub:'read a sketch / screenshot with the picked model' , engine:'library.vision'},
     { id:'i_match', title:'match_skill', sub:'best saved skill for an intent' , engine:'library.match_skill'},
     { id:'i_embed', title:'embed',  sub:'similar facts from the brain' , engine:'library.embed'},
+  ]},
+  { cat:'workshop', items:[
+    // Placing one runs nothing: these act only inside a Workshop workflow the
+    // user has approved (workshop_workflow.py); the canvas Run refuses them.
+    { id:'w_workshop', title:'Workshop',           sub:'this conversation; routes wired agents into it', engine:'workshop.conversation', params:{ conversation:'' } },
+    { id:'w_agent',    title:'Agent session',      sub:'one live native session through Session Link', engine:'agent.session', params:{ agent:'', message:'' } },
+    { id:'w_review',   title:'Independent review', sub:'a different agent reviews the wired artifact', engine:'workshop.review', params:{ reviewer:'' } },
   ]},
   { cat:'output', items:[
     { id:'o_skill', title:'save_skill',     sub:'template this run' , engine:'library.save_skill'},

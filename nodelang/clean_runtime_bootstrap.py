@@ -1,4 +1,10 @@
-"""Atomic composition of the accepted sources into one selected authority."""
+"""Atomic composition of the accepted sources into one selected authority.
+
+The running universal application does not start this bootstrap. Its Agent
+Session and Workshop contracts (install_agent_session_catalogue,
+install_workshop_catalogue) are reconciled into the one running catalogue by
+workshop_workflow.WORKSHOP_CATALOGUE; no state is copied from here.
+"""
 
 from __future__ import annotations
 

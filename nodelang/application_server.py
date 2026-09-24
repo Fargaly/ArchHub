@@ -6682,6 +6682,19 @@ class ApplicationServer:
                                     browser_guard=session_start_guard)
                             self._json(200, payload)
                             return
+                        from .workshop_workflow import ACTIONS as WORKFLOW_ACTIONS, perform_workshop_action
+                        if type(body) is dict and body.get('action') in WORKFLOW_ACTIONS:
+                            # Draft, approve and run agent-proposed workflows and
+                            # request independent review (workshop_workflow.py).
+                            def workflow_guard():
+                                current, current_token = self._browser_session_binding(unsafe=True)
+                                if current != binding or current_token != _session_token:
+                                    raise AuthorizationDenied('Workshop workflow browser changed')
+                                owner.require_universal_http_route('POST', self.path,
+                                    authentication_context=binding.context, revalidate=True)
+                            self._json(200, perform_workshop_action(owner, binding, body,
+                                browser_guard=workflow_guard))
+                            return
                         from .workshop_page_lifecycle import PAGE_ACTIONS, perform_browser_page_action
                         if type(body) is dict and type(body.get('action')) is str and body['action'] in PAGE_ACTIONS:
                             def page_guard():

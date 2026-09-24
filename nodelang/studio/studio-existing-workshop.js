@@ -738,6 +738,57 @@
         sends.set(pendingKey, operation);
         try { return await operation; } finally { if (sends.get(pendingKey) === operation) sends.delete(pendingKey); }
       },
+      // Agent-proposed workflows and independent review (workshop_workflow.py).
+      // Each request identity is derived from what it acts on, so a retry after a
+      // lost response reads the same draft or review instead of making another.
+      // Graph edits do not move the content cursor, so the page is re-read whole.
+      async workshopWorkflow(root, action, fields) {
+        const stamp = stampFor(root), held = workshop;
+        if (!held || held.root !== root || held.error || held.can_send !== true) {
+          fail('Refresh this conversation before acting on its workflow.');
+        }
+        if (!['workflow-draft', 'workflow-approve', 'workflow-execute', 'artifact-review'].includes(action) ||
+            !fields || typeof fields !== 'object') fail('That workflow action is not available.');
+        const body = {action, root, scope:stamp.scope, ...fields};
+        if (action === 'workflow-draft') {
+          if (!text(fields.message)) fail('Choose the agent reply that holds the proposal.');
+          body.idempotency_key = 'draft-' + (await hash(fields.message)).slice(0, 60);
+          body.revision = held.revision;
+        } else if (action === 'artifact-review') {
+          if (!text(fields.artifact) || !text(fields.reviewer)) fail('Choose the artifact and a different reviewer.');
+          body.idempotency_key = 'review-' + (await hash(fields.artifact + '\u001f' + fields.reviewer)).slice(0, 60);
+        } else if (action === 'workflow-approve') {
+          if (!text(fields.workflow) || !/^[a-f0-9]{64}$/.test(fields.digest || '')) fail('Review the workflow before approving it.');
+          body.revision = held.revision;
+        } else {
+          if (!text(fields.workflow)) fail('Choose the approved workflow to run.');
+          body.idempotency_key = uuid();
+        }
+        const result = await post('/api/universal/workshop', body);
+        if (!result?.ok) fail(result?.error || 'The workflow action was refused.');
+        if (current(stamp, root)) {
+          workshop = null; pageEpoch += 1; publish();
+          await readWorkshop(root, null).catch(() => {});
+        }
+        publish();
+        return result;
+      },
+      // A workflow parameter is an ordinary graph property: the same governed
+      // set-property route the inspector uses. Any behavioral edit invalidates
+      // the workflow's approval on the server; the re-read shows it.
+      async workshopWorkflowParam(root, relation, value) {
+        const stamp = stampFor(root), held = workshop;
+        if (!held || held.root !== root || held.error || !text(relation) || typeof value !== 'string' ||
+            value.length > 12000) fail('Refresh this conversation before editing its workflow.');
+        const result = await post('/api/universal/set-property', {relation, value});
+        if (!result?.ok) fail(result?.error || 'The parameter was not saved.');
+        if (current(stamp, root)) {
+          workshop = null; pageEpoch += 1; publish();
+          await readWorkshop(root, null).catch(() => {});
+        }
+        publish();
+        return result;
+      },
       async sendModelConversation(root, agent, message, editor = null) {
         const stamp = stampFor(root), held = workshop;
         if (!held || held.root !== root || held.error || !text(held.owner) || !text(held.view) || held.can_send !== true ||

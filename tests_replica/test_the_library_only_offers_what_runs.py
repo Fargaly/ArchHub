@@ -113,9 +113,21 @@ def _answered(engine_name, params, wired):
     return engine(dict(params), feeds)
 
 
+# The Workshop cards run only inside a Workshop workflow the user approved;
+# the ungated canvas Run gets their refusal by name, never an effect.
+_APPROVAL_GATED = ("workshop.conversation", "agent.session", "workshop.review")
+
+
+def test_workshop_cards_refuse_the_ungated_run_by_name():
+    for name in _APPROVAL_GATED:
+        with pytest.raises(ValueError) as refusal:
+            _answered(name, {}, None)
+        assert "approved Workshop workflow" in str(refusal.value), name
+
+
 def test_every_added_engine_answers_the_shared_shape(tmp_path):
     """(params, feeds) in, (outputs mapping, one display line) out."""
-    assert set(_PLACEMENTS) == set(LIBRARY_ENGINES), (
+    assert set(_PLACEMENTS) | set(_APPROVAL_GATED) == set(LIBRARY_ENGINES), (
         "every engine needs a placement in this court")
     for name, (params, wired) in _PLACEMENTS.items():
         if name == "library.save_skill":
@@ -177,9 +189,11 @@ def test_every_library_card_either_runs_or_says_it_cannot():
     holds the LANDED state.
     """
     items = _library_items()
-    assert len(items) == 54, len(items)
+    # 54 cards plus the three Workshop cards (Workshop, Agent session,
+    # Independent review) reconciled from the clean-bootstrap catalogue.
+    assert len(items) == 57, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 54, sorted(wired)
+    assert len(wired) == 57, sorted(wired)
 
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         assert items.get(item) == wiring["engine"], (

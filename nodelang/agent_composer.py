@@ -32,6 +32,7 @@ _SYSTEM = """You operate the ArchHub node canvas. Reply with ONE JSON object:
 {"actions":[...], "answer":"<one short sentence to the founder>"}
 Each action is one of:
  {"op":"place","definition":"<catalogue name>","ref":"<local name>","x":<num>,"y":<num>,"title":"<optional name>","parameters":{"<declared interface name>":"<text>"}}
+ {"op":"node","engine":"<pipeline engine name>","ref":"<local name>","title":"<name>","params":{"<parameter>":"<text>"},"x":<num>,"y":<num>}
  {"op":"work","ref":"<local name>","title":"<review task>","description":"<self-contained review input and requested outcome>","criteria":[{"criterion":"<observable result>","verification":"<how to check it>"}],"x":<num>,"y":<num>}
  {"op":"select","roots":[<node reference>, ...]}
  {"op":"group","ref":"<optional local name>"}
@@ -65,7 +66,7 @@ instead of preparing execution. The user still reviews and approves the draft.
 """
 
 _DRAFT_OPERATIONS = frozenset({
-    "place", "work", "select", "group", "ungroup", "set_property", "wire", "open", "run",
+    "place", "node", "work", "select", "group", "ungroup", "set_property", "wire", "open", "run",
 })
 
 
@@ -199,7 +200,7 @@ def _validate_draft_references(actions, projection):
     declared: set[str] = set()
     for action in actions:
         op = action["op"]
-        if op in {"place", "work"}:
+        if op in {"place", "node", "work"}:
             for coordinate in ("x", "y"):
                 if coordinate in action and (type(action[coordinate]) not in (int, float)
                         or not math.isfinite(action[coordinate])):
@@ -213,6 +214,13 @@ def _validate_draft_references(actions, projection):
                            or any(type(value) is not str or not value.strip() for value in row.values())
                            for row in criteria)):
                 raise InvalidCell("review Work needs input, outcome and verifiable acceptance criteria")
+        if op == "node":
+            parameters = action.get("params", {})
+            if (type(action.get("engine")) is not str or not action["engine"].strip()
+                    or type(parameters) is not dict or any(
+                        type(key) is not str or not key or type(value) is not str
+                        for key, value in parameters.items())):
+                raise InvalidCell("draft engine node needs an engine name and text parameters")
         if op == "place" and "parameters" in action:
             parameters = action["parameters"]
             if (type(parameters) is not dict or any(
@@ -241,7 +249,7 @@ def _validate_draft_references(actions, projection):
             raise InvalidCell("draft node reference is unknown or precedes its creation")
         if "ref" in action:
             name = action["ref"]
-            if (op not in {"place", "work", "group"} or type(name) is not str
+            if (op not in {"place", "node", "work", "group"} or type(name) is not str
                     or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name) is None
                     or name in declared):
                 raise InvalidCell("draft creation reference must be a unique local name")
@@ -413,6 +421,25 @@ def _apply_draft_actions(
                 references[action["ref"]] = root
             applied.append({"op": op, "ok": True, "root": root,
                             "membership_wire": membership_wire})
+        elif op == "node":
+            # An engine-backed node is placed exactly as the node library places
+            # one; placing it runs nothing. Execution needs the user's approval.
+            from .universal_pipeline import create_engine_node  # noqa: PLC0415
+            try:
+                created = create_engine_node(
+                    store, registry, title=str(action.get("title") or action["engine"]),
+                    engine=action["engine"], x=float(action.get("x", 400)),
+                    y=float(action.get("y", 300)), properties=action.get("params", {}),
+                    authentication_context=authentication_context,
+                )
+            except (InvalidCell, ValueError) as refusal:
+                applied.append({"op": op, "ok": False, "why": str(refusal)[:120]})
+                break
+            root = created["root"]
+            node_ids.add(root)
+            if "ref" in action:
+                references[action["ref"]] = root
+            applied.append({"op": op, "ok": True, "root": root, "engine": created["engine"]})
         elif op == "place":
             definition_root = catalogue.get(str(action.get("definition")))
             if not definition_root:

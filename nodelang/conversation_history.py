@@ -862,6 +862,30 @@ class ConversationHistoryStore(ConversationPageProtection):
                 (conversation_id, idempotency_key, *args)).fetchone()
             return self._message(row) if row is not None else None
 
+    def replies_to(self, conversation_id, message_ids, *, principal, read_all=False, limit=500,
+                   max_bytes=262144):
+        """Visible direct replies to a bounded set of messages, oldest first.
+
+        Uses the reply_to index with the same audience rule as page(); delivery
+        receipts and relayed replies are read here rather than from a page tail.
+        """
+        ids = tuple(dict.fromkeys(message_ids))
+        if not 1 <= len(ids) <= 200:
+            raise ValueError("reply lookup needs 1 to 200 message ids")
+        for value in ids:
+            _text(value, "message id")
+        _integer(limit, "limit", 1, 1000)
+        _integer(max_bytes, "byte budget", 1, _MAX_OUTPUT)
+        audience, args = self._audience(principal, read_all)
+        with self._transaction():
+            self._head(conversation_id)
+            cursor = self._db.execute(
+                "SELECT m.* FROM messages m WHERE m.conversation_id=? AND m.reply_to IN (" +
+                ",".join("?" * len(ids)) + ") AND " + audience + " ORDER BY m.sequence LIMIT ?",
+                (conversation_id, *ids, *args, limit + 1))
+            messages, truncated = self._collect(cursor, limit, max_bytes)
+            return dict(messages=messages, truncated=truncated)
+
     def search(self, conversation_id, query, *, principal, read_all=False, limit=20, max_bytes=262144):
         self._limits(limit, max_bytes)
         _text(query, "search query", 2048)

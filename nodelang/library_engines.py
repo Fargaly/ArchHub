@@ -1186,6 +1186,16 @@ LIBRARY_ITEM_ENGINES["o_spk"] = {"engine": "library.push_speckle",
                                  "params": {"project": "", "branch": "archhub/main", "message": "ArchHub push", "server": ""}}
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_spk", None)
 
+# Workshop, Agent session and Independent review: the clean-bootstrap contracts
+# reconciled into this one running catalogue (workshop_workflow.WORKSHOP_CATALOGUE).
+# Placing one runs nothing; the canvas Run refuses them and only an approved
+# Workshop workflow binds their effects (workshop_workflow._bound_engines).
+from .workshop_workflow import WORKSHOP_CATALOGUE, approval_required  # noqa: E402
+
+for _item, _row in WORKSHOP_CATALOGUE.items():
+    LIBRARY_ENGINES[_row["engine"]] = approval_required
+    LIBRARY_ITEM_ENGINES[_item] = {"engine": _row["engine"], "params": dict(_row["params"])}
+
 __all__ = [
     "LIBRARY_ENGINES",
     "set_notify_surface",

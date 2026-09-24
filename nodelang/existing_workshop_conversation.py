@@ -350,6 +350,29 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                         classification_root=space.classification_root, audience_root=space.audience_root,
                         lifecycle_state_root=space.lifecycle_root,
                         operational_state_root=space.operational_state_root))
+                # Delivery state comes only from the receipts that reply to each
+                # message (read by the reply index, so newer outcomes count).
+                from .workshop_delivery_state import project_delivery, relay_pending_digests
+                from .workshop_workflow import project_workshop_extras
+                founder = binding.subject_root == authority.subject_root
+                principal = registry.agent_body.session.root_id if founder else binding.subject_root
+                history = service._history_for(content_binding)
+                page_ids = [row["id"] for row in page["messages"]]
+                replies = (history.replies_to(root, page_ids, principal=principal, read_all=founder)["messages"]
+                           if page_ids else [])
+                states, relayed = project_delivery(page["messages"], replies,
+                    relay_pending=relay_pending_digests(owner),
+                    note_category=registry.workshop_category_roots["note"],
+                    tool_category=registry.workshop_category_roots.get("tool"),
+                    relay_author=authority.subject_root)
+                extras = project_workshop_extras(owner, binding, root=root, rows=[*page["messages"], *replies],
+                    history=history, principal=principal, read_all=founder, states=states, relayed=relayed)
+
+                def delivery_fields(row):
+                    held = states.get(row["id"])
+                    fields = ({"state": held["state"], "delivery": held["delivery"]} if held
+                              else {"state": "recorded"})
+                    return {**fields, **relayed.get(row["id"], {})}
                 result = {**header,
                     "owner": binding.subject_root, "view": binding.view_root, "self": binding.subject_root,
                     "can_join": False, "can_send": decision.allowed and binding.subject_root in space.participant_roots,
@@ -358,13 +381,15 @@ def _read_ordinary_browser_workshop(owner, binding, *, root, scope, expected_rev
                     "has_older": page["has_older"],
                     "next_before": (page_token(page["messages"][0]["sequence"])
                         if page["has_older"] else None),
+                    "reviews": extras["reviews"], "workflows": extras["workflows"],
                     "messages": [{"root": row["id"], "message_id": row["id"], "sequence": row["sequence"],
                         "sender_root": row["author"],
                         "recipient_root": ", ".join(row["recipients"]) or "Everyone",
                         "recipient_roots": row["recipients"], "body": row["content"],
-                        "category": categories.get(row["category"], row["category"]), "state": "recorded",
+                        "category": categories.get(row["category"], row["category"]),
                         "reply_to_root": row["reply_to"], "reference_roots": row["refs"],
-                        "evidence_roots": row["evidence"], "created_at": row["created_at"]}
+                        "evidence_roots": row["evidence"], "created_at": row["created_at"],
+                        **delivery_fields(row)}
                         for row in page["messages"]]}
                 # Match the actual HTTP encoder (including escaped Unicode).
                 # Keep the newest complete messages within the final UI budget.

@@ -204,6 +204,36 @@ provider limitations and lifecycle ordering are documented in
 Real acceptance requires addressed native replies and a reviewed work artifact
 inside the installed Workshop, plus save/reopen without replacing instance state.
 
+### Milestone 1: states, proposed workflows, independent review
+
+- **Delivery state** (`nodelang/workshop_delivery_state.py`): each user message
+  in the ordinary Workshop page carries `state` and a per-recipient `delivery`
+  list read only from the receipts that reply to it (relay decision/outcome,
+  Everyone broadcast, model turn): `stored`, `started`, `replied`,
+  `unavailable`, `uncertain`. A relayed reply carries `relayed_from` (the
+  contact) and `agent_text`; the Workshop draws it as that agent's message.
+- **Workshop nodes in the running catalogue** (`nodelang/workshop_workflow.py`
+  `WORKSHOP_CATALOGUE`, `node-registry.jsx` category `workshop`): Workshop
+  (`workshop.conversation`), Agent session (`agent.session`) and Independent
+  review (`workshop.review`), reconciled from the clean-bootstrap contracts
+  without starting that bootstrap. They place like any engine node (in/out
+  ports, parameters); the canvas Run refuses them.
+- **Agent-proposed workflow**: an agent's relayed reply holding a composer
+  draft (`{"actions": [...]}`, with the `node` op for engine nodes) becomes
+  editable nodes, wires and parameters by `POST /api/universal/workshop`
+  `workflow-draft`. The user edits parameters (set-property), approves the
+  exact behavior digest (`workflow-approve`, a graph property), then runs it
+  (`workflow-execute`). Any behavioral edit invalidates the approval; moving
+  nodes does not. Agent effects are keyed to workflow, approval and inputs, so
+  a retry or a reopened application never relays twice.
+- **Independent review** (`artifact-review`, or a wired Independent review
+  node): a different bound agent reviews an agent's relayed reply; the same
+  agent or session is refused (`judged_by` must differ from `claimed_by`).
+  The reviewer's `VERDICT: pass|fail` line is evidence, not a court pass.
+- Court: `tests_replica/test_workshop_milestone_one.py` (real application,
+  fixture native transport). The installed build is unchanged until a release
+  carries this source.
+
 ## Packaging and recovery status
 
 Connector assets, credential-store code and the physical hook observer now live

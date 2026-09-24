@@ -3438,6 +3438,10 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("POST", "/api/universal/accounts", "inspect"),
     ("POST", "/api/universal/account-tier", "edit"),
     ("GET", "/api/universal/hosts", "read"),
+    # Settings -> Hosts: which assistants carry the ArchHub MCP entry, and
+    # writing one entry after the person presses Connect for it.
+    ("GET", "/api/universal/assistant-registration", "read"),
+    ("POST", "/api/universal/assistant-registration", "execute"),
     ("GET", "/api/universal/models", "read"),
     ("GET", "/api/universal/native-agents", "read"),
     ("GET", "/api/universal/providers", "read"),

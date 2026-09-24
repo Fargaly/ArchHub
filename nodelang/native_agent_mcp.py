@@ -236,6 +236,19 @@ def build_server(*, session=None, workshop_task: str | None = None):
             result = client.request("GET", "/api/universal/work", {"projection": "index"})
             return _validate_index(result, client)
 
+    @server.tool(name="hosts.status")
+    def hosts_status() -> dict[str, object]:
+        """Read every host connector's live state and each operation's evidence.
+
+        Read-only through the installed application: no host is opened and no
+        operation runs. Each operation row says whether a real court proved it
+        or names the dependency that keeps it unavailable. Host operations run
+        only as graph nodes inside admitted Work (coordination.run_workshop_task);
+        this server offers no raw host execution.
+        """
+        with control.bound_client() as client:
+            return client.request("GET", "/api/universal/hosts", {})
+
     from .native_workshop_tools import register_artifact_tools
     register_artifact_tools(server, control)
     return server

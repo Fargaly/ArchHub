@@ -5271,6 +5271,80 @@ const SettingsAbout = ({ providers, release }) => {
 
 // Hosts (design studio-lm.jsx:3088-3142). The rows are the host catalogue; the BABOOM startup
 // choice closes the list as one more row.
+// Settings > Hosts > Assistants. Each of the person's assistants (Claude Code, Codex, OpenCode)
+// shows whether it carries the ArchHub MCP entry. Connect writes that one client's entry, and only
+// when pressed: the press is the consent. A client that cannot take the entry says why.
+const ASSISTANT_NAMES = { 'claude-code':'Claude Code', codex:'Codex', opencode:'OpenCode' };
+const ASSISTANT_SAID = {
+  registered:'connected', ready_to_register:'not connected', conflict:'a different entry is there; left unchanged',
+  legacy_migration_required:'an old ArchHub entry is there; left unchanged', unsupported:'cannot take an MCP entry',
+  not_installed:'not installed', install_incomplete:'this install is incomplete', config_unreadable:'its settings file is unreadable',
+  config_location_unverified:'its settings location is unverified', registration_unconfirmed:'the entry was not confirmed',
+};
+const SettingsAssistants = () => {
+  const [held, setHeld] = React.useState({ clients:null, error:'' });
+  const [busy, setBusy] = React.useState('');
+  const read = () => {
+    const api = window.ARCHHUB_ASSISTANTS;
+    if (!api) { setHeld({ clients:null, error:'This needs the application connection.' }); return; }
+    api.read().then(d => setHeld({ clients:(d && d.clients) || [], error:'' }),
+      e => setHeld({ clients:null, error:(e && e.message) || 'The assistants were not read.' }));
+  };
+  React.useEffect(read, []);
+  const connect = client => {
+    if (busy) return;
+    setBusy(client);
+    window.ARCHHUB_ASSISTANTS.connect(client).then(read,
+      e => setHeld(h => ({ ...h, error:(e && e.message) || 'The entry was not written.' }))).finally(() => setBusy(''));
+  };
+  return (
+    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
+      <div style={{ padding:'10px 14px', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>
+        ASSISTANTS · ARCHHUB TOOLS OVER MCP
+      </div>
+      {(held.clients || []).map(c => (
+        <div key={c.client} style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}` }}>
+          <div style={{ flex:1, minWidth:0, lineHeight:1.3 }}>
+            <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || c.client}</div>
+            <div style={{ fontSize:11.5, color:LM.inkMuted }}>{ASSISTANT_SAID[c.state] || c.state}{c.reason ? ' · ' + c.reason : ''}</div>
+          </div>
+          {c.state === 'ready_to_register' && (
+            <button onClick={() => connect(c.client)} disabled={!!busy}
+              title={'Adds one ArchHub entry to ' + (ASSISTANT_NAMES[c.client] || c.client) + "'s MCP settings and changes nothing else"}
+              style={{ ...smallBtn(), padding:'3px 10px', fontStyle:'normal' }}>{busy === c.client ? 'Connecting…' : 'Connect'}</button>
+          )}
+        </div>
+      ))}
+      {!held.clients && <SettingsEmpty role={held.error ? 'alert' : 'status'}>{held.error || 'Reading your assistants…'}</SettingsEmpty>}
+      {held.clients && held.error && <SettingsEmpty role="alert">{held.error}</SettingsEmpty>}
+    </div>
+  );
+};
+// Settings > Hosts > Operations: every operation the connectors declare, each with its evidence --
+// a real court that ran it, or the exact thing that keeps it unavailable -- beside the live state.
+const SettingsOperations = () => {
+  useCatalogueVersion();
+  const rows = Array.isArray(window.ARCHHUB_HOST_OPERATIONS) ? window.ARCHHUB_HOST_OPERATIONS : [];
+  if (!rows.length) return null;
+  const proven = rows.filter(r => r.evidence === 'court').length;
+  return (
+    <details style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
+      <summary style={{ padding:'10px 14px', cursor:'pointer', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>
+        OPERATIONS · {proven} PROVEN BY A COURT · {rows.length - proven} UNAVAILABLE
+      </summary>
+      {rows.map(r => (
+        <div key={r.op} style={{ padding:'7px 14px', display:'flex', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}`, alignItems:'baseline' }}>
+          <span style={{ fontFamily:LM.mono, fontSize:11, color:LM.ink, width:190, flexShrink:0 }}>{r.op}</span>
+          <span style={{ fontFamily:LM.mono, fontSize:9, padding:'1px 6px', borderRadius:LM.rad.xs, flexShrink:0,
+            background:(r.evidence === 'court' ? LM.ok : LM.inkMuted) + '1f', color:r.evidence === 'court' ? LM.ok : LM.inkMuted }}>
+            {r.evidence === 'court' ? 'COURT' : 'UNAVAILABLE'}</span>
+          <span style={{ fontSize:11.5, color:LM.inkSoft, minWidth:0, overflowWrap:'anywhere' }}>
+            {r.detail}{r.connector_state ? ' · now ' + r.connector_state : ''}</span>
+        </div>
+      ))}
+    </details>
+  );
+};
 const SettingsHosts = () => {
   const catalogue = useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   return (
@@ -5313,6 +5387,8 @@ const SettingsHosts = () => {
         {catalogue.loading ? 'Reading the hosts on this machine\u2026' : catalogue.error ? 'The hosts were not read: ' + catalogue.error : 'No host has answered a probe yet.'}</SettingsEmpty>}
       <BaboomStartupRow first={false}/>
     </div>
+    <SettingsAssistants/>
+    <SettingsOperations/>
   </div>
   );
 };

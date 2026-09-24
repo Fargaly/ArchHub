@@ -5934,6 +5934,7 @@ class ApplicationServer:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
                     try:
+                        from .connector_operation_evidence import operation_rows
                         # The rows the 30 s background probe holds (_host_rows),
                         # never a port scan inside this request (2026-09-24:
                         # the scan cost Settings 5.4 s). Until the first probe
@@ -5945,6 +5946,9 @@ class ApplicationServer:
                         self._json(200, {
                             'ok': True,
                             'connectors': catalogue,
+                            # Every catalogue operation: its real court, or
+                            # the exact dependency that keeps it unavailable.
+                            'operations': operation_rows(catalogue),
                             'hosts': [
                                 {
                                     'id': item['id'], 'name': item['name'],
@@ -5962,6 +5966,21 @@ class ApplicationServer:
                             'ok': True, 'hosts': [], 'connectors': [],
                             'note': str(exc),
                         })
+                    return
+                if parsed.path == '/api/universal/assistant-registration':
+                    # Which of this person's assistants carry the ArchHub MCP
+                    # entry. Reads their config files; writes nothing.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route(
+                            'GET', parsed.path,
+                            authentication_context=binding.context,
+                        )
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    from .assistant_registration import readiness
+                    self._json(200, {'ok': True, **readiness()})
                     return
                 if parsed.path == '/api/universal/capabilities':
                     # What this running application can actually reach. A
@@ -6617,6 +6636,21 @@ class ApplicationServer:
                             drain_denied_body=True,
                         ):
                             return
+                    if self.path == '/api/universal/assistant-registration':
+                        # The person pressed Connect for ONE assistant in
+                        # Settings; only this instance's own user may write
+                        # its local config. Outside the mutation lock: the
+                        # Claude Code command may take seconds.
+                        body = self._body(max_bytes=1024)
+                        if (type(body) is not dict or set(body) != {'client', 'consent'}
+                                or body['consent'] is not True):
+                            raise InvalidCell('assistant registration needs {client, consent: true}')
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('only this instance\'s own user connects its assistants')
+                        from .assistant_registration import register
+                        self._json(200, {'ok': True, 'result': register(
+                            str(body['client']), consent=True)})
+                        return
                     if self.path in ('/api/universal/provider-key', '/api/universal/social-credential', '/api/universal/social-credential-remove'):
                         from .model_router import ProviderCredentialError, save_provider_key
                         social_enrollment = self.path == '/api/universal/social-credential'
@@ -11889,6 +11923,9 @@ class ApplicationServer:
             ("GET", "/api/universal/baboom-steward-briefing"),
             ("GET", "/api/universal/baboom-capabilities"),
             ("GET", "/api/universal/mcp-broker"),
+            # Read-only host state and per-operation evidence for native MCP
+            # (hosts.status); host operations still run only inside Work.
+            ("GET", "/api/universal/hosts"),
             ("GET", "/api/universal/work-handoff"),
             ("GET", "/api/universal/work-claim-transfer"),
             ("GET", "/api/universal/browser-handoff"),
@@ -12677,6 +12714,16 @@ class ApplicationServer:
                 self.universal_store,
                 self.universal_registry,
             )
+        if method == "GET" and path == "/api/universal/hosts":
+            if body:
+                raise InvalidCell("host projection request must be empty")
+            self.require_universal_http_route(
+                method, path, authentication_context=context
+            )
+            # Probes and the evidence table only: no host is opened and no
+            # operation runs here (connector_operation_evidence.py).
+            from .connector_operation_evidence import host_projection
+            return host_projection()
         if method == "GET" and path == "/api/universal/work-handoff":
             if body:
                 raise InvalidCell(

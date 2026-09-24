@@ -37,12 +37,14 @@ class RevitUnreachable(RuntimeError):
 
 
 # Said wherever Revit is offered on a machine that cannot connect it. The
-# installer ships no Revit add-in: the RevitMCP add-in compiles and runs any
-# C# posted to its localhost port with no caller check, so it is not handed to
-# colleagues until it authenticates its callers.
+# add-in (bridges/sources/revit_mcp*) now refuses every caller without this
+# install's bridge secret (host_bridge_auth.py). Setup registers it per Revit
+# year only from a release payload whose custody review is recorded
+# (host_broker_installation.py); without that no registration exists here.
 REVIT_ADDIN_ABSENT = (
-    "Revit connects through the ArchHub Revit add-in, which this build does "
-    "not install. Revit stays off on this machine until the add-in ships."
+    "Revit connects through the ArchHub Revit add-in, which is not registered "
+    "for any Revit year on this machine. Setup registers it only when this "
+    "build carries a reviewed add-in for that year; then restart Revit."
 )
 
 
@@ -64,12 +66,30 @@ def _call(port: int, route: str, body: Mapping[str, object] | None = None,
           timeout: float = _READ_TIMEOUT) -> dict:
     url = "http://%s:%d%s" % (BROKER_HOST, port, route)
     data = None if body is None else json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"} if data else {}
+    if route != "/ping":
+        # Every route but /ping needs this install's bridge secret
+        # (bridges/sources/shared/BridgeAuth.cs); /ping is identity only.
+        from .host_bridge_auth import bridge_headers
+        headers.update(bridge_headers(url))
     request = urllib.request.Request(
-        url, data=data, method="POST" if data else "GET",
-        headers={"Content-Type": "application/json"} if data else {},
+        url, data=data, method="POST" if data else "GET", headers=headers,
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as refused:
+        # A bridge refusal (401 unauthenticated, 403 browser, 503 no secret)
+        # carries its reason as JSON; callers see it as a status "error".
+        try:
+            answer = json.loads(refused.read().decode("utf-8"))
+        except (OSError, ValueError):
+            raise refused from None
+        if not isinstance(answer, dict):
+            raise
+        answer["status"] = "error"
+        answer["http_status"] = refused.code
+        return answer
 
 
 def live_sessions() -> list[dict]:

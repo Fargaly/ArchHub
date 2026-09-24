@@ -24,6 +24,8 @@
   <ItemGroup>
     <Compile Include="..\shared\ScriptCompiler.cs"  Link="ScriptCompiler.cs"/>
     <Compile Include="..\shared\ICoreEntryPoint.cs" Link="ICoreEntryPoint.cs"/>
+    <!-- Caller check on every route but /ping (bridges/sources/shared/BridgeAuth.cs). -->
+    <Compile Include="..\shared\BridgeAuth.cs" Link="BridgeAuth.cs"/>
   </ItemGroup>
 
   <PropertyGroup>

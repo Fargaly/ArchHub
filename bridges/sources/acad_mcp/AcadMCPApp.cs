@@ -144,10 +144,20 @@ namespace AcadMCP
         private async Task ProcessRequestAsync(HttpListenerContext context)
         {
             string responseJson;
+            int status = 200;
             try
             {
                 var path = (context.Request.Url.AbsolutePath ?? "/").TrimEnd('/');
                 if (string.IsNullOrEmpty(path)) path = "/";
+                // Caller check before the body is read: /exec and /info need
+                // this install's bridge secret; /ping is identity only and is
+                // never answered to a browser (bridges/sources/shared/BridgeAuth.cs).
+                string refusal;
+                if (ArchHub.Shared.BridgeAuth.Refuse(context.Request, path != "/" && path != "/ping", out status, out refusal))
+                {
+                    await WriteResponseAsync(context, JsonError(refusal), status).ConfigureAwait(false);
+                    return;
+                }
                 string body = string.Empty;
                 if (context.Request.HasEntityBody)
                 {
@@ -161,12 +171,17 @@ namespace AcadMCP
                 responseJson = JsonError("Server error: " + ex.Message);
             }
 
+            await WriteResponseAsync(context, responseJson, 200).ConfigureAwait(false);
+        }
+
+        private async Task WriteResponseAsync(HttpListenerContext context, string json, int status)
+        {
             try
             {
-                var bytes = Encoding.UTF8.GetBytes(responseJson ?? "{}");
+                var bytes = Encoding.UTF8.GetBytes(json ?? "{}");
                 context.Response.ContentType = "application/json; charset=utf-8";
                 context.Response.ContentLength64 = bytes.Length;
-                context.Response.StatusCode = 200;
+                context.Response.StatusCode = status;
                 await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
                 context.Response.OutputStream.Close();
             }
@@ -193,6 +208,7 @@ namespace AcadMCP
                             + "\"pid\":" + System.Diagnostics.Process.GetCurrentProcess().Id + ","
                             + "\"compiler\":\"subprocess_csc\","
                             + "\"csc_status\":\"" + cscStatus + "\","
+                            + "\"caller_auth\":\"" + ArchHub.Shared.BridgeAuth.TokenHeader + "\","
                             + "\"csc_path\":\"" + JsonEscape(cscPath ?? "") + "\"}");
                     }
 

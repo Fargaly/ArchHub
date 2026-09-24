@@ -32,8 +32,10 @@ from pathlib import Path
 MAX_PORTS = range(48886, 48900)
 MAX_ROUTE = "/max-mcp"
 MAX_SERVICE = "max-mcp"
-# The installer ships no MaxMCP startup script into 3ds Max: like the Revit
-# add-in it runs any script posted to its localhost port with no caller check.
+# The installer carries the MaxMCP startup script beside the app (bridges/max)
+# but places nothing in a 3ds Max startup folder. The script now refuses every
+# caller without this install's bridge secret (host_bridge_auth.py); deploying
+# it into 3ds Max remains a separate, unbuilt step.
 MAX_PLUGIN_ABSENT = (
     "3ds Max connects through the ArchHub MaxMCP plug-in (it answers as max-mcp "
     "on 48886-48899), which this build does not install. 3ds Max stays off on "
@@ -73,6 +75,29 @@ def _http(url: str, body: Mapping[str, object] | None = None, headers: Mapping[s
         return json.loads(text)
     except json.JSONDecodeError:
         return {"raw": text}
+
+
+class BridgeRefused(RuntimeError):
+    """A host bridge answered and refused this caller; its reason is the message."""
+
+
+def _bridge_call(url: str, body: Mapping[str, object] | None = None, timeout: float = 20.0):
+    """One call to a local host bridge, carrying this install's caller secret.
+
+    The bridges refuse every route but /ping without it (host_bridge_auth.py);
+    a refusal comes back as BridgeRefused with the bridge's own reason.
+    """
+    from .host_bridge_auth import bridge_headers
+    try:
+        return _http(url, body, bridge_headers(url), timeout=timeout)
+    except urllib.error.HTTPError as refused:
+        try:
+            answer = json.loads(refused.read().decode("utf-8", "replace"))
+        except (OSError, ValueError):
+            answer = {}
+        reason = answer.get("error") if isinstance(answer, Mapping) else None
+        raise BridgeRefused("the bridge refused the call (HTTP %d): %s"
+                            % (refused.code, reason or "no reason given")) from None
 
 
 def _max_endpoint(timeout: float = 1.5) -> str | None:
@@ -347,7 +372,10 @@ def max_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
     if not code:
         return {"out": _http(base + "/ping", timeout=8)}, "MaxMCP answers"
     # MaxMCP reads the MAXScript from "script" (max_mcp_startup.py _run_kind).
-    return {"out": _http(base + "/exec_maxscript", {"script": code})}, "ran in 3ds Max"
+    try:
+        return {"out": _bridge_call(base + "/exec_maxscript", {"script": code})}, "ran in 3ds Max"
+    except BridgeRefused as refused:
+        return _honest("3ds Max: %s" % refused)
 
 
 def rhino_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -357,7 +385,10 @@ def rhino_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
         return _honest("Rhino bridge is not listening on :9879 (run the ArchHub bridge script inside Rhino)")
     if not code:
         return {"out": {"ok": True, "bridge": RHINO_URL}}, "Rhino bridge answers"
-    return {"out": _http(RHINO_URL + "/execute", {"code": code})}, "ran in Rhino"
+    try:
+        return {"out": _bridge_call(RHINO_URL + "/execute", {"code": code})}, "ran in Rhino"
+    except BridgeRefused as refused:
+        return _honest("Rhino: %s" % refused)
 
 
 def blender_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -367,7 +398,10 @@ def blender_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
         return _honest("Blender add-on is not listening on :9876 (enable the ArchHub add-on)")
     if not code:
         return {"out": _http(BLENDER_URL + "/ping", timeout=8)}, "Blender add-on answers"
-    return {"out": _http(BLENDER_URL + "/execute", {"code": code})}, "ran in Blender"
+    try:
+        return {"out": _bridge_call(BLENDER_URL + "/execute", {"code": code})}, "ran in Blender"
+    except BridgeRefused as refused:
+        return _honest("Blender: %s" % refused)
 
 
 def office_read(params: Mapping[str, object], feeds: Mapping[str, object]):

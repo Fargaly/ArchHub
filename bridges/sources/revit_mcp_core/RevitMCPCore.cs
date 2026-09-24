@@ -171,10 +171,21 @@ namespace RevitMCPCore
         private async Task HandleAsync(HttpListenerContext ctx)
         {
             string respJson;
+            int status = 200;
             try
             {
                 var path = (ctx.Request.Url.AbsolutePath ?? "/").TrimEnd('/');
                 if (string.IsNullOrEmpty(path)) path = "/";
+                // Caller check before the body is read or any route runs:
+                // /exec, /info, /screenshot and /reload need this install's
+                // bridge secret; /ping names the service to anyone local but
+                // never to a browser (BridgeAuth.cs).
+                string refusal;
+                if (BridgeAuth.Refuse(ctx.Request, path != "/" && path != "/ping", out status, out refusal))
+                {
+                    await WriteAsync(ctx, JsonError(refusal), status).ConfigureAwait(false);
+                    return;
+                }
                 string body = "";
                 if (ctx.Request.HasEntityBody)
                 {
@@ -187,12 +198,17 @@ namespace RevitMCPCore
             }
             catch (Exception ex) { respJson = JsonError("server: " + ex.Message); }
 
+            await WriteAsync(ctx, respJson, 200).ConfigureAwait(false);
+        }
+
+        private async Task WriteAsync(HttpListenerContext ctx, string json, int status)
+        {
             try
             {
-                var b = Encoding.UTF8.GetBytes(respJson ?? "{}");
+                var b = Encoding.UTF8.GetBytes(json ?? "{}");
                 ctx.Response.ContentType = "application/json; charset=utf-8";
                 ctx.Response.ContentLength64 = b.Length;
-                ctx.Response.StatusCode = 200;
+                ctx.Response.StatusCode = status;
                 await ctx.Response.OutputStream.WriteAsync(b, 0, b.Length).ConfigureAwait(false);
                 ctx.Response.OutputStream.Close();
             }
@@ -216,6 +232,7 @@ namespace RevitMCPCore
                          + "\"csc_status\":\"" + (cscPath != null ? "ok" : "missing") + "\","
                          + "\"csc_path\":\"" + JsonEscape(cscPath ?? "") + "\","
                          + "\"core_sha\":\"" + JsonEscape(_coreSha) + "\","
+                         + "\"caller_auth\":\"" + BridgeAuth.TokenHeader + "\","
                          + "\"hot_reload\":true}";
 
                 case "/info":

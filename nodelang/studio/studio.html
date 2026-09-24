@@ -310,7 +310,15 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       // The server answers from its background probe; before the first probe
       // lands it says so, and the panel offers "read again" instead of "none".
       if (scan.probing) throw new Error('the host probe is still running');
+      // Per operation: its real court, or the dependency that keeps it unavailable.
+      window.ARCHHUB_HOST_OPERATIONS = Array.isArray(scan.operations) ? scan.operations : [];
       return {hosts:scan.hosts || [], connectors:scan.connectors || []};
+    };
+    // Settings > Hosts > Assistants: read every client's state; write one entry
+    // only when the person presses Connect for it (consent is that press).
+    window.ARCHHUB_ASSISTANTS = {
+      read: () => jget('/api/universal/assistant-registration'),
+      connect: client => jpost('/api/universal/assistant-registration', {client, consent:true}),
     };
     window.ARCHHUB_LOAD_MEMORY = async () => {
       // Read only when the Brain tab opens; the server gives the brain 4 s and

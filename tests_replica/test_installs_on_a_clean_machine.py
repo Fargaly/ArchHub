@@ -461,11 +461,15 @@ def test_the_installer_script_actually_compiles():
         wheels = Path(out) / "wheelhouse"
         wheels.mkdir()
         (wheels / "court-0-py3-none-any.whl").write_bytes(b"")
+        # build_revit_bridge.ps1's output on a machine with no Revit: an index, no years.
+        host_payload = Path(out) / "hostpayload"
+        host_payload.mkdir()
+        (host_payload / "HOST_ARTIFACTS.json").write_text('{"revit":{}}', encoding="ascii")
         done = subprocess.run(
             [compiler, "/DBuildId=court", "/DRequirementsSha256=" + "0" * 64,
              "/DBuildMetadataPath=" + str(meta), "/DNodeRuntimePath=" + node,
              "/DNodeLicensePath=" + str(ROOT / "packaging" / "windows" / "licenses" / "Node-v24.13.0-LICENSE.txt"),
-             "/DWheelhousePath=" + str(wheels),
+             "/DWheelhousePath=" + str(wheels), "/DHostPayloadPath=" + str(host_payload),
              "/O" + out, "/Q", str(ROOT / "installer" / "ArchHub.iss")],
             capture_output=True, text=True, timeout=900,
         )

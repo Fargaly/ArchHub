@@ -56,6 +56,88 @@ _server: Optional[HTTPServer] = None
 _server_thread: Optional[threading.Thread] = None
 
 
+# --- BEGIN ArchHub bridge caller check (identical in every Python bridge) ---
+# Every route but /ping runs only for a caller that sends this install's
+# bridge secret; browser requests are refused and no CORS header is sent.
+# The ArchHub app (nodelang/host_bridge_auth.py) creates the secret in its
+# credential store, the Windows Credential Locker through keyring; it is read
+# back here exactly as keyring wrote it and compared in constant time.
+import ctypes as _ah_ctypes
+import hmac as _ah_hmac
+from ctypes import wintypes as _ah_wintypes
+
+BRIDGE_TOKEN_HEADER = "X-ArchHub-Bridge-Token"
+_BRIDGE_SECRET_SERVICE = "ArchHub"
+_BRIDGE_SECRET_USER = "archhub-host-bridge"
+
+
+class _AhCredential(_ah_ctypes.Structure):
+    _fields_ = [("Flags", _ah_wintypes.DWORD), ("Type", _ah_wintypes.DWORD),
+                ("TargetName", _ah_wintypes.LPWSTR), ("Comment", _ah_wintypes.LPWSTR),
+                ("LastWritten", _ah_wintypes.FILETIME),
+                ("CredentialBlobSize", _ah_wintypes.DWORD),
+                ("CredentialBlob", _ah_ctypes.POINTER(_ah_ctypes.c_ubyte)),
+                ("Persist", _ah_wintypes.DWORD), ("AttributeCount", _ah_wintypes.DWORD),
+                ("Attributes", _ah_ctypes.c_void_p), ("TargetAlias", _ah_wintypes.LPWSTR),
+                ("UserName", _ah_wintypes.LPWSTR)]
+
+
+def _ah_read_credential(target):
+    """(user, secret) of one generic Windows credential, or None."""
+    try:
+        advapi = _ah_ctypes.WinDLL("advapi32", use_last_error=True)
+    except (OSError, AttributeError):
+        return None
+    read = advapi.CredReadW
+    read.argtypes = (_ah_wintypes.LPCWSTR, _ah_wintypes.DWORD, _ah_wintypes.DWORD,
+                     _ah_ctypes.POINTER(_ah_ctypes.POINTER(_AhCredential)))
+    read.restype = _ah_wintypes.BOOL
+    advapi.CredFree.argtypes = (_ah_ctypes.c_void_p,)
+    found = _ah_ctypes.POINTER(_AhCredential)()
+    if not read(target, 1, 0, _ah_ctypes.byref(found)):  # CRED_TYPE_GENERIC
+        return None
+    try:
+        cred = found.contents
+        size = int(cred.CredentialBlobSize)
+        if not cred.CredentialBlob or size <= 0 or size > 4096 or size % 2:
+            return None
+        blob = _ah_ctypes.string_at(cred.CredentialBlob, size)
+        return (cred.UserName or "", blob.decode("utf-16-le"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    finally:
+        advapi.CredFree(found)
+
+
+def bridge_secret(service=_BRIDGE_SECRET_SERVICE, user=_BRIDGE_SECRET_USER):
+    """The bridge secret where keyring put it: the service target, else user@service."""
+    found = _ah_read_credential(service)
+    if found is None or found[0] != user:
+        found = _ah_read_credential(user + "@" + service)
+    if found is None or found[0] != user or len(found[1]) < 32:
+        return None
+    return found[1]
+
+
+def bridge_refusal(headers, require_token=True):
+    """None when the caller may proceed, else (http_status, reason)."""
+    if headers.get("Origin") is not None or headers.get("Sec-Fetch-Mode") is not None:
+        return 403, "browser requests are refused; ArchHub calls this bridge directly"
+    if not require_token:
+        return None
+    try:
+        secret = bridge_secret()
+    except Exception:
+        secret = None
+    if not secret:
+        return 503, "ArchHub has not provisioned this bridge's caller secret; open ArchHub once"
+    given = headers.get(BRIDGE_TOKEN_HEADER) or ""
+    if not _ah_hmac.compare_digest(given.encode("utf-8"), secret.encode("utf-8")):
+        return 401, "caller is not authenticated"
+    return None
+# --- END ArchHub bridge caller check ---
+
+
 # ---------------------------------------------------------------------------
 # Main-thread dispatcher.
 # Rhino's API is single-threaded. HTTP handler thread posts work to the UI
@@ -226,7 +308,21 @@ class _ArchHubRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _refused(self) -> bool:
+        refusal = bridge_refusal(self.headers, require_token=self.path != "/ping")
+        if refusal is None:
+            return False
+        self._send(refusal[0], {"status": "error", "error": refusal[1]})
+        return True
+
+    def do_OPTIONS(self):  # noqa: N802
+        # Only a browser sends a preflight; it gets no CORS grant.
+        self._send(403, {"status": "error",
+                         "error": "browser requests are refused; ArchHub calls this bridge directly"})
+
     def do_GET(self):  # noqa: N802
+        if self._refused():
+            return
         if self.path == "/ping":
             self._send(200, _handler_ping())
         elif self.path == "/info":
@@ -237,6 +333,8 @@ class _ArchHubRequestHandler(BaseHTTPRequestHandler):
             self._send(404, {"status": "error", "error": "unknown path"})
 
     def do_POST(self):  # noqa: N802
+        if self._refused():
+            return
         try:
             length = int(self.headers.get("Content-Length") or "0")
             raw = self.rfile.read(length).decode("utf-8") if length else "{}"

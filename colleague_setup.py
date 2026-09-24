@@ -364,6 +364,55 @@ def print_host_installation_readiness(root: Path) -> None:
         print("  Host installation evidence is unavailable. External connectors are not verified ready.")
 
 
+def register_revit_add_ins(root: Path, *, environment=None, install=None,
+                           detected_years=None) -> list[dict]:
+    """Register the packaged Revit add-in for every Revit year found here.
+
+    The installer carries the add-in compiled per year (installer/
+    build_revit_bridge.ps1) and HOST_ARTIFACTS.json naming each year's manifest
+    and digest. For each year both packaged and installed, the existing
+    registration owner (nodelang/host_broker_installation.py) verifies the
+    closure, the host API pins and the custody review, then writes the user's
+    RevitMCP.addin. It never overwrites a different registration, never needs
+    elevation and never starts Revit. Each outcome is printed as it is.
+    """
+    import json
+    env = os.environ if environment is None else environment
+    if install is None:
+        from nodelang.host_broker_installation import install_revit_broker as install
+    index_path = root / "HOST_ARTIFACTS.json"
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print("  revit add-in: this build carries no Revit add-in payload")
+        return []
+    revit = index.get("revit") if isinstance(index, dict) else None
+    if not isinstance(revit, dict):
+        print("  revit add-in: HOST_ARTIFACTS.json is unreadable; nothing registered")
+        return []
+    detected = set(_setup_host_installations().get("revit") or []) if detected_years is None else set(detected_years)
+    outcomes = []
+    for year in sorted(revit):
+        row = revit[year]
+        if year not in detected:
+            outcomes.append({"host_version": year, "status": "host-not-installed"})
+            print("  revit %s   : add-in packaged; Revit %s is not installed here" % (year, year))
+            continue
+        program_files = env.get("ProgramFiles", r"C:\Program Files")
+        result = install(
+            package_root=str(root), manifest_path=str(root / row["manifest"]),
+            expected_manifest_sha256=row["sha256"], host_version=year,
+            host_executable=str(Path(program_files) / "Autodesk" / ("Revit %s" % year) / "Revit.exe"),
+            user_profile_root=env["USERPROFILE"],
+            user_addins_root=str(Path(env["APPDATA"]) / "Autodesk" / "Revit" / "Addins"),
+            machine_addins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "Revit" / "Addins"))
+        outcomes.append(result)
+        print("  revit %s   : %s%s" % (year, result["status"],
+                                        (" - " + result["reason"]) if result.get("reason") else
+                                        " (restart Revit %s to load it)" % year if result.get("registered") else ""))
+    return outcomes
+
+
 def _launcher_state_root() -> Path:
     # launch_archhub_test.py owns this location; a court holds the two equal.
     return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR")
@@ -502,6 +551,11 @@ def main():
             print("  send this window text to your ArchHub administrator.")
             return 4
     print_host_installation_readiness(root)
+    try:
+        # As opened, not resolved: registration refuses a redirected install path.
+        register_revit_add_ins(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  revit add-in: not registered (%s)" % type(exc).__name__)
     try:
         if readiness_identity(root) != identity:
             raise ValueError("installed build changed during setup")

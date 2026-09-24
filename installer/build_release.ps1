@@ -11,7 +11,9 @@ param(
     [switch]$PrepareCandidateManifest,
     [string]$LocalCandidateManifest,
     [ValidatePattern('^[0-9a-fA-F]{64}$')]
-    [string]$LocalCandidateManifestSha256
+    [string]$LocalCandidateManifestSha256,
+    # Independent custody review of the authenticated Revit add-in source.
+    [string]$BrokerReviewPath
 )
 
 # Build only the selected colleague installer. No installed state, builder-home
@@ -128,6 +130,10 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         # renders with, beside their licences. They are data, not code: named exactly, so the
         # generic allowlist never turns into "any binary under nodelang".
         if ($Path -cmatch '^nodelang/data/website/(favicon\.(ico|svg)|og\.png|fonts/[A-Za-z0-9][A-Za-z0-9._-]*\.(woff2|txt))$') { return $true }
+        # The .NET add-in sources: build_revit_bridge.ps1 compiles the Revit ones and
+        # only that compiled closure is installed; AutoCAD's is carried, not built yet.
+        if ($Path -cin @('installer/build_revit_bridge.ps1', 'bridges/README.md')) { return $true }
+        if ($Path -cmatch '^bridges/sources/(revit_mcp|revit_mcp_core|shared|acad_mcp)/[A-Za-z0-9][A-Za-z0-9_.-]*\.(cs|csproj|addin|json)$') { return $true }
         return $Path -cmatch '^nodelang/.+\.(py|jsx|js|mjs|cjs|html|png)$'
     }
     return $false
@@ -620,7 +626,16 @@ if (@($wheels | Where-Object { $_.Name -match '^(?i:psycopg|boto3|botocore|fasta
 $wheelLines = @($wheels | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)" })
 [IO.File]::WriteAllText((Join-Path $output 'wheelhouse.sha256'), ($wheelLines -join "`n") + "`n", $utf8)
-& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DWheelhousePath=$wheelhouse" "/O$output" $installer
+# The authenticated Revit add-in, built per Revit year installed here from the
+# snapshot's bridges/sources. Its manifests carry activation only with the
+# independent custody review (-BrokerReviewPath); setup refuses them otherwise.
+$hostPayload = Join-Path $output 'hostpayload'
+$revision = (& git -C $snapshot.SelectedCheckout rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'The source revision for the Revit add-in could not be read.' }
+$bridgeArgs = @{ SourceRoot = (Join-Path $selectedRoot 'bridges/sources'); OutputRoot = $hostPayload; SourceRevision = $revision }
+if ($BrokerReviewPath) { $bridgeArgs.BrokerReviewPath = $BrokerReviewPath }
+& (Join-Path $selectedRoot 'installer/build_revit_bridge.ps1') @bridgeArgs
+& $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
     throw 'Node runtime changed during installer compilation; retain artifact for inspection only.'

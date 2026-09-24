@@ -37,6 +37,12 @@
 #ifndef WheelhousePath
 #error Build with installer/build_release.ps1: WheelhousePath is required.
 #endif
+; The authenticated Revit add-in, compiled per Revit year by
+; installer/build_revit_bridge.ps1 (bridges/revit/<year>/ + HOST_ARTIFACTS.json).
+; Setup registers a year only when its manifest carries the custody review.
+#ifndef HostPayloadPath
+#error Build with installer/build_release.ps1: HostPayloadPath is required.
+#endif
 #define BundledNodeSha256 GetSHA256OfFile(NodeRuntimePath)
 #define PayloadExcludes "__pycache__\*,*.pyc,*.pyo,.env,.env.*,*.sqlite3,*.sqlite3-*,*.db,*.db-*,*.key,*.pem"
 #define AppPublisher "Fargaly"
@@ -100,6 +106,9 @@ Source: "..\personal_brain\ambient_policy.py"; DestDir: "{app}\personal_brain"; 
 Source: "..\bridges\rhino\archhub_mcp.py"; DestDir: "{app}\bridges\rhino"; Flags: ignoreversion
 Source: "..\bridges\blender\archhub_mcp\__init__.py"; DestDir: "{app}\bridges\blender\archhub_mcp"; Flags: ignoreversion
 Source: "..\bridges\sources\max_mcp\max_mcp_startup.py"; DestDir: "{app}\bridges\max"; Flags: ignoreversion
+; Compiled add-in closure per Revit year the build machine carries; none when it carries none.
+Source: "{#HostPayloadPath}\bridges\revit\*"; DestDir: "{app}\bridges\revit"; Flags: recursesubdirs createallsubdirs ignoreversion skipifsourcedoesntexist
+Source: "{#HostPayloadPath}\HOST_ARTIFACTS.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\colleague_setup.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#WheelhousePath}\*.whl"; DestDir: "{app}\wheelhouse"; Flags: ignoreversion
@@ -139,6 +148,50 @@ Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open inst
 
 [Code]
 #include "legacy_sweep.iss"
+
+(* Uninstall removes only the Revit add-in registrations THIS installation made:
+  a per-user RevitMCP.addin whose text loads the add-in from the install folder's
+  bridges\revit\. Registrations that load from anywhere else (another install, a v1
+  payload\, a developer build) are foreign and stay. Revit reads the change at its
+  next start. *)
+procedure RemoveOwnRevitRegistrations();
+var
+  Base, Owned: String;
+  Years: TFindRec;
+  Manifest: String;
+  Text: AnsiString;
+begin
+  Base := ExpandConstant('{userappdata}') + '\Autodesk\Revit\Addins';
+  Owned := Lowercase(ExpandConstant('{app}') + '\bridges\revit\');
+  if FindFirst(Base + '\*', Years) then
+  begin
+    try
+      repeat
+        if ((Years.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and
+           (Years.Name <> '.') and (Years.Name <> '..') then
+        begin
+          Manifest := Base + '\' + Years.Name + '\RevitMCP.addin';
+          if FileExists(Manifest) and LoadStringFromFile(Manifest, Text) and
+             (Pos(Owned, Lowercase(String(Text))) > 0) then
+          begin
+            if DeleteFile(Manifest) then
+              Log('Removed ArchHub Revit add-in registration ' + Manifest)
+            else
+              Log('Could not remove ArchHub Revit add-in registration ' + Manifest);
+          end;
+        end;
+      until not FindNext(Years);
+    finally
+      FindClose(Years);
+    end;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RemoveOwnRevitRegistrations();
+end;
 
 function NodeRuntimeNeedsInstall(): Boolean;
 var

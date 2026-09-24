@@ -65,6 +65,9 @@
   <ItemGroup>
     <Compile Include="..\shared\ScriptCompiler.cs"
              Link="ScriptCompiler.cs" />
+    <!-- Caller check on /exec and /info (bridges/sources/shared/BridgeAuth.cs). -->
+    <Compile Include="..\shared\BridgeAuth.cs"
+             Link="BridgeAuth.cs" />
   </ItemGroup>
 
   <!-- AgDR-0025 — Microsoft.CodeAnalysis* package reference REMOVED.

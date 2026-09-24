@@ -7,7 +7,21 @@ broker listens on, so MAXScript went to AutoCAD. MaxMCP binds the first free por
 the signed exec call (_bridge_call) is faked too, so no court reaches a live 3ds Max
 or the credential store the signing secret lives in.
 """
+import importlib
+import importlib.util
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import app.secrets_store as _secrets
 from nodelang import host_brokers as hosts
+
+ROOT = Path(__file__).resolve().parents[1]
+# The real store functions, taken at import, before any court fixture runs.
+# The store courts below compare identities only; none of them calls these.
+_STORE_NAMES = ("load_api_key", "save_api_key", "delete_api_key", "list_keys")
+_REAL_STORE = tuple(getattr(_secrets, name) for name in _STORE_NAMES)
 
 ACAD, MAX = 48886, 48887
 
@@ -61,6 +75,54 @@ def test_a_court_signs_with_a_secret_held_in_memory_never_the_credential_store()
     assert type(store).__name__ == "_CourtCredentialStore", store
     secret = auth.ensure_secret()
     assert store.saved == {auth.PROVIDER: secret}
+
+
+def _reaches_real_store(store) -> bool:
+    return any(getattr(store, name, None) is real for name, real in zip(_STORE_NAMES, _REAL_STORE))
+
+
+def test_host_bridge_auth_loaded_by_path_never_reaches_the_real_store():
+    spec = importlib.util.spec_from_file_location("_court_host_bridge_auth",
+                                                  ROOT / "nodelang" / "host_bridge_auth.py")
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    assert not _reaches_real_store(loaded._store()), loaded._store()
+
+
+def test_host_bridge_auth_reloaded_never_reaches_the_real_store():
+    from nodelang import host_bridge_auth as auth
+    importlib.reload(auth)
+    assert not _reaches_real_store(auth._store()), auth._store()
+
+
+def test_a_by_path_copy_of_the_secrets_store_refuses_the_os_store():
+    """model_router loads app/secrets_store.py by path; that copy is not the patched module."""
+    spec = importlib.util.spec_from_file_location("_court_secrets_store", ROOT / "app" / "secrets_store.py")
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    assert getattr(loaded, "os_store_refused", lambda: False)(), "the copy would use keyring"
+
+
+def test_a_child_process_refuses_the_os_store():
+    probe = ("from app import secrets_store as s; "
+             "print(getattr(s, 'os_store_refused', lambda: False)())")
+    ran = subprocess.run([sys.executable, "-c", probe], cwd=ROOT, capture_output=True, text=True,
+                         timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    assert ran.stdout.strip() == "True", (ran.stdout, ran.stderr[-500:])
+
+
+def test_the_memory_store_outside_a_court_is_refused_not_obeyed():
+    """The variable alone, with no pytest running, must not switch a real install to memory keys."""
+    probe = ("from app import secrets_store as s\n"
+             "try:\n    s.os_store_refused()\n"
+             "except RuntimeError as refused:\n    print('refused:', refused)\n"
+             "else:\n    print('obeyed')\n")
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_VERSION"}
+    env["ARCHHUB_TEST_SECRET_STORE"] = "memory"
+    ran = subprocess.run([sys.executable, "-c", probe], cwd=ROOT, env=env, capture_output=True, text=True,
+                         timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    assert ran.stdout.strip() == ("refused: ARCHHUB_TEST_SECRET_STORE=memory is for courts only; unset it"), (
+        ran.stdout, ran.stderr[-500:])
 
 
 def test_the_max_row_names_the_port_maxmcp_answers_on(monkeypatch):

@@ -19,6 +19,26 @@ _CREDENTIAL_LOCK_MODULE = None
 _PAD = b"ArchHub-fallback-not-secure-use-keyring"
 _DPAPI_MARK = b"ARCHHUB-DPAPI-1:"
 _DPAPI_ENTROPY = b"ArchHub secrets.dat"
+# Courts set ARCHHUB_TEST_SECRET_STORE=memory (tests_replica/conftest.py). That
+# process, any copy of this file it loads by path, and every child it starts keep
+# keys in this dict and never reach keyring, secrets.dat, an alias resolver or
+# settings.json's provider index.
+TEST_STORE_ENV = "ARCHHUB_TEST_SECRET_STORE"
+_MEMORY_KEYS: dict = {}
+
+
+def os_store_refused() -> bool:
+    """True when this process must keep keys in memory, never in the OS store.
+
+    Only a court may ask for that: pytest sets PYTEST_VERSION for its process
+    and the children it starts. The variable anywhere else is refused, so a
+    stray setting can never switch a real install to keys that vanish.
+    """
+    if os.environ.get(TEST_STORE_ENV) != "memory":
+        return False
+    if not os.environ.get("PYTEST_VERSION"):
+        raise RuntimeError("ARCHHUB_TEST_SECRET_STORE=memory is for courts only; unset it")
+    return True
 
 
 def _dpapi(data: bytes, *, protect: bool) -> bytes:
@@ -178,6 +198,9 @@ def _file_delete(provider: str) -> None:
 def save_api_key(provider: str, api_key: str) -> None:
     if isinstance(provider, str) and provider.startswith("social-"):
         raise ValueError("Social credentials require account enrollment")
+    if os_store_refused():
+        _MEMORY_KEYS[provider] = api_key
+        return
     with _SAVE_LOCK:
         known = _updated_provider_index(provider)
         kr = _try_keyring()
@@ -218,6 +241,10 @@ def load_api_key(provider: str) -> str | None:
     if isinstance(provider, str) and provider.startswith("social-"):
         _set_meta(provider, source="none", resolver=None, value=None)
         return None
+    if os_store_refused():
+        value = _MEMORY_KEYS.get(provider)
+        _set_meta(provider, source="memory" if value else "none", resolver=None, value=value)
+        return value
     # 1. ResolverRegistry alias path (op://, wcm://, env://, file://, inline:)
     #    — refs only, never plain values. Per BRAIN-FIRST mandate.
     try:
@@ -261,6 +288,9 @@ def load_api_key(provider: str) -> str | None:
 def delete_api_key(provider: str) -> None:
     if isinstance(provider, str) and provider.startswith("social-"):
         raise ValueError("Social credentials require account revocation")
+    if os_store_refused():
+        _MEMORY_KEYS.pop(provider, None)
+        return
     with _SAVE_LOCK:
         _updated_provider_index(provider, remove=True)
         # Refuse known damaged local state before touching another store.
@@ -275,6 +305,8 @@ def delete_api_key(provider: str) -> None:
         _file_delete(provider)
 
 def list_keys() -> list[str]:
+    if os_store_refused():
+        return [name for name in _MEMORY_KEYS if not name.startswith("social-")]
     kr = _try_keyring()
     names = (load_setting("known_providers") or []) if kr else _read_file().keys()
     return [name for name in names if isinstance(name, str) and not name.startswith("social-")]

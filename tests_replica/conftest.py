@@ -170,18 +170,38 @@ class _CourtCredentialStore:
     def save_api_key(self, name, value):
         self.saved[name] = value
 
+    def delete_api_key(self, name):
+        self.saved.pop(name, None)
+
+    def list_keys(self):
+        return list(self.saved)
+
+
+# Children the courts start, and any copy of app/secrets_store.py loaded by
+# path (model_router does), refuse the OS store on this variable alone.
+import os as _os
+_os.environ["ARCHHUB_TEST_SECRET_STORE"] = "memory"
+
 
 @_pytest.fixture(autouse=True)
 def no_real_credential_store(monkeypatch):
     # host_bridge_auth.ensure_secret creates the bridge secret in the app's
     # credential store -- on Windows the person's Credential Locker -- the
     # first time anything signs a bridge call. A court that reached a signed
-    # call with nothing stubbed wrote the REAL entry. Every court signs with
-    # a secret held in memory for that test; a court that needs its own store
-    # replaces _store (or ensure_secret) with its own monkeypatch.
+    # call with nothing stubbed wrote the REAL entry. Every court keeps keys
+    # in memory for that test, whichever way it reaches the store: the
+    # imported host_bridge_auth, a copy of it loaded by path or reloaded
+    # (both import app.secrets_store, whose functions are replaced too), a
+    # by-path copy of app/secrets_store.py, or a child process (the
+    # variable). A court that needs its own store replaces _store (or
+    # ensure_secret) with its own monkeypatch.
+    import app.secrets_store as _secrets
     import nodelang.host_bridge_auth as _auth
     store = _CourtCredentialStore()
+    monkeypatch.setenv("ARCHHUB_TEST_SECRET_STORE", "memory")
     monkeypatch.setattr(_auth, "_store", lambda: store)
+    for name in ("load_api_key", "save_api_key", "delete_api_key", "list_keys"):
+        monkeypatch.setattr(_secrets, name, getattr(store, name))
     return store
 
 

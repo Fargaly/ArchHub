@@ -170,8 +170,43 @@ _LAST_RUN: dict[str, object] = {}
 
 
 def last_pipeline_run() -> dict[str, object]:
-    """{ran, answered, pending, at} of the most recent run, or {}."""
-    return dict(_LAST_RUN)
+    """{ran, answered, pending, failed, refused, at} of the most recent run, or {}.
+
+    ``failed`` lists the engines whose effect raised; ``refused`` the engines
+    that answered ok=False (a host or connector refusing). Engine names only:
+    BABOOM warns from these without receiving node titles or values.
+    """
+    held = dict(_LAST_RUN)
+    for name in ("failed", "refused"):
+        if name in held:
+            held[name] = list(held[name])
+    return held
+
+
+def _observed_effect_engines(engines, failed, refused):
+    """Wrap each effect engine to note a raise (failed) or an ok=False answer (refused).
+
+    A Workshop card refusing the ungated canvas Run is the designed answer, not
+    a failure, so approval-gated engines are left unwrapped.
+    """
+    from .workshop_workflow import approval_required
+
+    def observed(name, effect):
+        def run(params, feeds):
+            try:
+                produced, shown = effect(params, feeds)
+            except Exception:
+                failed.append(name)
+                raise
+            if isinstance(produced, Mapping) and produced.get("ok") is False:
+                refused.append(name)
+            return produced, shown
+        return run
+    return {
+        name: observed(name, effect)
+        if callable(effect) and effect is not approval_required else effect
+        for name, effect in engines.items()
+    }
 
 
 def _pipeline_port_name(node, interface_root, side, wire_root):
@@ -227,13 +262,59 @@ def run_universal_pipeline(
     effect_engines: Mapping[str, object],
     authentication_context: object | None = None,
     only_roots: object = None,
+    mutation_lock: object = None,
+    revalidate: object = None,
 ) -> dict[str, object]:
     """Evaluate every engine-declaring node along its wires; land statuses.
 
     `only_roots` narrows the run to those nodes (and wires between them):
     an act BABOOM confirms runs its one node, not every effect node left on
     the canvas (audit 2026-09-06: each confirm re-ran every prior act).
+
+    With `mutation_lock` the graph lock is held only to read the plan and to
+    land the statuses; the effects run between the two, outside it, because
+    an engine may wait a minute on a shell, a host or a provider (a Terminal
+    card held every graph route for its whole command). `revalidate` runs
+    under the lock before the statuses land and refuses a caller whose
+    authority lapsed meanwhile. A node retracted while its effect ran gets no
+    status. Without `mutation_lock` the caller holds whatever lock it holds.
     """
+    import contextlib
+    held_lock = mutation_lock if mutation_lock is not None else contextlib.nullcontext()
+    with held_lock:
+        stem_nodes, stem_wires, graph_engines = _pipeline_plan(
+            store, registry, authentication_context, only_roots)
+    failed_engines: list[str] = []
+    refused_engines: list[str] = []
+    evaluation = evaluate_stem_graph(
+        stem_nodes, stem_wires, None,
+        _observed_effect_engines(
+            {**graph_engines, **dict(effect_engines)},
+            failed_engines, refused_engines,
+        ),
+    )
+    with held_lock:
+        if callable(revalidate):
+            revalidate()
+        written = _land_pipeline_statuses(
+            store, registry, stem_nodes, evaluation, authentication_context)
+        revision = store.revision
+    # BABOOM's face reads this: how many cards ran and how many really
+    # answered, from the run itself rather than a guess over the graph.
+    _LAST_RUN.clear()
+    _LAST_RUN.update({
+        "ran": len(stem_nodes),
+        "answered": len(evaluation.display),
+        "pending": len(evaluation.pending),
+        "failed": tuple(sorted(set(failed_engines)))[:8],
+        "refused": tuple(sorted(set(refused_engines)))[:8],
+        "at": time.time(),
+    })
+    return _pipeline_outcome(stem_nodes, stem_wires, evaluation, written, revision)
+
+
+def _pipeline_plan(store, registry, authentication_context, only_roots):
+    """Under the graph lock: the engine nodes, their enabled wires, graph engines."""
     snapshot = store.snapshot()
     owned = _owner_properties(snapshot, registry)
     projection = project_universal_canvas(
@@ -277,10 +358,12 @@ def run_universal_pipeline(
                 source, _pipeline_port_name(projected_nodes[source], wire.get("source_interface"), "source", wire["id"]),
                 target, _pipeline_port_name(projected_nodes[target], wire.get("target_interface"), "target", wire["id"]),
             ))
-    evaluation = evaluate_stem_graph(
-        stem_nodes, stem_wires, None,
-        {**_graph_engines(store, registry), **dict(effect_engines)},
-    )
+    return stem_nodes, stem_wires, _graph_engines(store, registry)
+
+
+def _land_pipeline_statuses(store, registry, stem_nodes, evaluation, authentication_context):
+    """Under the graph lock: each answer lands as its node's status, read afresh."""
+    owned = _owner_properties(store.snapshot(), registry)
     written = 0
     for node in stem_nodes:
         answer = evaluation.display.get(node.root_id)
@@ -288,7 +371,9 @@ def run_universal_pipeline(
             answer = evaluation.pending.get(node.root_id)
         if answer is None:
             continue
-        rows = owned.get(node.root_id) or {}
+        rows = owned.get(node.root_id)
+        if rows is None:
+            continue  # retracted while its effect ran
         held = rows.get("status")
         if held is not None and held[1] == answer:
             continue
@@ -304,6 +389,10 @@ def run_universal_pipeline(
                 authentication_context=authentication_context,
             )
         written += 1
+    return written
+
+
+def _pipeline_outcome(stem_nodes, stem_wires, evaluation, written, revision):
     def _lines_like(value):
         return (
             isinstance(value, list) and value
@@ -321,15 +410,6 @@ def run_universal_pipeline(
             previews[root] = [
                 [float(v) for v in row[:4]] for row in value[:400]
             ]
-    # BABOOM's face reads this: how many cards ran and how many really
-    # answered, from the run itself rather than a guess over the graph.
-    _LAST_RUN.clear()
-    _LAST_RUN.update({
-        "ran": len(stem_nodes),
-        "answered": len(evaluation.display),
-        "pending": len(evaluation.pending),
-        "at": time.time(),
-    })
     return {
         "ran": len(stem_nodes),
         "wires": len(stem_wires),
@@ -338,7 +418,7 @@ def run_universal_pipeline(
         "results": dict(evaluation.results),
         "lines": previews,
         "written": written,
-        "revision": store.revision,
+        "revision": revision,
     }
 
 

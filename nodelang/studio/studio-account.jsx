@@ -28,8 +28,6 @@ const AC_SEED = {
   plan: '',                          // whatever tier the graph answers with; never assumed here
   billing: 'monthly',
   created: null,
-  brain: { local: true, path: '~/ArchHub/brain', size: 0, facts: 0, synced: null },
-  usage: { spend: 0, cap: null, ops: 0, opsCap: null, runs: 0, since: 'this cycle' },
   hostsSeen: [],
 };
 
@@ -38,11 +36,7 @@ const acLoad = () => {
     const raw = localStorage.getItem(ACLS);
     if (!raw) return AC_SEED;
     const s = JSON.parse(raw) || {};
-    // merge per key — a saved sub-object must never replace a seeded one wholesale
-    return Object.assign({}, AC_SEED, s, {
-      brain: Object.assign({}, AC_SEED.brain, s.brain || {}),
-      usage: Object.assign({}, AC_SEED.usage, s.usage || {}),
-    });
+    return Object.assign({}, AC_SEED, s);
   } catch (e) { return AC_SEED; }
 };
 const acSave = (a) => { try { localStorage.setItem(ACLS, JSON.stringify(a)); } catch (e) {} };
@@ -193,13 +187,11 @@ function AppBoot({ onDone, account }) {
 // machine, brain seeded from what you just said. No step is a formality.
 // ─────────────────────────────────────────────────────────────
 const AC_DISCIPLINES = ['Architecture', 'Structure', 'MEP', 'Interiors', 'Landscape', 'BIM management'];
-const AC_DETECT = [
-  { name: 'Revit 2025',  ops: 28, found: true },
-  { name: 'Rhino 8',     ops: 16, found: true },
-  { name: 'AutoCAD 2024',ops: 19, found: true },
-  { name: 'Speckle',     ops: 14, found: false },
-  { name: 'Excel',       ops: 13, found: true },
-];
+// The hosts the app's own probe answered (ARCHHUB_LIVE.connectors), never a fixed list:
+// a sign-up that says "FOUND" for software nobody detected is a fabricated scan.
+const acDetected = () => ((window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.connectors) || [])
+  .filter(c => c && c.name)
+  .map(c => ({ name: String(c.name), found: c.state === 'connected' || c.state === 'listening', state: String(c.state || 'unknown') }));
 
 // The desktop signs in through the cloud: the app opens the browser on the
 // cloud's own sign-in (Google, or a link mailed to the address) and holds a
@@ -265,7 +257,8 @@ function CloudSignIn({ email, onSignedIn }) {
 function SignUp({ onDone, onCancel, plan }) {
   const [step, setStep] = React.useState(0);
   const [a, setA] = React.useState(() => Object.assign({}, acLoad(), plan ? { plan } : {}));
-  const [hosts, setHosts] = React.useState(() => AC_DETECT.filter(h => h.found).map(h => h.name));
+  const detected = acDetected();
+  const hosts = detected.filter(h => h.found).map(h => h.name);
   const set = (k, v) => setA(p => Object.assign({}, p, { [k]: v }));
 
   const steps = ['Identity', 'Practice', 'Hosts', 'Brain'];
@@ -277,12 +270,10 @@ function SignUp({ onDone, onCancel, plan }) {
   ][step];
 
   const finish = () => {
-    const facts = 3 + (a.firm ? 1 : 0) + (a.discipline ? 1 : 0) + hosts.length;
+    // No brain size, fact count or sync time is invented here: the brain states its own.
     const rec = Object.assign({}, a, {
       signedIn: true,
       created: new Date().toISOString().slice(0, 10),
-      hostsSeen: hosts,
-      brain: Object.assign({}, a.brain, { facts, size: +(facts * 0.4).toFixed(1), synced: 'just now' }),
     });
     acSave(rec);
     // The account is a GRAPH record, not just localStorage: land it and
@@ -361,33 +352,24 @@ function SignUp({ onDone, onCancel, plan }) {
 
           {step === 2 && (
             <div>
-              <SHead title="Hosts on this machine" sub="Found by scanning your install paths. Each one becomes a node group on your canvas — untick anything you don't want reachable."/>
+              <SHead title="Hosts on this machine" sub="What the app's own host probe answered. Settings › Hosts reads it again at any time."/>
               <div style={{ border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, overflow: 'hidden' }}>
-                {AC_DETECT.map((h, i) => {
-                  const on = hosts.indexOf(h.name) >= 0;
-                  return (
-                    <div key={h.name} onClick={() => setHosts(p => on ? p.filter(x => x !== h.name) : p.concat(h.name))}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 13px', cursor: 'pointer',
-                        borderTop: i === 0 ? 'none' : `1px solid ${AC.lineSoft}`,
-                        background: on ? AC.bgSoft : 'transparent',
-                      }}>
-                      <span style={{
-                        width: 15, height: 15, borderRadius: 4, flexShrink: 0, display: 'grid', placeItems: 'center',
-                        border: `1px solid ${on ? AC.accent : AC.line}`, background: on ? AC.accent : 'transparent',
-                        color: '#180f08', fontSize: 10, fontWeight: 700,
-                      }}>{on ? '✓' : ''}</span>
-                      <span style={{ flex: 1, fontSize: 13 }}>{h.name}</span>
-                      <span style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>{h.ops} ops</span>
-                      <span style={{ fontFamily: AC.mono, fontSize: 9, letterSpacing: '0.12em', color: h.found ? AC.ok : AC.inkMuted }}>
-                        {h.found ? 'FOUND' : 'NOT INSTALLED'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 10 }}>
-                {hosts.length} hosts · {AC_DETECT.filter(h => hosts.indexOf(h.name) >= 0).reduce((s, h) => s + h.ops, 0)} operations available as nodes
+                {detected.map((h, i) => (
+                  <div key={h.name} style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '10px 13px',
+                    borderTop: i === 0 ? 'none' : `1px solid ${AC.lineSoft}`,
+                  }}>
+                    <span style={{ flex: 1, fontSize: 13 }}>{h.name}</span>
+                    <span style={{ fontFamily: AC.mono, fontSize: 9, letterSpacing: '0.12em', color: h.found ? AC.ok : AC.inkMuted }}>
+                      {h.state.toUpperCase()}
+                    </span>
+                  </div>
+                ))}
+                {!detected.length && (
+                  <div role="status" style={{ padding: '10px 13px', fontSize: 12.5, color: AC.inkSoft }}>
+                    No host has answered the probe yet.
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -402,7 +384,6 @@ function SignUp({ onDone, onCancel, plan }) {
                     a.name && `You are ${a.name}.`,
                     a.firm && `Works at ${a.firm}${a.discipline ? ' · ' + a.discipline.toLowerCase() : ''}.`,
                     hosts.length && `Reachable hosts: ${hosts.join(' · ')}.`,
-                    'Prefers dimensions on exterior walls first.',
                   ].filter(Boolean).map((f, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, padding: '4px 0', fontSize: 12.5, color: AC.inkSoft, lineHeight: 1.5 }}>
                       <span style={{ color: AC.accent }}>▸</span><span>{f}</span>
@@ -412,7 +393,7 @@ function SignUp({ onDone, onCancel, plan }) {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>
                 <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontSize: 9, letterSpacing: '0.12em' }}>LOCAL</span>
-                <span>{a.brain.path}</span>
+                <span>the brain folder on this machine</span>
               </div>
             </div>
           )}
@@ -440,41 +421,10 @@ function SignUp({ onDone, onCancel, plan }) {
 // SETTINGS › ACCOUNT & USAGE — the surface that has to keep the website's promises:
 // what you're on, what you've spent against your own cap, and where the brain lives.
 // ─────────────────────────────────────────────────────────────
-const acMeter = (label, val, max, unit, col) => {
-  // A cap nobody granted is not a number the app may state. Until the graph answers one
-  // or the user sets one, the meter says "not available" instead of a plan-table figure.
-  const known = typeof max === 'number' && max > 0;
-  const pct = known ? Math.min(100, Math.round((val / max) * 100)) : 0;
-  const hot = known && pct >= 80;
-  return (
-    <div key={label} style={{ marginBottom: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 5 }}>
-        <span style={{ fontSize: 12.5, color: AC.ink }}>{label}</span>
-        <span style={{ flex: 1 }}/>
-        <span style={{ fontFamily: AC.serif, fontSize: 19, color: hot ? AC.warn : col || AC.ink, lineHeight: 1 }}>
-          {unit === '$' ? '$' : ''}{val.toLocaleString()}
-        </span>
-        <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkSoft }}>
-          {known ? `/ ${unit === '$' ? '$' : ''}${max.toLocaleString()}${unit !== '$' ? ' ' + unit : ''}` : 'not available'}
-        </span>
-      </div>
-      {known && (
-        <div style={{ height: 5, background: AC.lineSoft, borderRadius: 3, overflow: 'hidden' }}>
-          <div style={{ width: pct + '%', height: '100%', background: hot ? AC.warn : col || AC.accent, transition: 'width .3s' }}/>
-        </div>
-      )}
-      {known && (
-        <div style={{ fontFamily: AC.mono, fontSize: 9.5, color: hot ? AC.warn : AC.inkMuted, marginTop: 4, letterSpacing: '0.06em' }}>
-          {pct}% USED{hot ? ' · APPROACHING YOUR CAP' : ''}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// The three brain-folder controls, each doing the thing it names: open
-// the folder in Explorer, choose where a copy syncs, and hand the
-// founder his own record as a file. Every answer is reported in place.
+// The brain-folder controls, each doing the thing it names: open the folder
+// in Explorer and hand the founder his own record as a file. Every answer is
+// reported in place. (A "sync folder" choice was removed 2026-09-24: it was
+// saved to this page's storage and nothing ever synced to it.)
 function BrainFolderActions() {
   const [said, setSaid] = React.useState('');
   const speak = (text) => { setSaid(text); setTimeout(() => setSaid(''), 5000); };
@@ -482,17 +432,6 @@ function BrainFolderActions() {
     try {
       const answer = await window.ARCHHUB_REVEAL('brain');
       speak(answer.ok ? 'opened ' + answer.opened : answer.error);
-    } catch (error) { speak('refused: ' + (error?.message || error)); }
-  };
-  const choose = async () => {
-    try {
-      const chosen = await window.ARCHHUB_PICK_FILE(
-        'Choose a folder to sync into (pick any file inside it)', '');
-      if (!chosen) return;
-      const folder = chosen.replace(/[\/][^\/]*$/, '');
-      const held = acLoad();
-      acSave(Object.assign({}, held, { syncFolder: folder }));
-      speak('sync folder: ' + folder);
     } catch (error) { speak('refused: ' + (error?.message || error)); }
   };
   const exportJson = () => {
@@ -516,7 +455,6 @@ function BrainFolderActions() {
   return (
     <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
       <button onClick={reveal} style={smallBtn()}>Reveal in explorer</button>
-      <button onClick={choose} style={smallBtn()}>Choose sync folder</button>
       <button onClick={exportJson} style={smallBtn()}>Export as JSON</button>
       {said ? <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkSoft }}>{said}</span> : null}
     </div>
@@ -591,16 +529,74 @@ function CloudSessionCard({ onSession }) {
   );
 }
 
+// Cloud publish consent: the one record (cloud-publish.consent.json beside the graph)
+// that start_cloud_relay reads. Allowed, the next launch starts the cloud relay that
+// publishes the map and answers the cockpit; withdrawn, the running relay stops claiming
+// work at its next poll and none starts at the next launch.
+function CloudPublishConsent({ signedIn }) {
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  const [state, setState] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const read = async () => {
+    if (!transport || !transport.readCloudPublishConsent) { setError('Cloud publish consent is unavailable in this connection.'); return; }
+    try { setState(await transport.readCloudPublishConsent()); setError(''); }
+    catch (e) { setError(String((e && e.message) || e)); }
+  };
+  React.useEffect(() => { read(); }, []);
+  const change = async () => {
+    if (busy || !state || !transport || !transport.setCloudPublishConsent) return;
+    setBusy(true); setError('');
+    try { setState(await transport.setCloudPublishConsent(!state.allowed)); }
+    catch (e) { setError(String((e && e.message) || e)); }
+    finally { setBusy(false); }
+  };
+  const allowed = !!(state && state.allowed);
+  const enabled = !!state && !busy && (allowed || signedIn);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, color: AC.ink }}>Publish this machine map to the cloud</div>
+        <div role={error ? 'alert' : 'status'} style={{ fontFamily: AC.mono, fontSize: 10, color: error ? AC.err : AC.inkSoft, marginTop: 3, lineHeight: 1.5 }}>
+          {error || (!state ? 'reading the consent record'
+            : allowed ? 'Allowed' + (state.account ? ' for ' + state.account : '') + '. The cloud relay starts with ArchHub; withdrawing stops it.'
+            : signedIn ? 'Not allowed. Nothing leaves this machine; allowing starts the relay at the next launch.'
+            : 'Not allowed. Sign in first; consent is recorded for a signed-in account.')}
+        </div>
+      </div>
+      <button type="button" role="switch" aria-checked={allowed} aria-label="Publish this machine map to the cloud"
+        disabled={!enabled} onClick={change}
+        title={enabled ? (allowed ? 'Withdraw cloud publish consent' : 'Allow cloud publish') : 'Sign in to allow cloud publish'}
+        style={{ width: 30, height: 16, borderRadius: 999, padding: 1, flexShrink: 0, position: 'relative', border: 0,
+          background: allowed ? AC.accent : AC.lineSoft, cursor: enabled ? 'pointer' : 'default',
+          ...(enabled ? {} : { outline: `1px dashed ${AC.line}`, outlineOffset: 1 }) }}>
+        <span style={{ position: 'absolute', top: 1, left: allowed ? 14 : 1, width: 14, height: 14, borderRadius: '50%', background: '#fff' }}/>
+      </button>
+    </div>
+  );
+}
+
 function SettingsAccount({ account, setAccount, onSignOut }) {
   // Prefer the live record on disk when the passed snapshot predates a sign-up — this panel
   // states someone's plan and spend, so it must not render a stale one.
   const live = acLoad();
   const a = (account && account.signedIn) || !live.signedIn ? (account || live) : live;
-  const u = a.usage;
   const patchA = (patch) => { const next = Object.assign({}, a, patch); acSave(next); setAccount && setAccount(next); };
+  const facts = ((window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.memory) || []).length;
+  // The one sign-in: what cloud.json holds, as cloud_signin.sign_in_state reads it (served by
+  // /api/universal/cloud-session). The identity row, consent and Sign out all follow it; the
+  // page's own account record only lends the name and firm (2026-09-24: the row said
+  // "Not signed in" while cloud.json was signed in).
+  const [session, setSession] = React.useState(null);
+  const cloudSignedIn = !!session && session.state === 'signed_in';
+  const who = !session ? 'Reading the sign-in…'
+    : cloudSignedIn ? (a.name || session.email)
+    : session.state === 'expired' ? 'Sign-in expired'
+    : session.state === 'unknown' ? 'Sign-in state unavailable' : 'Not signed in';
+  const mail = session && session.email ? session.email : '';
   return (
     <div>
-      <SHead title="Account & usage" sub="What you're on, what you've spent against your own cap, and where your brain lives. The cap is yours to set — we stop, we don't invoice past it."/>
+      <SHead title="Account" sub="Who is signed in, what the cloud may receive from this machine, and where your brain lives."/>
 
       {/* identity */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md, marginBottom: 16 }}>
@@ -609,9 +605,9 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
           background: AC.accentSoft, color: AC.accent, fontFamily: AC.serif, fontSize: 17,
         }}>{(a.name || 'A').slice(0, 1).toUpperCase()}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 500 }}>{a.signedIn ? (a.name || a.email) : 'Not signed in'}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 500 }}>{who}</div>
           <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginTop: 2 }}>
-            {a.email || '—'}{a.firm ? ' · ' + a.firm : ''}
+            {mail || '—'}{a.firm ? ' · ' + a.firm : ''}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
@@ -622,6 +618,7 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
 
       {/* the one sign-in: what cloud.json holds, and the way back in when it lapsed */}
       <CloudSessionCard onSession={session => {
+        setSession(session);
         const mail = session.state === 'signed_in' ? session.email : '';
         if (!mail) { if (a.signedIn) patchA({ signedIn: false }); return; }
         if (!a.signedIn || a.email !== mail) patchA({ email: mail, signedIn: true, created: a.created || new Date().toISOString().slice(0, 10) });
@@ -632,25 +629,13 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
         }
       }}/>
 
-      {/* usage meters — real numbers against the plan the account actually holds */}
-      <div style={{ fontFamily: AC.mono, fontSize: 9, color: AC.inkMuted, letterSpacing: '0.16em', marginBottom: 9 }}>THIS CYCLE</div>
-      {acMeter('Model spend', u.spend, u.cap, '$')}
-      {acMeter('Operations run', u.ops, u.opsCap, 'ops', AC.blue)}
-      {acMeter('Brain size', a.brain.size, 50, 'MB', AC.purple)}
+      {/* cloud publish consent: the record the relay reads, not a preference in this page */}
+      <CloudPublishConsent signedIn={cloudSignedIn}/>
 
-      {/* spend cap — editable, because the subhead just promised it */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px', borderRadius: AC.rad.md, background: AC.bgSoft, marginBottom: 18 }}>
-        <span style={{ fontFamily: AC.mono, fontSize: 10, color: AC.inkSoft, letterSpacing: '0.08em' }}>HARD CAP</span>
-        {[40, 120, 250, 500].map(c => (
-          <button key={c} onClick={() => patchA({ usage: Object.assign({}, u, { cap: c }) })} style={{
-            padding: '4px 10px', borderRadius: AC.rad.sm, cursor: 'pointer', fontFamily: AC.mono, fontSize: 11,
-            border: `1px solid ${u.cap === c ? AC.accent : AC.line}`,
-            background: u.cap === c ? AC.accentSoft : 'transparent',
-            color: u.cap === c ? AC.ink : AC.inkSoft,
-          }}>${c}</button>
-        ))}
-        <span style={{ flex: 1 }}/>
-        <span style={{ fontFamily: AC.mono, fontSize: 9.5, color: AC.inkMuted }}>runs stop at the cap</span>
+      {/* No spend or operation meter and no spend cap: nothing on this machine measures model
+          spend or enforces a cap, so the panel states that instead of a $0 it never read. */}
+      <div role="status" style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft, marginBottom: 18, lineHeight: 1.6 }}>
+        Model spend is not measured on this machine and no spend cap is enforced. Stop a running agent from its Workshop.
       </div>
 
       {/* plan — the tier the graph answered with (ARCHHUB_LOGIN above and in CloudSignIn). No
@@ -678,8 +663,8 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
       <div style={{ padding: '12px 14px', border: `1px solid ${AC.line}`, borderRadius: AC.rad.md }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ padding: '3px 8px', borderRadius: AC.rad.sm, border: `1px solid ${AC.ok}`, color: AC.ok, fontFamily: AC.mono, fontSize: 9, letterSpacing: '0.12em' }}>LOCAL</span>
-          <span style={{ fontFamily: AC.mono, fontSize: 11.5, color: AC.ink, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.brain.path}</span>
-          <span style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>{a.brain.facts} facts · {a.brain.size} MB</span>
+          <span style={{ fontFamily: AC.mono, fontSize: 11.5, color: AC.ink, flex: 1, minWidth: 0 }}>the brain folder on this machine</span>
+          <span style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.inkSoft }}>{facts ? facts + ' facts read' : 'facts not read yet'}</span>
         </div>
         <div style={{ fontSize: 12, color: AC.inkSoft, marginTop: 9, lineHeight: 1.55 }}>
           Your brain is a folder on your disk. It is never uploaded to us and never pushed to a
@@ -690,7 +675,7 @@ function SettingsAccount({ account, setAccount, onSignOut }) {
         </div>
       </div>
 
-      {a.signedIn && (
+      {cloudSignedIn && (
         <button onClick={onSignOut} style={Object.assign({}, smallBtn(), { marginTop: 16, color: AC.err, borderColor: AC.lineSoft })}>
           Sign out
         </button>

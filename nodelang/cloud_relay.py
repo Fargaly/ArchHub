@@ -194,6 +194,7 @@ class CloudRelay:
         models: Optional[Callable[[], object]] = None,
         session_loader: Optional[Callable[[], Optional[Mapping[str, str]]]] = None,
         session_path: Optional[Path] = None,
+        consent: Optional[Callable[[], bool]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.token = str(token)
@@ -209,6 +210,9 @@ class CloudRelay:
         self.models = models
         self.session_loader = session_loader
         self.session_path = session_path
+        # Settings > Account withdraws cloud publish consent by deleting its
+        # record; the relay reads it before every claim and stops for good.
+        self.consent = consent
         self.last_error: str = ""
         self.answered = 0
         self._map_digest = ""
@@ -267,6 +271,10 @@ class CloudRelay:
         """Claim one instruction, answer it, post the answer. None when idle."""
         if self._stop.is_set():
             return None  # stopping: claim nothing new
+        if callable(self.consent) and not self.consent():
+            self._stop.set()
+            self.last_error = "cloud publish consent withdrawn; relay stopped"
+            return None
         claimed = self._call(CLAIM_PATH, {"claimed_by": self.claimed_by, "kinds": list(APP_KINDS)})
         task = claimed.get("task")
         if not isinstance(task, Mapping) or not task.get("id"):
@@ -464,10 +472,21 @@ def start_cloud_relay(
     offer_command: Optional[Callable[[str, bool], object]] = None,
     models: Optional[Callable[[], object]] = None,
 ) -> Optional[CloudRelay]:
-    """Start the relay thread when the founder's session and consent exist."""
-    from .cloud_publish_consent import cloud_publish_allowed
+    """Start the relay thread when the founder's session and consent exist.
 
-    if not cloud_publish_allowed(state_dir):
+    Consent is the signed-in account's own (cloud_publish_consent): after a
+    sign-out or an account switch the relay does not start, and a running one
+    stops at its next poll.
+    """
+    from .cloud_publish_consent import cloud_publish_allowed
+    from .cloud_session import signed_in_cloud_account
+
+    session_path = Path(appdata) / "ArchHub" / "brain" / "cloud.json"
+
+    def consented() -> bool:
+        return cloud_publish_allowed(state_dir, signed_in_cloud_account(session_path))
+
+    if not consented():
         return None
     session = load_cloud_session(appdata)
     if session is None:
@@ -479,7 +498,8 @@ def start_cloud_relay(
         offer_command=offer_command,
         models=models,
         session_loader=lambda: load_cloud_session(appdata),
-        session_path=Path(appdata) / "ArchHub" / "brain" / "cloud.json",
+        session_path=session_path,
+        consent=consented,
     )
     return relay.start()
 

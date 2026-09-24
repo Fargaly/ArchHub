@@ -729,7 +729,9 @@ def embed(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 def notify(params: Mapping[str, object], feeds: Mapping[str, object]):
     """A desktop notification through the surface the app registered (its tray)."""
-    title = _text(params, "title", "ArchHub")
+    # notice_title, not title: every placed card already holds its own title
+    # property, so a "title" parameter could never be created (2026-09-24).
+    title = _text(params, "notice_title") or "ArchHub"
     message = _text(params, "message") or _wired_text(feeds)
     if not message:
         return {"out": []}, "nothing to say: no message, nothing wired in"
@@ -792,7 +794,7 @@ LIBRARY_ITEM_ENGINES.update({
     "o_email": {"engine": "library.draft_email",
                 "params": {"to": "", "subject": "", "body": ""}},
     "o_notify": {"engine": "library.notify",
-                 "params": {"title": "ArchHub", "message": ""}},
+                 "params": {"notice_title": "ArchHub", "message": ""}},
 })
 for _wired_now in ("i_think", "i_match", "i_embed", "o_email", "o_notify"):
     LIBRARY_ITEMS_WITHOUT_ENGINE.pop(_wired_now, None)
@@ -1204,6 +1206,18 @@ from .workshop_workflow import WORKSHOP_CATALOGUE, approval_required  # noqa: E4
 for _item, _row in WORKSHOP_CATALOGUE.items():
     LIBRARY_ENGINES[_row["engine"]] = approval_required
     LIBRARY_ITEM_ENGINES[_item] = {"engine": _row["engine"], "params": dict(_row["params"])}
+
+# Terminal: a real shell in a folder inside this ArchHub's admitted workspace
+# root. The application server owns the sessions (terminal_sessions.py) and binds
+# this engine to them; outside a server the card refuses rather than spawn a shell.
+def terminal_unbound(params, feeds):
+    raise ValueError("the terminal runs only inside the ArchHub application")
+
+
+LIBRARY_ENGINES["library.terminal"] = terminal_unbound
+LIBRARY_ITEM_ENGINES["o_term"] = {"engine": "library.terminal",
+                                  "params": {"cwd": "", "command": ""}}
+LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_term", None)
 
 __all__ = [
     "LIBRARY_ENGINES",

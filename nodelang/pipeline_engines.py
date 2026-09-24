@@ -305,11 +305,14 @@ def _brain_handshake(deadline: float) -> str:
     return session
 
 
-def _brain_call(tool: str, arguments: Mapping[str, object]) -> str:
-    """Handshake, then one tools/call against the live brain daemon."""
+def _brain_call(tool: str, arguments: Mapping[str, object], *, budget: float | None = None) -> str:
+    """Handshake, then one tools/call against the live brain daemon.
+
+    ``budget`` narrows the shared deadline for a caller a person is waiting on.
+    """
     import time
 
-    deadline = time.monotonic() + BRAIN_BUDGET_SECONDS
+    deadline = time.monotonic() + min(BRAIN_BUDGET_SECONDS, float(budget or BRAIN_BUDGET_SECONDS))
     # This daemon is stateless (mcp_core.build_asgi_app: "tools/call needs no
     # prior initialize, no session id is read or issued"), so the handshake is
     # a courtesy, not a requirement. It must never eat the budget the real call

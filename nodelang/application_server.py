@@ -5218,6 +5218,22 @@ class ApplicationServer:
             Path(universal_state_path).expanduser().resolve()
             if universal_state_path is not None else None
         )
+        # Terminal nodes: one owner. A terminal STARTS in a folder under this
+        # instance's own workspace folder (beside its graph), or under the
+        # workspace root the entry point named; the shell is not confined
+        # after that (terminal_sessions.py). Only the owner-checked binding a
+        # canvas Run makes (run-graph) spawns; every other path refuses.
+        from .terminal_sessions import TerminalSessions, owner_only_engine
+        if universal_workspace_root is not None:
+            self.terminal_sessions = TerminalSessions(self.universal_workspace_root)
+        else:
+            from .persistence import default_state_path
+            instance_state = (self.universal_state_path or requested_state_path
+                              or default_state_path())
+            self.terminal_sessions = TerminalSessions(
+                Path(instance_state).parent / "workspace", create=True)
+        if "library.terminal" in self.pipeline_effect_engines:
+            self.pipeline_effect_engines["library.terminal"] = owner_only_engine
         from .conversation_content import (
             ApplicationConversationContent, fresh_content_bootstrap_pending,
             preflight_fresh_content_path, read_fresh_content_bootstrap,
@@ -5821,6 +5837,43 @@ class ApplicationServer:
                     except (InvalidCell,ValueError,TypeError):
                         self._json(400,{'ok':False,'error':'Native discovery request is invalid'})
                     return
+                if parsed.path == '/api/universal/terminal':
+                    # A Terminal node reads its session output from this offset.
+                    from .terminal_sessions import TerminalRefused
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route(
+                            'GET', parsed.path, authentication_context=binding.context)
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('Terminals belong to this application owner')
+                        query = parse_qs(parsed.query)
+                        session_id = (query.get('id') or [''])[0]
+                        since = int((query.get('since') or ['0'])[0] or 0)
+                        self._json(200, {'ok': True, **owner.terminal_sessions.output(session_id, since)})
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                    except (TerminalRefused, ValueError) as refused:
+                        self._json(409, {'ok': False, 'error': str(refused)})
+                    return
+                if parsed.path == '/api/universal/cloud-publish-consent':
+                    # The one record start_cloud_relay reads; nothing else holds this consent.
+                    try:
+                        binding, _session_token = self._browser_session_binding()
+                        owner.require_universal_http_route(
+                            'GET', parsed.path, authentication_context=binding.context)
+                        if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                            raise AuthorizationDenied('Cloud publish consent belongs to this application owner')
+                        from .cloud_publish_consent import read_cloud_publish_consent
+                        from .cloud_session import signed_in_cloud_account
+                        state_dir = os.environ.get('ARCHHUB_STATE_DIR', '')
+                        if not state_dir:
+                            self._json(503, {'ok': False, 'error': 'The application state folder is unknown.'})
+                            return
+                        self._json(200, {'ok': True, **read_cloud_publish_consent(
+                            Path(state_dir), signed_in_cloud_account())})
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                    return
                 if parsed.path in {'/api/universal/providers', '/api/universal/models'}:
                     try:
                         binding, session_token = self._browser_session_binding()
@@ -5881,8 +5934,14 @@ class ApplicationServer:
                         self._json(403, {'ok': False, 'error': str(denied)})
                         return
                     try:
-                        from .pipeline_engines import probe_connectors
-                        catalogue = probe_connectors()
+                        # The rows the 30 s background probe holds (_host_rows),
+                        # never a port scan inside this request (2026-09-24:
+                        # the scan cost Settings 5.4 s). Until the first probe
+                        # answers, say so instead of claiming an empty machine.
+                        catalogue = owner._host_rows_or_none()
+                        if catalogue is None:
+                            self._json(200, {'ok': True, 'hosts': [], 'connectors': [], 'probing': True})
+                            return
                         self._json(200, {
                             'ok': True,
                             'connectors': catalogue,
@@ -6654,6 +6713,74 @@ class ApplicationServer:
                                 return
                         self._json(200, agent_result)
                         return
+                    if self.path == '/api/universal/terminal':
+                        from .terminal_sessions import TerminalRefused
+                        action = body.get('action') if isinstance(body, dict) else None
+                        # The consent route's admission: the binding this request
+                        # was admitted with is still the browser's, still holds
+                        # execute, and is the owner. Checked while the context
+                        # is held live; the shell action itself runs after, so a
+                        # Stop waiting on a process never holds the broker.
+                        try:
+                            with owner.universal_registry.authorization.broker.live_context(binding.context):
+                                current_binding, _ = self._browser_session_binding(unsafe=True)
+                                if current_binding.context is not binding.context:
+                                    raise AuthorizationDenied('Browser binding changed before terminal admission')
+                                owner.require_universal_http_route(
+                                    'POST', self.path, authentication_context=binding.context,
+                                    revalidate=True)
+                                if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                                    raise AuthorizationDenied('Terminals belong to this application owner')
+                        except AuthorizationDenied as denied:
+                            self._json(403, {'ok': False, 'error': str(denied)})
+                            return
+                        try:
+                            if action == 'start':
+                                payload = owner.terminal_sessions.start(body.get('cwd'))
+                            elif action == 'input':
+                                payload = owner.terminal_sessions.write(body.get('id'), body.get('text'))
+                            elif action == 'stop':
+                                payload = owner.terminal_sessions.stop(body.get('id'))
+                            else:
+                                raise TerminalRefused('Terminal action must be start, input or stop.')
+                        except TerminalRefused as refused:
+                            self._json(409, {'ok': False, 'error': str(refused)})
+                            return
+                        self._json(200, {'ok': True, **payload})
+                        return
+                    if self.path == '/api/universal/cloud-publish-consent':
+                        from .cloud_publish_consent import (
+                            read_cloud_publish_consent, record_cloud_publish_consent,
+                            withdraw_cloud_publish_consent,
+                        )
+                        allow = body.get('allow') if isinstance(body, dict) else None
+                        state_dir = os.environ.get('ARCHHUB_STATE_DIR', '')
+                        if type(allow) is not bool:
+                            self._json(400, {'ok': False, 'error': 'Consent must be allowed or withdrawn.'})
+                            return
+                        if not state_dir:
+                            self._json(503, {'ok': False, 'error': 'The application state folder is unknown.'})
+                            return
+                        with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(binding.context):
+                            current_binding, _ = self._browser_session_binding(unsafe=True)
+                            if current_binding.context is not binding.context:
+                                raise AuthorizationDenied('Browser binding changed before consent admission')
+                            if not self._universal_route('POST', self.path, current_binding):
+                                return
+                            if binding.subject_root != owner.universal_registry.authorization.subject_root:
+                                raise AuthorizationDenied('Cloud publish consent belongs to this application owner')
+                            from .cloud_session import signed_in_cloud_account
+                            account = signed_in_cloud_account() or ''
+                            if allow:
+                                if '@' not in account:
+                                    self._json(409, {'ok': False, 'error': 'Sign in before allowing cloud publish.'})
+                                    return
+                                record_cloud_publish_consent(Path(state_dir), account=account)
+                            else:
+                                withdraw_cloud_publish_consent(Path(state_dir))
+                            payload = read_cloud_publish_consent(Path(state_dir), account)
+                        self._json(200, {'ok': True, **payload})
+                        return
                     if self.path == '/api/universal/application-update':
                         from .application_update import application_update_action
                         with owner.mutation_lock, owner.universal_registry.authorization.broker.live_context(binding.context):
@@ -7399,6 +7526,96 @@ class ApplicationServer:
                                 )
                         self._json(200, payload)
                         return
+                    if self.path == '/api/universal/brain-export':
+                        # Outside the graph lock: the brain is another process,
+                        # and a silent brain held every graph route for up to
+                        # 30 s. The Brain tab asks with a short budget and says
+                        # "not answering"; the Export button may wait longer.
+                        import json as _json
+
+                        from .pipeline_engines import BrainSilent, _brain_call
+                        try:
+                            wanted = int((body or {}).get('limit') or 500)
+                        except (TypeError, ValueError):
+                            wanted = 500
+                        quick = (body or {}).get('quick') is True
+                        try:
+                            listing = str(_brain_call(
+                                'brain.list_facts', {'limit': max(1, min(wanted, 100000))},
+                                budget=4.0 if quick else None))
+                        except (BrainSilent, OSError) as silent:
+                            self._json(503, {'ok': False, 'error': 'Brain not answering',
+                                             'detail': str(silent)[:200]})
+                            return
+                        try:
+                            held = _json.loads(listing)
+                        except Exception:
+                            held = {'raw': listing[:200000]}
+                        self._json(200, {'ok': True, 'facts': held})
+                        return
+                    if self.path == '/api/universal/run-graph':
+                        # The run wire: nodes whose graph-held engine property
+                        # names an effect evaluate along their wires; answers
+                        # land as each node's status through the governed write.
+                        # The graph lock covers the plan and the landing only:
+                        # an effect (a shell, a host, a provider) may wait a
+                        # minute and never holds every graph route meanwhile.
+                        from .terminal_sessions import TerminalRefused
+                        from .universal_pipeline import run_universal_pipeline
+                        run_binding = binding
+
+                        def run_authority():
+                            current_binding, _ = self._browser_session_binding(unsafe=True)
+                            if current_binding.context is not run_binding.context:
+                                raise AuthorizationDenied('Browser binding changed during the run')
+                            owner.require_universal_http_route(
+                                'POST', '/api/universal/run-graph',
+                                authentication_context=run_binding.context, revalidate=True)
+
+                        def terminal_admission():
+                            # A Terminal card spawns only for the caller POST
+                            # /api/universal/terminal admits: execute, owner.
+                            try:
+                                with owner.universal_registry.authorization.broker.live_context(
+                                        run_binding.context):
+                                    run_authority()
+                                    owner.require_universal_http_route(
+                                        'POST', '/api/universal/terminal',
+                                        authentication_context=run_binding.context, revalidate=True)
+                                    if run_binding.subject_root != owner.universal_registry.authorization.subject_root:
+                                        raise AuthorizationDenied('not the owner')
+                            except (AuthorizationDenied, CloudRouteDenied):
+                                raise TerminalRefused(
+                                    'A terminal card runs only for this application owner '
+                                    'with the right to run commands.') from None
+
+                        def _baboom_presence(_params, _feeds):
+                            presence = owner._machine_agent_runtime_presence()
+                            live = bool(presence.get("baboom_connected"))
+                            return (
+                                {"out": presence},
+                                "companion %s · %d signed runtime session(s)" % (
+                                    "ATTACHED" if live else "not attached",
+                                    presence["active_runtime_sessions"],
+                                ),
+                            )
+                        engines = {
+                            **(owner.pipeline_effect_engines or {}),
+                            "baboom.presence": _baboom_presence,
+                        }
+                        if "library.terminal" in engines:
+                            engines["library.terminal"] = (
+                                owner.terminal_sessions.admitted_engine(terminal_admission))
+                        run_result = run_universal_pipeline(
+                            owner.universal_store,
+                            owner.universal_registry,
+                            effect_engines=engines,
+                            authentication_context=binding.context,
+                            mutation_lock=owner.mutation_lock,
+                            revalidate=run_authority,
+                        )
+                        self._json(200, run_result)
+                        return
                     with owner.mutation_lock:
                         if self.path.startswith('/api/universal/'):
                             created_root = None
@@ -7487,47 +7704,6 @@ class ApplicationServer:
                                     focus_root=body.get('focus'),
                                     consent_evidence_root=binding.session_root,
                                     authentication_context=binding.context)
-                            elif self.path == '/api/universal/run-graph':
-                                # The run wire: nodes whose graph-held
-                                # engine property names an effect evaluate
-                                # along their wires; answers land as each
-                                # node's status through the governed write.
-                                from .universal_pipeline import (
-                                    run_universal_pipeline,
-                                )
-                                def _baboom_presence(_params, _feeds):
-                                    presence = (
-                                        owner
-                                        ._machine_agent_runtime_presence()
-                                    )
-                                    live = bool(
-                                        presence.get("baboom_connected")
-                                    )
-                                    return (
-                                        {"out": presence},
-                                        "companion %s · %d signed runtime "
-                                        "session(s)" % (
-                                            "ATTACHED" if live
-                                            else "not attached",
-                                            presence[
-                                                "active_runtime_sessions"
-                                            ],
-                                        ),
-                                    )
-                                run_result = run_universal_pipeline(
-                                    owner.universal_store,
-                                    owner.universal_registry,
-                                    effect_engines={
-                                        **(
-                                            owner.pipeline_effect_engines
-                                            or {}
-                                        ),
-                                        "baboom.presence": _baboom_presence,
-                                    },
-                                    authentication_context=binding.context,
-                                )
-                                self._json(200, run_result)
-                                return
                             elif self.path == '/api/universal/cloud-signin':
                                 # Sign in to the cloud from the desktop: the
                                 # app opens the browser on the cloud's own
@@ -7726,29 +7902,6 @@ class ApplicationServer:
                                     },
                                 }]})
                                 self._json(200, {'ok': True})
-                                return
-                            elif self.path == '/api/universal/brain-export':
-                                import json as _json
-
-                                from .pipeline_engines import _brain_call
-                                # The studio hit this route TWICE at every
-                                # boot with no bound, and the daemon scanned
-                                # its whole store (54,076 rows, 88 s) each
-                                # time. The Memory panel wants a page; the
-                                # Export button says it wants everything.
-                                try:
-                                    wanted = int((body or {}).get('limit') or 500)
-                                except (TypeError, ValueError):
-                                    wanted = 500
-                                listing = str(_brain_call(
-                                    'brain.list_facts',
-                                    {'limit': max(1, min(wanted, 100000))}
-                                ))
-                                try:
-                                    held = _json.loads(listing)
-                                except Exception:
-                                    held = {'raw': listing[:200000]}
-                                self._json(200, {'ok': True, 'facts': held})
                                 return
                             elif self.path == '/api/universal/retract':
                                 from .universal_pipeline import (
@@ -10305,6 +10458,20 @@ class ApplicationServer:
         value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
         return value if isinstance(value, list) else []
 
+    def _host_rows_or_none(self):
+        """The same cached rows, or None while the first probe has not answered."""
+        value = self._refresh_in_background("hosts", 30.0, self._probe_hosts)
+        return value if isinstance(value, list) else None
+
+    def _local_runtime_states(self):
+        """{port: running} for LM Studio and Ollama, refreshed every 10 s off the
+        request path; None until the first probe answers. A refused localhost
+        connect costs about 200 ms on Windows, so the Providers read never waits
+        on one (2026-09-24: 442 ms per Settings open)."""
+        from .model_router import probe_local_runtimes
+        value = self._refresh_in_background("local-runtimes", 10.0, probe_local_runtimes)
+        return value if isinstance(value, dict) else None
+
     def _staged_update(self) -> dict:
         """The build the quiet updater staged (state_dir/updates/staged.json), cached 30 s."""
         import json as _j, os as _os, time as _t
@@ -11328,7 +11495,10 @@ class ApplicationServer:
             session = load_cloud_session(Path(appdata)) if appdata else None
             if not models:
                 from .model_router import provider_rows
-                return {'ok': True, 'providers': provider_rows(cloud_session=session)}
+                states = self._local_runtime_states()
+                return {'ok': True, 'providers': provider_rows(
+                    cloud_session=session,
+                    local_probe=lambda _host, port: None if states is None else states.get(int(port)))}
             from .model_catalogue import (groups_with_routes, held_model_groups,
                                           live_model_groups)
             # The held answer for this account is served at once and refreshed
@@ -17104,6 +17274,9 @@ class ApplicationServer:
         workshop_host = getattr(self, '_existing_workshop_native_host', None)
         if workshop_host is not None:
             workshop_host.close()
+        terminals = getattr(self, 'terminal_sessions', None)
+        if terminals is not None:
+            terminals.close()
         native_relay = getattr(self, 'native_recipient_relay', None)
         if native_relay is not None:
             # Before any drain or teardown: the relay settles into live content.

@@ -516,10 +516,37 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
             finally:
                 s.close()
     for family, name, port in (("lmstudio", "LM Studio", 1234), ("ollama", "Ollama", 11434)):
+        answered = probe("127.0.0.1", port)
+        # None: the background probe has not answered yet (never a guess).
         rows.append({"id": family, "name": name,
-                     "state": "running" if probe("127.0.0.1", port) else "not running",
+                     "state": "checking" if answered is None else ("running" if answered else "not running"),
                      "source": "127.0.0.1:%d" % port, "sets": ""})
     return rows
+
+
+def probe_local_runtimes() -> dict:
+    """{1234: bool, 11434: bool}: both local runtime ports probed in parallel."""
+    import socket
+    import threading
+
+    answers = {}
+
+    def one(port):
+        s = socket.socket()
+        s.settimeout(0.4)
+        try:
+            answers[port] = s.connect_ex(("127.0.0.1", port)) == 0
+        except Exception:
+            answers[port] = False
+        finally:
+            s.close()
+
+    workers = [threading.Thread(target=one, args=(port,), daemon=True) for port in (1234, 11434)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(1.0)
+    return {port: bool(answers.get(port)) for port in (1234, 11434)}
 
 
 def default_composer_route(*, settings_loader=None) -> tuple:

@@ -92,9 +92,10 @@ test('the shipped Settings dialog draws the brain strata with real facts and an 
     assert.ok(panel.textContent.includes('Real fact read from the brain.'), 'the real fact is filed under Instances');
     assert.ok(panel.textContent.includes('UNCLASSIFIED \u00b7 SEALED'), 'an unclassified real fact is sealed by default');
     assert.ok(panel.textContent.includes('GATES') && panel.textContent.includes('CONSENT RECORD') && panel.textContent.includes('KEY'));
-    const kit = [...panel.querySelectorAll('button')].find(button => button.textContent === 'show recovery kit');
-    win.ReactDOM.flushSync(() => kit.click());
-    assert.ok([...panel.querySelectorAll('[role="status"]')].some(node => node.textContent.startsWith('No recovery kit exists in this connection.')),
+    // 2026-09-24: no "show recovery kit" / "rotate login" buttons that only toggled a sentence.
+    assert.equal([...panel.querySelectorAll('button')].some(button => /recovery kit|rotate login/.test(button.textContent)), false,
+      'no ornamental recovery-kit or rotation control');
+    assert.ok([...panel.querySelectorAll('[role="status"]')].some(node => node.textContent.startsWith('No recovery kit or wrapped login key exists in this build.')),
       'the recovery kit is an absent state, never a sample key');
     const team = tab('Team')[0];
     assert.ok(team && !team.lastElementChild.textContent.includes('seat'), 'the Team badge names no firm or seats');

@@ -349,7 +349,7 @@ def test_d_a_forged_cloud_json_sends_nothing_off_the_pinned_hosts(tmp_path, monk
     assert model_router.resolve_model_route(
         "cloud/gpt-4o", cloud_base_url="https://evil.example").url.startswith("https://api.archhub.io/")
     # relay poll, started exactly as the app starts it
-    monkeypatch.setattr(cloud_publish_consent, "cloud_publish_allowed", lambda _state: True)
+    monkeypatch.setattr(cloud_publish_consent, "cloud_publish_allowed", lambda _state, _account=None: True)
     monkeypatch.setattr(cloud_relay.CloudRelay, "start", lambda self: self)
     relay = cloud_relay.start_cloud_relay(appdata=appdata, state_dir=tmp_path,
                                           respond=lambda text: {}, execute=lambda text: {})

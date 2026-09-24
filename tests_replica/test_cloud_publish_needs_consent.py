@@ -19,9 +19,17 @@ def test_a_malformed_or_false_record_stays_closed(tmp_path):
 
 def test_an_explicit_record_opens_and_deleting_it_closes(tmp_path):
     record = record_cloud_publish_consent(tmp_path, account="founder@example.test")
-    assert cloud_publish_allowed(tmp_path) is True
+    assert cloud_publish_allowed(tmp_path, "Founder@Example.test") is True
     record.unlink()
-    assert cloud_publish_allowed(tmp_path) is False
+    assert cloud_publish_allowed(tmp_path, "founder@example.test") is False
+
+
+def test_consent_belongs_to_the_account_that_gave_it(tmp_path):
+    """Identity = account: signing out or switching accounts closes the path."""
+    record_cloud_publish_consent(tmp_path, account="founder@example.test")
+    assert cloud_publish_allowed(tmp_path, "founder@example.test") is True
+    assert cloud_publish_allowed(tmp_path, "colleague@example.test") is False
+    assert cloud_publish_allowed(tmp_path, None) is False
 
 
 def test_the_launcher_checks_consent_before_any_network():

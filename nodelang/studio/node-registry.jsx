@@ -117,6 +117,7 @@ const AH_LIBRARY = [
     { id:'o_spk',   title:'push_speckle',   sub:'commit the wired rows to a branch' , engine:'library.push_speckle'},
     { id:'o_email', title:'draft_email',    sub:'draft in Outlook \u00b7 you send' , engine:'library.draft_email'},
     { id:'o_notify',title:'notify',         sub:'desktop notification' , engine:'library.notify'},
+    { id:'o_term',  title:'terminal',       sub:'a shell in a folder this ArchHub admits' , engine:'library.terminal', params:{ cwd:'', command:'' } },
   ]},
 ];
 

@@ -4312,23 +4312,20 @@ const SettingsEmpty = ({ children, role = 'status', action }) => (
 // the panel rows. Defined once precisely so the two cannot derive the same fact differently:
 // the badges previously counted only keys PRESENT in the store while the rows fell back to the
 // seed per item, so an empty or partial store made a badge contradict the panel beside it.
-const hostState = (store, h) => ((store && store.hosts) || {})[h.name] || h.state;
-const permMode  = (store, p) => ((store && store.perms) || {})[p.id] || p.mode;
+const hostState = h => h.state; // the probe's answer; there is no local override
 const Settings = ({ onClose, account, setAccount, onSignOut }) => {
   const providers = useProviderStatus();
   const release = releaseStatus(useWorkshopProjection());
-  // The Hosts and Brain badges state the catalogues their panels read, so both load when Settings opens.
+  // The Hosts badge states the cached host probe, read when Settings opens. The brain is
+  // another process and may be slow or down, so it is read only when the Brain tab opens
+  // (SettingsMemory); the badge states the facts already held (2026-09-24 click-path gate).
   useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
-  useLiveCatalogue('ARCHHUB_LOAD_MEMORY', LM_MEMORY);
   // Account first either way: signed in it states the account, signed out it is where you sign in.
   const [tab, setTab] = React.useState('account');
   const [store, setStore] = React.useState(() => {
-    var seed = {
-      perms: LM_PERMISSIONS.reduce(function (a, p) { a[p.id] = p.mode; return a; }, {}),
-      forgotten: [],
-      hosts: LM_HOSTS.reduce(function (a, h) { a[h.name] = h.state; return a; }, {}),
-      revealed: {},
-    };
+    // Only the Brain panel's session record lives here. Permission modes and host on/off switches
+    // were stored here too and nothing read them, so they are gone (2026-09-24).
+    var seed = { forgotten: [], revealed: {} };
     // MERGE PER KEY, never swap the container: Object.assign is shallow, so a persisted
     // `perms`/`hosts` object would REPLACE the fully-seeded one and drop every capability the
     // founder hadn't touched. Rows still rendered (each falls back to its own default) but the
@@ -4339,9 +4336,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
       if (raw) {
         var saved = JSON.parse(raw) || {};
         delete saved.theme; // Saved appearance belongs to the graph, never this legacy UI cache.
+        delete saved.perms; delete saved.hosts; // retired ornamental switches
         return Object.assign({}, seed, saved, {
-          perms: Object.assign({}, seed.perms, saved.perms || {}),
-          hosts: Object.assign({}, seed.hosts, saved.hosts || {}),
           revealed: Object.assign({}, seed.revealed, saved.revealed || {}),
         });
       }
@@ -4356,8 +4352,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
     ['memory',      'Brain',       `${(window.BRAIN_STRATA || []).length} strata \u00b7 ${LM_MEMORY.length - (store.forgotten || []).length} facts`],
     ['team',        'Team',        null],
     ['profile',     'Profile',     'Architect'],
-    ['permissions', 'Permissions', (() => { const v = LM_PERMISSIONS.map(p => permMode(store, p)); return `${v.filter(x => x === 'auto').length} auto · ${v.filter(x => x === 'ask').length} ask`; })()],
-    ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(store, h) !== 'off').length} live`],
+    ['permissions', 'Permissions', null],
+    ['hosts',       'Hosts',       `${LM_HOSTS.filter(h => hostState(h) !== 'off').length} live`],
     ['providers',   'Providers',   providers.rows ? `${keyed} key${keyed === 1 ? '' : 's'}` : null],
     ['models',      'Models',      pickedModel() ? pickedModel().name : null],
     ['theme',       'Theme',       STUDIO_THEME_MODE],
@@ -4404,8 +4400,8 @@ const Settings = ({ onClose, account, setAccount, onSignOut }) => {
           {tab === 'memory'      && <SettingsMemory store={store} patch={patch}/>}
           {tab === 'team'        && <SettingsTeam/>}
           {tab === 'profile'     && <SettingsProfile/>}
-          {tab === 'permissions' && <SettingsPermissions store={store} patch={patch}/>}
-          {tab === 'hosts'       && <SettingsHosts store={store} patch={patch}/>}
+          {tab === 'permissions' && <SettingsPermissions/>}
+          {tab === 'hosts'       && <SettingsHosts/>}
           {tab === 'providers'   && <SettingsProviders providers={providers} onTab={setTab}/>}
           {tab === 'models'      && <SettingsModels/>}
           {tab === 'theme'       && <SettingsTheme/>}
@@ -4446,8 +4442,6 @@ const SettingsMemory = ({ store, patch }) => {
   const open = chosen === 'auto' ? (live.length ? 'instances' : 'category') : chosen;
   const [showGates, setShowGates] = React.useState(false);
   const [showLog, setShowLog] = React.useState(false);
-  const [kit, setKit] = React.useState(null);
-  const [rotate, setRotate] = React.useState(false);
   const [said, setSaid] = React.useState({});
 
   // THE CONSENT RECORD. Every crossing is written down: what, which gate, which way, when.
@@ -4483,6 +4477,12 @@ const SettingsMemory = ({ store, patch }) => {
   <div>
     <SHead title="Brain" sub="Not a list of facts &#x2014; the layer that decides what kinds of things exist, how they relate and how they are filed. The top three strata are structure and can be shared; instances stay put."/>
 
+    {/* A failed read is said once, above the strata, whatever facts are already on screen. */}
+    {catalogue.error && !catalogue.loading && (
+      <SettingsEmpty role="alert" action={<button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}>
+        {/not answering/i.test(catalogue.error) ? 'Brain not answering. Nothing here is lost; read again when it is back.' : 'The brain was not read: ' + catalogue.error}
+      </SettingsEmpty>
+    )}
     {/* strata -- the spine */}
     <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:LM.sp.md }}>
       {strata.map(s => {
@@ -4533,7 +4533,8 @@ const SettingsMemory = ({ store, patch }) => {
                     display:'flex', alignItems:'center', gap:10 }}>
                     <span role={reading ? (catalogue.error ? 'alert' : 'status') : undefined} style={{ flex:1 }}>
                       {!reading ? 'Nothing at this stratum yet.'
-                        : catalogue.loading ? 'Reading the brain\u2026' : 'The brain was not read: ' + catalogue.error}
+                        : catalogue.loading ? 'Reading the brain\u2026'
+                        : 'The brain was not read (see above).'}
                     </span>
                     {reading && catalogue.error && !catalogue.loading &&
                       <button onClick={catalogue.retry} style={{ ...smallBtn(), padding:'3px 9px', fontStyle:'normal' }}>read again</button>}
@@ -4546,10 +4547,11 @@ const SettingsMemory = ({ store, patch }) => {
       })}
     </div>
 
+    {/* No "restore all": the brain has already forgotten these facts (ARCHHUB_BRAIN_FORGET), so
+        un-hiding them here would show facts the brain no longer holds. */}
     {forgotten.length > 0 && (
-      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:LM.sp.md }}>
-        <span style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.06em' }}>{forgotten.length} forgotten this session</span>
-        <button onClick={() => patch('forgotten', [])} style={{ ...smallBtn(), padding:'3px 9px' }}>restore all</button>
+      <div role="status" style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkSoft, letterSpacing:'0.06em', marginBottom:LM.sp.md }}>
+        {forgotten.length} forgotten this session
       </div>
     )}
 
@@ -4602,23 +4604,10 @@ const SettingsMemory = ({ store, patch }) => {
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6 }}>{keys.how}</div>
       <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.6, marginTop:7 }}>{keys.cost}</div>
 
-      {kit && (
-        <div role="status" style={{ marginTop:11, padding:'11px 12px', background:LM.bgDeep, border:`1px solid ${LM.accentSoft}`, borderRadius:LM.rad.sm, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
-          No recovery kit exists in this connection. The login-wrapped key is proposed, not shipped, so there is nothing to write down yet.
-        </div>
-      )}
-
-      {rotate && (
-        <div role="status" style={{ marginTop:11, padding:'11px 12px', background:LM.bgDeep, border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm, fontFamily:LM.serif, fontStyle:'italic', fontSize:13.5, color:LM.inkSoft }}>
-          No wrapped key exists in this connection, so there is nothing to re-wrap.
-        </div>
-      )}
-
-      <div style={{ display:'flex', gap:7, marginTop:10 }}>
-        <button onClick={() => setKit(kit ? null : 'show')} style={{ ...smallBtn(), padding:'3px 9px' }}>
-          {kit ? 'hide recovery kit' : 'show recovery kit'}
-        </button>
-        <button onClick={() => setRotate(!rotate)} style={{ ...smallBtn(), padding:'3px 9px' }}>rotate login</button>
+      {/* The login-wrapped key is proposed, not shipped: no recovery kit or rotation control is
+          drawn until one exists (the old buttons only toggled this sentence). */}
+      <div role="status" style={{ marginTop:9, fontSize:12, color:LM.inkMuted, lineHeight:1.6 }}>
+        No recovery kit or wrapped login key exists in this build.
       </div>
     </div>
     <div style={{ padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.lineSoft}`, borderRadius:LM.rad.md }}>
@@ -4695,26 +4684,17 @@ const SettingsTeam = () => {
 };// ── Profile: who you are, the AI's system prompt anchor
 const SettingsProfile = () => (
   <div>
-    <SHead title="Profile" sub="The grounding the model uses. Sets tone, units, and what 'we' means."/>
+    <SHead title="Profile" sub="Who the app says you are, and the standing instruction agents read from your brain."/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-      {/* The signed-in account, never an invented person. */}
+      {/* The signed-in account, never an invented person. Discipline, units, standard, languages
+          and timezone were drawn as dropdowns with invented values and no store; removed 2026-09-24. */}
       <SField label="Display name" value={(() => { const a = (typeof acLoad === 'function' && acLoad()) || {}; return a.name || (a.email ? String(a.email).split('@')[0] : '—'); })()}/>
-      <SField label="Studio / firm" value={(window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.firm) || '—'}/>
-      <SField label="Discipline" value="Architecture" select/>
-      <SField label="Role" value="Project lead" select/>
-      <SField label="Units" value="Millimeters (mm)" select/>
-      <SField label="Drafting standard" value="ISO 128 / ISO 8048" select/>
-      <SField label="Languages" value="English, Arabic"/>
-      <SField label="Timezone" value="Cairo (UTC+2)"/>
+      <SField label="Studio / firm" value={(() => { const a = (typeof acLoad === 'function' && acLoad()) || {}; return a.firm || (window.ARCHHUB_LIVE && window.ARCHHUB_LIVE.firm) || '—'; })()}/>
     </div>
     <div style={{ marginTop:LM.sp.lg }}>
-      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:6 }}>SYSTEM PROMPT — WRITTEN FROM YOUR PROFILE</div>
-      <div style={{
-        background:LM.bgDeep, border:`1px solid ${LM.lineSoft}`, borderLeft:`2px solid ${LM.cyan}`,
-        borderRadius:LM.rad.sm, padding:'10px 13px', fontFamily:LM.serif, fontStyle:'italic',
-        fontSize:13, color:LM.inkSoft, lineHeight:1.55,
-      }}>
-        You are working with the signed-in architect inside ArchHub. Use millimeters, ISO conventions. Be terse and technical, no preamble. Never propose imperial units. Never use emoji. The active Revit document is the source of truth.
+      <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.14em', marginBottom:6 }}>STANDING INSTRUCTION</div>
+      <div style={{ fontSize:12, color:LM.inkSoft, lineHeight:1.55 }}>
+        Saved as a brain fact that begins with SYSTEM PROMPT. Preview asks the current session which instruction it is working under.
       </div>
       <div style={{ display:'flex', gap:6, marginTop:LM.sp.sm }}>
         <button onClick={async (e) => {
@@ -4743,7 +4723,7 @@ const SettingsProfile = () => (
   </div>
 );
 
-const SField = ({ label, value, select }) => (
+const SField = ({ label, value }) => (
   <div>
     <div style={{ fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em', marginBottom:LM.sp.xs }}>{label.toUpperCase()}</div>
     <div style={{
@@ -4751,65 +4731,22 @@ const SField = ({ label, value, select }) => (
       borderRadius:LM.rad.sm, fontSize:12.5, color:LM.ink, display:'flex', alignItems:'center', gap:6,
     }}>
       <span style={{ flex:1 }}>{value}</span>
-      {select && <span style={{ color:LM.inkMuted }}>▾</span>}
     </div>
   </div>
 );
 
-// ── Permissions: what the AI can do without asking
-const LM_PERMISSIONS = [
-  { id:'read',  label:'Read host data',           sub:'List walls, doors, views, etc.', mode:'auto' },
-  { id:'filter',label:'Filter & search',          sub:'No side effects.',                mode:'auto' },
-  { id:'dim',   label:'Place dimensions & tags',  sub:'Annotation only · no model change.', mode:'auto' },
-  { id:'place', label:'Place new elements',       sub:'Doors, windows, walls.',           mode:'ask' },
-  { id:'param', label:'Edit parameter values',    sub:'On selected elements.',            mode:'ask' },
-  { id:'delete',label:'Delete elements',          sub:'Irreversible without undo.',       mode:'block' },
-  { id:'pub',   label:'Publish / export',         sub:'PDF, Speckle, email.',             mode:'ask' },
-  { id:'shell', label:'Run shell / scripts',      sub:'pyrevit, IronPython, system.',     mode:'block' },
-];
-const PERM_META = window.ArchHubTheme.derive((LM) => ({
-  auto:  { col:LM.ok,     label:'AUTO',  note:'Runs without asking' },
-  ask:   { col:LM.warn,   label:'ASK',   note:'Pauses for confirmation' },
-  block: { col:LM.err,    label:'BLOCK', note:'Never run' },
-}));
-const SettingsPermissions = ({ store, patch }) => (
+// ── Permissions. The design drew eight capabilities with AUTO / ASK / BLOCK switches. They were
+// saved to this page's localStorage and nothing that runs a host, agent or connector read them, so
+// every switch was ornamental (audit 2026-09-24). The panel now states the gate that is enforced:
+// effects run only inside Work you approved, and each Workshop run can be stopped there.
+const SettingsPermissions = () => (
   <div>
-    <SHead title="Permissions" sub="What the AI can do on its own — and what it must pause to ask. Keeps the gas pedal under your foot."/>
-    <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
-      {LM_PERMISSIONS.map((p, i) => {
-        const mode = permMode(store, p);
-        const meta = PERM_META[mode];
-        return (
-          <div key={p.id} style={{
-            padding:'10px 14px', display:'grid', gridTemplateColumns:'1fr 240px',
-            gap:14, alignItems:'center',
-            borderTop: i===0 ? 'none' : `1px solid ${LM.lineSoft}`,
-          }}>
-            <div style={{ minWidth:0 }}>
-              <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{p.label}</div>
-              <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{p.sub}</div>
-            </div>
-            <div style={{ display:'flex', gap:LM.sp.xs, background:LM.bgDeep, padding:2, borderRadius:LM.rad.sm }}>
-              {Object.entries(PERM_META).map(([k, m]) => {
-                const sel = mode === k;
-                return (
-                  <button key={k} title={m.label + ' \u2014 ' + p.label}
-                    onClick={() => patch({ perms: Object.assign({}, store.perms, { [p.id]: k }) })}
-                    style={{
-                    flex:1, padding:'4px 6px', border:0, borderRadius:4, cursor:'pointer',
-                    background: sel ? m.col + '22' : 'transparent',
-                    color: sel ? m.col : LM.inkMuted,
-                    fontFamily:LM.mono, fontSize:9.5, fontWeight: sel ? 600 : 400, letterSpacing:'0.1em',
-                  }}>{m.label}</button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-    <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:10, letterSpacing:'0.04em', lineHeight:1.6 }}>
-      Default for new permissions: <span style={{ color:LM.warn }}>ASK</span>. Cost ceiling per session: <span style={{ color:LM.accent }}>$2.00</span>. Auto-undo window: <span style={{ color:LM.accent }}>30s</span>.
+    <SHead title="Permissions" sub="What agents may do on their own, and where you stop them."/>
+    <div role="status" style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, padding:'12px 14px', fontSize:12.5, color:LM.inkSoft, lineHeight:1.6 }}>
+      <div>Host, file and connector effects run only inside a Workshop workflow you approved. Reads that change nothing need no approval.</div>
+      <div style={{ marginTop:6 }}>A running agent is stopped from its Workshop; a stop ends its process.</div>
+      <div style={{ marginTop:6 }}>Terminal nodes run only inside the workspace folders this ArchHub admits.</div>
+      <div style={{ marginTop:6, color:LM.inkMuted }}>Per-operation AUTO / ASK / BLOCK modes are not configurable in this build.</div>
     </div>
   </div>
 );
@@ -5047,14 +4984,12 @@ const SettingsModels = () => {
           <div style={{ fontSize:13, fontWeight:500 }}>{task}</div>
           <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2, letterSpacing:'0.04em' }}>{sub}</div>
         </div>
-        <button disabled title={i === 0 ? 'Pick the model from the composer model chip' : 'This job has no route of its own'} style={{
-          padding:'7px 11px', background:LM.bg, border:`1px dashed ${LM.line}`, borderRadius:LM.rad.sm,
-          color: model === '\u2014' ? LM.inkMuted : LM.ink, fontFamily:LM.mono, fontSize:11.5, textAlign:'left', cursor:'default',
-          display:'flex', alignItems:'center', gap:6,
-        }}>
-          <span style={{ flex:1 }}>{model}</span>
-          <span style={{ color:LM.inkMuted }}>▾</span>
-        </button>
+        {/* A value, not a dropdown: the pick is made from the composer model chip and held in the
+            graph (Personal Settings composer_model); the other jobs have no route of their own. */}
+        <div title={i === 0 ? 'Pick the model from the composer model chip' : 'This job has no route of its own'} style={{
+          padding:'7px 11px', fontFamily:LM.mono, fontSize:11.5, textAlign:'left',
+          color: model === '—' ? LM.inkMuted : LM.ink,
+        }}>{model}</div>
       </div>
     ))}
   </div>
@@ -5223,32 +5158,31 @@ const SettingsTheme = () => {
             <div style={{ fontSize:12.5 }}>{k}</div>
             <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:1, letterSpacing:'0.04em' }}>{v}</div>
           </div>
-          <span title={notLinked} style={{ color:LM.inkMuted, fontSize:11 }}>change</span>
         </div>
       ))}
     </div>
     {alert && <p role="alert" style={{fontSize:12, color:LM.warn}}>{alert}</p>}
   </div>;
 };
+// Only keys that have a handler in this build (the design sheet listed thirteen; seven had none).
+// Global: StudioLM keydown (Escape, Ctrl/Cmd+, and Ctrl/Cmd+/). Canvas: onCanvasKeyDown, which runs
+// select-all and the canvas menu rows whose keys are declared in canvasMenuItems.
+const STUDIO_SHORTCUTS = [
+  ['Toggle settings',       '⌘,'],
+  ['Open documentation',    '⌘/'],
+  ['Close settings or docs', 'Esc'],
+  ['Select all nodes',      '⌘A'],
+  ['Add node — library', '⌘L'],
+  ['Fit graph to view',     '⌘0'],
+  ['Zoom to 100%',          '⌘1'],
+  ['Auto-layout',           '⌘⇧L'],
+  ['Reset positions',       '⌘⇧R'],
+];
 const SettingsShortcuts = () => (
   <div>
-    <SHead title="Shortcuts" sub="The keys that matter."/>
+    <SHead title="Shortcuts" sub="The keys this build answers. Canvas keys work while the canvas has focus."/>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'4px 24px' }}>
-      {[
-        ['Open palette',          '⌘K'],
-        ['New session',           '⌘N'],
-        ['Run focused node',      '⌘↵'],
-        ['Add node — library',    '⌘L'],
-        ['Toggle settings',       '⌘,'],
-        ['Open documentation',    '⌘/'],
-        ['Pan canvas',            'drag empty'],
-        ['Zoom canvas',           '⌘ + scroll'],
-        ['Fit to view',           '⌘0'],
-        ['Branch from message',   '⌥B'],
-        ['Save as Skill',         '⌘⇧S'],
-        ['Switch model',          '⌘M'],
-        ['Toggle reasoning',      '⌥R'],
-      ].map(([label, key]) => (
+      {STUDIO_SHORTCUTS.map(([label, key]) => (
         <div key={label} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 0', borderBottom:`1px solid ${LM.lineSoft}` }}>
           <span style={{ flex:1, fontSize:12.5, color:LM.ink }}>{label}</span>
           <kbd style={{ ...kbd(), fontSize:10.5, padding:'2px 7px' }}>{key}</kbd>
@@ -5276,25 +5210,27 @@ const SettingsStorage = () => (
         </div>
       ))}
     </div>
+    {/* The design's Export / Clear cache / Forget all / Delete all rows each opened a folder while
+        naming an action they did not perform. The rows now name what they do. Deleting sessions or
+        the brain is done by hand in the folder; the Brain tab exports the brain. */}
     <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
       {[
-        ['Export everything',           'JSON · sessions, memory, profile, skills', LM.ink],
-        ['Clear cache',                 'safe — model weights re-download on demand', LM.inkSoft],
-        ['Forget all memory',           'irreversible · profile stays', LM.err],
-        ['Delete all sessions',         'irreversible · training queue stays', LM.err],
-      ].map(([t, sub, col]) => (
+        ['Graph folder', 'the graph database and its backups', 'graph'],
+        ['Brain folder', 'the brain on this machine', 'brain'],
+      ].map(([t, sub, target]) => (
         <div key={t} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.md }}>
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:13, color:col }}>{t}</div>
+            <div style={{ fontSize:13, color:LM.ink }}>{t}</div>
             <div style={{ fontFamily:LM.mono, fontSize:10, color:LM.inkMuted, marginTop:2 }}>{sub}</div>
           </div>
-          <button onClick={(e) => {
-            // Irreversible acts are never one click away from a list.
+          <button onClick={async (e) => {
             const b = e.currentTarget;
-            b.textContent = 'opening the folder';
-            window.ARCHHUB_REVEAL?.(t.indexOf('session') >= 0 ? 'graph' : 'brain');
-            setTimeout(() => { b.textContent = 'do it'; }, 5000);
-          }} style={{ ...smallBtn(), color:col, borderColor: col === LM.err ? LM.err + '55' : LM.line }}>do it</button>
+            try {
+              const answer = await window.ARCHHUB_REVEAL(target);
+              b.textContent = answer && answer.ok ? 'opened' : 'refused';
+            } catch (error) { b.textContent = 'refused'; }
+            setTimeout(() => { b.textContent = 'open folder'; }, 4000);
+          }} style={smallBtn()}>open folder</button>
         </div>
       ))}
     </div>
@@ -5335,19 +5271,19 @@ const SettingsAbout = ({ providers, release }) => {
 
 // Hosts (design studio-lm.jsx:3088-3142). The rows are the host catalogue; the BABOOM startup
 // choice closes the list as one more row.
-const SettingsHosts = ({ store, patch }) => {
+const SettingsHosts = () => {
   const catalogue = useLiveCatalogue('ARCHHUB_LOAD_HOSTS', LM_HOSTS);
   return (
   <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
     <div>
       <div style={{ fontFamily:LM.serif, fontSize:22, letterSpacing:'-0.01em' }}>Hosts</div>
       <div style={{ fontFamily:LM.sans, fontSize:13, color:LM.inkSoft, marginTop:3 }}>
-        Local clients ArchHub connects to. Toggle off to remove from the graph.
+        Local clients the host probe found on this machine. Operations reach a host only through an approved workflow.
       </div>
     </div>
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       {LM_HOSTS.map((h, i) => {
-        const state = hostState(store, h);
+        const state = hostState(h);
         const col = state==='connected'?LM.ok : state==='syncing'?LM.warn : LM.inkMuted;
         return (
           <div key={h.id} style={{
@@ -5369,16 +5305,6 @@ const SettingsHosts = ({ store, patch }) => {
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs,
               background: col + '14', color: col, letterSpacing:'0.1em', textTransform:'uppercase',
             }}>{state}</span>
-            <div role="switch" aria-checked={state !== 'off'}
-              title={(state !== 'off' ? 'Disconnect ' : 'Connect ') + h.name}
-              onClick={() => patch({ hosts: Object.assign({}, store.hosts, { [h.name]: state === 'off' ? (h.state === 'off' ? 'connected' : h.state) : 'off' }) })}
-              style={{
-              width:30, height:16, borderRadius:999, padding:1, position:'relative', cursor:'pointer',
-              transition:'background .15s',
-              background: state !== 'off' ? LM.accent : LM.lineSoft,
-            }}>
-              <span style={{ position:'absolute', top:1, transition:'left .15s', left: state !== 'off' ? 14 : 1, width:14, height:14, borderRadius:'50%', background:'#fff', transition:'left .15s' }}/>
-            </div>
           </div>
         );
       })}
@@ -5387,13 +5313,6 @@ const SettingsHosts = ({ store, patch }) => {
         {catalogue.loading ? 'Reading the hosts on this machine\u2026' : catalogue.error ? 'The hosts were not read: ' + catalogue.error : 'No host has answered a probe yet.'}</SettingsEmpty>}
       <BaboomStartupRow first={false}/>
     </div>
-    <button style={{
-      padding:'8px 12px', border:`1px dashed ${LM.line}`, background:'transparent',
-      borderRadius:LM.rad.md, color:LM.accent, fontFamily:LM.sans, fontSize:12.5, cursor:'pointer',
-      display:'inline-flex', alignItems:'center', gap:7, width:'fit-content',
-    }}>
-      <span>+</span> Auto-build a new host connector…
-    </button>
   </div>
   );
 };

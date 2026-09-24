@@ -307,10 +307,20 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     let hosts = [], connectors = [];
     window.ARCHHUB_LOAD_HOSTS = async () => {
       const scan = await jget('/api/universal/hosts');
+      // The server answers from its background probe; before the first probe
+      // lands it says so, and the panel offers "read again" instead of "none".
+      if (scan.probing) throw new Error('the host probe is still running');
       return {hosts:scan.hosts || [], connectors:scan.connectors || []};
     };
     window.ARCHHUB_LOAD_MEMORY = async () => {
-      const held = (await jpost('/api/universal/brain-export', {limit:500})).facts || {};
+      // Read only when the Brain tab opens; the server gives the brain 4 s and
+      // this page 6 s before the tab says the brain is not answering.
+      const answer = await Promise.race([
+        jpost('/api/universal/brain-export', {limit:500, quick:true}),
+        new Promise((_, refuse) => setTimeout(() => refuse(new Error('Brain not answering')), 6000)),
+      ]).catch(error => { throw new Error(/answer|503|silent/i.test(String(error && error.message)) ?
+        'Brain not answering' : String((error && error.message) || error)); });
+      const held = answer.facts || {};
       const out = [];
       for (const folder of (held.folders || [])) {
         for (const fact of (folder.facts || [])) {

@@ -926,6 +926,36 @@
       setBaboomStartup: value => changeTheme('baboom-startup', null, value),
       setComposerModel: value => changeTheme('composer-model', null, value),
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      // Terminal nodes: one shell per session in a folder the application admits.
+      async terminalStart(cwd) {
+        const result = await post('/api/universal/terminal', {action:'start', cwd:typeof cwd === 'string' ? cwd : ''});
+        if (!result || result.ok !== true || typeof result.id !== 'string') fail('The terminal could not be started.');
+        return result;
+      },
+      async terminalInput(id, text) {
+        if (typeof text !== 'string' || !text.trim()) fail('Type a command first.');
+        return post('/api/universal/terminal', {action:'input', id, text});
+      },
+      async terminalStop(id) {
+        const result = await post('/api/universal/terminal', {action:'stop', id});
+        if (!result || result.ok !== true || result.state === 'running') fail('The terminal stop could not be confirmed.');
+        return result;
+      },
+      terminalOutput(id, since) {
+        return get('/api/universal/terminal?id=' + encodeURIComponent(id) + '&since=' + Math.max(0, Number(since) || 0));
+      },
+      // Cloud publish consent: the record start_cloud_relay reads beside the graph.
+      async readCloudPublishConsent() {
+        const result = await get('/api/universal/cloud-publish-consent');
+        if (!result || result.ok !== true || typeof result.allowed !== 'boolean') fail('Cloud publish consent could not be read.');
+        return {allowed:result.allowed, account:typeof result.account === 'string' ? result.account : ''};
+      },
+      async setCloudPublishConsent(allow) {
+        if (typeof allow !== 'boolean') fail('Cloud publish consent must be allowed or withdrawn.');
+        const result = await post('/api/universal/cloud-publish-consent', {allow});
+        if (!result || result.ok !== true || result.allowed !== allow) fail('The cloud publish consent change could not be confirmed.');
+        return {allowed:result.allowed, account:typeof result.account === 'string' ? result.account : ''};
+      },
       readProviders() {
         if (providerRead) return providerRead;
         providerRead = Promise.resolve().then(() => get('/api/universal/providers')).then(result => {

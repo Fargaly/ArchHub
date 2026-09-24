@@ -55,6 +55,51 @@ unchanged, on the `archive/v1-main` branch.
 | `SPEC.md` | what ArchHub is, and the acceptance courts that define "done" (section 11) |
 | `RESEARCH-UNIVERSAL-CELL.md` | why the record has this shape |
 
+## Settings and terminals
+
+Every enabled Settings control writes the one source its effect reads, or it
+is not drawn (`tests_js/studio_settings_real_controls.test.cjs`):
+
+| control | source | effect |
+|---------|--------|--------|
+| Theme accent, restore | graph Personal Settings | the Studio redraws in the saved accent |
+| BABOOM startup | graph, owner only | BABOOM starts or not at the next launch |
+| Model pick (composer chip) | graph `composer_model` | Send, BABOOM, Think and Vision cards use it |
+| Cloud publish consent (Account) | `cloud-publish.consent.json` beside the graph, owner only | allowed by the signed-in account: the cloud relay starts at launch; withdrawn, signed out or another account signed in: it stops at its next poll |
+| OpenRouter key, social credentials | Windows DPAPI secrets store | provider routing and connector nodes read them |
+| Sign in, cockpit link | `cloud.json` | the account the cloud and the relay use |
+| Brain rewrite, forget, export | the brain | the fact changes in the brain |
+
+Opening Settings reads only cached or local records: the host list from the
+30 s background host probe (the first read after launch says the probe is
+still running), the LM Studio/Ollama state from a 10 s background probe
+(`checking` until it answers), the consent record and the sign-in record. The
+brain is read only when the Brain tab opens, outside the graph lock, with a
+4 s budget; a silent brain shows "Brain not answering" and blocks nothing.
+The Account identity row states the sign-in record (`cloud_signin.sign_in_state`),
+never this page's stored copy.
+
+Removed as ornamental in the same change: Permissions AUTO/ASK/BLOCK switches,
+per-host switches, spend cap and meters, sync folder, invented Profile fields,
+unbound shortcuts. Per-operation permissions, spend caps, an update channel
+and notification settings do not exist in this build.
+
+A **Terminal** card (library `terminal`, engine `library.terminal`) opens a
+real shell (`cmd.exe`) STARTED in its `cwd` folder, which must resolve inside
+this ArchHub's terminal folder: `workspace` beside the graph
+(`%LOCALAPPDATA%\ArchHub\workspace` on a desktop install), or the workspace
+root the entry point names. Only the start folder is checked; the running
+shell is not a sandbox and can reach anything the Windows user can. Only the
+application owner may start one: the terminal route needs `execute` and the
+owner, and a canvas Run binds the card with the same check (any other run,
+including a Workshop workflow, refuses the card). Output streams into the
+card, input is line by line, Stop kills the shell and everything it started
+(a Windows Job object with kill-on-close). At most four run at once, each for
+at most an hour, below normal priority, 256 KB of output kept. On a canvas Run
+the card runs its `command` once and the shell exits (60 s limit); the graph
+lock is not held while it runs. Sessions are not saved: they end when ArchHub
+closes. Owner: `nodelang/terminal_sessions.py`.
+
 ## Layout
 
 | folder | contents |

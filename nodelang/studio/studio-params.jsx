@@ -508,6 +508,68 @@ const pmHead = (glyph, text, right) => (
 );
 
 // ── the inspector ───────────────────────────────────────────────────────────
+// A Terminal node (engine library.terminal): a real shell STARTED in the card's folder, which
+// must be inside this ArchHub's terminal folder (terminal_sessions.py refuses anything else).
+// Only the start folder is checked: the running shell is not a sandbox and can reach whatever
+// the Windows user can, so the panel says so. Owner only. Output streams in by offset while
+// the shell runs; Stop ends the shell and all it started.
+function TerminalPanel({ node }) {
+  const transport = window.ARCHHUB_EXISTING_WORKSHOP;
+  const cwd = String(((node.params || []).find(p => p.k === 'cwd') || {}).v || '');
+  const [term, setTerm] = React.useState(null);
+  const [text, setText] = React.useState('');
+  const [line, setLine] = React.useState('');
+  const [error, setError] = React.useState('');
+  const next = React.useRef(0), alive = React.useRef(true), out = React.useRef(null);
+  React.useEffect(() => () => { alive.current = false; }, []);
+  React.useEffect(() => {
+    if (!term || term.state !== 'running' || !transport) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const answer = await transport.terminalOutput(term.id, next.current);
+        if (!alive.current) return;
+        next.current = answer.next;
+        if (answer.output) setText(t => (t + answer.output).slice(-65536));
+        if (answer.state !== 'running') setTerm(answer);
+      } catch (e) { if (alive.current) setError(String((e && e.message) || e)); }
+    }, 700);
+    return () => clearInterval(timer);
+  }, [term && term.id, term && term.state]);
+  React.useEffect(() => { if (out.current) out.current.scrollTop = out.current.scrollHeight; }, [text]);
+  const act = async (fn) => {
+    setError('');
+    try { await fn(); } catch (e) { setError(String((e && e.message) || e)); }
+  };
+  const start = () => act(async () => {
+    const started = await transport.terminalStart(cwd);
+    next.current = started.next; setText(started.output || ''); setTerm(started);
+  });
+  const send = () => act(async () => { const held = line; setLine(''); await transport.terminalInput(term.id, held); });
+  const stop = () => act(async () => { setTerm(await transport.terminalStop(term.id)); });
+  const running = !!term && term.state === 'running';
+  if (!transport || !transport.terminalStart) return null;
+  return (
+    <section aria-label="Terminal" style={{ margin: '8px 0 10px', border: '1px solid ' + PM.line, borderRadius: PM.rad.md, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: '1px solid ' + PM.lineHair }}>
+        <span style={{ flex: 1, minWidth: 0, fontFamily: PM.mono, fontSize: 10, color: PM.inkSoft, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {term ? term.cwd + ' · ' + (running ? 'running' : term.state + (term.exit_code == null ? '' : ' ' + term.exit_code)) : (cwd || 'terminal folder')}
+        </span>
+        {running
+          ? <button onClick={stop} style={Object.assign({}, pmBtn(), { color: PM.err, borderColor: PM.err })}>Stop</button>
+          : <button onClick={start} style={pmBtn()}>{term ? 'Start again' : 'Start'}</button>}
+      </div>
+      {!term && <div style={{ padding: '6px 8px', fontFamily: PM.mono, fontSize: 10.5, color: PM.inkSoft }}>
+        Starts in this folder only. Not a sandbox: the shell can reach anything your Windows account can.
+      </div>}
+      {term && <pre ref={out} role="log" style={{ margin: 0, padding: '8px', maxHeight: 220, overflow: 'auto', background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{text}</pre>}
+      {running && <input aria-label="Terminal input" value={line} onChange={e => setLine(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && line.trim()) send(); }} placeholder="command, then Enter"
+        style={{ width: '100%', border: 0, borderTop: '1px solid ' + PM.lineHair, padding: '6px 8px', background: PM.bg, color: PM.ink, fontFamily: PM.mono, fontSize: 11, outline: 'none' }}/>}
+      {error && <div role="alert" style={{ padding: '6px 8px', fontFamily: PM.mono, fontSize: 10.5, color: PM.err }}>{error}</div>}
+    </section>
+  );
+}
+
 function NodeInspector({ node }) {
   const builtins = React.useMemo(() => (node.params || []).map(pmNorm2), [node.id]);
   const defs = React.useMemo(() => { const d = {}; builtins.forEach(p => d[p.k] = (node.params.find(x => x.k === p.k) || {}).v); return d; }, [node.id]);
@@ -742,6 +804,7 @@ function NodeInspector({ node }) {
       </div>
 
       <div>
+        {node.sub === 'library.terminal' && node.live && <TerminalPanel node={node}/>}
         {(persistence.pending.size > 0 || persistence.errors.size > 0 || persistence.runError || persistence.result) && (
           <div role={persistence.errors.size || persistence.runError ? 'alert' : 'status'} style={{ fontFamily: PM.sans, fontSize: 12, lineHeight: 1.5, marginBottom: 9, color: persistence.errors.size || persistence.runError ? PM.err : PM.inkSoft }}>
             {persistence.pending.size > 0 && <div>Saving {persistence.pending.size} parameter(s)…</div>}

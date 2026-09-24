@@ -84,7 +84,7 @@ def test_notify_lands_on_the_registered_surface_or_says_there_is_none(monkeypatc
     assert out["out"] == "sheet set published" and "no desktop surface registered" in said
     shown = []
     L.set_notify_surface(lambda title, message: shown.append((title, message)))
-    out, said = L.notify({"title": "ArchHub", "message": "sheet set published"}, {})
+    out, said = L.notify({"notice_title": "ArchHub", "message": "sheet set published"}, {})
     assert shown == [("ArchHub", "sheet set published")] and said.startswith("sent to the desktop tray")
     out, said = L.notify({}, {})
     assert out["out"] == [] and "nothing to say" in said

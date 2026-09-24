@@ -76,6 +76,36 @@ the foreground window, and has no local task or conversation store.
 Creating the companion assembly alone does not connect a device, start a
 heartbeat, show a window, activate voice, or replace an existing runtime.
 
+### Warnings on real events (lane baboom-settings patch 2026-09-24; not landed, not installed)
+
+BABOOM's directive (`project_universal_baboom_companion_directive`) warns,
+after blocked Work and a silent brain and before every count, when:
+
+- an agent session stopped answering: its graph presence lease lapsed in the
+  last 15 minutes (`list_lapsed_runtime_presences`, the same leases Presence
+  reads; no cleanup write, no second store). Reported as runtime names in
+  `agents.gone`.
+- the last Run failed or a host or connector refused: `last_pipeline_run()`
+  now records `failed` (engines whose effect raised) and `refused` (engines
+  that answered `ok: False`), engine names only.
+- an update is ready: unchanged, the staged-update record.
+
+The message names runtimes and engines, never node titles, values or refusal
+text. The directive carries the `status` action so the companion panel shows
+the message; the next clean Run or a renewed lease clears it. No new top-level
+context key: the machine transport reads the same seventeen keys.
+
+### Stop that ends the run (same patch)
+
+A Workshop Stop (`stop_native`) first sends interrupt and closes the agent's
+input. When the child ignores both past its stop budget, the owned process
+tree (only PIDs this process owner observed, matched by creation time) is
+killed and the status reads `error_code: forced_stop`, `drained: true`,
+`requires_reconciliation: true`; the interrupted turn's outcome is
+`uncertain` and is never replayed. The same session can start again. Before
+this patch such a child kept running with `cooperative_stop_timeout`.
+BABOOM's own Stop remains session-only (no new requests; see below).
+
 ### Persistent startup control (approved 2026-09-16 as designed; landed and installed, not released)
 
 Approved design (717 record line 32): one persistent on/off control held on

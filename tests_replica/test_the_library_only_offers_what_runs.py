@@ -125,9 +125,20 @@ def test_workshop_cards_refuse_the_ungated_run_by_name():
         assert "approved Workshop workflow" in str(refusal.value), name
 
 
+# The Terminal card runs through the application server's terminal owner
+# (terminal_sessions.py), scoped to its admitted workspace root; unbound, it refuses.
+_SERVER_BOUND = ("library.terminal",)
+
+
+def test_the_terminal_card_refuses_outside_the_application():
+    with pytest.raises(ValueError) as refusal:
+        _answered("library.terminal", {"command": "echo x"}, None)
+    assert "inside the ArchHub application" in str(refusal.value)
+
+
 def test_every_added_engine_answers_the_shared_shape(tmp_path):
     """(params, feeds) in, (outputs mapping, one display line) out."""
-    assert set(_PLACEMENTS) | set(_APPROVAL_GATED) == set(LIBRARY_ENGINES), (
+    assert set(_PLACEMENTS) | set(_APPROVAL_GATED) | set(_SERVER_BOUND) == set(LIBRARY_ENGINES), (
         "every engine needs a placement in this court")
     for name, (params, wired) in _PLACEMENTS.items():
         if name == "library.save_skill":
@@ -190,10 +201,11 @@ def test_every_library_card_either_runs_or_says_it_cannot():
     """
     items = _library_items()
     # 54 cards plus the three Workshop cards (Workshop, Agent session,
-    # Independent review) reconciled from the clean-bootstrap catalogue.
-    assert len(items) == 57, len(items)
+    # Independent review) reconciled from the clean-bootstrap catalogue,
+    # plus the Terminal card (terminal_sessions.py, 2026-09-24).
+    assert len(items) == 58, len(items)
     wired = {item for item, engine in items.items() if engine}
-    assert len(wired) == 57, sorted(wired)
+    assert len(wired) == 58, sorted(wired)
 
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
         assert items.get(item) == wiring["engine"], (

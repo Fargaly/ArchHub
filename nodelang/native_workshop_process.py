@@ -3,8 +3,10 @@
 This module holds no graph, assignment, credential store or execution authority.
 The caller supplies the complete launch profile and admits every turn. A returned
 model result is stream completion, never proof that Work or effects succeeded.
-Limits request cooperative interruption/EOF; they cannot force memory reclamation.
-The caller must retain this object and reconcile any live child after stop times out.
+Limits request cooperative interruption/EOF first. When a stop outlives its
+cooperative budget, the owned tree (only processes this object observed, matched
+by PID and creation time) is terminated, so a user's Stop really ends the run.
+The caller must still reconcile the interrupted turn's unknown outcome.
 """
 from collections import deque
 from dataclasses import dataclass
@@ -150,6 +152,39 @@ class ObservedNativeProcessTree:
                 'parent_pid':None if parent is None else parent[0],
                 'parent_created_at':None if parent is None else parent[1], 'alive':alive, 'rss':rss}
         return tuple(observations.values())
+
+
+def _terminate_owned_tree(observer, process):
+    """Kill the observed owned tree, children first, then the root handle.
+
+    Only identities the observer recorded (PID plus creation time) are killed,
+    so a reused PID is never touched. Returns the number of kill requests.
+    """
+    killed = 0
+    owned = getattr(observer, '_owned', None)
+    if isinstance(owned, dict):
+        try:
+            import psutil
+        except ImportError:
+            psutil = None
+        if psutil is not None:
+            for (pid, created), _entry in reversed(list(owned.items())):
+                try:
+                    current = psutil.Process(pid)
+                    if current.create_time() != created or not current.is_running():
+                        continue
+                    current.kill()
+                    killed += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+    kill = getattr(process, 'kill', None)
+    if callable(kill) and process.poll() is None:
+        try:
+            kill()
+            killed += 1
+        except OSError:
+            pass
+    return killed
 
 
 def _object(pairs):
@@ -639,6 +674,22 @@ class NativeWorkshopProcess:
                     self._error = self._error or 'cooperative_stop_timeout'
                     break
                 self._condition.wait(min(remaining, 0.25))
+        with self._condition:
+            outlived = self._error == 'cooperative_stop_timeout' or (
+                self._process is not None and self._process.poll() is None)
+        if outlived:
+            # The child ignored interrupt and EOF within its budget: end it.
+            _terminate_owned_tree(self._tree_observer, self._process)
+            with self._condition:
+                if self._error in ('', 'cooperative_stop_timeout'):
+                    self._error = 'forced_stop'
+                if self._active_turn is not None:
+                    self._last_turn = {'turn_id':self._active_turn, 'outcome':'uncertain'}
+            forced_deadline = time.monotonic() + 3.0
+            while self._process is not None and self._process.poll() is None and time.monotonic() < forced_deadline:
+                time.sleep(0.05)
+            self._observe_tree(force=True)
+            deadline = max(deadline, forced_deadline)
         for thread in self._threads:
             if thread.ident is not None:
                 thread.join(max(0, deadline - time.monotonic()))

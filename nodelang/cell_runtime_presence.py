@@ -377,6 +377,32 @@ def list_active_runtime_presences(
     )
 
 
+def list_lapsed_runtime_presences(
+    snapshot: Snapshot,
+    protocol: RuntimePresenceProtocol,
+    *,
+    now: float,
+    window_seconds: float = 900.0,
+    lease_storage: RuntimePresenceLeaseStorage | None = None,
+) -> tuple[RuntimePresenceProjection, ...]:
+    """Presences whose lease ran out within the last ``window_seconds``.
+
+    The same graph leases list_active_runtime_presences reads: a session that
+    stopped renewing is "gone" without any cleanup mutation or second store.
+    """
+    current_time = _validate_now(now, "current time")
+    window = float(window_seconds)
+    if not 0 < window <= 86_400:
+        raise InvalidCell("lapsed presence window must be within one day")
+    return tuple(
+        presence
+        for presence in list_runtime_presences(
+            snapshot, protocol, lease_storage=lease_storage
+        )
+        if current_time - window < presence.expires_at <= current_time
+    )
+
+
 def renew_runtime_presence(
     store: CellStore,
     protocol: RuntimePresenceProtocol,

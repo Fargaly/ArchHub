@@ -346,6 +346,7 @@ from .cell_runtime_presence import (
     RuntimePresenceProtocol,
     bootstrap_runtime_presence_protocol,
     list_active_runtime_presences,
+    list_lapsed_runtime_presences,
     project_runtime_presence_protocol,
 )
 from .cell_activity import (
@@ -3489,6 +3490,12 @@ _APPLICATION_HTTP_ROUTE_SPECS = (
     ("GET", "/api/universal/application-update", "read"),
     ("POST", "/api/universal/application-update", "manage-policy"),
     ("POST", "/api/universal/provider-key", "manage-policy"),
+    # Settings > Account: the cloud publish consent record start_cloud_relay reads.
+    ("GET", "/api/universal/cloud-publish-consent", "read"),
+    # Terminal nodes (terminal_sessions.py): output by offset; start, input, stop.
+    ("GET", "/api/universal/terminal", "read"),
+    ("POST", "/api/universal/terminal", "execute"),
+    ("POST", "/api/universal/cloud-publish-consent", "manage-policy"),
     ("POST", "/api/universal/social-credential", "manage-policy"),
     ("POST", "/api/universal/social-credential-remove", "manage-policy"),
     ("POST", "/api/universal/connector-delegation-receipt", "execute"),
@@ -38200,7 +38207,14 @@ def project_universal_baboom_context(
     return {
         "cell_native": True,
         "context_lens": _BABOOM_CONTEXT_LENS_VERSION,
-        "agents": {"working": agents_working, "count": len(agents_working)},
+        "agents": {"working": agents_working, "count": len(agents_working),
+                   # Sessions whose graph presence lease lapsed in the last 15
+                   # minutes: the same leases "presence" reads, runtime names only.
+                   "gone": sorted({
+                       str(lease.runtime) for lease in list_lapsed_runtime_presences(
+                           snapshot, registry.runtime_presence_protocol, now=time.time(),
+                       )
+                   })[:8]},
         "brain": brain_view,
         "canvas": canvas_view,
         "hosts": {"down": hosts_down},
@@ -38221,6 +38235,25 @@ def project_universal_baboom_context(
         "persona_form": persona_form,
         "suggestion": suggestion,
     }
+
+
+def _baboom_runtime_warnings(context: Mapping[str, object]) -> list[str]:
+    """Warning lines from the context lens: lapsed sessions, run failures, refusals.
+
+    Runtime and engine names only; no node title, value or refusal text.
+    """
+    lines: list[str] = []
+    agents = context.get("agents") if isinstance(context.get("agents"), Mapping) else {}
+    for runtime in agents.get("gone") or ():
+        lines.append("A %s session stopped answering." % str(runtime)[:40])
+    canvas = context.get("canvas") if isinstance(context.get("canvas"), Mapping) else {}
+    failed = [str(name)[:60] for name in (canvas.get("failed") or ())]
+    if failed:
+        lines.append("The last run failed in %s." % ", ".join(failed[:3]))
+    refused = [str(name)[:60] for name in (canvas.get("refused") or ())]
+    if refused:
+        lines.append("%s refused in the last run." % ", ".join(refused[:3]))
+    return lines
 
 
 def project_universal_baboom_companion_directive(
@@ -38308,6 +38341,14 @@ def project_universal_baboom_companion_directive(
             "brain-health",
             "Check brain",
         )
+    elif _baboom_runtime_warnings(context):
+        # Real events, not counts: an agent session stopped answering, the
+        # last Run failed or a host/connector refused. Newest kind first.
+        warnings = _baboom_runtime_warnings(context)
+        message = warnings[0] + (" (+%d more)" % (len(warnings) - 1) if len(warnings) > 1 else "")
+        # "status" is the catalogue read BABOOM answers; with an action the
+        # companion panel carries the message instead of only the motion.
+        key, motion, action, action_label = ("runtime-warning", "warning", "status", "Show status")
     elif context.get("agents", {}).get("count"):
         # An agent holds claimed Work: BABOOM works alongside it and says
         # on what. The plan is one command away, so the state is actionable.

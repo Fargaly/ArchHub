@@ -1245,6 +1245,91 @@ def _verify_sparse_historical_relationship_material(
     return generation, stored_digest
 
 
+# One graph revision's signed relationship material verifies the same way on
+# every authorization check against it while the key ring is unchanged. The
+# BABOOM native frame runs dozens of checks per revision, and each re-read every
+# relationship and re-ran its HMAC (a key-ring stat per signature). Keep only
+# the SUCCESSFUL verifications of the latest immutable head, keyed by the head,
+# the protocol, the broker, the provider object and the provider's key-ring
+# fingerprint, for at most _MATERIAL_MEMO_TTL_SECONDS. A provider without a
+# fingerprint (KMS) is bounded by the TTL alone. Failures are never cached: a
+# provider maps transport errors to False, so a transient error must not deny a
+# relationship for the whole revision. Generation freshness and expiry are
+# checked on every call. Plain dict snapshots are mutable and never memoised.
+_MATERIAL_MEMO_TTL_SECONDS = 60.0
+_MATERIAL_MEMO_LOCK = threading.Lock()
+_MATERIAL_MEMO: dict = {}
+
+
+def _immutable_cells(cells) -> bool:
+    from .universal_cell import _LazyHeadCellMap, _OverlayCellMap
+    from rpds import HashTrieMap
+    return isinstance(cells, (_LazyHeadCellMap, _OverlayCellMap, HashTrieMap))
+
+
+def _material_memo_key(snapshot, protocol, broker):
+    """Identity of what a memoised success depends on, or None to skip it."""
+    if not _immutable_cells(snapshot.cells):
+        return None
+    provider = getattr(broker, "_key_provider", None)
+    fingerprint_of = getattr(provider, "key_ring_fingerprint", None)
+    try:
+        fingerprint = fingerprint_of() if callable(fingerprint_of) else None
+    except Exception:
+        return None
+    return (snapshot.cells, protocol.root_id, broker, provider, fingerprint)
+
+
+def _same_memo_key(left, right) -> bool:
+    return (left is not None and right is not None
+            and left[0] is right[0] and left[1] == right[1]
+            and left[2] is right[2] and left[3] is right[3] and left[4] == right[4])
+
+
+def _memoised_relationship_material(snapshot, protocol, broker):
+    """Registered roots and per-root verification for this immutable head."""
+    key = _material_memo_key(snapshot, protocol, broker)
+    registered = verified = None
+    if key is not None:
+        with _MATERIAL_MEMO_LOCK:
+            if (_same_memo_key(_MATERIAL_MEMO.get("key"), key)
+                    and time.monotonic() - _MATERIAL_MEMO["at"] < _MATERIAL_MEMO_TTL_SECONDS):
+                registered, verified = _MATERIAL_MEMO["registered"], _MATERIAL_MEMO["verified"]
+    if registered is None:
+        registered = tuple(
+            member.participant_id for member in read_relation(
+                snapshot, protocol.root_id, budget=100_000
+            )
+            if member.role_id == protocol.roles["relationship-member"]
+        )
+        verified = {}
+        if key is not None:
+            with _MATERIAL_MEMO_LOCK:
+                _MATERIAL_MEMO.clear()
+                _MATERIAL_MEMO.update(key=key, at=time.monotonic(),
+                                      registered=registered, verified=verified)
+    registered_roots = frozenset(registered)
+    results: dict = {}
+    for relationship_root in registered:
+        held = verified.get(relationship_root)
+        if held is not None:
+            results[relationship_root] = (True, held)
+            continue
+        try:
+            material = _verify_signed_relationship_material(
+                snapshot, protocol, broker, relationship_root,
+                registered_roots=registered_roots,
+            )
+        except RelationshipAuthorityDenied as exc:
+            results[relationship_root] = (False, str(exc))
+            continue
+        results[relationship_root] = (True, material)
+        if key is not None:
+            with _MATERIAL_MEMO_LOCK:
+                verified[relationship_root] = material
+    return registered, MappingProxyType(results)
+
+
 def verify_relationship_authority_snapshot(
     snapshot: Snapshot,
     protocol: IdentityProtocol,
@@ -1254,25 +1339,16 @@ def verify_relationship_authority_snapshot(
 ) -> VerifiedAuthoritySnapshot:
     """Verify every registered relationship once for one graph revision/time."""
     current = time.time() if now is None else now
-    registered = tuple(
-        member.participant_id for member in read_relation(
-            snapshot, protocol.root_id, budget=100_000
-        )
-        if member.role_id == protocol.roles["relationship-member"]
-    )
-    registered_roots = frozenset(registered)
+    registered, material = _memoised_relationship_material(snapshot, protocol, broker)
     relationships: dict[str, AuthorityRelationship] = {}
     expired_roots: set[str] = set()
     invalid_reasons: dict[str, str] = {}
     for relationship_root in registered:
         try:
-            relationship, generation = _verify_signed_relationship_material(
-                snapshot,
-                protocol,
-                broker,
-                relationship_root,
-                registered_roots=registered_roots,
-            )
+            verified, outcome = material[relationship_root]
+            if not verified:
+                raise RelationshipAuthorityDenied(outcome)
+            relationship, generation = outcome
             if not broker.verify_generation(relationship_root, generation):
                 raise RelationshipAuthorityDenied(
                     "authority relationship generation is stale or unknown"

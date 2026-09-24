@@ -38759,10 +38759,14 @@ def project_universal_founder_baboom_steward_briefing(
 ) -> dict[str, object]:
     """Return BABOOM's founder briefing from graph state and indexed content.
 
-    The caller must hold the application mutation lock while invoking this
-    function. Nested graph projections retain one revision; ordinary counts
-    and report entries come from one database snapshot. The desktop only
-    transports and renders this admitted lens.
+    The caller must either hold the application mutation lock while invoking
+    this function, or pass a ``_workshop_read`` page admitted at the current
+    head and, under that lock after the call, confirm the graph head is still
+    that page's revision and revalidate the page (``validate_projection_read``)
+    before using the result; the BABOOM native frame does the latter. Nested
+    graph projections retain one revision; ordinary counts and report entries
+    come from one database snapshot. The desktop only transports and renders
+    this admitted lens.
     """
     snapshot = store.snapshot()
     space = read_deliberation_space(snapshot, registry.deliberation_protocol, registry.workshop_root)

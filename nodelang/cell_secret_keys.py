@@ -169,6 +169,15 @@ class MemorySigningKeyProvider:
             self._current[key_id] = version
             return material
 
+    def key_ring_fingerprint(self) -> tuple:
+        """Changes whenever any held key version is added or replaced."""
+        with self._lock:
+            return tuple(sorted(
+                (key_id, version, hashlib.sha256(secret).hexdigest())
+                for key_id, versions in self._keys.items()
+                for version, secret in versions.items()
+            ))
+
     def versions(self, key_id: str) -> Mapping[int, bytes]:
         with self._lock:
             try:
@@ -558,6 +567,21 @@ class WindowsDpapiSigningKeyProvider:
             raise SigningKeyError("signing key version is invalid")
         with self._lock:
             return self._material(self._load(), key_id, version)
+
+    def key_ring_fingerprint(self) -> tuple:
+        """Ring file identity and the key versions it holds, for verifier memos."""
+        with self._lock:
+            try:
+                stat = self.path.stat()
+            except FileNotFoundError:
+                return (str(self.path), None)
+            payload = self._load()
+            versions = tuple(sorted(
+                (key_id, tuple(sorted(record.get("versions", {}))))
+                for key_id, record in payload["keys"].items()
+                if isinstance(record, dict)
+            ))
+            return (str(self.path), int(stat.st_mtime_ns), int(stat.st_size), versions)
 
     def current_reference(self, key_id: str) -> SigningKeyReference:
         material = self.current(key_id)

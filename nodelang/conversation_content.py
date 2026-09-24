@@ -5,6 +5,7 @@ Preparing a fresh binding is an in-process composition primitive, not an agent
 endpoint or migration approval. The governed adopter must prepare durable data
 first, then activate its graph patch atomically. Legacy adoption is separate.
 """
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 import json
@@ -683,13 +684,41 @@ class ApplicationConversationContent:
 
     def project_for_founder_context(self, *, authentication_context, expected_revision, project, limit=8,
                                     read_guard=None, route=("GET", "/api/universal/workshop"),
-                                    include_categories=False):
-        """Internal founder report after its caller's founder-route admission."""
+                                    include_categories=False, hold_owner_lock=True):
+        """Internal founder report after its caller's founder-route admission.
+
+        ``hold_owner_lock=False`` reads without the owner mutation lock or the
+        broker's revocation lock, from a head pinned at ``expected_revision``.
+        The caller must then, under the owner lock, confirm the graph head is
+        still that revision and pass the page to ``validate_projection_read``
+        before using it; the BABOOM native frame does exactly that.
+        """
         return self._read_for_runtime_context(
             agent_session_root=self._owner.universal_registry.agent_body.session.root_id,
             authentication_context=authentication_context, expected_revision=expected_revision,
             limit=limit, _founder=True, _project=project, read_guard=read_guard,
-            route=route, _include_categories=include_categories)
+            route=route, _include_categories=include_categories,
+            _hold_owner_lock=hold_owner_lock)
+
+    def _owner_scope(self, hold):
+        return self._owner.mutation_lock if hold else contextlib.nullcontext()
+
+    @staticmethod
+    def _revocation_scope(broker, authentication_context, hold):
+        if hold:
+            return broker.live_context(authentication_context)
+        broker.resolve(authentication_context)
+        return contextlib.nullcontext()
+
+    @staticmethod
+    def _snapshot_scope(store, expected_revision, hold):
+        """Held: no commit during the read. Not held: the same guard pins an
+        immutable head, released at once; the caller re-checks its revision."""
+        if hold:
+            return store.stable_snapshot(expected_revision=expected_revision)
+        with store.stable_snapshot(expected_revision=expected_revision) as pinned:
+            pass
+        return contextlib.nullcontext(pinned)
 
     @staticmethod
     def _admit_runtime_reader(snapshot, registry, agent_session_root, authentication_context, *, founder):
@@ -782,7 +811,8 @@ class ApplicationConversationContent:
     def _read_for_runtime_context(self, *, agent_session_root, authentication_context,
                                   expected_revision, limit=8, max_bytes=262144, counts_only=False,
                                   _founder=False, _project=None, read_guard=None,
-                                  route=("GET", "/api/universal/deliberation"), _include_categories=False):
+                                  route=("GET", "/api/universal/deliberation"), _include_categories=False,
+                                  _hold_owner_lock=True):
         """Internal agent read beneath the owner's admitted machine route.
 
         The caller retains its signed request and claimed-Work admission. An
@@ -795,12 +825,12 @@ class ApplicationConversationContent:
         if read_guard is not None and not callable(read_guard):
             raise InvalidCell("conversation read guard must be callable")
         owner = self._owner
-        with owner.mutation_lock:
+        with self._owner_scope(_hold_owner_lock):
             self._require_live_owner()
             registry, store = owner.universal_registry, owner.universal_store
             broker = registry.authorization.broker
-            with broker.live_context(authentication_context):
-                with store.stable_snapshot(expected_revision=expected_revision) as snapshot:
+            with self._revocation_scope(broker, authentication_context, _hold_owner_lock):
+                with self._snapshot_scope(store, expected_revision, _hold_owner_lock) as snapshot:
                     def admit():
                         if read_guard is not None:
                             read_guard()
@@ -810,7 +840,7 @@ class ApplicationConversationContent:
                     page = self._page(admit, space_root=registry.workshop_root,
                         limit=limit, max_bytes=max_bytes, _counts_only=counts_only,
                         _translate_content_errors=True, _project=_project, _route=route,
-                        _include_categories=_include_categories)
+                        _include_categories=_include_categories, _hold_owner_lock=_hold_owner_lock)
                     # Resolve again after the SQLite read, including expiry.
                     admit()
                     self._require_live_owner()
@@ -828,7 +858,7 @@ class ApplicationConversationContent:
               _translate_content_errors=False, _route_path="/api/universal/deliberation",
               _project=None, _route=None, _include_categories=False,
              _include_visible_head=False, _if_visible_head=None, _category=None,
-             _if_content_generation=None):
+             _if_content_generation=None, _hold_owner_lock=True):
         from .cell_authorization import AuthorizationDenied
 
         route = ("GET", _route_path) if _route is None else _route
@@ -848,13 +878,14 @@ class ApplicationConversationContent:
         if type(_include_visible_head) is not bool:
             raise InvalidCell("conversation visible head inclusion must be boolean")
         owner = self._owner
-        with owner.mutation_lock:
+        with self._owner_scope(_hold_owner_lock):
             self._require_live_owner()
             admission = admit()
             authentication_context, principal, read_all, machine = admission
             registry, store = owner.universal_registry, owner.universal_store
-            with registry.authorization.broker.live_context(authentication_context):
-                with store.stable_snapshot() as snapshot:
+            with self._revocation_scope(registry.authorization.broker, authentication_context,
+                                        _hold_owner_lock):
+                with self._snapshot_scope(store, None, _hold_owner_lock) as snapshot:
                     if admit() != admission:
                         raise AuthorizationDenied("conversation reader identity changed before read")
                     owner.require_universal_http_route(*route,

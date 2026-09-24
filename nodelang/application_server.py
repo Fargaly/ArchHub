@@ -5496,6 +5496,8 @@ class ApplicationServer:
             self.universal_store, self.universal_registry,
         )
         self.mutation_lock = threading.RLock()
+        # Build BABOOM native frames outside the graph lock (revision-checked).
+        self._native_frame_outside_lock = True
         content_path = conversation_history_path
         if content_path is None and self.universal_store.database_path is not None:
             content_path = self.universal_store.database_path + '.conversations.sqlite3'
@@ -12212,20 +12214,52 @@ class ApplicationServer:
             # The companion needs one coherent graph revision for both its
             # visible report and its active stewardship state. This combines
             # existing Cell projections; it does not create renderer authority.
-            with self.mutation_lock:
-                def project_frame(_workshop_read=None):
-                    read_options = {"content_service": self.conversation_content,
-                        "read_guard": read_guard, "read_route": (method, path),
-                        "_workshop_read": _workshop_read}
-                    runtime_presence = self._machine_agent_runtime_presence()
-                    work_index = self._project_universal_machine_work_index(
-                        authentication_context=context
-                    )
-                    baboom_context = project_universal_baboom_context(
+            def project_frame(_workshop_read=None):
+                read_options = {"content_service": self.conversation_content,
+                    "read_guard": read_guard, "read_route": (method, path),
+                    "_workshop_read": _workshop_read}
+                runtime_presence = self._machine_agent_runtime_presence()
+                work_index = self._project_universal_machine_work_index(
+                    authentication_context=context
+                )
+                baboom_context = project_universal_baboom_context(
+                    self.universal_store,
+                    self.universal_registry,
+                    runtime_presence=runtime_presence,
+                    workshop_agent_session_root=reader_root,
+                    authentication_context=context,
+                    work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
+                    staged_update=self._staged_update(),
+                    **read_options,
+                )
+                directive = project_universal_baboom_companion_directive(
+                    self.universal_store,
+                    self.universal_registry,
+                    runtime_presence=runtime_presence,
+                    workshop_agent_session_root=reader_root,
+                    authentication_context=context,
+                    work_index=work_index,
+                    brain_state=self._brain_state(),
+                    hosts=self._host_rows(),
+                    staged_update=self._staged_update(),
+                    **read_options,
+                )
+                revision = self.universal_store.revision
+                if (
+                    baboom_context.get("revision") != revision
+                    or directive.get("revision") != revision
+                ):
+                    raise InvalidCell("BABOOM native frame revision drifted")
+                action = directive.get("action")
+                if type(action) is not str:
+                    raise InvalidCell("BABOOM native frame action is invalid")
+                report = None
+                if action:
+                    briefing = project_universal_founder_baboom_steward_briefing(
                         self.universal_store,
                         self.universal_registry,
-                        runtime_presence=runtime_presence,
-                        workshop_agent_session_root=reader_root,
                         authentication_context=context,
                         work_index=work_index,
                         brain_state=self._brain_state(),
@@ -12233,75 +12267,88 @@ class ApplicationServer:
                         staged_update=self._staged_update(),
                         **read_options,
                     )
-                    directive = project_universal_baboom_companion_directive(
-                        self.universal_store,
-                        self.universal_registry,
-                        runtime_presence=runtime_presence,
-                        workshop_agent_session_root=reader_root,
-                        authentication_context=context,
-                        work_index=work_index,
-                        brain_state=self._brain_state(),
-                        hosts=self._host_rows(),
-                        staged_update=self._staged_update(),
-                        **read_options,
-                    )
-                    revision = self.universal_store.revision
-                    if (
-                        baboom_context.get("revision") != revision
-                        or directive.get("revision") != revision
-                    ):
-                        raise InvalidCell("BABOOM native frame revision drifted")
-                    action = directive.get("action")
-                    if type(action) is not str:
-                        raise InvalidCell("BABOOM native frame action is invalid")
-                    report = None
-                    if action:
-                        briefing = project_universal_founder_baboom_steward_briefing(
-                            self.universal_store,
-                            self.universal_registry,
-                            authentication_context=context,
-                            work_index=work_index,
-                            brain_state=self._brain_state(),
-                            hosts=self._host_rows(),
-                            staged_update=self._staged_update(),
-                            **read_options,
-                        )
-                        if briefing.get("revision") != revision:
-                            raise InvalidCell("BABOOM native frame report drifted")
-                        report = {
-                            "kind": BABOOM_NATIVE_REPORT_KIND,
-                            "summary": BABOOM_NATIVE_REPORT_SUMMARY,
-                            "revision": revision,
-                            "data": briefing,
-                        }
-                    ttl = directive.get("ttl_seconds")
-                    if type(ttl) not in (int, float) or not 0.0 < float(ttl) <= 60.0:
-                        raise InvalidCell("BABOOM native frame TTL is invalid")
-                    issued_at = time.time()
-                    frame = {
-                        "projection": BABOOM_NATIVE_FRAME_PROJECTION,
+                    if briefing.get("revision") != revision:
+                        raise InvalidCell("BABOOM native frame report drifted")
+                    report = {
+                        "kind": BABOOM_NATIVE_REPORT_KIND,
+                        "summary": BABOOM_NATIVE_REPORT_SUMMARY,
                         "revision": revision,
-                        "issued_at": issued_at,
-                        "expires_at": issued_at + float(ttl),
-                        "context": baboom_context,
-                        "directive": directive,
-                        "report": report,
+                        "data": briefing,
                     }
-                    try:
-                        return validate_baboom_native_frame_payload(
-                            frame, now=issued_at
-                        )
-                    except MachineTransportError as exc:
-                        raise InvalidCell("BABOOM native frame is invalid") from exc
+                ttl = directive.get("ttl_seconds")
+                if type(ttl) not in (int, float) or not 0.0 < float(ttl) <= 60.0:
+                    raise InvalidCell("BABOOM native frame TTL is invalid")
+                issued_at = time.time()
+                frame = {
+                    "projection": BABOOM_NATIVE_FRAME_PROJECTION,
+                    "revision": revision,
+                    "issued_at": issued_at,
+                    "expires_at": issued_at + float(ttl),
+                    "context": baboom_context,
+                    "directive": directive,
+                    "report": report,
+                }
+                try:
+                    return validate_baboom_native_frame_payload(
+                        frame, now=issued_at
+                    )
+                except MachineTransportError as exc:
+                    raise InvalidCell("BABOOM native frame is invalid") from exc
+
+            def build_frame(locked):
                 snapshot = self.universal_store.snapshot()
                 space = read_deliberation_space(snapshot, self.universal_registry.deliberation_protocol,
                     self.universal_registry.workshop_root)
-                if space.content_store_root is not None:
+                if space.content_store_root is None:
+                    return (project_frame() if locked else (project_frame(), None))
+                if locked:
                     return self.conversation_content.project_for_founder_context(
                         authentication_context=context, expected_revision=snapshot.revision,
                         project=project_frame, include_categories=True,
                         read_guard=read_guard, route=(method, path))
-                return project_frame()
+                # One admitted ordinary-content page, read from the head pinned
+                # at this revision without the owner or revocation locks; the
+                # projections below revalidate it, and the caller revalidates it
+                # again under the lock at an unchanged head before returning.
+                page = self.conversation_content.project_for_founder_context(
+                    authentication_context=context, expected_revision=snapshot.revision,
+                    project=dict, include_categories=True,
+                    read_guard=read_guard, route=(method, path), hold_owner_lock=False)
+                return project_frame(page), page
+
+            # One coherent revision without holding the graph lock for the
+            # build: revisions only increase, so a head that is the same before
+            # and after the build means no commit happened during it and the
+            # frame equals the build under the lock. A commit during the build
+            # retries once, then builds under the lock as before. A refusal on
+            # an unchanged head is the answer, exactly as under the lock.
+            if self._native_frame_outside_lock:
+                for _attempt in range(2):
+                    with self.mutation_lock:
+                        started_revision = self.universal_store.revision
+                    try:
+                        frame, page = build_frame(False)
+                    except Exception:
+                        if self.universal_store.revision == started_revision:
+                            raise
+                        continue
+                    with self.mutation_lock:
+                        if (self.universal_store.revision == started_revision
+                                and frame["revision"] == started_revision):
+                            # The checks the locked build ran after projecting:
+                            # source session, route, owner, content binding and
+                            # the page's audience at this unchanged head.
+                            read_guard()
+                            if page is not None:
+                                self.conversation_content.validate_projection_read(
+                                    page, store=self.universal_store,
+                                    registry=self.universal_registry,
+                                    agent_session_root=self.universal_registry.agent_body.session.root_id,
+                                    authentication_context=context,
+                                    expected_revision=started_revision)
+                            return frame
+            with self.mutation_lock:
+                return build_frame(True)
         if method == "GET" and path == "/api/universal/baboom-steward-briefing":
             if body != {"projection": "founder-briefing"}:
                 raise InvalidCell(

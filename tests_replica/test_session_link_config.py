@@ -148,3 +148,22 @@ def test_write_keeps_a_backup_and_line_endings(tmp_path):
     assert target.read_bytes() == b"new\r\nline\r\n"
     assert (backups / os.path.basename(result["backup"])).read_bytes() == b"old\r\n"
     assert slc.write_with_backup(target, "new\nline\n", backups)["changed"] is False
+
+
+def test_governance_lane_folders_render_round_trip_and_refuse_unsafe(install, tmp_path):
+    root, loader = install
+    state = tmp_path / "session-link"
+    spec = slc.spec_from_loader(loader)
+    assert "laneFolders" not in spec  # an existing loader re-renders byte-identically
+    plain = slc.render_governance_loader(spec, install_root=root, state_dir=state)
+    assert "laneFolders" not in plain
+    lane = "C:/Users/x/00.ARCHUB/70.HANDOFFS/repair/work/opencode-canvas"
+    spec["laneFolders"] = {"ses_A1": lane}
+    out = slc.render_governance_loader(spec, install_root=root, state_dir=state)
+    assert slc.spec_from_loader(out)["laneFolders"] == {"ses_A1": lane}
+    for bad in ("C:/Users/x/10.PRODUCT/13.NODE-LANGUAGE", "relative/70.HANDOFFS/r/work/l",
+                "C:/Users/x/70.HANDOFFS/r/work/l','evil"):
+        with pytest.raises(slc.SessionLinkConfigRefused):
+            slc.render_governance_loader({**spec, "laneFolders": {"ses_A1": bad}}, install_root=root, state_dir=state)
+    with pytest.raises(slc.SessionLinkConfigRefused):
+        slc.render_governance_loader({**spec, "laneFolders": {"ses_Z9": lane}}, install_root=root, state_dir=state)

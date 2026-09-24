@@ -7,15 +7,23 @@ class NativeNotDelivered extends Error {}
 const notDelivered = reason => {throw new NativeNotDelivered('ArchHub OpenCode governance: '+reason+'; tool not delivered');};
 const object = value => value && typeof value==='object' && !Array.isArray(value);
 const readTools = new Set(['read','glob','grep','list','skill']);
+const shellTools = new Set(['bash','powershell']);
+// Only these tools' effects are fully accounted by the owner's permit/receipt
+// ledger (reads have none; write/edit hold a permit until receipted).
+const ledgerTools = new Set([...readTools,'write','edit']);
 const stringify = value => JSON.stringify(value, (_key,item)=>object(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 
 // The private installed loader supplies the existing admitted gate command.
 // No shell, Bun global, source-checkout lookup, enrollment or fallback service.
-export function createNativeGateRunner(command,args,{expectedSessions={},selectedWorks={},sessionLink=null}={}) {
+export function createNativeGateRunner(command,args,{expectedSessions={},selectedWorks={},sessionLink=null,laneFolders={}}={}) {
  if(!path.isAbsolute(command)||!Array.isArray(args)||args.some(a=>typeof a!=='string'))fail('trusted native gate command required');
  if(!object(expectedSessions)||Object.keys(expectedSessions).length>128||Object.entries(expectedSessions).some(([session,actor])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof actor!=='string'||!/^app:agent-session:runtime:[a-f0-9]{32}$/.test(actor)))fail('exact recovery session identities required');
- const workers=new Map(),lineages=new Map(),queues=new Map(),quarantined=new Set();
+ // Quarantine keeps the exact actor and any release ack; only reconciliation
+ // against the owner's actual custody lifts it. Never cleared blindly.
+ const workers=new Map(),lineages=new Map(),queues=new Map(),quarantined=new Map(),probes=new Map();
+ if(!object(laneFolders)||Object.keys(laneFolders).length>128||Object.entries(laneFolders).some(([session,lane])=>
+    !/^ses_[A-Za-z0-9]+$/.test(session)||typeof lane!=='string'||!path.isAbsolute(lane)||lane.length>1024||lane.includes('\0')))fail('trusted lane folders required');
  if(!object(selectedWorks)||Object.keys(selectedWorks).length>128||Object.entries(selectedWorks).some(([session,work])=>
     !/^ses_[A-Za-z0-9]+$/.test(session)||typeof work!=='string'||!work.startsWith('assembly-instance:')||work.length>512||work.trim()!==work))fail('trusted selected Work identities required');
  if(sessionLink!==null&&(!object(sessionLink)||typeof sessionLink.node!=='string'||!path.isAbsolute(sessionLink.node)||
@@ -36,7 +44,12 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
   if(!object(event)||typeof event.session_id!=='string'||!/^ses_[A-Za-z0-9]+$/.test(event.session_id)||
      typeof event.cwd!=='string'||!path.isAbsolute(event.cwd)||typeof event.tool_use_id!=='string'||
      !event.tool_use_id||event.tool_use_id.length>256)notDelivered('native input identity is invalid');
-  if(quarantined.has(event.session_id))notDelivered('native session quarantined; no duplicate enrollment');
+  const held=quarantined.get(event.session_id);
+  if(held&&!held.actor&&!held.ack)notDelivered('native session quarantined; no duplicate enrollment; reconcile no recorded graph actor; coordinator: '+coordinator(event.session_id,null));
+  if(held)return reconcile(event.session_id).then(verdict=>{
+   if(verdict.outcome==='unknown')notDelivered('native session quarantined; no duplicate enrollment; reconcile '+verdict.reason+'; coordinator: '+verdict.command);
+   return dispatch(event);
+  });
   let state=workers.get(event.session_id);
   if(!state){
    if(workers.size>=4)notDelivered('native owner capacity reached');
@@ -47,6 +60,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
     OPENCODE_SESSION_ID:event.session_id,
     ARCHHUB_EXPECTED_AGENT_SESSION:lineages.get(event.session_id)||'',
     ARCHHUB_SELECTED_WORK:selectedWorks[event.session_id]||'',
+    ARCHHUB_ADMITTED_LANE:laneFolders[event.session_id]||'',
     ...(sessionLink?{SESSION_LINK_NODE:sessionLink.node,SESSION_LINK_STATE_DIR:sessionLink.stateDirectory,
       SESSION_LINK_REQUIRED_CONNECTIONS:(sessionLink.connections[event.session_id]||[]).join(',')}:{}),
     PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'}});
@@ -68,7 +82,9 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      state.closed?.resolve();
     }else{
      abort('native owner closed without confirmed release');
-     quarantined.add(event.session_id);workers.delete(event.session_id);
+     quarantined.set(event.session_id,{actor:state.actor||lineages.get(event.session_id)||null,cwd:state.cwd,
+      ack:state.released?.released===true&&!state.notDelivered?state.released:null});
+     workers.delete(event.session_id);
      state.closed?.reject(new Error('native release uncertain'));
     }
    });
@@ -101,7 +117,9 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
         (lineages.get(event.session_id)!==reply.agent_session||reply.continued!==true))){abort('native graph identity changed');return;}
     state.actor=reply.agent_session;lineages.set(event.session_id,state.actor);
     state.lastCompleted=held.id;
-    clearTimeout(held.timer);state.pending=null;held.resolve({allow:reply.decision==='allow',toolOutput:reply.tool_output});
+    clearTimeout(held.timer);state.pending=null;
+    held.resolve({allow:reply.decision==='allow',toolOutput:reply.tool_output,
+     ...(reply.decision==='deny'&&typeof reply.reason==='string'?{reason:reply.reason.slice(0,1024)}:{})});
    };
    child.stdout.on('data',data=>{
     if(state.failed)return;
@@ -120,6 +138,51 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
    state.child.stdin.write(payload);
   });
  };
+ const coordinator=(session,actor)=>[command,...args,'--reconcile-status',session,actor||'<actor>'].join(' ');
+ // One read-only owner inspection per session at a time; an unknown verdict is
+ // reused for 15 seconds so a blocked session cannot spawn a probe per call.
+ const reconcile=session=>{
+  const held=quarantined.get(session);
+  if(!held)return Promise.resolve(workers.has(session)?
+   {outcome:'unknown',reason:'native owner still live',command:coordinator(session,lineages.get(session))}:null)
+   .then(live=>live||probe(session,lineages.get(session),process.cwd(),null));
+  return probe(session,held.actor,held.cwd,held.ack).then(verdict=>{
+   if(verdict.outcome!=='unknown'&&quarantined.get(session)===held)quarantined.delete(session);
+   return verdict;
+  });
+ };
+ const probe=(session,actor,cwd,ack)=>{
+  const command_=coordinator(session,actor);
+  if(ack&&ack.agent_session===actor&&/^[a-f0-9]{32}$/.test(ack.release_id))
+   return Promise.resolve({outcome:'released',reason:'release acknowledged '+ack.release_id,command:command_});
+  if(!actor)return Promise.resolve({outcome:'unknown',reason:'no recorded graph actor',command:command_});
+  const cached=probes.get(session);
+  if(cached&&(cached.promise||Date.now()-cached.at<15000))return cached.promise||Promise.resolve(cached.verdict);
+  const entry={at:Date.now(),verdict:null,promise:null};
+  entry.promise=new Promise(resolve=>{
+   const unknown=reason=>resolve({outcome:'unknown',reason,command:command_});
+   let child;
+   try{child=spawn(command,[...args,'--reconcile'],{shell:false,windowsHide:true,cwd,stdio:['ignore','pipe','ignore'],env:{...process.env,
+    ARCHHUB_COORDINATION_VENDOR:'opencode',ARCHHUB_AGENT_RUNTIME:'opencode',ARCHHUB_EXTERNAL_SESSION_ID:session,
+    OPENCODE_SESSION_ID:session,ARCHHUB_EXPECTED_AGENT_SESSION:actor,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'}});}
+   catch(_){unknown('owner inspection launch failed');return;}
+   let out=Buffer.alloc(0);
+   const timer=setTimeout(()=>{child.kill();},30000);
+   child.on('error',()=>{clearTimeout(timer);unknown('owner inspection launch failed');});
+   child.stdout.on('data',data=>{out=Buffer.concat([out,data]);if(out.length>65536)child.kill();});
+   child.on('close',()=>{
+    clearTimeout(timer);
+    let reply=null;
+    try{reply=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(out).trim().split('\n').pop());}catch(_){}
+    if(!object(reply)||reply.kind!=='reconciled'||reply.session_id!==session||reply.agent_session!==actor||
+       !['released','owner-gone','unknown'].includes(reply.outcome)||typeof reply.reason!=='string'){unknown('owner inspection unavailable');return;}
+    resolve({outcome:reply.outcome,reason:reply.reason.slice(0,256),command:command_});
+   });
+  }).then(verdict=>{entry.promise=null;entry.verdict=verdict;entry.at=Date.now();
+   if(verdict.outcome!=='unknown')probes.delete(session);return verdict;});
+  probes.set(session,entry);
+  return entry.promise;
+ };
  const run=event=>{
   const key=event.session_id,prior=queues.get(key);
   if(prior?.count>=64)notDelivered('native request queue capacity reached');
@@ -128,6 +191,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
   const clear=()=>{if(queues.get(key)===entry)queues.delete(key);};
   promise.then(clear,clear);return promise;
  };
+ run.reconcile=reconcile;
  run.close=async()=>{
   if(queues.size)fail('native requests remain unresolved');
   for(const state of workers.values())if(state.pending||state.failed)fail('native outcome unresolved');
@@ -157,11 +221,17 @@ function normalized(tool,args) {
   return {tool_name:tool,tool_input:args};
  }
  if(readTools.has(tool))return {tool_name:tool,tool_input:args};
+ if(shellTools.has(tool)){
+  // Admission is the shared shell allowlist in the native gate; nothing else runs.
+  if(typeof args.command!=='string'||!args.command.trim()||args.command.length>8192||
+     (args.workdir!==undefined&&(typeof args.workdir!=='string'||!args.workdir)))fail('native shell arguments unavailable');
+  return {tool_name:'Bash',tool_input:{command:args.command,...(args.workdir?{workdir:args.workdir}:{})}};
+ }
  fail('tool has no verified governance mapping: '+String(tool));
 }
 
-export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink}) {
- const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,sessionLink});
+export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expectedSessions,selectedWorks={},workToolFactory,sessionLink,laneFolders={}}) {
+ const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,sessionLink,laneFolders});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
  const pending=new Map();
  return async ({directory})=>{
@@ -191,8 +261,20 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
    'tool.execute.before':async(input,output)=>{
     const key=identity(input);
     const read=readTools.has(input.tool);
-    const blocking=pending.get(key)||[...pending.values()].find(p=>p.session===input.sessionID&&
+    const blocker=()=>pending.get(key)||[...pending.values()].find(p=>p.session===input.sessionID&&
        (!read||!p.read||!['preparing','admitted','settling'].includes(p.state)));
+    let blocking=blocker();
+    // Uncertain read/write/edit records settle only on the owner's verdict:
+    // released or gone with zero unreceipted permits proves no open write effect.
+    // Shell calls and Work executions carry no permit, so the ledger cannot
+    // prove their outcome; they stay retained and keep refusing.
+    if(blocking&&blocking.state==='uncertain'&&invoke.reconcile&&!pending.get(key)&&
+       ![...pending.values()].some(p=>p.session===input.sessionID&&(p.state!=='uncertain'||!ledgerTools.has(p.tool)))){
+     const verdict=await invoke.reconcile(input.sessionID);
+     if(verdict.outcome==='unknown')fail('earlier tool outcome unresolved; reconcile '+verdict.reason+'; coordinator: '+verdict.command);
+     for(const [held,record] of pending)if(record.session===input.sessionID&&record.state==='uncertain')pending.delete(held);
+     blocking=blocker();
+    }
     // Identify the exact retained call without exposing arguments, file content,
     // credentials or another session's state. Diagnostics never clear custody.
     if(blocking)fail('earlier tool admission or receipt unresolved '+JSON.stringify({
@@ -212,7 +294,8 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
      else record.state='uncertain';
      throw error;
     }
-    if(!result.allow){pending.delete(key);fail(result.notDelivered?'native owner released before admission; tool not delivered':'prewrite admission denied');}
+    if(!result.allow){pending.delete(key);fail(result.notDelivered?'native owner released before admission; tool not delivered':
+     'prewrite admission denied'+(typeof result.reason==='string'?': '+result.reason:''));}
     record.state='admitted';
     if(input.tool==='archhub_work'){
      record.stamp=randomUUID();output.args._archhub_call=record.stamp;

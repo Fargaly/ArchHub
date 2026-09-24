@@ -34,6 +34,8 @@ _CONNECTION = re.compile(r"^[a-f0-9]{16}$")
 _ACTOR = re.compile(r"^app:agent-session:runtime:[a-f0-9]{32}$")
 _WORK = re.compile(r"^assembly-instance:[a-f0-9]{32}$")
 _PLAIN = re.compile(r"^[A-Za-z0-9 _:./\-]+$")
+# A lane is one absolute 70.HANDOFFS/<lane>/work/<name> folder; shell writes stay inside it.
+_LANE = re.compile(r"^[A-Za-z]:/(?:[A-Za-z0-9 _.\-]+/)*70\.HANDOFFS/[A-Za-z0-9_.\-]+/work/[A-Za-z0-9_.\-]+$")
 
 
 class SessionLinkConfigRefused(ValueError):
@@ -173,6 +175,11 @@ def render_governance_loader(spec, *, install_root=None, state_dir=None) -> str:
     works = _mapping(spec.get("selectedWorks"), _SESSION, _WORK, "selectedWorks")
     if set(works) - set(connections):
         raise SessionLinkConfigRefused("selected Work requires its Session Link connection")
+    lanes = spec.get("laneFolders")
+    if lanes is not None:
+        lanes = _mapping(lanes, _SESSION, _LANE, "laneFolders")
+        if set(lanes) - set(connections):
+            raise SessionLinkConfigRefused("lane folder requires its Session Link connection")
     gate_command = _plain(spec.get("gateCommand"), "gateCommand")
     gate_args = spec.get("gateArgs")
     if type(gate_args) is not list or not gate_args:
@@ -186,7 +193,7 @@ def render_governance_loader(spec, *, install_root=None, state_dir=None) -> str:
         ("selectedWorks", works),
         ("gateCommand", gate_command),
         ("gateArgs", gate_args),
-    ]
+    ] + ([("laneFolders", lanes)] if lanes is not None else [])
     return ("import {tool} from '@opencode-ai/plugin/tool';\n"
             "import {createOpenCodeGovernance} from " + _json(module.as_uri() + "?revision=" + revision) + ";\n"
             "export const ArchHubGovernance = createOpenCodeGovernance({\n"
@@ -214,7 +221,9 @@ def spec_from_loader(text) -> dict:
             "expectedSessions": literal(one(key("expectedSessions") + r"(\{[^{}]*\})")),
             "selectedWorks": literal(one(key("selectedWorks") + r"(\{[^{}]*\})")),
             "gateCommand": literal(one(key("gateCommand") + r"""(['"][^'"]*['"])""")),
-            "gateArgs": literal(one(key("gateArgs") + r"(\[[^\[\]]*\])"))}
+            "gateArgs": literal(one(key("gateArgs") + r"(\[[^\[\]]*\])")),
+            **({"laneFolders": literal(one(key("laneFolders") + r"(\{[^{}]*\})"))}
+               if re.search(key("laneFolders"), text) else {})}
 
 
 def write_with_backup(target, text, backup_dir) -> dict:

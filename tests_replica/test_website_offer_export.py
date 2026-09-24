@@ -39,7 +39,7 @@ from nodelang.universal_cell import CellStore  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 ORIGIN = "https://archhub.io"
-FOUNDER = "ahmed.fargaly98@gmail.com"
+FOUNDER = "founder@example.test"
 OFFER = dict(BETA_OFFER)
 ROOT_PATHS = {
     "/website": "/",

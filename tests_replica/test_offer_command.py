@@ -7,7 +7,8 @@ from nodelang.cell_accounts import (
 )
 from nodelang.universal_cell import CellStore, InvalidCell
 
-FOUNDER = "ahmed.fargaly98@gmail.com"
+FOUNDER = "founder@example.test"
+FOUNDER_TWO = "founder-two@example.test"
 COMMAND = 'set offer public-label to "Free while in beta"'
 
 
@@ -60,8 +61,9 @@ def test_an_invalid_label_is_refused(label):
 
 def test_the_owner_changes_the_offer_as_a_new_revision():
     store = _store()
+    ensure_accounts(store, founder_email=FOUNDER_TWO)  # the cloud proves the second founder on its own sign-in
     before = store.revisions_touching(OFFER_ROOT)
-    result = apply_offer_command(store, COMMAND, founder_account=" AhmedFargale@gmail.com ", execute=True)
+    result = apply_offer_command(store, COMMAND, founder_account=" Founder-Two@Example.Test ", execute=True)
     assert result["kind"] == "offer-updated"
     assert read_offer(store.snapshot())["public-label"] == "Free while in beta"
     after = store.revisions_touching(OFFER_ROOT)

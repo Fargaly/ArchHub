@@ -18,7 +18,7 @@ def test_a_malformed_or_false_record_stays_closed(tmp_path):
 
 
 def test_an_explicit_record_opens_and_deleting_it_closes(tmp_path):
-    record = record_cloud_publish_consent(tmp_path, account="ahmed.fargaly98@gmail.com")
+    record = record_cloud_publish_consent(tmp_path, account="founder@example.test")
     assert cloud_publish_allowed(tmp_path) is True
     record.unlink()
     assert cloud_publish_allowed(tmp_path) is False

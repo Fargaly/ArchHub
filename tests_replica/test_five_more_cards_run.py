@@ -47,7 +47,7 @@ def test_think_says_who_refused(monkeypatch):
 def test_match_skill_ranks_by_word_overlap_and_says_so(monkeypatch):
     rows = [
         {"name": "revit-room-tags", "source": "claude", "description": "tag rooms in the active Revit view", "path": "x"},
-        {"name": "bbc4-submittal-qc", "source": "codex", "description": "check a submittal against the master", "path": "y"},
+        {"name": "client-a-submittal-qc", "source": "codex", "description": "check a submittal against the master", "path": "y"},
     ]
     monkeypatch.setattr(pipeline_engines, "skills_catalogue", lambda p, f: ({"out": rows}, "2 skill(s)"))
     out, said = L.match_skill({"intent": "tag the rooms in revit"}, {})
@@ -168,7 +168,7 @@ def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_
     from nodelang import clean_revit_adapter as adapter
     sent = {}
     monkeypatch.setattr(adapter, "live_sessions", lambda: [
-        {"port": 48885, "revit_version": "2025", "document": "P-664.rvt"}])
+        {"port": 48885, "revit_version": "2025", "document": "project-a.rvt"}])
 
     def call(port, route, body=None, timeout=None):
         sent["port"], sent["route"], sent["body"] = port, route, dict(body or {})
@@ -187,7 +187,7 @@ def test_publish_pdf_exports_the_sheets_through_the_live_revit(monkeypatch, tmp_
     assert folder.startswith(base) and __import__("os").path.basename(folder).startswith(__import__("os").path.basename(str(tmp_path)) + "-"), folder
     assert sent["body"]["transaction_name"] == "ArchHub publish pdf"
     assert out["out"] == [str(tmp_path / "A101.pdf"), str(tmp_path / "A102.pdf")]
-    assert said.startswith("2 PDF(s) in") and "P-664.rvt" in said
+    assert said.startswith("2 PDF(s) in") and "project-a.rvt" in said
 
     monkeypatch.setattr(adapter, "_call", lambda *a, **k: {"status": "error", "error": "no sheet to publish"})
     out, said = L.publish_pdf({}, {})
@@ -202,7 +202,7 @@ def _revit(monkeypatch, result):
     from nodelang import clean_revit_adapter as adapter
     sent = {}
     monkeypatch.setattr(adapter, "live_sessions", lambda: [
-        {"port": 48885, "revit_version": "2025", "document": "P-664.rvt"}])
+        {"port": 48885, "revit_version": "2025", "document": "project-a.rvt"}])
 
     def call(port, route, body=None, timeout=None):
         sent["port"], sent["route"], sent["body"] = port, route, dict(body or {})
@@ -220,7 +220,7 @@ def test_tag_rooms_tags_the_untagged_rooms_of_the_active_view(monkeypatch):
     assert sent["body"]["transaction_name"] == "ArchHub tag rooms"
     assert "new Transaction(" not in code, "the broker owns the transaction; a second Start throws"
     assert "Autodesk.Revit.DB.Architecture.Room" in code, "Room lives outside the broker usings"
-    assert out["tagged"] == 6 and said == "6 room(s) tagged, 2 skipped, in Level 1 of P-664.rvt"
+    assert out["tagged"] == 6 and said == "6 room(s) tagged, 2 skipped, in Level 1 of project-a.rvt"
 
 
 def test_place_tags_tags_one_category_with_or_without_a_leader(monkeypatch):

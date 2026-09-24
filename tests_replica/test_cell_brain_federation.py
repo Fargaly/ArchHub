@@ -17,7 +17,7 @@ FOUNDER = "identity:founder"
 PEER = "identity:peer"
 OUTSIDER = "identity:outsider"
 FACT = "fact:day-rate"
-FIRM = "firm:fargool"
+FIRM = "firm:studio-a"
 
 
 def _store():

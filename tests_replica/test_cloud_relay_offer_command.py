@@ -10,7 +10,7 @@ from nodelang.cell_accounts import (
 from nodelang.cloud_relay import CloudRelay
 from nodelang.universal_cell import CellStore
 
-FOUNDER = "ahmed.fargaly98@gmail.com"
+FOUNDER = "founder@example.test"
 MAP_SCRIPT = 'window.ATLAS_MAP = {"domains":[],"nodes":[],"wires":[]}; window.ATLAS_LIVE = true;'
 
 

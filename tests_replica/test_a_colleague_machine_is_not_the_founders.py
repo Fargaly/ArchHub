@@ -30,7 +30,14 @@ from nodelang.cell_accounts import (  # noqa: E402
 from nodelang.cloud_session import signed_in_founder_account  # noqa: E402
 from nodelang.universal_cell import CellStore  # noqa: E402
 
-FOUNDER = "ahmed.fargaly98@gmail.com"
+FOUNDER = "founder@example.test"
+# Any real address: a mailbox whose domain is not a reserved example/test name.
+_ADDRESS = re.compile(rb"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")
+_RESERVED = re.compile(rb"(?:\.(?:test|example|invalid|localhost)|@example\.(?:com|org|net))$")
+
+
+def _real_addresses(data):
+    return [m.group(0) for m in _ADDRESS.finditer(data) if not _RESERVED.search(m.group(0).lower())]
 
 
 def _session(tmp_path, **held):
@@ -161,7 +168,8 @@ def test_an_old_graph_and_a_forged_email_never_change_the_offer_as_the_founder(t
 
 def test_no_route_names_a_fixed_founder_account():
     source = (ROOT / "nodelang" / "application_server.py").read_text(encoding="utf-8")
-    assert FOUNDER not in source and "ahmedfargale@gmail.com" not in source
+    for shipped in ("application_server.py", "cell_accounts.py", "cloud_session.py"):
+        assert _real_addresses((ROOT / "nodelang" / shipped).read_bytes()) == [], shipped
     accounts = source.index("elif self.path == '/api/universal/accounts':")
     assert source.index("owner._require_founder_machine()", accounts) < source.index(
         "ensure_accounts(", accounts), "a refused request must write nothing"
@@ -169,7 +177,8 @@ def test_no_route_names_a_fixed_founder_account():
 
 def test_the_shipped_cockpit_map_carries_no_founder_data():
     shipped = (ROOT / "nodelang" / "studio" / "map-data.js").read_bytes()
-    for marker in (FOUNDER.encode(), b"ahmedfargale@gmail.com", b"owner_email", b"require_founder"):
+    assert _real_addresses(shipped) == []
+    for marker in (b"owner_email", b"require_founder"):
         assert marker not in shipped
 
 

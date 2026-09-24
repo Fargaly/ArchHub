@@ -16,7 +16,7 @@ from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 OWNER = "identity:founder"
 MATE = "identity:mate"
 STRANGER = "identity:stranger"
-FIRM = "firm:fargool"
+FIRM = "firm:studio-a"
 EMAIL = "mate@example.com"
 TOKEN = "invite-9f3c1b7e5d2a"
 

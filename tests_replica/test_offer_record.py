@@ -7,7 +7,8 @@ from nodelang.cell_accounts import (
 )
 from nodelang.universal_cell import CellStore, InvalidCell
 
-FOUNDER = "ahmed.fargaly98@gmail.com"
+FOUNDER = "founder@example.test"
+FOUNDER_TWO = "founder-two@example.test"
 
 
 def _store():
@@ -71,6 +72,7 @@ def test_the_published_offer_is_one_stable_form():
 
 def test_the_second_founder_account_may_change_the_offer():
     store = _store()
+    ensure_accounts(store, founder_email=FOUNDER_TWO)  # the cloud proves the second founder on its own sign-in
     declare_offer(store, founder_account=FOUNDER)
-    set_offer_field(store, "pricing-visible", "true", founder_account=" AhmedFargale@gmail.com ")
+    set_offer_field(store, "pricing-visible", "true", founder_account=" Founder-Two@Example.Test ")
     assert read_offer(store.snapshot())["pricing-visible"] == "true"

@@ -3078,7 +3078,7 @@ def test_a_result_row_shows_every_field_the_host_returned():
 
     row = {
         "editable": True, "id": 0, "name": "Workset1",
-        "open": True, "owner": "ahmed.fargaly",
+        "open": True, "owner": "user-a",
     }
     line = _row_line(row)
     for key, value in row.items():
@@ -3089,7 +3089,7 @@ def test_a_result_row_shows_every_field_the_host_returned():
 
     # The same row with its keys in another order reads identically.
     shuffled = {
-        "owner": "ahmed.fargaly", "name": "Workset1", "open": True,
+        "owner": "user-a", "name": "Workset1", "open": True,
         "id": 0, "editable": True,
     }
     assert _row_line(shuffled) == line, (

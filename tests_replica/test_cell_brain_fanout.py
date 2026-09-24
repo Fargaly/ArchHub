@@ -12,7 +12,7 @@ from nodelang.universal_cell import NULL_CELL_ID, Cell, CellStore, InvalidCell
 OWNER = "identity:founder"
 MATE = "identity:mate"
 PEER = "firm:peer-studio"
-FIRM = "firm:fargool"
+FIRM = "firm:studio-a"
 FACT = "fact:day-rate"
 SECOND = "fact:site"
 

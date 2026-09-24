@@ -5,8 +5,11 @@ account in any tier at any time; tiers decide which features an
 installed app opens. Enforcement of paid tiers belongs to the cloud
 account service; this module is the graph record both sides read.
 
-The founders are a relation, not one string: every founder account stands
-in it, and the migration that fills it only ever appends. The offer is one
+The founders are a relation, not one string: every account the cloud names
+a founder stands in it, and the migration that fills it only ever appends.
+No founder address is written in this source: the cloud's founder route
+(its own secret list) is the only judge, and each founder account joins the
+relation when its own signed-in session is proven. The offer is one
 record -- what ArchHub is offered as, and whether a price is shown --
 declared once on the founder's instance and read by every surface that
 states it. Callers pass the account a cloud session proved; this module
@@ -31,9 +34,6 @@ FOUNDER_ROLE = ACCOUNTS_ROOT + ":role:founder"
 OFFER_ROOT = ACCOUNTS_ROOT + ":offer"
 
 TIERS = ("free", "pro", "firm", "founder")
-
-# Founder decision 2026-09-15: both of these accounts are the founder.
-FOUNDER_EMAILS = ("ahmed.fargaly98@gmail.com", "ahmedfargale@gmail.com")
 
 # Founder decision 2026-09-15: pricing stays hidden; ArchHub is free during beta.
 BETA_OFFER = {
@@ -122,7 +122,7 @@ def ensure_accounts(store, *, founder_email):
     if create:
         store.commit(snapshot.revision, create=tuple(create))
     recorded = _text(store.snapshot(), FOUNDER_EMAIL_ROOT)
-    _append_founders(store, (recorded, *FOUNDER_EMAILS))
+    _append_founders(store, (recorded, founder_email))
     upsert_account(store, founder_email)
 
 
@@ -380,7 +380,7 @@ def apply_offer_command(store, utterance, *, founder_account, execute):
         "data": {"field": field, "value": offer[field]},
     }
 __all__ = [
-    "ACCOUNTS_ROOT", "BETA_OFFER", "FOUNDER_EMAILS", "FOUNDERS_ROOT", "OFFER_FIELDS",
+    "ACCOUNTS_ROOT", "BETA_OFFER", "FOUNDERS_ROOT", "OFFER_FIELDS",
     "OFFER_ROOT", "TIERS", "apply_offer_command", "declare_offer", "ensure_accounts", "founder_email",
     "founder_emails", "is_founder", "parse_offer_command", "published_offer", "read_accounts", "read_offer",
     "set_offer_field", "set_tier", "upsert_account",

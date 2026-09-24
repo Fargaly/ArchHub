@@ -63,7 +63,7 @@ def test_the_app_claims_a_cockpit_question_and_posts_baboom_answer():
     asked = []
     relay = CloudRelay(
         base_url=base, token="tok-founder",
-        respond=lambda u: asked.append(("respond", u)) or {"response": {"kind": "attention", "summary": "Nothing is blocked.", "data": {"focus": "BBC4"}}},
+        respond=lambda u: asked.append(("respond", u)) or {"response": {"kind": "attention", "summary": "Nothing is blocked.", "data": {"focus": "client-a"}}},
         execute=lambda u: asked.append(("execute", u)) or {"kind": "agent-messaged", "summary": "Sent to codex.", "data": {}},
     )
     try:
@@ -71,7 +71,7 @@ def test_the_app_claims_a_cockpit_question_and_posts_baboom_answer():
     finally:
         server.shutdown()
     assert asked == [("respond", "what is blocked?"), ("execute", "tell codex: hi")]
-    assert first["result"].startswith("Nothing is blocked.") and "focus: BBC4" in first["result"]
+    assert first["result"].startswith("Nothing is blocked.") and "focus: client-a" in first["result"]
     assert second == {"task": "task_2", "ok": True, "result": "Sent to codex."}
     assert third is None
     assert [r[0] for r in _FakeCloud.results] == ["task_1", "task_2"]

@@ -9026,11 +9026,14 @@ class ApplicationServer:
                     and binding.session_root == self.browser_session_root
                     and scope == self._browser_handoff_scope(binding))
 
-    def _refresh_desktop_browser_handoff(self, request, authentication_context):
+    def _refresh_desktop_browser_handoff(self, request, authentication_context, *, commit=True):
         """Renew the held desktop binding after fresh, verified local admission.
 
-        Called under mutation_lock by the admitted handoff route. An expired
-        cookie cannot invoke this; graph revocation and authority still apply.
+        With ``commit`` the caller holds mutation_lock and a due renewal writes.
+        Without it this only reads one snapshot: a fresh binding is returned and
+        a due renewal returns None so the caller retries under the lock. The
+        one-minute desktop renewal thereby never waits behind unrelated graph
+        work. An expired cookie cannot invoke this; revocation still applies.
         """
         verified = _VERIFIED_MACHINE_RECOVERY_CONTEXT.get()
         peer_context = _VERIFIED_MACHINE_PEER_CONTEXT.get()
@@ -9070,6 +9073,7 @@ class ApplicationServer:
                 return self._refresh_desktop_browser_lease(
                     lease_storage, snapshot, protocol, binding, digest,
                     expected, view, authority, authentication_context,
+                    commit=commit,
                 )
         try:
             registered = list_browser_session_roots(snapshot, protocol)
@@ -9130,6 +9134,8 @@ class ApplicationServer:
         if (expires_at > now + renewal_lead and prior_identity is not None
                 and prior_identity.expires_at > now + renewal_lead):
             return binding
+        if not commit:
+            return None
         with authority.broker.live_context(authentication_context) as live_identity:
             now = time.time()
             renewed_expiry = min(now + 3600, live_identity.expires_at)
@@ -9198,7 +9204,7 @@ class ApplicationServer:
 
     def _refresh_desktop_browser_lease(
         self, lease_storage, snapshot, protocol, binding, digest, expected,
-        view, authority, authentication_context,
+        view, authority, authentication_context, *, commit=True,
     ):
         try:
             registered = list_browser_session_roots(snapshot, protocol)
@@ -9249,6 +9255,8 @@ class ApplicationServer:
         if (expires_at > now + renewal_lead and prior_identity is not None
                 and prior_identity.expires_at > now + renewal_lead):
             return binding
+        if not commit:
+            return None
         with authority.broker.live_context(authentication_context) as live_identity:
             now = time.time()
             renewed_expiry = min(now + 3600, live_identity.expires_at)
@@ -12832,6 +12840,38 @@ class ApplicationServer:
                     self.universal_checkpoint_guard.require_healthy()
                 self.require_universal_http_route(method, path, authentication_context=context)
             return release_session(self, request, peer_context[2])
+        if method == "POST" and path == "/api/universal/browser-handoff":
+            if (not direct and request.get("session") != {}) or body:
+                raise AuthorizationDenied(
+                    "browser handoff requires its unbound empty request"
+                )
+            if self.universal_checkpoint_guard is not None:
+                self.universal_checkpoint_guard.require_healthy()
+            self.require_universal_http_route(
+                method, path, authentication_context=context
+            )
+            # The desktop renewal reads one snapshot and writes only when its
+            # binding is due, so only that write waits for mutation_lock. A BABOOM
+            # native frame or other projection holding the lock for seconds no
+            # longer outlasts the launcher's 5 s renewal bound.
+            binding = self._refresh_desktop_browser_handoff(
+                request, context, commit=False
+            )
+            if binding is None:
+                with self.mutation_lock:
+                    if self.universal_checkpoint_guard is not None:
+                        self.universal_checkpoint_guard.require_healthy()
+                    binding = self._refresh_desktop_browser_handoff(request, context)
+            bootstrap_url = self._issue_browser_handoff(binding)
+            return {
+                "application": self.universal_registry.application_root,
+                "server_url": self.public_url,
+                "document_url": bootstrap_url,
+                "schema_version": UNIVERSAL_APPLICATION_SCHEMA_VERSION,
+                "one_use": True,
+                "session_root": self.browser_session_root,
+                "revision": self.universal_store.revision,
+            }
         with self.mutation_lock:
             if self.universal_checkpoint_guard is not None:
                 self.universal_checkpoint_guard.require_healthy()
@@ -13085,22 +13125,6 @@ class ApplicationServer:
                 if phase == "finalize":
                     result["signal_after_response"] = True
                 return result
-            if path == "/api/universal/browser-handoff":
-                if (not direct and request.get("session") != {}) or body:
-                    raise AuthorizationDenied(
-                        "browser handoff requires its unbound empty request"
-                    )
-                binding = self._refresh_desktop_browser_handoff(request, context)
-                bootstrap_url = self._issue_browser_handoff(binding)
-                return {
-                    "application": self.universal_registry.application_root,
-                    "server_url": self.public_url,
-                    "document_url": bootstrap_url,
-                    "schema_version": UNIVERSAL_APPLICATION_SCHEMA_VERSION,
-                    "one_use": True,
-                    "session_root": self.browser_session_root,
-                    "revision": self.universal_store.revision,
-                }
             if path == "/api/universal/grand-map-work":
                 if set(body) - {"limit", "include_live"}:
                     raise InvalidCell(

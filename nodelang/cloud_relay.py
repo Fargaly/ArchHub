@@ -268,6 +268,8 @@ class CloudRelay:
 
     def poll_once(self) -> Optional[dict]:
         """Claim one instruction, answer it, post the answer. None when idle."""
+        if self._stop.is_set():
+            return None  # stopping: claim nothing new
         claimed = self._call(CLAIM_PATH, {"claimed_by": self.claimed_by, "kinds": list(APP_KINDS)})
         task = claimed.get("task")
         if not isinstance(task, Mapping) or not task.get("id"):

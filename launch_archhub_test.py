@@ -1462,7 +1462,8 @@ def _finish_application_shutdown():
         return False
     try:
         if cloud_relay is not None:
-            cloud_relay.close(timeout_seconds=6.0)
+            # One HTTP request may be in flight for relay.timeout; wait it out.
+            cloud_relay.close(timeout_seconds=min(30.0, cloud_relay.timeout + 2.0))
     except Exception as refusal:
         print("  shutdown   : INCOMPLETE (cloud relay: %s); "
               "descriptor and graph retained for recovery" % type(refusal).__name__, flush=True)

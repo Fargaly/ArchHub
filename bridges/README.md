@@ -2,66 +2,81 @@
 
 ArchHub drives Revit, AutoCAD, Rhino, Blender and 3ds Max through a small
 listener inside each program. This folder is their source. The app side lives
-in `nodelang/host_brokers.py`, `nodelang/clean_revit_adapter.py` and
-`nodelang/pipeline_engines.py`.
+in `nodelang/host_bridge_auth.py` (the one client that calls them),
+`nodelang/host_brokers.py`, `nodelang/clean_revit_adapter.py`,
+`nodelang/pipeline_engines.py` and the `host` node in `nodelang/core.py`.
 
 | Host | Source | Listens on | Shipped as |
 |---|---|---|---|
-| Revit | `sources/revit_mcp`, `sources/revit_mcp_core`, `sources/shared` | first free of 48884-48899 | compiled per Revit year by `installer/build_revit_bridge.ps1`, registered by setup |
-| AutoCAD | `sources/acad_mcp`, `sources/shared` | 48884-48899 (answers as `acad-mcp`) | source only; not packaged yet |
-| 3ds Max | `sources/max_mcp/max_mcp_startup.py` | first free of 48886-48899 under `/max-mcp` | copied to `{app}\bridges\max`; not placed in a 3ds Max startup folder |
+| Revit | `sources/revit_mcp`, `sources/revit_mcp_core`, `sources/shared` | first free of 48884-48899 | compiled per Revit year by `installer/build_host_bridges.ps1`; setup registers it when reviewed |
+| AutoCAD | `sources/acad_mcp`, `sources/shared` | 48884-48899 (answers as `acad-mcp`) | compiled per AutoCAD year into `{app}\bridges\autocad\<year>`; **not registered** (see below) |
+| 3ds Max | `sources/max_mcp/max_mcp_startup.py` | first free of 48886-48899 under `/max-mcp` | copied to `{app}\bridges\max`; setup places it in each installed version's startup folder when reviewed |
 | Rhino 8 | `rhino/archhub_mcp.py` | 9879 | copied to `{app}\bridges\rhino`; "open Rhino" launches Rhino with it |
 | Blender 3.6+ | `blender/archhub_mcp/` | 9876 | copied to `{app}\bridges\blender`; "open Blender" launches Blender with it |
 
-The Revit and AutoCAD sources were imported from `12.PRODUCTION/payload/sources`
-(12.PRODUCTION commit 2ecb61d); their earlier history stays readable there.
+Provenance of the .NET and Max sources: `sources/PROVENANCE.md`, licence
+`sources/NOTICE.txt`, remaining build work `sources/BUILD-PROPOSAL.md`.
 
 ## Who may call a bridge
 
 Every bridge runs code it is sent, so every bridge checks its caller first:
 
-- `/ping` (identity) answers any local caller that is not a browser.
-- Every other route needs the header `X-ArchHub-Bridge-Token` equal to this
-  install's bridge secret, compared in constant time. Otherwise: **401**.
-- A request carrying `Origin` or `Sec-Fetch-Mode` (a browser) gets **403**, and
-  no bridge ever sends a CORS header, so a web page can neither call a bridge
-  nor read its answer.
+- `/ping` (identity) answers a local, non-browser caller. It reports no path
+  on the machine.
+- Every other route needs a fresh signature. The caller sends
+  `X-ArchHub-Bridge-Time` (unix seconds), `X-ArchHub-Bridge-Nonce` (32 random
+  hex digits) and `X-ArchHub-Bridge-Signature`, the hex
+  HMAC-SHA256(secret, `METHOD|target|time|nonce|sha256hex(body)`), where
+  target is the path and query exactly as sent. The bridge refuses (**401**) a
+  wrong signature, a time more than 60 s from its clock, and a nonce it has
+  already seen, so each signature works once, for that body only.
+- A request carrying `Origin` or `Sec-Fetch-Mode` (a browser), or a `Host` that
+  is not `127.0.0.1`, `localhost` or `[::1]`, gets **403**. No bridge sends a
+  CORS header.
 - With no secret provisioned the bridge answers **503** to everything but
   `/ping`: it fails closed.
 
 The secret is made once by the app (`nodelang/host_bridge_auth.py`), 32 random
 bytes, and kept in the app's credential store (`app/secrets_store.py`, which on
 the shipped desktop is keyring, i.e. the Windows Credential Locker, entry user
-`archhub-host-bridge`). The bridges read it from there; it is never written to a
-file and never sent to a non-loopback address. The Python bridges carry one
-identical copy of the check (between the `ArchHub bridge caller check` markers);
-the .NET add-ins link `sources/shared/BridgeAuth.cs`.
+`archhub-host-bridge`). The bridges read it there. It never crosses the wire and
+is never written to a file. The Python bridges carry one identical copy of the
+check (between the `ArchHub bridge caller check` markers); the .NET add-ins link
+`sources/shared/BridgeAuth.cs`.
 
-Limits: the secret is a bearer value between processes of the same Windows
-user; another process of that user can read the Credential Locker too. A local
-process that binds a bridge port before the host does could receive the header.
-If keyring is unavailable the app keeps the secret in its DPAPI file, which the
-bridges cannot read: they then refuse (503) rather than open.
+Limits: another process of the same Windows user can read the Credential
+Locker too. A process squatting a bridge port before the host binds it receives
+the app's one signed request and could forward it once, unchanged, within 60 s;
+it cannot sign anything else. If keyring is unavailable the app keeps the secret
+in its DPAPI file, which the bridges cannot read: they then refuse (503).
 
-## Revit add-in: build, register, remove
+## Build, register, remove
 
-1. `installer/build_release.ps1` calls `installer/build_revit_bridge.ps1`, which
-   builds the add-in for every Revit year installed on the build machine
-   (2020: net47, 2021-2024: net48, 2025+: net8) against that year's
-   `RevitAPI.dll`, and writes `bridges/revit/<year>/host-artifacts.json` plus
-   `HOST_ARTIFACTS.json`. Pass `-BrokerReviewPath <review file>` with the
-   independent custody review of this source; without it the manifests carry no
-   activation and setup refuses them.
-2. The installer copies `bridges/revit/<year>/` and `HOST_ARTIFACTS.json` into
-   the install folder.
-3. On first open, setup (`colleague_setup.py`, `register_revit_add_ins`) checks
-   each packaged year that is also installed and registers
-   `%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMCP.addin` through
-   `nodelang/host_broker_installation.py`. It never overwrites a different
-   registration (an older ArchHub add-in is reported, not replaced), never needs
-   administrator rights and never starts Revit. Restart Revit to load it.
-4. Uninstall deletes only the `RevitMCP.addin` files whose assembly lies in this
-   install's `bridges\revit\` folder.
+1. `installer/build_release.ps1` calls `installer/build_host_bridges.ps1`, which
+   builds the Revit add-in for every Revit year installed on the build machine
+   (2020: net47, 2021-2024: net48, 2025+: net8) and the AutoCAD add-in for every
+   AutoCAD year installed there, each against that year's own API assemblies,
+   and writes `HOST_ARTIFACTS.json` (Revit manifests, AutoCAD pins, the Max
+   script pin). Pass `-BrokerReviewPath <review file>` with the independent
+   custody review of this source; without it nothing carries activation and
+   setup activates nothing.
+2. The installer copies `bridges/revit/<year>/`, `bridges/autocad/<year>/`,
+   `bridges/max/` and `HOST_ARTIFACTS.json` into the install folder.
+3. On first open, setup (`colleague_setup.py`) registers the Revit add-in for
+   each packaged year that is installed (`%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMCP.addin`,
+   through `nodelang/host_broker_installation.py`) and places the Max script in
+   `%LOCALAPPDATA%\Autodesk\3dsMax\<year> - 64bit\ENU\scripts\startup\`. It never
+   overwrites a different registration or script, never needs administrator
+   rights and never starts a host. Restart the host to load it.
+4. Uninstall (`installer/host_registrations.iss`) deletes only a `RevitMCP.addin`
+   whose assembly lies in this install's `bridges\revit\`, and only a Max
+   startup script byte-identical to the one this install shipped.
+
+AutoCAD registration is not built: AutoCAD loads .NET add-ins through an
+`ApplicationPlugins\<name>.bundle\PackageContents.xml` per product series, and
+no reviewed owner for writing that bundle exists yet (the Revit equivalent is
+`nodelang/host_broker_installation.py`). Until one does, the compiled add-in is
+carried but AutoCAD does not load it.
 
 The v1 legacy sweep still keeps `payload\` while any Revit registration loads
 from it; the new registration loads from `bridges\revit\`, never `payload\`.

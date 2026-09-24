@@ -130,10 +130,13 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
         # renders with, beside their licences. They are data, not code: named exactly, so the
         # generic allowlist never turns into "any binary under nodelang".
         if ($Path -cmatch '^nodelang/data/website/(favicon\.(ico|svg)|og\.png|fonts/[A-Za-z0-9][A-Za-z0-9._-]*\.(woff2|txt))$') { return $true }
-        # The .NET add-in sources: build_revit_bridge.ps1 compiles the Revit ones and
-        # only that compiled closure is installed; AutoCAD's is carried, not built yet.
-        if ($Path -cin @('installer/build_revit_bridge.ps1', 'bridges/README.md')) { return $true }
-        if ($Path -cmatch '^bridges/sources/(revit_mcp|revit_mcp_core|shared|acad_mcp)/[A-Za-z0-9][A-Za-z0-9_.-]*\.(cs|csproj|addin|json)$') { return $true }
+        # The .NET add-in sources: build_host_bridges.ps1 compiles the Revit and
+        # AutoCAD ones and only that compiled closure is installed. Their
+        # provenance, licence and historical build manifests travel with them.
+        if ($Path -cin @('installer/build_host_bridges.ps1', 'installer/host_registrations.iss',
+                         'bridges/README.md', 'bridges/sources/PROVENANCE.md',
+                         'bridges/sources/NOTICE.txt', 'bridges/sources/BUILD-PROPOSAL.md')) { return $true }
+        if ($Path -cmatch '^bridges/sources/(revit_mcp|revit_mcp_core|shared|acad_mcp|legacy-build-evidence)/[A-Za-z0-9][A-Za-z0-9_.-]*\.(cs|csproj|addin|json)$') { return $true }
         return $Path -cmatch '^nodelang/.+\.(py|jsx|js|mjs|cjs|html|png)$'
     }
     return $false
@@ -634,7 +637,7 @@ $revision = (& git -C $snapshot.SelectedCheckout rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'The source revision for the Revit add-in could not be read.' }
 $bridgeArgs = @{ SourceRoot = (Join-Path $selectedRoot 'bridges/sources'); OutputRoot = $hostPayload; SourceRevision = $revision }
 if ($BrokerReviewPath) { $bridgeArgs.BrokerReviewPath = $BrokerReviewPath }
-& (Join-Path $selectedRoot 'installer/build_revit_bridge.ps1') @bridgeArgs
+& (Join-Path $selectedRoot 'installer/build_host_bridges.ps1') @bridgeArgs
 & $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {

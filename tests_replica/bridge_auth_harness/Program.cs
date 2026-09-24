@@ -31,7 +31,13 @@ internal static class Program
                 int status;
                 string reason;
                 string json;
-                if (BridgeAuth.Refuse(ctx.Request, path != "/" && path != "/ping", out status, out reason))
+                var body = BridgeAuth.ReadBody(ctx.Request);
+                if (body == null)
+                {
+                    status = 413;
+                    json = "{\"status\":\"error\",\"error\":\"request body is too large\"}";
+                }
+                else if (BridgeAuth.Refuse(ctx.Request, body, path != "/" && path != "/ping", out status, out reason))
                     json = "{\"status\":\"error\",\"error\":\"" + reason + "\"}";
                 else
                 {

@@ -32,14 +32,15 @@ from pathlib import Path
 MAX_PORTS = range(48886, 48900)
 MAX_ROUTE = "/max-mcp"
 MAX_SERVICE = "max-mcp"
-# The installer carries the MaxMCP startup script beside the app (bridges/max)
-# but places nothing in a 3ds Max startup folder. The script now refuses every
-# caller without this install's bridge secret (host_bridge_auth.py); deploying
-# it into 3ds Max remains a separate, unbuilt step.
+# The installer carries the MaxMCP startup script (bridges/max), which refuses
+# every unsigned caller (host_bridge_auth.py). Setup places it in each installed
+# 3ds Max version's startup folder only when the build carries its custody
+# review (colleague_setup.register_max_startup); until then none is placed.
 MAX_PLUGIN_ABSENT = (
-    "3ds Max connects through the ArchHub MaxMCP plug-in (it answers as max-mcp "
-    "on 48886-48899), which this build does not install. 3ds Max stays off on "
-    "this machine until the plug-in ships."
+    "3ds Max connects through the ArchHub MaxMCP startup script (it answers as "
+    "max-mcp on 48886-48899), which is not in any 3ds Max startup folder on this "
+    "machine. Setup places it only when this build carries its reviewed script; "
+    "then restart 3ds Max."
 )
 RHINO_URL = "http://127.0.0.1:9879"
 
@@ -82,22 +83,18 @@ class BridgeRefused(RuntimeError):
 
 
 def _bridge_call(url: str, body: Mapping[str, object] | None = None, timeout: float = 20.0):
-    """One call to a local host bridge, carrying this install's caller secret.
+    """One signed call to a local host bridge through the one authenticated client.
 
-    The bridges refuse every route but /ping without it (host_bridge_auth.py);
-    a refusal comes back as BridgeRefused with the bridge's own reason.
+    The bridges refuse every route but /ping without a fresh signature
+    (host_bridge_auth.py); a refusal comes back as BridgeRefused with the
+    bridge's own reason.
     """
-    from .host_bridge_auth import bridge_headers
-    try:
-        return _http(url, body, bridge_headers(url), timeout=timeout)
-    except urllib.error.HTTPError as refused:
-        try:
-            answer = json.loads(refused.read().decode("utf-8", "replace"))
-        except (OSError, ValueError):
-            answer = {}
-        reason = answer.get("error") if isinstance(answer, Mapping) else None
+    from .host_bridge_auth import bridge_request
+    status, answer = bridge_request(url, body, timeout=timeout)
+    if status != 200:
         raise BridgeRefused("the bridge refused the call (HTTP %d): %s"
-                            % (refused.code, reason or "no reason given")) from None
+                            % (status, answer.get("error") or "no reason given"))
+    return answer
 
 
 def _max_endpoint(timeout: float = 1.5) -> str | None:

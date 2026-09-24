@@ -64,32 +64,17 @@ def revit_addin_years() -> list[str]:
 
 def _call(port: int, route: str, body: Mapping[str, object] | None = None,
           timeout: float = _READ_TIMEOUT) -> dict:
+    # The one authenticated client (host_bridge_auth.bridge_request): every
+    # route but /ping is signed per request; /ping is identity only.
+    from .host_bridge_auth import bridge_request
     url = "http://%s:%d%s" % (BROKER_HOST, port, route)
-    data = None if body is None else json.dumps(body).encode("utf-8")
-    headers = {"Content-Type": "application/json"} if data else {}
-    if route != "/ping":
-        # Every route but /ping needs this install's bridge secret
-        # (bridges/sources/shared/BridgeAuth.cs); /ping is identity only.
-        from .host_bridge_auth import bridge_headers
-        headers.update(bridge_headers(url))
-    request = urllib.request.Request(
-        url, data=data, method="POST" if data else "GET", headers=headers,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as refused:
+    status, answer = bridge_request(url, body, timeout=timeout, sign=route != "/ping")
+    if status != 200:
         # A bridge refusal (401 unauthenticated, 403 browser, 503 no secret)
-        # carries its reason as JSON; callers see it as a status "error".
-        try:
-            answer = json.loads(refused.read().decode("utf-8"))
-        except (OSError, ValueError):
-            raise refused from None
-        if not isinstance(answer, dict):
-            raise
+        # carries its reason; callers see it as a status "error".
         answer["status"] = "error"
-        answer["http_status"] = refused.code
-        return answer
+        answer["http_status"] = status
+    return answer
 
 
 def live_sessions() -> list[dict]:

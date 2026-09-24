@@ -1,6 +1,7 @@
-"""Court: every host exec bridge refuses callers without this install's secret.
+"""Court: every host exec bridge runs code only for a fresh request signed with this install's secret.
 
-Real HTTP, real bridge source files, real Windows Credential Locker reads. The
+Real HTTP, real bridge source files, real Windows Credential Locker reads,
+and the app's one authenticated client (nodelang/host_bridge_auth.py). The
 Python bridges (Rhino, Blender, 3ds Max) are loaded from the files the
 installer ships, with only their host modules (bpy, Rhino, pymxs) replaced;
 the .NET guard the Revit and AutoCAD add-ins link (BridgeAuth.cs) runs in a
@@ -20,12 +21,13 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import types
 import urllib.error
 import urllib.request
 import uuid
 from ctypes import wintypes
-from http.server import HTTPServer, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -33,10 +35,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from nodelang import host_bridge_auth as auth  # noqa: E402
 from nodelang.clean_revit_adapter import _call as _REAL_REVIT_CALL  # noqa: E402 - before conftest's guard
 
-HEADER = "X-ArchHub-Bridge-Token"
 USER = "archhub-host-bridge"
+SIGNATURE_HEADERS = (auth.TIME_HEADER, auth.NONCE_HEADER, auth.SIGNATURE_HEADER)
 BRIDGES = {
     "rhino": ROOT / "bridges" / "rhino" / "archhub_mcp.py",
     "blender": ROOT / "bridges" / "blender" / "archhub_mcp" / "__init__.py",
@@ -90,6 +93,14 @@ def credential():
 
 # ------------------------------------------------------- the shipped bridges --
 
+class _NullContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
 def _fake_hosts(monkeypatch):
     bpy = types.ModuleType("bpy")
     bpy.app = types.SimpleNamespace(
@@ -128,14 +139,6 @@ def _fake_hosts(monkeypatch):
     monkeypatch.setenv("ARCHHUB_MAXMCP_AUTOSTART", "0")
 
 
-class _NullContext:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        return False
-
-
 def _load(name: str, monkeypatch):
     _fake_hosts(monkeypatch)
     spec = importlib.util.spec_from_file_location("court_bridge_" + name, BRIDGES[name])
@@ -144,27 +147,16 @@ def _load(name: str, monkeypatch):
     return module
 
 
-# Per bridge: handler class, identity route, exec route, body that runs `code`.
+# Per bridge: handler class, identity route, exec route.
 _ROUTES = {
-    "rhino": ("_ArchHubRequestHandler", "/ping", "/execute", lambda code: {"code": code}),
-    "blender": ("_ArchHubHandler", "/ping", "/execute", lambda code: {"code": code}),
-    "max": ("_Handler", "/max-mcp/ping", "/max-mcp/exec", lambda code: {"code": code}),
+    "rhino": ("_ArchHubRequestHandler", "/ping", "/execute"),
+    "blender": ("_ArchHubHandler", "/ping", "/execute"),
+    "max": ("_Handler", "/max-mcp/ping", "/max-mcp/exec"),
 }
 
 
-@pytest.fixture(params=sorted(BRIDGES))
-def bridge(request, monkeypatch, credential):
-    name = request.param
-    module = _load(name, monkeypatch)
-    if name == "rhino":
-        module.sc = types.SimpleNamespace(doc=None)
-    # The shipped reader, pointed at the court's own credential service. A
-    # bridge without the check has no reader; the courts below then show what
-    # it does for an unauthenticated caller instead of failing in setup.
-    if hasattr(module, "bridge_secret"):
-        monkeypatch.setattr(module, "bridge_secret",
-                            functools.partial(module.bridge_secret, service=credential.service))
-    handler, ping, execute, body = _ROUTES[name]
+def _serve(name, module):
+    handler = _ROUTES[name][0]
     server = (ThreadingHTTPServer if name == "max" else HTTPServer)(("127.0.0.1", 0), getattr(module, handler))
     stop = threading.Event()
     threads = [threading.Thread(target=server.serve_forever, daemon=True)]
@@ -176,84 +168,147 @@ def bridge(request, monkeypatch, credential):
         threads.append(threading.Thread(target=drain, daemon=True))
     for thread in threads:
         thread.start()
-    base = "http://127.0.0.1:%d" % server.server_address[1]
-    try:
-        yield types.SimpleNamespace(name=name, module=module, base=base, ping=ping,
-                                    execute=execute, body=body, credential=credential)
-    finally:
+
+    def close():
         stop.set()
         server.shutdown()
         server.server_close()
+    return server.server_address[1], close
 
 
-def _request(url, *, body=None, headers=None, method=None):
-    data = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(url, data=data, method=method or ("POST" if data else "GET"))
-    request.add_header("Content-Type", "application/json")
+@pytest.fixture(params=sorted(BRIDGES))
+def bridge(request, monkeypatch, credential):
+    name = request.param
+    module = _load(name, monkeypatch)
+    if name == "rhino":
+        module.sc = types.SimpleNamespace(doc=None)
+    # The shipped reader, pointed at the court's own credential service. A
+    # bridge without the check has no reader; the courts below then show what
+    # it does for an unsigned caller instead of failing in setup.
+    if hasattr(module, "bridge_secret"):
+        monkeypatch.setattr(module, "bridge_secret",
+                            functools.partial(module.bridge_secret, service=credential.service))
+    port, close = _serve(name, module)
+    _handler, ping, execute = _ROUTES[name]
+    try:
+        yield types.SimpleNamespace(name=name, module=module, base="http://127.0.0.1:%d" % port,
+                                    ping=ping, execute=execute, credential=credential)
+    finally:
+        close()
+
+
+def _raw(url, *, data=None, headers=None, method=None):
+    """A plain HTTP exchange, as any local process could make it."""
+    request = urllib.request.Request(url, data=data, method=method or ("POST" if data is not None else "GET"))
     for key, value in (headers or {}).items():
         request.add_header(key, value)
+    def parsed(raw):
+        # http.sys answers some refusals itself with an HTML page (e.g. a bad Host).
+        try:
+            return json.loads(raw or b"{}")
+        except ValueError:
+            return {"raw": raw.decode("utf-8", "replace")}
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
-            return response.status, dict(response.headers), json.loads(response.read() or b"{}")
+            return response.status, dict(response.headers), parsed(response.read())
     except urllib.error.HTTPError as refused:
-        return refused.code, dict(refused.headers), json.loads(refused.read() or b"{}")
+        return refused.code, dict(refused.headers), parsed(refused.read())
 
 
-def _marker_code(path: Path) -> str:
-    return "open(%r, 'w').write('ran')\nresult = 42" % str(path)
+def _code(marker: Path) -> bytes:
+    return json.dumps({"code": "open(%r, 'a').write('ran')\nresult = 42" % str(marker)}).encode("utf-8")
 
 
-def test_an_unauthenticated_post_is_refused_and_runs_nothing(bridge, tmp_path):
+def _signed(url, body: bytes, secret: str, **kwargs):
+    headers = {"Content-Type": "application/json"}
+    headers.update(auth.signed_headers("POST", url, body, secret=secret, **kwargs))
+    return headers
+
+
+def test_an_unsigned_post_is_refused_and_runs_nothing(bridge, tmp_path):
     marker = tmp_path / "ran.txt"
-    status, _headers, answer = _request(bridge.base + bridge.execute, body=bridge.body(_marker_code(marker)))
+    status, _h, answer = _raw(bridge.base + bridge.execute, data=_code(marker),
+                              headers={"Content-Type": "application/json"})
     assert status == 401, (bridge.name, status, answer)
     assert answer["error"] == "caller is not authenticated"
-    assert not marker.exists(), "%s ran code for an unauthenticated caller" % bridge.name
+    assert not marker.exists(), "%s ran code for an unsigned caller" % bridge.name
 
 
-def test_a_wrong_secret_is_refused(bridge, tmp_path):
+def test_the_signed_caller_runs_its_code_once(bridge, tmp_path):
     marker = tmp_path / "ran.txt"
-    status, _headers, _answer = _request(bridge.base + bridge.execute, body=bridge.body(_marker_code(marker)),
-                                         headers={HEADER: "x" * len(bridge.credential.secret)})
+    url, body = bridge.base + bridge.execute, _code(marker)
+    headers = _signed(url, body, bridge.credential.secret)
+    status, _h, answer = _raw(url, data=body, headers=headers)
+    assert status == 200, answer
+    assert answer.get("result") == 42 and marker.read_text() == "ran"
+    # The same signed request again is a replay: refused, nothing runs twice.
+    status, _h, answer = _raw(url, data=body, headers=headers)
+    assert status == 401 and answer["error"] == "signature was already used"
+    assert marker.read_text() == "ran"
+
+
+def test_a_signature_by_another_key_is_refused(bridge, tmp_path):
+    marker = tmp_path / "ran.txt"
+    url, body = bridge.base + bridge.execute, _code(marker)
+    status, _h, _a = _raw(url, data=body, headers=_signed(url, body, "k" * 43))
     assert status == 401 and not marker.exists()
 
 
-def test_a_browser_request_is_refused_even_with_the_secret(bridge, tmp_path):
+def test_a_signature_does_not_carry_over_to_another_body(bridge, tmp_path):
     marker = tmp_path / "ran.txt"
-    status, headers, _answer = _request(
-        bridge.base + bridge.execute, body=bridge.body(_marker_code(marker)),
-        headers={HEADER: bridge.credential.secret, "Origin": "https://evil.example"})
+    url = bridge.base + bridge.execute
+    headers = _signed(url, json.dumps({"code": "result = 1"}).encode(), bridge.credential.secret)
+    status, _h, _a = _raw(url, data=_code(marker), headers=headers)
+    assert status == 401 and not marker.exists()
+
+
+def test_a_stale_signature_is_refused(bridge, tmp_path):
+    marker = tmp_path / "ran.txt"
+    url, body = bridge.base + bridge.execute, _code(marker)
+    headers = _signed(url, body, bridge.credential.secret, now=time.time() - 3 * auth.SKEW_SECONDS)
+    status, _h, answer = _raw(url, data=body, headers=headers)
+    assert status == 401 and answer["error"] == "signature time is outside the allowed window"
+    assert not marker.exists()
+
+
+def test_a_browser_request_is_refused_even_when_signed(bridge, tmp_path):
+    marker = tmp_path / "ran.txt"
+    url, body = bridge.base + bridge.execute, _code(marker)
+    headers = dict(_signed(url, body, bridge.credential.secret), Origin="https://evil.example")
+    status, response_headers, _a = _raw(url, data=body, headers=headers)
     assert status == 403 and not marker.exists()
-    assert not any(key.lower().startswith("access-control-") for key in headers)
+    assert not any(key.lower().startswith("access-control-") for key in response_headers)
 
 
 def test_a_preflight_gets_no_cors_grant(bridge):
-    status, headers, _answer = _request(bridge.base + bridge.execute, method="OPTIONS",
-                                        headers={"Origin": "https://evil.example",
-                                                 "Access-Control-Request-Method": "POST"})
+    status, headers, _a = _raw(bridge.base + bridge.execute, method="OPTIONS",
+                               headers={"Origin": "https://evil.example",
+                                        "Access-Control-Request-Method": "POST"})
     assert status == 403
     assert not any(key.lower().startswith("access-control-") for key in headers)
 
 
-def test_the_identity_route_answers_without_the_secret(bridge):
-    status, _headers, _answer = _request(bridge.base + bridge.ping)
-    assert status == 200
-
-
-def test_the_authenticated_caller_runs_its_code(bridge, tmp_path):
+def test_a_non_loopback_host_name_is_refused_even_when_signed(bridge, tmp_path):
+    """DNS rebinding: a page's own host name reaching 127.0.0.1 is not served."""
     marker = tmp_path / "ran.txt"
-    status, _headers, answer = _request(bridge.base + bridge.execute, body=bridge.body(_marker_code(marker)),
-                                        headers={HEADER: bridge.credential.secret})
-    assert status == 200, answer
-    assert marker.read_text() == "ran"
-    assert answer.get("result") == 42
+    url, body = bridge.base + bridge.execute, _code(marker)
+    headers = dict(_signed(url, body, bridge.credential.secret), Host="evil.example:80")
+    status, _h, answer = _raw(url, data=body, headers=headers)
+    assert status == 403 and "loopback" in answer["error"] and not marker.exists()
+    assert _raw(bridge.base + bridge.ping, headers={"Host": "evil.example"})[0] == 403
+
+
+def test_the_identity_route_answers_without_a_signature(bridge):
+    status, _h, answer = _raw(bridge.base + bridge.ping)
+    assert status == 200
+    assert not any(isinstance(v, str) and ("\\" in v or "/Users/" in v) for v in answer.values())
 
 
 def test_with_no_secret_provisioned_the_bridge_fails_closed(bridge, tmp_path):
     _cred_delete(bridge.credential.service)
     marker = tmp_path / "ran.txt"
-    status, _headers, answer = _request(bridge.base + bridge.execute, body=bridge.body(_marker_code(marker)),
-                                        headers={HEADER: bridge.credential.secret})
+    url, body = bridge.base + bridge.execute, _code(marker)
+    status, _h, answer = _raw(url, data=body, headers=_signed(url, body, bridge.credential.secret))
     assert status == 503 and "not provisioned" in answer["error"] and not marker.exists()
 
 
@@ -268,68 +323,127 @@ def test_the_reader_follows_keyring_when_the_entry_moved_to_its_compound_name(mo
 
 # ------------------------------------------------- the app's side of the call --
 
-def test_the_app_engine_sends_the_secret_and_its_call_works(monkeypatch, credential, tmp_path):
-    from nodelang import host_bridge_auth, host_brokers
+def _rhino_bridge(monkeypatch, credential):
     module = _load("rhino", monkeypatch)
     module.sc = types.SimpleNamespace(doc=None)
     monkeypatch.setattr(module, "bridge_secret",
                         functools.partial(module.bridge_secret, service=credential.service))
-    server = HTTPServer(("127.0.0.1", 0), module._ArchHubRequestHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return _serve("rhino", module)
+
+
+def test_the_app_engine_signs_and_its_call_works(monkeypatch, credential, tmp_path):
+    from nodelang import host_brokers
+    port, close = _rhino_bridge(monkeypatch, credential)
     try:
-        monkeypatch.setattr(host_brokers, "RHINO_URL", "http://127.0.0.1:%d" % server.server_address[1])
+        monkeypatch.setattr(host_brokers, "RHINO_URL", "http://127.0.0.1:%d" % port)
         monkeypatch.setattr(host_brokers, "_port_open", lambda port, timeout=0.15: True)
         marker = tmp_path / "ran.txt"
-        # The installed app reads the same secret from its credential store.
-        monkeypatch.setattr(host_bridge_auth, "ensure_secret", lambda: credential.secret)
-        out, said = host_brokers.rhino_exec({"code": _marker_code(marker)}, {})
-        assert said == "ran in Rhino" and out["out"]["result"] == 42 and marker.exists()
-        marker.unlink()
-        # A store that cannot answer: no header, and the refusal is reported, not hidden.
-        monkeypatch.setattr(host_bridge_auth, "ensure_secret", lambda: (_ for _ in ()).throw(OSError("store")))
-        out, said = host_brokers.rhino_exec({"code": _marker_code(marker)}, {})
-        assert out["ok"] is False and "HTTP 401" in said and not marker.exists()
+        code = "open(%r, 'a').write('ran')\nresult = 42" % str(marker)
+        monkeypatch.setattr(auth, "ensure_secret", lambda: credential.secret)
+        out, said = host_brokers.rhino_exec({"code": code}, {})
+        assert said == "ran in Rhino" and out["out"]["result"] == 42 and marker.read_text() == "ran"
+        # A store that cannot answer: unsigned, refused, and said -- not hidden.
+        monkeypatch.setattr(auth, "ensure_secret", lambda: (_ for _ in ()).throw(OSError("store")))
+        out, said = host_brokers.rhino_exec({"code": code}, {})
+        assert out["ok"] is False and "HTTP 401" in said and marker.read_text() == "ran"
     finally:
-        server.shutdown()
-        server.server_close()
+        close()
 
 
-def test_the_revit_adapter_sends_the_secret_and_reads_a_refusal_as_an_error(monkeypatch, credential):
-    from nodelang import clean_revit_adapter, host_bridge_auth
+def test_a_squatting_listener_learns_no_secret(monkeypatch, credential, tmp_path):
+    """Whatever answers on a bridge port gets one MAC bound to one body, never the key."""
+    from nodelang import host_brokers
+    captured = []
+
+    class Squatter(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            captured.append((dict(self.headers), body))
+            payload = b'{"status": "ok", "result": 0}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_):
+            pass
+
+    squat = HTTPServer(("127.0.0.1", 0), Squatter)
+    threading.Thread(target=squat.serve_forever, daemon=True).start()
+    port, close = _rhino_bridge(monkeypatch, credential)
+    try:
+        monkeypatch.setattr(auth, "ensure_secret", lambda: credential.secret)
+        host_brokers._bridge_call("http://127.0.0.1:%d/execute" % squat.server_address[1], {"code": "result = 1"})
+        headers, _body = captured[0]
+        assert credential.secret not in json.dumps(headers) and credential.secret.encode() not in _body
+        # The captured signature cannot carry different code into the real bridge.
+        marker = tmp_path / "ran.txt"
+        status, _h, _a = _raw("http://127.0.0.1:%d/execute" % port, data=_code(marker),
+                              headers={k: v for k, v in headers.items() if k.startswith("X-ArchHub")
+                                       or k == "Content-Type"})
+        assert status == 401 and not marker.exists()
+    finally:
+        close()
+        squat.shutdown()
+        squat.server_close()
+
+
+def test_the_revit_adapter_signs_and_reads_a_refusal_as_an_error(monkeypatch, credential):
+    from nodelang import clean_revit_adapter
     module = _load("blender", monkeypatch)
     monkeypatch.setattr(module, "bridge_secret",
                         functools.partial(module.bridge_secret, service=credential.service))
-    server = HTTPServer(("127.0.0.1", 0), module._ArchHubHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port, close = _serve("blender", module)
     try:
-        port = server.server_address[1]
         # This court's own bridge on its own port, never a live host.
         monkeypatch.setattr(clean_revit_adapter, "_call", _REAL_REVIT_CALL)
-        monkeypatch.setattr(host_bridge_auth, "ensure_secret", lambda: credential.secret)
+        monkeypatch.setattr(auth, "ensure_secret", lambda: credential.secret)
         assert clean_revit_adapter._call(port, "/exec", {"code": "result = 7"})["result"] == 7
-        monkeypatch.setattr(host_bridge_auth, "ensure_secret", lambda: "z" * 43)
+        monkeypatch.setattr(auth, "ensure_secret", lambda: "z" * 43)
         refused = clean_revit_adapter._call(port, "/exec", {"code": "result = 7"})
         assert refused["status"] == "error" and refused["http_status"] == 401
     finally:
-        server.shutdown()
-        server.server_close()
+        close()
 
 
-def test_the_secret_is_created_once_kept_in_the_store_and_never_sent_off_machine(monkeypatch):
-    from nodelang import host_bridge_auth
+def test_the_host_graph_node_signs_through_the_same_client(monkeypatch, credential):
+    """nodelang/core.py op 'host' (_run_host): a signed call works; a refusal is a host_error, not unreachable."""
+    from nodelang import core
+    # MaxMCP answers the node's POST /exec with the {"status": "ok"} shape it reads.
+    module = _load("max", monkeypatch)
+    monkeypatch.setattr(module, "bridge_secret",
+                        functools.partial(module.bridge_secret, service=credential.service))
+    port, close = _serve("max", module)
+    try:
+        monkeypatch.setattr(auth, "ensure_secret", lambda: credential.secret)
+        assert core._run_host(port, "result = 6 * 7") == 42
+        monkeypatch.setattr(auth, "ensure_secret", lambda: "w" * 43)
+        refused = core._run_host(port, "result = 1")
+        assert refused["http_status"] == 401 and "host_unreachable" not in refused
+    finally:
+        close()
+
+
+def test_the_client_refuses_to_call_anything_but_loopback(monkeypatch):
+    monkeypatch.setattr(auth, "ensure_secret", lambda: "s" * 43)
+    with pytest.raises(ValueError):
+        auth.bridge_request("https://api.notion.com/v1/search", {"query": "x"})
+    headers = auth.signed_headers("POST", "http://127.0.0.1:9879/execute", b"{}", secret="s" * 43)
+    assert set(headers) == set(SIGNATURE_HEADERS) and "s" * 43 not in json.dumps(headers)
+
+
+def test_the_secret_is_created_once_and_kept_in_the_store(monkeypatch):
     saved = {}
     store = types.SimpleNamespace(load_api_key=saved.get,
                                   save_api_key=lambda name, value: saved.__setitem__(name, value))
-    monkeypatch.setattr(host_bridge_auth, "_store", lambda: store)
-    first = host_bridge_auth.ensure_secret()
+    monkeypatch.setattr(auth, "_store", lambda: store)
+    first = auth.ensure_secret()
     assert len(first) >= 32 and saved == {"archhub-host-bridge": first}
-    assert host_bridge_auth.ensure_secret() == first
-    assert host_bridge_auth.bridge_headers("http://127.0.0.1:9879/execute") == {HEADER: first}
-    assert host_bridge_auth.bridge_headers("https://api.notion.com/v1/search") == {}
+    assert auth.ensure_secret() == first
     lying = types.SimpleNamespace(load_api_key=lambda name: None, save_api_key=lambda name, value: None)
-    monkeypatch.setattr(host_bridge_auth, "_store", lambda: lying)
-    with pytest.raises(host_bridge_auth.BridgeSecretUnavailable):
-        host_bridge_auth.ensure_secret()
+    monkeypatch.setattr(auth, "_store", lambda: lying)
+    with pytest.raises(auth.BridgeSecretUnavailable):
+        auth.ensure_secret()
 
 
 # ------------------------------------------- the .NET guard (Revit, AutoCAD) --
@@ -357,25 +471,36 @@ def harness_exe(tmp_path_factory):
     return out / "BridgeAuthHarness.exe"
 
 
-def test_the_dotnet_guard_the_revit_and_autocad_add_ins_link(harness_exe, credential, tmp_path):
+def test_the_dotnet_guard_the_revit_and_autocad_add_ins_link(harness_exe, credential):
     port = _free_port()
     process = subprocess.Popen([str(harness_exe), str(port), credential.service, USER],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
         assert process.stdout.readline().strip() == "READY"
-        base = "http://localhost:%d" % port
-        body = {"code": "noop"}
-        assert _request(base + "/ping")[0] == 200
-        assert _request(base + "/exec", body=body)[0] == 401
-        assert _request(base + "/exec", body=body, headers={HEADER: "q" * 64})[0] == 401
-        status, headers, _ = _request(base + "/exec", body=body,
-                                      headers={HEADER: credential.secret, "Origin": "https://evil.example"})
+        url = "http://localhost:%d/exec" % port
+        body = b'{"code":"noop"}'
+        json_type = {"Content-Type": "application/json"}
+        assert _raw("http://localhost:%d/ping" % port)[0] == 200
+        assert _raw(url, data=body, headers=json_type)[0] == 401
+        assert _raw(url, data=body, headers=dict(json_type, **_signed(url, body, "q" * 43)))[0] == 401
+        signed = dict(json_type, **_signed(url, body, credential.secret))
+        status, headers, _ = _raw(url, data=body, headers=dict(signed, Origin="https://evil.example"))
         assert status == 403 and not any(k.lower().startswith("access-control-") for k in headers)
-        assert _request(base + "/exec", method="OPTIONS", headers={"Origin": "https://evil.example"})[0] == 403
-        status, _headers, answer = _request(base + "/exec", body=body, headers={HEADER: credential.secret})
+        assert _raw(url, method="OPTIONS", headers={"Origin": "https://evil.example"})[0] == 403
+        stale = dict(json_type, **_signed(url, body, credential.secret, now=time.time() - 300))
+        assert _raw(url, data=body, headers=stale)[0] == 401
+        other_body = dict(json_type, **_signed(url, b'{"code":"other"}', credential.secret))
+        assert _raw(url, data=body, headers=other_body)[0] == 401
+        signed = dict(json_type, **_signed(url, body, credential.secret))
+        status, _headers, answer = _raw(url, data=body, headers=signed)
         assert status == 200 and answer == {"status": "ok", "result": "ran"}
+        status, _headers, answer = _raw(url, data=body, headers=signed)
+        assert status == 401 and answer["error"] == "signature was already used"
+        assert _raw(url, data=body, headers=dict(json_type, **_signed(url, body, credential.secret),
+                                                 Host="evil.example"))[0] in (400, 403)
         _cred_delete(credential.service)
-        assert _request(base + "/exec", body=body, headers={HEADER: credential.secret})[0] == 503
+        fresh = dict(json_type, **_signed(url, body, credential.secret))
+        assert _raw(url, data=body, headers=fresh)[0] == 503
     finally:
         process.stdin.close()
         process.wait(timeout=10)
@@ -387,11 +512,12 @@ def test_every_dotnet_route_passes_the_guard_before_it_runs():
     for text, handler in ((core, "private async Task HandleAsync("), (acad, "private async Task ProcessRequestAsync(")):
         body = text[text.index(handler):]
         body = body[:body.index("\n        }\n")]
-        assert body.index("BridgeAuth.Refuse(") < body.index("RouteAsync("), handler
+        assert body.index("BridgeAuth.ReadBody(") < body.index("BridgeAuth.Refuse(") < body.index("RouteAsync(")
         assert "Access-Control" not in text
-    for project, marker in (("revit_mcp_core/RevitMCPCore.csproj", "BridgeAuth.cs"),
-                            ("acad_mcp/AcadMCP.csproj", "BridgeAuth.cs")):
-        assert marker in (ROOT / "bridges/sources" / project).read_text(encoding="utf-8")
+        # /ping names the service; it never reveals a path on this machine.
+        assert "csc_path" not in text
+    for project in ("revit_mcp_core/RevitMCPCore.csproj", "acad_mcp/AcadMCP.csproj"):
+        assert "BridgeAuth.cs" in (ROOT / "bridges/sources" / project).read_text(encoding="utf-8")
 
 
 def test_the_python_bridges_carry_one_identical_guard_and_no_cors():

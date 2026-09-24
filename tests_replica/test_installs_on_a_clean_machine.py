@@ -461,7 +461,7 @@ def test_the_installer_script_actually_compiles():
         wheels = Path(out) / "wheelhouse"
         wheels.mkdir()
         (wheels / "court-0-py3-none-any.whl").write_bytes(b"")
-        # build_revit_bridge.ps1's output on a machine with no Revit: an index, no years.
+        # build_host_bridges.ps1's output on a machine with no Revit: an index, no years.
         host_payload = Path(out) / "hostpayload"
         host_payload.mkdir()
         (host_payload / "HOST_ARTIFACTS.json").write_text('{"revit":{}}', encoding="ascii")

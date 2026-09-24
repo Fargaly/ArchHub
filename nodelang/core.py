@@ -164,17 +164,16 @@ def _run_host(port, code):
     """Drive a REAL running host broker (revit-mcp /exec) over HTTP and return
     the real result. READ-ONLY by contract: the caller sends a query against the
     live document. A node value that is real work on a real model NOW."""
-    import json as _json
+    # The bridge refuses an unsigned /exec, so the call goes through the one
+    # authenticated client (host_bridge_auth.bridge_request); a refusal is a
+    # host_error carrying the bridge's reason, not an unreachable host.
+    from .host_bridge_auth import bridge_request
     try:
-        body = _json.dumps({'code': code}).encode('utf-8')
-        req = urllib.request.Request('http://localhost:%s/exec' % port,
-                                     data=body, method='POST',
-                                     headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=45) as r:
-            out = _json.loads(r.read().decode('utf-8'))
-        if out.get('status') == 'ok':
+        status, out = bridge_request('http://127.0.0.1:%d/exec' % int(port),
+                                     {'code': code}, timeout=45)
+        if status == 200 and out.get('status') == 'ok':
             return out.get('result')
-        return {'host_error': out.get('error') or out}
+        return {'host_error': out.get('error') or out, 'http_status': status}
     except Exception as ex:
         return {'host_unreachable': '%s:%r' % (port, ex)}
 

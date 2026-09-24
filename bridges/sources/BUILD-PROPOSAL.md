@@ -96,3 +96,20 @@ complete the product's admitted connector path. The remaining ordered work is:
 Arbitrary C# can reach documents other than the context document. Normal node
 operations therefore need reviewed operation implementations; document identity
 checking alone is not a sandbox for arbitrary scripts.
+
+## Status, 2026-09-24
+
+- Done: every listener (Revit Core, AutoCAD, Max, and the Rhino and Blender
+  bridges) refuses unsigned, stale, replayed, browser and non-loopback-Host
+  requests on every route but `/ping` (`shared/BridgeAuth.cs`, the Python
+  "caller check" block; `nodelang/host_bridge_auth.py` signs). This covers the
+  execution and reload entry points named in step 4 as far as the caller is
+  concerned; target identity and per-operation grants (steps 1-3) remain open.
+- Done: `installer/build_host_bridges.ps1` builds Revit and AutoCAD per
+  installed year against the local host API and writes the release manifests;
+  setup calls `install_revit_broker` and places the Max script, both only with
+  a supplied custody review; uninstall removes only what this install placed.
+- Open: the custody review itself; locked package restore (versions above are
+  still floating on the build machine's NuGet cache); the compiler closure at
+  `bin/csc`; an AutoCAD registration owner; a permitted physical operation on a
+  host a court may drive.

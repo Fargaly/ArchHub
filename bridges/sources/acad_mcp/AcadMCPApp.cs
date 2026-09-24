@@ -149,21 +149,22 @@ namespace AcadMCP
             {
                 var path = (context.Request.Url.AbsolutePath ?? "/").TrimEnd('/');
                 if (string.IsNullOrEmpty(path)) path = "/";
-                // Caller check before the body is read: /exec and /info need
-                // this install's bridge secret; /ping is identity only and is
-                // never answered to a browser (bridges/sources/shared/BridgeAuth.cs).
+                // Caller check before any route runs: /exec and /info need a
+                // fresh signature over the exact body; /ping is identity only,
+                // for a local non-browser caller (bridges/sources/shared/BridgeAuth.cs).
+                var raw = ArchHub.Shared.BridgeAuth.ReadBody(context.Request);
+                if (raw == null)
+                {
+                    await WriteResponseAsync(context, JsonError("request body is too large"), 413).ConfigureAwait(false);
+                    return;
+                }
                 string refusal;
-                if (ArchHub.Shared.BridgeAuth.Refuse(context.Request, path != "/" && path != "/ping", out status, out refusal))
+                if (ArchHub.Shared.BridgeAuth.Refuse(context.Request, raw, path != "/" && path != "/ping", out status, out refusal))
                 {
                     await WriteResponseAsync(context, JsonError(refusal), status).ConfigureAwait(false);
                     return;
                 }
-                string body = string.Empty;
-                if (context.Request.HasEntityBody)
-                {
-                    using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding ?? Encoding.UTF8))
-                        body = await reader.ReadToEndAsync().ConfigureAwait(false);
-                }
+                string body = (context.Request.ContentEncoding ?? Encoding.UTF8).GetString(raw);
                 responseJson = await RouteAsync(path, body).ConfigureAwait(false);
             }
             catch (System.Exception ex)
@@ -208,8 +209,7 @@ namespace AcadMCP
                             + "\"pid\":" + System.Diagnostics.Process.GetCurrentProcess().Id + ","
                             + "\"compiler\":\"subprocess_csc\","
                             + "\"csc_status\":\"" + cscStatus + "\","
-                            + "\"caller_auth\":\"" + ArchHub.Shared.BridgeAuth.TokenHeader + "\","
-                            + "\"csc_path\":\"" + JsonEscape(cscPath ?? "") + "\"}");
+                            + "\"caller_auth\":\"hmac-sha256\"}");
                     }
 
                 case "/info":

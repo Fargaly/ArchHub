@@ -369,7 +369,7 @@ def register_revit_add_ins(root: Path, *, environment=None, install=None,
     """Register the packaged Revit add-in for every Revit year found here.
 
     The installer carries the add-in compiled per year (installer/
-    build_revit_bridge.ps1) and HOST_ARTIFACTS.json naming each year's manifest
+    build_host_bridges.ps1) and HOST_ARTIFACTS.json naming each year's manifest
     and digest. For each year both packaged and installed, the existing
     registration owner (nodelang/host_broker_installation.py) verifies the
     closure, the host API pins and the custody review, then writes the user's
@@ -410,6 +410,73 @@ def register_revit_add_ins(root: Path, *, environment=None, install=None,
         print("  revit %s   : %s%s" % (year, result["status"],
                                         (" - " + result["reason"]) if result.get("reason") else
                                         " (restart Revit %s to load it)" % year if result.get("registered") else ""))
+    return outcomes
+
+
+def register_max_startup(root: Path, *, environment=None, detected_years=None) -> list[dict]:
+    """Place the shipped MaxMCP startup script in each installed 3ds Max version, when reviewed.
+
+    The script (bridges/max/max_mcp_startup.py) signs-checks every caller
+    (host_bridge_auth.py). It is copied only when HOST_ARTIFACTS.json carries
+    the custody review for it and its SHA-256 matches the shipped file; an
+    existing different script is reported and left alone. 3ds Max loads it at
+    its next start. Uninstall removes only byte-identical copies.
+    """
+    import hashlib
+    import json
+    import tempfile
+    from nodelang.client_mcp_installation import RegistrationRefused, _require_plain
+    env = os.environ if environment is None else environment
+    try:
+        index = json.loads((root / "HOST_ARTIFACTS.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    entry = index.get("max") if isinstance(index, dict) else None
+    shipped = root / "bridges" / "max" / "max_mcp_startup.py"
+    if not isinstance(entry, dict):
+        print("  3ds max    : this build carries no MaxMCP entry; nothing placed")
+        return []
+    activation = entry.get("activation")
+    if not (isinstance(activation, dict) and activation.get("eligibility") == "reviewed-authenticated-broker"):
+        print("  3ds max    : MaxMCP custody is not reviewed for activation; nothing placed")
+        return [{"status": "refused", "reason": "not reviewed for activation"}]
+    try:
+        payload = shipped.read_bytes()
+    except OSError:
+        print("  3ds max    : the shipped MaxMCP script is missing; nothing placed")
+        return [{"status": "refused", "reason": "shipped script missing"}]
+    if hashlib.sha256(payload).hexdigest() != entry.get("sha256"):
+        print("  3ds max    : the shipped MaxMCP script differs from its release pin; nothing placed")
+        return [{"status": "refused", "reason": "shipped script differs from its pin"}]
+    years = sorted(set(_setup_host_installations().get("max") or []) if detected_years is None
+                   else set(detected_years))
+    outcomes = []
+    for year in years:
+        if not re.fullmatch(r"20\d{2}", year):
+            continue
+        folder = Path(env["LOCALAPPDATA"]) / "Autodesk" / "3dsMax" / ("%s - 64bit" % year) / "ENU" / "scripts" / "startup"
+        target = folder / "max_mcp_startup.py"
+        row = {"host_version": year, "path": str(target)}
+        try:
+            _require_plain(folder, "directory", may_be_absent=True)
+            if target.exists():
+                row["status"] = "unchanged" if target.read_bytes() == payload else "refused"
+                if row["status"] == "refused":
+                    row["reason"] = "a different max_mcp_startup.py is already there; left unchanged"
+            else:
+                folder.mkdir(parents=True, exist_ok=True)
+                descriptor, temporary = tempfile.mkstemp(prefix=".archhub-max-", suffix=".tmp", dir=folder)
+                try:
+                    with os.fdopen(descriptor, "wb") as stream:
+                        stream.write(payload)
+                    os.link(temporary, target)  # never replaces a file another writer placed
+                finally:
+                    os.unlink(temporary)
+                row["status"] = "placed_pending_host_restart"
+        except (OSError, RegistrationRefused) as exc:
+            row.update(status="failed", reason="%s: %s" % (type(exc).__name__, exc))
+        outcomes.append(row)
+        print("  3ds max %s : %s%s" % (year, row["status"], (" - " + row["reason"]) if row.get("reason") else ""))
     return outcomes
 
 
@@ -556,6 +623,10 @@ def main():
         register_revit_add_ins(Path(os.path.abspath(__file__)).parent)
     except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
         print("  revit add-in: not registered (%s)" % type(exc).__name__)
+    try:
+        register_max_startup(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  3ds max    : not placed (%s)" % type(exc).__name__)
     try:
         if readiness_identity(root) != identity:
             raise ValueError("installed build changed during setup")

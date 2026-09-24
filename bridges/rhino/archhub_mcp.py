@@ -57,18 +57,30 @@ _server_thread: Optional[threading.Thread] = None
 
 
 # --- BEGIN ArchHub bridge caller check (identical in every Python bridge) ---
-# Every route but /ping runs only for a caller that sends this install's
-# bridge secret; browser requests are refused and no CORS header is sent.
-# The ArchHub app (nodelang/host_bridge_auth.py) creates the secret in its
-# credential store, the Windows Credential Locker through keyring; it is read
-# back here exactly as keyring wrote it and compared in constant time.
+# Every route but /ping runs only for a request signed with this install's
+# bridge secret: HMAC-SHA256 over "METHOD|target|time|nonce|sha256(body)",
+# a time within BRIDGE_SKEW_SECONDS and a nonce never seen before. The secret
+# never crosses the wire. Browser requests and non-loopback Host names are
+# refused and no CORS header is sent. The ArchHub app (nodelang/
+# host_bridge_auth.py) creates the secret in its credential store, the Windows
+# Credential Locker through keyring; it is read back here as keyring wrote it.
 import ctypes as _ah_ctypes
+import hashlib as _ah_hashlib
 import hmac as _ah_hmac
+import threading as _ah_threading
+import time as _ah_time
 from ctypes import wintypes as _ah_wintypes
 
-BRIDGE_TOKEN_HEADER = "X-ArchHub-Bridge-Token"
+BRIDGE_TIME_HEADER = "X-ArchHub-Bridge-Time"
+BRIDGE_NONCE_HEADER = "X-ArchHub-Bridge-Nonce"
+BRIDGE_SIGNATURE_HEADER = "X-ArchHub-Bridge-Signature"
+BRIDGE_SKEW_SECONDS = 60
+BRIDGE_MAX_BODY = 16 * 1024 * 1024
 _BRIDGE_SECRET_SERVICE = "ArchHub"
 _BRIDGE_SECRET_USER = "archhub-host-bridge"
+_AH_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+_ah_seen_nonces = {}
+_ah_nonce_lock = _ah_threading.Lock()
 
 
 class _AhCredential(_ah_ctypes.Structure):
@@ -119,10 +131,32 @@ def bridge_secret(service=_BRIDGE_SECRET_SERVICE, user=_BRIDGE_SECRET_USER):
     return found[1]
 
 
-def bridge_refusal(headers, require_token=True):
+def _ah_loopback_host(value):
+    host = (value or "").strip().lower()
+    if host.startswith("["):
+        host = host[:host.find("]") + 1]
+    elif ":" in host:
+        host = host.rsplit(":", 1)[0]
+    return host in _AH_LOOPBACK_HOSTS
+
+
+def bridge_read_body(handler):
+    """The request body bytes, bounded; None when its length is too large or malformed."""
+    try:
+        length = int(handler.headers.get("Content-Length") or 0)
+    except ValueError:
+        return None
+    if length < 0 or length > BRIDGE_MAX_BODY:
+        return None
+    return handler.rfile.read(length) if length else b""
+
+
+def bridge_refusal(method, target, headers, body, require_token=True, now=None):
     """None when the caller may proceed, else (http_status, reason)."""
     if headers.get("Origin") is not None or headers.get("Sec-Fetch-Mode") is not None:
         return 403, "browser requests are refused; ArchHub calls this bridge directly"
+    if not _ah_loopback_host(headers.get("Host")):
+        return 403, "only a loopback host name is served"
     if not require_token:
         return None
     try:
@@ -131,9 +165,28 @@ def bridge_refusal(headers, require_token=True):
         secret = None
     if not secret:
         return 503, "ArchHub has not provisioned this bridge's caller secret; open ArchHub once"
-    given = headers.get(BRIDGE_TOKEN_HEADER) or ""
-    if not _ah_hmac.compare_digest(given.encode("utf-8"), secret.encode("utf-8")):
+    stamp = headers.get(BRIDGE_TIME_HEADER) or ""
+    nonce = headers.get(BRIDGE_NONCE_HEADER) or ""
+    given = headers.get(BRIDGE_SIGNATURE_HEADER) or ""
+    text = "|".join((method.upper(), target, stamp, nonce,
+                     _ah_hashlib.sha256(body or b"").hexdigest())).encode("utf-8")
+    expected = _ah_hmac.new(secret.encode("utf-8"), text, _ah_hashlib.sha256).hexdigest()
+    if not _ah_hmac.compare_digest(given.encode("utf-8"), expected.encode("utf-8")):
         return 401, "caller is not authenticated"
+    clock = _ah_time.time() if now is None else now
+    if not stamp.isdigit() or abs(clock - int(stamp)) > BRIDGE_SKEW_SECONDS:
+        return 401, "signature time is outside the allowed window"
+    if len(nonce) != 32 or any(ch not in "0123456789abcdef" for ch in nonce):
+        return 401, "signature nonce is malformed"
+    with _ah_nonce_lock:
+        for seen, at in list(_ah_seen_nonces.items()):
+            if clock - at > 2 * BRIDGE_SKEW_SECONDS:
+                del _ah_seen_nonces[seen]
+        if nonce in _ah_seen_nonces:
+            return 401, "signature was already used"
+        if len(_ah_seen_nonces) >= 100000:
+            return 503, "too many recent requests; retry shortly"
+        _ah_seen_nonces[nonce] = clock
     return None
 # --- END ArchHub bridge caller check ---
 
@@ -308,12 +361,18 @@ class _ArchHubRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _refused(self) -> bool:
-        refusal = bridge_refusal(self.headers, require_token=self.path != "/ping")
-        if refusal is None:
-            return False
-        self._send(refusal[0], {"status": "error", "error": refusal[1]})
-        return True
+    def _admitted(self, method: str):
+        """The request body once the caller check passes; None after replying."""
+        body = bridge_read_body(self)
+        if body is None:
+            self._send(413, {"status": "error", "error": "request body is too large or malformed"})
+            return None
+        refusal = bridge_refusal(method, self.path, self.headers, body,
+                                 require_token=self.path != "/ping")
+        if refusal is not None:
+            self._send(refusal[0], {"status": "error", "error": refusal[1]})
+            return None
+        return body
 
     def do_OPTIONS(self):  # noqa: N802
         # Only a browser sends a preflight; it gets no CORS grant.
@@ -321,7 +380,7 @@ class _ArchHubRequestHandler(BaseHTTPRequestHandler):
                          "error": "browser requests are refused; ArchHub calls this bridge directly"})
 
     def do_GET(self):  # noqa: N802
-        if self._refused():
+        if self._admitted("GET") is None:
             return
         if self.path == "/ping":
             self._send(200, _handler_ping())
@@ -333,12 +392,11 @@ class _ArchHubRequestHandler(BaseHTTPRequestHandler):
             self._send(404, {"status": "error", "error": "unknown path"})
 
     def do_POST(self):  # noqa: N802
-        if self._refused():
+        body = self._admitted("POST")
+        if body is None:
             return
         try:
-            length = int(self.headers.get("Content-Length") or "0")
-            raw = self.rfile.read(length).decode("utf-8") if length else "{}"
-            payload = json.loads(raw or "{}")
+            payload = json.loads(body.decode("utf-8") or "{}")
         except Exception as ex:
             self._send(400, {"status": "error",
                               "error": f"bad json: {ex}"})

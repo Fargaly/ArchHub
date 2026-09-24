@@ -36,7 +36,7 @@ _MODEL = "a picked model whose provider answers (a court would spend model calls
 EVIDENCE: dict[str, dict[str, str]] = {
     "vision.sketch_lines": {"unavailable": "OpenCV (cv2), which the desktop requirements.txt does not install"},
     "cad.read_lines": {"court": _OWN + "test_cad_read_lines_reads_the_shipped_sample_dxf"},
-    "cad.host_lines": {"unavailable": "a running AutoCAD with the ArchHub AutoCAD add-in (acad-mcp); this build does not package that add-in"},
+    "cad.host_lines": {"unavailable": "a running AutoCAD that loads the ArchHub AutoCAD add-in (acad-mcp); the add-in is built and carried, but no AutoCAD registration owner exists to make AutoCAD load it"},
     "lines.watch": {"court": _OWN + "test_lines_watch_passes_real_lines_through"},
     "revit.sessions": {"unavailable": _REVIT_SCRATCH},
     "revit.read": {"unavailable": _REVIT_SCRATCH},
@@ -47,7 +47,7 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "skills.catalogue": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
     "skills.read": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
     "skills.thinking_chain": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
-    "max.exec": {"unavailable": "3ds Max running with the MaxMCP startup script loaded; this build places no script in a 3ds Max startup folder"},
+    "max.exec": {"unavailable": "3ds Max running with the MaxMCP startup script loaded; setup places the script only when the build carries its custody review, and courts do not launch hosts"},
     "rhino.exec": {"unavailable": "Rhino 8 running the ArchHub bridge script on :9879; courts do not launch hosts on this machine"},
     "blender.exec": {"unavailable": "Blender running the ArchHub add-on on :9876; courts do not launch hosts on this machine"},
     "office.read": {"unavailable": _OFFICE},

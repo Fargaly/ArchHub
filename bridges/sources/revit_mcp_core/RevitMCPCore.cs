@@ -176,23 +176,23 @@ namespace RevitMCPCore
             {
                 var path = (ctx.Request.Url.AbsolutePath ?? "/").TrimEnd('/');
                 if (string.IsNullOrEmpty(path)) path = "/";
-                // Caller check before the body is read or any route runs:
-                // /exec, /info, /screenshot and /reload need this install's
-                // bridge secret; /ping names the service to anyone local but
-                // never to a browser (BridgeAuth.cs).
+                // Caller check before any route runs: /exec, /info,
+                // /screenshot and /reload need a fresh signature over the
+                // exact body (BridgeAuth.cs); /ping names the service to a
+                // local non-browser caller only.
+                var raw = BridgeAuth.ReadBody(ctx.Request);
+                if (raw == null)
+                {
+                    await WriteAsync(ctx, JsonError("request body is too large"), 413).ConfigureAwait(false);
+                    return;
+                }
                 string refusal;
-                if (BridgeAuth.Refuse(ctx.Request, path != "/" && path != "/ping", out status, out refusal))
+                if (BridgeAuth.Refuse(ctx.Request, raw, path != "/" && path != "/ping", out status, out refusal))
                 {
                     await WriteAsync(ctx, JsonError(refusal), status).ConfigureAwait(false);
                     return;
                 }
-                string body = "";
-                if (ctx.Request.HasEntityBody)
-                {
-                    using (var r = new StreamReader(ctx.Request.InputStream,
-                                                    ctx.Request.ContentEncoding ?? Encoding.UTF8))
-                        body = await r.ReadToEndAsync().ConfigureAwait(false);
-                }
+                string body = (ctx.Request.ContentEncoding ?? Encoding.UTF8).GetString(raw);
                 respJson = await RouteAsync(path, body, ctx.Request.HttpMethod)
                               .ConfigureAwait(false);
             }
@@ -230,9 +230,8 @@ namespace RevitMCPCore
                          + "\"revit_version\":\"" + JsonEscape(_revitVersion) + "\","
                          + "\"compiler\":\"subprocess_csc\","
                          + "\"csc_status\":\"" + (cscPath != null ? "ok" : "missing") + "\","
-                         + "\"csc_path\":\"" + JsonEscape(cscPath ?? "") + "\","
                          + "\"core_sha\":\"" + JsonEscape(_coreSha) + "\","
-                         + "\"caller_auth\":\"" + BridgeAuth.TokenHeader + "\","
+                         + "\"caller_auth\":\"hmac-sha256\","
                          + "\"hot_reload\":true}";
 
                 case "/info":

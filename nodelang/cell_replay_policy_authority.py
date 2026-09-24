@@ -78,7 +78,11 @@ class PublishedProofReplayPolicyVerifier:
         ].atom.decode("ascii")
         for evidence_root in revision.evidence_roots:
             try:
-                self._attestation_broker.verify(
+                # A Published release is a recorded transition: its court
+                # evidence is verified as a signed historical record (court,
+                # bindings, signature, not future-dated), never as fresh
+                # admission, which requires a finite age limit.
+                self._attestation_broker.verify_recorded_evidence(
                     snapshot,
                     self._attestation,
                     evidence_root,
@@ -86,7 +90,6 @@ class PublishedProofReplayPolicyVerifier:
                     expected_subject_name=predecessor_root,
                     expected_subject_digest=digest,
                     expected_parameters=parameters,
-                    max_age_seconds=float("inf"),
                 )
                 return revision
             except (InvalidCell, PermissionError, KeyError):

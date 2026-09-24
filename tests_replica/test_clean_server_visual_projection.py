@@ -30,6 +30,8 @@ from nodelang.unified_application_lens import (
     scope_lens_payload,
 )
 from nodelang.unified_authority import (
+    adopt_definition_revision,
+    promote_definition,
     read_definition,
     revise_definition,
     revise_instance,
@@ -328,6 +330,31 @@ def _revise_scope_definition(
     )
 
 
+def _publish_and_adopt(built, definition_root: str, revised, instance_root: str):
+    """SPEC.md 5.2: instances keep their exact definition revision.
+
+    A WIP definition revision never reaches a placed node. The revision is
+    published and the node adopts it -- the signed act that moves one
+    instance forward -- before its projection may show the new contract.
+    """
+    authority, caller = built.location.authority, built.caller
+    current = read_definition(authority, definition_root, caller=caller)
+    shared = promote_definition(
+        authority, definition_root, target_lifecycle="shared",
+        version=current.version + "-shared", evidence_roots=(revised.receipt_root,),
+        caller=caller, command_id=str(uuid.uuid4()),
+    )
+    promote_definition(
+        authority, definition_root, target_lifecycle="published",
+        version=current.version + "-published", evidence_roots=(shared.receipt_root,),
+        caller=caller, command_id=str(uuid.uuid4()),
+    )
+    return adopt_definition_revision(
+        authority, instance_root, scope_root=built.grand_map.root_id,
+        caller=caller, command_id=str(uuid.uuid4()),
+    )
+
+
 def _json(url, path, payload=None, *, token: str, csrf: str | None = None):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {
@@ -585,7 +612,7 @@ def test_clean_visual_projection_uses_graph_held_panels_properties_and_catalogue
             "label": "Domain composition",
             "panels": ["Overview", "Govern", "Wires"],
         }
-        _revise_scope_definition(
+        revised = _revise_scope_definition(
             built,
             definition_root,
             version_suffix="-visual-contracts",
@@ -593,6 +620,7 @@ def test_clean_visual_projection_uses_graph_held_panels_properties_and_catalogue
             interfaces=revised_interfaces,
             presentation=revised_presentation,
         )
+        _publish_and_adopt(built, definition_root, revised, focus_target)
         after, lens_after, _, _ = _project_current_visual_for_session(
             built, issued
         )
@@ -1159,12 +1187,13 @@ def test_clean_visual_projection_requires_graph_held_node_presentation_contract(
             "position": {"x": 640, "y": 320},
             "panels": ["Use", "Govern"],
         }
-        _revise_scope_definition(
+        revised = _revise_scope_definition(
             built,
             definition_root,
             version_suffix="-node-presentation",
             presentation=revised_presentation,
         )
+        _publish_and_adopt(built, definition_root, revised, node_root)
         after, lens_after, _snapshot_before, _snapshot_after = _project_current_visual(
             built
         )

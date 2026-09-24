@@ -3268,7 +3268,7 @@ def test_machine_workshop_read_is_cached_per_cell_revision(tmp_path, monkeypatch
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    original_list = application_server_module.list_deliberation_entries
+    original_list = application_server_module._recent_entries_from_validated_space
     calls = {"count": 0}
 
     def counted_list(*args, **kwargs):
@@ -3277,7 +3277,7 @@ def test_machine_workshop_read_is_cached_per_cell_revision(tmp_path, monkeypatch
 
     monkeypatch.setattr(
         application_server_module,
-        "list_deliberation_entries",
+        "_recent_entries_from_validated_space",
         counted_list,
     )
     client = UniversalRuntimeClient(descriptor_path, provider)
@@ -3323,16 +3323,24 @@ def test_machine_workshop_read_bounds_entries_before_transport(tmp_path, monkeyp
         )
         for sequence in range(300)
     )
+    asked = {}
+
+    def bounded_tail(_snapshot, _protocol, _space, *, limit):
+        # The bound is applied by the graph reader, before projection and
+        # before the transport, not by trimming a full transcript afterwards.
+        asked["limit"] = limit
+        return entries[-limit:]
+
     monkeypatch.setattr(
         application_server_module,
-        "list_deliberation_entries",
-        lambda *_args, **_kwargs: entries,
+        "_recent_entries_from_validated_space",
+        bounded_tail,
     )
     try:
         result = UniversalRuntimeClient(
             descriptor_path, provider
         ).request("GET", "/api/universal/workshop")
-        assert result["total"] == 300
+        assert asked["limit"] == 50
         assert len(result["entries"]) == 50
         assert result["entries"][0]["sequence"] == 250
         assert result["entries"][-1]["sequence"] == 299
@@ -3397,7 +3405,7 @@ def test_machine_workshop_read_filters_direct_entries_by_graph_relationship(
     )
     monkeypatch.setattr(
         application_server_module,
-        "list_deliberation_entries",
+        "_recent_entries_from_validated_space",
         lambda *_args, **_kwargs: entries,
     )
     try:
@@ -3435,7 +3443,13 @@ def test_machine_workshop_read_filters_direct_entries_by_graph_relationship(
         assert projection_a["total"] == 2
         assert projection_b["total"] == 3
         assert projection_c["total"] == 2
-        assert projection_founder["total"] == 3
+        # The founder alone receives the exact graph-held membership total
+        # (len(space.entry_roots)), not the count of a stubbed tail.
+        assert projection_founder["total"] == len(read_deliberation_space(
+            server.universal_store.snapshot(),
+            server.universal_registry.deliberation_protocol,
+            server.universal_registry.workshop_root,
+        ).entry_roots)
     finally:
         server.close()
 

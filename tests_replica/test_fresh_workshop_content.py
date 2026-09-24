@@ -10,6 +10,7 @@ import pytest
 from nodelang.application_server import ApplicationServer
 from nodelang.cell_secret_keys import MemorySigningKeyProvider
 from nodelang.conversation_content import ApplicationConversationContent, read_content_binding
+from nodelang import commit_intent
 from nodelang import universal_application as app
 from nodelang.universal_cell import InvalidCell
 
@@ -327,10 +328,15 @@ def test_first_boot_http_workshop_send_and_same_binding_after_reopen(tmp_path, m
         assert content_path.is_file()
         assert server.conversation_content._history.instance_id == binding.instance_id
         browser = server._resolve_browser_session(server.browser_session_token)
-        app.set_universal_scope(server.universal_store, registry, registry.map.domains["brain"],
-            authentication_context=browser.context)
-        app.set_universal_scope(server.universal_store, registry, registry.workshop_workbench_root,
-            authentication_context=browser.context)
+        # The court opens the Workshop as the signed-in person would. Since the
+        # commit gate (nodelang/commit_intent.py) a graph revision exists only
+        # for a declared reason; a bare in-process call has none.
+        with commit_intent.declare(commit_intent.USER_ACTION, actor=browser.subject_root,
+                reason="open the Workshop scope"):
+            app.set_universal_scope(server.universal_store, registry, registry.map.domains["brain"],
+                authentication_context=browser.context)
+            app.set_universal_scope(server.universal_store, registry, registry.workshop_workbench_root,
+                authentication_context=browser.context)
         sent = request("/api/universal/workshop", {"root":registry.workshop_root,
             "scope":registry.workshop_workbench_root, "category":"note", "text":"Fresh public Workshop message",
             "refs":[], "evidence":[], "recipients":[browser.subject_root], "reply_to":None,

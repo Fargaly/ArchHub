@@ -224,8 +224,14 @@ def test_a_held_port_says_so_instead_of_exiting_in_silence():
     assert len(said) == 1, "a held port must put a message on the screen"
     message = said[0]
     assert "48611" in message, "the person is never told which port is held"
-    assert "ARCHHUB_TEST_LOCK_PORT" in message, (
-        "the person is never told how to move the port"
+    # 2026-09-23 (7554226): one ArchHub per user state. Moving the lock port
+    # would start a second copy against the same graph, so the person is told
+    # to recover the existing instance instead of how to move the port.
+    assert "tray icon" in message, "the person is never told where the open copy is"
+    assert "Do not change the lock port" in message
+    assert "background instance needs recovery" in message
+    assert "ARCHHUB_TEST_LOCK_PORT" not in message, (
+        "moving the port starts a second copy against the same user data"
     )
     assert answer and "48611" in answer, "the log line must name the port too"
 
@@ -325,23 +331,34 @@ def _free_port() -> int:
     return port
 
 
+# The Brain check moved out of the launcher (326b657, 2026-09-23): the
+# launcher asks nodelang.brain_supervisor_start once per start, and that
+# module only starts the existing supervisor -- it never stops, kills or
+# replaces a Brain, so the old launcher watchdog courts have no subject.
+# The probe courts follow the check to its owner.
+
+def _brain_answers():
+    from nodelang.brain_supervisor_start import brain_answers
+    return brain_answers
+
+
 def test_the_brain_check_rejects_a_listener_that_is_not_the_brain():
-    answers = launcher_function("_brain_answers")
+    answers = _brain_answers()
     stranger = _OneAnswerListener(b'{"status":"ok","service":"something else"}')
     try:
         assert answers(stranger.port, 2.0) is False, (
             "an open port that answers in plain HTTP was taken for the brain; "
-            "ArchHub would hand its memory to a stranger"
+            "ArchHub would treat a stranger as its memory"
         )
     finally:
         stranger.close()
 
 
 def test_the_brain_check_accepts_an_answer_in_mcp():
-    answers = launcher_function("_brain_answers")
+    answers = _brain_answers()
     brain = _OneAnswerListener(
-        b'{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18",'
-        b'"serverInfo":{"name":"personal-brain","version":"1"}}}'
+        b'{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text",'
+        b'"text":"{\\"ok\\": true}"}]}}'
     )
     try:
         assert answers(brain.port, 2.0) is True
@@ -350,141 +367,22 @@ def test_the_brain_check_accepts_an_answer_in_mcp():
 
 
 def test_the_brain_check_says_no_when_nothing_is_listening():
-    answers = launcher_function("_brain_answers")
+    answers = _brain_answers()
     assert answers(_free_port(), 1.0) is False
 
 
-def test_a_busy_brain_is_never_mistaken_for_an_absent_one():
-    """The watchdog started a second brain while the first was merely busy.
-
-    launcher.log, 2026-09-06: "brain : started, not answering yet on :8473
-    (watchdog)" twice in a row. The MCP probe is short by design, and a daemon
-    in the middle of a heavy tool call cannot answer inside it. This stands up
-    a real listener that accepts and never replies, which is exactly what a
-    busy daemon looks like from outside, and requires the probe to leave it be.
-    """
-    import ast as _ast
-    import socket
-
+def test_the_launcher_starts_the_brain_only_through_its_supervisor():
+    """No launcher watchdog stops or replaces a Brain any more."""
     source = LAUNCHER.read_text(encoding="utf-8")
-    tree = _ast.parse(source, str(LAUNCHER))
-    wanted = {"_brain_answers", "_port_held"}
-    body = [node for node in tree.body
-            if isinstance(node, _ast.FunctionDef) and node.name in wanted]
-    assert {node.name for node in body} == wanted, sorted(n.name for n in body)
-    namespace = {}
-    exec(compile(_ast.Module(body=body, type_ignores=[]), str(LAUNCHER), "exec"),
-         namespace)
-
-    listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
-    # A real daemon keeps accepting while it works. A backlog of one would
-    # make the probe's own abandoned connection look like a closed port, which
-    # is the test's artefact and not the behaviour under test.
-    listener.listen(16)
-    port = listener.getsockname()[1]
-    try:
-        assert namespace["_port_held"](port) is True
-        assert namespace["_brain_answers"](port=port, timeout=0.4) is True, (
-            "a listener that accepts and never answers is a BUSY brain")
-    finally:
-        listener.close()
-
-    assert namespace["_port_held"](port) is False
-    assert namespace["_brain_answers"](port=port, timeout=0.4) is False, (
-        "nothing holds the port: start our own brain")
-
-
-def test_a_wedged_brain_is_replaced_rather_than_waited_on_forever():
-    """Busy is alive; wedged is not, and the difference is time and work.
-
-    Treating a held port as proof the brain is there fixed the watchdog
-    starting rivals, and created the opposite failure: a daemon holding :8473
-    and answering nothing left the founder with a dead brain for a whole
-    session. Then the strict probe asked for a GREETING, and on his machine
-    initialize answered in 0.0 s while every tools/call hung, so a brain that
-    could do nothing still passed. The watchdog asks for work now.
-    """
-    import ast as _ast
-    import socket
-
-    source = LAUNCHER.read_text(encoding="utf-8")
-    tree = _ast.parse(source, str(LAUNCHER))
-    namespace = {}
-    exec(compile(_ast.Module(
-        body=[n for n in tree.body if isinstance(n, _ast.FunctionDef)],
-        type_ignores=[]), str(LAUNCHER), "exec"), namespace)
-
-    listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
-    # A real daemon keeps accepting while it works. A backlog of one would make
-    # the probe's own abandoned connection look like a closed port.
-    listener.listen(16)
-    port = listener.getsockname()[1]
-    try:
-        assert namespace["_brain_answers"](port=port, timeout=0.4) is True, (
-            "the boot probe leaves a busy daemon alone")
-        assert namespace["_brain_answers"](port=port, timeout=0.4, strict=True) is False, (
-            "the strict probe reports that the daemon did not speak")
-    finally:
-        listener.close()
-
-    assert namespace["_port_held"](port) is False
-    assert namespace["_brain_answers"](port=port, timeout=0.4) is False, (
-        "nothing holds the port: start our own brain")
-
-    probe = _ast.get_source_segment(source, next(
+    tree = ast.parse(source, str(LAUNCHER))
+    names = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    assert not names & {"_brain_answers", "_port_held", "_watch_brain",
+                        "_replace_a_wedged_brain"}, sorted(names)
+    ensure = ast.get_source_segment(source, next(
         n for n in tree.body
-        if isinstance(n, _ast.FunctionDef) and n.name == "_brain_answers"))
-    assert '"method": "tools/call"' in probe and "brain.health" in probe, (
-        "the strict probe must ask for work, not a greeting")
-    assert "if strict:" in probe.split('"method": "tools/call"')[0]
-
-    watch = _ast.get_source_segment(source, next(
-        n for n in tree.body
-        if isinstance(n, _ast.FunctionDef) and n.name == "_watch_brain"))
-    assert "strict=True" in watch and "_replace_a_wedged_brain" in watch
-    assert "_WEDGED_CHECKS_BEFORE_REPLACING" in watch
-    assert "_WEDGED_CHECKS_BEFORE_REPLACING = 30" in source  # ten minutes at 20s
-    assert "_BRAIN_SETTLING_SECONDS" in watch, (
-        "a brain that just started is doing its first sync, not wedging")
-
-    replace = _ast.get_source_segment(source, next(
-        n for n in tree.body
-        if isinstance(n, _ast.FunctionDef) and n.name == "_replace_a_wedged_brain"))
-    assert "LISTENING" in replace, "only what really serves the port is stopped"
-    assert "taskkill" in replace and "CREATE_NO_WINDOW" in replace
-
-
-def test_the_watchdog_does_not_kill_a_brain_that_is_merely_working():
-    """46 restarts in one hour, because two minutes of silence is not a wedge.
-
-    A brain that has just started pushes the whole store to the cloud, and the
-    write lock that takes makes a health probe time out. The watchdog killed
-    it, the replacement began the same sync, and it killed that one too
-    (launcher.log, 2026-09-06). A young brain is never replaced, and silence
-    has to last ten minutes before it counts.
-    """
-    import ast as _ast
-
-    source = LAUNCHER.read_text(encoding="utf-8")
-    tree = _ast.parse(source, str(LAUNCHER))
-    watch = _ast.get_source_segment(source, next(
-        n for n in tree.body
-        if isinstance(n, _ast.FunctionDef) and n.name == "_watch_brain"))
-
-    wanted = {"_WEDGED_CHECKS_BEFORE_REPLACING", "_BRAIN_SETTLING_SECONDS"}
-    constants = [n for n in tree.body if isinstance(n, _ast.Assign)
-                 and any(isinstance(t, _ast.Name) and t.id in wanted for t in n.targets)]
-    namespace = {}
-    exec(compile(_ast.Module(body=constants, type_ignores=[]), str(LAUNCHER), "exec"), namespace)
-    checks = namespace["_WEDGED_CHECKS_BEFORE_REPLACING"]
-    settling = namespace["_BRAIN_SETTLING_SECONDS"]
-    assert checks * 20 >= 300, "silence must last minutes, not seconds: %ss" % (checks * 20)
-    assert settling >= 300, "a young brain is doing its first sync: %ss" % settling
-    assert "not young" in watch, "the age guard must gate the kill"
-    assert "started_watching = _clock.monotonic()" in watch.split("not young")[1], (
-        "a replacement restarts the grace period, or the loop kills again at once")
+        if isinstance(n, ast.FunctionDef) and n.name == "_ensure_brain"))
+    assert "ensure_brain_supervisor" in ensure
+    assert "taskkill" not in ensure
 
 
 def test_the_tray_click_uses_the_windows_foreground_dance():
@@ -531,7 +429,9 @@ def test_a_machine_without_python_is_given_python_not_a_lecture():
     assert "https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe" in iss
     assert re.search(r"PythonSha256 = '[0-9a-f]{64}'", iss), "the download is pinned"
     assert "CreateDownloadPage(" in iss and "PythonPage.Download" in iss
-    assert "/quiet InstallAllUsers=0 PrependPath=0 Include_launcher=0" in iss
+    # /norestart keeps the CPython bootstrapper from rebooting mid-setup; the
+    # outer Inno restart controls do not reach it (installer/ArchHub.iss).
+    assert "/quiet /norestart InstallAllUsers=0 PrependPath=0 Include_launcher=0" in iss
     assert "PythonWanted := not PythonPresent()" in iss
     assert "Result := InstallPython()" in iss
     assert "tick \"Add python.exe to PATH\"" not in iss, "no lecture as the only path"

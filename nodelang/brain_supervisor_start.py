@@ -46,7 +46,10 @@ def brain_answers(port: int = BRAIN_PORT, timeout: float = 3.0) -> bool:
             body = response.read(8192).decode("utf-8", "replace")
     except (urllib.error.URLError, OSError, ValueError):
         return False
-    return not ('"error"' in body and '"result"' not in body)
+    # Only a JSON-RPC result is the Brain answering. Any other 200 on this
+    # port (a stranger's plain HTTP) is not the Brain and must not suppress
+    # starting its supervisor.
+    return '"jsonrpc"' in body and '"result"' in body
 
 
 def brain_directory(local_appdata: str | os.PathLike | None = None) -> Path:

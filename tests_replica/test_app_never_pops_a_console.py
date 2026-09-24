@@ -37,6 +37,28 @@ def test_every_spawn_in_the_shipped_app_hides_its_console():
 
 
 def test_tasklist_probe_is_silent():
+    """The host probe no longer spawns tasklist at all: it reads a Toolhelp32
+    process snapshot in-process, so there is no child that could open a console."""
+    import inspect
+
+    from nodelang import host_brokers
+
+    running = inspect.getsource(host_brokers._running)
+    assert "_windows_process_names()" in running
+    snapshot = inspect.getsource(host_brokers._windows_process_names)
+    assert "CreateToolhelp32Snapshot" in snapshot
     src = (ROOT / "nodelang" / "host_brokers.py").read_text(encoding="utf-8")
-    assert "_NO_WINDOW = getattr(subprocess, \"CREATE_NO_WINDOW\", 0)" in src
-    assert 'stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW' in src
+    assert "tasklist" not in src.lower()
+
+
+def test_process_presence_probe_does_not_spawn(monkeypatch):
+    from types import SimpleNamespace
+    from nodelang import host_brokers as hosts
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Process observation spawned a child")
+    monkeypatch.setattr(hosts, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(hosts.subprocess, "run", forbidden)
+    monkeypatch.setattr(hosts.subprocess, "Popen", forbidden)
+    monkeypatch.setattr(hosts, "_windows_process_names", lambda: frozenset({"rhino.exe"}))
+    assert hosts._running(("RHINO.EXE",))
+    assert not hosts._running(("Rhino",))

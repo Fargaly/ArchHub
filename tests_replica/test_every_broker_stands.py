@@ -14,12 +14,24 @@ EXPECTED = {"revit", "autocad", "speckle", "max", "rhino", "blender", "excel", "
             "illustrator", "indesign", "teams", "lmstudio", "antigravity", "procore"}
 
 
+# Host and key states, plus the exact results the shipped checks report
+# rather than a flattened guess: the Microsoft Graph prerequisite check
+# (nodelang/outlook_graph.ps1 "prerequisites"; outlook_graph.py transport
+# failures) and the IMAP row that needs its own sign-in. The Graph row's
+# state is pinned to the check's own answer by tests/test_graph_prerequisites.py.
+TRUTHFUL_STATES = frozenset({
+    "connected", "listening", "running", "installed", "needs-key", "absent", "reachable",
+    "prerequisites-ready", "dependency-missing", "unavailable", "timeout", "unsupported",
+    "needs-sign-in",
+})
+
+
 def test_the_catalogue_names_every_program_with_a_truthful_state():
     rows = {r["id"]: r for r in probe_connectors()}
     missing = EXPECTED - set(rows)
     assert not missing, missing
     for row in rows.values():
-        assert row["state"] in {"connected", "listening", "running", "installed", "needs-key", "absent", "reachable"}, row
+        assert row["state"] in TRUTHFUL_STATES, row
         assert row["detail"], row
 
 

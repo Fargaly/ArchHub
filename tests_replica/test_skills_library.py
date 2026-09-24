@@ -21,7 +21,13 @@ def test_catalogue_reads_the_shipped_library_when_home_has_none(tmp_path, monkey
     assert desc == "Forces the laziest solution that works.", "a folded YAML description is joined, not a lone >"
 
 
-def test_installer_ships_both_skill_folders():
+def test_installer_ships_no_builder_home_skills():
+    # installer/build_release.ps1: "No installed state, builder-home skills,
+    # PyInstaller runtime, or implicit sibling checkout enters this package."
+    # The builder's ~/.claude and ~/.codex skill folders are private to that
+    # machine (AGENTS.md hard rule 7); the catalogue still reads a shipped
+    # {app}/skills library when one is packaged from governed source.
     iss = (Path(engines.__file__).resolve().parents[1] / "installer" / "ArchHub.iss").read_text(encoding="utf-8")
-    assert '.claude\skills\*"; DestDir: "{app}\skills\claude"' in iss
-    assert '.codex\skills\*"; DestDir: "{app}\skills\codex"' in iss
+    assert r'.claude\skills' not in iss
+    assert r'.codex\skills' not in iss
+    assert 'GetEnv("USERPROFILE")' not in iss

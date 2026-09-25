@@ -203,22 +203,9 @@ function AtlasCockpit() {
     // absent application must be visible (audit, 2026-09-07).
     let data = live ? mergeLive(live, saved && saved.M)
       : { domains: [], nodes: [], wires: [], w: 2448, h: 2348 };
-    // Attention is a real seed NODE (importance is a node, not a hardcoded rule) and it is
-    // WIRED. This is a safety-net only — re-mints the node and/or its wires for any saved
-    // state that predates them, so stale localStorage never shows Attention floating loose.
-    if (!data.nodes.some(n => n.cat === 'attention')) {
-      const d = data.domains.find(x => x.key === 'cockpit') || data.domains[0];
-      if (d) data = { ...data, nodes: [...data.nodes, { id: 'sys_attention', dom: d.key, cat: 'attention', title: 'Attention', sub: 'ranks what needs the founder now — importance is a node, not a hardcoded rule (its params are the weights)', status: 'live', params: [{ k: 'weight.blocked', v: '3' }, { k: 'weight.gap', v: '2' }, { k: 'weight.agent', v: '1' }, { k: 'gap.threshold', v: '4' }], evidence_ref: 'self:right-panel/activity', x: d.x + 320, y: d.y + 72 }] };
-    }
-    if (data.nodes.some(n => n.id === 'sys_attention') && !data.wires.some(w => w.a === 'sys_attention' || w.b === 'sys_attention')) {
-      const has = (id) => data.nodes.some(n => n.id === id);
-      const inbound = [['cockpit_agent_loop', 'agent activity → weight.agent'], ['cockpit_live_metrics', 'metric gaps → weight.gap'], ['cockpit_audit_log', 'recent events to rank'], ['connectors_self_heal', 'heal/blocked signals → weight.blocked'], ['connectors_health_daemon', 'fleet health → blocked signal'], ['brain_daemon', 'brain activity to surface']];
-      const outbound = [['cockpit_command_bar', 'ranked "what matters now" surfaces here'], ['cockpit_gate', 'high-rank items gate the founder view']];
-      const add = [];
-      inbound.forEach(([s, why]) => { if (has(s)) add.push({ a: s, b: 'sys_attention', why, dom: 'cockpit' }); });
-      outbound.forEach(([t, why]) => { if (has(t)) add.push({ a: 'sys_attention', b: t, why, dom: 'cockpit' }); });
-      if (add.length) data = { ...data, wires: [...data.wires, ...add] };
-    }
+    // The map draws the graph's nodes and wires only. An Attention node and its wires used
+    // to be minted here when the push lacked them: a node the graph does not hold. Ranking
+    // reads an Attention node's weights when the graph has one, else its defaults.
     // The layout grid is structural, not user data: adopt it from the seed if a saved state
     // predates it, so domain drags snap and the off-cell test works on existing layouts.
     if (!data.grid && window.ATLAS_MAP && window.ATLAS_MAP.grid) data = { ...data, grid: window.ATLAS_MAP.grid };
@@ -531,11 +518,10 @@ function AtlasCockpit() {
     if (!node.engine) { flash(node.title + ' has no engine — there is nothing to re-run.'); return; }
     flash('Re-running ' + node.title + ' in ArchHub (variant of run #' + fromRun.n + ')');
     runNode(id); };
+  // A watcher is a graph node placed in ArchHub (Watch cards), not a map-only card.
   const addWatcher = (id) => {
     const node = M.nodes.find(n => n.id === id); if (!node) return;
-    const wid = 'watch_' + Date.now().toString(36);
-    setM(m => ({ ...m, nodes: [...m.nodes, { id: wid, dom: node.dom, cat: 'watch', title: 'Watch · ' + node.title.slice(0, 14), sub: 'live result of ' + node.title, status: 'live', params: [], evidence_ref: '', x: node.x + 180, y: node.y + 30 }], wires: [...m.wires, { a: id, b: wid, why: 'streams its latest result to this watcher', kind: 'data' }] }));
-    flash('Watcher added → wired'); setSel({ domain: null, nodes: new Set([wid]) });
+    flash('Place a Watch card after ' + node.title + ' in ArchHub Studio; the map shows it once the graph holds it.');
   };
   const patchDomain = (key, patch) => setM(m => ({ ...m, domains: m.domains.map(d => d.key === key ? { ...d, ...patch } : d) }));
   const moveNode = (id, x, y) => setM(m => ({ ...m, nodes: m.nodes.map(n => n.id === id ? { ...n, x, y } : n) }));
@@ -573,27 +559,15 @@ function AtlasCockpit() {
   const delNodes = (ids) => { const s = new Set(ids); setM(m => ({ ...m, nodes: m.nodes.filter(n => !s.has(n.id)), wires: m.wires.filter(w => !s.has(w.a) && !s.has(w.b)) })); clearSel(); flash(`Deleted ${ids.length} node${ids.length > 1 ? 's' : ''} from this view — your app's graph is unchanged`); };
   const requestDelete = (ids) => { if (ids.length) setConfirmDel({ ids }); };
   // ── graph logic: wire / unwire / freeze / duplicate, via ports + right-click ──
+  // Wires are graph relations drawn in ArchHub Studio (/api/universal/connect on its
+  // sockets). The map used to add a local wire, or an invented Adapter node, that no
+  // graph held; it adds neither now and says where the wire is made.
   const connectNodes = (a, b) => {
     if (a === b) return;
     const na = M.nodes.find(n => n.id === a), nb = M.nodes.find(n => n.id === b);
     if (!na || !nb) return;
     if (M.wires.some(w => w.a === a && w.b === b)) { flash('Already wired'); return; }
-    const ta = window.typeOf ? window.typeOf(na) : 'any';
-    const tb = window.typeOf ? window.typeOf(nb) : 'any';
-    const ok = window.archCanConnect ? window.archCanConnect(ta, tb) : true;
-    if (ok) {
-      setM(m => ({ ...m, wires: [...m.wires, { a, b, why: `carries ${ta}`, kind: 'flow', t: ta }] }));
-      flash(ta === tb ? `Wired · ${ta}` : `Wired · ${ta} → ${tb} (any bridges)`);
-    } else {
-      // types differ — the app grammar inserts an ADAPTER that translates ta → tb
-      const id = 'adp_' + Date.now().toString(36);
-      const mx = Math.round((na.x + nb.x) / 2), my = Math.round((na.y + nb.y) / 2);
-      setM(m => ({ ...m,
-        nodes: [...m.nodes, { id, dom: na.dom, cat: 'adapter', title: `${ta} ⇄ ${tb}`, sub: 'type translation', status: 'live', params: [{ k: 'from', v: ta }, { k: 'to', v: tb }, { k: 'on_fail', v: 'coerce' }], evidence_ref: '', x: mx, y: my }],
-        wires: [...m.wires, { a, b: id, why: `emits ${ta}`, kind: 'flow', t: ta }, { a: id, b, why: `translated to ${tb}`, kind: 'flow', t: tb }] }));
-      setSel({ domain: null, nodes: new Set([id]) });
-      flash(`✗ ${ta} → ${tb} can't connect — inserted Adapter`);
-    }
+    flash('Wire ' + na.title + ' to ' + nb.title + ' in ArchHub Studio; the map shows only the wires the graph holds.');
   };
   const disconnectWire = (a, b) => { setM(m => ({ ...m, wires: m.wires.filter(w => !(w.a === a && w.b === b) && !(w.a === b && w.b === a)) })); flash('Wire cut in this view'); };
   const disconnectAll = (id) => { setM(m => ({ ...m, wires: m.wires.filter(w => w.a !== id && w.b !== id) })); flash('Disconnected all wires in this view'); };
@@ -848,7 +822,7 @@ function AtlasCockpit() {
 
   // ── attention layer: what matters now ──
   const gotoAttention = (it) => { if (it.nodeId) inspectNode(it.nodeId); else { focusDomain(it.dom); pickDomain(it.dom); } };
-  const tuneAttention = () => { const a = M.nodes.find(n => n.cat === 'attention'); if (a) inspectNode(a.id); };
+  const tuneAttention = () => { const a = M.nodes.find(n => n.cat === 'attention'); if (a) inspectNode(a.id); else flash('The graph holds no Attention node; ranking uses its default weights.'); };
 
   // ── INSPECT panel (left, selection-aware) ──
   let inspectPanel;

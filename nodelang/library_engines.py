@@ -317,10 +317,10 @@ def sort_by(params: Mapping[str, object], feeds: Mapping[str, object]):
 # ------------------------------------------------------------- logic --
 
 def branch_if(params: Mapping[str, object], feeds: Mapping[str, object]):
-    """if: the wired value passes only when the predicate holds.
+    """if: the wired value leaves on ``out`` when the predicate holds and on
+    ``false`` when it does not -- one side only, never both.
 
-    A wire carries one output, so the false branch is an empty answer whose
-    card says which way the test went, never a value on both sides.
+    A wired ``condition`` decides before the card's own rule does.
     """
     value = _wired(feeds, "in", "value")
     if value is None:
@@ -338,7 +338,7 @@ def branch_if(params: Mapping[str, object], feeds: Mapping[str, object]):
         "control.if", {}, {"value": value, "condition": condition})
     if "true" in produced:
         return {"out": produced["true"]}, "true"
-    return {}, "false - nothing passed"
+    return {"false": produced["false"]}, "false - value left on the false branch"
 
 
 def branch_switch(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -350,9 +350,12 @@ def branch_switch(params: Mapping[str, object], feeds: Mapping[str, object]):
     if key is None:
         key = _text(params, "key", "a") or "a"
     produced, shown = run_stem_operation(
-        "control.switch", {}, {"value": value, "key": key})
+        "control.switch", {"cases": _text(params, "cases", "a, b, c") or "a, b, c"},
+        {"value": value, "key": key})
     taken = next(iter(produced))
-    return {"out": produced[taken]}, "branch %s" % (shown or taken)
+    # ``out`` always carries the routed value; the named branch carries it
+    # too, so a wire from a, b or c fires only when that case is taken.
+    return {"out": produced[taken], taken: produced[taken]}, "branch %s" % (shown or taken)
 
 
 def loop(params: Mapping[str, object], feeds: Mapping[str, object]):
@@ -365,8 +368,10 @@ def loop(params: Mapping[str, object], feeds: Mapping[str, object]):
 
 
 def merge(params: Mapping[str, object], feeds: Mapping[str, object]):
-    """merge: concat the wired streams, and dedupe them when asked."""
+    """merge: concat the streams wired to ``in`` and ``b``; dedupe when asked."""
     rows = _rows(feeds)
+    second = feeds.get("b")
+    rows = rows + ([] if second is None else as_list(second))
     if not rows:
         return {"out": []}, _EMPTY_LIST
     joined = []
@@ -578,7 +583,7 @@ LIBRARY_ITEM_ENGINES = {
     "t_sort": {"engine": "library.sort_by",
                "params": {"by": "", "direction": "asc"}},
     "l_if": {"engine": "library.if", "params": {"rule": ""}},
-    "l_switch": {"engine": "library.switch", "params": {"key": "a"}},
+    "l_switch": {"engine": "library.switch", "params": {"key": "a", "cases": "a, b, c"}},
     "l_loop": {"engine": "library.loop", "params": {}},
     "l_merge": {"engine": "library.merge", "params": {"mode": "concat"}},
     "a_text": {"engine": "library.add_text",
@@ -1219,9 +1224,264 @@ LIBRARY_ITEM_ENGINES["o_term"] = {"engine": "library.terminal",
                                   "params": {"cwd": "", "command": ""}}
 LIBRARY_ITEMS_WITHOUT_ENGINE.pop("o_term", None)
 
+# The sockets an engine card is placed with. Every card has ``out`` and
+# ``in``; a logic card's other branches are real, named sockets on the graph
+# (universal_pipeline._ensure_pipeline_node_interfaces mints them), so what
+# the library says a card does is what can be wired to it.
+ENGINE_SOCKETS = {
+    "library.if": {"source": ("out", "false"), "target": ("in", "condition")},
+    "library.switch": {"source": ("out", "a", "b", "c"), "target": ("in", "key")},
+    "library.loop": {"source": ("out", "each"), "target": ("in",)},
+    "library.merge": {"source": ("out",), "target": ("in", "b")},
+}
+
+
+def engine_sockets(engine: str) -> dict:
+    """{"source": names, "target": names} for one engine card."""
+    held = ENGINE_SOCKETS.get(str(engine or "").strip()) or {}
+    return {
+        "source": tuple(held.get("source") or ("out",)),
+        "target": tuple(held.get("target") or ("in",)),
+    }
+
+
+# -------------------------------------------------- the base AI and Skill --
+# The base catalogue's AI and Skill stems (ai.master, skill.wrap) answered
+# "engine ... is pending" on every Run. They are the same model route, skill
+# matcher, brain recall and skill reader the library cards already use.
+
+def ai_master(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """AI: one model card with an action picker, over the wired context."""
+    action = _text(params, "action", "think") or "think"
+    context = feeds.get("context")
+    shared = {} if context is None else {"in": context}
+    prompt = _text(params, "prompt")
+    if action in ("think", "converse"):
+        outputs, shown = think(params, shared)
+    elif action == "vision":
+        outputs, shown = vision(params, shared)
+    elif action == "match":
+        outputs, shown = match_skill(dict(params, intent=prompt), shared)
+    elif action == "embed":
+        outputs, shown = embed(dict(params, query=prompt), shared)
+    else:
+        raise ValueError(
+            "action %r is not one of converse, think, vision, match, embed" % action)
+    return {"response": outputs.get("out"), "intent": prompt}, "%s: %s" % (action, shown)
+
+
+def skill_wrap(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Skill: the saved skill this card names, as its instructions text."""
+    from .pipeline_engines import skill_read
+    name = _text(params, "name")
+    if not name:
+        raise ValueError("set the name parameter to a saved skill")
+    outputs, shown = skill_read({"skill": name}, {})
+    return {"result": outputs["out"]}, shown
+
+
+STEM_EFFECT_ENGINES = {"ai.master": ai_master, "skill.wrap": skill_wrap}
+
+# Library engines that compute over the wired stream alone: no host, no
+# network, no model, no file, no shell. The clean shell (which carries no host
+# adapter) runs only these and the owner-gated STEM_EFFECT_ENGINES.
+PURE_LIBRARY_ENGINES = frozenset({
+    "library.filter_field", "library.filter_compare", "library.filter_rule",
+    "library.set_field", "library.move", "library.rotate", "library.scale",
+    "library.group_by", "library.sort_by", "library.if", "library.switch",
+    "library.loop", "library.merge", "library.add_text", "library.dimensions",
+    "library.build_schedule", "library.make_legend",
+})
+MODEL_PICK_ENGINES = MODEL_PICK_ENGINES | {"ai.master"}
+
+
+# ------------------------------------------------------ one node library --
+# The hosts and reads the library offers, with the engines and parameters
+# they are placed with. Studio used to type these (and every card title) in
+# its own copy (node-registry.jsx AH_LIBRARY); it is served from here now.
+LIBRARY_ITEM_ENGINES.update({
+    "h_revit": {"engine": "revit.sessions", "params": {}},
+    "h_autocad": {"engine": "cad.host_lines", "params": {}},
+    "h_max": {"engine": "max.exec", "params": {"code": ""}},
+    "h_rhino": {"engine": "rhino.exec", "params": {"code": ""}},
+    "h_blender": {"engine": "blender.exec", "params": {"code": ""}},
+    "h_excel": {"engine": "office.read", "params": {"operation": "excel.list_workbooks"}},
+    "h_word": {"engine": "office.read", "params": {"operation": "word.list_documents"}},
+    "h_ppt": {"engine": "office.read", "params": {"operation": "powerpoint.list_presentations"}},
+    "h_outlook": {"engine": "outlook.inbox", "params": {"count": "20"}},
+    "h_notion": {"engine": "notion.search", "params": {"query": ""}},
+    "h_dropbox": {"engine": "dropbox.list", "params": {"path": ""}},
+    "h_speckle": {"engine": "library.push_speckle",
+                  "params": dict(LIBRARY_ITEM_ENGINES["o_spk"]["params"])},
+    "r_walls": {"engine": "revit.read", "params": {"operation": "revit.list_walls"}},
+    "r_doors": {"engine": "revit.read", "params": {"operation": "revit.list_doors"}},
+    "r_windows": {"engine": "revit.read", "params": {"operation": "revit.list_windows"}},
+    "r_sheets": {"engine": "revit.read", "params": {"operation": "revit.list_sheets"}},
+    "r_views": {"engine": "revit.read", "params": {"operation": "revit.list_views"}},
+    "r_levels": {"engine": "revit.read", "params": {"operation": "revit.list_levels"}},
+    "r_selection": {"engine": "revit.read", "params": {"operation": "revit.get_selection"}},
+    "r_warnings": {"engine": "revit.read", "params": {"operation": "revit.list_warnings"}},
+    "r_xl_sheets": {"engine": "office.read", "params": {"operation": "excel.list_worksheets"}},
+    "r_doc_paras": {"engine": "office.read", "params": {"operation": "word.list_paragraphs"}},
+    "r_ppt_slides": {"engine": "office.read", "params": {"operation": "powerpoint.list_slides"}},
+})
+
+# How each card is listed: category, then (item, title, one-line summary).
+LIBRARY_PRESENTATION = (
+    ("host", (
+        ("h_revit", "Revit", "live sessions on this machine"),
+        ("h_autocad", "AutoCAD", "line work from the live drawing"),
+        ("h_max", "3ds Max", "MAXScript / Python in the open scene"),
+        ("h_rhino", "Rhino", "RhinoPython in the open model"),
+        ("h_blender", "Blender", "Python in the open scene"),
+        ("h_excel", "Excel", "open workbooks and their sheets"),
+        ("h_word", "Word", "open documents and their paragraphs"),
+        ("h_ppt", "PowerPoint", "open decks and their slides"),
+        ("h_outlook", "Outlook", "the inbox, newest first"),
+        ("h_notion", "Notion", "search your workspace"),
+        ("h_dropbox", "Dropbox", "files in your Dropbox folder"),
+        ("h_speckle", "Speckle", "commit the wired rows to a branch"),
+    )),
+    ("read", (
+        ("r_walls", "list_walls", "pull walls from active view"),
+        ("r_doors", "list_doors", "pull doors + swings + marks"),
+        ("r_windows", "list_windows", "pull windows + types"),
+        ("r_sheets", "list_sheets", "enumerate sheets in set"),
+        ("r_views", "list_views", "plans, sections, schedules"),
+        ("r_levels", "list_levels", "levels + elevations"),
+        ("r_selection", "get_selection", "whatever is selected in host"),
+        ("r_warnings", "list_warnings", "host warnings \u00b7 by severity"),
+        ("r_xl_sheets", "excel worksheets", "sheets of the workbook in front"),
+        ("r_doc_paras", "word paragraphs", "paragraphs of the document in front"),
+        ("r_ppt_slides", "powerpoint slides", "slides of the deck in front"),
+    )),
+    ("filter", (
+        ("f_type", "where type", "by family/type"),
+        ("f_cat", "where category", "by Revit category"),
+        ("f_level", "where level", "by level reference"),
+        ("f_param", "where parameter", "predicate on a parameter"),
+        ("f_pred", "where custom", "a comparison rule, e.g. item.height >= 3000"),
+    )),
+    ("transform", (
+        ("t_setp", "set parameter", "sets a field on the stream"),
+        ("t_move", "move", "translation"),
+        ("t_rot", "rotate", "rotation"),
+        ("t_scale", "scale", "uniform"),
+        ("t_group", "group by", "key \u2192 list"),
+        ("t_sort", "sort by", "asc / desc on key"),
+    )),
+    ("annotate", (
+        ("a_dims", "create_dimensions", "aligned, parallel, baseline"),
+        ("a_tags", "place_tags", "tag every untagged element of a category"),
+        ("a_text", "add_text", "text note \u00b7 positioned"),
+        ("a_rooms", "tag_rooms", "tag every untagged room in the view"),
+    )),
+    ("compose", (
+        ("c_sched", "build_schedule", "table from a stream"),
+        ("c_sheet", "place_on_sheet", "named views onto a sheet"),
+        ("c_legend", "make_legend", "symbol legend block"),
+    )),
+    ("logic", (
+        ("l_if", "if", "rule \u2192 out (true) / false branches"),
+        ("l_switch", "switch", "key \u2192 branch a / b / c by its cases"),
+        ("l_loop", "loop", "iterate a list: each (first) and out (all)"),
+        ("l_merge", "merge", "concat / dedupe streams in + b"),
+    )),
+    ("ai", (
+        ("i_think", "think", "reason with the picked model"),
+        ("i_vis", "vision", "read a sketch / screenshot with the picked model"),
+        ("i_match", "match_skill", "best saved skill for an intent"),
+        ("i_embed", "embed", "similar facts from the brain"),
+    )),
+    ("workshop", (
+        ("w_workshop", "Workshop", "this conversation; routes wired agents into it"),
+        ("w_agent", "Agent session", "one live native session through Session Link"),
+        ("w_review", "Independent review", "a different agent reviews the wired artifact"),
+    )),
+    ("output", (
+        ("o_skill", "save_skill", "template this run"),
+        ("o_pdf", "publish_pdf", "sheets \u2192 PDF files via the live Revit"),
+        ("o_spk", "push_speckle", "commit the wired rows to a branch"),
+        ("o_email", "draft_email", "draft in Outlook \u00b7 you send"),
+        ("o_notify", "notify", "desktop notification"),
+        # The terminal card (library.terminal; terminal_sessions binds it).
+        ("o_term", "terminal", "a shell in a folder this ArchHub admits"),
+    )),
+)
+
+
+def library_catalogue() -> list:
+    """The node library Studio draws: every card, its engine and defaults.
+
+    One source: item ids, engines and parameters are LIBRARY_ITEM_ENGINES. A
+    card with no engine entry is not listed; one whose engine is not in the
+    Run table is marked noEngine, never silently dropped. Every
+    LIBRARY_ITEM_ENGINES card must have a presentation row (court).
+    """
+    from .pipeline_engines import PIPELINE_ENGINES
+    groups = []
+    for category, rows in LIBRARY_PRESENTATION:
+        items = []
+        for item, title, summary in rows:
+            wiring = LIBRARY_ITEM_ENGINES.get(item)
+            if wiring is None:
+                continue  # a card this build does not carry is not listed
+            entry = {
+                "id": item, "cat": category, "title": title, "sub": summary,
+                "engine": wiring["engine"], "params": dict(wiring["params"]),
+                "sockets": {
+                    side: list(names)
+                    for side, names in engine_sockets(wiring["engine"]).items()
+                },
+            }
+            reason = LIBRARY_ITEMS_WITHOUT_ENGINE.get(item)
+            if wiring["engine"] not in PIPELINE_ENGINES or reason:
+                entry["noEngine"] = True
+                entry["reason"] = reason or "engine %s is not in this build" % wiring["engine"]
+            items.append(entry)
+        groups.append({"cat": category, "items": items})
+    return groups
+
+
+def engine_categories(groups=None) -> dict:
+    """engine -> the category its card is drawn in, for every engine this build runs.
+
+    A library card's category is its own; an engine no card lists (the seed's
+    sketch, CAD, watch, walls, brain and BABOOM cards) is placed by its family.
+    """
+    from .pipeline_engines import PIPELINE_ENGINES
+    held = {}
+    if groups is not None:
+        # The served library (graph relations) decides a card's category.
+        for group in groups:
+            for entry in group.get("items") or ():
+                held.setdefault(entry["engine"], group["cat"])
+    else:
+        for category, rows in LIBRARY_PRESENTATION:
+            for item, _title, _summary in rows:
+                if item in LIBRARY_ITEM_ENGINES:
+                    held.setdefault(LIBRARY_ITEM_ENGINES[item]["engine"], category)
+    families = (
+        (("vision.", "cad."), "read"), (("lines.",), "annotate"),
+        (("revit.",), "host"), (("brain.", "ai.", "baboom."), "ai"),
+    )
+    for engine in sorted(set(PIPELINE_ENGINES) | {"baboom.status", "baboom.presence"}):
+        if engine in held:
+            continue
+        held[engine] = next(
+            (category for prefixes, category in families if engine.startswith(prefixes)),
+            "logic")
+    return held
+
+
 __all__ = [
     "LIBRARY_ENGINES",
     "set_notify_surface",
+    "engine_categories",
     "LIBRARY_ITEM_ENGINES",
     "LIBRARY_ITEMS_WITHOUT_ENGINE",
+    "ENGINE_SOCKETS",
+    "STEM_EFFECT_ENGINES",
+    "engine_sockets",
+    "library_catalogue",
 ]

@@ -85,6 +85,31 @@ def _owner_properties(snapshot, registry):
     return owned
 
 
+def runtime_presence_state(store, registry, *, now: float | None = None) -> dict:
+    """Which signed runtimes hold a live presence lease on this graph.
+
+    The one presence source: the BABOOM Presence card and every BABOOM
+    presence route (application_server._machine_agent_runtime_presence)
+    read this. Leases live in the graph's presence registry and its
+    indexed lease storage; a graph with no presence protocol has none.
+    """
+    import time as _time
+
+    from .cell_runtime_presence import list_active_runtime_presences
+
+    protocol = getattr(registry, "runtime_presence_protocol", None)
+    live = () if protocol is None else list_active_runtime_presences(
+        store.snapshot(), protocol, now=_time.time() if now is None else now
+    )
+    runtimes = sorted({presence.runtime for presence in live})
+    return {
+        "active_runtime_sessions": len(live),
+        "baboom_connected": "baboom" in runtimes,
+        "baboom_action_capability_active": "baboom-execution" in runtimes,
+        "runtimes": runtimes,
+    }
+
+
 def _graph_engines(store, registry):
     """Effect engines whose truth IS the graph this server serves."""
 
@@ -124,36 +149,20 @@ def _graph_engines(store, registry):
     def baboom_presence(params, feeds):
         """Whether a signed BABOOM runtime is attached to THIS graph.
 
-        The presence leases are graph cells, so this answers from the same
-        truth the HTTP route reports and needs no server object -- which is
-        why the boot run can answer it. The route-local copy of this engine
-        (application_server.py, /api/universal/run-graph) is now redundant:
-        without one here the card read "engine baboom.presence is pending"
-        from every boot until the founder clicked Run.
+        One source: runtime_presence_state, the same answer the BABOOM
+        presence, context and native-frame routes read. It needs no server
+        object, which is why the boot run can answer it.
         """
-        import time as _time
-
-        from .cell_runtime_presence import list_active_runtime_presences
-
         protocol = getattr(registry, "runtime_presence_protocol", None)
         if protocol is None:
             raise ValueError("this graph holds no runtime-presence protocol")
-        live = list_active_runtime_presences(
-            store.snapshot(), protocol, now=_time.time()
-        )
-        runtimes = sorted({presence.runtime for presence in live})
-        attached = "baboom" in runtimes
-        state = {
-            "active_runtime_sessions": len(live),
-            "baboom_connected": attached,
-            "baboom_action_capability_active": "baboom-execution" in runtimes,
-            "runtimes": runtimes,
-        }
+        state = runtime_presence_state(store, registry)
+        runtimes = state["runtimes"]
         return (
             {"out": state},
             "companion %s · %d signed runtime session(s)%s" % (
-                "ATTACHED" if attached else "not attached",
-                len(live),
+                "ATTACHED" if state["baboom_connected"] else "not attached",
+                state["active_runtime_sessions"],
                 "" if not runtimes else " (%s)" % ", ".join(runtimes),
             ),
         )
@@ -229,20 +238,63 @@ def _pipeline_port_name(node, interface_root, side, wire_root):
     return name
 
 
-def _pipeline_wire_enabled(wire):
+def _pipeline_wire_rows(wire):
+    """The rows the evaluator applies to one wire, or None when it is muted.
+
+    enabled, tree, condition and on_fail are carried by the evaluator
+    (stem_graph_evaluation._carry). Rows an older build persisted and this
+    one does not apply (lacing, throttle_ms, on_fail "pass last") refuse the
+    run when they ask for anything but their default, instead of being
+    silently ignored.
+    """
     parameters = {row["label"]: str(row.get("value", ""))
                   for row in wire.get("params", ()) if row.get("label")}
     enabled = parameters.get("enabled", "true").strip().lower()
     if enabled not in ("true", "false"):
         raise InvalidCell("wire %s has an invalid enabled value" % wire["id"])
     if enabled == "false":
-        return False
-    # These inspector settings are persisted but have no released evaluator
-    # binding yet. Refuse a requested behavior instead of silently ignoring it.
-    for name, default in _WIRE_PARAMETERS:
-        if name != "enabled" and parameters.get(name, default) != default:
+        return None
+    for name, default in _HIDDEN_WIRE_PARAMETERS:
+        if parameters.get(name, default).strip() != default:
             raise InvalidCell("wire %s requests unsupported %s behavior" % (wire["id"], name))
-    return True
+    defaults = dict(_WIRE_PARAMETERS)
+    rows = {
+        name: parameters.get(name, defaults[name]).strip()
+        for name in ("tree", "condition", "on_fail")
+    }
+    if rows["tree"] not in _WIRE_CHOICES["tree"]:
+        raise InvalidCell("wire %s requests unsupported tree behavior" % wire["id"])
+    if rows["on_fail"] not in _WIRE_CHOICES["on_fail"]:
+        raise InvalidCell("wire %s requests unsupported on_fail behavior" % wire["id"])
+    return rows
+
+
+def _rules_engine(node) -> str:
+    """The engine a node's definition declares in its rules, when it has one.
+
+    A rule row may hold the engine as JSON ({"engine": "shape.count"}) or as
+    ``engine: shape.count`` / ``engine=shape.count``.
+    """
+    import json as _json
+
+    assembly = node.get("assembly") if isinstance(node, Mapping) else None
+    for row in (assembly or {}).get("rules") or ():
+        text = str((row or {}).get("value") or "").strip()
+        if not text:
+            continue
+        if text.startswith("{"):
+            try:
+                held = _json.loads(text)
+            except ValueError:
+                continue
+            if isinstance(held, Mapping) and str(held.get("engine") or "").strip():
+                return str(held["engine"]).strip()
+            continue
+        for separator in (":", "="):
+            name, found, value = text.partition(separator)
+            if found and name.strip() == "engine" and value.strip():
+                return value.strip()
+    return ""
 
 
 def _composer_pick(snapshot, registry) -> str:
@@ -326,9 +378,14 @@ def _pipeline_plan(store, registry, authentication_context, only_roots):
     from .library_engines import MODEL_PICK_ENGINES
     picked: list[str] = []
     stem_nodes = []
+    projected_nodes = {str(node["id"]): node for node in projection.get("nodes", ())}
     for root in node_ids:
         rows = owned.get(root) or {}
-        engine = (rows.get("engine") or ("", ""))[1].strip()
+        # A graph-held engine row wins; a node placed from a definition that
+        # declares rules.engine runs that engine without one.
+        engine = (rows.get("engine") or ("", ""))[1].strip() or _rules_engine(
+            projected_nodes.get(root)
+        )
         if not engine:
             continue
         parameters = {
@@ -346,17 +403,18 @@ def _pipeline_plan(store, registry, authentication_context, only_roots):
                 parameters["model"] = picked[0]
         stem_nodes.append(StemNode(root, engine, parameters))
     engine_roots = {node.root_id for node in stem_nodes}
-    projected_nodes = {str(node["id"]): node for node in projection.get("nodes", ())}
     stem_wires = []
     for wire in projection.get("wires", ()):
         source = str(wire.get("source") or "")
         target = str(wire.get("target") or "")
         if source in engine_roots and target in engine_roots:
-            if not _pipeline_wire_enabled(wire):
+            carried = _pipeline_wire_rows(wire)
+            if carried is None:
                 continue
             stem_wires.append(StemWire(
                 source, _pipeline_port_name(projected_nodes[source], wire.get("source_interface"), "source", wire["id"]),
                 target, _pipeline_port_name(projected_nodes[target], wire.get("target_interface"), "target", wire["id"]),
+                **carried,
             ))
     return stem_nodes, stem_wires, _graph_engines(store, registry)
 
@@ -422,32 +480,41 @@ def _pipeline_outcome(stem_nodes, stem_wires, evaluation, written, revision):
     }
 
 
-def _ensure_pipeline_node_interfaces(store, registry, owner_root: str):
-    """Give one pipeline node its exact out/in canvas interfaces.
+def _pipeline_interface_cells(snapshot, registry, owner_root: str, engine, planned):
+    """The cells and registrations one engine card's missing sockets need.
 
-    A node the founder wires must declare where a wire may land, registered
-    on the application root like every other application-level interface.
-    They carry no read-only role: an engine's out and in are sockets a new
-    wire is drawn from and dropped on, not a committed wire's endpoints.
+    ``planned`` holds cell ids already planned in the same commit, so a
+    shared presentation cell is created once. Nothing is committed here.
     """
+    from .library_engines import engine_sockets
+
     protocol = registry.assembly_protocol
     token = owner_root.rsplit(":", 1)[-1]
-    created = []
-    snapshot = store.snapshot()
     create: list[Cell] = []
     registered: list[tuple[str, str]] = []
-    for side, name in (("source", "out"), ("target", "in")):
-        interface_root = "app:pipeline-interface:%s:%s" % (token, side)
-        if interface_root in snapshot.cells:
+    created: list[str] = []
+    sockets = engine_sockets(engine or "")
+    wanted = [("source", "out"), ("target", "in")] + [
+        (side, name)
+        for side in ("source", "target")
+        for name in sockets[side]
+        if name not in ("out", "in")
+    ]
+    for side, name in wanted:
+        interface_root = (
+            "app:pipeline-interface:%s:%s" % (token, side)
+            if name in ("out", "in")
+            else "app:pipeline-interface:%s:%s:%s" % (token, side, name)
+        )
+        if interface_root in snapshot.cells or interface_root in planned:
             continue
         name_root = interface_root + ":name"
         create.append(Cell(
             name_root, NULL_CELL_ID, NULL_CELL_ID, name.encode("utf-8")
         ))
         presentation_root = "app:canvas-interface:presentation:%s" % side
-        if presentation_root not in snapshot.cells and not any(
-            cell.id == presentation_root for cell in create
-        ):
+        if presentation_root not in snapshot.cells and presentation_root not in planned:
+            planned.add(presentation_root)
             create.append(Cell(
                 presentation_root, NULL_CELL_ID, NULL_CELL_ID,
                 side.encode("ascii"),
@@ -462,12 +529,13 @@ def _ensure_pipeline_node_interfaces(store, registry, owner_root: str):
             relation_id=interface_root,
         )
         create.extend(interface.cells)
-        registered.append((
-            protocol.role("interface"), interface_root
-        ))
+        planned.add(interface_root)
+        registered.append((protocol.role("interface"), interface_root))
         created.append(interface_root)
-    if not create:
-        return created
+    return create, registered, created
+
+
+def _commit_interfaces(store, registry, snapshot, create, registered):
     registration = prepare_append_relation_members(
         snapshot,
         registry.application_root,
@@ -479,7 +547,67 @@ def _ensure_pipeline_node_interfaces(store, registry, owner_root: str):
         create=(*create, *registration.create),
         replace=registration.replace,
     )
+
+
+def _ensure_pipeline_node_interfaces(store, registry, owner_root: str, engine: str | None = None):
+    """Give one pipeline node its exact named canvas interfaces.
+
+    A node the founder wires must declare where a wire may land, registered
+    on the application root like every other application-level interface.
+    They carry no read-only role: an engine's sockets are where a new wire
+    is drawn from and dropped on, not a committed wire's endpoints. Every
+    card has out and in; a logic card also gets the branches its engine
+    produces and the inputs it reads (library_engines.ENGINE_SOCKETS).
+    """
+    snapshot = store.snapshot()
+    create, registered, created = _pipeline_interface_cells(
+        snapshot, registry, owner_root, engine, set()
+    )
+    if create:
+        _commit_interfaces(store, registry, snapshot, create, registered)
     return created
+
+
+def ensure_logic_card_sockets(store, registry) -> int:
+    """Admitted migration: give logic cards placed before 2026-09-24 their
+    named sockets (if: false/condition, switch: a/b/c/key, loop: each,
+    merge: b).
+
+    Only engine cards this module placed (they already hold the pipeline
+    out socket) whose engine declares extra sockets are touched. Every
+    missing socket lands in ONE commit, then the view sessions index them
+    (the existing visibility growth law, its own commit); a graph with none
+    missing makes no commit and returns 0. The caller declares the
+    migration intent.
+    """
+    from .library_engines import ENGINE_SOCKETS
+
+    snapshot = store.snapshot()
+    planned: set[str] = set()
+    create: list[Cell] = []
+    registered: list[tuple[str, str]] = []
+    added = 0
+    for owner_root, rows in sorted(_owner_properties(snapshot, registry).items()):
+        engine = (rows.get("engine") or ("", ""))[1].strip()
+        if engine not in ENGINE_SOCKETS:
+            continue
+        token = owner_root.rsplit(":", 1)[-1]
+        if "app:pipeline-interface:%s:source" % token not in snapshot.cells:
+            continue
+        cells, members, created = _pipeline_interface_cells(
+            snapshot, registry, owner_root, engine, planned
+        )
+        create.extend(cells)
+        registered.extend(members)
+        added += len(created)
+    if create:
+        _commit_interfaces(store, registry, snapshot, create, registered)
+        # The view sessions index the interfaces they may show. Index the new
+        # sockets now, under the same admitted migration, so the next boot
+        # finds nothing left to catch up (it did: one visibility commit).
+        from .universal_application import _ensure_visibility_scope_projections
+        _ensure_visibility_scope_projections(store, registry)
+    return added
 
 
 _PIPELINE_SOCKET = re.compile(r"app:pipeline-interface:[0-9A-Za-z_-]+:(?:source|target)")
@@ -525,14 +653,42 @@ def release_pipeline_socket_read_only(store, registry) -> int:
 # defaults the inspector draws. They are ordinary graph rows on the wire's
 # own root, so editing one is the ordinary property write every node
 # parameter already uses -- no second mechanism for "a wire".
-_WIRE_PARAMETERS = (
-    ("enabled", "true"),
-    ("lacing", "shortest"),
-    ("tree", "none"),
-    ("condition", ""),
-    ("on_fail", "block"),
-    ("throttle_ms", "0"),
+# THE wire parameter list: Studio and the cockpit draw these rows from
+# GET /api/universal/node-library ("wire_parameters"), the run applies them
+# (stem_graph_evaluation._carry) and a new connection is given these rows.
+# Nothing else declares them.
+WIRE_PARAMETER_SPECS = (
+    {"k": "enabled", "label": "Enabled", "type": "toggle", "def": True,
+     "help": "Mute the connection without deleting it — downstream sees nothing."},
+    {"k": "tree", "label": "Data tree", "type": "menu", "def": "none",
+     "opts": ["none", "flatten", "graft", "simplify"],
+     "help": "Restructure on the way through — flatten to one list, graft each item "
+             "into its own branch, simplify removes empty levels."},
+    {"k": "condition", "label": "Condition", "type": "text", "def": "", "page": "Rules",
+     "help": "The wire only carries when this holds, e.g. count > 0 or value >= 10. "
+             "Empty means always."},
+    {"k": "on_fail", "label": "On block", "type": "menu", "def": "block",
+     "opts": ["block", "pass empty"], "page": "Rules",
+     "help": "What downstream receives when the condition blocks: nothing (block) "
+             "or an empty list."},
 )
+
+
+def _row_default(value) -> str:
+    return ("true" if value else "false") if isinstance(value, bool) else str(value)
+
+
+_WIRE_PARAMETERS = tuple((spec["k"], _row_default(spec["def"])) for spec in WIRE_PARAMETER_SPECS)
+_WIRE_CHOICES = {spec["k"]: tuple(spec["opts"]) for spec in WIRE_PARAMETER_SPECS if spec.get("opts")}
+
+
+def wire_parameter_specs() -> list:
+    """The wire rows as Studio and the cockpit draw them (a copy)."""
+    return [dict(spec, opts=list(spec["opts"])) if spec.get("opts") else dict(spec)
+            for spec in WIRE_PARAMETER_SPECS]
+# Persisted by earlier builds, applied by none: a run refuses anything but
+# the default rather than ignoring it.
+_HIDDEN_WIRE_PARAMETERS = (("lacing", "shortest"), ("throttle_ms", "0"))
 
 
 def _ensure_wire_parameters(store, registry, wire_root: str):
@@ -685,6 +841,7 @@ def create_engine_node(
     properties=None,
     instance_token: str | None = None,
     authentication_context: object | None = None,
+    item: str | None = None,
 ):
     """Create ONE engine-backed node on the graph, the way the seed does.
 
@@ -714,8 +871,26 @@ def create_engine_node(
     # The engine catalogue owns declared defaults for every placement surface.
     # Persist them as ordinary editable graph properties; UI cards need no copy.
     from .library_engines import LIBRARY_ITEM_ENGINES
-    catalogue_items = [item for item in LIBRARY_ITEM_ENGINES.values()
-                       if item.get("engine") == engine]
+    item = str(item or "").strip()
+    if item:
+        # The library card placed names itself: its defaults are the ones,
+        # even when several cards share this engine (where type / category /
+        # level are all library.filter_field). The graph-held entry wins
+        # over the seed constant once the library is installed.
+        chosen = engine_library_entry(store.snapshot(), item) or LIBRARY_ITEM_ENGINES.get(item)
+        if chosen is None or chosen.get("engine") != engine:
+            raise ValueError("library card %r does not run engine %r" % (item, engine))
+        catalogue_items = [chosen]
+    else:
+        # No card named: the graph-held library decides (SPEC 4.5); the seed
+        # constant answers only before the library is installed.
+        installed = read_engine_library(store.snapshot())
+        if installed is not None:
+            catalogue_items = [entry for group in installed for entry in group["items"]
+                               if entry.get("engine") == engine]
+        else:
+            catalogue_items = [entry for entry in LIBRARY_ITEM_ENGINES.values()
+                               if entry.get("engine") == engine]
     # Shared engines can have different item-specific defaults. An engine name
     # alone cannot choose between them; preserve explicit caller parameters.
     if len(catalogue_items) == 1:
@@ -750,7 +925,7 @@ def create_engine_node(
                 _persist(lambda label=label, value=value: create_universal_property(
                     store, registry, root, label, value, authentication_context=authentication_context,
                 ), store=store)
-    _persist(lambda: _ensure_pipeline_node_interfaces(store, registry, root), store=store)
+    _persist(lambda: _ensure_pipeline_node_interfaces(store, registry, root, engine), store=store)
     return {"ok": True, "root": root, "engine": engine, "title": title}
 
 
@@ -975,6 +1150,31 @@ _ATLAS_COLORS = (
 )
 
 
+def _is_private_value(label: object, value: object) -> bool:
+    """True for a file location, which never leaves the machine in full."""
+    text = str(value)
+    key = str(label).casefold()
+    looks_like_path = (
+        len(text) > 2 and (text[1:3] == ":" + chr(92) or text.startswith((chr(92) * 2, "/", "~")))
+    )
+    return key.endswith("_path") or key in {"path", "file", "image"} or looks_like_path
+
+
+def _atlas_param(label, rel, value) -> dict:
+    """One map parameter: the display value, and the full value to edit.
+
+    A value cut to 48 characters is only for display; editing it must start
+    from the whole value, or saving writes the cut copy back over the graph.
+    A file location is shown by name only and is not editable here.
+    """
+    row = {"k": label, "v": _public_value(label, value), "rel": rel, "t": "string"}
+    if _is_private_value(label, value):
+        row["editable"] = False
+    else:
+        row["full"] = str(value)
+    return row
+
+
 def _public_value(label: object, value: object) -> str:
     """A property value as the published map may show it.
 
@@ -1101,7 +1301,7 @@ def project_atlas_map(store, registry, *, authentication_context=None):
             data = {label: value for label, (_r, value) in held.items()}
             title = data.get("title") or data.get("label") or member
             params = [
-                {"k": label, "v": _public_value(label, value), "rel": rel, "t": "string"}
+                _atlas_param(label, rel, value)
                 for label, (rel, value) in held.items()
                 if label not in {
                     "title", "label", "status", "position_x", "position_y",
@@ -1117,6 +1317,9 @@ def project_atlas_map(store, registry, *, authentication_context=None):
                 "title": str(title)[:60],
                 "sub": str(data.get("engine") or data.get("status") or "")[:80],
                 "status": "live" if data.get("status") else "partial",
+                # What the last Run actually answered, word for word; the
+                # status above is only the map's colour class.
+                "status_text": str(data.get("status") or ""),
                 "params": params,
                 "x": gx + 40 + (spot % 2) * 260,
                 "y": gy + 60 + (spot // 2) * 120,
@@ -1302,5 +1505,177 @@ def retract_universal_node(
         )
     return {"retracted": root, "revision": store.revision}
 
+
+# ------------------------------------------------ the graph-held node library --
+# SPEC 4.5: catalogue membership, category and order are graph relations. The
+# engine-card library lives here: one root relation whose members are the
+# sections in order, each section a relation whose members are its cards in
+# order, each card a relation holding its item id, title, summary, engine and
+# default parameters. library_engines.LIBRARY_PRESENTATION and
+# LIBRARY_ITEM_ENGINES are only the seed that installs these relations once;
+# GET /api/universal/node-library reads the graph, so editing a relation
+# changes the served library.
+ENGINE_LIBRARY_ROOT = "app:engine-library:v1"
+_ENGINE_LIBRARY_ROLES = {
+    name: "app:engine-library:role:%s:v1" % name
+    for name in ("section", "entry", "label", "item", "title", "summary",
+                 "engine", "params")
+}
+
+
+def engine_library_section_root(category: str) -> str:
+    return "app:engine-library:section:%s" % category
+
+
+def engine_library_entry_root(item: str) -> str:
+    return "app:engine-library:entry:%s" % item
+
+
+def _text_cell(root: str, text: str) -> Cell:
+    return Cell(root, NULL_CELL_ID, NULL_CELL_ID, str(text).encode("utf-8"))
+
+
+def _entry_cells(item: str, title: str, summary: str, wiring) -> list:
+    import json as _json
+
+    roles = _ENGINE_LIBRARY_ROLES
+    entry = engine_library_entry_root(item)
+    fields = (
+        ("item", item), ("title", title), ("summary", summary),
+        ("engine", wiring["engine"]),
+        ("params", _json.dumps(wiring["params"], sort_keys=True)),
+    )
+    cells = [_text_cell(entry + ":" + name, value) for name, value in fields]
+    relation = compose_relation_cells(
+        tuple((roles[name], entry + ":" + name) for name, _value in fields),
+        relation_id=entry,
+    )
+    return [*cells, *relation.cells]
+
+
+def seed_engine_library(store, registry) -> int:
+    """Admitted migration: install the node library as graph relations.
+
+    Installs what the seed lists and the graph does not hold yet, in ONE
+    commit; a card whose entry relation already exists is never touched
+    (an edit or a removal made on the graph stands). A graph holding every
+    entry makes no commit and returns 0. The caller declares the intent.
+    """
+    from .library_engines import LIBRARY_ITEM_ENGINES, LIBRARY_PRESENTATION
+
+    roles = _ENGINE_LIBRARY_ROLES
+    snapshot = store.snapshot()
+    create: list = []
+    replace: dict = {}
+    added = 0
+    root_members = []
+    if ENGINE_LIBRARY_ROOT not in snapshot.cells:
+        create.extend(_text_cell(role, name) for name, role in roles.items()
+                      if role not in snapshot.cells)
+    for category, rows in LIBRARY_PRESENTATION:
+        section = engine_library_section_root(category)
+        new_entries = []
+        for item, title, summary in rows:
+            wiring = LIBRARY_ITEM_ENGINES.get(item)
+            if wiring is None or engine_library_entry_root(item) in snapshot.cells:
+                continue
+            create.extend(_entry_cells(item, title, summary, wiring))
+            new_entries.append((roles["entry"], engine_library_entry_root(item)))
+            added += 1
+        if section not in snapshot.cells:
+            if not new_entries:
+                continue
+            create.append(_text_cell(section + ":label", category))
+            create.extend(compose_relation_cells(
+                ((roles["label"], section + ":label"), *new_entries),
+                relation_id=section,
+            ).cells)
+            root_members.append((roles["section"], section))
+        elif new_entries:
+            patch = prepare_append_relation_members(
+                snapshot, section, new_entries, budget=100_000)
+            create.extend(patch.create)
+            replace.update({cell.id: cell for cell in patch.replace})
+    if ENGINE_LIBRARY_ROOT not in snapshot.cells:
+        if not root_members:
+            return 0
+        create.extend(compose_relation_cells(
+            tuple(root_members), relation_id=ENGINE_LIBRARY_ROOT).cells)
+    elif root_members:
+        patch = prepare_append_relation_members(
+            snapshot, ENGINE_LIBRARY_ROOT, root_members, budget=100_000)
+        create.extend(patch.create)
+        replace.update({cell.id: cell for cell in patch.replace})
+    if not create and not replace:
+        return 0
+    store.commit(snapshot.revision, create=tuple(create), replace=tuple(replace.values()))
+    return added
+
+
+def _read_engine_library_entry(snapshot, entry_root: str):
+    import json as _json
+
+    roles = _ENGINE_LIBRARY_ROLES
+    held = {}
+    for member in read_relation(snapshot, entry_root, budget=64):
+        for name, role in roles.items():
+            if member.role_id == role:
+                held[name] = _text(snapshot, member.participant_id)
+    if not {"item", "title", "summary", "engine", "params"} <= set(held):
+        return None
+    try:
+        params = _json.loads(held["params"])
+    except ValueError:
+        return None
+    if not isinstance(params, dict):
+        return None
+    return {"id": held["item"], "title": held["title"], "sub": held["summary"],
+            "engine": held["engine"], "params": {str(k): str(v) for k, v in params.items()}}
+
+
+def read_engine_library(snapshot):
+    """The node library as the graph holds it, or None before it is installed.
+
+    Sections in their relation order; cards in their section order; the
+    category of a card is the section that holds it. A card whose engine
+    this build does not run is marked noEngine, never dropped.
+    """
+    from .library_engines import engine_sockets
+    from .pipeline_engines import PIPELINE_ENGINES
+
+    if ENGINE_LIBRARY_ROOT not in snapshot.cells:
+        return None
+    roles = _ENGINE_LIBRARY_ROLES
+    groups = []
+    for section in read_relation(snapshot, ENGINE_LIBRARY_ROOT, budget=256):
+        if section.role_id != roles["section"]:
+            continue
+        members = read_relation(snapshot, section.participant_id, budget=1024)
+        label = next((_text(snapshot, m.participant_id) for m in members
+                      if m.role_id == roles["label"]), "")
+        items = []
+        for member in members:
+            if member.role_id != roles["entry"]:
+                continue
+            entry = _read_engine_library_entry(snapshot, member.participant_id)
+            if entry is None:
+                continue
+            entry["cat"] = label
+            entry["sockets"] = {side: list(names)
+                                for side, names in engine_sockets(entry["engine"]).items()}
+            if entry["engine"] not in PIPELINE_ENGINES:
+                entry["noEngine"] = True
+                entry["reason"] = "engine %s is not in this build" % entry["engine"]
+            items.append(entry)
+        groups.append({"cat": label, "items": items})
+    return groups
+
+
+def engine_library_entry(snapshot, item: str):
+    """One card as the graph holds it (engine and defaults), or None."""
+    root = engine_library_entry_root(str(item or ""))
+    if root not in snapshot.cells:
+        return None
+    return _read_engine_library_entry(snapshot, root)
 
 __all__ = ["run_universal_pipeline", "seed_wall_pipeline", "project_atlas_map", "retract_universal_node"]

@@ -270,8 +270,9 @@ const _SEED_GRAPH = {
   ],
 };
 
-// The insertable nodes come from node-registry.jsx - one definition.
-const LM_LIBRARY = window.AH_LIBRARY;
+// The insertable nodes: one definition, served by the graph (library_engines).
+// Served by the graph (studio.html sets it from /api/universal/node-library); never typed here.
+const LM_LIBRARY = window.AH_LIBRARY || [];
 
 // ──────────────────────── ROOT ────────────────────────
 const StudioLM = () => {
@@ -474,37 +475,31 @@ const StudioLM = () => {
   // Insert a node from the library at canvas coords (x,y). called from drop or dbl-click
   const addNodeFromLibrary = (libItem, x = 200, y = 200) => {
     if (window.ARCHHUB_STUDIO_AUTHORITY) {
-      return window.ARCHHUB_NODE_CREATE({definition: libItem.definition || libItem.id,
-        definition_revision: libItem.revision_root, x, y}).catch(() => false);
+      // A signed canvas places published definitions only. A card without one
+      // is refused by name: its item id is not a definition id.
+      if (!libItem.definition) {
+        window.alert(libItem.title + ' is not a published definition on this canvas, so it cannot be placed here.');
+        return Promise.resolve(false);
+      }
+      return window.ARCHHUB_NODE_CREATE({definition: libItem.definition,
+        definition_revision: libItem.revision_root, x, y})
+        .catch(e => { window.alert('not created: ' + (e && e.message || e)); return false; });
     }
-    const cat = libItem.cat;
-    const tmpl = LM_NODE_TEMPLATES[libItem.id] || LM_NODE_TEMPLATES[`__cat_${cat}`] || {};
-    const id = `${libItem.id}_${Date.now().toString(36).slice(-4)}`;
-    const newNode = {
-      id, cat, x, y, w: tmpl.w || 220, h: tmpl.h || 110,
-      title: libItem.title, sub: libItem.sub,
-      ins: tmpl.ins || [], outs: tmpl.outs || [],
-      params: tmpl.params || [],
-      _user: true,
-    };
-    if (libItem.engine && window.ARCHHUB_NODE_CREATE) {
-      // A node with an engine is created ON THE GRAPH through the same governed
-      // write the seed uses, then the canvas reloads from the graph.
-      window.ARCHHUB_NODE_CREATE({ title: libItem.title, engine: libItem.engine, x, y, params: libItem.params || {} })
-        .then(r => { if (r && r.ok !== false) window.location.reload(); else window.alert('not created: ' + ((r && r.error) || '')); })
-        .catch(e => window.alert('not created: ' + (e && e.message || e)));
-      return;
-    }
-    if (libItem.noEngine) {
+    if (libItem.noEngine || !libItem.engine || !window.ARCHHUB_NODE_CREATE) {
       // A card with no engine used to land in this component's memory only:
       // invisible to Run, never written to the graph, gone on the next reload.
       // Say so instead of pretending it was placed.
       window.alert(libItem.title + ' has no engine in this build, so it cannot run yet. '
+        + (libItem.reason ? '(' + libItem.reason + ') ' : '')
         + 'It would vanish on reload, so it is not placed.');
       return;
     }
-    setUserNodes(ns => [...ns, newNode]);
-    setFocusId(id);
+    // A node with an engine is created ON THE GRAPH through the same governed
+    // write the seed uses, then the canvas reloads from the graph. The item id
+    // names the card, so a shared engine gets that card's own defaults.
+    window.ARCHHUB_NODE_CREATE({ item: libItem.id, title: libItem.title, engine: libItem.engine, x, y, params: libItem.params || {} })
+      .then(r => { if (r && r.ok !== false) window.location.reload(); else window.alert('not created: ' + ((r && r.error) || '')); })
+      .catch(e => window.alert('not created: ' + (e && e.message || e)));
   };
 
   // Docs and Settings are mutually exclusive — they share a z-index, so opening one closes the other.
@@ -611,79 +606,6 @@ const StudioLM = () => {
       `}</style>
     </div>
   );
-};
-
-// ─── Node templates ─ default I/O & params per library item ───
-// keyed by library item id; falls back to a per-category template.
-const LM_NODE_TEMPLATES = {
-  // hosts
-  h_revit:    { w:220, h:118, outs:[{ id:'view', label:'active view', t:'view' }, { id:'sel', label:'selection', t:'selection' }] },
-  h_rhino:    { w:220, h:118, outs:[{ id:'mesh', label:'mesh', t:'view' }, { id:'crv', label:'curves', t:'walls' }] },
-  h_max:      { w:220, h:118, outs:[{ id:'out', label:'result', t:'trace' }] },
-  h_blender:  { w:220, h:118, outs:[{ id:'out', label:'result', t:'trace' }] },
-  h_excel:    { w:220, h:118, outs:[{ id:'out', label:'workbooks', t:'sheets' }] },
-  h_word:     { w:220, h:118, outs:[{ id:'out', label:'documents', t:'sheets' }] },
-  h_ppt:      { w:220, h:118, outs:[{ id:'out', label:'decks', t:'sheets' }] },
-  h_outlook:  { w:220, h:118, outs:[{ id:'out', label:'inbox', t:'trace' }] },
-  h_notion:   { w:220, h:118, outs:[{ id:'out', label:'pages', t:'trace' }] },
-  h_dropbox:  { w:220, h:118, outs:[{ id:'out', label:'files', t:'trace' }] },
-  h_blender:  { w:220, h:118, outs:[{ id:'mesh', label:'mesh', t:'view' }, { id:'sk', label:'sketch', t:'view' }] },
-  h_speckle:  { w:240, h:140, ins:[{ id:'sheet', label:'sheet', t:'sheets' }, { id:'view', label:'model', t:'view' }], outs:[{ id:'commit', label:'commit', t:'trace' }] },
-  h_dropbox:  { w:220, h:90, ins:[{ id:'file', label:'file', t:'file' }], outs:[{ id:'url', label:'url', t:'file' }] },
-  h_outlook:  { w:220, h:90, outs:[{ id:'inbox', label:'inbox', t:'file' }] },
-  // reads
-  r_walls:    { w:220, h:96, ins:[{ id:'view', label:'view', t:'view' }], outs:[{ id:'walls', label:'walls', t:'walls' }] },
-  r_doors:    { w:220, h:96, ins:[{ id:'view', label:'view', t:'view' }], outs:[{ id:'doors', label:'doors', t:'doors' }] },
-  r_windows:  { w:220, h:96, ins:[{ id:'view', label:'view', t:'view' }], outs:[{ id:'wins', label:'windows', t:'doors' }] },
-  r_sheets:   { w:220, h:96, outs:[{ id:'sheets', label:'sheets', t:'sheets' }] },
-  r_views:    { w:220, h:96, outs:[{ id:'views', label:'views', t:'view' }] },
-  r_selection:{ w:220, h:96, outs:[{ id:'sel', label:'selection', t:'selection' }] },
-  // filters
-  f_type:     { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'matches', t:'walls' }], params:[{ k:'type', v:'Generic 200', type:'select' }] },
-  f_cat:      { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'matches', t:'walls' }], params:[{ k:'category', v:'Walls', type:'select' }] },
-  f_level:    { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'matches', t:'walls' }], params:[{ k:'level', v:'L03', type:'select' }] },
-  f_param:    { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'matches', t:'walls' }], params:[{ k:'param', v:'length', type:'select' }, { k:'op', v:'>=', type:'select' }, { k:'value', v:800, min:0, max:5000, step:50, type:'slider' }] },
-  f_pred:     { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'matches', t:'walls' }], params:[{ k:'predicate', v:'el => el.length > 800', type:'text' }] },
-  // transforms
-  t_setp:     { w:240, h:122, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'out', t:'walls' }], params:[{ k:'parameter', v:'Mark', type:'select' }, { k:'value', v:'auto', type:'text' }] },
-  t_move:     { w:220, h:122, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'out', t:'walls' }], params:[{ k:'dx', v:0, min:-5000, max:5000, step:50, type:'slider' }, { k:'dy', v:0, min:-5000, max:5000, step:50, type:'slider' }] },
-  t_group:    { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'groups', t:'walls' }], params:[{ k:'key', v:'type', type:'select' }] },
-  t_sort:     { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'sorted', t:'walls' }], params:[{ k:'key', v:'length', type:'select' }, { k:'order', v:'desc', type:'select' }] },
-  // annotate
-  a_dims:     { w:260, h:200, ins:[{ id:'walls', label:'walls', t:'walls' }, { id:'view', label:'view', t:'view' }], outs:[{ id:'dims', label:'dimensions', t:'dims' }], params:[{ k:'scale', v:'1:50', type:'select' }, { k:'align', v:'parallel', type:'select' }, { k:'offset_mm', v:240, min:60, max:600, step:10, type:'slider' }] },
-  a_tags:     { w:220, h:140, ins:[{ id:'els', label:'elements', t:'walls' }], outs:[{ id:'tags', label:'tags', t:'dims' }], params:[{ k:'family', v:'Tag · Default', type:'select' }, { k:'leader', v:'on', type:'select' }] },
-  a_text:     { w:220, h:118, ins:[{ id:'at', label:'point', t:'view' }], outs:[{ id:'text', label:'text', t:'dims' }], params:[{ k:'body', v:'placed automatically', type:'text' }] },
-  a_rooms:    { w:220, h:118, ins:[{ id:'view', label:'view', t:'view' }], outs:[{ id:'tags', label:'tags', t:'dims' }] },
-  // compose
-  c_sched:    { w:260, h:180, ins:[{ id:'in', label:'rows', t:'walls' }], outs:[{ id:'sheet', label:'sheet', t:'sheets' }], params:[{ k:'group_by', v:'type', type:'select' }, { k:'columns', v:'type, level, length', type:'text' }] },
-  c_sheet:    { w:220, h:118, ins:[{ id:'views', label:'views', t:'view' }], outs:[{ id:'sheet', label:'sheet', t:'sheets' }], params:[{ k:'layout', v:'A1 · portrait', type:'select' }] },
-  c_legend:   { w:220, h:118, ins:[{ id:'items', label:'items', t:'walls' }], outs:[{ id:'sheet', label:'legend', t:'sheets' }] },
-  // logic
-  l_if:       { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'yes', label:'yes', t:'walls' }, { id:'no', label:'no', t:'walls' }], params:[{ k:'predicate', v:'count > 0', type:'text' }] },
-  l_switch:   { w:220, h:140, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'a', label:'a', t:'walls' }, { id:'b', label:'b', t:'walls' }, { id:'c', label:'c', t:'walls' }] },
-  l_loop:     { w:220, h:118, ins:[{ id:'list', label:'list', t:'walls' }], outs:[{ id:'each', label:'each', t:'walls' }] },
-  l_merge:    { w:220, h:118, ins:[{ id:'a', label:'a', t:'walls' }, { id:'b', label:'b', t:'walls' }], outs:[{ id:'out', label:'out', t:'walls' }] },
-  // ai
-  i_think:    { w:280, h:160, ins:[{ id:'ctx', label:'context', t:'view' }], outs:[{ id:'intent', label:'intent', t:'intent' }], params:[{ k:'model', v:'Claude Sonnet 4.5', type:'select' }, { k:'temperature', v:0.7, min:0, max:2, step:0.05, type:'slider' }, { k:'max_tokens', v:4096, min:256, max:32000, step:256, type:'slider' }, { k:'system', v:'concise + technical', type:'text' }] },
-  i_vis:      { w:240, h:140, ins:[{ id:'img', label:'image', t:'file' }], outs:[{ id:'desc', label:'description', t:'intent' }], params:[{ k:'model', v:'Claude Sonnet 4.5 vision', type:'select' }] },
-  i_match:    { w:240, h:140, ins:[{ id:'intent', label:'intent', t:'intent' }], outs:[{ id:'skill', label:'skill', t:'trace' }], params:[{ k:'top_k', v:3, min:1, max:10, step:1, type:'slider' }] },
-  i_embed:    { w:220, h:118, ins:[{ id:'text', label:'text', t:'intent' }], outs:[{ id:'vec', label:'vector', t:'trace' }] },
-  // output
-  o_skill:    { w:240, h:140, ins:[{ id:'trace', label:'trace', t:'trace' }], params:[{ k:'name', v:'untitled skill', type:'text' }] },
-  o_pdf:      { w:240, h:118, ins:[{ id:'sheet', label:'sheet', t:'sheets' }], params:[{ k:'destination', v:'/Tower-A/exports', type:'text' }] },
-  o_spk:      { w:220, h:118, ins:[{ id:'in', label:'in', t:'view' }], params:[{ k:'branch', v:'main', type:'select' }] },
-  o_email:    { w:220, h:118, ins:[{ id:'body', label:'body', t:'intent' }], params:[{ k:'to', v:'team@…', type:'text' }] },
-  o_notify:   { w:220, h:96, ins:[{ id:'msg', label:'message', t:'intent' }] },
-  // category fallbacks
-  __cat_host:      { w:220, h:118, outs:[{ id:'out', label:'output', t:'view' }] },
-  __cat_read:      { w:220, h:96, ins:[{ id:'in', label:'view', t:'view' }], outs:[{ id:'out', label:'result', t:'walls' }] },
-  __cat_filter:    { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'matches', t:'walls' }] },
-  __cat_transform: { w:220, h:122, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'out', label:'out', t:'walls' }] },
-  __cat_annotate:  { w:220, h:140, ins:[{ id:'els', label:'elements', t:'walls' }], outs:[{ id:'out', label:'output', t:'dims' }] },
-  __cat_compose:   { w:220, h:140, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'sheet', label:'sheet', t:'sheets' }] },
-  __cat_logic:     { w:220, h:118, ins:[{ id:'in', label:'in', t:'walls' }], outs:[{ id:'a', label:'yes', t:'walls' }, { id:'b', label:'no', t:'walls' }] },
-  __cat_ai:        { w:240, h:140, ins:[{ id:'ctx', label:'context', t:'view' }], outs:[{ id:'out', label:'output', t:'intent' }] },
-  __cat_output:    { w:220, h:96, ins:[{ id:'in', label:'in', t:'intent' }] },
 };
 
 // ──────────────────────── SIDEBAR (icon rail + active panel) ────────────────────────
@@ -885,6 +807,11 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
       </div>
 
       <div className="ah-scroll" style={{ flex:1, overflow:'auto', padding:'0 6px 8px', minHeight:0 }}>
+        {!library.length && window.AH_LIBRARY_ERROR && (
+          <div role="alert" style={{ padding:'8px 12px', fontFamily:LM.mono, fontSize:10.5, color:LM.err, lineHeight:1.5 }}>
+            {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
+          </div>
+        )}
         {library.map(group => {
           const c = studioCategory(group.cat);
           const items = q ? group.items.filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : group.items;

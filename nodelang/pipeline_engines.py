@@ -717,12 +717,16 @@ def probe_connectors():
     speckle_installed = bool(appdata) and os.path.isdir(
         os.path.join(appdata, "Speckle")
     )
+    # The wire is the push_speckle card (library_engines.push_speckle): it
+    # commits over the Speckle server API with the stored token, so it does
+    # not depend on the desktop Manager being installed.
     found.append({
-        "id": "speckle", "name": "Speckle", "drive": "",
+        "id": "speckle", "name": "Speckle", "drive": "library.push_speckle",
         "state": "installed" if speckle_installed else "absent",
         "detail": (
-            "Manager installed · no wire in this build"
-            if speckle_installed else "Manager not found"
+            "Manager installed · push_speckle commits with the stored token"
+            if speckle_installed
+            else "Manager not found · push_speckle commits with the stored token"
         ),
     })
     # Every other program the founder works with: Max, Rhino, Blender, Excel,
@@ -744,5 +748,8 @@ PIPELINE_ENGINES.update(_HOST_ENGINES)
 # in library_engines.LIBRARY_ITEMS_WITHOUT_ENGINE so the library can grey them.
 from .library_engines import LIBRARY_ENGINES as _LIBRARY_ENGINES  # noqa: E402
 PIPELINE_ENGINES.update(_LIBRARY_ENGINES)
+# The base catalogue's AI and Skill stems run on the same routes.
+from .library_engines import STEM_EFFECT_ENGINES as _STEM_EFFECT_ENGINES  # noqa: E402
+PIPELINE_ENGINES.update(_STEM_EFFECT_ENGINES)
 
 __all__ = ["PIPELINE_ENGINES", "probe_connectors"]

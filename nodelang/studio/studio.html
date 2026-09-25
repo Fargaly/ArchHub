@@ -351,35 +351,39 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     // One skill's own file text, for the Skill split view.
     window.ARCHHUB_READ_SKILL = async name =>
       String((await jpost('/api/universal/skills', {want:'read', skill:String(name || '')})).result || '');
+    // The one node library, served by the graph (library_engines). Studio
+    // keeps no copy: the Nodes panel, card categories and placement read it.
+    // A library that cannot be read (a refusal, the 503 of a graph whose
+    // library is not installed yet, a network fault) must not cost the whole
+    // Studio: it mounts with an empty library and the Nodes panel says why.
+    let nodeLibrary = {};
+    window.AH_LIBRARY_ERROR = '';
+    window.WIRE_PARAMS_ERROR = '';
+    try {
+      nodeLibrary = await jget('/api/universal/node-library');
+    } catch (error) {
+      nodeLibrary = {};
+      window.AH_LIBRARY_ERROR = window.WIRE_PARAMS_ERROR = (error && error.message) || String(error);
+    }
+    window.AH_LIBRARY = nodeLibrary.groups || [];
+    window.AH_ENGINE_CATEGORIES = nodeLibrary.categories || {};
+    // The wire rows are served too (universal_pipeline.WIRE_PARAMETER_SPECS); no copy here.
+    window.WIRE_PARAMS = nodeLibrary.wire_parameters || [];
     function projectStudioCanvas(canvas) {
-    const CATS = e =>
-      e.startsWith('vision.') || e.startsWith('cad.') ? 'read'
-      : e.startsWith('lines.') ? 'annotate'
-      : e.startsWith('revit.') ? 'host'
-      : e.startsWith('brain.') ? 'ai'
-      : e.startsWith('ai') ? 'ai' : 'logic';
-    const PORT_TYPES = {
-      'vision.sketch_lines': {in:'file', out:'lines'},
-      'cad.read_lines': {in:'file', out:'lines'},
-      'lines.watch': {in:'lines', out:'lines'},
-      'revit.build_walls': {in:'lines', out:'walls'},
-      'revit.sessions': {in:'any', out:'rows'},
-      'brain.recall': {in:'text', out:'text'},
-      'brain.facts': {in:'any', out:'rows'},
-      'baboom.status': {in:'any', out:'rows'},
-      'baboom.presence': {in:'any', out:'rows'},
-    };
+    // engine -> card category, served with the library; nothing guessed here.
+    const held = (typeof window !== 'undefined' && window.AH_ENGINE_CATEGORIES) || {};
+    const CATS = e => held[e] || 'logic';
     const nodes = [];
     for (const n of (canvas.nodes || [])) {
       const params = Object.fromEntries((n.params || []).map(r => [r.label, r.value]));
       const engine = String(n.engine || params.engine || '');
-      const types = PORT_TYPES[engine] || {in:'any', out:'any'};
+      // A port's type is what the graph declares for it; nothing is guessed.
       const ins = [], outs = [];
       for (const p of (n.ports || [])) {
         if (p.side === 'target') {
-          ins.push({...p, label:p.name || '', t:p.value_type || types.in});
+          ins.push({...p, label:p.name || '', t:p.value_type || 'any'});
         } else if (p.side === 'source') {
-          outs.push({...p, label:p.name || '', t:p.value_type || types.out});
+          outs.push({...p, label:p.name || '', t:p.value_type || 'any'});
         }
       }
       nodes.push({

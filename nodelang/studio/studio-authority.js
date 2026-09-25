@@ -370,7 +370,8 @@
             unresolvedRuns.set(runKey, {command: request.command_id, operation,
               host: typeof operation === 'string' && operation.trim().length > 0});
           }
-          return post('/api/universal/interaction', request);
+          // One Run route for both Studios; here it carries the signed Run control.
+          return post('/api/universal/run-graph', request);
         }).then(result => {
           unresolvedRuns.delete(runKey);
           return result;

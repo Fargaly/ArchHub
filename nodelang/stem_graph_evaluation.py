@@ -12,10 +12,10 @@ values, declared interfaces) and the wires (source root and interface to
 target root and interface). No store handle, no host, no clock: the same
 graph always evaluates to the same values.
 
-Honest about what it cannot run. An engine this version does not carry
-(ai.master, skill.wrap, expression-driven shapes) marks its node
-"pending" and everything downstream of it "blocked" -- never a guess,
-never a crash.
+Honest about what it cannot run. An engine neither built in here nor
+injected as an effect engine (the Run paths inject pipeline_engines,
+which carries ai.master and skill.wrap) marks its node "pending" and
+everything downstream of it "blocked" -- never a guess, never a crash.
 
 A cycle is an answer, not a hang. Nodes on a cycle are reported as
 blocked with the reason "cycle"; everything reachable without them still
@@ -38,12 +38,21 @@ class StemNode:
 
 @dataclass(frozen=True)
 class StemWire:
-    """One wire between declared interfaces."""
+    """One wire between declared interfaces, with its governed rows.
+
+    ``condition`` gates what the wire carries (the If/Else rule grammar),
+    ``on_fail`` says what the target receives when it blocks ("block" or
+    "pass empty"), and ``tree`` restructures a list on the way through
+    ("none", "flatten", "graft", "simplify").
+    """
 
     source: str
     source_interface: str
     target: str
     target_interface: str
+    condition: str = ""
+    on_fail: str = "block"
+    tree: str = "none"
 
 
 @dataclass(frozen=True)
@@ -88,6 +97,156 @@ def _display(value: object) -> str:
 
 _PASS_THROUGH = {"watch.preview": ("in", "out"), "reroute": ("in", "out")}
 
+# The comparisons a rule may use, longest first so ">=" is never read as ">".
+_OPERATORS = (
+    (">=", lambda left, right: left >= right),
+    ("<=", lambda left, right: left <= right),
+    ("!=", lambda left, right: left != right),
+    ("==", lambda left, right: left == right),
+    (">", lambda left, right: left > right),
+    ("<", lambda left, right: left < right),
+)
+
+
+class _Refusal:
+    """Why a wire delivered nothing; the target node reports it."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+
+def rule_holds(rule: str, value: object) -> "bool | None":
+    """Whether a declared comparison holds for one value, or None when the
+    rule is not one this version evaluates.
+
+    The left side names what is compared: ``count`` is how many items the
+    value carries, ``value`` / ``item`` (or nothing) is the value itself,
+    and any other name is that field of the value. The right side is a
+    literal. This is the comparison grammar the Filter card honours.
+    """
+    text = str(rule or "").strip()
+    for operator, test in _OPERATORS:
+        if operator not in text:
+            continue
+        left_text, right_text = text.split(operator, 1)
+        name = left_text.strip()
+        wanted = _coerce(right_text.strip().strip("'" + chr(34)))
+        if name == "count":
+            held = len(_as_list(value))
+        elif name in ("", "value", "item"):
+            held = value
+        else:
+            for prefix in ("item.", "value."):
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+            held = _field(value, name)
+        try:
+            return bool(test(held, wanted))
+        except TypeError:
+            return False
+    return None
+
+
+def _restructure(tree: str, value: object) -> object:
+    """A list reshaped the way the wire's data-tree row asks."""
+    if tree in ("", "none"):
+        return value
+    items = _as_list(value)
+    if tree == "flatten":
+        flat: list = []
+        stack = list(reversed(items))
+        while stack:
+            item = stack.pop()
+            if isinstance(item, list):
+                stack.extend(reversed(item))
+            else:
+                flat.append(item)
+        return flat
+    if tree == "graft":
+        return [[item] for item in items]
+    if tree == "simplify":
+        def simplify(item):
+            if not isinstance(item, list):
+                return item
+            kept = [simplify(child) for child in item]
+            kept = [child for child in kept if child != []]
+            while len(kept) == 1 and isinstance(kept[0], list):
+                kept = kept[0]
+            return kept
+        return simplify(items)
+    return _Refusal("wire data tree %r is not one this version applies" % tree)
+
+
+def _carry(wire: StemWire, value: object) -> object:
+    """What one wire delivers: restructured, then gated by its condition."""
+    shaped = _restructure(str(wire.tree or "none").strip(), value)
+    if isinstance(shaped, _Refusal):
+        return shaped
+    condition = str(wire.condition or "").strip()
+    if not condition:
+        return shaped
+    holds = rule_holds(condition, shaped)
+    if holds is None:
+        return _Refusal(
+            "wire condition %r is not one this version evaluates" % condition
+        )
+    if holds:
+        return shaped
+    on_fail = str(wire.on_fail or "block").strip()
+    if on_fail == "pass empty":
+        return []
+    if on_fail == "block":
+        return _Refusal("blocked by wire condition %r" % condition)
+    return _Refusal("wire on-block %r is not one this version applies" % on_fail)
+
+
+def _file_name(text: str) -> str:
+    return text.replace(chr(92), "/").rsplit("/", 1)[-1]
+
+
+def _constant_refusal(params: Mapping[str, object], value: object) -> "str | None":
+    """Why a Number or File card's value breaks its own declared limits."""
+    import math
+
+    def number(name):
+        held = params.get(name)
+        if held in ("", None):
+            return None
+        if isinstance(held, bool) or not isinstance(held, (int, float)):
+            raise ValueError("%s %r is not a number" % (name, held))
+        return float(held)
+
+    if any(name in params for name in ("min", "max", "step")):
+        try:
+            low, high, step = number("min"), number("max"), number("step")
+        except ValueError as refusal:
+            return str(refusal)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "value %r is not a number" % (value,)
+        if low is not None and value < low:
+            return "value %s is below min %s" % (_display(value), _display(low))
+        if high is not None and value > high:
+            return "value %s is above max %s" % (_display(value), _display(high))
+        if step is not None:
+            if step <= 0:
+                return "step %s must be greater than 0" % _display(step)
+            steps = (value - (low or 0.0)) / step
+            if not math.isclose(steps, round(steps), abs_tol=1e-9):
+                return "value %s is not on a step of %s from %s" % (
+                    _display(value), _display(step), _display(low or 0))
+    if "extensions" in params:
+        allowed = []
+        for part in str(params.get("extensions") or "").split(","):
+            part = part.strip().lower().lstrip("*")
+            if part:
+                allowed.append(part if part.startswith(".") else "." + part)
+        name = _file_name(str(value or "").strip())
+        if allowed and name:
+            suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            if suffix not in allowed:
+                return "file %r is not one of %s" % (name, ", ".join(allowed))
+    return None
+
 
 def evaluate_stem_graph(
     nodes: Sequence[StemNode],
@@ -106,7 +265,7 @@ def evaluate_stem_graph(
         if wire.target_interface in feeds:
             conflicts.setdefault(wire.target, set()).add(wire.target_interface)
         else:
-            feeds[wire.target_interface] = (wire.source, wire.source_interface)
+            feeds[wire.target_interface] = wire
 
     outputs: dict[str, dict[str, object]] = {}
     display: dict[str, str] = {}
@@ -131,7 +290,8 @@ def evaluate_stem_graph(
         visiting.add(root)
         try:
             feeds: dict[str, object] = {}
-            for name, (src, src_if) in (incoming.get(root) or {}).items():
+            for name, wire in (incoming.get(root) or {}).items():
+                src, src_if = wire.source, wire.source_interface
                 upstream = resolve(src)
                 if upstream is None:
                     pending.setdefault(root, "blocked by %s" % src)
@@ -139,7 +299,11 @@ def evaluate_stem_graph(
                 if src_if not in upstream:
                     pending[root] = "no value on %s.%s" % (src, src_if)
                     return None
-                feeds[name] = upstream[src_if]
+                carried = _carry(wire, upstream[src_if])
+                if isinstance(carried, _Refusal):
+                    pending[root] = carried.reason
+                    return None
+                feeds[name] = carried
             # An operation whose definition holds an expression computes from
             # that expression: the graph says what the node means (SPEC 4.1).
             # The Python engines below remain only where no released
@@ -195,6 +359,13 @@ def _run_engine(
         # nothing bound reads the declared default instead of nothing.
         if engine == "input.parameter" and value in ("", None):
             value = params.get("default", "")
+        # Number declares min/max/step and File declares extensions: the
+        # card's own limits are enforced, never decoration.
+        if engine == "data.constant":
+            refusal = _constant_refusal(params, value)
+            if refusal is not None:
+                pending[root] = refusal
+                return None
         display[root] = _display(value)
         return {"value": value}
     if engine == "output.parameter":
@@ -219,7 +390,18 @@ def _run_engine(
             pending[root] = "input value is not wired"
             return None
         value = feeds["value"]
-        condition = feeds.get("condition", bool(value))
+        # A wired condition decides; otherwise the card's own condition
+        # rule does; a card with no rule routes on the value's truth.
+        if "condition" in feeds:
+            condition = feeds["condition"]
+        else:
+            rule = str(node.parameters.get("condition") or "").strip()
+            condition = bool(value) if not rule else rule_holds(rule, value)
+            if condition is None:
+                pending[root] = (
+                    "condition %r is not one this version evaluates" % rule
+                )
+                return None
         taken = "true" if condition else "false"
         display[root] = taken
         return {taken: value}
@@ -250,9 +432,25 @@ def _run_engine(
         if "value" not in feeds:
             pending[root] = "input value is not wired"
             return None
-        key = str(feeds.get("key") or "a").strip().lower()
-        branch = key if key in ("a", "b", "c") else "a"
-        display[root] = branch
+        # The card's cases name the key of each of its three outputs, in
+        # order: cases "wall, door, window" routes key "door" to output b.
+        cases = [
+            part.strip().casefold()
+            for part in str(node.parameters.get("cases") or "a, b, c").split(",")
+            if part.strip()
+        ]
+        if not cases or len(cases) > 3:
+            pending[root] = (
+                "Switch has three outputs (a, b, c); cases must name one to three keys"
+            )
+            return None
+        held_key = feeds.get("key")
+        key = str(cases[0] if held_key is None else held_key).strip()
+        if key.casefold() not in cases:
+            pending[root] = "key %r matches no case (%s)" % (key, ", ".join(cases))
+            return None
+        branch = ("a", "b", "c")[cases.index(key.casefold())]
+        display[root] = branch if key.casefold() == branch else "%s -> %s" % (key, branch)
         return {branch: feeds["value"]}
     pending[root] = "engine %s is pending" % engine
     return None

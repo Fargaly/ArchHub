@@ -263,11 +263,11 @@ def test_workshop_and_agent_definitions_run_from_the_catalogue(harness):
     # One running catalogue: the clean-bootstrap contracts are mapped into it.
     assert {row['clean_definition'] for row in WORKSHOP_CATALOGUE.values()} >= {
         'Agent session state', 'Independent review', 'Workshop'}
-    registry_js = (Path(app.__file__).parent / 'studio' / 'node-registry.jsx').read_text(encoding='utf-8')
+    from nodelang.library_engines import library_catalogue
+    served = {item['id']: item for group in library_catalogue() for item in group['items']}
     for item, row in WORKSHOP_CATALOGUE.items():
         assert LIBRARY_ITEM_ENGINES[item]['engine'] == row['engine'] in PIPELINE_ENGINES
-        assert "engine:'%s'" % row['engine'] in registry_js
-    assert "cat:'workshop'" in registry_js
+        assert served[item]['engine'] == row['engine'] and served[item]['cat'] == 'workshop'
     convo = h.conversation_with_two_agents()
     transport = h.state['transport']
     calls = len(transport.calls)

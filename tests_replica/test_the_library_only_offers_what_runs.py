@@ -6,14 +6,14 @@ studio-lm.jsx creates a node on the graph only when libItem.engine is set
 card in local React state alone: invisible to Run, never written to the
 graph, gone on reload.
 
-This court holds the engine side of that gap shut. It reads the real
-AH_LIBRARY out of the studio registry (node-registry.jsx) rather than a copy, so the numbers
-here move the moment the library does.
+This court holds the engine side of that gap shut. It reads the one node
+library the graph serves to Studio (library_engines.library_catalogue, GET
+/api/universal/node-library) rather than a copy, so the numbers here move the
+moment the library does.
 """
 from __future__ import annotations
 
 import math
-import re
 from pathlib import Path
 
 import pytest
@@ -22,9 +22,9 @@ from nodelang.library_engines import (
     LIBRARY_ENGINES,
     LIBRARY_ITEMS_WITHOUT_ENGINE,
     LIBRARY_ITEM_ENGINES,
+    library_catalogue,
 )
 
-_STUDIO = Path(__file__).resolve().parents[1] / "nodelang" / "studio" / "node-registry.jsx"
 _CANVAS = Path(__file__).resolve().parents[1] / "nodelang" / "studio" / "studio-lm.jsx"
 
 _LINES = [
@@ -93,18 +93,11 @@ _STREAM_ENGINES = [
 
 
 def _library_items():
-    """Every AH_LIBRARY card in the studio registry, with its engine or None."""
-    source = _STUDIO.read_text(encoding="utf-8", errors="replace")
-    start = source.index("const AH_LIBRARY = [")
-    end = source.index(chr(10) + "];", start)
-    items = {}
-    for line in source[start:end].splitlines():
-        found = re.search(r"id:'([a-z0-9_]+)'", line)
-        if not found:
-            continue
-        engine = re.search(r"engine:'([^']+)'", line)
-        items[found.group(1)] = engine.group(1) if engine else None
-    return items
+    """Every card the served library lists, with its engine or None."""
+    return {
+        item["id"]: (None if item.get("noEngine") else item["engine"])
+        for group in library_catalogue() for item in group["items"]
+    }
 
 
 def _answered(engine_name, params, wired):
@@ -214,17 +207,19 @@ def test_every_library_card_either_runs_or_says_it_cannot():
 
     bare = set(items) - wired
     assert bare == set(LIBRARY_ITEMS_WITHOUT_ENGINE), sorted(bare)
-    source = _STUDIO.read_text(encoding="utf-8", errors="replace")
+    served = {item["id"]: item for group in library_catalogue() for item in group["items"]}
     for item in bare:
-        line = [l for l in source.splitlines() if "id:'%s'" % item in l]
-        assert line and "noEngine:true" in line[0], (
-            "%s can never run and is not marked: %s" % (item, line[:1]))
+        assert served[item].get("noEngine") is True, (
+            "%s can never run and is not marked" % item)
     assert "libItem.noEngine" in _CANVAS.read_text(encoding="utf-8", errors="replace"), "the drop must refuse, not vanish"
 
 
 def test_every_mapped_card_names_an_engine_that_exists():
+    # Host and read cards run on host engines; every card's engine is in the
+    # one table both Run paths carry.
+    from nodelang.pipeline_engines import PIPELINE_ENGINES
     for item, wiring in LIBRARY_ITEM_ENGINES.items():
-        assert wiring["engine"] in LIBRARY_ENGINES, item
+        assert wiring["engine"] in PIPELINE_ENGINES, item
         assert isinstance(wiring["params"], dict), item
 
 
@@ -291,9 +286,10 @@ def test_logic_passes_one_branch_only():
     assert passed["out"] == _ROWS and shown == "true"
     blocked, shown = _answered(
         "library.if", {"rule": "item.height > 90000"}, _ROWS)
-    assert blocked == {} and shown.startswith("false")
+    # The false branch is a real socket: the value leaves on it, never on out.
+    assert blocked == {"false": _ROWS} and shown.startswith("false")
     taken, shown = _answered("library.switch", {"key": "b"}, _ROWS)
-    assert taken["out"] == _ROWS and "b" in shown
+    assert taken["out"] == _ROWS and taken["b"] == _ROWS and "b" in shown
     looped, shown = _answered("library.loop", {}, _ROWS)
     assert looped["each"] == _ROWS[0] and looped["out"] == _ROWS
     assert "3 items" in shown

@@ -234,3 +234,18 @@ def no_configured_model_default(monkeypatch):
     # Courts that need it restore it with a fixture settings store.
     import nodelang.model_router as _router
     monkeypatch.setattr(_router, "default_composer_route", lambda **_kwargs: ("", ""), raising=False)
+
+
+@_pytest.fixture(autouse=True)
+def _fresh_last_pipeline_run():
+    """Every court starts with no remembered pipeline run.
+
+    universal_pipeline keeps the last run in a module global for BABOOM
+    lenses; a run in one court leaked into the next court's projection, so
+    a result depended on test order.
+    """
+    from nodelang import universal_pipeline
+
+    universal_pipeline._LAST_RUN.clear()
+    yield
+    universal_pipeline._LAST_RUN.clear()

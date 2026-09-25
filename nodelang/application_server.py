@@ -1414,27 +1414,10 @@ class _CleanAuthorityHttpServer:
             command_id=str(_uuid.uuid4()),
         )
 
-    def _clean_run_stem_graph(self, binding, payload):
-        """Evaluate the scope's stem graph and land what it produced.
+    def _clean_stem_plan(self, payload):
+        """Under the graph lock: the scope's engine nodes and wires."""
+        from .stem_graph_evaluation import StemNode, StemWire
 
-        Values flow along declared wires (data.constant to
-        output.parameter and everything between), and each node that
-        produced or refused a value has that answer written onto its
-        instance as its status -- the card shows what Run did, and the
-        write is the same signed sparse-override command the inspector
-        uses. Engines this version cannot run are answered per node
-        ("engine ai.master is pending"), never guessed.
-        """
-        import uuid as _uuid
-
-        from .stem_graph_evaluation import (
-            StemNode,
-            StemWire,
-            evaluate_stem_graph,
-        )
-        standing = payload.get("root")
-        if type(standing) is not str or not standing:
-            raise InvalidCell("run projection has no scope root")
         stem_nodes = []
         for item in payload["nodes"]:
             engine = item.get("engine")
@@ -1468,9 +1451,113 @@ class _CleanAuthorityHttpServer:
                     wire["source"], source_interface,
                     wire["target"], target_interface,
                 ))
-        evaluation = evaluate_stem_graph(
-            stem_nodes, stem_wires, self._graph_held_operations()
+        return stem_nodes, stem_wires, self._graph_held_operations()
+
+    @staticmethod
+    def _clean_engine_table(gate=None):
+        """The engines the clean shell runs.
+
+        This shell carries no host adapter, so every pipeline engine that
+        reaches a host, a network, a file or a shell refuses honestly here.
+        It runs the pure library engines, and the base AI and Skill stems
+        only through ``gate`` -- the owner admission that also records a
+        receipt; with no gate they refuse too.
+        """
+        from .library_engines import LIBRARY_ENGINES, PURE_LIBRARY_ENGINES, STEM_EFFECT_ENGINES
+        from .pipeline_engines import PIPELINE_ENGINES
+
+        def refuse(name):
+            def refused(_params, _feeds):
+                raise ValueError(
+                    "this shell has no adapter for %s, so it reaches no host" % name)
+            return refused
+
+        table = {name: refuse(name) for name in PIPELINE_ENGINES}
+        table.update({name: LIBRARY_ENGINES[name] for name in PURE_LIBRARY_ENGINES})
+        for name, engine in STEM_EFFECT_ENGINES.items():
+            table[name] = gate(name, engine) if gate is not None else refuse(name)
+        return table
+
+    @staticmethod
+    def _clean_evaluate(plan, gate=None):
+        """The evaluation itself. A gated effect may wait on a model, so
+        callers run this OUTSIDE the graph lock."""
+        from .stem_graph_evaluation import evaluate_stem_graph
+
+        stem_nodes, stem_wires, held = plan
+        return evaluate_stem_graph(
+            stem_nodes, stem_wires, held,
+            _CleanAuthorityHttpServer._clean_engine_table(gate))
+
+    def _clean_owner_effect_gate(self, token, csrf_token, admitted_session, records):
+        """Owner admission for model and skill effects on the clean shell.
+
+        The same rule the terminal and Brain routes apply: the browser binding
+        is still the one that pressed Run, still holds the Run control, and is
+        this application owner -- re-proven immediately before each provider
+        call. Anything else refuses before the provider is touched. Every
+        admitted call is recorded in ``records`` and lands as a receipt.
+        """
+        owner_subject = self.authority.manifest.principal_root
+
+        def gate(name, engine):
+            def admitted(params, feeds):
+                current = self._resolve_binding(
+                    token, csrf_token=csrf_token, require_csrf=True)
+                if current.session_root != admitted_session:
+                    raise AuthorizationDenied("Browser binding changed during the run")
+                if current.subject_root != owner_subject:
+                    raise ValueError(
+                        "%s runs only for this application owner" % name)
+                try:
+                    produced, shown = engine(params, feeds)
+                except Exception as refusal:
+                    records.append({"engine": name, "succeeded": False,
+                                    "display": str(refusal)[:200]})
+                    raise
+                records.append({"engine": name, "succeeded": True,
+                                "display": str(shown)[:200]})
+                return produced, shown
+            return admitted
+        return gate
+
+    def _clean_record_effects(self, records):
+        """Under the graph lock: one signed receipt per admitted effect call,
+        through the same command path a host operation records with."""
+        from .unified_authority import (
+            COMMAND_BUDGET, build_contract, commit_with_receipt,
+            composition_root, digest, validate_command_participants,
         )
+        import uuid as _uuid
+
+        receipts = []
+        for record in records:
+            snapshot = self.authority.store.snapshot()
+            interface_root = composition_root(
+                self.authority, "Interface", caller=self.clean_caller)
+            command_id = str(_uuid.uuid4())
+            request_digest = digest({"intent": "execute-host-operation",
+                                     "operation": "effect:" + record["engine"],
+                                     "arguments": {}, "subject": ""})
+            authenticated, proof = validate_command_participants(
+                self.authority, snapshot, self.clean_caller, command_id,
+                intent="execute-host-operation", request_digest=request_digest,
+                object_root=interface_root, scope_root=interface_root,
+                budget=COMMAND_BUDGET)
+            result_root, cells = build_contract(self.authority, {
+                "phase": "effect", "operation": "effect:" + record["engine"],
+                "succeeded": record["succeeded"], "display": record["display"],
+            })
+            receipts.append(commit_with_receipt(
+                self.authority, snapshot, resource_create=tuple(cells),
+                resource_replace=(), authenticated=authenticated,
+                result_root=result_root, policy_proof=proof))
+        return receipts
+
+    def _clean_land_stem_statuses(self, binding, standing, evaluation):
+        """Under the graph lock: land each answer as its node status, read
+        afresh; a node gone meanwhile gets nothing."""
+        payload = self._canvas(binding, scope_root=standing)
         written = 0
         stale = {}
         for item in payload["nodes"]:
@@ -1501,9 +1588,7 @@ class _CleanAuthorityHttpServer:
             except InvalidCell as refusal:
                 # An instance pinned to a definition revision that
                 # predates the status channel has nowhere to land its
-                # answer. The run still stands for every other node;
-                # the refusal is carried per node, never invented away
-                # and never allowed to take the whole run down.
+                # answer. The run still stands for every other node.
                 stale[root] = str(refusal)
                 continue
             written += 1
@@ -1519,6 +1604,67 @@ class _CleanAuthorityHttpServer:
         })
         return payload
 
+    def _clean_run_stem_graph(self, binding, payload):
+        """Evaluate the scope stem graph and land what it produced, for a
+        caller that already holds the graph lock (the focused-execute path).
+        Values flow along declared wires; each answer lands as the node
+        status through the signed sparse-override command the inspector
+        uses. A browser Run goes through _clean_run_graph, which keeps the
+        effects outside the lock.
+        """
+        standing = payload.get("root")
+        if type(standing) is not str or not standing:
+            raise InvalidCell("run projection has no scope root")
+        evaluation = self._clean_evaluate(self._clean_stem_plan(payload))
+        return self._clean_land_stem_statuses(binding, standing, evaluation)
+
+    def _clean_run_graph(self, token, csrf_token, body):
+        """Run pressed on the scope Run control, lock-light.
+
+        The graph lock covers the plan and the landing only; the effects run
+        between them without holding every graph route. The binding and the
+        scope are re-proven before anything lands. A focused host operation
+        keeps its own signed, receipted path.
+        """
+        with self._mutation_lock:
+            probe = self._resolve_binding(
+                token, csrf_token=csrf_token, require_csrf=True)
+            standing = self._standing_scope(
+                probe, expected_scope=body.get("expected_scope"))
+            if self._clean_control_capability(body.get("control")) != CAPABILITY_EXECUTE:
+                raise InvalidCell("run-graph needs the scope Run control")
+            payload = self._canvas(probe, scope_root=standing)
+            selected = payload.get("selected")
+            node = next((item for item in payload["nodes"]
+                         if item["id"] == selected), None)
+            operation = None if node is None else node.get("operation")
+            if type(operation) is str and operation.strip():
+                return self._clean_execute_focused(probe, body)
+            engine = None if node is None else node.get("engine")
+            if not (type(selected) is str and selected
+                    and type(engine) is str and engine.strip()):
+                raise InvalidCell(
+                    "no node is focused to run" if not selected
+                    else "the focused node declares no host operation")
+            plan = self._clean_stem_plan(payload)
+        records: list = []
+        # Every model or skill call passes the owner gate, which re-proves the
+        # binding before the provider is touched; a non-owner is refused.
+        gate = self._clean_owner_effect_gate(token, csrf_token, probe.session_root, records)
+        evaluation = self._clean_evaluate(plan, gate)
+        with self._mutation_lock:
+            # An effect that ran is a fact: its receipt lands even if the
+            # binding lapsed meanwhile and no status may land.
+            receipts = self._clean_record_effects(records)
+            current = self._resolve_binding(
+                token, csrf_token=csrf_token, require_csrf=True)
+            if (current.session_root, current.view_root) != (
+                    probe.session_root, probe.view_root):
+                raise AuthorizationDenied("Browser binding changed during the run")
+            self._standing_scope(current, expected_scope=standing)
+            payload = self._clean_land_stem_statuses(current, standing, evaluation)
+            payload["effect_receipts"] = [receipt.receipt_root for receipt in receipts]
+            return payload
     def _clean_execute_focused(self, binding, body):
         """Run the operation the focused node declares.
 
@@ -3761,6 +3907,15 @@ class _CleanAuthorityHttpServer:
                             payload = owner._clean_connect(binding, body)
                         self._json(200, {"ok": True, **payload})
                         return
+                    if self.path == "/api/universal/run-graph":
+                        # Both Studios press Run on this one route. Here it
+                        # is the scope's signed Run control, exactly what the
+                        # interaction route admits for it; nothing else runs,
+                        # and effects run outside the graph lock.
+                        payload = owner._clean_run_graph(
+                            self._token(), csrf_token, body)
+                        self._json(200, {"ok": True, **payload})
+                        return
                     if self.path == "/api/universal/execute-adapter":
                         with owner._mutation_lock:
                             binding = owner._resolve_binding(
@@ -3828,6 +3983,22 @@ class _CleanAuthorityHttpServer:
                         return
                     if self.path == "/api/universal/interaction":
                         with owner._mutation_lock:
+                            # Execute is the same Run as /api/universal/
+                            # run-graph: effects run outside the graph lock.
+                            owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
+                            )
+                            executes = owner._clean_control_capability(
+                                body.get("control")
+                            ) == CAPABILITY_EXECUTE
+                        if executes:
+                            payload = owner._clean_run_graph(
+                                self._token(), csrf_token, body)
+                            self._json(200, {"ok": True, **payload})
+                            return
+                        with owner._mutation_lock:
                             # A control does what the graph says it does.
                             # Execute is not a scope-open, and answering it
                             # with one would open a scope the founder never
@@ -3841,12 +4012,6 @@ class _CleanAuthorityHttpServer:
                             capability = owner._clean_control_capability(
                                 body.get("control")
                             )
-                            if capability == CAPABILITY_EXECUTE:
-                                payload = owner._clean_execute_focused(
-                                    probe, body
-                                )
-                                self._json(200, {"ok": True, **payload})
-                                return
                             if capability == CAPABILITY_INSTANTIATE:
                                 payload = owner._clean_instantiate_definition(
                                     probe, body, body.get("control")
@@ -5519,6 +5684,34 @@ class ApplicationServer:
         except Exception as refused:
             print("  sockets    : engine sockets left read-only -- %s" % refused,
                   flush=True)
+        # The node library as graph relations (SPEC 4.5), installed once.
+        from .universal_pipeline import seed_engine_library
+        try:
+            with commit_intent.declare(
+                commit_intent.MIGRATION,
+                actor=universal_registry.application_root,
+                reason="node library catalogue as graph relations",
+            ):
+                seeded = seed_engine_library(universal_store, universal_registry)
+            if seeded:
+                print("  library    : %d node-library card(s) installed" % seeded, flush=True)
+        except Exception as refused:
+            print("  library    : node library not installed -- %s" % refused, flush=True)
+        # Logic cards placed before 2026-09-24 had only out/in; their named
+        # branches and inputs arrive once, in one commit, then never again.
+        from .universal_pipeline import ensure_logic_card_sockets
+        try:
+            with commit_intent.declare(
+                commit_intent.MIGRATION,
+                actor=universal_registry.application_root,
+                reason="named sockets for logic cards placed before 2026-09-24",
+            ):
+                added = ensure_logic_card_sockets(universal_store, universal_registry)
+            if added:
+                print("  sockets    : %d logic-card socket(s) added" % added, flush=True)
+        except Exception as refused:
+            print("  sockets    : logic-card sockets not added -- %s" % refused,
+                  flush=True)
         self.runtime_presence_lease_storage = getattr(
             self.universal_registry.runtime_presence_protocol, "lease_storage", None
         )
@@ -6003,6 +6196,29 @@ class ApplicationServer:
                         return
                     from .cloud_signin import current_status
                     self._json(200, {'ok': True, **current_status()})
+                    return
+                if parsed.path == '/api/universal/node-library':
+                    # The one node library (library_engines): every card,
+                    # its engine, defaults and sockets. Studio holds no copy.
+                    try:
+                        self._browser_session_binding()
+                    except AuthorizationDenied as denied:
+                        self._json(403, {'ok': False, 'error': str(denied)})
+                        return
+                    # SPEC 4.5: membership, category and order are graph
+                    # relations (universal_pipeline.read_engine_library).
+                    from .library_engines import engine_categories
+                    from .universal_pipeline import (
+                        read_engine_library, wire_parameter_specs,
+                    )
+                    groups = read_engine_library(owner.universal_store.snapshot())
+                    if groups is None:
+                        self._json(503, {'ok': False, 'error':
+                            'the node library is not installed in this graph yet'})
+                        return
+                    self._json(200, {'ok': True, 'groups': groups,
+                                     'categories': engine_categories(groups),
+                                     'wire_parameters': wire_parameter_specs()})
                     return
                 if parsed.path == '/api/universal/hosts':
                     # The live machine, honestly: which hosts answer right
@@ -7742,20 +7958,10 @@ class ApplicationServer:
                                     'A terminal card runs only for this application owner '
                                     'with the right to run commands.') from None
 
-                        def _baboom_presence(_params, _feeds):
-                            presence = owner._machine_agent_runtime_presence()
-                            live = bool(presence.get("baboom_connected"))
-                            return (
-                                {"out": presence},
-                                "companion %s · %d signed runtime session(s)" % (
-                                    "ATTACHED" if live else "not attached",
-                                    presence["active_runtime_sessions"],
-                                ),
-                            )
-                        engines = {
-                            **(owner.pipeline_effect_engines or {}),
-                            "baboom.presence": _baboom_presence,
-                        }
+                        # baboom.presence answers from the graph's own
+                        # presence leases (universal_pipeline._graph_engines):
+                        # the one source every BABOOM presence route reads.
+                        engines = dict(owner.pipeline_effect_engines or {})
                         if "library.terminal" in engines:
                             engines["library.terminal"] = (
                                 owner.terminal_sessions.admitted_engine(terminal_admission))
@@ -8025,6 +8231,7 @@ class ApplicationServer:
                                     title=str(body.get('title') or ''), engine=str(body.get('engine') or ''),
                                     x=float(body.get('x') or 240.0), y=float(body.get('y') or 200.0),
                                     properties=body.get('params') or {}, authentication_context=binding.context,
+                                    item=str(body.get('item') or '') or None,
                                 )
                                 self._json(200, created)
                                 return
@@ -10661,11 +10868,15 @@ class ApplicationServer:
     def _machine_agent_runtime_presence(self) -> dict[str, object]:
         """Project bounded live capability state for the BABOOM graph lens.
 
-        The durable Agent Session is already a Cell composition. This only says
-        whether this runtime can currently verify a capability for that graph
-        session; it never creates a second presence authority or exposes roots,
-        device custody, tokens, or external identities.
+        One presence source: which runtimes are attached is read from the
+        graph's signed presence leases (universal_pipeline.
+        runtime_presence_state), the same answer the BABOOM Presence card
+        gives. The in-memory device-proof sessions only admit renewals; they
+        are not a second answer to "is BABOOM here". Nothing here exposes
+        roots, device custody, tokens, or external identities.
         """
+        from .universal_pipeline import runtime_presence_state
+
         now = time.time()
         with self._machine_agent_session_lock:
             stale = tuple(
@@ -10674,22 +10885,23 @@ class ApplicationServer:
             )
             for root in stale:
                 self._machine_agent_sessions.pop(root, None)
-            runtimes = tuple(
-                str(binding.get("runtime") or "")
-                for binding in self._machine_agent_sessions.values()
-            )
-        baboom_device_proven = (
-            "baboom" in runtimes or "baboom-execution" in runtimes
+        state = runtime_presence_state(
+            self.universal_store, self.universal_registry, now=now
         )
+        runtimes = state["runtimes"]
         return {
-            "active_runtime_sessions": len(runtimes),
-            "baboom_connected": "baboom" in runtimes,
-            "baboom_action_capability_active": "baboom-execution" in runtimes,
+            "active_runtime_sessions": state["active_runtime_sessions"],
+            "baboom_connected": state["baboom_connected"],
+            "baboom_action_capability_active": (
+                state["baboom_action_capability_active"]
+            ),
             # The Browser handoff is a released local-server route. The proof
-            # bit is about this runtime's admitted session, never the device
+            # bit is about this graph's admitted leases, never the device
             # inventory or its custody root.
             "device_enrollment_handoff_available": True,
-            "current_runtime_device_proven": baboom_device_proven,
+            "current_runtime_device_proven": (
+                "baboom" in runtimes or "baboom-execution" in runtimes
+            ),
             "remote_gateway_serving": bool(
                 self._universal_cloud_thread is not None
                 and self._universal_cloud_thread.is_alive()

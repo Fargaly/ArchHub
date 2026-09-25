@@ -22,7 +22,14 @@
 window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
 (() => {
   const session = window.ARCHHUB_BOOT;
-  if (!session) return;
+  // The wire inspector's rows are the server's one list (WIRE_PARAMETER_SPECS).
+  // When they cannot be read, the panel says why instead of drawing nothing.
+  window.WIRE_PARAMS = [];
+  window.WIRE_PARAMS_ERROR = '';
+  if (!session) {
+    window.WIRE_PARAMS_ERROR = 'this page has no signed-in session';
+    return;
+  }
   window.ARCHHUB_SET_PROP = async (relation, value) => {
     const response = await fetch('/api/universal/set-property', {
       method: 'POST',
@@ -40,13 +47,31 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     }
     return answer;
   };
+  window.ARCHHUB_WIRE_PARAMS_LOAD = fetch('/api/universal/node-library', {
+    headers: {'X-ArchHub-Session': session.token, 'X-ArchHub-CSRF': session.csrf},
+    credentials: 'same-origin',
+  }).then(async response => {
+    let answer = null;
+    try { answer = await response.json(); } catch (_) { answer = null; }
+    if (!response.ok || !answer || answer.ok === false) {
+      throw new Error((answer && answer.error) || ('HTTP ' + response.status));
+    }
+    if (!Array.isArray(answer.wire_parameters) || !answer.wire_parameters.length) {
+      throw new Error('the server listed no wire parameters');
+    }
+    window.WIRE_PARAMS = answer.wire_parameters;
+    window.WIRE_PARAMS_ERROR = '';
+  }).catch(error => {
+    window.WIRE_PARAMS = [];
+    window.WIRE_PARAMS_ERROR = (error && error.message) || String(error);
+  });
 })();
 </script>
 <script src="/studio/vendor/react.js"></script>
 <script src="/studio/vendor/react-dom.js"></script>
 <script src="/studio/vendor/babel.js"></script>
 <script type="text/babel" data-presets="env,react" src="/studio/tokens.jsx"></script>
-<!-- the shared parameter-type registry: the wire inspector reads window.WIRE_PARAMS from it, and this page never loaded it, so the WIRE PARAMETERS header sat over zero rows -->
+<!-- the shared parameter-type registry (types and sockets); the wire rows (window.WIRE_PARAMS) are served by /api/universal/node-library above -->
 <script type="text/babel" data-presets="env,react" src="/studio/param-types.jsx"></script>
 <script type="text/babel" data-presets="env,react" src="/studio/cockpit-core.jsx"></script>
 <script type="text/babel" data-presets="env,react" src="/studio/hub-kit.jsx"></script>

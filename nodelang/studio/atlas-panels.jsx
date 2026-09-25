@@ -348,13 +348,25 @@ function StemParams({ node, patchNode }) {
   const params = node.params || [];
   const ports = node.ports || { ins: [], outs: [] };
   const promoted = new Set((ports.ins || []).map(x => x.id));
+  // A refused write is shown on the panel, never swallowed.
+  const [writeError, setWriteError] = React.useState('');
+  // The map shows a value cut to 48 characters; editing starts from the whole value
+  // (p.full), so saving never writes the cut copy back over the graph.
+  const fullValue = p => (p.full !== undefined ? p.full : p.v);
   const setParam = (i, patch) => {
-    patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...patch } : p) });
+    const held = params[i];
+    if (patch.v !== undefined && held && held.editable === false) {
+      setWriteError(held.k + ' is a file location; it stays on the machine and is edited in the app.');
+      return;
+    }
+    const next = patch.v !== undefined && held && held.full !== undefined ? { ...patch, full: patch.v } : patch;
+    patchNode(node.id, { params: params.map((p, j) => j === i ? { ...p, ...next } : p) });
     // A live-graph parameter commits through the governed write; the
     // local patch above keeps the panel instant either way.
-    const held = params[i];
     if (patch.v !== undefined && held && held.rel && window.ARCHHUB_SET_PROP) {
-      window.ARCHHUB_SET_PROP(held.rel, String(patch.v)).catch(() => {});
+      window.ARCHHUB_SET_PROP(held.rel, String(patch.v))
+        .then(() => setWriteError(''))
+        .catch(e => setWriteError('Not saved: ' + held.k + ' — ' + ((e && e.message) || String(e))));
     }
   };
   const delParam = (i) => { const p = params[i]; patchNode(node.id, { params: params.filter((_, j) => j !== i), ports: { ...ports, ins: (ports.ins || []).filter(x => x.id !== p.k) } }); };
@@ -388,18 +400,19 @@ function StemParams({ node, patchNode }) {
         <span style={{ width: 30, height: 16, borderRadius: 99, background: on ? HB.accent : HB.lineSoft, position: 'relative', flexShrink: 0, transition: 'background .15s' }}><span style={{ position: 'absolute', top: 1, left: on ? 15 : 1, width: 14, height: 14, borderRadius: '50%', background: HB.ink, transition: 'left .15s' }}/></span>
       </button>
     ); }
-    if (t === 'number') return <input type="number" value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle}/>;
+    if (t === 'number') return <input type="number" value={fullValue(p)} readOnly={p.editable === false} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle}/>;
     if (t === 'color') return (
       <input type="color" title={String(p.v)} value={/^#[0-9a-fA-F]{6}$/.test(String(p.v)) ? p.v : '#d97757'} onChange={e => setParam(i, { v: e.target.value })} style={{ width: 104, height: 24, flexShrink: 0, border: `1px solid ${HB.line}`, background: 'none', padding: 0, cursor: 'pointer', borderRadius: 4 }}/>
     );
     if (t === 'trigger') return (
-      <input value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle} title="▷ fires on…" placeholder="on save · cron…"/>
+      <input value={fullValue(p)} readOnly={p.editable === false} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle} title="▷ fires on…" placeholder="on save · cron…"/>
     );
-    return <input value={p.v} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle} placeholder="value…"/>;
+    return <input value={fullValue(p)} readOnly={p.editable === false} title={p.editable === false ? 'A file location stays on the machine' : undefined} onChange={e => setParam(i, { v: e.target.value })} style={fieldStyle} placeholder="value…"/>;
   };
 
   return (
     <div style={wrap}>
+      {writeError && <div role="alert" style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.red, padding: '6px 8px' }}>{writeError}</div>}
       {params.length === 0 && <div style={{ fontFamily: HB.serif, fontStyle: 'italic', fontSize: 12.5, color: HB.inkMute }}>No parameters yet — add a field, toggle, or trigger below to grow this node.</div>}
       {params.map((p, i) => { const t = ptypeOf(p); const on = promoted.has(p.k); return (
         <div key={i} style={card(on)} title={p.k + ' · ' + t + (on ? ' · exposed as an input port, wireable on the map' : '')}>
@@ -473,6 +486,7 @@ function NodeInspector({ M, node, DB, assign, STATUS, CATS, patchNode, delNode, 
               <div><div style={insLabel}>CATEGORY</div><select value={node.cat} onChange={e => patchNode(node.id, { cat: e.target.value })} style={insInput()}>{CATS.map(c => <option key={c}>{c}</option>)}</select></div>
             </div>
             <div>
+              {node.status_text ? <div style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.inkSoft, marginBottom: 6, whiteSpace: 'pre-wrap' }} title="What the last Run answered">LAST RUN · {node.status_text}</div> : null}
               <div style={insLabel}>STATUS · THE LIVE ROADMAP</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                 {STATUS.map(s => <button key={s} onClick={() => patchNode(node.id, { status: s })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: HB.mono, fontSize: 10.5, textTransform: 'capitalize', border: `1px solid ${node.status === s ? STC[s] : HB.line}`, background: node.status === s ? STC[s] + '20' : 'transparent', color: node.status === s ? STC[s] : HB.inkSoft }}><span style={{ width: 7, height: 7, borderRadius: 2, background: STC[s] }}/>{s}</button>)}
@@ -709,7 +723,7 @@ function MultiFieldPanel({ M, ids, onGroup, clearSel }) {
   );
 }
 
-// Wire parameters come from the shared type registry (window.WIRE_PARAMS) — the SAME
+// Wire parameters are the server's one list (window.WIRE_PARAMS, set by cockpit.html from the node library) -- the SAME
 // definition the app's inspector uses, so a connection means one thing in both graphs.
 const WIRE_PARAM_DEFS = () => (window.WIRE_PARAMS || []).map(p => ({
   k: p.k, v: p.def, t: p.type === 'toggle' ? 'boolean' : p.type === 'number' ? 'number' : 'string',
@@ -754,6 +768,11 @@ function WirePanel({ M, w, onDelete, onGoto, onClose, patchWire }) {
           Applies to all {members.length} underlying wire{members.length === 1 ? '' : 's'}.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', borderTop: `1px solid ${HB.lineSoft}` }}>
+          {WIRE_PARAM_DEFS().length === 0 && (
+            <div role="alert" style={{ fontFamily: HB.mono, fontSize: 10.5, color: HB.red, padding: '8px 2px' }}>
+              {'Wire parameters could not be loaded: ' + (window.WIRE_PARAMS_ERROR || 'the list has not arrived from the server')}
+            </div>
+          )}
           {WIRE_PARAM_DEFS().map(p => {
             const val = wp[p.k] === undefined ? p.v : wp[p.k];
             const changed = String(val) !== String(p.v);

@@ -67,19 +67,15 @@ const pmLabel = (spec, labels) => (labels && labels[spec.k]) || spec.label || (P
 // into the ordinary node shape and the SAME inspector renders it: typed sockets, the same rows,
 // pages, ⋯ menu, add-parameter, cook lifecycle.
 //
-// Its parameters are the ones a real graph engine gives a connection, not decoration:
-//   lacing      — Dynamo's list lacing: how two lists of different length are paired.
+// Its parameters are the ones the run applies to a connection, not decoration:
 //   tree        — Grasshopper's data-tree ops: flatten / graft / simplify.
 //   condition   — a rule; the wire only carries when the expression holds.
-//   on_fail     — what downstream receives when the rule blocks or the source errors.
-//   throttle_ms — rate limit, for a wire fed by a live host.
+//   on_fail     — what downstream receives when the rule blocks: nothing, or an empty list.
 //   enabled     — mute the connection without deleting it.
-// ONE definition, in param-types.jsx. The founder's handover: "defined once
-// in param-types.jsx so a connection means the same thing in the cockpit and
-// in Studio... If it adds a parameter type to one and not the other, it is
-// wrong." This file held a second copy and the two had already drifted (a
-// throttle ceiling of 10 s here, 2 s there), so the studio now derives from
-// window.WIRE_PARAMS and nothing here can drift again.
+// ONE definition, on the server (universal_pipeline.WIRE_PARAMETER_SPECS), served with the
+// node library; studio.html sets window.WIRE_PARAMS from it before Studio mounts. The founder's
+// handover: a connection means the same thing in the cockpit and in Studio -- both read that
+// one list, and nothing here types it again.
 const WIRE_SPECS = (typeof window !== 'undefined' && window.WIRE_PARAMS) || [];
 const WIRE_ROW_TYPE = { toggle: 'toggle', menu: 'select', text: 'text', number: 'slider' };
 
@@ -138,15 +134,15 @@ function wireAsNode(w, i, nodes) {
   };
 }
 
+// Presets set only rows the engine reads (library_engines.dimensions reads style and
+// offset), keyed by the engine the card runs; a card id or category never matches.
 const PM_PRESETS = {
-  'revit.create_dimensions': [
-    { id: 'ext50', name: '1:50 exterior', vals: { scale: '1:50', align: 'parallel', offset_mm: 240, snap_to: 'outer face' } },
-    { id: 'ext100', name: '1:100 coarse', vals: { scale: '1:100', align: 'parallel', offset_mm: 400, snap_to: 'outer face' } },
-    { id: 'core', name: 'core setting-out', vals: { scale: '1:50', align: 'parallel', offset_mm: 120, snap_to: 'core face' } },
+  'library.dimensions': [
+    { id: 'aligned240', name: 'aligned, 240 offset', vals: { style: 'aligned', offset: 240 } },
+    { id: 'parallel400', name: 'parallel, 400 offset', vals: { style: 'parallel', offset: 400 } },
+    { id: 'baseline120', name: 'baseline, 120 offset', vals: { style: 'baseline', offset: 120 } },
   ],
 };
-PM_PRESETS.a_dims = PM_PRESETS['revit.create_dimensions'];
-PM_PRESETS.annotate = PM_PRESETS['revit.create_dimensions'];
 
 // Pending edits keyed by node id, held outside the component so they survive the remount a
 // focus change causes. A panel that says "1 change pending" then discards it is not control.
@@ -681,7 +677,7 @@ function NodeInspector({ node }) {
   const overridden = editable.filter(p => !wired[p.k] && String(vals[p.k]) !== String(allDefs[p.k])).length;
 
   const fn = ((node.sub || '').match(/^[\w.]+/) || [])[0];
-  const presets = PM_PRESETS[fn] || PM_PRESETS[node.id] || PM_PRESETS[node.cat] || [];
+  const presets = PM_PRESETS[fn] || [];
   const activePreset = presets.find(pr => Object.keys(pr.vals).every(k => String(vals[k]) === String(pr.vals[k])));
 
   const onPage = all.filter(p => (p.page || 'Main') === page);

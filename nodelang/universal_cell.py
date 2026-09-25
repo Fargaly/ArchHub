@@ -531,11 +531,21 @@ class _HeadRowReader:
 
     Eviction is safe because misses read immutable history at base_revision,
     never the mutable current_cells table. Later writes belong to the overlay.
+
+    The bounds hold one full canvas projection's working set. On the
+    204,870-Cell founder-shape graph a projection reads ~105k distinct Cells
+    (~140k with its interaction binding) and ~7k absent ids; at 64 MB and
+    2048 absent ids the LRU evicted each of them before the next projection
+    came back for it, so the first read after every edit re-ran ~91k SQLite
+    point queries (~1.1 s). Entries stay valid across commits -- the overlay
+    shadows what later revisions wrote -- so a cache that holds the working
+    set turns that rebuild into dictionary reads (~0.4 s). Measured cost:
+    ~125 MB by this accounting, +35-50 MB process RSS.
     """
-    MAX_CACHE_ENTRIES = 65536
-    MAX_CACHE_BYTES = 64 * 1024 * 1024
-    MAX_MISSING_ENTRIES = 2048
-    MAX_MISSING_BYTES = 256 * 1024
+    MAX_CACHE_ENTRIES = 262144
+    MAX_CACHE_BYTES = 256 * 1024 * 1024
+    MAX_MISSING_ENTRIES = 32768
+    MAX_MISSING_BYTES = 4 * 1024 * 1024
     BATCH_SIZE = 128
     MAX_REGION_CELLS = 8192
     MAX_REGION_DEPTH = 8

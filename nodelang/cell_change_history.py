@@ -131,6 +131,9 @@ class HistoryState:
     redo_root: str | None
     applied_roots: tuple[str, ...]
     redo_roots: tuple[str, ...]
+    # Undone originals whose redo tail a later original change truncated.
+    # History is linear: they stay in the record but can never be redone.
+    discarded_roots: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -808,6 +811,7 @@ def _history_summary(
 def _read_history_projection(snapshot, protocol, history_root, budget, reader):
     applied: list[str] = []
     redo: list[str] = []
+    discarded: list[str] = []
     transactions = {}
     for root in _history_transaction_roots(
         snapshot, protocol, history_root, budget=budget
@@ -835,12 +839,17 @@ def _read_history_projection(snapshot, protocol, history_root, budget, reader):
             applied.append(original)
         else:
             applied.append(root)
+            # A new change after an undo truncates the redo tail (linear
+            # history). Those originals are recorded as discarded, so every
+            # original the history holds has exactly one derived state.
+            discarded.extend(reversed(redo))
             redo.clear()
     state = HistoryState(
         applied[-1] if applied else None,
         redo[-1] if redo else None,
         tuple(applied),
         tuple(redo),
+        tuple(discarded),
     )
     return state, transactions
 

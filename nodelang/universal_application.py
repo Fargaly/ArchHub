@@ -22741,6 +22741,7 @@ def _project_session_action_history(
     }
     applied_roots = set(state.applied_roots)
     redo_roots = set(state.redo_roots)
+    discarded_roots = set(state.discarded_roots)
     rows = []
     for transaction_root in reversed(tuple(transactions)):
         transaction = transactions[transaction_root]
@@ -22758,6 +22759,9 @@ def _project_session_action_history(
             state_label = "applied"
         elif transaction.root_id in redo_roots:
             state_label = "undone"
+        elif transaction.root_id in discarded_roots:
+            # Undone, then a new change truncated the redo tail.
+            state_label = "discarded"
         else:
             raise InvalidCell("action history transaction has no derived state")
         rows.append({

@@ -417,6 +417,20 @@ _INTERACTION_DELTA_MODE = "interaction-delta-v1"
 _TOPOLOGY_DELTA_MODE = "topology-delta-v1"
 _RECEIPT_MODE = "receipt-v1"
 _MACHINE_WORKSHOP_ENTRY_LIMIT = 50
+# GET routes whose unbound (founder-body) projection is the owner's private
+# state; see _dispatch_verified_machine_route_scoped.
+_FOUNDER_PRIVATE_MACHINE_READS = frozenset({
+    "/api/universal/attention",
+    "/api/universal/baboom-capabilities",
+    "/api/universal/baboom-context",
+    "/api/universal/baboom-native-frame",
+    "/api/universal/baboom-presence",
+    "/api/universal/baboom-steward-briefing",
+    "/api/universal/deliberation",
+    "/api/universal/devices",
+    "/api/universal/visibility-recovery",
+    "/api/universal/workshop",
+})
 _BROWSER_HANDOFF_LIMIT = 8
 _BROWSER_HANDOFF_SECONDS = 60.0
 _BROWSER_SCOPE_PROJECTION_LIMIT = 8
@@ -5517,6 +5531,10 @@ class ApplicationServer:
         self.mutation_lock = threading.RLock()
         # Build BABOOM native frames outside the graph lock (revision-checked).
         self._native_frame_outside_lock = True
+        # Same for the machine Workshop read (GET /api/universal/workshop)
+        # and the founder Steward briefing.
+        self._workshop_read_outside_lock = True
+        self._steward_briefing_outside_lock = True
         content_path = conversation_history_path
         if content_path is None and self.universal_store.database_path is not None:
             content_path = self.universal_store.database_path + '.conversations.sqlite3'
@@ -6326,11 +6344,12 @@ class ApplicationServer:
                 if parsed.path == '/api/universal/canvas':
                     if not self._universal_route('GET', parsed.path, binding):
                         return
-                    with owner.mutation_lock:
-                        payload = {
-                            'ok': True,
-                            **owner.project_interaction_canvas(binding),
-                        }
+                    # The projection takes the graph lock itself, and only for
+                    # its short revision-checked tail (00911b3 pattern).
+                    payload = {
+                        'ok': True,
+                        **owner.project_interaction_canvas(binding),
+                    }
                     self._json(200, payload)
                     return
                 if parsed.path == '/api/universal/graphs':
@@ -11373,8 +11392,13 @@ class ApplicationServer:
         request_agent_session: str,
         request: dict[str, object] | None = None,
         authentication_context: object | None = None,
+        _unlocked_page: dict | None = None,
     ) -> dict[str, object]:
-        """Read ordinary content under owner admission; retain the legacy cache."""
+        """Read ordinary content under owner admission; retain the legacy cache.
+
+        With ``_unlocked_page`` (a dict) the ordinary-content page is read
+        without the owner lock and stored there for the caller's revalidation.
+        """
         from .cell_deliberation import read_deliberation_space
         snapshot = self.universal_store.snapshot()
         # Only legacy reads populate this cache. Adopting ordinary content
@@ -11432,9 +11456,18 @@ class ApplicationServer:
                     raise InvalidCell("Workshop response exceeds its byte budget")
                 return result
 
+            if _unlocked_page is None:
+                return service.page_for_workshop_machine(request, agent_session_root=request_agent_session,
+                    authentication_context=authentication_context, expected_revision=snapshot.revision,
+                    project=project, limit=_MACHINE_WORKSHOP_ENTRY_LIMIT)
+
+            def keep(page):
+                _unlocked_page["page"] = page
+                return project(page)
+
             return service.page_for_workshop_machine(request, agent_session_root=request_agent_session,
                 authentication_context=authentication_context, expected_revision=snapshot.revision,
-                project=project, limit=_MACHINE_WORKSHOP_ENTRY_LIMIT)
+                project=keep, limit=_MACHINE_WORKSHOP_ENTRY_LIMIT, hold_owner_lock=False)
         entries = _recent_entries_from_validated_space(
             snapshot,
             self.universal_registry.deliberation_protocol,
@@ -11610,9 +11643,12 @@ class ApplicationServer:
         (audit, 2026-09-07). The Steward briefing route beside them has always
         made exactly this check; they now make it too.
         """
+        # An empty session is the founder body only for a read; a command is
+        # never driven by an unbound caller (35393a5: a runtime must never act
+        # with the founder body).
         holder = (
             self.universal_registry.agent_body.session.root_id
-            if direct or request.get("session") == {}
+            if direct or (request.get("session") == {} and request.get("method") == "GET")
             else self._resolve_universal_machine_agent_session(request)
         )
         if holder != self.universal_registry.agent_body.session.root_id:
@@ -11912,13 +11948,33 @@ class ApplicationServer:
                 and request.get("path") == "/api/universal/runtime-backend"
                 and type(request.get("body")) is dict and not request["body"]
             )
+            # An exactly unbound GET is a read by the founder-local desktop and
+            # every route resolves it to the builtin agent body; it never takes
+            # the lock and is never admitted to commit (reads never commit). Any
+            # other unbound request is refused here, before the lock: a refusal
+            # must never wait on, or hold, mutation_lock.
+            unbound_read = (
+                type(session) is dict and not session
+                and request.get("method") == "GET"
+            )
+            # Every route resolves an unbound read to the founder body, so a
+            # read whose projection is the owner's private state (briefings,
+            # device custody, BABOOM context, the founder's Workshop and
+            # deliberation views) is the application owner's alone: served
+            # in process, never to an unbound pipe caller (8316782 pattern).
+            if unbound_read and request.get("path") in _FOUNDER_PRIVATE_MACHINE_READS:
+                raise AuthorizationDenied(
+                    "founder-private read belongs to the application owner")
+            if (type(session) is dict and not session and not (
+                    unbound_enrollment or unbound_desktop_handoff or unbound_read)):
+                raise AuthorizationDenied("a bound runtime Agent Session is required")
             # Desktop handoff authenticates its physical launch and graph
             # authority downstream; it has no Agent Session to count here.
             # These routes authenticate native enrollment/recovery themselves.
-            # An exactly unbound request has no actor to count yet. Never skip
-            # proof verification for a claimed actor or an ordinary route.
+            # Never skip proof verification for a claimed actor or an ordinary route.
             if session is not None and not (
                 unbound_enrollment or unbound_desktop_handoff or unbound_runtime_backend
+                or unbound_read
             ):
                 # Authenticate before attributing activity. Keep admission and
                 # increment atomic against capability retirement, using the
@@ -12686,9 +12742,55 @@ class ApplicationServer:
                 )
             _reader_root, read_guard = self._baboom_machine_content_reader(
                 request, direct, context, founder=True)
-            # The briefing combines graph and ordinary content projections. Holding the same
-            # server mutation lock gives the desktop one coherent revision
-            # without creating a secondary Steward state authority.
+            # The briefing combines graph and ordinary content projections at one
+            # coherent revision without a secondary Steward state authority. As
+            # the native frame (00911b3): build from a pinned head without the
+            # graph lock, then re-check the head and the content page briefly.
+            if self._steward_briefing_outside_lock:
+                from .universal_application import _FOUNDER_WORKSHOP_REPORT_LIMIT
+                for _attempt in range(2):
+                    started_revision = self.universal_store.revision
+                    page = None
+                    try:
+                        snapshot = self.universal_store.snapshot()
+                        space = read_deliberation_space(snapshot,
+                            self.universal_registry.deliberation_protocol,
+                            self.universal_registry.workshop_root)
+                        if space.content_store_root is not None:
+                            page = self.conversation_content.project_for_founder_context(
+                                authentication_context=context, expected_revision=snapshot.revision,
+                                project=dict, include_categories=True,
+                                limit=_FOUNDER_WORKSHOP_REPORT_LIMIT, read_guard=read_guard,
+                                route=(method, path), hold_owner_lock=False)
+                        briefing = project_universal_founder_baboom_steward_briefing(
+                            self.universal_store,
+                            self.universal_registry,
+                            authentication_context=context,
+                            brain_state=self._brain_state(),
+                            hosts=self._host_rows(),
+                            staged_update=self._staged_update(),
+                            content_service=self.conversation_content,
+                            read_guard=read_guard, read_route=(method, path),
+                            _workshop_read=page,
+                        )
+                    except Exception:
+                        if self.universal_store.revision == started_revision:
+                            raise
+                        continue
+                    if (snapshot.revision != started_revision
+                            or briefing.get("revision") != started_revision):
+                        continue
+                    with self.mutation_lock:
+                        if self.universal_store.revision == started_revision:
+                            read_guard()
+                            if page is not None:
+                                self.conversation_content.validate_projection_read(
+                                    page, store=self.universal_store,
+                                    registry=self.universal_registry,
+                                    agent_session_root=self.universal_registry.agent_body.session.root_id,
+                                    authentication_context=context,
+                                    expected_revision=started_revision)
+                            return briefing
             with self.mutation_lock:
                 return project_universal_founder_baboom_steward_briefing(
                     self.universal_store,
@@ -13111,6 +13213,37 @@ class ApplicationServer:
                         read_guard=read_guard, read_route=(method, path),
                     ),
                 }
+            # The 00911b3 native-frame pattern: build from one pinned head
+            # without the graph lock. Revisions only increase, so a result at
+            # the head read before the build is the locked build of that head.
+            # A legacy graph-tail read needs no lock at all; an ordinary-content
+            # page is re-validated under a short lock at the unchanged head.
+            if self._workshop_read_outside_lock:
+                for _attempt in range(2):
+                    started_revision = self.universal_store.revision
+                    kept = {}
+                    try:
+                        result = self._project_universal_machine_workshop(
+                            request_agent_session=request_agent_session,
+                            request=request, authentication_context=context,
+                            _unlocked_page=kept)
+                    except Exception:
+                        if self.universal_store.revision == started_revision:
+                            raise
+                        continue
+                    if result.get("revision") != started_revision:
+                        continue
+                    if "page" not in kept:
+                        return result
+                    with self.mutation_lock:
+                        if self.universal_store.revision == started_revision:
+                            self.conversation_content.validate_projection_read(
+                                kept["page"], store=self.universal_store,
+                                registry=self.universal_registry,
+                                agent_session_root=request_agent_session,
+                                authentication_context=context,
+                                expected_revision=started_revision)
+                            return result
             with self.mutation_lock:
                 return self._project_universal_machine_workshop(
                     request_agent_session=request_agent_session,
@@ -15878,22 +16011,120 @@ class ApplicationServer:
         """Project the real canvas and bind its callable controls to one revision."""
         return self._project_interaction_canvas(binding)
 
+    # Build the full canvas outside the graph lock (00911b3 pattern).
+    _interaction_canvas_outside_lock = True
+
+    def _project_interaction_canvas(self, binding, *, scope_materialization=None,
+                                    previous_projection=None, expected_base_revision=None):
+        """Project the full canvas from a pinned head without holding the lock.
+
+        The projection is built where any graph commit is refused. Each
+        idempotent interaction-authority publication (ensure_universal_*)
+        takes the lock only for itself, and only while the head is still the
+        one this build last saw; the lease is issued under a short final lock
+        at that head. Revisions only increase, so the result equals the locked
+        build. A build that saw anyone else's commit is done again under the
+        lock exactly as before.
+        """
+        if scope_materialization is None and self._interaction_canvas_outside_lock:
+            for _attempt in range(2):
+                started_revision = self.universal_store.revision
+                try:
+                    return self._project_interaction_canvas_scoped(
+                        binding, unlocked_from=started_revision)
+                except Exception:
+                    if self.universal_store.revision == started_revision:
+                        break
+        return self._project_interaction_canvas_scoped(
+            binding, scope_materialization=scope_materialization,
+            previous_projection=previous_projection,
+            expected_base_revision=expected_base_revision)
+
+    class _CanvasBuild:
+        """One unlocked canvas build: the head it has seen, and its final lock."""
+
+        def __init__(self, owner, head, stack):
+            self.owner, self.head, self.stack = owner, head, stack
+
+        @contextlib.contextmanager
+        def publish(self):
+            with self.owner.mutation_lock:
+                if self.owner.universal_store.revision != self.head:
+                    raise InvalidCell("canvas build revision drifted")
+                yield
+                self.head = self.owner.universal_store.revision
+
+        def lock_tail(self):
+            self.stack.enter_context(self.owner.mutation_lock)
+            if self.owner.universal_store.revision != self.head:
+                raise InvalidCell("canvas build revision drifted")
+
+    @contextlib.contextmanager
+    def _interaction_canvas_scope(self, unlocked_from):
+        if unlocked_from is None:
+            with self.mutation_lock:
+                yield None
+            return
+        with contextlib.ExitStack() as stack:
+            yield self._CanvasBuild(self, unlocked_from, stack)
+
+    @staticmethod
+    def _canvas_step(tail, function):
+        """An interaction publication: under its own short lock when unlocked.
+
+        Idempotent: tried read-only first; only when it has something to
+        publish (its commit is refused there) does it take the lock.
+        """
+        if tail is None:
+            return function
+
+        def published(*args, **kwargs):
+            from .universal_cell import CommitRefused
+            try:
+                with commit_intent.recording_refusals() as refused,                         commit_intent.operational("browser-session"):
+                    result = function(*args, **kwargs)
+                if not refused:
+                    return result
+            except CommitRefused:
+                pass
+            with tail.publish():
+                return function(*args, **kwargs)
+        return published
+
+    @staticmethod
+    def _canvas_read(tail, function):
+        """The canvas projection itself: read-only when built unlocked."""
+        if tail is None:
+            return function
+
+        def read(*args, **kwargs):
+            with commit_intent.recording_refusals() as refused,                     commit_intent.operational("browser-session"):
+                result = function(*args, **kwargs)
+            if refused:
+                # The projection wanted to publish (and may have swallowed the
+                # refusal): build this read under the lock as before.
+                raise InvalidCell("canvas projection must publish under the lock")
+            return result
+        return read
+
     @with_relation_projection_scope
     @with_catalog_verification_scope
     @with_interaction_projection_scope
-    def _project_interaction_canvas(
+    def _project_interaction_canvas_scoped(
         self,
         binding: _BrowserSessionBinding,
         *,
         scope_materialization=None,
         previous_projection=None,
         expected_base_revision=None,
+        unlocked_from=None,
     ):
         """Bind controls over one exact full or materialized session scope."""
-        with self.mutation_lock:
+        with self._interaction_canvas_scope(unlocked_from) as tail:
             reusable_scope_projection = None
             if scope_materialization is None:
-                self._discard_browser_scope_projections(binding.session_root)
+                if tail is None:  # an unlocked build discards at its locked tail
+                    self._discard_browser_scope_projections(binding.session_root)
             else:
                 target_scope = scope_materialization.trail[-1]
                 reusable_scope_projection = (
@@ -15905,21 +16136,21 @@ class ApplicationServer:
                     )
                 )
             panel_event_root, panel_interaction_roots = (
-                ensure_universal_properties_panel_interactions(
+                self._canvas_step(tail, ensure_universal_properties_panel_interactions)(
                     self.universal_store,
                     self.universal_registry,
                     binding.subject_root,
                 )
             )
             form_event_root, form_interaction_roots = (
-                ensure_universal_relation_form_interactions(
+                self._canvas_step(tail, ensure_universal_relation_form_interactions)(
                     self.universal_store,
                     self.universal_registry,
                     binding.subject_root,
                 )
             )
             projection = (
-                project_universal_canvas(
+                self._canvas_read(tail, project_universal_canvas)(
                     self.universal_store,
                     self.universal_registry,
                     authentication_context=binding.context,
@@ -15940,7 +16171,7 @@ class ApplicationServer:
                 instantiation_interaction_roots,
                 _event_fact_protocol,
                 instantiation_fact_specs,
-            ) = ensure_universal_instantiation_interactions(
+            ) = self._canvas_step(tail, ensure_universal_instantiation_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
@@ -15950,7 +16181,7 @@ class ApplicationServer:
                 relation_composer_interaction_roots,
                 _relation_composer_event_fact_protocol,
                 relation_composer_fact_specs,
-            ) = ensure_universal_relation_composer_interactions(
+            ) = self._canvas_step(tail, ensure_universal_relation_composer_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
@@ -15961,14 +16192,14 @@ class ApplicationServer:
                 property_interaction_roots,
                 _property_event_fact_protocol,
                 property_fact_specs,
-            ) = ensure_universal_property_interactions(
+            ) = self._canvas_step(tail, ensure_universal_property_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
                 projection,
             )
             operational_transition_interaction_roots = (
-                ensure_universal_operational_transition_interactions(
+                self._canvas_step(tail, ensure_universal_operational_transition_interactions)(
                     self.universal_store,
                     self.universal_registry,
                     binding.subject_root,
@@ -15979,7 +16210,7 @@ class ApplicationServer:
                 presentation_interaction_roots,
                 _presentation_event_fact_protocol,
                 presentation_fact_specs,
-            ) = ensure_universal_presentation_interactions(
+            ) = self._canvas_step(tail, ensure_universal_presentation_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
@@ -15989,7 +16220,7 @@ class ApplicationServer:
                 interface_value_interaction_roots,
                 _interface_value_event_fact_protocol,
                 interface_value_fact_specs,
-            ) = ensure_universal_interface_value_interactions(
+            ) = self._canvas_step(tail, ensure_universal_interface_value_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
@@ -15999,7 +16230,7 @@ class ApplicationServer:
                 relation_member_interaction_roots,
                 _relation_member_event_fact_protocol,
                 relation_member_fact_specs,
-            ) = ensure_universal_relation_member_interactions(
+            ) = self._canvas_step(tail, ensure_universal_relation_member_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
@@ -16009,14 +16240,14 @@ class ApplicationServer:
                 topology_interaction_roots,
                 _topology_event_fact_protocol,
                 topology_fact_specs,
-            ) = ensure_universal_topology_interactions(
+            ) = self._canvas_step(tail, ensure_universal_topology_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
                 projection,
             )
             composition_event_root, composition_interaction_roots = (
-                ensure_universal_composition_interactions(
+                self._canvas_step(tail, ensure_universal_composition_interactions)(
                     self.universal_store,
                     self.universal_registry,
                     binding.subject_root,
@@ -16024,7 +16255,7 @@ class ApplicationServer:
                 )
             )
             history_event_root, history_interaction_roots = (
-                ensure_universal_history_interactions(
+                self._canvas_step(tail, ensure_universal_history_interactions)(
                     self.universal_store,
                     self.universal_registry,
                     binding.subject_root,
@@ -16032,7 +16263,7 @@ class ApplicationServer:
                 )
             )
             lens_event_root, lens_interaction_roots = (
-                ensure_universal_inspector_lens_interactions(
+                self._canvas_step(tail, ensure_universal_inspector_lens_interactions)(
                     self.universal_store,
                     self.universal_registry,
                     binding.subject_root,
@@ -16043,7 +16274,7 @@ class ApplicationServer:
                 scope_event_root,
                 scope_interaction_roots,
                 _scope_targets,
-            ) = ensure_universal_scope_interactions(
+            ) = self._canvas_step(tail, ensure_universal_scope_interactions)(
                 self.universal_store,
                 self.universal_registry,
                 binding.subject_root,
@@ -16123,6 +16354,11 @@ class ApplicationServer:
                 raise InvalidCell(
                     "visible control lacks a graph interaction"
                 )
+            if tail is not None:
+                # The short locked tail: the head must still be the one this
+                # build last saw before the lease is issued.
+                tail.lock_tail()
+                self._discard_browser_scope_projections(binding.session_root)
             snapshot = self.universal_store.snapshot()
             # The ensure calls above publish only interaction authority; they
             # do not change the visible canvas. Bind the already-projected

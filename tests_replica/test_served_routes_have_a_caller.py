@@ -28,20 +28,31 @@ _NAMED = re.compile(r"['\"](/api/universal/[a-z0-9/_-]+)['\"]")
 # A route whose only caller is the server's own table. Recorded so the
 # court states what is known rather than pretending the tree is clean:
 # nothing in the product reaches it, and removing it is a decision, not a
-# cleanup this file may make on its own.
-UNREACHED = frozenset({"/api/universal/focus"})
+# cleanup this file may make on its own. Empty since the served Studio client
+# is read too: /api/universal/focus (studio-authority.js) and
+# /api/universal/capabilities (studio.html) have their callers there.
+UNREACHED = frozenset()
+
+# The served client the docstring promises: the Studio sources the server
+# ships beside the Python modules.
+STUDIO = NODELANG / "studio"
+STUDIO_PATTERNS = ("*.js", "*.jsx", "*.html")
 
 
 def _served() -> frozenset[str]:
     return frozenset(_DISPATCH.findall(SERVER.read_text(encoding="utf-8")))
 
 
-def _reached() -> frozenset[str]:
+def _reached(skip=None) -> frozenset[str]:
     reached: set[str] = set()
-    for path in NODELANG.glob("*.py"):
-        if path.name == "application_server.py":
-            continue
-        reached |= set(_NAMED.findall(path.read_text(encoding="utf-8")))
+    sources = [path for path in NODELANG.glob("*.py") if path.name != "application_server.py"]
+    for pattern in STUDIO_PATTERNS:
+        sources.extend(STUDIO.glob(pattern))
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        if skip is not None:
+            text = skip(path, text)
+        reached |= set(_NAMED.findall(text))
     return frozenset(reached)
 
 
@@ -87,3 +98,18 @@ def test_the_served_canvas_names_the_routes_it_calls() -> None:
     # the second authority's surface, and it is the number a cut is judged
     # against.
     assert len(client) < len(_served())
+
+
+def test_a_route_whose_only_studio_caller_is_removed_is_reported() -> None:
+    """Mutant: drop the Studio's own call and the court must go red."""
+    def without_capabilities(path, text):
+        if path.parent == STUDIO:
+            return text.replace("'/api/universal/capabilities'", "''")
+        return text
+
+    assert "/api/universal/capabilities" in _served()
+    assert "/api/universal/capabilities" in _reached()
+    assert "/api/universal/capabilities" not in _reached(skip=without_capabilities), (
+        "the Studio is no longer the only caller; pick another mutant")
+    unreached = _served() - _reached(skip=without_capabilities) - UNREACHED
+    assert "/api/universal/capabilities" in unreached

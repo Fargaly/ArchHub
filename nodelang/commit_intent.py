@@ -133,6 +133,27 @@ def admit(
     return True
 
 
+_REFUSALS: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "archhub_commit_operational_refusals", default=None
+)
+
+
+@contextmanager
+def recording_refusals() -> Iterator[list]:
+    """Collect every commit refused inside an operational path here, even one
+    a caller catches as InvalidCell: a read that wanted to publish must know."""
+    outer = _REFUSALS.get()
+    refused: list = []
+    reset = _REFUSALS.set(refused)
+    try:
+        yield refused
+    finally:
+        _REFUSALS.reset(reset)
+        # A nested recorder never hides a refusal from the one around it.
+        if outer is not None:
+            outer.extend(refused)
+
+
 @contextmanager
 def operational(kind: str) -> Iterator[None]:
     """Run an operational path; any graph commit inside it is refused."""
@@ -194,6 +215,9 @@ def refusal(requires_declared_intent: bool) -> str | None:
     """Why a commit must be refused now, or None when it is admitted."""
     kind = _OPERATIONAL.get()
     if kind is not None:
+        refused = _REFUSALS.get()
+        if refused is not None:
+            refused.append(kind)
         return (
             "graph commit refused: %s is operational; SPEC 3.3 keeps it in "
             "bounded indexed records, not graph revisions" % kind

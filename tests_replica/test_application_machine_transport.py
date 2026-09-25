@@ -18,6 +18,7 @@ import nodelang.application_machine_transport as transport_module
 import nodelang.universal_application as universal_application_module
 from nodelang.application_machine_transport import (
     BABOOM_NATIVE_FRAME_PROJECTION,
+    MachineResponseError,
     MachineTransportError,
     UniversalRuntimeClient,
     UniversalRuntimeTransport,
@@ -70,6 +71,47 @@ from nodelang.universal_application import (
     create_universal_governed_work,
 )
 from nodelang.universal_cell import Cell, CellStore, InvalidCell, NULL_CELL_ID
+
+
+# Unbound routes that authenticate their caller themselves stay on the pipe.
+_SELF_AUTHENTICATING_UNBOUND = frozenset({
+    ("POST", "/api/universal/agent-session"),
+    ("POST", "/api/universal/agent-session-challenge"),
+    ("POST", "/api/universal/agent-session-resume"),
+    ("POST", "/api/universal/agent-session-reconcile"),
+    ("POST", "/api/universal/agent-session-continuation-status"),
+    ("POST", "/api/universal/browser-handoff"),
+})
+
+
+class _FounderLocalClient(UniversalRuntimeClient):
+    """The founder desktop, as the product runs it after the GET-only rule.
+
+    An unbound pipe request may only read, and never a founder-private read
+    (application_server._dispatch_verified_machine_route_scoped). The founder
+    acts in process: unbound writes and founder-private reads go through the
+    owner's in-process dispatch; a bound Agent Session and every other unbound
+    read still travel over the authenticated pipe exactly as before.
+    """
+
+    def __init__(self, server, descriptor_path, key_provider, **kwargs):
+        super().__init__(descriptor_path, key_provider, **kwargs)
+        self._founder_server = server
+
+    def _request_once(self, method, path, body=None, *, request_id=None,
+                      response_timeout_seconds=None):
+        private = getattr(application_server_module, "_FOUNDER_PRIVATE_MACHINE_READS", frozenset())
+        if (self.agent_session_root or (method.upper() == "GET" and path not in private)
+                or (method.upper(), path) in _SELF_AUTHENTICATING_UNBOUND):
+            return super()._request_once(method, path, body, request_id=request_id,
+                                         response_timeout_seconds=response_timeout_seconds)
+        try:
+            return self._founder_server.dispatch_universal_machine_route(
+                {"method": method, "path": path, "body": dict(body or {})})
+        except MachineTransportError:
+            raise
+        except Exception as exc:  # the pipe reports route refusals the same way
+            raise MachineResponseError(str(exc)) from exc
 
 
 def _green_runtime_compliance(_invocation):
@@ -1146,10 +1188,13 @@ def test_concurrent_machine_enrollment_mints_one_graph_session():
         for thread in threads:
             thread.join(timeout=30)
         assert not any(thread.is_alive() for thread in threads)
-        assert failures == []
-        assert len(results) == 2
-        assert len({result["agent_session"] for result in results}) == 1
-        assert sorted(result["continued"] for result in results) == [False, True]
+        # One identity holds one live capability: the concurrent second
+        # enrollment is refused and told to renew, never given a second
+        # graph session (_machine_agent_identity_is_currently_bound).
+        assert len(results) == 1, (results, failures)
+        assert [type(exc).__name__ for exc in failures] == ["AuthorizationDenied"]
+        assert "already bound; renew it instead" in str(failures[0])
+        assert results[0]["continued"] is False
 
         entry = application_server_module._agent_body_catalog_entry_for_runtime(
             server.universal_store.snapshot(),
@@ -1239,8 +1284,8 @@ def test_machine_work_claim_fails_closed_on_red_runtime_compliance(tmp_path):
         machine_key_provider=provider,
         runtime_compliance_runner=_red_runtime_compliance,
     ).start()
-    founder = UniversalRuntimeClient(descriptor_path, provider)
-    agent = UniversalRuntimeClient(descriptor_path, provider)
+    founder = _FounderLocalClient(server, descriptor_path, provider)
+    agent = _FounderLocalClient(server, descriptor_path, provider)
     try:
         created = founder.request("POST", "/api/universal/work", {
             "title": "Runtime compliance must precede assignment",
@@ -1420,7 +1465,10 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
         assert consumed["kind"] == "consumed"
         assert consumed["work"] == work_root
         assert consumed["claim_binding"] == claim_binding
-        assert consumed["revision"] == issued["revision"] + 1
+        # SPEC.md 3.3 (founder clarification 2026-09-22): a per-write permit
+        # receipt is a bounded indexed record, not a graph revision.
+        assert consumed["revision"] == issued["revision"]
+        assert server.universal_store.revision == issued["revision"]
         recovered = agent.consume_cde_write_permit(
             permit=issued["permit"],
             operation="apply_patch",
@@ -1492,7 +1540,7 @@ def test_generic_deliberation_route_writes_an_openable_cell_payload(tmp_path):
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         ledger = server.universal_registry.brain_control_ledger_root
         category = server.universal_registry.brain_control_category_roots[
@@ -1550,7 +1598,7 @@ def test_deliberation_category_filter_precedes_payload_projection(
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         ledger = server.universal_registry.brain_control_ledger_root
         compliance = server.universal_registry.brain_control_category_roots[
@@ -1617,7 +1665,7 @@ def test_deliberation_read_bounds_one_large_payload_without_losing_identity(
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         ledger = server.universal_registry.brain_control_ledger_root
         run_report = server.universal_registry.brain_control_category_roots[
@@ -2238,10 +2286,37 @@ def test_slow_request_does_not_block_later_clients(tmp_path):
         transport.close()
 
 
+def _as_observed_desktop_launch(monkeypatch):
+    """The court process is not an ArchHub Desktop launch (326b657 admits the
+    browser handoff only for one, application_server._refresh_desktop_browser_handoff).
+    Stand in for that OS launch identity; every other check still runs."""
+    monkeypatch.setattr(
+        application_server_module, "desktop_pipe_peer_is_current", lambda peer: True
+    )
+
+
+def test_browser_handoff_refuses_a_caller_that_is_not_the_desktop_launch(tmp_path):
+    descriptor_path = tmp_path / "handoff-launch-runtime.json"
+    provider = MemorySigningKeyProvider(
+        "archhub.local.universal-runtime-pipe", b"d" * 32
+    )
+    server = ApplicationServer(
+        enable_machine_transport=True,
+        machine_descriptor_path=descriptor_path,
+        machine_key_provider=provider,
+    ).start()
+    try:
+        with pytest.raises(MachineTransportError, match="observed Desktop launch"):
+            UniversalRuntimeClient(descriptor_path, provider).browser_handoff()
+    finally:
+        server.close()
+
+
 def test_slow_work_index_read_does_not_block_later_machine_requests(
     tmp_path,
     monkeypatch,
 ):
+    _as_observed_desktop_launch(monkeypatch)
     descriptor_path = tmp_path / "active-universal-runtime.json"
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"q" * 32
@@ -2336,7 +2411,7 @@ def test_grand_map_work_machine_route_creates_cell_native_work(tmp_path):
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         preview = client.request(
             "GET", "/api/universal/grand-map-work", {"limit": 4}
@@ -2429,7 +2504,7 @@ def test_roma_tree_machine_route_syncs_and_projects_cell_graph(tmp_path):
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         synced = client.request(
             "POST",
@@ -2548,8 +2623,8 @@ def test_baboom_context_does_not_wait_for_mutation_lock(tmp_path):
 
     def read_context():
         try:
-            result["value"] = UniversalRuntimeClient(
-                descriptor_path, provider
+            result["value"] = _FounderLocalClient(
+                server, descriptor_path, provider
             ).request("GET", "/api/universal/baboom-context")
         except Exception as exc:
             error["value"] = exc
@@ -2580,7 +2655,7 @@ def test_runtime_handoff_readiness_is_revision_bound_and_content_free(tmp_path):
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         revision = server.universal_store.revision
         idle = client.request("GET", "/api/universal/runtime-handoff-readiness")
@@ -2660,7 +2735,7 @@ def test_baboom_presence_route_is_a_graph_directive_without_work_content(tmp_pat
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     # A court server has no brain daemon, and a down brain outranks Work in
     # the directive, so without this every message below read "Your brain is
     # not answering." and the Work directives this court exists to hold were
@@ -2720,7 +2795,7 @@ def test_baboom_native_frame_keeps_host_context_and_directive_on_one_revision(tm
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     # A court server has no brain daemon, and a down brain outranks Work
     # in the directive, so the Work message this court holds was never
     # reached (2026-09-07).
@@ -2774,7 +2849,7 @@ def test_baboom_native_frame_keeps_host_context_and_directive_on_one_revision(tm
         with pytest.raises(MachineTransportError, match="revision drifted"):
             validate_baboom_native_frame_payload(drifted)
 
-        codex = UniversalRuntimeClient(descriptor_path, provider)
+        codex = _FounderLocalClient(server, descriptor_path, provider)
         codex.bind_agent_session(
             runtime="codex",
             external_session_id="native-frame-non-baboom-denial",
@@ -2795,7 +2870,7 @@ def test_machine_transport_executes_only_one_idempotent_founder_baboom_task(tmp_
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         created = client.execute_baboom_command(
             utterance="Assign task: prepare the bounded Workshop review"
@@ -2826,7 +2901,7 @@ def test_baboom_capability_route_projects_only_released_graph_adapters(tmp_path)
         model_execution_broker=_RecordedModelBroker(),
     ).start()
     try:
-        report = UniversalRuntimeClient(descriptor_path, provider).request(
+        report = _FounderLocalClient(server, descriptor_path, provider).request(
             "GET", "/api/universal/baboom-capabilities"
         )
 
@@ -2842,6 +2917,12 @@ def test_baboom_capability_route_projects_only_released_graph_adapters(tmp_path)
             "notion.append_blocks",
             "teams.list_meetings",
             "teams.open_meeting",
+            "workshop.project.repair",
+            # One released provider per admitted social Work operation (326b657).
+            "linkedin.profile", "linkedin.post", "linkedin.comment",
+            "facebook.pages", "facebook.feed", "facebook.comments",
+            "facebook.page_post", "facebook.comment",
+            "instagram.account", "instagram.comments", "instagram.reply",
         }
         assert "GET /api/universal/baboom-capabilities" in report["routes"]
         assert "POST /api/universal/model-delegation-execute" in report["routes"]
@@ -2996,7 +3077,7 @@ def test_baboom_context_uses_compact_work_index_not_full_status(
         "project_universal_governed_work_status",
         fail_full_status,
     )
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         created = client.request("POST", "/api/universal/work", {
             "title": "Compact index only",
@@ -3040,8 +3121,8 @@ def test_workshop_read_does_not_wait_for_mutation_lock(tmp_path):
 
     def read_workshop():
         try:
-            result["value"] = UniversalRuntimeClient(
-                descriptor_path, provider
+            result["value"] = _FounderLocalClient(
+                server, descriptor_path, provider
             ).request("GET", "/api/universal/workshop")
         except Exception as exc:
             error["value"] = exc
@@ -3280,7 +3361,7 @@ def test_machine_workshop_read_is_cached_per_cell_revision(tmp_path, monkeypatch
         "_recent_entries_from_validated_space",
         counted_list,
     )
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         first = client.request("GET", "/api/universal/workshop")
         second = client.request("GET", "/api/universal/workshop")
@@ -3337,8 +3418,8 @@ def test_machine_workshop_read_bounds_entries_before_transport(tmp_path, monkeyp
         bounded_tail,
     )
     try:
-        result = UniversalRuntimeClient(
-            descriptor_path, provider
+        result = _FounderLocalClient(
+            server, descriptor_path, provider
         ).request("GET", "/api/universal/workshop")
         assert asked["limit"] == 50
         assert len(result["entries"]) == 50
@@ -3521,7 +3602,7 @@ def test_machine_projection_prewarm_primes_read_caches(tmp_path, monkeypatch):
         "project_universal_governed_work_index",
         counted_index,
     )
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         status = server.prewarm_universal_machine_read_projections()
 
@@ -3672,8 +3753,12 @@ def test_concurrent_machine_work_index_requests_share_inflight_projection(
         first.start()
         assert entered.wait(timeout=5)
         second.start()
-        time.sleep(0.25)
-        assert calls["count"] == 1
+        # Both reads project concurrently: neither waits on the other's
+        # in-flight projection nor on a lock while the first is held.
+        deadline = time.monotonic() + 5
+        while calls["count"] < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert calls["count"] == 2
         release.set()
         first.join(timeout=10)
         second.join(timeout=10)
@@ -3682,7 +3767,13 @@ def test_concurrent_machine_work_index_requests_share_inflight_projection(
         assert errors == []
         assert len(results) == 2
         assert results[0]["revision"] == results[1]["revision"]
-        assert calls["count"] == 1
+        # Neither request waited on the other's projection (no in-flight
+        # wait: _project_universal_machine_work_index caches completed values
+        # only); a third read at the same revision is served from that cache.
+        assert calls["count"] == 2
+        UniversalRuntimeClient(descriptor_path, provider).request(
+            "GET", "/api/universal/work", {"projection": "index"})
+        assert calls["count"] == 2
     finally:
         release.set()
         first.join(timeout=5)
@@ -4112,13 +4203,13 @@ def test_baboom_device_proof_selects_its_catalog_body_and_fails_closed(tmp_path)
         )
 
     try:
-        unproven = UniversalRuntimeClient(descriptor_path, provider)
+        unproven = _FounderLocalClient(server, descriptor_path, provider)
         with pytest.raises(MachineTransportError, match="credential"):
             unproven.bind_agent_session(
                 runtime="baboom", external_session_id=external_session_id
             )
 
-        baboom = UniversalRuntimeClient(descriptor_path, provider)
+        baboom = _FounderLocalClient(server, descriptor_path, provider)
         enrolled = baboom.bind_agent_session(
             runtime="baboom",
             external_session_id=external_session_id,
@@ -4166,7 +4257,7 @@ def test_baboom_device_proof_selects_its_catalog_body_and_fails_closed(tmp_path)
             enrolled["agent_session"],
         )
         assert session.body_root == "app:agent-body:baboom"
-        presence = UniversalRuntimeClient(descriptor_path, provider).request(
+        presence = _FounderLocalClient(server, descriptor_path, provider).request(
             "GET", "/api/universal/baboom-context"
         )
         assert presence["presence"] == {
@@ -4185,7 +4276,7 @@ def test_baboom_device_proof_selects_its_catalog_body_and_fails_closed(tmp_path)
             "POST", "/api/universal/baboom-meeting-notes", {"action": "stop"}
         )
         assert closed_notes["state"] == "closed"
-        post_close = UniversalRuntimeClient(descriptor_path, provider).request(
+        post_close = _FounderLocalClient(server, descriptor_path, provider).request(
             "GET", "/api/universal/baboom-context"
         )
         assert post_close["meeting_notes"] == {"active_sessions": 0}
@@ -4193,7 +4284,7 @@ def test_baboom_device_proof_selects_its_catalog_body_and_fails_closed(tmp_path)
         assert enrolled["agent_session"] not in json.dumps(presence)
         with server._machine_agent_session_lock:
             server._machine_agent_sessions.clear()
-        reconnected = UniversalRuntimeClient(descriptor_path, provider)
+        reconnected = _FounderLocalClient(server, descriptor_path, provider)
         continued = reconnected.bind_agent_session(
             runtime="baboom",
             external_session_id=external_session_id,
@@ -4205,7 +4296,7 @@ def test_baboom_device_proof_selects_its_catalog_body_and_fails_closed(tmp_path)
         renewed_lease = baboom.renew_runtime_presence()
         assert renewed_lease["agent_session"] == enrolled["agent_session"]
 
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM proof court",
             "description": "Claim only through its released device-bound body.",
@@ -4238,7 +4329,7 @@ def test_baboom_device_proof_selects_its_catalog_body_and_fails_closed(tmp_path)
                 "evidence": "untrusted completion",
             })
 
-        replay_client = UniversalRuntimeClient(descriptor_path, provider)
+        replay_client = _FounderLocalClient(server, descriptor_path, provider)
         replay_challenge = replay_client.request(
             "POST",
             "/api/universal/agent-session-challenge",
@@ -4256,7 +4347,7 @@ def test_baboom_device_proof_selects_its_catalog_body_and_fails_closed(tmp_path)
         }
         replay_client.request("POST", "/api/universal/agent-session", replay_body)
         with pytest.raises(MachineTransportError, match="challenge"):
-            UniversalRuntimeClient(descriptor_path, provider).request(
+            _FounderLocalClient(server, descriptor_path, provider).request(
                 "POST", "/api/universal/agent-session", replay_body
             )
 
@@ -4392,7 +4483,7 @@ def test_baboom_execution_can_draft_one_non_executing_plan_for_its_exact_claim(t
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM work plan transport court",
             "description": "Prepare a review without executing any action.",
@@ -4408,7 +4499,7 @@ def test_baboom_execution_can_draft_one_non_executing_plan_for_its_exact_claim(t
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         enrolled = execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -4530,7 +4621,7 @@ def test_baboom_execution_can_prepare_one_sealed_cognition_request(tmp_path):
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM Cognition transport court",
             "description": "Prepare a governed review with no provider call.",
@@ -4546,7 +4637,7 @@ def test_baboom_execution_can_prepare_one_sealed_cognition_request(tmp_path):
             "x": 860,
             "y": 560,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         enrolled = execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -4616,7 +4707,7 @@ def test_baboom_model_broker_executes_only_the_graph_grant_and_settles_one_recei
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM model broker court",
             "description": "Execute only a founder-approved graph delegation.",
@@ -4632,7 +4723,7 @@ def test_baboom_model_broker_executes_only_the_graph_grant_and_settles_one_recei
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -4714,7 +4805,7 @@ def test_baboom_execution_body_rejects_generic_submit_and_reports_failed_receipt
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM execution receipt court",
             "description": "Complete only through BABOOM action-capability receipt.",
@@ -4730,7 +4821,7 @@ def test_baboom_execution_body_rejects_generic_submit_and_reports_failed_receipt
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         enrolled = execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -4868,7 +4959,7 @@ def test_baboom_execution_reconnects_to_its_exact_session_after_transport_loss(t
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM execution continuation court",
             "description": "Continue only with the same device-proofed graph session.",
@@ -4884,7 +4975,7 @@ def test_baboom_execution_reconnects_to_its_exact_session_after_transport_loss(t
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         enrolled = execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -4899,7 +4990,7 @@ def test_baboom_execution_reconnects_to_its_exact_session_after_transport_loss(t
 
         # A companion restart may recover its graph-held claim, but it cannot
         # seize the original mutable capability or disturb that live worker.
-        recovered = UniversalRuntimeClient(descriptor_path, provider)
+        recovered = _FounderLocalClient(server, descriptor_path, provider)
         resumed = recovered.resume_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -4918,7 +5009,7 @@ def test_baboom_execution_reconnects_to_its_exact_session_after_transport_loss(t
         with server._machine_agent_session_lock:
             server._machine_agent_sessions.clear()
         revision_before_reconnect = server.universal_store.revision
-        reconnected = UniversalRuntimeClient(descriptor_path, provider)
+        reconnected = _FounderLocalClient(server, descriptor_path, provider)
         continued = reconnected.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -4935,7 +5026,7 @@ def test_baboom_execution_reconnects_to_its_exact_session_after_transport_loss(t
         with pytest.raises(MachineTransportError, match="proof is invalid"):
             execution.claim_next_work()
         with pytest.raises(MachineTransportError, match="already bound"):
-            UniversalRuntimeClient(descriptor_path, provider).bind_agent_session(
+            _FounderLocalClient(server, descriptor_path, provider).bind_agent_session(
                 runtime="baboom-execution",
                 external_session_id=external_session_id,
                 device_credential_provider=provider_for,
@@ -4966,7 +5057,7 @@ def test_baboom_execution_model_delegation_requires_founder_approval_and_one_rec
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM delegated model court",
             "description": "Run only after the founder approves one provider request.",
@@ -4982,7 +5073,7 @@ def test_baboom_execution_model_delegation_requires_founder_approval_and_one_rec
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -5133,7 +5224,7 @@ def test_baboom_connector_delegation_requires_founder_approval_and_one_receipt(t
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "Prepare the founder's next meeting brief",
             "description": "Read the approved calendar source after the founder authorizes it.",
@@ -5149,7 +5240,7 @@ def test_baboom_connector_delegation_requires_founder_approval_and_one_receipt(t
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -5247,7 +5338,7 @@ def test_consented_notion_delegation_requires_same_live_baboom_consent(tmp_path)
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "Publish approved founder meeting notes",
             "description": "Append one founder-supplied meeting note only with live consent.",
@@ -5263,7 +5354,7 @@ def test_consented_notion_delegation_requires_same_live_baboom_consent(tmp_path)
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=execution_external_id,
@@ -5282,7 +5373,7 @@ def test_consented_notion_delegation_requires_same_live_baboom_consent(tmp_path)
         with pytest.raises(MachineTransportError, match="live BABOOM consent"):
             execution.request("POST", "/api/universal/connector-delegation", request)
 
-        baboom = UniversalRuntimeClient(descriptor_path, provider)
+        baboom = _FounderLocalClient(server, descriptor_path, provider)
         baboom.bind_agent_session(
             runtime="baboom",
             external_session_id=presence_external_id,
@@ -5351,7 +5442,7 @@ def test_baboom_connector_failure_blocks_then_resumes_exact_work(tmp_path):
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "BABOOM connector recovery court",
             "description": "Block only from one failed connector receipt.",
@@ -5367,7 +5458,7 @@ def test_baboom_connector_failure_blocks_then_resumes_exact_work(tmp_path):
             "x": 840,
             "y": 540,
         })
-        execution = UniversalRuntimeClient(descriptor_path, provider)
+        execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=external_session_id,
@@ -5802,7 +5893,7 @@ def test_claimed_work_transfers_between_baboom_devices_without_copying_work(tmp_
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "Transfer one existing BIM coordination review",
             "description": "Review the held coordination note without copying it.",
@@ -5810,8 +5901,8 @@ def test_claimed_work_transfers_between_baboom_devices_without_copying_work(tmp_
             "x": 420.0,
             "y": 280.0,
         })
-        source = UniversalRuntimeClient(descriptor_path, provider)
-        target = UniversalRuntimeClient(descriptor_path, provider)
+        source = _FounderLocalClient(server, descriptor_path, provider)
+        target = _FounderLocalClient(server, descriptor_path, provider)
         source.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=source_session_id,
@@ -5932,7 +6023,7 @@ def test_prepared_work_claim_transfer_recovers_without_an_unattached_reservation
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "Resume the same BIM coordination review",
             "description": "Keep this review on one Work root after a release fault.",
@@ -5940,8 +6031,8 @@ def test_prepared_work_claim_transfer_recovers_without_an_unattached_reservation
             "x": 420.0,
             "y": 280.0,
         })
-        source = UniversalRuntimeClient(descriptor_path, provider)
-        target = UniversalRuntimeClient(descriptor_path, provider)
+        source = _FounderLocalClient(server, descriptor_path, provider)
+        target = _FounderLocalClient(server, descriptor_path, provider)
         source.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=source_session_id,
@@ -6065,7 +6156,7 @@ def test_source_cancellation_restores_normal_claimability_without_copying_work(t
         )
 
     try:
-        founder = UniversalRuntimeClient(descriptor_path, provider)
+        founder = _FounderLocalClient(server, descriptor_path, provider)
         created = founder.request("POST", "/api/universal/work", {
             "title": "Recover one BIM coordination review after continuation cancellation",
             "description": "Cancel a device continuation without copying this Work.",
@@ -6073,8 +6164,8 @@ def test_source_cancellation_restores_normal_claimability_without_copying_work(t
             "x": 420.0,
             "y": 280.0,
         })
-        source = UniversalRuntimeClient(descriptor_path, provider)
-        target = UniversalRuntimeClient(descriptor_path, provider)
+        source = _FounderLocalClient(server, descriptor_path, provider)
+        target = _FounderLocalClient(server, descriptor_path, provider)
         source.bind_agent_session(
             runtime="baboom-execution",
             external_session_id=source_session_id,
@@ -6168,7 +6259,7 @@ def test_machine_workshop_admission_rejects_protected_content_without_commit(tmp
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         before = read_deliberation_space(
             server.universal_store.snapshot(),
@@ -6220,7 +6311,8 @@ def test_machine_workshop_admission_rejects_protected_content_without_commit(tmp
         server.close()
 
 
-def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path):
+def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path, monkeypatch):
+    _as_observed_desktop_launch(monkeypatch)
     descriptor_path = tmp_path / "active-universal-runtime.json"
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"p" * 32
@@ -6231,7 +6323,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         machine_key_provider=provider,
         runtime_compliance_runner=_green_runtime_compliance,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
         assert descriptor["status"] == "active"
@@ -6464,7 +6556,9 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
             MachineTransportError,
             match="(?:bound runtime Agent Session|proof is invalid)",
         ):
-            client.request("POST", "/api/universal/work-next", {})
+            # An unbound claim over the pipe itself (not the in-process founder).
+            UniversalRuntimeClient(descriptor_path, provider).request(
+                "POST", "/api/universal/work-next", {})
         assert server.universal_store.revision == revision_before_unbound_claim
 
         brain_root = server.universal_registry.map.domains["brain"]
@@ -6532,8 +6626,8 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
             baboom_context_after_work, sort_keys=True
         )
 
-        agent_a = UniversalRuntimeClient(descriptor_path, provider)
-        agent_b = UniversalRuntimeClient(descriptor_path, provider)
+        agent_a = _FounderLocalClient(server, descriptor_path, provider)
+        agent_b = _FounderLocalClient(server, descriptor_path, provider)
         external_a = "codex-session-not-for-persistence"
         enrolled_a = agent_a.bind_agent_session(
             runtime="codex", external_session_id=external_a
@@ -6577,7 +6671,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         renewed_a = agent_a.renew_agent_session()
         assert renewed_a["agent_session"] == session_a
         assert agent_a._agent_session_token != old_session_token
-        stale_agent_a = UniversalRuntimeClient(descriptor_path, provider)
+        stale_agent_a = _FounderLocalClient(server, descriptor_path, provider)
         stale_agent_a.agent_session_root = session_a
         stale_agent_a._agent_session_token = old_session_token
         stale_agent_a._agent_session_expires_at = time.time() + 60
@@ -6706,7 +6800,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         assert repeated_a["claimed"] is True
         assert repeated_a["reused"] is True
         assert repeated_a["work"]["root"] == created["created_root"]
-        agent_c = UniversalRuntimeClient(descriptor_path, provider)
+        agent_c = _FounderLocalClient(server, descriptor_path, provider)
         agent_c.bind_agent_session(
             runtime="cursor", external_session_id="cursor-session-c"
         )
@@ -6723,7 +6817,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
                 "evidence": "",
             })
 
-        expiring = UniversalRuntimeClient(descriptor_path, provider)
+        expiring = _FounderLocalClient(server, descriptor_path, provider)
         expiring.bind_agent_session(
             runtime="cursor", external_session_id="cursor-expiry-court"
         )
@@ -6743,8 +6837,13 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
             server._resolve_browser_session(server.browser_session_token)
         )
         visible = {node["id"] for node in canvas["nodes"]}
-        assert requirements_root in visible
-        assert capabilities_root in visible
+        # 3ca241f (2026-09-17): the product canvas lens draws registered Work
+        # and its <work>:data:<name> value nodes only inside a Work home; the
+        # graph keeps them (read_value_graph above) and the Workshop draws them
+        # (test_product_canvas_work_lens.py).
+        assert created["created_root"] not in visible
+        assert requirements_root not in visible
+        assert capabilities_root not in visible
         assert session_a in visible
         assert session_b in visible
 

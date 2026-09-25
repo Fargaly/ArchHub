@@ -26342,16 +26342,24 @@ def project_universal_canvas(
                 sources, tails,
             )
             return json.loads(encoded)
+        from . import commit_intent
+
         sources: dict = {}
         handle = _CANVAS_POSITION_SOURCES.set(sources)
         try:
-            projection = _project_universal_canvas_interpreter(
-                store,
-                registry,
-                authentication_context=authentication_context,
-            )
+            with commit_intent.recording_refusals() as refused:
+                projection = _project_universal_canvas_interpreter(
+                    store,
+                    registry,
+                    authentication_context=authentication_context,
+                )
         finally:
             _CANVAS_POSITION_SOURCES.reset(handle)
+    if refused:
+        # A build in a read-only scope was refused a publication it owed
+        # (visibility repair) and carried on without it. Remembering that
+        # answer would let the locked rebuild return it and never publish.
+        return projection
     after = store.snapshot()
     if after.cells is not cells or after.revision != key[0]:
         # The build itself committed (visibility repair); the next read
@@ -30769,6 +30777,18 @@ def sync_universal_grand_map_work(
     }
 
 
+def _read_universal_roma_requirement_protocol(snapshot: Snapshot):
+    """The installed ROMA protocol, read only; None when it is not installed.
+
+    Reads never commit (commit gate, 72bcaae): installing the protocol and
+    linking it into the application and Brain scopes is the sync's work.
+    """
+    prefix = "app:roma-requirement-protocol"
+    if "%s:root" % prefix not in snapshot.cells:
+        return None
+    return open_roma_requirement_protocol(snapshot, prefix=prefix)
+
+
 def _universal_roma_requirement_protocol(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -30883,11 +30903,11 @@ def project_universal_roma_requirement_tree(
         registry.map.domains["brain"],
         authentication_context=authentication_context,
     )
-    protocol = _universal_roma_requirement_protocol(
-        store, registry, create=False
-    )
+    protocol = _read_universal_roma_requirement_protocol(snapshot)
+    if protocol is None:
+        raise InvalidCell("ROMA requirement protocol is not installed")
     projected = project_roma_requirement_tree(
-        store.snapshot(), protocol, registry.value_graph_protocol, tree_root
+        snapshot, protocol, registry.value_graph_protocol, tree_root
     )
     projected.update({
         "ok": True,
@@ -30915,18 +30935,23 @@ def project_universal_roma_requirement_tree_index(
         registry.map.domains["brain"],
         authentication_context=authentication_context,
     )
-    protocol = _universal_roma_requirement_protocol(
-        store, registry, create=True
-    )
-    projected = project_roma_requirement_tree_index(
-        store.snapshot(), protocol, registry.value_graph_protocol
-    )
+    protocol = _read_universal_roma_requirement_protocol(snapshot)
+    if protocol is None:
+        # Nothing synced yet: an empty index, and still no commit.
+        projected = {
+            "schema": "archhub-roma-requirement-tree-cell-index/v1",
+            "registry": None, "tree_count": 0, "tree_ids": (), "trees": (),
+        }
+    else:
+        projected = project_roma_requirement_tree_index(
+            snapshot, protocol, registry.value_graph_protocol
+        )
     projected.update({
         "ok": True,
         "application": registry.application_root,
         "brain_scope": registry.map.domains["brain"],
-        "protocol": protocol.root_id,
-        "revision": store.revision,
+        "protocol": None if protocol is None else protocol.root_id,
+        "revision": snapshot.revision,
     })
     return projected
 

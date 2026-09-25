@@ -634,15 +634,21 @@ class ApplicationConversationContent:
             return None
 
     def page_for_workshop_machine(self, request, *, agent_session_root,
-                                  authentication_context, expected_revision, project, limit=50):
-        """Project the actual admitted machine route before final read checks."""
+                                  authentication_context, expected_revision, project, limit=50,
+                                  hold_owner_lock=True):
+        """Project the actual admitted machine route before final read checks.
+
+        ``hold_owner_lock=False`` has the contract of ``project_for_founder_context``:
+        the caller re-checks the head and ``validate_projection_read`` under the lock.
+        """
         if (type(request) is not dict or request.get("method", "").upper() != "GET"
                 or request.get("path") != "/api/universal/workshop" or request.get("body") != {}
                 or not callable(project)):
             raise InvalidCell("Workshop content machine request is invalid")
         return self._page_for_admitted_machine(request, agent_session_root=agent_session_root,
             authentication_context=authentication_context, expected_revision=expected_revision,
-            project=project, limit=limit, space_root=self._owner.universal_registry.workshop_root)
+            project=project, limit=limit, space_root=self._owner.universal_registry.workshop_root,
+            _hold_owner_lock=hold_owner_lock)
 
     def project_for_deliberation_machine(self, request, *, agent_session_root,
                                          authentication_context, expected_revision, project):
@@ -662,7 +668,8 @@ class ApplicationConversationContent:
 
     def _page_for_admitted_machine(self, request, *, agent_session_root,
                                    authentication_context, expected_revision, project,
-                                   space_root, limit, category=None, before=None):
+                                   space_root, limit, category=None, before=None,
+                                   _hold_owner_lock=True):
         from .cell_authorization import AuthorizationDenied
         from .universal_application import _runtime_agent_session, _view_session_for_context
 
@@ -671,12 +678,12 @@ class ApplicationConversationContent:
             raise InvalidCell("Workshop content machine request shape is invalid")
         founder = direct or request.get("session") == {}
         owner = self._owner
-        with owner.mutation_lock:
+        with self._owner_scope(_hold_owner_lock):
             self._require_live_owner()
             registry, store = owner.universal_registry, owner.universal_store
             broker = registry.authorization.broker
-            with broker.live_context(authentication_context):
-                with store.stable_snapshot(expected_revision=expected_revision) as snapshot:
+            with self._revocation_scope(broker, authentication_context, _hold_owner_lock):
+                with self._snapshot_scope(store, expected_revision, _hold_owner_lock) as snapshot:
                     def admit():
                         identity = broker.resolve(authentication_context)
                         view, _ = _view_session_for_context(registry, authentication_context)
@@ -696,7 +703,8 @@ class ApplicationConversationContent:
 
                     return self._page(admit, space_root=space_root, limit=limit,
                         _route_path=request["path"], _translate_content_errors=True,
-                        _project=project, before=before, _category=category)
+                        _project=project, before=before, _category=category,
+                        _hold_owner_lock=_hold_owner_lock)
 
     def page_for_runtime_context(self, *, agent_session_root, authentication_context,
                                  expected_revision, limit=8, max_bytes=262144):

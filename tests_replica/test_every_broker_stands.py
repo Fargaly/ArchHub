@@ -14,16 +14,33 @@ EXPECTED = {"revit", "autocad", "speckle", "max", "rhino", "blender", "excel", "
             "illustrator", "indesign", "teams", "lmstudio", "antigravity", "procore"}
 
 
-# Host and key states, plus the exact results the shipped checks report
-# rather than a flattened guess: the Microsoft Graph prerequisite check
-# (nodelang/outlook_graph.ps1 "prerequisites"; outlook_graph.py transport
-# failures) and the IMAP row that needs its own sign-in. The Graph row's
-# state is pinned to the check's own answer by tests/test_graph_prerequisites.py.
+# Host and key states every program row may report.
 TRUTHFUL_STATES = frozenset({
     "connected", "listening", "running", "installed", "needs-key", "absent", "reachable",
-    "prerequisites-ready", "dependency-missing", "unavailable", "timeout", "unsupported",
-    "needs-sign-in",
 })
+# Rows that report the exact result of their own shipped check instead: the
+# Microsoft Graph prerequisite check (nodelang/outlook_graph.ps1
+# "prerequisites"; outlook_graph.py transport failures, pinned to the check's
+# own answer by tests/test_graph_prerequisites.py) and the IMAP row, which
+# needs its own sign-in. No other row may borrow these states.
+ROW_STATES = {
+    "outlook-new": frozenset({
+        "prerequisites-ready", "dependency-missing", "unavailable", "timeout", "unsupported",
+    }),
+    "outlook-imap": frozenset({"needs-sign-in"}),
+}
+# Host rows that also say "unavailable" when the program is installed but its
+# ArchHub bridge is not: 3ds Max without MaxMCP (host_brokers.probe_host_rows)
+# and a per-year Revit without its add-in (host_brokers.probe_catalogue_rows).
+BRIDGE_ROW_STATES = TRUTHFUL_STATES | {"unavailable"}
+
+
+def _allowed(row_id):
+    if row_id in ROW_STATES:
+        return ROW_STATES[row_id]
+    if row_id == "max" or row_id.startswith("revit-"):
+        return BRIDGE_ROW_STATES
+    return TRUTHFUL_STATES
 
 
 def test_the_catalogue_names_every_program_with_a_truthful_state():
@@ -31,8 +48,28 @@ def test_the_catalogue_names_every_program_with_a_truthful_state():
     missing = EXPECTED - set(rows)
     assert not missing, missing
     for row in rows.values():
-        assert row["state"] in TRUTHFUL_STATES, row
+        assert row["state"] in _allowed(row["id"]), row
         assert row["detail"], row
+
+
+def test_max_installed_without_maxmcp_is_reported_unavailable(monkeypatch):
+    """Verifier 2026-09-25 (test_vr_catalogue_rows.py): a shipped, truthful row."""
+    monkeypatch.setattr(host_brokers, "_max_endpoint", lambda: None)
+    monkeypatch.setattr(host_brokers, "_max_plugin_installed", lambda: False)
+    monkeypatch.setattr(host_brokers, "_running", lambda names: False)
+    monkeypatch.setattr(host_brokers, "_installed", lambda paths: True)
+    row = next(r for r in host_brokers.probe_host_rows() if r["id"] == "max")
+    assert row["state"] == "unavailable"
+    assert row["state"] in _allowed(row["id"])
+
+
+def test_a_revit_year_without_its_add_in_is_reported_unavailable(monkeypatch):
+    monkeypatch.setattr(host_brokers, "_installed", lambda paths: True)
+    monkeypatch.setattr(host_brokers, "revit_years", lambda: ())
+    row = next(r for r in host_brokers.probe_catalogue_rows() if r["id"] == "revit-2024")
+    assert row["state"] == "unavailable"
+    assert row["state"] in _allowed(row["id"])
+    assert "unavailable" not in _allowed("rhino")
 
 
 def test_every_broker_engine_is_registered():
@@ -63,3 +100,11 @@ def test_office_read_on_this_machine_is_honest():
     out, label = host_brokers.ENGINES["office.read"]({"operation": "excel.list_workbooks"}, {})
     assert label
     assert out.get("ok") is False or "workbooks" in out["out"]
+
+
+def test_check_states_are_pinned_to_their_own_rows():
+    """Mutant: a host row reporting a check-only state is not truthful."""
+    borrowed = {"id": "rhino", "state": "prerequisites-ready", "detail": "x"}
+    assert borrowed["state"] not in _allowed(borrowed["id"])
+    for row_id, states in ROW_STATES.items():
+        assert not states & TRUTHFUL_STATES, row_id

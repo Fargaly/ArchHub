@@ -760,17 +760,22 @@ def test_group_and_ungroup_undo_redo_redraw_the_same_canvas():
 
 
 @pytest.mark.parametrize("members", ["user cards", "domains"])
-def test_group_undo_redo_undo_redo_round_trips(members):
+def test_group_undo_redo_undo_redo_round_trips(members, tmp_path):
     """Verifier finding (canvas2 r4 probe6, 2026-09-25, on main 6e167b6):
     undo right after redo of a group was refused, "created Cell gained
     references after the recorded transaction". Undo and redo are a
-    round trip at every step: each lands on the canvas it returns to."""
+    round trip at every step: each lands on the canvas it returns to.
+    Round 3 (2026-09-25): the THIRD undo was refused -- the grants revoked
+    in cycle 2 still reference the group. Four cycles, then a reopen."""
     from nodelang.universal_application import (
         redo_universal_change,
         undo_universal_change,
     )
 
-    store, registry = build_universal_application(resolve_map_path())
+    path = tmp_path / "round-trip.sqlite3"
+    store, registry = build_universal_application(
+        resolve_map_path(), CellStore(path), key_provider=_provider()
+    )
 
     def drawn():
         canvas = project_universal_canvas(store, registry)
@@ -794,11 +799,21 @@ def test_group_undo_redo_undo_redo_round_trips(members):
     before = drawn()
     group_universal_selection(store, registry, title="Round trip")
     grouped = drawn()
-    for _ in range(2):
-        undo_universal_change(store, registry)
-        assert drawn() == before
-        redo_universal_change(store, registry)
+    try:
+        for cycle in range(4):
+            undo_universal_change(store, registry)
+            assert drawn() == before, cycle
+            redo_universal_change(store, registry)
+            assert drawn() == grouped, cycle
+    finally:
+        store.close()
+    store, registry = restore_universal_application(
+        resolve_map_path(), CellStore(path), key_provider=_provider()
+    )
+    try:
         assert drawn() == grouped
+    finally:
+        store.close()
 
 
 def test_undo_still_refuses_a_foreign_signed_reference_after_redo():
@@ -953,3 +968,59 @@ def test_undo_refuses_a_broader_delegation_on_the_group():
     with pytest.raises(Conflict, match="gained references"):
         undo_universal_change(store, registry)
     assert store.revision == before
+
+
+def test_undo_of_a_group_another_view_draws_keeps_that_views_grant(tmp_path):
+    """Round 3: undo retires only what THIS view drew. When a member view
+    also draws the group, the founder's undo must not revoke the grant
+    that view reads it through: either the undo is refused and writes
+    nothing, or it lands and the member still draws the group."""
+    from nodelang.universal_application import (
+        redo_universal_change,
+        undo_universal_change,
+    )
+    from nodelang.universal_cell import Conflict
+
+    store, registry = build_universal_application(
+        resolve_map_path(), key_provider=_provider()
+    )
+    definitions = registry.standard_library.definition_roots
+    selected = tuple(
+        instantiate_universal_definition(
+            store, registry, definitions[0], x=400.0 + 300 * i, y=1400.0
+        )[0]
+        for i in range(2)
+    )
+    set_universal_selection(store, registry, selected, focus_root=selected[-1])
+    group, _ = group_universal_selection(store, registry, title="Shared group")
+    undo_universal_change(store, registry)
+    redo_universal_change(store, registry)
+    # A group is personal WIP and cannot be promoted ("resource lifecycle
+    # requires the released lifecycle capability"), so today no other view
+    # can be handed it. Record that refusal: if it ever opens, this court
+    # runs the undo below instead and holds the member's view to it.
+    revision = store.revision
+    try:
+        context = _member(
+            store, registry, "test:other-view:member", (group,)
+        )
+    except (InvalidCell, PermissionError) as refusal:
+        assert "WIP resource is outside this subject's authority" in str(
+            refusal
+        ), refusal
+        # The member Cell is committed before provisioning refuses; the
+        # refusal itself writes nothing more.
+        assert store.revision == revision + 1
+        return
+    member_before = _ids(project_universal_canvas(
+        store, registry, authentication_context=context
+    ))
+    assert group in member_before
+    revision = store.revision
+    try:
+        undo_universal_change(store, registry)
+    except (Conflict, InvalidCell):
+        assert store.revision == revision
+    assert _ids(project_universal_canvas(
+        store, registry, authentication_context=context
+    )) == member_before

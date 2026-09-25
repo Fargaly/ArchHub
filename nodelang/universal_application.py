@@ -51539,7 +51539,8 @@ def _signed_grant_incidence(
     of a group always failed.
 
     The referring incidence must point at the created Cell under check, and
-    its relationship must be registered, active, signature/generation-
+    its relationship must be registered, active or revoked (a revoked
+    grant authorizes nothing), signature/generation-
     verified, in this tenant, and one of the two shapes the reconciler
     issues for a root THIS transaction created:
       * delegation: reader principal -> this view's subject, scope = root,
@@ -51584,11 +51585,19 @@ def _signed_grant_incidence(
         ):
             return False
         try:
+            # Active or revoked: a grant the reconciler revoked in an
+            # earlier cycle still holds its incidences on the group but
+            # authorizes nothing. Its signature and generation are still
+            # verified, and it must still have the exact reconciler shape.
             relationship = verify_authority_relationship(
                 snapshot, identity, authority.relationship_broker,
-                relationship_root,
+                relationship_root, require_active=False,
             )
         except (InvalidCell, RelationshipAuthorityDenied, KeyError):
+            return False
+        if relationship.state_root not in (
+            identity.states["active"], identity.states["revoked"]
+        ):
             return False
         if (
             relationship.tenant_root != authority.tenant_root

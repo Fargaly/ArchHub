@@ -20792,6 +20792,11 @@ def _canvas_scope_for_assigned(
     owner_interface_index, boundary_index = _nested_scope_endpoint_indexes(
         snapshot, registry, assigned, interface_cache
     )
+    # Endpoints resolve against the ASSIGNED level, as the canvas reader
+    # does. Resolving against every canvas root answered a card folded into
+    # a group with the card itself (still a canvas root, not on this
+    # level), so the wire crossing the group's edge left the index and
+    # never reached the group's derived boundary port.
     for relation_root in all_relations:
         members = read_relation(snapshot, relation_root, budget=256)
         source_members = tuple(
@@ -20808,7 +20813,7 @@ def _canvas_scope_for_assigned(
             snapshot,
             registry,
             source_members[0],
-            all_roots,
+            assigned,
             interface_cache=interface_cache,
             owner_interface_index=owner_interface_index,
             boundary_index=boundary_index,
@@ -20817,7 +20822,7 @@ def _canvas_scope_for_assigned(
             snapshot,
             registry,
             target_members[0],
-            all_roots,
+            assigned,
             interface_cache=interface_cache,
             owner_interface_index=owner_interface_index,
             boundary_index=boundary_index,

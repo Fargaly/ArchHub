@@ -44193,7 +44193,17 @@ def _compose_universal_selection(
             )
             for departing_root in sorted(selected_set)
         ]
-        for grant_root in departing_grant_roots:
+        # A root grouped before and ungrouped was re-granted under a
+        # successor id (_fresh_relationship_id: the deterministic one was
+        # revoked by the first group). Looking up only the deterministic
+        # ids left that grant active, and the next read refused ("granted
+        # but not visible"). Every active projection grant of a departing
+        # root is revoked, read the way ungroup and the canvas reader do.
+        for departing_root in sorted(selected_set):
+            departing_grant_roots.extend(_active_projection_grant_roots(
+                snapshot, registry, view_session, departing_root
+            ))
+        for grant_root in dict.fromkeys(departing_grant_roots):
             if grant_root not in snapshot.cells:
                 continue
             if not _relationship_is_active(
@@ -51915,6 +51925,9 @@ def _reconcile_view_projection_grants(
         )
 
 
+from .cell_identity import _verify_signed_relationship_material  # noqa: E402
+
+
 def _signed_grant_incidence(
     registry: UniversalApplicationRegistry,
     view_session: ApplicationViewSession,
@@ -51929,12 +51942,14 @@ def _signed_grant_incidence(
     of a group always failed.
 
     The referring incidence must point at the created Cell under check, and
-    its relationship must be registered, active or revoked (a revoked
-    grant authorizes nothing), signature/generation-
+    its relationship must be signed (registered: active or revoked with a
+    fresh generation; unregistered: authorizes nothing, signed material
+    verified), signature/generation-
     verified, in this tenant, and one of the two shapes the reconciler
     issues for a root THIS transaction created:
-      * delegation: reader principal -> this view's subject, scope = root,
-        actions exactly (read,);
+      * delegation: reader principal -> this view's subject, actions
+        exactly (read,), scope = root -- or evidence exactly (entry,) for a
+        created scope-exposure entry that shows the scoped composition;
       * audience-binding: root -> the application audience, classification
         scope, actions exactly (read,) -- revoked by the reconciler once
         the undo leaves the root undrawn.
@@ -51964,25 +51979,41 @@ def _signed_grant_incidence(
                 if member.role_id == member_role
             )
             registered[snapshot.revision] = roots
-        if relationship_root not in roots:
-            return False
-        if not any(
-            member.incidence_id == referrer
-            and member.participant_id == target_root
-            for member in read_relation(
-                snapshot, relationship_root, budget=128
-            )
-        ):
-            return False
         try:
-            # Active or revoked: a grant the reconciler revoked in an
-            # earlier cycle still holds its incidences on the group but
-            # authorizes nothing. Its signature and generation are still
-            # verified, and it must still have the exact reconciler shape.
-            relationship = verify_authority_relationship(
-                snapshot, identity, authority.relationship_broker,
-                relationship_root, require_active=False,
-            )
+            if not any(
+                member.incidence_id == referrer
+                and member.participant_id == target_root
+                for member in read_relation(
+                    snapshot, relationship_root, budget=128
+                )
+            ):
+                return False
+            if relationship_root in roots:
+                # Active or revoked: a grant the reconciler revoked in an
+                # earlier cycle still holds its incidences on the group but
+                # authorizes nothing. Signature and generation are verified.
+                relationship = verify_authority_relationship(
+                    snapshot, identity, authority.relationship_broker,
+                    relationship_root, require_active=False,
+                )
+            else:
+                # A reconciler grant that a later compensation dropped from
+                # the registry authorizes nothing at all. Its signed
+                # material must verify, its generation must be the one the
+                # broker last recorded (a superseded generation is a
+                # replay), the reconciler (this view's subject) issued it,
+                # and the shape below is exact.
+                relationship, generation = (
+                    _verify_signed_relationship_material(
+                        snapshot, identity, authority.relationship_broker,
+                        relationship_root,
+                        registered_roots=frozenset((relationship_root,)),
+                    )
+                )
+                if not authority.relationship_broker.verify_generation(
+                    relationship_root, generation
+                ) or relationship.issuer_root != view_session.subject_root:
+                    return False
         except (InvalidCell, RelationshipAuthorityDenied, KeyError):
             return False
         if relationship.state_root not in (
@@ -51995,11 +52026,27 @@ def _signed_grant_incidence(
         ):
             return False
         if relationship.kind_root == identity.kinds["delegation"]:
-            return (
+            if (
                 relationship.source_root
-                == authority.resource_reader_principal_root
-                and relationship.target_root == view_session.subject_root
-                and relationship.scope_root in created_roots
+                != authority.resource_reader_principal_root
+                or relationship.target_root != view_session.subject_root
+            ):
+                return False
+            if relationship.scope_root in created_roots:
+                return True
+            # The reconciler's exposure grant: evidence is exactly the
+            # created scope-exposure entry, scope a composition that entry
+            # shows (ungroup of a nested group).
+            if relationship.evidence_roots != (target_root,):
+                return False
+            entry_members = _relation_members_or_none(snapshot, target_root)
+            return bool(entry_members) and any(
+                member.role_id == registry.roles["visible"]
+                and member.participant_id == relationship.scope_root
+                for member in entry_members
+            ) and any(
+                member.role_id == registry.roles["scope"]
+                for member in entry_members
             )
         if relationship.kind_root == identity.kinds["audience-binding"]:
             return (
@@ -52010,6 +52057,243 @@ def _signed_grant_incidence(
         return False
 
     return reconciled
+
+
+def _signed_relationship_material_cell(registry: UniversalApplicationRegistry):
+    """A Cell of a signed authority relationship whose CURRENT signed
+    material verifies (digest + signature). Signed authority is never
+    compensated by replaying bytes -- a later signed change (a revocation,
+    a re-grant) is the reconciler's; the change-history module already
+    exempts relationships under ``app:authority-relationship:`` this way.
+    """
+    authority = registry.authorization
+    identity = authority.identity_protocol
+
+    def material(snapshot: Snapshot, cell_id: str) -> bool:
+        for root in {
+            cell_id.rpartition(":incidence:")[0],
+            cell_id.rpartition(":")[0],
+        }:
+            if not root.startswith("app:authority:"):
+                continue
+            try:
+                relationship, _generation = (
+                    _verify_signed_relationship_material(
+                        snapshot, identity, authority.relationship_broker,
+                        root, registered_roots=frozenset((root,)),
+                    )
+                )
+            except (InvalidCell, RelationshipAuthorityDenied, KeyError):
+                continue
+            from .cell_identity import _relationship_material_cell_ids
+
+            if cell_id in _relationship_material_cell_ids(relationship):
+                return True
+        return False
+
+    return material
+
+
+def _focus_registered_when_created(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    record_root: str,
+) -> bool:
+    """The attention registry held this focus record in the revision that
+    created it (records are registered in their creating commit).
+
+    A compensation that replays the registry's tail chain Cell drops later
+    registrations from the CURRENT registry; the journal still proves them.
+    Point reads of that one revision, no historical snapshot.
+    """
+    revisions = store.revisions_touching(record_root)
+    if not revisions:
+        return False
+    revision = revisions[0]
+    member_role = registry.attention_protocol.role("focus-member")
+
+    def cell_at(cell_id: str) -> Cell | None:
+        try:
+            return store.cells_at(revision, (cell_id,)).get(cell_id)
+        except InvalidCell:
+            return None
+
+    cursor = cell_at(registry.attention_protocol.registry("focus"))
+    seen: set[str] = set()
+    while cursor is not None and cursor.link0 != NULL_CELL_ID:
+        if cursor.id in seen or len(seen) > 100_000:
+            return False
+        seen.add(cursor.id)
+        incidence = cell_at(cursor.link0)
+        if (
+            incidence is not None
+            and incidence.link0 == member_role
+            and incidence.link1 == record_root
+        ):
+            return True
+        if cursor.link1 == NULL_CELL_ID:
+            return False
+        cursor = cell_at(cursor.link1)
+    return False
+
+
+def _view_selection_cell(
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    store: CellStore | None = None,
+):
+    """This view's focus pointer, a member incidence of its selection, or a
+    member incidence of a focus record whose session is THIS view.
+
+    Selection and focus change through untracked gestures between tracked
+    ones; only these exact Cells of THIS view may have drifted under a
+    recorded change, and undo/redo restore their recorded images.
+    """
+    created_registration: dict[str, bool] = {}
+
+    def selection_cell(snapshot: Snapshot, cell_id: str) -> bool:
+        if cell_id == view_session.focus_incidence:
+            return True
+        members = _relation_members_or_none(
+            snapshot, view_session.selection_state_root
+        )
+        if members and any(
+            member.incidence_id == cell_id for member in members
+        ):
+            return True
+        record_root, separator, _tail = cell_id.rpartition(":incidence:")
+        if not separator:
+            return False
+        try:
+            # Only a focus record the attention registry holds (now, or --
+            # after a compensation replayed the registry tail -- in the
+            # revision that created it); a relation that merely reads like
+            # a focus record is not this view's state.
+            if record_root not in _attention_registry_roots(
+                snapshot, registry.attention_protocol, "focus", "focus-member"
+            ):
+                if store is None:
+                    return False
+                known = created_registration.get(record_root)
+                if known is None:
+                    known = _focus_registered_when_created(
+                        store, registry, record_root
+                    )
+                    created_registration[record_root] = known
+                if not known:
+                    return False
+            record = read_focus(
+                snapshot, registry.attention_protocol, record_root
+            )
+        except (InvalidCell, KeyError, MatchBudgetExceeded):
+            return False
+        if record.session_root != view_session.root_id:
+            return False
+        record_members = _relation_members_or_none(snapshot, record_root)
+        return bool(record_members) and any(
+            member.incidence_id == cell_id for member in record_members
+        )
+
+    return selection_cell
+
+
+from .cell_attention import _registry_roots as _attention_registry_roots  # noqa: E402
+
+
+def _derive_view_selection(
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+):
+    """Selection and focus state equal the focus record this compensation
+    restores -- the laws a selection transition writes:
+      * a root is selected iff the pointed focus record selects it;
+      * of this session's focus records only the pointed one is active,
+        an active other one is resolved.
+    Only Cells of THIS view that differ are rewritten.
+    """
+    def derive(
+        snapshot: Snapshot, replacements: Mapping[str, Cell]
+    ) -> tuple[Cell, ...]:
+        pointer = replacements.get(view_session.focus_incidence)
+        if pointer is None:
+            return ()
+        protocol = registry.attention_protocol
+        focus = read_focus(snapshot, protocol, pointer.link1)
+        selected = set(focus.selected_roots)
+        derived = []
+        state_role = protocol.role("focus-state")
+        for record_root in _attention_registry_roots(
+            snapshot, protocol, "focus", "focus-member"
+        ):
+            record = read_focus(snapshot, protocol, record_root)
+            if record.session_root != view_session.root_id:
+                continue
+            state_member = next(
+                member for member in read_relation(
+                    snapshot, record_root, budget=100_000
+                )
+                if member.role_id == state_role
+            )
+            state = replacements.get(
+                state_member.incidence_id,
+                snapshot.cells[state_member.incidence_id],
+            )
+            if record_root == pointer.link1:
+                wanted = protocol.state("active")
+            elif state.link1 == protocol.state("active"):
+                wanted = protocol.state("resolved")
+            else:
+                continue
+            if state.link1 != wanted:
+                derived.append(Cell(state.id, state.link0, wanted, state.atom))
+        for member in read_relation(
+            snapshot, view_session.selection_state_root, budget=100_000
+        ):
+            incidence = replacements.get(
+                member.incidence_id, snapshot.cells[member.incidence_id]
+            )
+            role_id = (
+                registry.roles["selected"]
+                if member.participant_id in selected
+                else registry.roles["available"]
+            )
+            if incidence.link0 != role_id:
+                derived.append(Cell(
+                    incidence.id, role_id, incidence.link1, incidence.atom
+                ))
+        return tuple(derived)
+
+    return derive
+
+
+def _undo_referrer(
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    store: CellStore | None = None,
+):
+    """Referrers undo may leave in place: the reconciler's signed grants,
+    and this view's own selection/focus state -- an incidence of a focus
+    record the attention registry holds for THIS view, or of its selection
+    (selection is untracked view state that names what the user picked)."""
+    signed = _signed_grant_incidence(registry, view_session)
+    view_state = _view_selection_cell(registry, view_session, store)
+
+    def referrer_ok(
+        snapshot: Snapshot,
+        referrer: str,
+        target_root: str,
+        created_roots: frozenset[str],
+    ) -> bool:
+        referring = snapshot.cells.get(referrer)
+        if (
+            referring is not None
+            and referring.link1 == target_root
+            and view_state(snapshot, referrer)
+        ):
+            return True
+        return signed(snapshot, referrer, target_root, created_roots)
+
+    return referrer_ok
 
 
 def undo_universal_change(
@@ -52051,7 +52335,10 @@ def undo_universal_change(
         actor_root=actor_root,
         session_root=view_session.root_id,
         operation_root=operation_root,
-        reconciled_referrer=_signed_grant_incidence(registry, view_session),
+        reconciled_referrer=_undo_referrer(registry, view_session, store),
+        view_state_cell=_view_selection_cell(registry, view_session, store),
+        derive_view_state=_derive_view_selection(registry, view_session),
+        signed_authority_cell=_signed_relationship_material_cell(registry),
     ).revision
     _reconcile_view_projection_grants(
         store, registry, view_session, actor_root, retired_roots
@@ -52084,6 +52371,9 @@ def redo_universal_change(
         actor_root=actor_root,
         session_root=view_session.root_id,
         operation_root=operation_root,
+        view_state_cell=_view_selection_cell(registry, view_session, store),
+        derive_view_state=_derive_view_selection(registry, view_session),
+        signed_authority_cell=_signed_relationship_material_cell(registry),
     )
     # Same law as undo: signed authority is compensated by a NEW signed
     # generation, never by replaying old bytes.

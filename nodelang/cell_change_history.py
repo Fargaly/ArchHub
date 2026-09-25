@@ -745,6 +745,16 @@ def history_state(
     )[0]
 
 
+# One undo authorises against, then compensates, the SAME immutable
+# revision: both walked and fully validated the whole history (one run spent
+# 17 s of a 19.5 s undo in three identical walks, each stepping historical
+# snapshots back). Keep the last validated walk per store, keyed by its
+# exact revision, history root, protocol and budget; any commit changes the
+# revision, so a stale walk is never reused.
+_HISTORY_WALK_MEMO: "WeakKeyDictionary[object, tuple]" = WeakKeyDictionary()
+_HISTORY_WALK_LOCK = threading.Lock()
+
+
 def _history_state_and_transactions(
     snapshot: Snapshot,
     protocol: ChangeHistoryProtocol,
@@ -759,15 +769,35 @@ def _history_state_and_transactions(
     is validated in full when ``history`` is supplied, and otherwise by its
     header; every undo/redo re-reads its one transaction with history.
     """
+    owner = getattr(history, "__self__", None)
+    key = (snapshot.revision, id(snapshot.cells), history_root, protocol, budget)
+    if owner is not None and getattr(history, "__name__", "") == "at":
+        with _HISTORY_WALK_LOCK:
+            try:
+                held = _HISTORY_WALK_MEMO.get(owner)
+            except TypeError:
+                held = None
+        if held is not None and held[0] == key:
+            return held[1], dict(held[2])
+
     def reader(snapshot_, protocol_, transaction_root, *, budget):
         return _read_change_transaction(
             snapshot_, protocol_, transaction_root, budget=budget,
             history=history, header_without_history=True,
         )
 
-    return _read_history_projection(
+    state, transactions = _read_history_projection(
         snapshot, protocol, history_root, budget, reader
     )
+    if owner is not None and getattr(history, "__name__", "") == "at":
+        with _HISTORY_WALK_LOCK:
+            try:
+                _HISTORY_WALK_MEMO[owner] = (
+                    key, state, MappingProxyType(dict(transactions))
+                )
+            except TypeError:
+                pass
+    return state, transactions
 
 
 def _history_summary(
@@ -1057,6 +1087,26 @@ def _compensation_tolerates_drift(target_root: str) -> bool:
     )
 
 
+def _with_view_state(
+    snapshot: Snapshot,
+    replacements: list[Cell],
+    derive_view_state,
+) -> tuple[Cell, ...]:
+    """Add the view-state Cells derived from what this compensation restores.
+
+    Untracked selection between tracked changes leaves roles no recorded
+    change holds; the owner re-derives them from the restored graph (the
+    focus record) in the same commit.
+    """
+    merged = {cell.id: cell for cell in replacements}
+    if derive_view_state is not None:
+        for cell in derive_view_state(snapshot, MappingProxyType(dict(merged))):
+            if merged.get(cell.id, cell) != cell:
+                raise Conflict("derived view state conflicts with the compensation")
+            merged[cell.id] = cell
+    return tuple(merged.values())
+
+
 def undo_last_change(
     store: CellStore,
     protocol: ChangeHistoryProtocol,
@@ -1068,6 +1118,11 @@ def undo_last_change(
     reconciled_referrer: (
         Callable[[Snapshot, str, str, frozenset[str]], bool] | None
     ) = None,
+    view_state_cell: Callable[[Snapshot, str], bool] | None = None,
+    derive_view_state: (
+        Callable[[Snapshot, Mapping[str, Cell]], Iterable[Cell]] | None
+    ) = None,
+    signed_authority_cell: Callable[[Snapshot, str], bool] | None = None,
 ) -> ChangeCommit:
     """Compensate the latest change of this view.
 
@@ -1078,7 +1133,11 @@ def undo_last_change(
     every other gained or lost reference still refuses the undo.
     """
     snapshot = store.snapshot()
-    state = history_state(snapshot, protocol, history_root, history=store.at)
+    # The walk that derives the state already reads and validates every
+    # transaction; keep them, so judging referrers re-reads nothing.
+    state, known_transactions = _history_state_and_transactions(
+        snapshot, protocol, history_root, history=store.at
+    )
     if state.undo_root is None:
         raise Conflict("nothing to undo")
     original = read_change_transaction(
@@ -1098,11 +1157,73 @@ def undo_last_change(
     result_incoming = _incoming_links_for_targets(
         result_snapshot, created_targets
     )
+    undone_images: dict[str, Cell] | None = None
+
+    def created_by_an_undone_change(referrer: str) -> bool:
+        """The referrer is exactly a Cell an undone change created.
+
+        A later change that is itself undone (redo-able, or discarded by a
+        newer change) still holds the Cells it created -- undo never deletes
+        -- but they are not in effect. Its reference is not a live edit this
+        undo would orphan. Only a byte-identical image counts.
+        """
+        nonlocal undone_images
+        if undone_images is None:
+            undone_images = {}
+            for root in (*state.redo_roots, *state.discarded_roots):
+                undone = known_transactions.get(root)
+                if getattr(undone, "changes", None) is None:
+                    undone = read_change_transaction(
+                        snapshot, protocol, root, history=store.at
+                    )
+                for undone_change in undone.changes:
+                    if undone_change.before is None:
+                        undone_images[undone_change.target_root] = (
+                            undone_change.after
+                        )
+        image = undone_images.get(referrer)
+        return image is not None and snapshot.cells.get(referrer) == image
+
+    recorded_transactions: frozenset[str] | None = None
+
+    def a_receipt_of_this_history(referrer: str) -> bool:
+        """The referrer is an incidence of a transaction this history holds.
+
+        Receipts name their scopes; they are the append-only record of
+        what happened, not an edit that depends on the Cell staying.
+        """
+        nonlocal recorded_transactions
+        if recorded_transactions is None:
+            recorded_transactions = frozenset(known_transactions)
+        transaction_root, separator, _tail = referrer.rpartition(":incidence:")
+        if not separator or transaction_root not in recorded_transactions:
+            return False
+        return any(
+            member.incidence_id == referrer
+            for member in read_relation(
+                snapshot, transaction_root, budget=10_000
+            )
+        )
+
     replacements: list[Cell] = []
     for change in original.changes:
         current = snapshot.cells.get(change.target_root)
         if current != change.after:
-            if _compensation_tolerates_drift(change.target_root):
+            if _compensation_tolerates_drift(change.target_root) or (
+                signed_authority_cell is not None
+                and signed_authority_cell(snapshot, change.target_root)
+            ):
+                continue
+            if view_state_cell is not None and (
+                view_state_cell(snapshot, change.target_root)
+                or view_state_cell(result_snapshot, change.target_root)
+            ):
+                # Selection and focus are rewritten by untracked gestures
+                # between tracked ones; undo returns them to the recorded
+                # moment before this change, as it does when undrifted (a
+                # Cell this change created stays, as undo never deletes).
+                if change.before is not None:
+                    replacements.append(change.before)
                 continue
             raise Conflict(
                 "Cell changed after the recorded transaction: %s"
@@ -1122,10 +1243,22 @@ def undo_last_change(
                 result_incoming[change.target_root]
                 - current_incoming[change.target_root]
             )
-            if lost or any(
-                reconciled_referrer is None
-                or not reconciled_referrer(
-                    snapshot, referrer, change.target_root, created_targets
+            # A reference lost only from this view's selection/focus Cells
+            # (rewritten by untracked selection, restored by this undo).
+            lost = {
+                (referrer, position) for referrer, position in lost
+                if view_state_cell is None
+                or not view_state_cell(snapshot, referrer)
+            }
+            if lost or not all(
+                created_by_an_undone_change(referrer)
+                or a_receipt_of_this_history(referrer)
+                or (
+                    reconciled_referrer is not None
+                    and reconciled_referrer(
+                        snapshot, referrer, change.target_root,
+                        created_targets,
+                    )
                 )
                 for referrer, _position in gained
             ):
@@ -1144,7 +1277,7 @@ def undo_last_change(
         authority_root=original.authority_root,
         scope_roots=original.scope_roots,
         interface_root=original.interface_root,
-        replace=replacements,
+        replace=_with_view_state(snapshot, replacements, derive_view_state),
         undo_of=original.root_id,
     )
 
@@ -1157,6 +1290,11 @@ def redo_last_change(
     actor_root: str,
     session_root: str,
     operation_root: str,
+    view_state_cell: Callable[[Snapshot, str], bool] | None = None,
+    derive_view_state: (
+        Callable[[Snapshot, Mapping[str, Cell]], Iterable[Cell]] | None
+    ) = None,
+    signed_authority_cell: Callable[[Snapshot, str], bool] | None = None,
 ) -> ChangeCommit:
     snapshot = store.snapshot()
     state = history_state(snapshot, protocol, history_root, history=store.at)
@@ -1175,7 +1313,21 @@ def redo_last_change(
         current = snapshot.cells.get(change.target_root)
         expected = change.before if change.before is not None else change.after
         if current != expected:
-            if _compensation_tolerates_drift(change.target_root):
+            if _compensation_tolerates_drift(change.target_root) or (
+                signed_authority_cell is not None
+                and signed_authority_cell(snapshot, change.target_root)
+            ):
+                continue
+            if view_state_cell is not None and (
+                view_state_cell(snapshot, change.target_root)
+                or view_state_cell(
+                    store.at(original.result_revision), change.target_root
+                )
+            ):
+                # As in undo: judged in the graph now or in the revision
+                # the change being redone produced. Redo writes the recorded
+                # image back, also on a view Cell this change created.
+                replacements.append(change.after)
                 continue
             raise Conflict(
                 "Cell changed after the recorded compensation: %s"
@@ -1193,7 +1345,7 @@ def redo_last_change(
         authority_root=original.authority_root,
         scope_roots=original.scope_roots,
         interface_root=original.interface_root,
-        replace=replacements,
+        replace=_with_view_state(snapshot, replacements, derive_view_state),
         redo_of=original.root_id,
     )
 

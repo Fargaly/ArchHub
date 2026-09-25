@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from nodelang.cell_value_graph import read_value_graph
 from nodelang.map_import import resolve_map_path
+from tests_replica.workshop_gate_support import open_execution_gate_in_graph
 from nodelang.universal_application import (
     begin_universal_runtime_agent_session,
     build_universal_application,
@@ -197,6 +198,7 @@ def test_work_plan_live_activity_projects_pending_model_delegation_without_mutat
         y=320,
         authentication_context=context,
     )
+    open_execution_gate_in_graph(store, registry, work_root, "baboom-work-plan-activity", context)
     claim_universal_governed_work(
         store,
         registry,

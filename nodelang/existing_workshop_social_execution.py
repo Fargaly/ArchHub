@@ -193,7 +193,7 @@ def prepare_social_work(server, *, work_root: str, session_root: str, context, n
         store, registry, agent_session_root=session_root, work_root=work_root,
         provider=social_provider_name(prepared.operation), input_digest=hashlib.sha256(raw).hexdigest(),
         input_bytes=len(raw), data_class=prepared.data_class, lifetime_seconds=300.0,
-        authentication_context=context)
+        authentication_context=context, content_service=server.conversation_content)
     if operation != prepared.operation:
         raise InvalidCell("social provider operation changed")
     return {"work": work_root, "worker": session_root, "delegation": delegation.root_id,

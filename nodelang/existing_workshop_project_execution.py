@@ -150,7 +150,7 @@ def prepare_project_work(server, *, work_root, session_root, context):
         store, registry, agent_session_root=session_root, work_root=work_root,
         provider=PROVIDER, input_digest=hashlib.sha256(raw).hexdigest(),
         input_bytes=len(raw), data_class="public-text", lifetime_seconds=300.0,
-        authentication_context=context)
+        authentication_context=context, content_service=server.conversation_content)
     if operation != OPERATION:
         raise InvalidCell("Project work provider operation changed")
     return {"work":work_root, "worker":session_root, "delegation":delegation.root_id,

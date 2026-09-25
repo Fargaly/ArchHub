@@ -225,8 +225,31 @@ def test_shared_workshop_assignments_are_atomic_and_gate_claims(tmp_path):
         )
         with pytest.raises(MachineTransportError, match="assigned to a different"):
             agent_c.claim_work(work_root)
-        with pytest.raises(MachineTransportError, match="plan and source-backed research"):
-            agent_a.claim_work(work_root)
+        # 326b657 (universal_application._require_workshop_assignment_claim_gate):
+        # a claim reserves assigned Work for inspection and plan drafting; it is
+        # not permission to execute. Plan/research belong at execution admission
+        # (AGENTS.md product gate 14), so the assignee may claim before planning.
+        early = agent_a.claim_work(work_root)
+        assert early["claimed"] is True
+        assert early["work"]["claimant_session"] == session_a
+        # ...but no effect is admitted until the coordinate-phase gate holds:
+        # the CDE write admission of the claimed Work is refused, writing nothing.
+        before_refusal = server.universal_store.revision
+        with pytest.raises(Exception, match="plan and source-backed research"):
+            universal_application_module.authorize_universal_cde_write(
+                server.universal_store, server.universal_registry,
+                agent_session_root=session_a, operation="apply_patch",
+                path="court/early.txt",
+                authentication_context=server.universal_registry.authorization.session.context(),
+            )
+        with pytest.raises(Exception, match="plan and source-backed research"):
+            universal_application_module._require_workshop_execution_gate(
+                server.universal_store.snapshot(), server.universal_registry,
+                work_root=work_root)
+        assert server.universal_store.revision == before_refusal
+        agent_a.request("POST", "/api/universal/work-transition", {
+            "root": work_root, "event": "release", "evidence": "",
+        })
 
         before_plan = server.universal_store.revision
         plan = agent_a.request("POST", "/api/universal/workshop", {
@@ -240,12 +263,21 @@ def test_shared_workshop_assignments_are_atomic_and_gate_claims(tmp_path):
             "created_at": "2026-07-21T10:00:00+00:00",
         })
         assert server.universal_store.revision == before_plan + 1
+        # The research cites a source captured in the graph (a registered value
+        # graph); the Grand Map root alone is structure, not a source.
+        from nodelang import commit_intent
+        from nodelang.cell_value_graph import build_value_graph
+        with commit_intent.declare(commit_intent.USER_ACTION, actor="court", reason="capture a source"):
+            source_root, _ = build_value_graph(
+                server.universal_store, server.universal_registry.value_graph_protocol,
+                {"source": "court", "text": "Source cited by the shared assignment research."},
+                root_id="court:workshop-assignment:source")
         before_research = server.universal_store.revision
         research = agent_b.request("POST", "/api/universal/workshop", {
             "category": "research",
             "text": "Attach the source-backed research needed for coordination.",
             "refs": [work_root],
-            "evidence": [server.universal_registry.map.grand_map_root],
+            "evidence": [server.universal_registry.map.grand_map_root, source_root],
             "recipients": [],
             "reply_to": None,
             "idempotency_key": "court:workshop-assignment:research",
@@ -334,6 +366,10 @@ def test_shared_workshop_assignments_are_atomic_and_gate_claims(tmp_path):
         claimed = agent_a.claim_work(work_root)
         assert claimed["claimed"] is True
         assert claimed["work"]["claimant_session"] == session_a
+        # With the plan and the source-backed research recorded, execution is admitted.
+        assert universal_application_module._require_workshop_execution_gate(
+            server.universal_store.snapshot(), server.universal_registry,
+            work_root=work_root) is None
 
         projected = server.dispatch_universal_machine_route({
             "method": "GET",

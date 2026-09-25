@@ -13858,6 +13858,13 @@ class ApplicationServer:
                     result["signal_after_response"] = True
                 return result
             if path == "/api/universal/grand-map-work":
+                # Syncing creates governed Work: the owner's alone, as for
+                # POST /api/universal/work (AGENTS.md product gate 14).
+                if not direct and request.get("session") != {}:
+                    raise AuthorizationDenied(
+                        "governed Work is created by the application owner; "
+                        "an agent proposes it in the Workshop"
+                    )
                 if set(body) - {"limit", "include_live"}:
                     raise InvalidCell(
                         "Grand Map Work sync request shape is invalid"
@@ -14024,6 +14031,8 @@ class ApplicationServer:
                     operation=body["operation"],
                     path=body["path"],
                     authentication_context=context,
+                    # Without an owner service a content-store gate fails closed.
+                    content_service=getattr(self, "conversation_content", None),
                 )
                 snapshot = self.universal_store.snapshot()
                 if snapshot.revision != admission.authority_revision:
@@ -14346,6 +14355,7 @@ class ApplicationServer:
                         input_digest=body["input_digest"],
                         input_bytes=body["input_bytes"],
                         authentication_context=context,
+                        content_service=self.conversation_content,
                     )
                 )
                 return {
@@ -14379,6 +14389,7 @@ class ApplicationServer:
                         input_bytes=body["input_bytes"],
                         data_class=body["data_class"],
                         authentication_context=context,
+                        content_service=self.conversation_content,
                     )
                 )
                 return {
@@ -15159,6 +15170,8 @@ class ApplicationServer:
                     operation=body["operation"],
                     path=body["path"],
                     authentication_context=context,
+                    # Without an owner service a content-store gate fails closed.
+                    content_service=getattr(self, "conversation_content", None),
                 )
                 snapshot = self.universal_store.snapshot()
                 if snapshot.revision != admission.authority_revision:
@@ -15283,6 +15296,16 @@ class ApplicationServer:
                     **result,
                 }
             if path == "/api/universal/work":
+                # AGENTS.md product gate 14: an agent proposes Work in the
+                # Workshop; the user approves its behavior and scope. Governed
+                # Work (whose claim can lead to effects) is created by the
+                # application owner -- in process or its cloud device -- never
+                # by a bound runtime Agent Session over the pipe.
+                if not direct and request.get("session") != {}:
+                    raise AuthorizationDenied(
+                        "governed Work is created by the application owner; "
+                        "an agent proposes it in the Workshop"
+                    )
                 allowed = {
                     "title", "description", "priority", "external_key",
                     "references", "structured_references", "x", "y",

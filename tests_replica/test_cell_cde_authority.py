@@ -406,6 +406,16 @@ def test_application_cde_admission_uses_exact_session_work_claim_and_container(
             _cde_container() if root == container_root else None
         ),
     )
+    # This court's registry is a stub for claim/container resolution; the
+    # Workshop execution gate has its own courts on a real registry
+    # (test_workshop_execution_gate.py). Record that admission asks it.
+    gated = []
+    monkeypatch.setattr(
+        universal_application_module,
+        "_require_workshop_execution_gate",
+        lambda _snapshot, _registry, *, work_root, agent_session_root=None, content_service=None:
+            gated.append((work_root, agent_session_root)),
+    )
 
     admission = authorize_universal_cde_write(
         store,
@@ -418,6 +428,8 @@ def test_application_cde_admission_uses_exact_session_work_claim_and_container(
         ),
         authentication_context=object(),
     )
+    assert gated == [(work_root, session_root)], (
+        "CDE admission must ask the Workshop execution gate for its claiming session")
 
     assert admission.agent_session_root == session_root
     assert admission.work_root == work_root

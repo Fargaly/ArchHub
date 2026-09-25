@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 import hashlib
 import uuid
 from threading import RLock
@@ -1627,6 +1627,36 @@ def evaluate_deliberation_gate(
         snapshot, protocol, space_root, budget=budget
     )
     _require_legacy_content(space)
+    return evaluate_deliberation_gate_for_entries(
+        snapshot, protocol, space_root, phase_root=phase_root,
+        reference_root=reference_root,
+        entries=list_deliberation_entries(snapshot, protocol, space_root, budget=budget),
+        budget=budget,
+    )
+
+
+def evaluate_deliberation_gate_for_entries(
+    snapshot: Snapshot,
+    protocol: DeliberationProtocol,
+    space_root: str,
+    *,
+    phase_root: str,
+    reference_root: str,
+    entries: Iterable[object],
+    evidence_admitted: Callable[[str], bool] | None = None,
+    budget: int = RELATION_BUDGET,
+) -> DeliberationGateProjection:
+    """The same graph-held requirement test over entries the caller admitted.
+
+    ``entries`` carry root_id, category_root, reference_roots and
+    evidence_roots, from the legacy graph transcript or ordinary content;
+    ``evidence_admitted`` narrows which evidence roots count.
+    """
+    if phase_root not in snapshot.cells or reference_root not in snapshot.cells:
+        raise InvalidCell("deliberation gate references missing Cells")
+    space = read_deliberation_space(
+        snapshot, protocol, space_root, budget=budget
+    )
     requirements = tuple(
         _read_requirement(snapshot, protocol, root, budget=budget)
         for root in space.requirement_roots
@@ -1638,11 +1668,21 @@ def evaluate_deliberation_gate(
     if not required:
         raise InvalidCell("deliberation gate phase has no graph requirement")
     matching = tuple(
-        entry for entry in list_deliberation_entries(
-            snapshot, protocol, space_root, budget=budget
-        )
+        entry for entry in entries
         if reference_root in entry.reference_roots
     )
+    if evidence_admitted is not None:
+        from types import SimpleNamespace
+        matching = tuple(
+            SimpleNamespace(
+                root_id=entry.root_id, category_root=entry.category_root,
+                reference_roots=tuple(entry.reference_roots),
+                evidence_roots=tuple(
+                    root for root in entry.evidence_roots if evidence_admitted(root)
+                ),
+            )
+            for entry in matching
+        )
     counts = {
         category: sum(
             entry.category_root == category for entry in matching
@@ -1705,6 +1745,7 @@ __all__ = [
     "compose_deliberation_space",
     "extend_deliberation_space",
     "evaluate_deliberation_gate",
+    "evaluate_deliberation_gate_for_entries",
     "list_deliberation_entries",
     "open_deliberation_protocol",
     "prepare_deliberation_entry",

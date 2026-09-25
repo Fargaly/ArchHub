@@ -683,6 +683,28 @@ class ConversationHistoryStore(ConversationPageProtection):
                                          (conversation_id,)).fetchone()[0]
             return {**status, "restored": restored, "tombstones": remaining}
 
+    def messages_referencing(self, conversation_id, reference, *, categories, limit=1000):
+        """Read-only: live messages of the given categories whose refs name one root.
+
+        The Workshop execution gate reads its plan and research entries here;
+        nothing is written and archived (retained-out) messages do not count.
+        """
+        _text(conversation_id, "conversation")
+        _text(reference, "reference")
+        categories = tuple(categories)
+        if not categories or any(type(item) is not str or not item for item in categories):
+            raise ValueError("gate categories are invalid")
+        placeholders = ",".join("?" for _ in categories)
+        with self._transaction():
+            self._head(conversation_id)
+            rows = self._db.execute(
+                "SELECT * FROM messages WHERE conversation_id=? AND category IN (%s) "
+                "AND EXISTS (SELECT 1 FROM json_each(messages.refs) WHERE value=?) "
+                "ORDER BY sequence LIMIT ?" % placeholders,
+                (conversation_id, *categories, reference, int(limit)),
+            ).fetchall()
+            return [self._message(row) for row in rows]
+
     def conversation_head(self, conversation_id):
         """Read admitted conversation metadata; never create a missing record."""
         with self._transaction():

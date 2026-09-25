@@ -13,6 +13,7 @@ from nodelang.cell_agent_cognition import read_cognition_budget, read_model_desc
 from nodelang.cell_baboom_model_execution import read_model_delegation
 from nodelang.map_import import resolve_map_path
 from nodelang.universal_cell import InvalidCell
+from tests_replica.workshop_gate_support import open_execution_gate_in_graph
 from nodelang.universal_application import (
     _baboom_cognition_model_binding_verifier,
     approve_universal_baboom_model_execution,
@@ -55,6 +56,7 @@ def test_claimed_work_can_prepare_one_bounded_review_only_cognition_request():
         y=300,
         authentication_context=context,
     )
+    open_execution_gate_in_graph(store, registry, work_root, "baboom-cognition", context)
     claim_universal_governed_work(
         store,
         registry,

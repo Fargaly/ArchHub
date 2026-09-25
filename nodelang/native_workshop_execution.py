@@ -210,6 +210,11 @@ def publish_existing_session_artifact(server, *, request, context, work_root,
                  "Artifact publisher or reviewed material changed")
         app._require_application_authorization(server.universal_store.snapshot(), server.universal_registry,
                                              'execute', work_root, authentication_context=context)
+        # Publishing artifact bytes on claimed Work is an effect: the Workshop
+        # execution gate holds before the intent is written.
+        app._require_workshop_execution_gate(server.universal_store.snapshot(), server.universal_registry,
+            work_root=work_root, agent_session_root=actor,
+            content_service=getattr(server, "conversation_content", None))
         key = _digest([server.universal_registry.application_root, work_root, actor, idempotency_key])
         intent_root = 'app:existing-artifact:' + key + ':intent'
         publication_root = 'app:existing-artifact:' + key + ':publication'

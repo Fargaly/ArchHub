@@ -240,8 +240,10 @@ from .cell_deliberation import (
     bootstrap_deliberation_protocol,
     compose_deliberation_space,
     evaluate_deliberation_gate,
+    evaluate_deliberation_gate_for_entries,
     extend_deliberation_space,
     _recent_entries_from_validated_space,
+    list_deliberation_entries,
     list_recent_deliberation_entries,
     open_deliberation_protocol,
     prepare_deliberation_entry,
@@ -34226,6 +34228,152 @@ def _require_workshop_assignment_claim_gate(
         )
 
 
+def _require_workshop_execution_gate(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    *,
+    work_root: str,
+    agent_session_root: str | None = None,
+    content_service=None,
+) -> None:
+    """Require the coordinate-phase gate before claimed Work takes an agent effect.
+
+    326b657 moved the plan and source-backed research requirement off the
+    claim (a claim reserves Work for drafting) to execution admission. The
+    agent-requested effect paths of claimed Work call this before they write
+    anything: model delegation, non-read connector delegation (connector, MCP
+    tool, project and social execution all request through it), CDE writes
+    and Workshop artifact publication. The founder's own consented native
+    Work preparation (native_workshop_execution.prepare_native_work) is the
+    founder acting and is deliberately outside it. Read-only; a refusal
+    commits nothing.
+
+    It applies to every Work an Agent Session claimed, assigned or not.
+    What counts, against the graph-held coordinate-phase requirements
+    (_WORKSHOP_REQUIREMENT_SPECS: plan x1; research x1 with >=1 evidence):
+    * only entries that reference this exact Work and were authored by one of
+      its assigned Agent Sessions (for unassigned Work: the claiming
+      session) or the founder -- its subject or its agent body;
+    * as research evidence: the codebase has no dedicated source-capture
+      protocol. Two existing records count. (a) A connector execution
+      receipt (cell_connector_execution.py:105, read at :708: provider,
+      operation, digests, outcome) -- succeeded, from a read-action provider
+      ("read-*"), on a delegation for this exact Work by one of those
+      authors: an external read with provenance. Only BABOOM execution
+      sessions can hold delegations (_baboom_execution_work_context), so
+      (b) content captured in the graph as a registered value graph also
+      counts -- self-attested, not verified provenance -- but never a Work,
+      its data (the CDE container included), an agent-built artifact graph
+      (app:existing-artifact:...) or a structural root such as the Grand Map.
+      Read-action connector delegations are research themselves and are not
+      behind this gate (they still need founder approval).
+    """
+    assignees = frozenset(
+        item.agent_session_root
+        for item in (
+            _read_workshop_assignment(snapshot, registry, root)
+            for root in _workshop_assignment_roots(snapshot, registry)
+        )
+        if item.work_root == work_root
+    )
+    if assignees:
+        workers = assignees
+    elif agent_session_root:
+        workers = frozenset({agent_session_root})
+    else:
+        raise AuthorizationDenied(
+            "Workshop execution gate requires the claiming Agent Session"
+        )
+    authors = workers | {
+        registry.agent_body.session.root_id,
+        registry.authorization.subject_root,
+    }
+    categories = registry.workshop_category_roots
+    gate_categories = (categories["plan"], categories["research"])
+    space = read_deliberation_space(
+        snapshot, registry.deliberation_protocol, registry.workshop_root
+    )
+    if space.content_store_root is None:
+        entries = tuple(
+            entry for entry in list_deliberation_entries(
+                snapshot, registry.deliberation_protocol, registry.workshop_root
+            )
+            if entry.category_root in gate_categories
+        )
+    else:
+        owner = getattr(content_service, "_owner", None)
+        if (content_service is None or owner is None
+                or getattr(owner, "universal_registry", None) is not registry
+                or getattr(owner, "conversation_content", None) is not content_service):
+            raise AuthorizationDenied(
+                "Workshop execution gate requires the application's conversation owner"
+            )
+        entries = content_service.workshop_gate_entries(
+            snapshot, registry, reference_root=work_root,
+            category_roots=gate_categories,
+        )
+    def connector_source(root: str) -> bool:
+        protocol = registry.baboom_connector_execution_protocol
+        receipt = read_connector_execution_receipt(
+            snapshot, protocol, registry.adapter_protocol, root)
+        if receipt.outcome != "succeeded" or not receipt.output_digest:
+            return False
+        delegation = read_connector_delegation(
+            snapshot, protocol, registry.adapter_protocol, receipt.delegation_root)
+        if delegation.work_root != work_root or delegation.session_root not in authors:
+            return False
+        return _connector_provider_reads(snapshot, registry, receipt.provider_root)
+
+    def captured_content(root: str) -> bool:
+        # Never a Work, its data (CDE container included), an agent-built
+        # artifact graph, or anything else the application owns structurally.
+        if (_governed_work_owned_root(snapshot, registry, root)
+                or root.startswith("app:existing-artifact:")
+                or root in registry.map.domains.values()
+                or root == registry.map.grand_map_root):
+            return False
+        read_value_graph(snapshot, registry.value_graph_protocol, root)
+        return True
+
+    def source_evidence(root: str) -> bool:
+        if type(root) is not str or not root:
+            return False
+        for admitted in (connector_source, captured_content):
+            try:
+                if admitted(root):
+                    return True
+            except (InvalidCell, KeyError, ValueError, TypeError):
+                continue
+        return False
+
+    gate = evaluate_deliberation_gate_for_entries(
+        snapshot,
+        registry.deliberation_protocol,
+        registry.workshop_root,
+        phase_root=registry.workshop_phase_roots["coordinate"],
+        reference_root=work_root,
+        entries=tuple(entry for entry in entries if entry.actor_root in authors),
+        evidence_admitted=source_evidence,
+    )
+    if not gate.allowed:
+        raise AuthorizationDenied(
+            "claimed Workshop Work lacks the required plan and source-backed research; "
+            "plan it in the Workshop (again, if its plan was archived) before any effect"
+        )
+
+
+def _connector_provider_reads(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    provider_root: str,
+) -> bool:
+    """Whether a released connector provider's graph-held action is a read."""
+    provider = read_connector_provider(
+        snapshot, registry.baboom_connector_execution_protocol,
+        registry.adapter_protocol, provider_root)
+    return _text(snapshot, provider.action_root).startswith("read-")
+
+
 def _read_governed_work_claim_binding(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -36792,6 +36940,7 @@ def _request_baboom_connector_execution_for_provider(
     adapter_catalog_root: str,
     lifetime_seconds: float = 120.0,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ConnectorDelegationProjection, str, str, int]:
     """Create one approved connector request from an already-admitted provider."""
     session, _, _ = _baboom_execution_work_context(
@@ -36802,6 +36951,15 @@ def _request_baboom_connector_execution_for_provider(
         authentication_context=authentication_context,
         purpose="connector delegation",
     )
+    gate_snapshot = store.snapshot()
+    try:
+        research_read = _connector_provider_reads(gate_snapshot, registry, provider_root)
+    except (InvalidCell, KeyError, ValueError):
+        research_read = False
+    if not research_read:  # a source read is the research itself
+        _require_workshop_execution_gate(gate_snapshot, registry, work_root=work_root,
+                                         agent_session_root=agent_session_root,
+                                         content_service=content_service)
     snapshot = store.snapshot()
     provider_projection = read_connector_provider(
         snapshot,
@@ -36878,6 +37036,7 @@ def request_universal_baboom_connector_execution(
     data_class: str,
     lifetime_seconds: float = 120.0,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ConnectorDelegationProjection, str, str, int]:
     """Create an exact released connector request without its raw values."""
     if (
@@ -36917,6 +37076,7 @@ def request_universal_baboom_connector_execution(
         adapter_catalog_root=registry.baboom_connector_execution_adapter_catalog_root,
         lifetime_seconds=lifetime_seconds,
         authentication_context=authentication_context,
+        content_service=content_service,
     )
 
 
@@ -37146,6 +37306,7 @@ def request_universal_baboom_mcp_tool_execution(
     input_bytes: int,
     lifetime_seconds: float = 120.0,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> tuple[ConnectorDelegationProjection, McpNegotiationProjection, int]:
     """Delegate one active MCP tool through the connector approval protocol."""
     if (
@@ -37205,6 +37366,7 @@ def request_universal_baboom_mcp_tool_execution(
             adapter_catalog_root=registry.mcp_broker_adapter_catalog_root,
             lifetime_seconds=lifetime_seconds,
             authentication_context=authentication_context,
+            content_service=content_service,
         )
     )
     return delegation, negotiation, revision
@@ -37559,6 +37721,9 @@ def request_universal_baboom_model_execution(
         work_root=work_root,
         authentication_context=authentication_context,
     )
+    _require_workshop_execution_gate(store.snapshot(), registry, work_root=work_root,
+                                     agent_session_root=agent_session_root,
+                                     content_service=content_service)
     provider_root = registry.baboom_model_provider_roots.get(provider.strip())
     if provider_root is None:
         raise AuthorizationDenied("model provider is not released for BABOOM")
@@ -40576,6 +40741,7 @@ def authorize_universal_cde_write(
     operation: str,
     path: str,
     authentication_context: object | None = None,
+    content_service=None,
 ) -> UniversalCdeWriteAdmission:
     """Resolve one write solely from the session's claimed Work and CDE node."""
     work, authority_revision = read_universal_current_claimed_work(
@@ -40602,6 +40768,9 @@ def authorize_universal_cde_write(
         raise AuthorizationDenied(
             "claimed Work CDE authority revision drifted"
         )
+    _require_workshop_execution_gate(snapshot, registry, work_root=str(work_root),
+                                     agent_session_root=agent_session_root,
+                                     content_service=content_service)
     assembly = _instance_projection(snapshot, registry, str(work_root))
     if assembly is None:
         raise InvalidCell("claimed Work is not a projectable assembly")

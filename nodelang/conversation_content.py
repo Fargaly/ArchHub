@@ -616,6 +616,26 @@ class ApplicationConversationContent:
             _include_visible_head=True, _if_visible_head=if_visible_head,
             _if_content_generation=if_content_generation, _category=category)
 
+    def workshop_gate_entries(self, snapshot, registry, *, reference_root, category_roots):
+        """Workshop messages of the gate categories that reference one exact root.
+
+        Read-only input to the Workshop execution gate on a graph whose
+        Workshop transcript is ordinary content. Each row keeps its author,
+        category, refs and evidence exactly as the owner admitted them.
+        """
+        from types import SimpleNamespace
+        self._require_live_owner()
+        binding = read_content_binding(snapshot, registry.deliberation_protocol,
+            application_root=registry.application_root, space_root=registry.workshop_root)
+        rows = self._history_for(binding).messages_referencing(
+            binding.space_root, reference_root, categories=category_roots)
+        return tuple(
+            SimpleNamespace(root_id=row["id"], actor_root=row["author"],
+                category_root=row["category"], reference_roots=tuple(row["refs"]),
+                evidence_roots=tuple(row["evidence"]))
+            for row in rows
+        )
+
     def note_open(self, space_root):
         """A person explicitly opened this conversation: keep it from retention.
 

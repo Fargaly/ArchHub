@@ -71,6 +71,7 @@ from nodelang.universal_application import (
     create_universal_governed_work,
 )
 from nodelang.universal_cell import Cell, CellStore, InvalidCell, NULL_CELL_ID
+from tests_replica.workshop_gate_support import open_execution_gate
 
 
 # Unbound routes that authenticate their caller themselves stay on the pipe.
@@ -1384,6 +1385,7 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
             x=320,
             y=240,
         )
+        open_execution_gate(server, work_root, "machine-cde-permit")
         agent.bind_agent_session(
             runtime="codex",
             external_session_id="court-machine-cde-permit",
@@ -2980,7 +2982,10 @@ def test_mcp_broker_routes_bind_one_tool_to_the_existing_connector_lifecycle(
         assert enrollment["transport"] == "stdio"
         assert enrollment["data_classes"] == ["internal-text"]
 
-        created = founder.request("POST", "/api/universal/work", {
+        # Governed Work is created by the application owner in process; a
+        # bound runtime session (whatever its name) may not create it.
+        created = _FounderLocalClient(server, descriptor_path, provider).request(
+            "POST", "/api/universal/work", {
             "title": "Prepare one MCP-bound coordination review",
             "description": "The runtime court must not retain raw tool input.",
             "priority": 75,
@@ -2991,6 +2996,7 @@ def test_mcp_broker_routes_bind_one_tool_to_the_existing_connector_lifecycle(
             "x": 880,
             "y": 560,
         })
+        open_execution_gate(server, created["created_root"], "mcp-broker")
         execution = UniversalRuntimeClient(descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
@@ -4725,6 +4731,7 @@ def test_baboom_model_broker_executes_only_the_graph_grant_and_settles_one_recei
             "x": 840,
             "y": 540,
         })
+        open_execution_gate(server, created["created_root"], "baboom-governance-%d" % id(created))
         execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
@@ -4823,6 +4830,7 @@ def test_baboom_execution_body_rejects_generic_submit_and_reports_failed_receipt
             "x": 840,
             "y": 540,
         })
+        open_execution_gate(server, created["created_root"], "baboom-governance-%d" % id(created))
         execution = _FounderLocalClient(server, descriptor_path, provider)
         enrolled = execution.bind_agent_session(
             runtime="baboom-execution",
@@ -5075,6 +5083,7 @@ def test_baboom_execution_model_delegation_requires_founder_approval_and_one_rec
             "x": 840,
             "y": 540,
         })
+        open_execution_gate(server, created["created_root"], "baboom-governance-%d" % id(created))
         execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",
@@ -5356,6 +5365,7 @@ def test_consented_notion_delegation_requires_same_live_baboom_consent(tmp_path)
             "x": 840,
             "y": 540,
         })
+        open_execution_gate(server, created["created_root"], "consented-notion")
         execution = _FounderLocalClient(server, descriptor_path, provider)
         execution.bind_agent_session(
             runtime="baboom-execution",

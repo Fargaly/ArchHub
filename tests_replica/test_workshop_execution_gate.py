@@ -31,9 +31,14 @@ TARGET = "10.PRODUCT/13.NODE-LANGUAGE/nodelang/cell_cde_authority.py"
 
 def _start(kind, tmp_path, monkeypatch, descriptor, provider):
     from tests_replica.test_application_machine_transport import _green_runtime_compliance as green
+    # The court's workspace holds the Work's CDE file, the source it captures.
+    source_file = tmp_path / TARGET
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_bytes(b"# the source this court's research cites\n")
     if kind == "in-memory":
         return ApplicationServer(enable_machine_transport=True, machine_descriptor_path=descriptor,
-                                 machine_key_provider=provider, runtime_compliance_runner=green).start()
+                                 machine_key_provider=provider, runtime_compliance_runner=green,
+                                 universal_workspace_root=tmp_path).start()
     monkeypatch.setenv("ARCHHUB_GRAND_MAP_PATH", str(Path(app.__file__).parent / "data/public_runtime_map.json"))
     keys = MemorySigningKeyProvider("archhub.local.relationship-authority", secrets.token_bytes(32))
     keys.add_key("archhub.local.court-attestation", secrets.token_bytes(32))
@@ -103,29 +108,41 @@ def _assign(server, assignment_id, work_root, session_root):
         "body": {"assignment_id": assignment_id, "work": work_root, "agent_session": session_root}})
 
 
-def _source(server, key):
-    """Content captured in the graph as a registered value graph."""
-    with commit_intent.declare(commit_intent.USER_ACTION, actor="court", reason="capture a source"):
+def _value_graph(server, key):
+    """Content in the graph that no capture produced (not a source)."""
+    with commit_intent.declare(commit_intent.USER_ACTION, actor="court", reason="a value graph"):
         root, _revision = build_value_graph(
             server.universal_store, server.universal_registry.value_graph_protocol,
-            {"source": "court", "key": key, "text": "A cited source for the research."},
-            root_id="court:source:" + key)
+            {"source": "court", "key": key, "text": "Not a captured source."},
+            root_id="court:value:" + key)
     return root
 
 
-def _entry(category, refs, evidence, key):
-    return {"category": category, "text": "%s for %s" % (category, key), "refs": refs,
+def _entry(category, refs, evidence, key, capture=None):
+    body = {"category": category, "text": "%s for %s" % (category, key), "refs": refs,
             "evidence": evidence, "recipients": [], "reply_to": None,
             "idempotency_key": "court:execution-gate:" + key, "created_at": "2026-09-25T10:00:00+00:00"}
+    if capture is not None:
+        body["capture"] = {"path": capture}
+    return body
 
 
-def _post(client, category, refs, evidence, key):
-    return client.request("POST", "/api/universal/workshop", _entry(category, refs, evidence, key))
+def _post(client, category, refs, evidence, key, capture=None):
+    return client.request("POST", "/api/universal/workshop", _entry(category, refs, evidence, key, capture))
 
 
-def _founder_post(server, category, refs, evidence, key):
+def _founder_post(server, category, refs, evidence, key, capture=None):
     return server.dispatch_universal_machine_route(
-        {"method": "POST", "path": "/api/universal/workshop", "body": _entry(category, refs, evidence, key)})
+        {"method": "POST", "path": "/api/universal/workshop",
+         "body": _entry(category, refs, evidence, key, capture)})
+
+
+def _captured(result):
+    """The source record a capture minted: the last evidence of its entry."""
+    evidence = result.get("evidence") or result.get("evidence_roots") or []
+    sources = [root for root in evidence if str(root).startswith("app:workshop-source:")]
+    assert sources, result
+    return sources[-1]
 
 
 def _permit(client, key):
@@ -163,9 +180,86 @@ def test_the_assignees_plan_and_captured_research_admit_the_effect(served):
     assert a.claim_work(work)["claimed"] is True
     with pytest.raises(MachineTransportError, match=GATE):
         _permit(a, "planned-too-early")  # the Grand Map is structure, not a source
-    _post(a, "research", [work], [_source(server, "planned")], "planned-research")
+    captured = _captured(_post(a, "research", [work], [], "planned-research", capture=TARGET))
+    record = app._workshop_source_record(server.universal_store.snapshot(), server.universal_registry, captured)
+    workspace_file = server.universal_workspace_root / TARGET
+    assert record["sha256"] == hashlib.sha256(workspace_file.read_bytes()).hexdigest()
+    assert record["session"] == sa and record["work"] == work and record["locator"] == TARGET
     issued = _permit(a, "planned")
     assert issued["work"] == work and issued["permit"]
+
+
+def test_a_fabricated_source_record_is_not_evidence(memory):
+    server, descriptor, provider = memory
+    work = _work(server, "court:fabricated")
+    a, sa = _agent(descriptor, provider, "gate-fabricated-a")
+    _assign(server, "app:workshop-assignment:gate-fabricated", work, sa)
+    _post(a, "plan", [work], [], "fabricated-plan")
+    # A claimed source digest with no capture behind it cannot even be cited...
+    with pytest.raises(MachineTransportError, match="missing Cells"):
+        _post(a, "research", [work], ["app:workshop-source:" + "0" * 64], "fabricated-digest")
+    # ...and content in the graph that no capture made is not a source.
+    _post(a, "research", [work], [_value_graph(server, "fabricated")], "fabricated-research")
+    assert a.claim_work(work)["claimed"] is True
+    before = server.universal_store.revision
+    with pytest.raises(MachineTransportError, match=GATE):
+        _permit(a, "fabricated")
+    assert server.universal_store.revision == before
+
+
+def test_a_source_captured_for_another_work_opens_nothing_else(memory):
+    """Verifier R3: a founder source cited for a different Work, reused by A."""
+    server, descriptor, provider = memory
+    work, other = _work(server, "court:r3"), _work(server, "court:r3-other")
+    a, sa = _agent(descriptor, provider, "gate-r3-a")
+    _assign(server, "app:workshop-assignment:gate-r3", work, sa)
+    founder_research = _founder_post(server, "research", [other], [], "r3-founder", capture=TARGET)
+    foreign = _captured(founder_research)
+    _post(a, "plan", [work], [], "r3-plan")
+    _post(a, "research", [work], [foreign], "r3-reuse")
+    assert a.claim_work(work)["claimed"] is True
+    before = server.universal_store.revision
+    with pytest.raises(MachineTransportError, match=GATE):
+        _permit(a, "r3")
+    assert server.universal_store.revision == before
+
+
+def test_a_tampered_source_digest_is_refused(memory):
+    from nodelang.universal_cell import Cell, NULL_CELL_ID
+    server, descriptor, provider = memory
+    work = _work(server, "court:tampered")
+    a, sa = _agent(descriptor, provider, "gate-tampered-a")
+    _assign(server, "app:workshop-assignment:gate-tampered", work, sa)
+    _post(a, "plan", [work], [], "tampered-plan")
+    captured = _captured(_post(a, "research", [work], [], "tampered-research", capture=TARGET))
+    snapshot = server.universal_store.snapshot()
+    digest = app._workshop_source_record(snapshot, server.universal_registry, captured)["sha256"]
+    leaves = [cell for cell in snapshot.cells.values()
+              if cell.atom == digest.encode("ascii")
+              and cell.link0 == NULL_CELL_ID and cell.link1 == NULL_CELL_ID]
+    assert leaves
+    with commit_intent.declare(commit_intent.USER_ACTION, actor="court", reason="tamper"):
+        server.universal_store.commit(server.universal_store.revision, replace=tuple(
+            Cell(cell.id, NULL_CELL_ID, NULL_CELL_ID, b"f" * 64) for cell in leaves))
+    assert app._workshop_source_record(
+        server.universal_store.snapshot(), server.universal_registry, captured) is None
+    assert a.claim_work(work)["claimed"] is True
+    with pytest.raises(MachineTransportError, match=GATE):
+        _permit(a, "tampered")
+
+
+def test_capture_reads_only_the_works_cde_paths(memory):
+    server, descriptor, provider = memory
+    work = _work(server, "court:outside")
+    a, sa = _agent(descriptor, provider, "gate-outside-a")
+    _assign(server, "app:workshop-assignment:gate-outside", work, sa)
+    (server.universal_workspace_root / "private.txt").write_text("not the Work's", encoding="utf-8")
+    before = server.universal_store.revision
+    with pytest.raises(MachineTransportError, match="outside the Work's CDE container"):
+        _post(a, "research", [work], [], "outside-research", capture="private.txt")
+    with pytest.raises(MachineTransportError, match="outside the Work's CDE container"):
+        _post(a, "research", [work], [], "escape-research", capture="../escape.txt")
+    assert server.universal_store.revision == before
 
 
 def test_another_works_data_is_not_research_evidence(memory):
@@ -191,7 +285,12 @@ def test_another_participants_shared_entries_never_open_someone_elses_work(memor
     c, _sc = _agent(descriptor, provider, "gate-shared-c")
     _assign(server, "app:workshop-assignment:gate-wa", work_a, sa)
     _assign(server, "app:workshop-assignment:gate-wb", work_b, sb)
-    source = _source(server, "shared")
+    # A real capture for B's Work, minted by the owner; C's entries cite it.
+    with commit_intent.declare(commit_intent.USER_ACTION, actor="court", reason="capture"):
+        source = app.capture_universal_workshop_file_source(
+            server.universal_store, server.universal_registry,
+            actor_root=server.universal_registry.authorization.subject_root,
+            work_root=work_b, path=TARGET, workspace_root=server.universal_workspace_root)
     _post(c, "plan", [work_a, work_b], [], "shared-plan")
     _post(c, "research", [work_a, work_b], [source], "shared-research")
     assert b.claim_work(work_b)["claimed"] is True
@@ -207,7 +306,7 @@ def test_the_founders_own_plan_and_research_open_assigned_work(memory):
     a, sa = _agent(descriptor, provider, "gate-founder-a")
     _assign(server, "app:workshop-assignment:gate-founder", work, sa)
     _founder_post(server, "plan", [work], [], "founder-plan")
-    _founder_post(server, "research", [work], [_source(server, "founder")], "founder-research")
+    _founder_post(server, "research", [work], [], "founder-research", capture=TARGET)
     assert a.claim_work(work)["claimed"] is True
     assert _permit(a, "founder")["work"] == work
 
@@ -222,7 +321,7 @@ def test_unassigned_claimed_work_is_gated_too(memory):
         _permit(a, "unassigned-early")
     assert server.universal_store.revision == before
     _post(a, "plan", [work], [], "unassigned-plan")
-    _post(a, "research", [work], [_source(server, "unassigned")], "unassigned-research")
+    _post(a, "research", [work], [], "unassigned-research", capture=TARGET)
     assert _permit(a, "unassigned")["work"] == work
 
 

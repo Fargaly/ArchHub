@@ -15928,7 +15928,8 @@ class ApplicationServer:
                     "category", "text", "refs", "evidence", "recipients",
                     "reply_to", "idempotency_key", "created_at",
                 }
-                if set(body) != expected:
+                capture = body.get("capture") if type(body) is dict else None
+                if set(body) != expected and set(body) != expected | {"capture"}:
                     raise InvalidCell("workshop entry request shape is invalid")
                 category = body["category"]
                 text = body["text"]
@@ -15988,6 +15989,27 @@ class ApplicationServer:
                             lifetime_seconds=60.0,
                         )
                     )
+                if capture is not None:
+                    # A research entry may carry one actual capture: the server
+                    # reads the file and mints its source record (never a
+                    # caller-claimed digest), then cites it as evidence.
+                    if (type(capture) is not dict or set(capture) != {"path"}
+                            or type(capture["path"]) is not str
+                            or category_root != self.universal_registry
+                            .workshop_category_roots["research"]
+                            or len(refs) != 1):
+                        raise InvalidCell(
+                            "source capture requires one research entry for one Work"
+                        )
+                    from .universal_application import (
+                        capture_universal_workshop_file_source,
+                    )
+                    evidence = list(evidence) + [capture_universal_workshop_file_source(
+                        self.universal_store, self.universal_registry,
+                        actor_root=actor_root, work_root=refs[0],
+                        path=capture["path"],
+                        workspace_root=self.universal_workspace_root,
+                    )]
                 try:
                     entry = append_universal_workshop_entry(
                         self.universal_store,

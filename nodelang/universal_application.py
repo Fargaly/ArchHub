@@ -34254,19 +34254,15 @@ def _require_workshop_execution_gate(
     * only entries that reference this exact Work and were authored by one of
       its assigned Agent Sessions (for unassigned Work: the claiming
       session) or the founder -- its subject or its agent body;
-    * as research evidence: the codebase has no dedicated source-capture
-      protocol. Two existing records count. (a) A connector execution
-      receipt (cell_connector_execution.py:105, read at :708: provider,
-      operation, digests, outcome) -- succeeded, from a read-action provider
-      ("read-*"), on a delegation for this exact Work by one of those
-      authors: an external read with provenance. Only BABOOM execution
-      sessions can hold delegations (_baboom_execution_work_context), so
-      (b) content captured in the graph as a registered value graph also
-      counts -- self-attested, not verified provenance -- but never a Work,
-      its data (the CDE container included), an agent-built artifact graph
-      (app:existing-artifact:...) or a structural root such as the Grand Map.
-      Read-action connector delegations are research themselves and are not
-      behind this gate (they still need founder approval).
+    * as research evidence, only an actual capture: (a) a Workshop source
+      record (capture_universal_workshop_file_source: the server read the
+      file and computed its sha256; content-addressed, so a changed field is
+      refused) for this exact Work by one of those authors; or (b) a
+      connector execution receipt (cell_connector_execution.py:105, read at
+      :708) -- succeeded, from a read-action provider ("read-*"), on a
+      delegation for this exact Work by one of those authors. Read-action
+      connector delegations are research themselves and are not behind this
+      gate (they still need founder approval).
     """
     assignees = frozenset(
         item.agent_session_root
@@ -34324,21 +34320,17 @@ def _require_workshop_execution_gate(
             return False
         return _connector_provider_reads(snapshot, registry, receipt.provider_root)
 
-    def captured_content(root: str) -> bool:
-        # Never a Work, its data (CDE container included), an agent-built
-        # artifact graph, or anything else the application owns structurally.
-        if (_governed_work_owned_root(snapshot, registry, root)
-                or root.startswith("app:existing-artifact:")
-                or root in registry.map.domains.values()
-                or root == registry.map.grand_map_root):
-            return False
-        read_value_graph(snapshot, registry.value_graph_protocol, root)
-        return True
+    def captured_source(root: str) -> bool:
+        # A Workshop source record minted by an actual capture for this exact
+        # Work by one of its authors, whose content still matches its address.
+        record = _workshop_source_record(snapshot, registry, root)
+        return (record is not None and record["work"] == work_root
+                and record["session"] in authors)
 
     def source_evidence(root: str) -> bool:
         if type(root) is not str or not root:
             return False
-        for admitted in (connector_source, captured_content):
+        for admitted in (connector_source, captured_source):
             try:
                 if admitted(root):
                     return True
@@ -34372,6 +34364,109 @@ def _connector_provider_reads(
         snapshot, registry.baboom_connector_execution_protocol,
         registry.adapter_protocol, provider_root)
     return _text(snapshot, provider.action_root).startswith("read-")
+
+
+# Workshop source record: the graph-held evidence that a source was actually
+# read. Only a capture operation mints one -- the server reads the bytes and
+# computes their sha256 itself -- never a caller-claimed digest. The record is
+# content-addressed: its root is the digest of its canonical fields, so a
+# changed digest (or any field) no longer matches its root and is refused.
+_WORKSHOP_SOURCE_PREFIX = "app:workshop-source:"
+_WORKSHOP_SOURCE_CONTRACT = "archhub.workshop-source/v1"
+_WORKSHOP_SOURCE_MAX_BYTES = 16 * 1024 * 1024
+
+
+def _workshop_source_address(record: Mapping[str, object]) -> str:
+    canonical = json.dumps(dict(record), sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=True)
+    return _WORKSHOP_SOURCE_PREFIX + hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def capture_universal_workshop_file_source(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    *,
+    actor_root: str,
+    work_root: str,
+    path: str,
+    workspace_root: Path,
+    now: float | None = None,
+) -> str:
+    """Read one workspace file and mint its Workshop source record for one Work.
+
+    The application owner may capture any file under the workspace root. An
+    Agent Session may capture only for Work it is assigned to or has claimed,
+    and only a path the Work's graph-held CDE container names (allowed_paths).
+    Only the digest and locator enter the graph; the bytes are never returned.
+    """
+    snapshot = store.snapshot()
+    if not _registered_governed_work_root(snapshot, registry, work_root):
+        raise InvalidCell("source capture requires one registered governed Work")
+    if type(path) is not str or not path.strip() or "\x00" in path:
+        raise InvalidCell("source capture path is invalid")
+    locator = path.replace("\\", "/").strip()
+    founder = actor_root in {registry.authorization.subject_root,
+                             registry.agent_body.session.root_id}
+    if not founder:
+        assigned = any(
+            item.work_root == work_root and item.agent_session_root == actor_root
+            for item in (
+                _read_workshop_assignment(snapshot, registry, root)
+                for root in _workshop_assignment_roots(snapshot, registry)
+            )
+        )
+        claimed, _revision = read_universal_current_claimed_work(
+            store, registry, agent_session_root=actor_root)
+        if not assigned and (claimed is None or claimed.get("root") != work_root):
+            raise AuthorizationDenied(
+                "source capture belongs to the Work's assignee or claimant")
+        assembly = _instance_projection(snapshot, registry, work_root)
+        targets = [item.get("target") for item in (assembly or {}).get("interfaces", ())
+                   if item.get("name") == "cde-container"]
+        if len(targets) != 1 or type(targets[0]) is not str:
+            raise AuthorizationDenied("source capture requires the Work's CDE container")
+        container = read_value_graph(snapshot, registry.value_graph_protocol, targets[0])
+        allowed = container.get("allowed_paths") if isinstance(container, Mapping) else None
+        if not isinstance(allowed, (list, tuple)) or locator not in allowed:
+            raise AuthorizationDenied("source capture path is outside the Work's CDE container")
+    root = Path(workspace_root).resolve()
+    target = (root / locator).resolve()
+    if target != root and root not in target.parents:
+        raise AuthorizationDenied("source capture path escapes the workspace")
+    if not target.is_file():
+        raise InvalidCell("source capture path is not a file")
+    if target.stat().st_size > _WORKSHOP_SOURCE_MAX_BYTES:
+        raise InvalidCell("source capture file exceeds its size limit")
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    retrieved_at = float(time.time() if now is None else now)
+    record = {
+        "contract": _WORKSHOP_SOURCE_CONTRACT, "kind": "file", "locator": locator,
+        "sha256": digest, "retrieved_at": retrieved_at,
+        "session": actor_root, "work": work_root,
+    }
+    source_root = _workshop_source_address(record)
+    if source_root not in snapshot.cells:
+        build_value_graph(store, registry.value_graph_protocol, record, root_id=source_root)
+    return source_root
+
+
+def _workshop_source_record(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root: str,
+) -> Mapping[str, object] | None:
+    """A captured source record whose content still matches its address."""
+    if type(root) is not str or not root.startswith(_WORKSHOP_SOURCE_PREFIX):
+        return None
+    record = read_value_graph(snapshot, registry.value_graph_protocol, root)
+    if (not isinstance(record, Mapping)
+            or record.get("contract") != _WORKSHOP_SOURCE_CONTRACT
+            or set(record) != {"contract", "kind", "locator", "sha256",
+                               "retrieved_at", "session", "work"}
+            or type(record.get("sha256")) is not str or len(record["sha256"]) != 64
+            or _workshop_source_address(record) != root):
+        return None
+    return record
 
 
 def _read_governed_work_claim_binding(

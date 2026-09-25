@@ -263,15 +263,17 @@ def test_shared_workshop_assignments_are_atomic_and_gate_claims(tmp_path):
             "created_at": "2026-07-21T10:00:00+00:00",
         })
         assert server.universal_store.revision == before_plan + 1
-        # The research cites a source captured in the graph (a registered value
-        # graph); the Grand Map root alone is structure, not a source.
+        # The research cites an actual capture (the owner read a workspace file
+        # and minted its source record); the Grand Map root alone is structure.
         from nodelang import commit_intent
-        from nodelang.cell_value_graph import build_value_graph
+        from tests_replica.workshop_gate_support import _court_source
         with commit_intent.declare(commit_intent.USER_ACTION, actor="court", reason="capture a source"):
-            source_root, _ = build_value_graph(
-                server.universal_store, server.universal_registry.value_graph_protocol,
-                {"source": "court", "text": "Source cited by the shared assignment research."},
-                root_id="court:workshop-assignment:source")
+            source_root = universal_application_module.capture_universal_workshop_file_source(
+                server.universal_store, server.universal_registry,
+                actor_root=server.universal_registry.authorization.subject_root,
+                work_root=work_root,
+                path=_court_source(server.universal_workspace_root, "workshop-assignment"),
+                workspace_root=server.universal_workspace_root)
         before_research = server.universal_store.revision
         research = agent_b.request("POST", "/api/universal/workshop", {
             "category": "research",

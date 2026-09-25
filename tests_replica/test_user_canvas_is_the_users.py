@@ -712,3 +712,48 @@ def test_a_cell_the_user_places_inside_any_domain_deletes_cleanly():
         retract_universal_node(store, registry, cell)
         assert cell not in _ids(project_universal_canvas(store, registry))
         assert _incidences(store, domain) == before, domain
+
+
+def test_group_and_ungroup_undo_redo_redraw_the_same_canvas():
+    """canvas2-v6 (2026-09-25): group left the wires with one end in the
+    selection in the view index, so the next canvas READ committed twice to
+    shed them; the gesture that followed failed on a stale revision
+    ("expected revision 931, current revision is 933") and redo replayed an
+    index the reader had rewritten ("scope exposure invents a non-
+    composition root"). Each gesture now commits the whole change: a read
+    writes nothing, and every undo/redo redraws the canvas it returns to,
+    byte for byte."""
+    from nodelang.universal_application import (
+        redo_universal_change,
+        undo_universal_change,
+        ungroup_universal_composition,
+    )
+
+    store, registry = build_universal_application(resolve_map_path())
+
+    def drawn():
+        revision = store.revision
+        canvas = project_universal_canvas(store, registry)
+        assert store.revision == revision, "a canvas read wrote the graph"
+        return json.dumps(
+            {"nodes": canvas["nodes"], "wires": canvas["wires"]},
+            sort_keys=True,
+        )
+
+    first = json.loads(drawn())["nodes"]
+    selected = (first[0]["id"], first[1]["id"])
+    set_universal_selection(store, registry, selected, focus_root=selected[-1])
+    # Undo returns to the moment before the gesture: the selection is set.
+    before = drawn()
+    group, _ = group_universal_selection(store, registry, title="Undo me")
+    grouped = drawn()
+    undo_universal_change(store, registry)
+    assert drawn() == before
+    redo_universal_change(store, registry)
+    assert drawn() == grouped
+    ungroup_universal_composition(store, registry, group)
+    ungrouped = drawn()
+    undo_universal_change(store, registry)
+    assert drawn() == grouped
+    redo_universal_change(store, registry)
+    assert drawn() == ungrouped

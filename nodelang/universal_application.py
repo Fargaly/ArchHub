@@ -4891,6 +4891,37 @@ def _fresh_relationship_id(snapshot: Snapshot, base_root: str) -> str:
     return "%s:r%d" % (base_root, snapshot.revision)
 
 
+def _active_projection_grant_roots(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    target_root: str,
+) -> tuple[str, ...]:
+    """Every active projection grant of one root to one view.
+
+    A grant is reissued under a successor id when its deterministic id was
+    already used (_fresh_relationship_id), which is what redo does. Looking
+    up only the deterministic ids missed the successor: ungroup after redo
+    left the dissolved composition granted, and the next canvas read refused
+    ("granted but not visible"). This reads the grants the way the canvas
+    reader does.
+    """
+    authority = registry.authorization
+    read_root = authority.protocol.actions["read"]
+    verified = _cached_authority_snapshot(snapshot, authority)
+    return tuple(
+        relationship.root_id
+        for relationship in verified.active_relationships
+        if relationship.source_root == authority.resource_reader_principal_root
+        and relationship.target_root == view_session.subject_root
+        and relationship.kind_root
+        == authority.identity_protocol.kinds["delegation"]
+        and relationship.tenant_root == authority.tenant_root
+        and relationship.scope_root == target_root
+        and relationship.action_roots == (read_root,)
+    )
+
+
 def _projection_grant_root(
     subject_root: str,
     target_root: str,
@@ -19606,16 +19637,9 @@ def prepare_universal_retraction(
     authority = registry.authorization
     actor_root = view_session.subject_root
     revocations = []
-    for grant_root in (
-        _projection_grant_root(view_session.subject_root, root),
-        _projection_grant_root(
-            view_session.subject_root, root, view_session.visibility_root
-        ),
+    for grant_root in _active_projection_grant_roots(
+        snapshot, registry, view_session, root
     ) if top_level else ():
-        if grant_root not in snapshot.cells or not _relationship_is_active(
-            snapshot, authority, grant_root
-        ):
-            continue
         revocations.append(prepare_authority_relationship_revocation(
             snapshot,
             authority.identity_protocol,
@@ -43332,6 +43356,87 @@ def _canvas_interface_owner_in(
     )
 
 
+def _reconcile_top_visibility_index(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    create: tuple[Cell, ...],
+    replace: Mapping[str, Cell],
+) -> tuple[tuple[Cell, ...], dict[str, Cell]]:
+    """Leave the top visibility index equal to its canonical derivation.
+
+    Group and ungroup change what the top canvas shows. The wires with one
+    end in the folded selection (and their properties) leave or return with
+    it. When the gesture left them, the next canvas read shed or grew them
+    in commits of its own: the gesture that followed failed on a stale
+    revision, and undo/redo replayed an index the reader then rewrote. The
+    reader derivation is applied here, in the gesture commit, so history
+    holds one exact change.
+    """
+    overlay = overlay_read_snapshot(
+        snapshot, create=create, replace=tuple(replace.values())
+    )
+    members = read_relation(
+        overlay, view_session.visibility_root, budget=100_000
+    )
+    assigned = tuple(
+        member.participant_id for member in members
+        if member.role_id == registry.roles["visible"]
+    )
+    _roots, relations, properties = _canvas_scope_for_assigned(
+        overlay, registry, assigned
+    )
+    wanted = {
+        registry.roles["relation"]: set(relations),
+        registry.roles["property"]: set(properties),
+    }
+    stale = tuple(
+        member.incidence_id for member in members
+        if member.role_id in wanted
+        and member.participant_id not in wanted[member.role_id]
+    )
+    held = {(member.role_id, member.participant_id) for member in members}
+    missing = tuple(
+        (role_id, root)
+        for role_id, roots in (
+            (registry.roles["relation"], relations),
+            (registry.roles["property"], properties),
+        )
+        for root in roots
+        if (role_id, root) not in held
+    )
+    replace = dict(replace)
+    create = tuple(create)
+    if stale:
+        shed = prepare_remove_relation_members(
+            overlay, view_session.visibility_root, stale, budget=100_000
+        )
+        create, replace = _fold_patch_cells(create, replace, shed.replace)
+        overlay = overlay_read_snapshot(
+            snapshot, create=create, replace=tuple(replace.values())
+        )
+    if missing:
+        growth = prepare_append_relation_members(
+            overlay, view_session.visibility_root, missing, budget=100_000
+        )
+        create, replace = _fold_patch_cells(
+            (*create, *growth.create), replace, growth.replace
+        )
+    return create, replace
+
+
+def _fold_patch_cells(
+    create: tuple[Cell, ...],
+    replace: dict[str, Cell],
+    cells: Iterable[Cell],
+) -> tuple[tuple[Cell, ...], dict[str, Cell]]:
+    """Apply later cells: a cell this change creates is rewritten in place."""
+    later = {cell.id: cell for cell in cells}
+    create = tuple(later.pop(cell.id, cell) for cell in create)
+    replace.update(later)
+    return create, replace
+
+
 @_with_canvas_interface_projection_scope
 @with_relation_projection_scope
 @with_catalog_verification_scope
@@ -43862,6 +43967,22 @@ def _compose_universal_selection(
             raise InvalidCell("atomic composition has conflicting patches")
         superseded.discard(cell.id)
         replacements[cell.id] = cell
+    create_cells = (
+        *base_create,
+        *audience_grant.cells,
+        *projection_grant.cells,
+        *(canvas_projection_grant.cells if canvas_projection_grant else ()),
+        *(cell for grant in exposed_group_grants for cell in grant.cells),
+        *(cell for patch in visibility_revocations
+          for cell in patch.create),
+        *identity_patch.create,
+        *session_patch.create,
+        *selection_transition.create,
+    )
+    if parent_root == registry.canvas_root:
+        create_cells, replacements = _reconcile_top_visibility_index(
+            snapshot, registry, view_session, create_cells, replacements
+        )
     revision = _commit_universal_user_change(
         store,
         registry,
@@ -43871,18 +43992,7 @@ def _compose_universal_selection(
         route="/api/universal/interaction",
         command_name="catalog.configure",
         authorization_scope_root=view_session.root_id,
-        create=(
-            *base_create,
-            *audience_grant.cells,
-            *projection_grant.cells,
-            *(canvas_projection_grant.cells if canvas_projection_grant else ()),
-            *(cell for grant in exposed_group_grants for cell in grant.cells),
-            *(cell for patch in visibility_revocations
-              for cell in patch.create),
-            *identity_patch.create,
-            *session_patch.create,
-            *selection_transition.create,
-        ),
+        create=create_cells,
         replace=tuple(replacements.values()),
     )
     for grant in (audience_grant, projection_grant, *exposed_group_grants):
@@ -44149,18 +44259,9 @@ def ungroup_universal_composition(
     canvas_grant_revocations = []
     canvas_grants: tuple[object, ...] = ()
     if parent_root == registry.canvas_root:
-        for grant_root in (
-            _projection_grant_root(view_session.subject_root, composition_root),
-            _projection_grant_root(
-                view_session.subject_root,
-                composition_root,
-                view_session.visibility_root,
-            ),
+        for grant_root in _active_projection_grant_roots(
+            snapshot, registry, view_session, composition_root
         ):
-            if grant_root not in snapshot.cells:
-                continue
-            if not _relationship_is_active(snapshot, authority, grant_root):
-                continue
             canvas_grant_revocations.append(
                 prepare_authority_relationship_revocation(
                     snapshot,
@@ -44279,6 +44380,20 @@ def ungroup_universal_composition(
             raise InvalidCell("atomic ungroup has conflicting patches")
         superseded.discard(cell.id)
         replacements[cell.id] = cell
+    create_cells = (
+        *base_create,
+        *(cell for grant in projection_grants for cell in grant.cells),
+        *(cell for grant in canvas_grants for cell in grant.cells),
+        *(cell for patch in canvas_grant_revocations
+          for cell in patch.create),
+        *identity_patch.create,
+        *session_patch.create,
+        *selection_transition.create,
+    )
+    if parent_root == registry.canvas_root:
+        create_cells, replacements = _reconcile_top_visibility_index(
+            snapshot, registry, view_session, create_cells, replacements
+        )
     revision = _commit_universal_user_change(
         store,
         registry,
@@ -44288,16 +44403,7 @@ def ungroup_universal_composition(
         route="/api/universal/interaction",
         command_name="catalog.configure",
         authorization_scope_root=composition_root,
-        create=(
-            *base_create,
-            *(cell for grant in projection_grants for cell in grant.cells),
-            *(cell for grant in canvas_grants for cell in grant.cells),
-            *(cell for patch in canvas_grant_revocations
-              for cell in patch.create),
-            *identity_patch.create,
-            *session_patch.create,
-            *selection_transition.create,
-        ),
+        create=create_cells,
         replace=tuple(replacements.values()),
     )
     for grant in (*projection_grants, *canvas_grants):
@@ -51301,21 +51407,25 @@ def _reconcile_view_projection_grants(
     # the recorded chain bytes cannot be replayed once the registry has
     # moved on. Reissue a fresh binding where verification fails.
     wip_root = registry.standard_library.lifecycle_protocol.states["wip"]
+    # A binding reissued by an earlier compensation lives under a successor
+    # id; the deterministic id alone read as missing, and undo-after-redo
+    # issued a second one ("resource has duplicate active audience
+    # bindings"). Any active binding of the resource counts.
+    bound = {
+        relationship.source_root
+        for relationship in verified.active_relationships
+        if relationship.kind_root
+        == authority.identity_protocol.kinds["audience-binding"]
+        and relationship.target_root == authority.audience_root
+        and relationship.tenant_root == authority.tenant_root
+    }
     for resource_root in sorted({
         root for root in (*assigned, *exposure_compositions)
         if _is_universal_composition(snapshot, registry, root)
     }):
         binding_root = _resource_audience_binding_root(resource_root)
-        try:
-            verify_authority_relationship(
-                snapshot,
-                authority.identity_protocol,
-                authority.relationship_broker,
-                binding_root,
-            )
+        if resource_root in bound:
             continue
-        except (InvalidCell, RelationshipAuthorityDenied):
-            pass
         grant_authority_relationship(
             store,
             authority.identity_protocol,

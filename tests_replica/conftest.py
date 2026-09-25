@@ -74,6 +74,25 @@ def _restore_state(obj, saved):
 import pytest
 
 
+_FRESH_TEMPLATE_STATE: list = []
+
+
+def _template_shared_state(registry):
+    """The runtime bookkeeping every fork of one template shares."""
+    saved = []
+    for broker in (
+        registry.authorization.broker,
+        registry.authorization.relationship_broker,
+    ):
+        saved.append((broker, _mutable_state(broker)))
+    # Operational records (SPEC 3.3: ownership, browser leases, presence)
+    # live in the template in-memory record storage that forks share.
+    records = getattr(registry.runtime_presence_protocol, "lease_storage", None)
+    if records is not None:
+        saved.append((records, _mutable_state(records)))
+    return saved
+
+
 @pytest.fixture(autouse=True)
 def _template_broker_state_rolls_back():
     """The brokers are identity: a verified snapshot carries ITS broker
@@ -86,23 +105,23 @@ def _template_broker_state_rolls_back():
     saved = []
     with _TEMPLATE_LOCK:
         held = list(_TEMPLATES.values())
+        _FRESH_TEMPLATE_STATE.clear()
     for _store, registry in held:
-        for broker in (
-            registry.authorization.broker,
-            registry.authorization.relationship_broker,
-        ):
-            saved.append((broker, _mutable_state(broker)))
-        # Operational records (SPEC 3.3: ownership, browser leases, presence)
-        # live in the template's in-memory record storage that forks share.
-        records = getattr(registry.runtime_presence_protocol, "lease_storage", None)
-        if records is not None:
-            saved.append((records, _mutable_state(records)))
+        saved.extend(_template_shared_state(registry))
     # The verified-authority cache is keyed by id(authority) with a
     # 120-second TTL. Forks share the authorization object, so one
     # test's verified snapshot -- its relationships, its inspector, its
     # promotions -- was served to the next test as current authority.
     _application_module._AUTHORITY_SNAPSHOT_CACHE.clear()
     yield
+    # A template first built DURING this test was not held at setup; its
+    # state right after the build is rolled back too. Without this, the
+    # first test of a run to build the template leaked its grants and
+    # revocations into every later fork (canvas2-v6, 2026-09-25: a group
+    # gesture in the first court made the next courts refuse the canvas).
+    with _TEMPLATE_LOCK:
+        saved.extend(_FRESH_TEMPLATE_STATE)
+        _FRESH_TEMPLATE_STATE.clear()
     for broker, state in saved:
         _restore_state(broker, state)
     _application_module._AUTHORITY_SNAPSHOT_CACHE.clear()
@@ -118,6 +137,9 @@ def _forking_build(map_path, store=None, **kwargs):
         built_store, built_registry = _real_build(map_path)
         with _TEMPLATE_LOCK:
             _TEMPLATES[key] = (built_store, built_registry)
+            _FRESH_TEMPLATE_STATE.extend(
+                _template_shared_state(built_registry)
+            )
         held = (built_store, built_registry)
     template_store, template_registry = held
     return _fork_store(template_store), _fork_registry(template_registry)

@@ -109,10 +109,12 @@ def test_an_unbound_refusal_never_waits_on_the_graph_lock(served):
     assert UNBOUND_REFUSAL in answer["error"]
 
 
-@pytest.mark.parametrize("path", ["/api/universal/canvas", "/api/universal/work"])
+@pytest.mark.parametrize("path", ["/api/universal/runtime-backend", "/api/universal/browser-handoff"])
 def test_an_unbound_read_still_answers_without_committing(served, path):
+    # Project content (canvas, work, ...) is owner-only; see
+    # test_founder_private_reads_are_owner_only.py. These open reads remain.
     server, client = served
     revision = server.universal_store.revision
     answer = client.request("GET", path, {}, response_timeout_seconds=60)
-    assert answer["agent_session"] == server.universal_registry.agent_body.session.root_id
+    assert answer["application"] == server.universal_registry.application_root
     assert server.universal_store.revision == revision

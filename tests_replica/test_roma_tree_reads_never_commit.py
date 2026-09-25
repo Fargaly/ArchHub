@@ -47,12 +47,26 @@ def served(request, tmp_path, monkeypatch):
         server.close()
 
 
-def test_an_unbound_roma_index_read_commits_nothing(served):
+def _owner_read(server, body):
+    # roma-tree is owner-only over the pipe; the owner reads it in process.
+    return server.dispatch_universal_machine_route(
+        {"method": "GET", "path": "/api/universal/roma-tree", "body": body})
+
+
+def test_the_owner_roma_index_read_commits_nothing(served):
     server, descriptor, provider = served
     assert "app:roma-requirement-protocol:root" not in server.universal_store.snapshot().cells
     revision = server.universal_store.revision
-    index = UniversalRuntimeClient(descriptor, provider).request("GET", "/api/universal/roma-tree", {})
+    index = _owner_read(server, {})
     assert index["tree_count"] == 0 and index["protocol"] is None
+    assert server.universal_store.revision == revision
+
+
+def test_an_unbound_roma_read_is_refused_without_committing(served):
+    server, descriptor, provider = served
+    revision = server.universal_store.revision
+    with pytest.raises(Exception, match="belongs to the application owner"):
+        UniversalRuntimeClient(descriptor, provider).request("GET", "/api/universal/roma-tree", {})
     assert server.universal_store.revision == revision
 
 
@@ -70,6 +84,5 @@ def test_a_roma_tree_read_without_the_protocol_is_refused_without_committing(ser
     server, descriptor, provider = served
     revision = server.universal_store.revision
     with pytest.raises(Exception, match="not installed"):
-        UniversalRuntimeClient(descriptor, provider).request(
-            "GET", "/api/universal/roma-tree", {"tree_id": "rt-absent"})
+        _owner_read(server, {"tree_id": "rt-absent"})
     assert server.universal_store.revision == revision

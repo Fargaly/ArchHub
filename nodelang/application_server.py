@@ -418,19 +418,35 @@ _TOPOLOGY_DELTA_MODE = "topology-delta-v1"
 _RECEIPT_MODE = "receipt-v1"
 _MACHINE_WORKSHOP_ENTRY_LIMIT = 50
 # GET routes whose unbound (founder-body) projection is the owner's private
-# state; see _dispatch_verified_machine_route_scoped.
+# state or project content; see _dispatch_verified_machine_route_scoped. An
+# unbound pipe request is the founder body, so each of these would hand the
+# owner's view to any same-user process that reaches the pipe.
 _FOUNDER_PRIVATE_MACHINE_READS = frozenset({
-    "/api/universal/attention",
-    "/api/universal/baboom-capabilities",
-    "/api/universal/baboom-context",
-    "/api/universal/baboom-native-frame",
-    "/api/universal/baboom-presence",
+    "/api/universal/attention",            # founder Focus/Obligation briefing
+    "/api/universal/baboom-capabilities",  # founder capability report
+    "/api/universal/baboom-context",       # work index, Brain state, hosts, content counts
+    "/api/universal/baboom-native-frame",  # the founder frame (a bound BABOOM session still reads)
+    "/api/universal/baboom-presence",      # companion directive over the founder context
     "/api/universal/baboom-steward-briefing",
-    "/api/universal/deliberation",
-    "/api/universal/devices",
-    "/api/universal/visibility-recovery",
-    "/api/universal/workshop",
+    "/api/universal/canvas",               # founder project content
+    "/api/universal/deliberation",         # any space, read as the founder
+    "/api/universal/devices",              # device custody report
+    "/api/universal/grand-map-work",       # founder project content (Grand Map Work)
+    "/api/universal/roma-tree",            # founder requirement trees
+    "/api/universal/visibility-recovery",  # visibility diagnosis of the owner's graph
+    "/api/universal/work",                 # founder Work: titles, descriptions, claims
+    "/api/universal/workshop",             # founder view incl. direct agent-to-agent entries
+    "/api/universal/workshop-assignments", # who is assigned to which Work
 })
+# Unbound GETs that stay open, and why (none is project content):
+#   providers                 key presence per provider, never key material
+#   hosts                     which local host bridges answer
+#   models                    the model catalogue
+#   mcp-broker                registered MCP brokers and their state
+#   runtime-backend           ownership/generation proof of this runtime
+#   runtime-handoff-readiness revision-bound, content-free readiness
+#   browser-handoff (GET)     handoff readiness; authority_bridge.py's liveness proof
+# work-current, work-claim-transfer and work-handoff need a bound session.
 _BROWSER_HANDOFF_LIMIT = 8
 _BROWSER_HANDOFF_SECONDS = 60.0
 _BROWSER_SCOPE_PROJECTION_LIMIT = 8

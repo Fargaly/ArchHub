@@ -106,12 +106,14 @@ class _FounderLocalClient(UniversalRuntimeClient):
             return super()._request_once(method, path, body, request_id=request_id,
                                          response_timeout_seconds=response_timeout_seconds)
         try:
-            return self._founder_server.dispatch_universal_machine_route(
+            result = self._founder_server.dispatch_universal_machine_route(
                 {"method": method, "path": path, "body": dict(body or {})})
         except MachineTransportError:
             raise
         except Exception as exc:  # the pipe reports route refusals the same way
             raise MachineResponseError(str(exc)) from exc
+        # What the pipe would deliver: the same JSON (tuples arrive as lists).
+        return json.loads(json.dumps(result))
 
 
 def _green_runtime_compliance(_invocation):
@@ -2342,8 +2344,8 @@ def test_slow_work_index_read_does_not_block_later_machine_requests(
     slow_result = {}
 
     def run_slow_read():
-        slow_result["value"] = UniversalRuntimeClient(
-            descriptor_path, provider
+        slow_result["value"] = _FounderLocalClient(
+            server, descriptor_path, provider
         ).request("GET", "/api/universal/work", {"projection": "index"})
 
     worker = threading.Thread(target=run_slow_read, daemon=True)
@@ -3157,8 +3159,8 @@ def test_canvas_read_does_not_wait_for_mutation_lock(tmp_path):
 
     def read_canvas():
         try:
-            result["value"] = UniversalRuntimeClient(
-                descriptor_path, provider
+            result["value"] = _FounderLocalClient(
+                server, descriptor_path, provider
             ).request("GET", "/api/universal/canvas")
         except Exception as exc:
             error["value"] = exc
@@ -3206,8 +3208,8 @@ def test_machine_canvas_read_uses_bounded_summary_not_full_browser_projection(
         forbidden_projection,
     )
     try:
-        result = UniversalRuntimeClient(
-            descriptor_path, provider
+        result = _FounderLocalClient(
+            server, descriptor_path, provider
         ).request("GET", "/api/universal/canvas")
         assert result["ok"] is True
         assert result["inspector"]["lens"] == "machine-summary"
@@ -3244,8 +3246,8 @@ def test_machine_canvas_read_does_not_expand_browser_interfaces(
         forbidden_browser_expansion,
     )
     try:
-        result = UniversalRuntimeClient(
-            descriptor_path, provider
+        result = _FounderLocalClient(
+            server, descriptor_path, provider
         ).request("GET", "/api/universal/canvas")
         assert result["ok"] is True
         assert result["inspector"]["lens"] == "machine-summary"
@@ -3289,8 +3291,8 @@ def test_machine_canvas_read_does_not_scan_global_canvas_or_full_catalog(
         forbidden_full_scan,
     )
     try:
-        result = UniversalRuntimeClient(
-            descriptor_path, provider
+        result = _FounderLocalClient(
+            server, descriptor_path, provider
         ).request("GET", "/api/universal/canvas")
         assert result["ok"] is True
         assert result["inspector"]["lens"] == "machine-summary"
@@ -3322,7 +3324,7 @@ def test_machine_canvas_read_is_cached_per_cell_revision(tmp_path, monkeypatch):
         "project_universal_machine_canvas",
         counted_canvas,
     )
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         first = client.request("GET", "/api/universal/canvas")
         second = client.request("GET", "/api/universal/canvas")
@@ -3557,7 +3559,7 @@ def test_machine_work_index_is_cached_per_cell_revision(tmp_path, monkeypatch):
         "project_universal_governed_work_index",
         counted_index,
     )
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     try:
         first = client.request(
             "GET", "/api/universal/work", {"projection": "index"}
@@ -3741,8 +3743,8 @@ def test_concurrent_machine_work_index_requests_share_inflight_projection(
 
     def read_index():
         try:
-            results.append(UniversalRuntimeClient(
-                descriptor_path, provider
+            results.append(_FounderLocalClient(
+                server, descriptor_path, provider
             ).request("GET", "/api/universal/work", {"projection": "index"}))
         except Exception as exc:
             errors.append(exc)
@@ -3771,7 +3773,7 @@ def test_concurrent_machine_work_index_requests_share_inflight_projection(
         # wait: _project_universal_machine_work_index caches completed values
         # only); a third read at the same revision is served from that cache.
         assert calls["count"] == 2
-        UniversalRuntimeClient(descriptor_path, provider).request(
+        _FounderLocalClient(server, descriptor_path, provider).request(
             "GET", "/api/universal/work", {"projection": "index"})
         assert calls["count"] == 2
     finally:
@@ -3791,7 +3793,7 @@ def test_compact_work_index_exposes_state_and_claimant(tmp_path):
         machine_descriptor_path=descriptor_path,
         machine_key_provider=provider,
     ).start()
-    client = UniversalRuntimeClient(descriptor_path, provider)
+    client = _FounderLocalClient(server, descriptor_path, provider)
     agent = UniversalRuntimeClient(descriptor_path, provider)
     try:
         created_root, _membership_wire, _revision = create_universal_governed_work(
@@ -3905,8 +3907,8 @@ def test_compact_work_index_does_not_expand_instance_interfaces(
             "read_relation",
             guarded_read_relation,
         )
-        projected = UniversalRuntimeClient(
-            descriptor_path, provider
+        projected = _FounderLocalClient(
+            server, descriptor_path, provider
         ).request("GET", "/api/universal/work", {"projection": "index"})
         item = next(
             item for item in projected["items"]
@@ -6531,9 +6533,13 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         assert initial["baboom"]["model_execution"] \
             == initial["model_execution"]
 
+        # Replay safety is a property of the pipe: exercise it on an unbound
+        # read that stays open there (Work is owner-only, read in process).
+        pipe = UniversalRuntimeClient(descriptor_path, provider)
+        pipe.request("GET", "/api/universal/runtime-backend", request_id="2" * 32)
         with pytest.raises(MachineTransportError, match="replay"):
-            client.request(
-                "GET", "/api/universal/work", request_id="1" * 32
+            pipe.request(
+                "GET", "/api/universal/runtime-backend", request_id="2" * 32
             )
 
         canvas = client.request("GET", "/api/universal/canvas")
@@ -6885,8 +6891,10 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
         descriptor_path.write_text(
             json.dumps(tampered), encoding="utf-8"
         )
+        # A descriptor property: checked on the pipe itself, on an open read.
         with pytest.raises(MachineTransportError, match="signature"):
-            client.request("GET", "/api/universal/work")
+            UniversalRuntimeClient(descriptor_path, provider).request(
+                "GET", "/api/universal/runtime-backend")
         descriptor_path.write_text(
             json.dumps(descriptor), encoding="utf-8"
         )
@@ -6896,5 +6904,7 @@ def test_machine_transport_is_authenticated_replay_safe_and_cell_backed(tmp_path
     stopped = json.loads(descriptor_path.read_text(encoding="utf-8"))
     assert stopped["status"] == "stopped"
     assert stopped["runtime_id"] == descriptor["runtime_id"]
+    # A stopped runtime is a pipe property: checked on the pipe, on an open read.
     with pytest.raises(MachineTransportError, match="not active"):
-        client.request("GET", "/api/universal/work")
+        UniversalRuntimeClient(descriptor_path, provider).request(
+            "GET", "/api/universal/runtime-backend")

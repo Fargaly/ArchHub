@@ -61,7 +61,23 @@ function Get-Pin([string]$Path) {
 function Get-Framework([int]$Year, [int]$LastNet48) {
     if ($Year -le 2020) { return 'net47' }
     if ($Year -le $LastNet48) { return 'net48' }
+    # Autodesk 2027 hosts run on .NET 10: their API assemblies reference
+    # System.Runtime 10.0, which a net8 build cannot compile against (CS1705).
+    if ($Year -ge 2027) { return 'net10.0-windows' }
     return 'net8.0-windows'
+}
+
+# The compiler server can still hold a file of a finished build for a moment;
+# a failed scratch delete must not fail the whole release.
+function Remove-BuildScratch([string]$Path) {
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop; return }
+        catch {
+            if ($attempt -eq 1) { & $dotnet build-server shutdown *> $null }
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+    Remove-Item -LiteralPath $Path -Recurse -Force
 }
 
 # One project built for one host year into $Payload, from a fresh copy so restore
@@ -103,7 +119,7 @@ foreach ($year in 2020..2030) {
     foreach ($project in 'revit_mcp_core/RevitMCPCore.csproj', 'revit_mcp/RevitMCP.csproj') {
         Build-Project $project @("-p:TargetFramework=$framework", "-p:RevitYear=$year", "-p:RevitInstallDir=$hostDir") $payload $work
     }
-    Remove-Item -LiteralPath $work -Recurse -Force
+    Remove-BuildScratch $work
     $manifest = [ordered]@{
         schema          = 'archhub-host-artifacts/v1'
         source_revision = $SourceRevision
@@ -136,7 +152,7 @@ foreach ($year in 2020..2030) {
     $payload = Join-Path $output "bridges/autocad/$year"
     New-Item -ItemType Directory -Path $payload -Force | Out-Null
     Build-Project 'acad_mcp/AcadMCP.csproj' @("-p:TargetFramework=$framework", "-p:AcadYear=$year", "-p:AcadInstallDir=$hostDir") $payload $work
-    Remove-Item -LiteralPath $work -Recurse -Force
+    Remove-BuildScratch $work
     $hostApi = [ordered]@{}
     foreach ($api in $apis) { $hostApi[[IO.Path]::GetFileName($api)] = Get-Pin $api }
     $index.autocad["$year"] = [ordered]@{

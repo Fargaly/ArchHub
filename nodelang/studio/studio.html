@@ -397,6 +397,8 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
         ports:{ins:ins.map(x => ({id:x.id, t:x.t})),
                outs:outs.map(x => ({id:x.id, t:x.t}))},
         status: n.status || params.status || '',
+        group: typeof n.group === 'string' ? n.group : '', pinned: n.pinned === true,
+        ...(typeof n.application === 'boolean' ? {application: n.application} : {}),
       });
     }
     const nodeIndex = new Map(nodes.map(node => [node.id, node]));

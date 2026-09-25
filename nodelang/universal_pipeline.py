@@ -1270,35 +1270,36 @@ def retract_universal_node(
     which is what makes an undo possible and an audit honest -- while the
     canvas and every projection stop carrying it.
     """
-    from .cell_protocols import prepare_remove_relation_members
+    from .cell_identity import record_authority_relationship_revocation
     from .universal_application import (
         _session_canvas_roots,
         _view_session_for_context,
-        read_relation,
+        prepare_universal_retraction,
     )
 
     snapshot = store.snapshot()
     view_session, _context = _view_session_for_context(
         registry, authentication_context
     )
-    visible_roots, _relations, _properties = _session_canvas_roots(
-        snapshot, registry, view_session
+    visible_roots, _relations, _properties, trail = _session_canvas_roots(
+        snapshot, registry, view_session, include_trail=True
     )
     if root not in visible_roots:
         raise InvalidCell("that node is not on this canvas")
-    members = read_relation(
-        snapshot, view_session.visibility_root, budget=100_000
+    # The card, the interfaces it owns, the wires ending on it and their
+    # properties leave together, at the level the card is on; the result is
+    # proved before the commit.
+    create, replace, revocations, grants = prepare_universal_retraction(
+        snapshot, registry, view_session, root, scope_root=trail[-1]
     )
-    doomed = tuple(
-        member.incidence_id for member in members
-        if member.participant_id == root
-    )
-    if not doomed:
-        raise InvalidCell("that node has no visibility to retract")
-    patch = prepare_remove_relation_members(
-        snapshot, view_session.visibility_root, doomed, budget=100_000
-    )
-    store.commit(snapshot.revision, replace=patch.replace)
+    store.commit(snapshot.revision, create=create, replace=replace)
+    broker = registry.authorization.relationship_broker
+    for grant in grants:
+        broker.record_generation(grant.root_id, grant.generation)
+    for revocation in revocations:
+        record_authority_relationship_revocation(
+            broker, revocation, store.revision
+        )
     return {"retracted": root, "revision": store.revision}
 
 

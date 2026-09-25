@@ -205,6 +205,10 @@ const wsAgents = (transcript, cards, clock) => {
   });
   return [...agents.filter(a => a.verified), ...agents.filter(a => !a.verified)];
 };
+// The rail's default list: agents that are here now (and you). Disconnected sessions stay in the
+// graph and in the transcript; they are listed only when asked for.
+const WS_SHOW_OFFLINE = '__show-disconnected__';
+const wsShownAgents = (agents, showOff) => showOff ? agents : agents.filter(a => a.status !== 'off' || a.self);
 const wsParam = (node, pattern) => {
   const row = (node?.params || []).find(param => pattern.test(String(param.k || '')));
   return row && row.v != null && String(row.v).trim() ? String(row.v) : '';
@@ -441,7 +445,12 @@ const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
   const canAddress = row => row.attached === true && row.root !== transcript?.self &&
     all.some(participant => participant.root === transcript?.self && participant.attached === true) &&
     transcript?.can_send !== false;
-  const current = agents.some(a => a.id === sel) ? sel : agents[0]?.id;
+  // Only agents that are here now are listed; a disconnected session is history, one toggle away.
+  // Nothing is removed from the graph.
+  const [showOff, setShowOff] = React.useState(false);
+  const offCount = agents.filter(a => a.status === 'off' && !a.self).length;
+  const shown = wsShownAgents(agents, showOff);
+  const current = shown.some(a => a.id === sel) ? sel : shown[0]?.id;
   return (
   <section aria-label="Workshop agents" style={{ background:W.bgPanel, borderRight:`1px solid ${W.line}`, overflow:'auto', display:'flex', flexDirection:'column', minHeight:0 }} className="ah-scroll">
     <div style={{ padding:'9px 12px 9px 14px', borderBottom:`1px solid ${W.lineSoft}`, display:'flex', alignItems:'center', gap:8 }}>
@@ -450,7 +459,8 @@ const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
     </div>
     {!transcript && <p role="status" style={{ fontSize:11.5, lineHeight:1.4, color:W.inkSoft, padding:'9px 14px', margin:0 }}>No live agent data for this Workshop. Waiting for its current connection status.</p>}
     {transcript && !agents.length && <p role="status" style={{ fontSize:11.5, lineHeight:1.4, color:W.inkSoft, padding:'9px 14px', margin:0 }}>No agent has joined this Workshop.</p>}
-    {agents.map(a => { const s = ST[a.status]; const on = current === a.id; const addressable = canAddress(a.row); return (
+    {transcript && agents.length > 0 && !shown.length && <p role="status" style={{ fontSize:11.5, lineHeight:1.4, color:W.inkSoft, padding:'9px 14px', margin:0 }}>No agent is connected right now.</p>}
+    {shown.map(a => { const s = ST[a.status]; const on = current === a.id; const addressable = canAddress(a.row); return (
       <div key={a.id} role="button" tabIndex={0} aria-pressed={on} data-workshop-agent={a.id}
         title={[a.id, addressable ? 'Select, and address messages to this agent' : 'Select', a.seen ? 'Last seen: ' + a.seen : ''].filter(Boolean).join('\n')}
         onClick={() => onSelect(a.id, addressable)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(a.id, addressable); } }}
@@ -473,6 +483,12 @@ const AgentsRail = ({ context, sel, onSelect, onAddAgent, compact }) => {
           </>}
         </div>
       </div> ); })}
+    {offCount > 0 && <button type="button" data-workshop-disconnected-toggle="" aria-pressed={showOff}
+      onClick={() => setShowOff(value => !value)}
+      style={{ margin:'8px 14px', alignSelf:'flex-start', fontFamily:W.mono, fontSize:10, letterSpacing:'0.06em',
+        color:W.inkMuted, background:'transparent', border:`1px solid ${W.line}`, borderRadius:4, padding:'3px 8px', cursor:'pointer' }}>
+      {showOff ? 'Hide disconnected' : `Show disconnected (${offCount})`}
+    </button>}
     <div style={{ flex:1 }}/>
     <div style={{ padding:'11px 14px', borderTop:`1px solid ${W.lineSoft}` }}>
       <Lbl>SCOPE</Lbl>
@@ -1205,6 +1221,11 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
   }, [authority, descriptor.root, nativeAvailable, nativeTarget]);
   const participants = transcript?.participants || [];
   const nativeContacts = store.contacts, contactError = store.contactError, contactsLoading = store.contactsLoading;
+  // The recipient picker offers connections that are here now; an offline one is one choice away.
+  const [showOfflineContacts, setShowOfflineContacts] = React.useState(false);
+  const offlineContacts = nativeContacts.filter(row => row.connected === false && 'contact:' + row.root !== target).length;
+  const pickerContacts = showOfflineContacts ? nativeContacts :
+    nativeContacts.filter(row => row.connected !== false || 'contact:' + row.root === target);
   const contactRead = React.useRef(0), currentTarget = React.useRef(target);
   currentTarget.current = target;
   const refreshContacts = React.useCallback(async () => {
@@ -1945,16 +1966,20 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
             placeholder={!joined ? 'Messaging requires an admitted Workshop participant.' : !target ? 'Reply to the Workshop…' : `Message ${targetName}…`}
             style={{ width:'100%', border:0, background:'transparent', outline:'none', color:W.ink, fontFamily:W.serif, fontSize:16.5, letterSpacing:'-0.01em', padding:'2px 0 9px' }}/>
           <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-            <select aria-label="Recipient" value={target} disabled={busy || !joined} onChange={e => setTarget(e.target.value)} style={{ padding:'3px 8px', borderRadius:5, background:W.accentDim,
+            <select aria-label="Recipient" value={target} disabled={busy || !joined} onChange={e => {
+              if (e.target.value === WS_SHOW_OFFLINE) setShowOfflineContacts(value => !value); else setTarget(e.target.value);
+            }} style={{ padding:'3px 8px', borderRadius:5, background:W.accentDim,
               border:`1px solid ${W.accentSoft}`, color:W.accent, fontFamily:W.mono, fontSize:10, letterSpacing:'0.04em', cursor:'pointer', maxWidth:'min(100%, 240px)' }}>
               <option value="">to: Workshop (everyone)</option>
               {modelAgent && <option value={'model:' + modelAgent.root}>{`to: @Agent · ${modelAgent.model}`}</option>}
-              {nativeContacts.length > 0 && <optgroup label="Connected agent environments">
-                {nativeContacts.map(row => <option key={row.root} value={'contact:' + row.root}>
+              {pickerContacts.length > 0 && <optgroup label="Connected agent environments">
+                {pickerContacts.map(row => <option key={row.root} value={'contact:' + row.root}>
                   {`to: @${row.label} · ${row.connected === true ? row.app : row.connected === false ? 'offline' : 'availability unknown'}`}
                 </option>)}
               </optgroup>}
               {addressable.map(row => <option key={row.root} value={row.root}>{`to: @${row.label}`}</option>)}
+              {(offlineContacts > 0 || showOfflineContacts) && <option value={WS_SHOW_OFFLINE}>
+                {showOfflineContacts ? 'hide disconnected' : `show disconnected (${offlineContacts})`}</option>}
             </select>
             <IBtn g="@" title="Address one agent" acc={!!target} disabled={busy || !joined || (!target && !firstRecipient)} onClick={() => setTarget(target ? '' : firstRecipient)}/>
             <IBtn g="⌗" title="Open as nodes" onClick={openAsNodes}/>

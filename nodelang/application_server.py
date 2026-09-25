@@ -1009,7 +1009,7 @@ def _validate_layout_preconditions(body, projection, *, scope):
     """Compare the moved nodes, not unrelated graph activity, under owner lock."""
     import math
     allowed = {'positions', 'expected_positions', 'expected_scope', 'projection_revision',
-               'projection_mode', 'projection', 'command_id'}
+               'projection_mode', 'projection', 'command_id', 'placement'}
     positions, expected = body.get('positions'), body.get('expected_positions')
     if (set(body) - allowed or type(positions) is not dict or not 1 <= len(positions) <= 256
             or type(expected) is not dict or set(expected) != set(positions)
@@ -1687,6 +1687,9 @@ class _CleanAuthorityHttpServer:
             "expected_positions",
             "command_id",
             "expected_scope",
+            # Arrange marks its positions so the universal owner leaves a
+            # hand-placed card where it is; this path writes the points only.
+            "placement",
         }
         unadmitted = sorted(set(body) - admitted)
         if unadmitted:
@@ -5639,6 +5642,23 @@ class ApplicationServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
+            def send_response(self, code, message=None):
+                self._responded = True
+                super().send_response(code, message)
+
+            def do_GET(self):
+                # A read the subject may not make is a refusal the page can
+                # show. It used to escape the handler, and the connection
+                # closed with no response at all (a member's /work,
+                # /grand-map-work, or a canvas after entering a scope).
+                self._responded = False
+                try:
+                    self._do_get()
+                except (AuthorizationDenied, InvalidCell) as exc:
+                    if self._responded:
+                        raise
+                    self._json(403, {'ok': False, 'error': str(exc)})
+
             def log_message(self, _format, *_args):
                 return
 
@@ -5805,7 +5825,7 @@ class ApplicationServer:
             @with_relation_projection_scope
             @with_catalog_verification_scope
             @with_session_canvas_roots_scope
-            def do_GET(self):
+            def _do_get(self):
                 denied = local_browser_admission_error(
                     self.headers, self.server.server_address[1])
                 if denied:
@@ -8158,6 +8178,7 @@ class ApplicationServer:
                                     positions=body.get('positions'),
                                     viewport=body.get('viewport'),
                                     expected_scope=body.get('expected_scope'),
+                                    placement=body.get('placement'),
                                     consent_evidence_root=binding.session_root,
                                     authentication_context=binding.context,
                                     leased_projection=previous_projection)

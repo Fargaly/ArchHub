@@ -215,7 +215,8 @@
     // One committed drag is the held canvas with the admitted points at the
     // receipted revision. Reading the whole canvas back only to learn the two
     // facts the receipt already states cost the drag a second full projection.
-    const acceptTopologyLayout = (identity, moved, committedRevision) => {
+    // A hand move pins the card on the owner (Arrange never moves it again); an Arrange does not.
+    const acceptTopologyLayout = (identity, moved, committedRevision, pins = false) => {
       const value = topologyCanvas;
       if (!value || topologyIdentity(value) !== identity || !revision(committedRevision) ||
           committedRevision < value.revision ||
@@ -224,7 +225,7 @@
       }
       return acceptTopology({...value, revision:committedRevision,
         nodes:value.nodes.map(node => moved[node.id]
-          ? {...node, x:moved[node.id].x, y:moved[node.id].y} : node),
+          ? {...node, x:moved[node.id].x, y:moved[node.id].y, ...(pins ? {pinned:true} : {})} : node),
         interaction_projection:{...value.interaction_projection, revision:committedRevision}});
     };
     const readTopology = async identity => {
@@ -1057,7 +1058,8 @@
           return acceptTopology(result);
         });
       },
-      moveTopologyNodes(positions, expectedRevision = topologyCanvas?.revision, expectedPositions = null) {
+      moveTopologyNodes(positions, expectedRevision = topologyCanvas?.revision, expectedPositions = null, placement = null) {
+        const arrange = placement === 'arrange';
         const copy = Object.fromEntries(Object.entries(positions || {}).map(([root, point]) => [root, {x:point?.x, y:point?.y}]));
         const roots = Object.keys(copy);
         const bases = Object.fromEntries(Object.entries(expectedPositions ?? Object.fromEntries(roots.map(root => {
@@ -1067,7 +1069,7 @@
         if (!roots.length || roots.some(root => !text(root) || !Number.isFinite(copy[root].x) || !Number.isFinite(copy[root].y))) {
           fail('Choose nodes with valid canvas positions.');
         }
-        return runTopology(JSON.stringify(['positions', copy, bases]), async (identity, command) => {
+        return runTopology(JSON.stringify(['positions', copy, bases, arrange]), async (identity, command) => {
           // The canvas the drag started from is the one the owner checks the save
           // against: it carries expected_positions and the scope, and the owner
           // refuses under its lock if either moved. Re-reading the whole canvas
@@ -1083,11 +1085,12 @@
           const result = await command('/api/universal/gesture', {
             expected_scope:value.scope.current, positions:copy, expected_positions:bases,
             projection_mode:'receipt-v1', projection_revision:value.revision,
+            ...(arrange ? {placement:'arrange'} : {}),
           });
           if (!result || result.ok !== true || result.projection_mode !== 'receipt-v1' ||
               !revision(result.base_revision) || result.base_revision < value.revision || !revision(result.committed_revision) ||
               result.committed_revision < result.base_revision) fail('The layout save needs reconciliation.');
-          acceptTopologyLayout(identity, copy, result.committed_revision);
+          acceptTopologyLayout(identity, copy, result.committed_revision, !arrange);
           return result;
         });
       },

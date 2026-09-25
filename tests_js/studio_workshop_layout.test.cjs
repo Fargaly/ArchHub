@@ -261,12 +261,21 @@ test('the agents rail is the transcript participants with verified connection fa
     await ui.render('WorkshopAgentsRail', {context, sel:null, onSelect:(id, addressable) => picked.push([id, addressable]), onAddAgent:() => picked.push(['library'])});
     const rail = ui.doc.querySelector('[aria-label="Workshop agents"]');
     assert.match(text(rail), /^CONNECTED AGENTS/);
-    const rows = [...rail.querySelectorAll('[data-workshop-agent]')];
-    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude, ids.gone], 'verified agents first; the owner is not an agent row');
-    assert.deepEqual(rows.map(r => r.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+    // Founder order 2026-09-24: the rail lists the agents that are here now; a disconnected
+    // session is one toggle away and is never removed from the graph.
+    let rows = [...rail.querySelectorAll('[data-workshop-agent]')];
+    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude], 'verified agents first; the owner is not an agent row; disconnected hidden');
+    assert.deepEqual(rows.map(r => r.getAttribute('aria-pressed')), ['true', 'false']);
     assert.match(text(rows[0]), /^C Codex AGENT codex · local WAITING FOR INPUT/);
     assert.match(text(rows[1]), /^C Claude Code AGENT claude · local WORKING/);
+    const toggle = rail.querySelector('button[data-workshop-disconnected-toggle]');
+    assert.equal(text(toggle), 'Show disconnected (1)');
+    assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+    await ui.click(toggle);
+    rows = [...rail.querySelectorAll('[data-workshop-agent]')];
+    assert.deepEqual(rows.map(r => r.getAttribute('data-workshop-agent')), [ids.codex, ids.claude, ids.gone]);
     assert.match(text(rows[2]), /^G Gone agent AGENT antigravity-ide DISCONNECTED · 6m Disconnected from this app\./);
+    assert.equal(text(rail.querySelector('button[data-workshop-disconnected-toggle]')), 'Hide disconnected');
     assert.match(text(rail), /SCOPE Write access: not projected for these agents\. Recent activity is not a running task\.$/);
     await ui.click(rows[1]);
     await ui.click(rail.querySelector('button[aria-label^="Connect another agent"]'));

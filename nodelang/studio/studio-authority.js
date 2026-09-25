@@ -42,6 +42,8 @@
           outs: ports.filter(port => port.side === 'source'),
           params: parameters.filter(row => row.k !== 'status'),
           openable: node.openable === true,
+          group: typeof node.group === 'string' ? node.group : '', pinned: node.pinned === true,
+          ...(typeof node.application === 'boolean' ? {application: node.application} : {}),
         };
       });
       const nodeIds = new Set(nodes.map(node => node.id));
@@ -305,7 +307,7 @@
             positions: {[root]: {x: position.x, y: position.y}}});
         });
       },
-      moveMany(positions, expectedRevision = canvas?.revision, expectedPositions = null) {
+      moveMany(positions, expectedRevision = canvas?.revision, expectedPositions = null, placement = null) {
         const scope = canvas?.root, graph = identity;
         const copy = Object.fromEntries(Object.entries(positions || {}).map(([root, point]) => [root, {
           x:Number.isFinite(point?.x) ? Math.trunc(point.x) : point?.x,
@@ -328,7 +330,8 @@
             }
           }
           const result = await post('/api/universal/gesture', {expected_scope:scope, positions:copy,
-            expected_positions:bases, projection_revision:canvas.revision});
+            expected_positions:bases, projection_revision:canvas.revision,
+            ...(placement === 'arrange' ? {placement:'arrange'} : {})});
           if (!Array.isArray(result?.nodes) || Object.entries(copy).some(([root, point]) => {
             const held = result.nodes.find(row => row.id === root);
             return !held || held.x !== point.x || held.y !== point.y;

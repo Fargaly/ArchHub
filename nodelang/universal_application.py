@@ -19221,6 +19221,212 @@ def _product_canvas_roots(
     )
 
 
+def _user_canvas_root(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root_id: str,
+    _seen: set[str] | None = None,
+    *,
+    level_root: str | None = None,
+) -> bool:
+    """Whether one canvas root is content a user placed, at one level.
+
+    Derived from graph structure, never from a list of names. A user places
+    content by exactly three gestures, and each leaves its own shape: an
+    editable primitive Cell is a terminal cell, a catalogue or relation
+    instance carries the assembly protocol's provenance role, and a group is
+    a personal composition. Nothing the application seeds carries provenance
+    or the composition seed, and registered Work is the Workshop's.
+
+    ``level_root`` is the level the root is read on (``None`` is the top
+    canvas). The application never places a terminal on the top canvas, but
+    its domains hold many (public authority, runtime contract, registries,
+    the secret vault), so below the top level a terminal is the user's only
+    inside a group the user made (verifier 2026-09-24: every terminal inside
+    every map domain read as user content and deleted).
+    """
+    cell = snapshot.cells.get(root_id)
+    if cell is None:
+        return False
+    if _governed_work_owned_root(snapshot, registry, root_id):
+        # Work and its value nodes carry provenance, but the application
+        # registers and owns them.
+        return False
+    if cell.link0 == NULL_CELL_ID and cell.link1 == NULL_CELL_ID:
+        # Inside a group being judged right now (``_seen``), a terminal is
+        # one of the group's own cards; the group's verdict is the answer.
+        return level_root in (None, registry.canvas_root) or (
+            level_root in (_seen or ())
+        ) or _user_composition_root(snapshot, registry, level_root) or (
+            # Below the top level (inside a domain) a terminal is the
+            # user's when it owns the authorship fact its placement wrote.
+            _user_authored_cell(snapshot, registry, root_id)
+        )
+    members = _relation_members_or_none(snapshot, root_id)
+    if not members:
+        return False
+    if _is_composition_members(registry, members):
+        # A group is the user's only when everything in it is, at every
+        # depth: a group holding a map domain is still the application's,
+        # so it is neither drawn for a member nor deletable (verifier
+        # 2026-09-24: grouping a domain with a user card made the domain
+        # deletable through the group).
+        seen = set() if _seen is None else _seen
+        if root_id in seen or len(seen) >= _SCOPE_MEMBER_LIMIT:
+            return False
+        seen.add(root_id)
+        children = [
+            member.participant_id for member in members
+            if member.role_id == registry.roles["member"]
+        ]
+        return bool(children) and all(
+            _user_canvas_root(
+                snapshot, registry, child, seen, level_root=root_id
+            )
+            for child in children
+        )
+    provenance_role = registry.assembly_protocol.role("provenance")
+    return any(member.role_id == provenance_role for member in members)
+
+
+def _is_composition_members(
+    registry: UniversalApplicationRegistry,
+    members: Iterable[object],
+) -> bool:
+    """Whether a relation's members carry the personal composition seed."""
+    return any(
+        member.role_id == registry.roles["seed"]
+        and member.participant_id == _COMPOSITION_MARKER_ROOT
+        for member in members
+    )
+
+
+def _user_composition_root(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root_id: str | None,
+) -> bool:
+    """Whether a level is a group the user made (all of it the user's)."""
+    if root_id is None or root_id not in snapshot.cells:
+        return False
+    members = _relation_members_or_none(snapshot, root_id)
+    return bool(members) and _is_composition_members(registry, members) and (
+        _user_canvas_root(snapshot, registry, root_id)
+    )
+
+
+_USER_PLACEMENT = "user"
+_CANVAS_CARD_PITCH = (260.0, 200.0)
+_CANVAS_PLACEMENT_COLUMNS = 6
+
+
+def _canvas_node_group(node: Mapping[str, object]) -> str:
+    """The frame a user card is drawn in on the canvas.
+
+    An instance belongs with the other instances of its definition (its
+    provenance relation); a group card with the groups; a primitive Cell
+    with the Cells.
+    """
+    assembly = node.get("assembly")
+    if isinstance(assembly, Mapping) and assembly.get("definition"):
+        return str(assembly.get("name") or assembly["definition"])
+    if node.get("composition"):
+        return "Groups"
+    return "Cells"
+
+
+def _place_unplaced_canvas_nodes(nodes: list[dict[str, object]]) -> None:
+    """Draw cards that hold no position in free space, grouped, below the rest.
+
+    A card without stored coordinates used to be drawn on a five-column
+    default grid that ignored every placed card, which is how cards landed
+    on top of each other. This is a drawing rule only: it writes nothing,
+    and the first move or Arrange stores the coordinates. Cards are placed
+    frame by frame, so the System view's frames and the user's do not mix.
+    """
+    unplaced = [node for node in nodes if node.get("placed") is False]
+    if not unplaced:
+        return
+    placed = [node for node in nodes if node.get("placed") is not False]
+    pitch_x, pitch_y = _CANVAS_CARD_PITCH
+    left = min((float(node["x"]) for node in placed), default=60.0)
+    y = (
+        92.0 if not placed
+        else max(float(node["y"]) for node in placed) + pitch_y + 60.0
+    )
+    by_group: dict[tuple[bool, str], list[dict[str, object]]] = {}
+    for node in unplaced:
+        key = (
+            bool(node.get("application")),
+            str(node.get("group") or _canvas_node_group(node)),
+        )
+        by_group.setdefault(key, []).append(node)
+    for key in sorted(by_group):
+        members = by_group[key]
+        for index, node in enumerate(members):
+            node["x"] = left + (index % _CANVAS_PLACEMENT_COLUMNS) * pitch_x
+            node["y"] = y + (index // _CANVAS_PLACEMENT_COLUMNS) * pitch_y
+        rows = (len(members) - 1) // _CANVAS_PLACEMENT_COLUMNS + 1
+        y += rows * pitch_y + 60.0
+
+
+def _system_view_protocol(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root_id: str,
+) -> str:
+    """Name an application root that no domain holds by its relation's protocol."""
+    members = _relation_members_or_none(snapshot, root_id) or ()
+    prefixes: dict[str, int] = {}
+    for member in members:
+        prefix, separator, _name = member.role_id.partition(":role:")
+        if separator:
+            prefixes[prefix] = prefixes.get(prefix, 0) + 1
+    if not prefixes:
+        return "Application"
+    protocol = max(sorted(prefixes), key=prefixes.__getitem__)
+    if protocol == registry.roles["member"].partition(":role:")[0]:
+        return "Application"
+    name = protocol.rsplit(":", 1)[-1].replace("-", " ").strip()
+    return (name[:1].upper() + name[1:]) if name else protocol
+
+
+def _system_view_groups(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    roots: tuple[str, ...],
+) -> dict[str, str]:
+    """The System view frame of each application root, grouped by domain.
+
+    A map domain is its own frame, and so is every root that domain holds
+    as a member (agent sessions sit in Models & Agents). A root no domain
+    holds is named by the protocol its relation is written in. Derived from
+    the graph on every read; nothing is listed by name.
+    """
+    wanted = set(roots)
+    groups: dict[str, str] = {}
+    for domain_root in registry.map.domains.values():
+        if domain_root not in snapshot.cells:
+            continue
+        title = _scope_label(snapshot, registry, domain_root)
+        if domain_root in wanted:
+            groups[domain_root] = title
+        for member in read_relation(
+            snapshot, domain_root, budget=_SCOPE_MEMBER_LIMIT * 4
+        ):
+            if (
+                member.role_id == registry.roles["member"]
+                and member.participant_id in wanted
+            ):
+                groups.setdefault(member.participant_id, title)
+    for root_id in roots:
+        if root_id not in groups:
+            groups[root_id] = _system_view_protocol(
+                snapshot, registry, root_id
+            )
+    return groups
+
+
 def _require_resource_audience_authority(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
@@ -19293,6 +19499,257 @@ def _require_resource_audience_authority(
         ):
             raise InvalidCell("archived resource is founder-only")
     return bindings
+
+
+def prepare_universal_retraction(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    root: str,
+    scope_root: str | None = None,
+) -> tuple[
+    tuple[Cell, ...], tuple[Cell, ...], tuple[object, ...], tuple[object, ...]
+]:
+    """The cells that take one card off a view's canvas, and nothing broken.
+
+    A card is more than its ``visible`` incidence: the view's materialized
+    projection also indexes the interfaces the card owns, the wires that end
+    on it and the properties it or those wires own. Removing the card alone
+    left those entries behind, and the next boot refused the whole graph
+    ("visibility interface leaves its scope"). Everything that hung on the
+    card leaves with it, and the result is proved against the same reader
+    the boot uses BEFORE anything is committed. The graph is append-only:
+    nothing is erased, the view only stops carrying it.
+    """
+    if not _user_canvas_root(snapshot, registry, root, level_root=scope_root):
+        # What the application placed (map domains, core values, registries,
+        # agent sessions) is re-derived and relied on at boot: taking it off
+        # the view left a graph whose next boot refused (2026-09-24, the
+        # founder's graph). It stays, in the founder's System view.
+        raise InvalidCell(
+            "this card belongs to the application and stays in the System "
+            "view; only cards you placed can be deleted"
+        )
+    # The level the card is on. On the top canvas it is the view's
+    # materialized visibility index; inside a domain or a group it is that
+    # relation itself, where placement appended the card as a member.
+    top_level = scope_root in (None, registry.canvas_root)
+    parent_root = registry.canvas_root if top_level else scope_root
+    scope_relation = (
+        view_session.visibility_root if top_level else parent_root
+    )
+    members = read_relation(snapshot, scope_relation, budget=100_000)
+    interface_role = registry.assembly_protocol.role("interface")
+    placed_role = (
+        registry.roles["visible"] if top_level else registry.roles["member"]
+    )
+    if not any(
+        member.role_id == placed_role and member.participant_id == root
+        for member in members
+    ):
+        raise InvalidCell("that card is not placed at this level")
+    owners = frozenset((root,))
+    owned: dict[str, bool] = {}
+
+    def owned_by_card(interface_root: str) -> bool:
+        if interface_root not in owned:
+            owned[interface_root] = _canvas_interface_owner_in(
+                snapshot, registry, interface_root, owners
+            )
+        return owned[interface_root]
+
+    leaving: set[str] = {root}
+    for member in members:
+        if member.role_id == interface_role and owned_by_card(
+            member.participant_id
+        ):
+            leaving.add(member.participant_id)
+    for member in members:
+        if member.role_id != registry.roles["relation"]:
+            continue
+        relation_members = _relation_members_or_none(
+            snapshot, member.participant_id
+        ) or ()
+        if any(
+            part.participant_id in leaving
+            or (
+                part.role_id in (
+                    registry.roles["source"], registry.roles["target"]
+                )
+                and owned_by_card(part.participant_id)
+            )
+            for part in relation_members
+        ):
+            leaving.add(member.participant_id)
+    for member in members:
+        if member.role_id != registry.roles["property"]:
+            continue
+        owner = _one_for_role(
+            _relation_members_or_none(snapshot, member.participant_id) or (),
+            registry.roles["owner"],
+        )
+        if owner in leaving:
+            leaving.add(member.participant_id)
+    doomed = tuple(
+        member.incidence_id for member in members
+        if member.participant_id in leaving
+        and member.role_id != registry.roles["migration"]
+    )
+    patch = prepare_remove_relation_members(
+        snapshot, scope_relation, doomed, budget=100_000
+    )
+    # Visible and granted are one fact: the grant that projected this card
+    # to this view is revoked in the same commit, as ungroup does for a
+    # dissolved composition. The grant stays signed history.
+    authority = registry.authorization
+    actor_root = view_session.subject_root
+    revocations = []
+    for grant_root in (
+        _projection_grant_root(view_session.subject_root, root),
+        _projection_grant_root(
+            view_session.subject_root, root, view_session.visibility_root
+        ),
+    ) if top_level else ():
+        if grant_root not in snapshot.cells or not _relationship_is_active(
+            snapshot, authority, grant_root
+        ):
+            continue
+        revocations.append(prepare_authority_relationship_revocation(
+            snapshot,
+            authority.identity_protocol,
+            authority.relationship_broker,
+            authority.relationship_broker.mint_from_trusted_administrator(
+                actor_root
+            ),
+            grant_root,
+            administrator_root=actor_root,
+            reason="the card was taken off this view's canvas",
+        ))
+    # A group the user made is also named by the top scope's exposure (the
+    # partition the canvas draws). The card leaves that partition too: a new
+    # exposure entry without it is activated, or the last one is retired.
+    grants: tuple[object, ...] = ()
+    exposure_create: tuple[Cell, ...] = ()
+    exposure_replace: tuple[Cell, ...] = ()
+    active = _view_scope_exposures(snapshot, registry, view_session).get(
+        parent_root
+    )
+    if active is not None and root in active[1]:
+        active_root, exposed = active
+        remaining = tuple(item for item in exposed if item != root)
+        if remaining:
+            entry_root = "app:scope-exposure:%s" % uuid.uuid4().hex
+            exposure = _composition_exposure_cells(
+                registry, parent_root, remaining,
+                entry_root=entry_root,
+            )
+            _previous, registry_create, registry_replace = (
+                _prepare_exposure_activation(
+                    snapshot, registry, view_session,
+                    parent_root, entry_root,
+                )
+            )
+            exposure_create = (*exposure.cells, *registry_create)
+            exposure_replace = tuple(registry_replace)
+            # A group still drawn through the new entry is granted through
+            # it, exactly as ungroup grants the compositions it re-exposes.
+            grants = _prepare_exposed_group_grants(
+                snapshot,
+                registry,
+                view_session,
+                entry_root,
+                remaining,
+                pending_roots=tuple(cell.id for cell in exposure_create),
+            )
+            if grants:
+                identity_patch = prepare_append_relation_members(
+                    snapshot,
+                    authority.identity_protocol.root_id,
+                    (
+                        (authority.identity_protocol.role(
+                            "relationship-member"
+                        ), grant.root_id)
+                        for grant in grants
+                    ),
+                    budget=100_000,
+                )
+                session_patch = prepare_append_relation_members(
+                    snapshot,
+                    view_session.root_id,
+                    ((registry.roles["relation"], grant.root_id)
+                     for grant in grants),
+                    budget=100_000,
+                )
+                exposure_create = (
+                    *exposure_create,
+                    *(cell for grant in grants for cell in grant.cells),
+                    *identity_patch.create,
+                    *session_patch.create,
+                )
+                exposure_replace = (
+                    *exposure_replace,
+                    *identity_patch.replace,
+                    *session_patch.replace,
+                )
+        else:
+            exposure_replace = tuple(prepare_remove_relation_members(
+                snapshot,
+                view_session.scope_exposure_root,
+                tuple(
+                    member.incidence_id for member in read_relation(
+                        snapshot, view_session.scope_exposure_root,
+                        budget=100_000,
+                    )
+                    if member.participant_id == active_root
+                ),
+                budget=100_000,
+            ).replace)
+    replacements = {cell.id: cell for cell in patch.replace}
+    for cell in (
+        *exposure_replace,
+        *(cell for revocation in revocations for cell in revocation.replace),
+    ):
+        if cell.id in replacements and replacements[cell.id] != cell:
+            raise InvalidCell("card removal patches conflict")
+        replacements[cell.id] = cell
+    create = (
+        *exposure_create,
+        *(cell for revocation in revocations for cell in revocation.create),
+    )
+    replace = tuple(replacements.values())
+    # Proved by the readers the next boot runs, before anything is written:
+    # the materialized projection and the top scope's exposure partition.
+    # The signed grants move with them by construction (the card's grant is
+    # revoked, each group still exposed is granted through the new entry);
+    # new grant generations are recorded only after the commit, so they are
+    # not re-verified here. A card the graph cannot release refuses instead
+    # of leaving a graph that cannot open.
+    try:
+        overlay = overlay_read_snapshot(
+            snapshot, create=create, replace=replace
+        )
+        if top_level:
+            visible, relations, properties, _interfaces = (
+                _visibility_scope_projection(overlay, registry, view_session)
+            )
+        else:
+            visible, relations, properties = _nested_canvas_scope(
+                overlay, registry, parent_root
+            )
+        _apply_view_scope_exposure(
+            overlay, registry, view_session, parent_root,
+            (visible, relations, properties),
+        )
+        if not top_level and not grants:
+            # Nothing new is signed at a nested level, so the whole reader
+            # the next boot runs -- trail, scope and grants -- proves it.
+            _session_canvas_roots(overlay, registry, view_session)
+    except InvalidCell as exc:
+        raise InvalidCell(
+            "this card cannot be taken off this level without breaking it: "
+            "%s" % exc
+        ) from exc
+    return create, replace, tuple(revocations), grants
 
 
 def _visibility_scope_projection(
@@ -22868,6 +23325,14 @@ def _project_universal_canvas_interpreter(
                 if color_row else _DEFAULT_NODE_PRESENTATION_COLOR
             ),
             "selected": root_id in selected_roots,
+            # A card the user put somewhere by hand. Arrange lays out the
+            # others around it and never moves it.
+            "pinned": (
+                "placed" in labelled
+                and _text(snapshot, labelled["placed"].value_root)
+                == _USER_PLACEMENT
+            ),
+            "placed": bool(x_row and y_row),
             "composition": composition,
             "openable": bool(_relation_members_or_none(snapshot, root_id)),
             "physical": {
@@ -22892,7 +23357,7 @@ def _project_universal_canvas_interpreter(
                     "id", "cat", "key", "title", "sub", "status", "color",
                     "position_x", "position_y", "definition", "version",
                     "evidence_ref", "last_verified", "authority_source",
-                    "bim_phase", "standard",
+                    "bim_phase", "standard", "placed",
                 }
             ],
             # The run wire reads which effect a node declares; the card's
@@ -22926,6 +23391,29 @@ def _project_universal_canvas_interpreter(
             ),
         })
 
+    if reusable_nodes is None:
+        # Who placed each card, derived from its graph shape. On the top
+        # level of the application canvas the Studio draws the user's cards
+        # and keeps the application's own (map domains, core values,
+        # registries, agent sessions) for the founder's System view, framed
+        # by domain. Below the top level every card belongs to the level
+        # entered, so nothing is marked there.
+        top_level = tuple(scope_trail)[-1:] == (registry.canvas_root,)
+        application_roots = tuple(
+            node["id"] for node in nodes
+            if top_level and not _user_canvas_root(snapshot, registry, node["id"])
+        )
+        system_groups = _system_view_groups(
+            snapshot, registry, application_roots
+        )
+        for node in nodes:
+            if top_level:
+                node["application"] = node["id"] in system_groups
+            node["group"] = (
+                system_groups.get(node["id"]) or _canvas_node_group(node)
+            )
+        # Cards with no stored position are drawn in free space by frame.
+        _place_unplaced_canvas_nodes(nodes)
     node_index = {node["id"]: node for node in nodes}
 
     def enrich_relation_role_interface(
@@ -25114,6 +25602,11 @@ def _project_universal_canvas_interpreter(
             "browser_sessions": browser_sessions,
             "visibility": view_session.visibility_root,
             "assigned_canvas_roots": len(assigned_visible_roots),
+            # Whether this subject may open the System view; the view
+            # itself refuses anyone else.
+            "system_view": (
+                view_session.subject_root == authority.subject_root
+            ),
             "tenant_membership": view_session.tenant_membership_root,
             "tenant_role_membership": (
                 view_session.tenant_role_membership_root
@@ -25489,6 +25982,66 @@ def _compose_property(
     )
 
 
+_AUTHORSHIP_LABEL = "author"
+
+
+def _authorship_property_root(owner_root: str) -> str:
+    """The one authorship property a user-placed Cell can own (keyed)."""
+    return "app:dynamic:property:author-%s" % uuid.uuid5(
+        uuid.NAMESPACE_URL, "archhub-author:%s" % owner_root
+    ).hex
+
+
+def _compose_authorship_property(
+    registry: UniversalApplicationRegistry,
+    owner_root: str,
+) -> tuple[PropertyRef, tuple[Cell, ...]]:
+    """Read-only ``author = user`` owned by a Cell the user placed."""
+    relation_root = _authorship_property_root(owner_root)
+    token = uuid.uuid4().hex
+    value_root = "app:dynamic:value:%s" % token
+    label_root = "app:dynamic:label:%s" % token
+    relation = compose_relation_cells((
+        (registry.roles["owner"], owner_root),
+        (registry.roles["value"], value_root),
+        (registry.roles["label"], label_root),
+        (registry.roles["read-only"], registry.roles["read-only"]),
+    ), relation_id=relation_root)
+    return (
+        PropertyRef(relation_root, value_root, label_root),
+        (
+            Cell(value_root, NULL_CELL_ID, NULL_CELL_ID, _atom("user")),
+            Cell(label_root, NULL_CELL_ID, NULL_CELL_ID,
+                 _atom(_AUTHORSHIP_LABEL)),
+            *relation.cells,
+        ),
+    )
+
+
+def _user_authored_cell(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    root_id: str,
+) -> bool:
+    """Whether a Cell owns the read-only authorship fact a user placement writes."""
+    relation_root = _authorship_property_root(root_id)
+    if relation_root not in snapshot.cells:
+        return False
+    members = _relation_members_or_none(snapshot, relation_root) or ()
+    if not any(
+        member.role_id == registry.roles["read-only"] for member in members
+    ):
+        return False
+    value_root = _one_for_role(members, registry.roles["value"])
+    label_root = _one_for_role(members, registry.roles["label"])
+    return (
+        _one_for_role(members, registry.roles["owner"]) == root_id
+        and value_root in snapshot.cells and label_root in snapshot.cells
+        and _text(snapshot, label_root) == _AUTHORSHIP_LABEL
+        and _text(snapshot, value_root) == "user"
+    )
+
+
 def _compose_bound_property(
     registry: UniversalApplicationRegistry,
     owner_root: str,
@@ -25679,6 +26232,12 @@ def provision_universal_view_session(
         for interface in _registered_canvas_interfaces(snapshot, registry)
         if interface["owner"] in assigned_set
     )
+    # A member view holds user content and the application roots the
+    # founder released or shared to it (SPEC: members see released
+    # application roots under signed authority). The audience refusals below
+    # (WIP, archived, no signed binding) are that boundary; the canvas
+    # carries an application root to a member only while its signed
+    # projection grant stands (_product_canvas_roots).
     _require_resource_audience_authority(
         snapshot, registry, subject_root, assigned_roots
     )
@@ -27995,7 +28554,7 @@ def _commit_atomic_visible_wip_resource(
         if member.role_id == interface_role
     )
     if activate_view:
-        exposure_create, exposure_replace = (
+        exposure_create, exposure_replace, exposure_grants = (
             _prepare_active_top_scope_exposure_extension(
                 snapshot,
                 registry,
@@ -28005,7 +28564,7 @@ def _commit_atomic_visible_wip_resource(
             )
         )
     else:
-        exposure_create, exposure_replace = (), ()
+        exposure_create, exposure_replace, exposure_grants = (), (), ()
     scope_patch = None
     if activate_view and active_scope_root != registry.canvas_root:
         if _relation_members_or_none(snapshot, active_scope_root) is None:
@@ -28174,7 +28733,7 @@ def _commit_atomic_visible_wip_resource(
         (audience_grant, projection_grant)
         if projection_grant is not None
         else (audience_grant,)
-    )
+    ) + tuple(exposure_grants)
     identity_patch = prepare_append_relation_members(
         snapshot,
         identity.root_id,
@@ -28184,14 +28743,19 @@ def _commit_atomic_visible_wip_resource(
         ),
         budget=100_000,
     )
+    session_grants = (
+        *((projection_grant,) if projection_grant is not None else ()),
+        *exposure_grants,
+    )
     session_patch = (
         prepare_append_relation_members(
             snapshot,
             view_session.root_id,
-            ((registry.roles["relation"], projection_grant.root_id),),
+            ((registry.roles["relation"], grant.root_id)
+             for grant in session_grants),
             budget=100_000,
         )
-        if projection_grant is not None
+        if session_grants
         else None
     )
     replacements = {cell.id: cell for cell in selection_transition_replace}
@@ -28301,6 +28865,13 @@ def instantiate_universal_primitive(
     )
     property_refs.append(value_reference)
     property_cells.extend(value_cells)
+    # Who placed this Cell, as a graph fact: a terminal inside a domain is
+    # the user's only when it owns this read-only authorship property.
+    author_reference, author_cells = _compose_authorship_property(
+        registry, root_id
+    )
+    property_refs.append(author_reference)
+    property_cells.extend(author_cells)
     revision = _commit_atomic_visible_wip_resource(
         store,
         registry,
@@ -28716,8 +29287,10 @@ def _prepare_universal_value_graph_exposure(
         if any(row.role_id == registry.roles["owner"] and row.participant_id in requested_roots
                for row in read_relation(snapshot, property_root, budget=8)):
             raise InvalidCell("value graph already owns exposure properties; do not expose it again")
-    exposure_create, exposure_replace = _prepare_active_top_scope_exposure_extensions(
-        snapshot, registry, view_session, roots, active_scope_root,
+    exposure_create, exposure_replace, exposure_grants = (
+        _prepare_active_top_scope_exposure_extensions(
+            snapshot, registry, view_session, roots, active_scope_root,
+        )
     )
     canvas_members = []
     lens_members = []
@@ -28787,6 +29360,9 @@ def _prepare_universal_value_graph_exposure(
                     action_roots=(read_root,), **grant_spec))
             if grant_spec["kind"] == "delegation":
                 projection_grants.append(grant_root)
+    # Groups the advanced exposure still shows are granted through it.
+    prepared_grants.extend(exposure_grants)
+    projection_grants.extend(grant.root_id for grant in exposure_grants)
     session_members = read_relation(snapshot, view_session.root_id, budget=100_000)
     for grant_root in projection_grants:
         if sum(member.role_id == registry.roles["relation"] and member.participant_id == grant_root
@@ -41852,13 +42428,69 @@ def _composition_exposure_cells(
     ), relation_id=entry_root)
 
 
+def _prepare_exposed_group_grants(
+    snapshot: Snapshot,
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+    entry_root: str,
+    exposed_roots: tuple[str, ...],
+    *,
+    pending_roots: tuple[str, ...],
+    staged_cells: tuple[Cell, ...] = (),
+) -> tuple[object, ...]:
+    """Grant each group an exposure entry shows, through that entry.
+
+    Every exposure advance (placement, group, ungroup, delete) activates a
+    new entry; a group it still shows is granted through the new entry, or
+    the next read refuses the whole canvas ("scope exposure differs from
+    signed composition grants").
+    """
+    authority = registry.authorization
+    broker = authority.relationship_broker
+    administrator_root = view_session.subject_root
+    read_root = authority.protocol.actions["read"]
+    staged = (
+        overlay_read_snapshot(snapshot, create=staged_cells)
+        if staged_cells else snapshot
+    )
+    grants = []
+    for target_root in exposed_roots:
+        if not _is_universal_composition(snapshot, registry, target_root):
+            continue
+        grant = prepare_authority_relationship_grant(
+            staged,
+            authority.identity_protocol,
+            broker,
+            broker.mint_from_trusted_administrator(administrator_root),
+            relationship_id=_fresh_relationship_id(
+                staged,
+                _projection_grant_root(
+                    view_session.subject_root, target_root, entry_root
+                ),
+            ),
+            source_root=authority.resource_reader_principal_root,
+            target_root=view_session.subject_root,
+            kind="delegation",
+            tenant_root=authority.tenant_root,
+            administrator_root=administrator_root,
+            scope_root=target_root,
+            action_roots=(read_root,),
+            reason="subject receives this resource through the authorized view",
+            evidence_roots=(entry_root,),
+            pending_roots=pending_roots,
+        )
+        grants.append(grant)
+        staged = overlay_read_snapshot(staged, create=grant.cells)
+    return tuple(grants)
+
+
 def _prepare_active_top_scope_exposure_extension(
     snapshot: Snapshot,
     registry: UniversalApplicationRegistry,
     view_session: ApplicationViewSession,
     pending_root: str,
     parent_root: str,
-) -> tuple[tuple[Cell, ...], tuple[Cell, ...]]:
+) -> tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[object, ...]]:
     """Advance the active personal scope exposure without rewriting history."""
     return _prepare_active_top_scope_exposure_extensions(
         snapshot, registry, view_session, (pending_root,), parent_root,
@@ -41871,15 +42503,22 @@ def _prepare_active_top_scope_exposure_extensions(
     view_session: ApplicationViewSession,
     pending_roots: tuple[str, ...],
     parent_root: str,
-) -> tuple[tuple[Cell, ...], tuple[Cell, ...]]:
-    """Extend one active exposure once for an already validated resource batch."""
+) -> tuple[tuple[Cell, ...], tuple[Cell, ...], tuple[object, ...]]:
+    """Extend one active exposure once for an already validated resource batch.
+
+    Returns the cells and the grants the caller commits and records: each
+    group the new entry still exposes is granted through it, as group,
+    ungroup and retract do. Without them the next read refused the canvas
+    ("scope exposure differs from signed composition grants") after any
+    card was placed beside a group.
+    """
     active = _view_scope_exposures(
         snapshot,
         registry,
         view_session,
     ).get(parent_root)
     if active is None:
-        return (), ()
+        return (), (), ()
     _previous_root, visible_roots = active
     if len(set(pending_roots)) != len(pending_roots) or any(root in visible_roots for root in pending_roots):
         raise InvalidCell("pending root already exists in the active exposure")
@@ -41899,9 +42538,22 @@ def _prepare_active_top_scope_exposure_extensions(
             entry_root,
         )
     )
+    grants = _prepare_exposed_group_grants(
+        snapshot,
+        registry,
+        view_session,
+        entry_root,
+        tuple(visible_roots),
+        pending_roots=(
+            *(cell.id for cell in exposure.cells),
+            *(cell.id for cell in registry_create),
+            *pending_roots,
+        ),
+    )
     return (
         (*exposure.cells, *registry_create),
         tuple(registry_replace),
+        grants,
     )
 
 
@@ -42123,11 +42775,27 @@ def _canvas_interface_owner_in(
     interface_root: str,
     owners: frozenset[str] | set[str],
 ) -> bool:
-    """True when a projected canvas interface belongs to one of `owners`."""
+    """True when a canvas interface belongs to one of `owners`.
+
+    An interface the canvas cannot project (an instance part) still has an
+    owner: the root whose relation lists it in the interface role. The boot
+    reader resolves it that way (_nested_scope_endpoint_indexes), so this
+    does too; otherwise grouping or deleting an instance left its part
+    interfaces indexed under an owner nobody can see, and the next read
+    refused the graph ("visibility interface lacks a visible graph owner").
+    """
     interface = _project_canvas_interface(
         snapshot, registry.assembly_protocol, interface_root
     )
-    return bool(interface) and interface.get("owner") in owners
+    if interface:
+        return interface.get("owner") in owners
+    interface_role = registry.assembly_protocol.role("interface")
+    return any(
+        member.role_id == interface_role
+        and member.participant_id == interface_root
+        for owner_root in owners
+        for member in (_relation_members_or_none(snapshot, owner_root) or ())
+    )
 
 
 @_with_canvas_interface_projection_scope
@@ -42168,6 +42836,25 @@ def _compose_universal_selection(
     )
     if not empty and len(selected) < 2:
         raise InvalidCell("group requires at least two selected roots")
+    scope = projection.get("scope")
+    level_root = scope.get("current") if isinstance(scope, Mapping) else None
+    held = [
+        root for root in selected
+        if not _user_canvas_root(
+            snapshot, registry, root,
+            level_root=level_root if type(level_root) is str else None,
+        )
+    ]
+    if held and len(held) < len(selected):
+        # A group never mixes the application's cards with the user's.
+        # Folding an application card in with a user card made it deletable
+        # through the group (verifier, 2026-09-24). A group of application
+        # cards only is the application's own (System view): it is derived
+        # as such and its delete is refused.
+        raise InvalidCell(
+            "a group with your cards holds only cards you placed; %d "
+            "selected card(s) belong to the application" % len(held)
+        )
     _authorize(
         snapshot,
         registry,
@@ -42553,6 +43240,25 @@ def _compose_universal_selection(
             evidence_roots=(view_session.visibility_root,),
             pending_roots=base_ids,
         )
+    # The other groups the new entry still shows stay granted through it.
+    exposed_group_grants = _prepare_exposed_group_grants(
+        snapshot,
+        registry,
+        view_session,
+        entry_root,
+        tuple(
+            root_id for root_id in after_roots
+            if root_id != composition_root
+        ),
+        pending_roots=base_ids,
+        staged_cells=(
+            *base_create,
+            *audience_grant.cells,
+            *projection_grant.cells,
+            *(canvas_projection_grant.cells
+              if canvas_projection_grant is not None else ()),
+        ),
+    )
     identity_patch = prepare_append_relation_members(
         snapshot,
         identity.root_id,
@@ -42563,13 +43269,19 @@ def _compose_universal_selection(
                 (identity.role("relationship-member"),
                  canvas_projection_grant.root_id),
             ) if canvas_projection_grant is not None else ()),
+            *((identity.role("relationship-member"), grant.root_id)
+              for grant in exposed_group_grants),
         ),
         budget=100_000,
     )
     session_patch = prepare_append_relation_members(
         snapshot,
         view_session.root_id,
-        ((registry.roles["relation"], projection_grant.root_id),),
+        (
+            (registry.roles["relation"], projection_grant.root_id),
+            *((registry.roles["relation"], grant.root_id)
+              for grant in exposed_group_grants),
+        ),
         budget=100_000,
     )
     pending_roots = (
@@ -42630,6 +43342,7 @@ def _compose_universal_selection(
             *audience_grant.cells,
             *projection_grant.cells,
             *(canvas_projection_grant.cells if canvas_projection_grant else ()),
+            *(cell for grant in exposed_group_grants for cell in grant.cells),
             *(cell for patch in visibility_revocations
               for cell in patch.create),
             *identity_patch.create,
@@ -42638,7 +43351,7 @@ def _compose_universal_selection(
         ),
         replace=tuple(replacements.values()),
     )
-    for grant in (audience_grant, projection_grant):
+    for grant in (audience_grant, projection_grant, *exposed_group_grants):
         relationship_broker.record_generation(grant.root_id, grant.generation)
     if canvas_projection_grant is not None:
         relationship_broker.record_generation(
@@ -42887,32 +43600,15 @@ def ungroup_universal_composition(
     identity = authority.identity_protocol
     relationship_broker = authority.relationship_broker
     read_root = authority.protocol.actions["read"]
-    projection_grants = tuple(
-        prepare_authority_relationship_grant(
-            snapshot,
-            identity,
-            relationship_broker,
-            relationship_broker.mint_from_trusted_administrator(actor_root),
-            relationship_id=_fresh_relationship_id(
-                snapshot,
-                _projection_grant_root(
-                    view_session.subject_root,
-                    target_root,
-                    entry_root,
-                ),
-            ),
-            source_root=authority.resource_reader_principal_root,
-            target_root=view_session.subject_root,
-            kind="delegation",
-            tenant_root=authority.tenant_root,
-            administrator_root=actor_root,
-            scope_root=target_root,
-            action_roots=(read_root,),
-            reason="subject receives this resource through the authorized view",
-            evidence_roots=(entry_root,),
-            pending_roots=base_ids,
-        )
-        for target_root in nested_compositions
+    # Every group the new entry shows is granted through it: the children
+    # this ungroup releases and any other group already on this level.
+    projection_grants = _prepare_exposed_group_grants(
+        snapshot,
+        registry,
+        view_session,
+        entry_root,
+        tuple(after_roots),
+        pending_roots=base_ids,
     )
     # The composition stops being granted to this view and the members it
     # held start being granted again. Visible and granted are one fact.
@@ -50322,8 +51018,17 @@ def apply_universal_canvas_gesture(
     authentication_context: object | None = None,
     leased_projection: Mapping[str, object] | None = None,
     expected_scope: str | None = None,
+    placement: str | None = None,
 ) -> int:
-    """Publish one complete local canvas gesture in one Store revision."""
+    """Publish one complete local canvas gesture in one Store revision.
+
+    Positions are a hand move unless ``placement`` is ``"arrange"``: a hand
+    move pins each moved card, and an Arrange refuses to move a pinned one.
+    """
+    if placement not in (None, "arrange"):
+        raise InvalidCell("canvas placement must be a hand move or arrange")
+    if placement is not None and not positions:
+        raise InvalidCell("canvas placement requires positions")
     snapshot = store.dense_snapshot()
     verify_released_catalog_stable(
         store,
@@ -50558,9 +51263,24 @@ def apply_universal_canvas_gesture(
             position_rows = _rows_by_label(
                 snapshot, property_index.get(root_id, ())
             )
-            for name, key in (("position_x", "x"), ("position_y", "y")):
-                value = float(point[key])
-                if not math.isfinite(value):
+            pinned = (
+                "placed" in position_rows
+                and _text(snapshot, position_rows["placed"].value_root)
+                == _USER_PLACEMENT
+            )
+            if placement == "arrange" and pinned:
+                raise InvalidCell(
+                    "Arrange never moves a card that was placed by hand"
+                )
+            fields = (("position_x", "x"), ("position_y", "y"))
+            if placement is None and not pinned:
+                # A hand move pins the card: auto-layout leaves it there.
+                fields += (("placed", None),)
+            for name, key in fields:
+                value = (
+                    _USER_PLACEMENT if key is None else float(point[key])
+                )
+                if key is not None and not math.isfinite(value):
                     raise InvalidCell("canvas position must be finite")
                 if name not in position_rows:
                     if lens_positions is None:
@@ -50573,7 +51293,8 @@ def apply_universal_canvas_gesture(
                         position_rows[name] = existing
                         indexed_position_roots.append(existing.relation_root)
                 if name not in position_rows:
-                    reference, cells = _compose_property(registry, root_id, name, value)
+                    reference, cells = _compose_property(
+                        registry, root_id, name, value, read_only=key is None)
                     created_position_cells.extend(cells)
                     created_position_roots.append(reference.relation_root)
                     created_position_owners[reference.relation_root] = root_id

@@ -2221,6 +2221,7 @@ const SOCKET_R = 5;
 const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
 // Snap to grid (design CanvasMenu) uses the dot grid's own 20-unit pitch.
 const CANVAS_GRID = 20;
+const ARRANGE_ALL_PINNED = 'Every chosen card was placed by hand. Arrange leaves hand-placed cards where they are.';
 
 const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
   const adjacency = new Map(nodeIds.map(id => [id, new Set()]));
@@ -2248,14 +2249,24 @@ const canvasFitBounds = (ids, positions, sizes, viewport) => {
   return {zoom, pan:{x:24 + width / 2 - (left + right) * zoom / 2,
     y:72 + height / 2 - (top + bottom) * zoom / 2}, bounds:{left, top, right, bottom}};
 };
-const canvasArrangePositions = (ids, positions, sizes, allIds, wires) => {
-  const stable = [...ids].sort((a, b) => positions[a].y - positions[b].y || positions[a].x - positions[b].x || a.localeCompare(b));
+// `groupOf` names the frame a card is drawn in (the projection's `group`: the
+// instances of one definition, the groups, the Cells). Each frame is packed as
+// its own block of rows, so Arrange never interleaves two frames; cards the
+// caller left out (hand-placed ones) stay where they are and are avoided.
+const canvasArrangePositions = (ids, positions, sizes, allIds, wires, groupOf = null) => {
+  const frameOf = id => (typeof groupOf === 'function' && groupOf(id)) || '';
+  const byPlace = (a, b) => positions[a].y - positions[b].y || positions[a].x - positions[b].x || a.localeCompare(b);
+  const placed = [...ids].sort(byPlace);
+  const frameOrder = [...new Set(placed.map(frameOf))];
+  const stable = frameOrder.flatMap(frame => placed.filter(id => frameOf(id) === frame));
   const rank = new Map(stable.map((id, index) => [id, index]));
   const neighbours = new Map(stable.map(id => [id, new Set()])), outgoing = new Map(stable.map(id => [id, new Set()]));
   const indegree = new Map(stable.map(id => [id, 0]));
   for (const wire of wires) {
     const from = wire.from?.[0], to = wire.to?.[0];
     if (!rank.has(from) || !rank.has(to) || from === to || outgoing.get(from).has(to)) continue;
+    // A wire between two frames does not pull a card out of its own frame.
+    if (frameOf(from) !== frameOf(to)) continue;
     neighbours.get(from).add(to); neighbours.get(to).add(from);
     outgoing.get(from).add(to); indegree.set(to, indegree.get(to) + 1);
   }
@@ -2275,12 +2286,16 @@ const canvasArrangePositions = (ids, positions, sizes, allIds, wires) => {
     }
     groups.push(order);
   }
-  const gap = 48, totalArea = stable.reduce((area, id) => area + (sizes[id].w + gap) * (sizes[id].h + gap), 0);
+  // Room between two frames for the frame border and its title.
+  const gap = 48, frameGap = 96, totalArea = stable.reduce((area, id) => area + (sizes[id].w + gap) * (sizes[id].h + gap), 0);
   const shelfWidth = Math.max(...stable.map(id => sizes[id].w), Math.sqrt(totalArea * 1.4));
   const local = {};
-  let x = 0, y = 0, rowHeight = 0, packedWidth = 0;
+  let x = 0, y = 0, rowHeight = 0, packedWidth = 0, frame = null;
   for (const group of groups) {
-    if (x) { x = 0; y += rowHeight + gap; rowHeight = 0; }
+    const next = frameOf(group[0]);
+    if (frame !== null && next !== frame) { x = 0; y += rowHeight + frameGap; rowHeight = 0; }
+    else if (x) { x = 0; y += rowHeight + gap; rowHeight = 0; }
+    frame = next;
     for (const id of group) {
       const size = sizes[id];
       if (x && x + size.w > shelfWidth) { x = 0; y += rowHeight + gap; rowHeight = 0; }
@@ -2343,7 +2358,22 @@ const writeCanvasLayoutTrace = (scope, burst) => {
 
 const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNodeFromLibrary, model }) => {
   const authorityState = useStudioProjection();
-  const graph = authorityState?.graph || LM_GRAPH;
+  const projectedGraph = authorityState?.graph || LM_GRAPH;
+  // The owner marks every top-level card with who placed it (graph shape, not a list of names).
+  // The canvas draws the user's cards; the application's own -- map domains, core values,
+  // registries, agent sessions -- are the founder's System view, framed by domain. Only the
+  // founder's view holds them, and only the founder is offered the switch.
+  const systemViewAllowed = authorityState?.canvas?.authorization?.system_view === true;
+  const [systemMode, setSystemMode] = React.useState(false);
+  const hasApplicationNodes = projectedGraph.nodes.some(node => node.application === true);
+  const showingSystem = systemMode && systemViewAllowed && hasApplicationNodes;
+  const graph = React.useMemo(() => {
+    const nodes = projectedGraph.nodes.filter(node =>
+      typeof node.application !== 'boolean' || node.application === showingSystem);
+    const drawn = new Set(nodes.map(node => node.id));
+    return {...projectedGraph, nodes,
+      wires:projectedGraph.wires.filter(wire => drawn.has(wire.from?.[0]) && drawn.has(wire.to?.[0]))};
+  }, [projectedGraph, showingSystem]);
   const authority = window.ARCHHUB_STUDIO_AUTHORITY;
   const normal = !authority && window.ARCHHUB_EXISTING_WORKSHOP;
   const [wireStart, setWireStart] = React.useState(null);
@@ -2446,7 +2476,8 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   // `force` marks a save handed over on the way out (unmount, window close). It still
   // queues behind the save in flight, but it is not dropped when this canvas stops
   // being alive: the transport outlives the component.
-  const savePositions = async (next, before, expectedRevision, remember = true, force = false) => {
+  // `placement` is 'arrange' for Arrange; anything else is a hand move, which the owner pins.
+  const savePositions = async (next, before, expectedRevision, remember = true, force = false, placement = null) => {
     if (!scopeStillCurrent()) { pendingArrange.current = null; return false; }
     const entries = Object.entries(next).filter(([id, point]) => before[id]?.x !== point.x || before[id]?.y !== point.y);
     if (!entries.length) return true;
@@ -2456,7 +2487,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     // to retry it, and a save behind a save is exactly what a burst needs to survive.
     if (saving.current && canSaveLayout && entries.length <= MAX_LAYOUT_NODES) {
       // The preview already shows the new place; the save runs right after the current one.
-      queuedSave.current = {next, before, expectedRevision, remember, force};
+      queuedSave.current = {next, before, expectedRevision, remember, force, placement};
       return true;
     }
     // The transport, never the render snapshot: the echo of a save that has just answered
@@ -2474,10 +2505,11 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     saving.current = true; setLayoutBusy(true); setLayoutError('');
     setPositions(held => ({...held, ...changes}));
     try {
-      if (authority) await authority.moveMany(changes, expectedRevision, expectedPositions);
-      else await normal.moveTopologyNodes(changes, expectedRevision, expectedPositions);
+      if (authority) await authority.moveMany(changes, expectedRevision, expectedPositions, placement);
+      else await normal.moveTopologyNodes(changes, expectedRevision, expectedPositions, placement);
       if (!scopeStillCurrent()) return false;
-      setUndoLayout(remember ? {before:Object.fromEntries(entries.map(([id]) => [id, before[id]])), after:changes} : null);
+      // Undo moves the cards back the way they were moved: undoing Arrange must not pin them.
+      setUndoLayout(remember ? {before:Object.fromEntries(entries.map(([id]) => [id, before[id]])), after:changes, placement} : null);
       // Confirmed, and nothing else is owed: there is no unwritten movement left to report.
       if (!burstRef.current && !queuedSave.current) writeCanvasLayoutTrace(scopeKey, null);
       return true;
@@ -2512,7 +2544,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       if (handOver) {
         // Run the queued drag against the canvas as it is now; its `before` is the
         // preview the drag started from, which is what the server holds after the save.
-        setTimeout(() => saveRef.current && saveRef.current(queued.next, queued.before, queued.expectedRevision, queued.remember, queued.force), 0);
+        setTimeout(() => saveRef.current && saveRef.current(queued.next, queued.before, queued.expectedRevision, queued.remember, queued.force, queued.placement), 0);
       }
     }
   };
@@ -2835,6 +2867,10 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     setSelectedIds(canvasConnectedNodeIds(nodeIds, graph.wires, seeds, whole));
   };
   const runPendingArrangeRef = React.useRef(null);
+  // A card the user put somewhere by hand is pinned by the owner: Arrange lays the others out
+  // around it (it stays an obstacle) and never moves it.
+  const arrangeMovable = ids => ids.filter(id => !allNodes.some(node => node.id === id && node.pinned === true));
+  const arrangeFrameOf = id => allNodes.find(node => node.id === id)?.group || '';
   const arrangeNeedsRefresh = () => needsRefresh.current || layoutNeedsRefresh ||
     !!(authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology)?.requires_refresh;
   // Single-flight drain. Order matters: stale-scope, refresh-owed, auth, nodes,
@@ -2875,12 +2911,14 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (!sizes) return false;
     if (allNodes.some(node => positions[node.id]?.x !== node.x || positions[node.id]?.y !== node.y)) return false;
     pendingArrange.current = null;
+    const movable = arrangeMovable(liveIds);
+    if (!movable.length) { setLayoutError(ARRANGE_ALL_PINNED); return false; }
     arrangeRunning.current = true;
     setLayoutError('');
     try {
-      const before = Object.fromEntries(liveIds.map(id => [id, {...positions[id]}]));
-      const next = canvasArrangePositions(liveIds, positions, sizes, allNodes.map(node => node.id), graph.wires);
-      await savePositions(next, before, revision);
+      const before = Object.fromEntries(movable.map(id => [id, {...positions[id]}]));
+      const next = canvasArrangePositions(movable, positions, sizes, allNodes.map(node => node.id), graph.wires, arrangeFrameOf);
+      await savePositions(next, before, revision, true, false, 'arrange');
       return true;
     } catch (error) {
       if (scopeStillCurrent()) setLayoutError(error.message || 'Arrange could not be confirmed.');
@@ -2929,11 +2967,13 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       setLayoutError('The canvas is receiving new positions. Try Arrange again.'); return;
     }
     if (graph.wires.length > 4096) { setLayoutError('Arrange supports up to 4096 visible wires. Open a smaller scope.'); return; }
+    const movable = arrangeMovable(liveIds);
+    if (!movable.length) { setLayoutError(ARRANGE_ALL_PINNED); return; }
     const expectedRevision = revision, sizes = measureCards();
     if (!sizes) return;
-    const before = Object.fromEntries(liveIds.map(id => [id, {...positions[id]}]));
-    const next = canvasArrangePositions(liveIds, positions, sizes, allNodes.map(node => node.id), graph.wires);
-    await savePositions(next, before, expectedRevision);
+    const before = Object.fromEntries(movable.map(id => [id, {...positions[id]}]));
+    const next = canvasArrangePositions(movable, positions, sizes, allNodes.map(node => node.id), graph.wires, arrangeFrameOf);
+    await savePositions(next, before, expectedRevision, true, false, 'arrange');
   };
   const undoAvailable = !!undoLayout && Object.entries(undoLayout.after).every(([id, point]) =>
     allNodes.some(node => node.id === id && node.x === point.x && node.y === point.y) &&
@@ -2942,7 +2982,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (flushLayoutBurst()) {
       setLayoutError('Saving the moved nodes first. Try Reset positions again.'); return;
     }
-    if (undoAvailable && !blocked) savePositions(undoLayout.before, undoLayout.after, revision, false);
+    if (undoAvailable && !blocked) savePositions(undoLayout.before, undoLayout.after, revision, false, false, undoLayout.placement || null);
   };
   const refreshCanvas = async () => {
     if (!scopeStillCurrent() || saving.current || authorityState?.pending) return;
@@ -2954,6 +2994,20 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
   };
   const allIds = allNodes.map(node => node.id);
+  // Frames: one per group the projection names (instances of one definition, groups, Cells),
+  // drawn behind its cards from where they are now, so a moved card carries its frame along.
+  const canvasFrames = (() => {
+    const held = new Map();
+    for (const node of allNodes) {
+      if (!node.group) continue;
+      const at = positions[node.id] || node, w = node.w || 220, h = node.h || 110;
+      const box = held.get(node.group) || {key:node.group, count:0, left:Infinity, top:Infinity, right:-Infinity, bottom:-Infinity};
+      box.count += 1; box.left = Math.min(box.left, at.x); box.top = Math.min(box.top, at.y);
+      box.right = Math.max(box.right, at.x + w); box.bottom = Math.max(box.bottom, at.y + h);
+      held.set(node.group, box);
+    }
+    return [...held.values()];
+  })();
   const menuHasSeed = !!ctxMenu?.nodeId || selected.size > 0 || allIds.includes(focusId);
   // Each action names why it is disabled; CanvasMenu shows that reason as the item title.
   const busyWhy = layoutBusy || authorityState?.pending ? 'Wait for the canvas to finish saving' : 'Refresh the canvas first';
@@ -3019,6 +3073,18 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         position:'absolute', left:pan.x, top:pan.y,
         transform:`scale(${zoom})`, transformOrigin:'0 0',
       }}>
+        {canvasFrames.map(frame => (
+          <div key={frame.key} data-canvas-frame={frame.key} aria-hidden="true" style={{
+            position:'absolute', left:frame.left - 18, top:frame.top - 34,
+            width:frame.right - frame.left + 36, height:frame.bottom - frame.top + 52,
+            border:`1px dashed ${LM.line}`, borderRadius:LM.rad.md, background:LM.bgSoft + '55',
+            pointerEvents:'none'}}>
+            <span style={{position:'absolute', left:10, top:7, fontFamily:LM.mono, fontSize:10,
+              letterSpacing:'0.08em', color:LM.inkMuted, whiteSpace:'nowrap'}}>
+              {String(frame.key).toUpperCase()} · {frame.count}
+            </span>
+          </div>
+        ))}
         <svg width="2400" height="1400" style={{ position:'absolute', left:0, top:0, pointerEvents:'none', overflow:'visible' }} className="lm-wires">
           <defs>
             <filter id="lm-wire-glow" x="-20%" y="-20%" width="140%" height="140%">
@@ -3081,6 +3147,17 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             'Unnamed connection'}: {wire.reason}</li>)}</ul>
         {unresolvedWires.length > 20 && <p>{unresolvedWires.length - 20} more connections are affected.</p>}
       </details>}
+      {!allNodes.length && !showingSystem && <p data-no-pan role="note" style={{position:'absolute', left:'50%', top:'42%',
+        transform:'translate(-50%, -50%)', margin:0, maxWidth:360, textAlign:'center', fontSize:12.5,
+        lineHeight:1.5, color:LM.inkSoft}}>
+        This canvas holds only what you place on it. Add a node from the library (⌘L).
+        {systemViewAllowed && hasApplicationNodes ? " The application's own parts are in the System view." : ''}
+      </p>}
+      {systemViewAllowed && hasApplicationNodes && <button data-no-pan aria-pressed={showingSystem}
+        onClick={() => { setSelectedIds([]); setSystemMode(value => !value); }}
+        title={showingSystem ? 'Back to the cards you placed' : 'The application\u2019s own parts, framed by domain (founder only)'}
+        style={{...smallBtn(), position:'absolute', left:14, bottom:14, zIndex:6}}>
+        {showingSystem ? 'My canvas' : 'System view'}</button>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
       {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout) &&

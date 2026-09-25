@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 from weakref import WeakKeyDictionary, ref
 import threading
 import uuid
@@ -1065,7 +1065,18 @@ def undo_last_change(
     actor_root: str,
     session_root: str,
     operation_root: str,
+    reconciled_referrer: (
+        Callable[[Snapshot, str, str, frozenset[str]], bool] | None
+    ) = None,
 ) -> ChangeCommit:
+    """Compensate the latest change of this view.
+
+    ``reconciled_referrer(snapshot, referrer, created_root, created)`` names the
+    referring Cells some other owner compensates -- the signed view grants
+    the grant reconciler re-issues as NEW generations after a redo. A
+    reference from one of those is not a later edit that undo would orphan;
+    every other gained or lost reference still refuses the undo.
+    """
     snapshot = store.snapshot()
     state = history_state(snapshot, protocol, history_root, history=store.at)
     if state.undo_root is None:
@@ -1098,9 +1109,25 @@ def undo_last_change(
                 % change.target_root
             )
         if change.before is None:
-            if (
+            if _compensation_tolerates_drift(change.target_root):
+                # Pure linkage and signed authority: their owners
+                # re-link and re-grant; references among them are not an
+                # edit this undo would orphan.
+                continue
+            gained = (
                 current_incoming[change.target_root]
-                != result_incoming[change.target_root]
+                - result_incoming[change.target_root]
+            )
+            lost = (
+                result_incoming[change.target_root]
+                - current_incoming[change.target_root]
+            )
+            if lost or any(
+                reconciled_referrer is None
+                or not reconciled_referrer(
+                    snapshot, referrer, change.target_root, created_targets
+                )
+                for referrer, _position in gained
             ):
                 raise Conflict(
                     "created Cell gained references after the recorded transaction"

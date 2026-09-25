@@ -757,3 +757,199 @@ def test_group_and_ungroup_undo_redo_redraw_the_same_canvas():
     assert drawn() == grouped
     redo_universal_change(store, registry)
     assert drawn() == ungrouped
+
+
+@pytest.mark.parametrize("members", ["user cards", "domains"])
+def test_group_undo_redo_undo_redo_round_trips(members):
+    """Verifier finding (canvas2 r4 probe6, 2026-09-25, on main 6e167b6):
+    undo right after redo of a group was refused, "created Cell gained
+    references after the recorded transaction". Undo and redo are a
+    round trip at every step: each lands on the canvas it returns to."""
+    from nodelang.universal_application import (
+        redo_universal_change,
+        undo_universal_change,
+    )
+
+    store, registry = build_universal_application(resolve_map_path())
+
+    def drawn():
+        canvas = project_universal_canvas(store, registry)
+        return json.dumps(
+            {"nodes": canvas["nodes"], "wires": canvas["wires"]},
+            sort_keys=True,
+        )
+
+    if members == "domains":
+        domains = registry.map.domains
+        selected = (domains["brain"], domains["ui"])
+    else:
+        definitions = registry.standard_library.definition_roots
+        selected = tuple(
+            instantiate_universal_definition(
+                store, registry, definitions[0], x=400.0 + 300 * i, y=1400.0
+            )[0]
+            for i in range(2)
+        )
+    set_universal_selection(store, registry, selected, focus_root=selected[-1])
+    before = drawn()
+    group_universal_selection(store, registry, title="Round trip")
+    grouped = drawn()
+    for _ in range(2):
+        undo_universal_change(store, registry)
+        assert drawn() == before
+        redo_universal_change(store, registry)
+        assert drawn() == grouped
+
+
+def test_undo_still_refuses_a_foreign_signed_reference_after_redo():
+    """Coordinator gap (A): only the reconciler's own view grants for THIS
+    group may reference it after redo. A signed relationship of another
+    kind that references the group is a later edit; undo refuses it and
+    writes nothing."""
+    from nodelang.universal_application import (
+        redo_universal_change,
+        undo_universal_change,
+    )
+    from nodelang.cell_identity import grant_authority_relationship
+    from nodelang.universal_cell import Conflict
+
+    store, registry = build_universal_application(resolve_map_path())
+    definitions = registry.standard_library.definition_roots
+    selected = tuple(
+        instantiate_universal_definition(
+            store, registry, definitions[0], x=400.0 + 300 * i, y=1400.0
+        )[0]
+        for i in range(2)
+    )
+    set_universal_selection(store, registry, selected, focus_root=selected[-1])
+    group, _ = group_universal_selection(store, registry, title="Held")
+    undo_universal_change(store, registry)
+    redo_universal_change(store, registry)
+    authority = registry.authorization
+    context = application_module._active_authentication_context(authority, None)
+    admin = authority.broker.resolve(context).subject_root
+    grant_authority_relationship(
+        store,
+        authority.identity_protocol,
+        authority.relationship_broker,
+        authority.relationship_broker.mint_from_trusted_administrator(admin),
+        relationship_id="test:foreign-membership:" + group,
+        source_root=group,
+        target_root=authority.tenant_root,
+        kind="membership",
+        tenant_root=authority.tenant_root,
+        administrator_root=admin,
+        reason="a later, foreign signed reference to the group",
+    )
+    before = store.revision
+    with pytest.raises(Conflict, match="gained references"):
+        undo_universal_change(store, registry)
+    assert store.revision == before
+
+
+def _live_grants_on(store, registry, root):
+    from nodelang.cell_identity import verify_relationship_authority_snapshot
+
+    authority = registry.authorization
+    kinds = authority.identity_protocol.kinds
+    verified = verify_relationship_authority_snapshot(
+        store.snapshot(), authority.identity_protocol,
+        authority.relationship_broker,
+    )
+    return sorted(
+        relationship.root_id for relationship in verified.active_relationships
+        if (relationship.kind_root == kinds["audience-binding"]
+            and relationship.source_root == root)
+        or (relationship.kind_root == kinds["delegation"]
+            and relationship.scope_root == root)
+    )
+
+
+def test_undo_after_redo_leaves_no_live_grant_on_the_group(tmp_path):
+    """Round-2 finding: group -> undo -> redo -> undo left an ACTIVE signed
+    audience binding on the undone group, and it survived reopen."""
+    from nodelang.universal_application import (
+        redo_universal_change,
+        undo_universal_change,
+    )
+
+    path = tmp_path / "undone.sqlite3"
+    store, registry = build_universal_application(
+        resolve_map_path(), CellStore(path), key_provider=_provider()
+    )
+    try:
+        definitions = registry.standard_library.definition_roots
+        selected = tuple(
+            instantiate_universal_definition(
+                store, registry, definitions[0], x=400.0 + 300 * i, y=1400.0
+            )[0]
+            for i in range(2)
+        )
+        set_universal_selection(
+            store, registry, selected, focus_root=selected[-1]
+        )
+        group, _ = group_universal_selection(store, registry, title="Gone")
+        undo_universal_change(store, registry)
+        redo_universal_change(store, registry)
+        assert _live_grants_on(store, registry, group), "redo re-grants"
+        undo_universal_change(store, registry)
+        assert group not in _ids(project_universal_canvas(store, registry))
+        assert _live_grants_on(store, registry, group) == []
+    finally:
+        store.close()
+    store, registry = restore_universal_application(
+        resolve_map_path(), CellStore(path), key_provider=_provider()
+    )
+    try:
+        assert _live_grants_on(store, registry, group) == []
+        assert group not in _ids(project_universal_canvas(store, registry))
+    finally:
+        store.close()
+
+
+def test_undo_refuses_a_broader_delegation_on_the_group():
+    """Round-2 finding: only a read-only delegation is the reconciler's; a
+    delegation granting more than read that references the group is a
+    later edit, and undo refuses it without writing."""
+    from nodelang.universal_application import (
+        redo_universal_change,
+        undo_universal_change,
+    )
+    from nodelang.cell_identity import grant_authority_relationship
+    from nodelang.universal_cell import Conflict
+
+    store, registry = build_universal_application(resolve_map_path())
+    definitions = registry.standard_library.definition_roots
+    selected = tuple(
+        instantiate_universal_definition(
+            store, registry, definitions[0], x=400.0 + 300 * i, y=1400.0
+        )[0]
+        for i in range(2)
+    )
+    set_universal_selection(store, registry, selected, focus_root=selected[-1])
+    group, _ = group_universal_selection(store, registry, title="Held")
+    undo_universal_change(store, registry)
+    redo_universal_change(store, registry)
+    authority = registry.authorization
+    context = application_module._active_authentication_context(authority, None)
+    admin = authority.broker.resolve(context).subject_root
+    actions = authority.protocol.actions
+    grant_authority_relationship(
+        store,
+        authority.identity_protocol,
+        authority.relationship_broker,
+        authority.relationship_broker.mint_from_trusted_administrator(admin),
+        relationship_id="test:broader-delegation:" + group,
+        source_root=authority.resource_reader_principal_root,
+        target_root=registry.view_sessions[admin].subject_root,
+        kind="delegation",
+        tenant_root=authority.tenant_root,
+        scope_root=group,
+        action_roots=(actions["read"], actions["edit"]),
+        administrator_root=admin,
+        reason="a broader delegation than the reconciler issues",
+    )
+    before = store.revision
+    with pytest.raises(Conflict, match="gained references"):
+        undo_universal_change(store, registry)
+    assert store.revision == before

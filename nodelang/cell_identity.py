@@ -1160,6 +1160,46 @@ def _verify_signed_relationship_material(
     return relationship, generation
 
 
+def _evidence_incidences_at(
+    store: CellStore,
+    revision: int,
+    protocol: IdentityProtocol,
+    relationship_root: str,
+    *,
+    budget: int = 128,
+) -> tuple[str, ...]:
+    """The evidence incidences one relationship held at one revision.
+
+    Walks the relation chain with point reads of that revision
+    (``cells_at``) instead of materialising a historical snapshot, so a
+    restart still reads only what the relationship touched.
+    """
+    evidence_role = protocol.roles["evidence"]
+
+    def cell_at(cell_id: str) -> Cell:
+        cell = store.cells_at(revision, (cell_id,)).get(cell_id)
+        if cell is None:
+            raise InvalidCell("historical relation cell is missing")
+        return cell
+
+    incidences: list[str] = []
+    seen: set[str] = set()
+    cursor = cell_at(relationship_root)
+    steps = 0
+    while cursor.link0 != NULL_CELL_ID:
+        steps += 1
+        if steps > budget or cursor.id in seen:
+            raise InvalidCell("historical relation chain is invalid")
+        seen.add(cursor.id)
+        incidence = cell_at(cursor.link0)
+        if incidence.link0 == evidence_role:
+            incidences.append(incidence.id)
+        if cursor.link1 == NULL_CELL_ID:
+            break
+        cursor = cell_at(cursor.link1)
+    return tuple(incidences)
+
+
 def _relationship_material_cell_ids(
     relationship: AuthorityRelationship,
 ) -> tuple[str, ...]:
@@ -1186,12 +1226,26 @@ def _verify_sparse_historical_relationship_material(
     protocol: IdentityProtocol,
     broker: RelationshipAuthorityBroker,
     relationship: AuthorityRelationship,
+    evidence_incidences: tuple[str, ...] = (),
 ) -> tuple[int, str]:
-    """Verify one relationship generation without materialising a snapshot."""
+    """Verify one relationship generation without materialising a snapshot.
+
+    Evidence is signed material too: an evidence revision replaces its
+    incidence cells in place (same identities, new participants), so the
+    generation this revision held is verified against the evidence THIS
+    revision held -- never the current one, which made every generation
+    before an evidence revision read as drifted and the history as
+    discontinuous (a Shared promotion bricked the next boot, 2026-09-25).
+    """
     if relationship.kind_root not in protocol.kinds.values():
         raise InvalidCell("authority relationship kind is outside vocabulary")
     cells = store.cells_at(
-        revision, _relationship_material_cell_ids(relationship)
+        revision,
+        (*_relationship_material_cell_ids(relationship), *evidence_incidences),
+    )
+    evidence_roots = (
+        tuple(cells[incidence].link1 for incidence in evidence_incidences)
+        if evidence_incidences else relationship.evidence_roots
     )
     state_root = cells[relationship.state_incidence].link1
     changed_by_root = cells[relationship.changed_by_incidence].link1
@@ -1231,7 +1285,7 @@ def _verify_sparse_historical_relationship_material(
         expires_at=expiry,
         generation=generation,
         reason=reason,
-        evidence_roots=relationship.evidence_roots,
+        evidence_roots=evidence_roots,
         key_reference=key_reference,
         key_version=key_version,
     )
@@ -1469,6 +1523,15 @@ def restore_relationship_authority_history(
         )
         for relationship_root in historical_roots
     }
+    evidence_incidences = {
+        relationship_root: tuple(
+            member.incidence_id for member in _for_role(
+                read_relation(current, relationship_root, budget=128),
+                protocol.roles["evidence"],
+            )
+        )
+        for relationship_root in historical_roots
+    }
     touched_by_revision: dict[int, set[str]] = {}
     if changed_by_revision is None:
         # The same attribution as the walk below -- a change under a
@@ -1505,6 +1568,7 @@ def restore_relationship_authority_history(
     }
     for revision in sorted(touched_by_revision):
         for relationship_root in sorted(touched_by_revision[revision]):
+            relationship = current_relationships[relationship_root]
             try:
                 generation, digest = (
                     _verify_sparse_historical_relationship_material(
@@ -1512,11 +1576,31 @@ def restore_relationship_authority_history(
                         revision,
                         protocol,
                         broker,
-                        current_relationships[relationship_root],
+                        relationship,
+                        evidence_incidences[relationship_root],
                     )
                 )
             except (InvalidCell, RelationshipAuthorityDenied, KeyError):
-                continue
+                # The current evidence membership did not reproduce this
+                # revision's signed digest: read the membership this
+                # revision actually held (point reads of the append-only
+                # journal) and verify against that. Still fail-closed --
+                # a generation is admitted only by its own signature.
+                try:
+                    generation, digest = (
+                        _verify_sparse_historical_relationship_material(
+                            store,
+                            revision,
+                            protocol,
+                            broker,
+                            relationship,
+                            _evidence_incidences_at(
+                                store, revision, protocol, relationship_root
+                            ),
+                        )
+                    )
+                except (InvalidCell, RelationshipAuthorityDenied, KeyError):
+                    continue
             digests_by_root[relationship_root].setdefault(
                 generation, set()
             ).add(digest)

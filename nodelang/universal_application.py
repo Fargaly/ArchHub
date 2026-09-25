@@ -26767,11 +26767,14 @@ def provision_universal_view_session(
     _, relation_scopes, property_scopes = _canvas_scope_for_assigned(
         snapshot, registry, assigned_roots
     )
-    assigned_set = set(assigned_roots)
-    interface_scopes = tuple(
-        str(interface["id"])
-        for interface in _registered_canvas_interfaces(snapshot, registry)
-        if interface["owner"] in assigned_set
+    # The index is written with the derivation its reader verifies
+    # (_ensure_view_visibility_scope_projection), owner interface members
+    # included. Indexing only the registered ports left the first canvas
+    # read to COMMIT the rest -- inside the next gesture, between its
+    # snapshot and its commit, which then failed stale (group after a
+    # member view: "expected revision 942, current revision is 943").
+    interface_scopes = _top_scope_interface_index_roots(
+        snapshot, registry, assigned_roots
     )
     # A member view holds user content and the application roots the
     # founder released or shared to it (SPEC: members see released
@@ -43453,13 +43456,18 @@ def _compose_universal_selection(
     title = title.strip()
     if not title or len(title.encode("utf-8")) > 256:
         raise InvalidCell("composition title is empty or too large")
-    snapshot = store.dense_snapshot()
     view_session, context = _view_session_for_context(
         registry, authentication_context
     )
+    # Read the canvas BEFORE fixing the revision this gesture commits
+    # against: a read may still heal a view index, and a snapshot taken
+    # ahead of that heal made the whole gesture fail stale.
     projection = _interaction_canvas_at_revision(
-        store, registry, context, snapshot.revision, projected_canvas
+        store, registry, context, store.revision, projected_canvas
     )
+    snapshot = store.dense_snapshot()
+    if projection.get("revision", snapshot.revision) != snapshot.revision:
+        raise InvalidCell("composition projection is not the current revision")
     projected_nodes = tuple(projection.get("nodes", ()))
     if any(not isinstance(node, Mapping) for node in projected_nodes):
         raise InvalidCell("composition projection nodes are invalid")
@@ -51283,8 +51291,13 @@ def _reconcile_view_projection_grants(
     registry: UniversalApplicationRegistry,
     view_session: ApplicationViewSession,
     actor_root: str,
+    retired_roots: frozenset[str] = frozenset(),
 ) -> None:
     """Re-align signed projection grants with the visible set after undo/redo.
+
+    ``retired_roots`` are the roots an undone change had created. A signed
+    audience binding on one of them that the view no longer draws is
+    revoked, so undo never leaves a live grant on a group it took away.
 
     Undo restores the visibility cells byte-for-byte, but a signed grant
     cannot be resurrected by restoring old bytes -- the broker's anti-replay
@@ -51448,6 +51461,30 @@ def _reconcile_view_projection_grants(
                 resource_root,
             ),
         )
+    # The mirror of the reissue above: an undone composition that the view
+    # no longer draws keeps no ACTIVE audience binding. Only roots the
+    # undone change created are judged, so a nested or another view's
+    # composition is never touched.
+    drawn_roots = assigned | exposure_compositions
+    for relationship in verified.active_relationships:
+        if (
+            relationship.kind_root
+            == authority.identity_protocol.kinds["audience-binding"]
+            and relationship.target_root == authority.audience_root
+            and relationship.tenant_root == authority.tenant_root
+            and relationship.source_root in retired_roots
+            and relationship.source_root not in drawn_roots
+        ):
+            revoke_authority_relationship(
+                store,
+                authority.identity_protocol,
+                authority.relationship_broker,
+                authority.relationship_broker
+                .mint_from_trusted_administrator(actor_root),
+                relationship.root_id,
+                administrator_root=actor_root,
+                reason="compensation removed this resource",
+            )
     for target_root in sorted(assigned - set(signed_targets)):
         grant_authority_relationship(
             store,
@@ -51488,6 +51525,94 @@ def _reconcile_view_projection_grants(
         )
 
 
+def _signed_grant_incidence(
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+):
+    """A referrer that is the grant reconciler's own signed view grant.
+
+    Redo re-grants a restored composition with NEW signed generations
+    (fresh relationship roots); their incidences reference the composition
+    but belong to the grant reconciler, which revokes them after the undo.
+    Undo refused them as foreign references ("created Cell gained
+    references after the recorded transaction"), so undo right after redo
+    of a group always failed.
+
+    The referring incidence must point at the created Cell under check, and
+    its relationship must be registered, active, signature/generation-
+    verified, in this tenant, and one of the two shapes the reconciler
+    issues for a root THIS transaction created:
+      * delegation: reader principal -> this view's subject, scope = root,
+        actions exactly (read,);
+      * audience-binding: root -> the application audience, classification
+        scope, actions exactly (read,) -- revoked by the reconciler once
+        the undo leaves the root undrawn.
+    Any other relationship referencing the Cell still refuses the undo.
+    """
+    authority = registry.authorization
+    identity = authority.identity_protocol
+    member_role = identity.roles["relationship-member"]
+    read_only = (authority.protocol.actions["read"],)
+    registered: dict[int, frozenset[str]] = {}
+
+    def reconciled(
+        snapshot: Snapshot,
+        referrer: str,
+        target_root: str,
+        created_roots: frozenset[str],
+    ) -> bool:
+        relationship_root, separator, _tail = referrer.rpartition(":incidence:")
+        if not separator:
+            return False
+        roots = registered.get(snapshot.revision)
+        if roots is None:
+            roots = frozenset(
+                member.participant_id for member in read_relation(
+                    snapshot, identity.root_id, budget=100_000
+                )
+                if member.role_id == member_role
+            )
+            registered[snapshot.revision] = roots
+        if relationship_root not in roots:
+            return False
+        if not any(
+            member.incidence_id == referrer
+            and member.participant_id == target_root
+            for member in read_relation(
+                snapshot, relationship_root, budget=128
+            )
+        ):
+            return False
+        try:
+            relationship = verify_authority_relationship(
+                snapshot, identity, authority.relationship_broker,
+                relationship_root,
+            )
+        except (InvalidCell, RelationshipAuthorityDenied, KeyError):
+            return False
+        if (
+            relationship.tenant_root != authority.tenant_root
+            or relationship.action_roots != read_only
+        ):
+            return False
+        if relationship.kind_root == identity.kinds["delegation"]:
+            return (
+                relationship.source_root
+                == authority.resource_reader_principal_root
+                and relationship.target_root == view_session.subject_root
+                and relationship.scope_root in created_roots
+            )
+        if relationship.kind_root == identity.kinds["audience-binding"]:
+            return (
+                relationship.source_root in created_roots
+                and relationship.target_root == authority.audience_root
+                and relationship.scope_root == authority.classification_root
+            )
+        return False
+
+    return reconciled
+
+
 def undo_universal_change(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -51506,6 +51631,20 @@ def undo_universal_change(
     if operation_root not in snapshot.cells:
         raise InvalidCell("undo control binding has no graph authority")
     actor_root = registry.authorization.broker.resolve(context).subject_root
+    undone = history_state(
+        snapshot,
+        registry.change_history_protocol,
+        view_session.action_history_root,
+        history=store.at,
+    ).undo_root
+    retired_roots = frozenset(
+        change.target_root
+        for change in read_change_transaction(
+            snapshot, registry.change_history_protocol, undone,
+            history=store.at,
+        ).changes
+        if change.before is None
+    ) if undone is not None else frozenset()
     revision = undo_last_change(
         store,
         registry.change_history_protocol,
@@ -51513,9 +51652,10 @@ def undo_universal_change(
         actor_root=actor_root,
         session_root=view_session.root_id,
         operation_root=operation_root,
+        reconciled_referrer=_signed_grant_incidence(registry, view_session),
     ).revision
     _reconcile_view_projection_grants(
-        store, registry, view_session, actor_root
+        store, registry, view_session, actor_root, retired_roots
     )
     return store.revision
 

@@ -625,6 +625,61 @@ class _HeadRowReader:
         if not self._missing:
             self._missing = OrderedDict()
 
+    def hand_over(self, successor: "_HeadRowReader", rewritten) -> None:
+        """Move this reader's cache to the reader that replaces it at a rebase.
+
+        A rebase starts a reader pinned to the new head's revision. Entries
+        for identities no revision between the two bases wrote are the same
+        Cells at the new base, so they move across; everything else is
+        dropped. Afterwards this reader holds nothing: a snapshot that still
+        uses it reads its own base revision from SQLite, as after any
+        eviction. Without this every rebase left a full cache behind for
+        as long as anything referenced an older head.
+        """
+        if successor is self or successor._lock is not self._lock:
+            return
+        with self._lock:
+            moved = OrderedDict(
+                (key, cell) for key, cell in self._cache.items()
+                if key not in rewritten
+            )
+            costs = {key: self._cache_costs[key] for key in moved}
+            missing = OrderedDict(
+                (key, cost) for key, cost in self._missing.items()
+                if key not in rewritten
+            )
+            # The successor was published this commit; anything it already
+            # read is newer than what moves across, so it is kept.
+            for key, cell in successor._cache.items():
+                moved.pop(key, None)
+                costs.pop(key, None)
+            moved.update(successor._cache)
+            costs.update(successor._cache_costs)
+            successor._cache, successor._cache_costs = moved, costs
+            successor._cache_bytes = sum(costs.values())
+            for key in successor._cache:
+                missing.pop(key, None)
+            missing.update(successor._missing)
+            successor._missing = missing
+            successor._missing_bytes = sum(missing.values())
+            while successor._cache and (
+                len(successor._cache) > successor.MAX_CACHE_ENTRIES
+                or successor._positive_size() > successor.MAX_CACHE_BYTES
+            ):
+                oldest, _ = successor._cache.popitem(last=False)
+                successor._cache_bytes -= successor._cache_costs.pop(oldest)
+            while successor._missing and (
+                len(successor._missing) > successor.MAX_MISSING_ENTRIES
+                or successor._negative_size() > successor.MAX_MISSING_BYTES
+            ):
+                _, amount = successor._missing.popitem(last=False)
+                successor._missing_bytes -= amount
+            self._cache = OrderedDict()
+            self._cache_costs = {}
+            self._cache_bytes = 0
+            self._missing = OrderedDict()
+            self._missing_bytes = 0
+
     def cache_stats(self):
         with self._lock:
             return {"base_revision": self._base_revision, "positive_entries": len(self._cache),
@@ -3425,7 +3480,14 @@ class CellStore:
                 )
             else:
                 rebase = False
+            handover = None
             if rebase:
+                # Every identity written since the old reader's base revision
+                # lives in the overlay being folded, or in this commit.
+                handover = (
+                    base._reader,
+                    frozenset(base._overlay.keys()) | frozenset(delta),
+                )
                 # Allocate the next map before the fallible append, but do not
                 # read or publish it until SQLite confirms durability below.
                 # Its reader is distinct: changing the old reader's revision
@@ -3467,6 +3529,8 @@ class CellStore:
                     raise
             self._cells = published
             self._revision = next_revision
+            if handover is not None:
+                handover[0].hand_over(published._reader, handover[1])
             self._sqlite_head_overlay_bytes = next_overlay_bytes
             self._dense_snapshot_cache = None
             if next_accumulator is not None:

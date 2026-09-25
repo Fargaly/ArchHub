@@ -26,6 +26,7 @@ from types import MappingProxyType
 from typing import Callable, Iterable, Mapping, Sequence
 from urllib.parse import quote
 import uuid
+import weakref
 from weakref import WeakKeyDictionary
 
 from .artifact_verification_court import (
@@ -123,6 +124,7 @@ from .cell_authorization import (
     build_authorization_rule,
     read_authorization_policy,
     release_authorization_policy,
+    record_time_thresholds,
     require_authorization,
     require_authorizations,
     verify_authorization_policy,
@@ -23309,6 +23311,9 @@ def _project_universal_canvas_interpreter(
                 "connectable": False,
                 "derived": True,
             })
+        position_sources = _CANVAS_POSITION_SOURCES.get()
+        if position_sources is not None and x_row and y_row:
+            position_sources[root_id] = (x_row.value_root, y_row.value_root)
         nodes.append({
             "id": root_id,
             "label": title,
@@ -25751,20 +25756,7 @@ def _project_universal_canvas_interpreter(
             "label": projected_canvas["scope"]["current_label"],
         },
     )
-    canvas_signature_payload = {
-        "scope": projected_canvas["scope"]["current"],
-        "viewport": projected_canvas["viewport"],
-        "selection": projected_canvas["selection"],
-        "nodes": projected_canvas["nodes"],
-        "wires": projected_canvas["wires"],
-    }
-    projected_canvas["canvas_signature"] = "v1:" + hashlib.sha256(
-        json.dumps(
-            canvas_signature_payload,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    projected_canvas["canvas_signature"] = _canvas_signature(projected_canvas)
     projected_canvas["library"]["descriptor"] = render_view_template(
         snapshot,
         registry.view_template_protocol,
@@ -25852,6 +25844,465 @@ def _project_universal_canvas_interpreter(
     return projected_canvas
 
 
+# The full canvas is a function of one committed head, the viewer's resolved
+# identity, the verified relationship authority, the interpreting code and
+# the wall clock -- the clock only through expiries a decision compared
+# against. Reading the same answer twice walked a hundred thousand Cells
+# twice: on a 204,870-Cell graph every warm read cost ~1.1 s. The answer is
+# remembered as a disposable, revision-bound accelerator (SPEC 3.1.6-7), in
+# this process's memory only, keyed on the exact head mapping and never
+# served past the first expiry its build compared against. It is never
+# written to disk: nothing outlives the process, a sign-out or a key change,
+# and there is no stored row to forge. Deleting it only makes the next read
+# rebuild.
+_CANVAS_ACCELERATOR: "weakref.WeakKeyDictionary[CellStore, dict]" = (
+    weakref.WeakKeyDictionary()
+)
+_CANVAS_ACCELERATOR_LOCK = threading.Lock()
+_CANVAS_ACCELERATOR_ENTRIES = 4
+
+
+def canvas_accelerator_enabled() -> bool:
+    """The generic path stays one environment switch away."""
+    return os.environ.get("ARCHHUB_CANVAS_ACCELERATOR", "1") != "0"
+
+
+def clear_canvas_accelerator(store: CellStore | None = None) -> None:
+    """Forget the in-memory canvas answers; meaning is unchanged."""
+    with _CANVAS_ACCELERATOR_LOCK:
+        if store is None:
+            _CANVAS_ACCELERATOR.clear()
+        else:
+            _CANVAS_ACCELERATOR.pop(store, None)
+
+
+_CANVAS_POSITION_SOURCES: ContextVar[dict | None] = ContextVar(
+    "_CANVAS_POSITION_SOURCES", default=None
+)
+_CANVAS_DELTA_REVISIONS = 16
+_CANVAS_DELTA_CELLS = 512
+
+
+def _canvas_signature(projected_canvas: Mapping[str, object]) -> str:
+    """The canvas signature: scope, viewport, selection, nodes and wires."""
+    payload = {
+        "scope": projected_canvas["scope"]["current"],
+        "viewport": projected_canvas["viewport"],
+        "selection": projected_canvas["selection"],
+        "nodes": projected_canvas["nodes"],
+        "wires": projected_canvas["wires"],
+    }
+    return "v1:" + hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _relation_tail(cells, relation_root: str, budget: int = 200_000) -> str | None:
+    """The last chain Cell of one relation (the root is the first chain)."""
+    cursor = relation_root
+    for _ in range(budget):
+        chain = cells.get(cursor)
+        if chain is None or chain.link0 == NULL_CELL_ID:
+            return None
+        if chain.link1 == NULL_CELL_ID:
+            return cursor
+        cursor = chain.link1
+    return None
+
+
+def _small_relation_cells(cells, relation_root: str, budget: int = 64):
+    """(chain ids, incidence ids, members) of one small relation, or None.
+
+    Every chain and incidence Cell is read; a link atom must be empty and
+    the chain must end within `budget`, or the relation is not a shape the
+    canvas delta accepts.
+    """
+    chains: list[str] = []
+    incidences: list[str] = []
+    members: list[tuple[str, str]] = []
+    cursor = relation_root
+    for _ in range(budget):
+        chain = cells.get(cursor)
+        if chain is None or chain.atom != b"" or chain.link0 == NULL_CELL_ID:
+            return None
+        incidence = cells.get(chain.link0)
+        if incidence is None or incidence.atom != b"" or chain.link0 in incidences:
+            return None
+        chains.append(cursor)
+        incidences.append(chain.link0)
+        members.append((incidence.link0, incidence.link1))
+        if chain.link1 == NULL_CELL_ID:
+            return chains, incidences, members
+        cursor = chain.link1
+    return None
+
+
+def _canvas_index_tails(store, registry, authentication_context):
+    """Tails of the three relations a first placement appends to."""
+    snapshot = store.dense_snapshot()
+    view_session, _context = _view_session_for_context(
+        registry, authentication_context
+    )
+    roles = registry.roles
+    tails = {}
+    for index_root, role in (
+        (view_session.visibility_root, roles["property"]),
+        (registry.canvas_root, roles["property"]),
+        (view_session.properties_lens_root, roles["scope"]),
+    ):
+        tail = _relation_tail(snapshot.cells, index_root)
+        if tail is None or index_root in tails:
+            return None
+        tails[index_root] = (tail, role)
+    return tails
+
+
+def _canvas_position_delta(store, registry, key, cells, authentication_context):
+    """Answer a node move from the previous head's answer, or None to rebuild.
+
+    A drag commits two value Cells per moved node and appends one change
+    transaction to the session history. Rebuilding the whole canvas for that
+    re-walked ~105k Cells. The delta is taken only when EVERY Cell written
+    since a remembered answer is one of exactly these shapes, decided from
+    the commits' own written Cells:
+
+    * a replaced position value Cell of a node in that answer (links
+      unchanged) -- its node's x or y is re-read the way the build reads it;
+    * a Cell of a change transaction created in that span -- its chain,
+      its incidences under the change-history roles and its created
+      participants (the record), each read and shape-checked -- the incidence
+      that registers it under the history role, the chain Cell that holds
+      the incidence, or the history chain tail whose only change is to link
+      that new chain Cell;
+    * a node's first hand placement: a new property relation owned by a
+      node in that answer, labelled `placed` (read-only, value `user`) or
+      `position_x`/`position_y`, whose only registrations are exactly three
+      new incidences -- property in the view's visibility index, property
+      in the canvas index, scope in the view's Properties lens -- each
+      reached by walking forward from that relation's tail Cell as recorded
+      when the answer was built, through the new chain Cells that append
+      them.
+
+    Any other Cell -- authority, grant, visibility, property, placement,
+    anything unknown -- rebuilds. The history section is re-projected by
+    the interpreter's own function; if undo/redo applicability moved, the
+    toolbar moved with it, so that rebuilds too.
+    """
+    with _CANVAS_ACCELERATOR_LOCK:
+        entries = list(_CANVAS_ACCELERATOR.get(store, {}).items())
+    base = None
+    for (entry_registry, entry_key), value in entries:
+        if (
+            entry_registry == id(registry)
+            and entry_key[1:] == key[1:]
+            and value[5] is not None
+            and value[4] < key[0]
+            and key[0] - value[4] <= _CANVAS_DELTA_REVISIONS
+            and (base is None or value[4] > base[4])
+        ):
+            base = value
+    if base is None:
+        return None
+    old_cells, filled_at, valid_until, encoded, old_revision, sources, tails = base
+    changed: set[str] = set()
+    for revision in range(old_revision + 1, key[0] + 1):
+        changed.update(store.revision_changes(revision))
+        if len(changed) > _CANVAS_DELTA_CELLS:
+            return None
+    history = registry.change_history_protocol
+    transaction_role = history.role("transaction")
+    value_owner = {}
+    for root_id, (x_root, y_root) in sources.items():
+        value_owner[x_root] = (root_id, "x")
+        value_owner[y_root] = (root_id, "y")
+    created = {cell_id for cell_id in changed if old_cells.get(cell_id) is None}
+    incidences = {
+        cell_id for cell_id in created
+        if cells[cell_id].link0 == transaction_role
+        and cells[cell_id].link1 in created
+    }
+    transactions = {cells[cell_id].link1 for cell_id in incidences}
+    history_roles = set(history.roles.values())
+    transaction_cells: set[str] = set()
+    for transaction_root in transactions:
+        shape = _small_relation_cells(cells, transaction_root)
+        if shape is None:
+            return None
+        chains, parts, members = shape
+        if any(role not in history_roles for role, _participant in members):
+            return None
+        own = {
+            cell_id for cell_id in created
+            if cell_id == transaction_root
+            or cell_id.startswith(transaction_root + ":")
+        }
+        read = set(chains) | set(parts) | {
+            participant for _role, participant in members
+            if participant in own
+        }
+        if own != read:
+            return None
+        transaction_cells |= read
+    roles = registry.roles
+    placement_incidences = {
+        cell_id for cell_id in created
+        if cells[cell_id].link0 in (roles["property"], roles["scope"])
+        and cells[cell_id].link1 in created
+    }
+    placements = {cells[cell_id].link1 for cell_id in placement_incidences}
+    if placements & transactions:
+        return None
+    new_chains = {
+        cell_id for cell_id in created
+        if cells[cell_id].link0 in incidences
+        or cells[cell_id].link0 in placement_incidences
+    }
+    snapshot = store.dense_snapshot()
+    view_session, _context = _view_session_for_context(
+        registry, authentication_context
+    )
+    answer = json.loads(encoded)
+    nodes = {node.get("id"): node for node in answer.get("nodes", ())}
+    if any(node.get("placed") is False for node in answer.get("nodes", ())):
+        # Cards without a stored position are drawn from the placed cards'
+        # left and bottom edges (_place_unplaced_canvas_nodes); any move can
+        # shift those edges, so such a canvas is rebuilt.
+        return None
+    selected_roots = {
+        root for root in (answer.get("selected"), *(answer.get("selection") or ()))
+        if isinstance(root, str)
+    }
+    if any(not isinstance(root, str) for root in (answer.get("selection") or ())):
+        return None
+    placed: dict[str, dict[str, str]] = {}
+    property_cells: set[str] = set()
+    for relation_root in placements:
+        registrations = sorted(
+            cells[cell_id].link0 for cell_id in placement_incidences
+            if cells[cell_id].link1 == relation_root
+        )
+        if registrations != sorted(
+            (roles["property"], roles["property"], roles["scope"])
+        ):
+            return None
+        shape = _small_relation_cells(cells, relation_root, budget=8)
+        if shape is None:
+            return None
+        chains, parts, relation_members = shape
+        own = {
+            cell_id for cell_id in created
+            if cell_id == relation_root or cell_id.startswith(relation_root + ":")
+        }
+        if own != set(chains) | set(parts):
+            return None
+        property_cells.update(own)
+        by_role: dict[str, list[str]] = {}
+        for role_id, participant_id in relation_members:
+            by_role.setdefault(role_id, []).append(participant_id)
+        owner = by_role.pop(roles["owner"], [])
+        value = by_role.pop(roles["value"], [])
+        label = by_role.pop(roles["label"], [])
+        read_only = by_role.pop(roles["read-only"], [])
+        if (
+            by_role or len(owner) != 1 or len(value) != 1 or len(label) != 1
+            or value[0] not in created or label[0] not in created
+            or owner[0] not in nodes or owner[0] in selected_roots
+        ):
+            return None
+        if any(
+            (cells[root].link0, cells[root].link1) != (NULL_CELL_ID, NULL_CELL_ID)
+            for root in (value[0], label[0])
+        ):
+            return None
+        name = cells[label[0]].atom.decode("utf-8", "replace")
+        if name == "placed":
+            if read_only != [roles["read-only"]]:
+                return None
+        elif name in ("position_x", "position_y"):
+            if read_only:
+                return None
+        else:
+            return None
+        if name in placed.setdefault(owner[0], {}):
+            return None
+        placed[owner[0]][name] = value[0]
+        property_cells.update((value[0], label[0]))
+    new_tails = dict(tails or {})
+    appended_tails: set[str] = set()
+    if placements:
+        if tails is None:
+            return None
+        found: dict[str, str] = {}
+        for index_root, (tail, role) in tails.items():
+            if tail not in changed:
+                continue
+            old, current = old_cells.get(tail), cells[tail]
+            if (
+                old is None or old.link1 != NULL_CELL_ID
+                or (old.link0, old.atom) != (current.link0, current.atom)
+            ):
+                return None
+            appended_tails.add(tail)
+            cursor, last, members = current.link1, tail, set()
+            while cursor != NULL_CELL_ID:
+                if cursor not in created or cursor not in new_chains:
+                    return None
+                incidence = cells[cursor].link0
+                if (
+                    incidence not in placement_incidences
+                    or cells[incidence].link0 != role
+                    or incidence in found
+                ):
+                    return None
+                found[incidence] = index_root
+                members.add(cells[incidence].link1)
+                last, cursor = cursor, cells[cursor].link1
+            if members != placements:
+                return None
+            new_tails[index_root] = (last, role)
+        if set(found) != placement_incidences or len(appended_tails) != 3:
+            return None
+    moved: dict[str, dict[str, str]] = {}
+    for cell_id in changed:
+        cell = cells[cell_id]
+        old = old_cells.get(cell_id)
+        if cell_id in value_owner:
+            if old is None or (old.link0, old.link1) != (cell.link0, cell.link1):
+                return None
+            root_id, axis = value_owner[cell_id]
+            moved.setdefault(root_id, {})[axis] = cell_id
+        elif cell_id in incidences or cell_id in placement_incidences:
+            if cell.atom != b"":
+                return None
+        elif cell_id in property_cells:
+            continue
+        elif cell_id in new_chains:
+            if cell.atom != b"" or (
+                cell.link1 != NULL_CELL_ID and cell.link1 not in new_chains
+            ):
+                return None
+        elif old is None:
+            if cell_id not in transaction_cells:
+                return None
+        elif (
+            old.link0 == cell.link0
+            and old.atom == cell.atom
+            and old.link1 == NULL_CELL_ID
+            and cell.link1 in new_chains
+            and (
+                cell_id in appended_tails
+                or (
+                    cells.get(old.link0) is not None
+                    and cells[old.link0].link0 == transaction_role
+                )
+            )
+        ):
+            continue
+        else:
+            return None
+    for root_id, axes in moved.items():
+        node = nodes.get(root_id)
+        if node is None:
+            return None
+        for axis, value_root in axes.items():
+            node[axis] = float(_text(snapshot, value_root))
+    sources = dict(sources)
+    for root_id, names in placed.items():
+        node = nodes[root_id]
+        if "placed" in names:
+            node["pinned"] = _text(snapshot, names["placed"]) == _USER_PLACEMENT
+        created_axes = {"position_x", "position_y"} & set(names)
+        if created_axes:
+            # Both coordinates are created together or the node is rebuilt.
+            if (
+                created_axes != {"position_x", "position_y"}
+                or root_id in sources
+                or root_id in moved
+            ):
+                return None
+            node["x"] = float(_text(snapshot, names["position_x"]))
+            node["y"] = float(_text(snapshot, names["position_y"]))
+            node["placed"] = True
+            sources[root_id] = (names["position_x"], names["position_y"])
+    action_history = json.loads(json.dumps(_project_session_action_history(
+        snapshot, registry, view_session, store=store
+    )))
+    held_history = answer.get("action_history")
+    if (
+        not isinstance(held_history, Mapping)
+        or bool(held_history.get("can_undo")) != bool(action_history["can_undo"])
+        or bool(held_history.get("can_redo")) != bool(action_history["can_redo"])
+    ):
+        return None
+    answer["action_history"] = action_history
+    answer["revision"] = snapshot.revision
+    selected_relation = answer.get("selected_relation")
+    if isinstance(selected_relation, dict) and "observed_revision" in selected_relation:
+        selected_relation["observed_revision"] = snapshot.revision
+    answer["canvas_signature"] = _canvas_signature(answer)
+    return filled_at, valid_until, json.dumps(answer), sources, new_tails
+
+
+def _canvas_accelerator_key(
+    store: CellStore,
+    registry: UniversalApplicationRegistry,
+    authentication_context: object | None,
+    now: float,
+):
+    """Everything the full canvas answer depends on, read without projecting."""
+    snapshot = store.snapshot()
+    authority = registry.authorization
+    authority_snapshot = verify_relationship_authority_snapshot(
+        snapshot,
+        authority.identity_protocol,
+        authority.relationship_broker,
+        now=now,
+    )
+    view_session, context = _view_session_for_context(
+        registry, authentication_context
+    )
+    identity = authority.broker.resolve(context, now=now)
+    return snapshot.cells, (
+        snapshot.revision,
+        view_session.root_id,
+        identity.subject_root,
+        tuple(identity.principal_roots),
+        identity.tenant_root,
+        identity.assurance_root,
+        authority_snapshot.registered_roots,
+        tuple(
+            relationship.root_id
+            for relationship in authority_snapshot.active_relationships
+        ),
+        tuple(sorted(authority_snapshot.expired_roots)),
+        tuple(sorted(authority_snapshot.invalid_reasons.items())),
+    )
+
+
+def filled_at_ok(delta, started) -> bool:
+    """A delta inherits its base's time window; outside it, rebuild."""
+    return delta[0] <= started < delta[1]
+
+
+def _remember_canvas_answer(
+    store, memory_key, cells, filled_at, valid_until, encoded, sources=None,
+    tails=None,
+):
+    with _CANVAS_ACCELERATOR_LOCK:
+        entries = _CANVAS_ACCELERATOR.setdefault(store, {})
+        entries.pop(memory_key, None)
+        # The newest older head stays: it is the base of a position delta.
+        older = [item for item, value in entries.items() if value[0] is not cells]
+        for stale in older[:-1]:
+            entries.pop(stale, None)
+        while len(entries) >= _CANVAS_ACCELERATOR_ENTRIES:
+            entries.pop(next(iter(entries)))
+        entries[memory_key] = (
+            cells, filled_at, valid_until, encoded, memory_key[1][0], sources,
+            tails,
+        )
+
+
 def project_universal_canvas(
     store: CellStore,
     registry: UniversalApplicationRegistry,
@@ -25859,11 +26310,65 @@ def project_universal_canvas(
     authentication_context: object | None = None,
 ) -> dict[str, object]:
     """Exhaustively interpret the current canonical canvas."""
-    return _project_universal_canvas_interpreter(
-        store,
-        registry,
-        authentication_context=authentication_context,
+    if not canvas_accelerator_enabled():
+        return _project_universal_canvas_interpreter(
+            store,
+            registry,
+            authentication_context=authentication_context,
+        )
+    started = time.time()
+    with record_time_thresholds() as thresholds:
+        cells, key = _canvas_accelerator_key(
+            store, registry, authentication_context, started
+        )
+        memory_key = (id(registry), key)
+        with _CANVAS_ACCELERATOR_LOCK:
+            held = _CANVAS_ACCELERATOR.get(store, {}).get(memory_key)
+        if held is not None:
+            held_cells, filled_at, valid_until, encoded = held[:4]
+            if held_cells is cells and filled_at <= started < valid_until:
+                return json.loads(encoded)
+        delta = _canvas_position_delta(
+            store, registry, key, cells, authentication_context
+        )
+        if delta is not None and filled_at_ok(delta, started):
+            filled_at, valid_until, encoded, sources, tails = delta
+            _remember_canvas_answer(
+                store, memory_key, cells, filled_at, valid_until, encoded,
+                sources, tails,
+            )
+            return json.loads(encoded)
+        sources: dict = {}
+        handle = _CANVAS_POSITION_SOURCES.set(sources)
+        try:
+            projection = _project_universal_canvas_interpreter(
+                store,
+                registry,
+                authentication_context=authentication_context,
+            )
+        finally:
+            _CANVAS_POSITION_SOURCES.reset(handle)
+    after = store.snapshot()
+    if after.cells is not cells or after.revision != key[0]:
+        # The build itself committed (visibility repair); the next read
+        # keys on the head it produced.
+        return projection
+    try:
+        encoded = json.dumps(projection)
+    except (TypeError, ValueError):
+        return projection
+    if json.loads(encoded) != projection:
+        return projection
+    future = [value for value in thresholds if value > started]
+    valid_until = min(future) if future else 1e308
+    try:
+        tails = _canvas_index_tails(store, registry, authentication_context)
+    except (InvalidCell, KeyError, AuthorizationDenied):
+        tails = None
+    _remember_canvas_answer(
+        store, memory_key, cells, started, valid_until, encoded, sources, tails
     )
+    return projection
 
 
 @with_relation_projection_scope

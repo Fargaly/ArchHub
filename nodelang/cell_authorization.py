@@ -9,6 +9,7 @@ says "authenticated" or "released" cannot mint either authority.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -298,6 +299,7 @@ class AuthenticationBroker:
             if entry is None:
                 raise AuthorizationDenied("unknown authenticated context")
             current = time.time() if now is None else now
+            note_time_threshold(entry.expires_at)
             if current >= entry.expires_at:
                 raise AuthorizationDenied("authenticated context expired")
             return entry
@@ -842,6 +844,34 @@ def _request_roots(request: AuthorizationRequest) -> tuple[str, ...]:
     ) if root is not None)
 
 
+
+# A read decision that compares the clock against a stored expiry is only
+# true until that expiry. A disposable projection accelerator records every
+# threshold its build compared against, so a remembered answer is never
+# served past the moment the uncached build would have answered differently.
+_TIME_THRESHOLDS: ContextVar[list[float] | None] = ContextVar(
+    "_TIME_THRESHOLDS", default=None
+)
+
+
+def note_time_threshold(value: float) -> None:
+    """Report one wall-clock threshold a decision just compared against."""
+    thresholds = _TIME_THRESHOLDS.get()
+    if thresholds is not None:
+        thresholds.append(float(value))
+
+
+@contextmanager
+def record_time_thresholds():
+    """Collect every wall-clock threshold consulted inside this block."""
+    thresholds: list[float] = []
+    handle = _TIME_THRESHOLDS.set(thresholds)
+    try:
+        yield thresholds
+    finally:
+        _TIME_THRESHOLDS.reset(handle)
+
+
 def _rule_matches(
     snapshot: Snapshot,
     rule: AuthorizationRule,
@@ -892,6 +922,7 @@ def _rule_matches(
             )
         except (UnicodeDecodeError, ValueError) as exc:
             raise InvalidCell("authorization rule expiry is invalid") from exc
+        note_time_threshold(expires_at)
         if now >= expires_at:
             return False
     if rule.max_invocations_root is not None:

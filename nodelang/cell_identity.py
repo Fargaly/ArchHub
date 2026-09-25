@@ -22,6 +22,7 @@ from .cell_authorization import (
     AuthorizationProtocol,
     AuthorizationRequest,
     _AuthenticationEntry,
+    note_time_threshold,
     require_authorization,
 )
 from .cell_protocols import (
@@ -1054,6 +1055,7 @@ def verify_authority_relationship(
             expiry_value = float(expiry)
         except ValueError as exc:
             raise InvalidCell("authority relationship expiry is invalid") from exc
+        note_time_threshold(expiry_value)
         if current >= expiry_value and not allow_expired:
             raise RelationshipAuthorityDenied("authority relationship expired")
     if require_active and relationship.state_root != protocol.states["active"]:
@@ -1364,6 +1366,7 @@ def verify_relationship_authority_snapshot(
                     raise InvalidCell(
                         "authority relationship expiry is invalid"
                     ) from exc
+                note_time_threshold(expiry_value)
                 if current >= expiry_value:
                     expired_roots.add(relationship_root)
             relationships[relationship_root] = relationship

@@ -5767,12 +5767,16 @@ class ApplicationServer:
                 # header line whatever the caller passed.
                 if not _COOKIE_OCTETS.fullmatch(str(token or '')):
                     raise AuthorizationDenied('malformed browser session token')
+                # No Max-Age: the cookie lives as long as the window that
+                # holds it. The server-side session decides whether the token
+                # is still good; a one-hour cookie outlived by an open window
+                # made every reload after an hour a "desktop bootstrap is
+                # required" page while the same session still answered.
                 attributes = [
                     'ArchHub-Session=%s' % token,
                     'Path=/',
                     'HttpOnly',
                     'SameSite=Strict',
-                    'Max-Age=3600',
                 ]
                 if owner.httpd.server_address[0] not in (
                     '127.0.0.1', 'localhost', '::1'

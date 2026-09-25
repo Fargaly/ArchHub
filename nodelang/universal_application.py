@@ -19025,10 +19025,31 @@ def _canvas_endpoint(
                     for boundary_member in boundary_members
                     if boundary_member.role_id == registry.roles["authority"]
                 }
-                if (
-                    member.participant_id not in seeds
-                    or member.incidence_id not in incidences
-                ):
+                if member.incidence_id not in incidences:
+                    continue
+                # A group inside a group seeds on the inner group's
+                # boundary port: follow nested boundaries that carry this
+                # same wire incidence down to the wire's own endpoint.
+                pending = list(seeds)
+                followed: set[str] = set()
+                while pending and member.participant_id not in seeds:
+                    seed_root = pending.pop()
+                    if seed_root in followed:
+                        continue
+                    followed.add(seed_root)
+                    nested_members = _relation_members_or_none(
+                        snapshot, seed_root
+                    )
+                    if not nested_members or member.incidence_id not in {
+                        nested.participant_id for nested in nested_members
+                        if nested.role_id == registry.roles["authority"]
+                    }:
+                        continue
+                    for nested in nested_members:
+                        if nested.role_id == registry.roles["seed"]:
+                            seeds.add(nested.participant_id)
+                            pending.append(nested.participant_id)
+                if member.participant_id not in seeds:
                     continue
                 boundary = project(boundary_root)
                 if boundary is None or boundary["side"] != expected_side:
@@ -19144,17 +19165,42 @@ def _nested_scope_endpoint_indexes(
                 raise InvalidCell(
                     "canvas interface has multiple visible owners"
                 )
-            for seed_root in projected.get("relation_roots", ()):
-                for incidence_root in projected.get(
-                    "endpoint_incidences", ()
-                ):
-                    key = (str(seed_root), str(incidence_root))
+            for incidence_root in projected.get("endpoint_incidences", ()):
+                # A group inside a group seeds its boundary on the INNER
+                # group's boundary port, not on the wire's own endpoint.
+                # Follow the seeds down through each nested boundary that
+                # carries this same wire incidence, so a wire into a card
+                # any number of groups deep resolves to the visible group.
+                pending = [str(seed) for seed in projected.get(
+                    "relation_roots", ()
+                )]
+                followed: set[str] = set()
+                while pending:
+                    seed_root = pending.pop()
+                    if seed_root in followed:
+                        continue
+                    followed.add(seed_root)
+                    key = (seed_root, str(incidence_root))
                     previous_boundary = boundaries.setdefault(
                         key, (owner_root, projected)
                     )
                     if previous_boundary[0] != owner_root:
                         raise InvalidCell(
                             "canvas boundary has multiple visible owners"
+                        )
+                    if seed_root not in interface_cache:
+                        interface_cache[seed_root] = _project_canvas_interface(
+                            snapshot, registry.assembly_protocol, seed_root
+                        )
+                    nested = interface_cache[seed_root]
+                    if nested and str(incidence_root) in {
+                        str(root) for root in nested.get(
+                            "endpoint_incidences", ()
+                        )
+                    }:
+                        pending.extend(
+                            str(root)
+                            for root in nested.get("relation_roots", ())
                         )
     return owner_interfaces, boundaries
 
@@ -43430,6 +43476,81 @@ def _reconcile_top_visibility_index(
         create, replace = _fold_patch_cells(
             (*create, *growth.create), replace, growth.replace
         )
+        overlay = overlay_read_snapshot(
+            snapshot, create=create, replace=tuple(replace.values())
+        )
+    # Interfaces ride the same law as the reader
+    # (_ensure_view_visibility_scope_projection): grow what the scope and
+    # the indexed wires require, then shed non-application interfaces whose
+    # owner no longer resolves at this level. Left to the reader, ungrouping
+    # an outer group made the next canvas READ commit the inner group's
+    # ports ("READ WROTE 938 -> 939").
+    interface_role = registry.assembly_protocol.role("interface")
+    members = read_relation(
+        overlay, view_session.visibility_root, budget=100_000
+    )
+    indexed_relations = tuple(
+        member.participant_id for member in members
+        if member.role_id == registry.roles["relation"]
+    )
+    indexed_interfaces = {
+        member.participant_id for member in members
+        if member.role_id == interface_role
+    }
+    gained = tuple(dict.fromkeys(
+        root for root in (
+            *_top_scope_interface_index_roots(overlay, registry, assigned),
+            *_visibility_required_interfaces(
+                overlay, registry, assigned, indexed_relations
+            ),
+        )
+        if root not in indexed_interfaces
+    ))
+    if gained:
+        growth = prepare_append_relation_members(
+            overlay,
+            view_session.visibility_root,
+            ((interface_role, root) for root in gained),
+            budget=100_000,
+        )
+        create, replace = _fold_patch_cells(
+            (*create, *growth.create), replace, growth.replace
+        )
+        overlay = overlay_read_snapshot(
+            snapshot, create=create, replace=tuple(replace.values())
+        )
+        members = read_relation(
+            overlay, view_session.visibility_root, budget=100_000
+        )
+    application_interfaces = {
+        member.participant_id
+        for member in read_relation(
+            overlay, registry.application_root, budget=100_000
+        )
+        if member.role_id == interface_role
+    }
+    candidates = {
+        member.participant_id for member in members
+        if member.role_id == interface_role
+    } - application_interfaces
+    if candidates:
+        owner_index, _boundary = _nested_scope_endpoint_indexes(
+            overlay, registry, assigned, {}
+        )
+        stale_incidences = tuple(
+            member.incidence_id for member in members
+            if member.role_id == interface_role
+            and member.participant_id in candidates
+            and member.participant_id not in owner_index
+        )
+        if stale_incidences:
+            shed = prepare_remove_relation_members(
+                overlay,
+                view_session.visibility_root,
+                stale_incidences,
+                budget=100_000,
+            )
+            create, replace = _fold_patch_cells(create, replace, shed.replace)
     return create, replace
 
 

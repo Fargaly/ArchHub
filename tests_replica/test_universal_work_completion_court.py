@@ -45,6 +45,24 @@ def _green_runtime_compliance(_invocation):
     return CourtResult(True, checks, {"adapter": "test-runtime-auditor"})
 
 
+class _InProcessOwner:
+    """The desktop owner acting in process.
+
+    4e4bae7 refuses every unbound machine-pipe write before the graph lock
+    ("Unbound machine writes are refused before the lock"); the owner creates
+    Work through the in-process dispatch, as _FounderLocalClient does in
+    test_application_machine_transport.py.
+    """
+
+    def __init__(self, server):
+        self._server = server
+
+    def request(self, method, path, body=None):
+        result = self._server.dispatch_universal_machine_route(
+            {"method": method, "path": path, "body": dict(body or {})})
+        return json.loads(json.dumps(result))
+
+
 def _work(client, *, title, proof):
     return client.request("POST", "/api/universal/work", {
         "title": title,
@@ -174,7 +192,10 @@ def test_restore_backfills_legacy_governed_work_claim_binding():
     )
     item = next(row for row in status["items"] if row["root"] == work_root)
     assert item["claimant_session"] == session.root_id
-    assert item["claimant_agent_body"] == restored.agent_body.body.root_id
+    # 7bd0563 gives each harness runtime its own body, never founder
+    # authority, so a Codex claim is held by the Codex body.
+    assert item["claimant_agent_body"] == "app:agent-body:codex"
+    assert item["claimant_agent_body"] != restored.agent_body.body.root_id
     assert item["claim_binding"].startswith("app:governed-work-claim-binding:")
     assert item["claim_binding"] != original_binding
 
@@ -191,7 +212,7 @@ def test_independent_court_alone_accepts_or_returns_submitted_work(tmp_path):
         universal_workspace_root=tmp_path,
         runtime_compliance_runner=_green_runtime_compliance,
     ).start()
-    owner = UniversalRuntimeClient(descriptor, provider)
+    owner = _InProcessOwner(server)
     agent = UniversalRuntimeClient(descriptor, provider)
     other = UniversalRuntimeClient(descriptor, provider)
     try:
@@ -263,7 +284,7 @@ def test_court_rejects_path_escape_without_reading_outside_cde(tmp_path):
         universal_workspace_root=tmp_path,
         runtime_compliance_runner=_green_runtime_compliance,
     ).start()
-    owner = UniversalRuntimeClient(descriptor, provider)
+    owner = _InProcessOwner(server)
     agent = UniversalRuntimeClient(descriptor, provider)
     try:
         escaped = _work(owner, title="Escaping work", proof="../outside.flag")

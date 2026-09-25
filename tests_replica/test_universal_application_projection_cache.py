@@ -63,6 +63,9 @@ def test_canvas_projection_uses_one_request_local_relation_cache(
         return original(snapshot, relation_root, **kwargs)
 
     monkeypatch.setattr(application_module, "read_relation", checked)
+    # c9a6594 remembers a whole canvas answer per head, and this module's
+    # fixture already projected it, so forget it: the court measures a build.
+    application_module.clear_canvas_accelerator(store)
     project_universal_canvas(store, registry)
 
     assert len(cache_identities) == 1
@@ -110,6 +113,9 @@ def test_interaction_projection_walks_the_visible_canvas_once(monkeypatch):
     actual_visible = dict(projection)
     actual_visible.pop("revision")
     actual_visible.pop("interaction_projection")
+    # 326b657 binds the interaction canvas to its Workshop conversation; a
+    # plain canvas read has no Workshop scope.
+    assert actual_visible.pop("workshop_scope")["graph_id"]
     assert actual_visible == expected_visible
 
 

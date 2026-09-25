@@ -1209,7 +1209,13 @@ def test_issue_reads_legacy_registry_once(indexed, monkeypatch):
     before = store.revision
     issue(6)
     assert reads.count(before) == 1
-    # The legacy writer additionally verifies its new graph record after commit.
-    assert len(reads) == (1 if indexed else 2)
+    # 72bcaae (SPEC 3.3, founder order 2026-09-23) deleted the graph-composition
+    # issue path: a store without attached storage gets it attached, so both
+    # parameters take the indexed path, read the registry once, and never
+    # write the new permit into the graph.
+    assert len(reads) == 1
+    assert store.revision == before
+    assert "court:linear:6" not in store.snapshot().cells
+    assert store._cde_operational_storage.get_permit("court:linear:6") is not None
     with pytest.raises(InvalidCell, match="not registered"):
         cde._read_cde_write_permit_unchecked(store.snapshot(), protocol, "court:absent")

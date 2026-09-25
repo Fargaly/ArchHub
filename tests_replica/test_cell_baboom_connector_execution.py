@@ -20,7 +20,9 @@ from nodelang.cell_adapters import (
     grant_permission,
     release_adapter_definition,
 )
-from nodelang.cell_baboom_connector_execution import (
+# 326b657 deleted nodelang/cell_baboom_connector_execution.py, a byte-identical
+# duplicate of nodelang/cell_connector_execution.py, and kept the latter.
+from nodelang.cell_connector_execution import (
     bootstrap_baboom_connector_execution_protocol,
     create_connector_delegation,
     create_connector_execution_grant,

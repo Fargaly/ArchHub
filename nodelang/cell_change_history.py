@@ -283,10 +283,62 @@ def change_transaction_header_memo(
         return memo
 
 
+class _ValidatedTransactionMemo(ChangeTransactionHeaderMemo):
+    """Fully validated transactions, under the header memo's exact proof.
+
+    A validated transaction is a function of the Cells under its own prefix
+    (written once, never again) and of immutable earlier revisions (its
+    base and result images). The same prefix-scoped invalidation that keeps
+    a header therefore keeps the validated transaction; a hit stands in for
+    a walk run under an equal or larger traversal budget only.
+    """
+
+    def get(self, snapshot, transaction_root, budget):
+        with self._lock:
+            if snapshot.cells is not self._cells:
+                return None
+            reuse = self._entries.get(transaction_root)
+        if reuse is None or reuse.steps > budget:
+            self.misses += 1
+            return None
+        self.hits += 1
+        return reuse.header
+
+
+_VALIDATED_TRANSACTION_MEMOS: WeakKeyDictionary[
+    CellStore, _ValidatedTransactionMemo
+] = WeakKeyDictionary()
+
+
+def _validated_transaction_memo(store) -> _ValidatedTransactionMemo | None:
+    subscribe = getattr(store, "subscribe", None)
+    if not callable(subscribe):
+        return None
+    with _CHANGE_TRANSACTION_HEADER_MEMO_LOCK:
+        try:
+            memo = _VALIDATED_TRANSACTION_MEMOS.get(store)
+        except TypeError:
+            return None
+        if memo is not None:
+            return memo
+        memo = _ValidatedTransactionMemo()
+        _VALIDATED_TRANSACTION_MEMOS[store] = memo
+        memo_ref = ref(memo)
+
+        def invalidate(event) -> None:
+            active = memo_ref()
+            if active is not None:
+                active.forget(event.touched)
+
+        subscribe(invalidate)
+        return memo
+
+
 def forget_change_transaction_header_memo(store: CellStore) -> None:
     """Delete one Store accelerator; the next projection rebuilds it."""
     with _CHANGE_TRANSACTION_HEADER_MEMO_LOCK:
         _CHANGE_TRANSACTION_HEADER_MEMOS.pop(store, None)
+        _VALIDATED_TRANSACTION_MEMOS.pop(store, None)
 
 
 def bootstrap_change_history_protocol(
@@ -471,10 +523,30 @@ def read_change_transaction(
 
     ``history(revision) -> Snapshot`` (normally ``store.at``) supplies the
     images of a compact record; a record with copied images needs none.
+    With ``store.at`` the validated read is reused until a commit writes
+    under the transaction's prefix (_ValidatedTransactionMemo).
     """
-    return _read_change_transaction(
+    owner = getattr(history, "__self__", None)
+    validated = (
+        _validated_transaction_memo(owner)
+        if _store_bound_history(owner, history)
+        else None
+    )
+    if validated is not None:
+        validated.bind(owner, snapshot)
+        reused = validated.get(snapshot, transaction_root, budget)
+        if reused is not None:
+            if project_change_history_protocol(
+                snapshot, protocol.root_id, budget=min(budget, 256)
+            ) != protocol:
+                raise InvalidCell("change-history protocol authority drifted")
+            return reused
+    transaction = _read_change_transaction(
         snapshot, protocol, transaction_root, budget=budget, history=history
     )
+    if validated is not None:
+        validated.put(snapshot, transaction_root, transaction, budget)
+    return transaction
 
 
 def _compact_record(snapshot: Snapshot, record_root: str) -> dict:
@@ -755,6 +827,14 @@ _HISTORY_WALK_MEMO: "WeakKeyDictionary[object, tuple]" = WeakKeyDictionary()
 _HISTORY_WALK_LOCK = threading.Lock()
 
 
+def _store_bound_history(owner, history) -> bool:
+    """``history`` is exactly its Store's own ``at`` (the journal it reads)."""
+    try:
+        return owner is not None and history == getattr(owner, "at", None)
+    except Exception:
+        return False
+
+
 def _history_state_and_transactions(
     snapshot: Snapshot,
     protocol: ChangeHistoryProtocol,
@@ -771,7 +851,7 @@ def _history_state_and_transactions(
     """
     owner = getattr(history, "__self__", None)
     key = (snapshot.revision, id(snapshot.cells), history_root, protocol, budget)
-    if owner is not None and getattr(history, "__name__", "") == "at":
+    if _store_bound_history(owner, history):
         with _HISTORY_WALK_LOCK:
             try:
                 held = _HISTORY_WALK_MEMO.get(owner)
@@ -780,16 +860,34 @@ def _history_state_and_transactions(
         if held is not None and held[0] == key:
             return held[1], dict(held[2])
 
+    # The state is derived from headers (undo/redo order); only the one
+    # transaction an undo/redo executes is read with its images, by the
+    # caller, through read_change_transaction. Validating every record's
+    # images on each gesture made undo cost grow with the whole history.
+    header_memo = (
+        change_transaction_header_memo(owner)
+        if _store_bound_history(owner, history)
+        else None
+    )
+    if header_memo is not None:
+        header_memo.bind(owner, snapshot)
+    header_history = None if header_memo is not None else history
+
     def reader(snapshot_, protocol_, transaction_root, *, budget):
+        if header_memo is not None:
+            return _read_change_transaction_header(
+                snapshot_, protocol_, transaction_root, budget=budget,
+                memo=header_memo,
+            )
         return _read_change_transaction(
             snapshot_, protocol_, transaction_root, budget=budget,
-            history=history, header_without_history=True,
+            history=header_history, header_without_history=True,
         )
 
     state, transactions = _read_history_projection(
         snapshot, protocol, history_root, budget, reader
     )
-    if owner is not None and getattr(history, "__name__", "") == "at":
+    if _store_bound_history(owner, history):
         with _HISTORY_WALK_LOCK:
             try:
                 _HISTORY_WALK_MEMO[owner] = (
@@ -1057,6 +1155,55 @@ def _incoming_links_for_targets(
     })
 
 
+def _incoming_links_since(
+    store: CellStore,
+    snapshot: Snapshot,
+    result_revision: int,
+    target_roots: frozenset[str],
+) -> tuple[
+    Mapping[str, frozenset[tuple[str, int]]],
+    Mapping[str, frozenset[tuple[str, int]]],
+]:
+    """Links to the targets that differ between a revision and now.
+
+    A Cell no commit wrote after ``result_revision`` holds the same links in
+    both states, so only the Cells those revisions wrote can differ. This
+    answers the same gained/lost question as indexing both whole graphs
+    (_incoming_links_for_targets) in the cost of the changes since.
+    """
+    current = {root: set() for root in target_roots}
+    earlier = {root: set() for root in target_roots}
+    if target_roots and snapshot.revision > result_revision:
+        changed: set[str] = set()
+        for revision in range(result_revision + 1, snapshot.revision + 1):
+            changed.update(store.revision_changes(revision))
+        ordered = tuple(sorted(changed))
+        try:
+            before = dict(store.cells_at(result_revision, ordered))
+        except InvalidCell:
+            before = {}
+            for cell_id in ordered:
+                try:
+                    before.update(store.cells_at(result_revision, (cell_id,)))
+                except InvalidCell:
+                    continue
+        for cell_id in ordered:
+            for cell, into in (
+                (snapshot.cells.get(cell_id), current),
+                (before.get(cell_id), earlier),
+            ):
+                if cell is None:
+                    continue
+                if cell.link0 in into:
+                    into[cell.link0].add((cell.id, 0))
+                if cell.link1 in into:
+                    into[cell.link1].add((cell.id, 1))
+    return (
+        MappingProxyType({root: frozenset(v) for root, v in current.items()}),
+        MappingProxyType({root: frozenset(v) for root, v in earlier.items()}),
+    )
+
+
 def _require_transaction_context(
     transaction: ChangeTransaction,
     *,
@@ -1140,23 +1287,29 @@ def undo_last_change(
     )
     if state.undo_root is None:
         raise Conflict("nothing to undo")
-    original = read_change_transaction(
-        snapshot, protocol, state.undo_root, history=store.at
-    )
+    original = known_transactions.get(state.undo_root)
+    if getattr(original, "changes", None) is None:
+        original = read_change_transaction(
+            snapshot, protocol, state.undo_root, history=store.at
+        )
     _require_transaction_context(
         original, actor_root=actor_root, session_root=session_root
     )
     if original.authority_root is None or not original.scope_roots:
         raise Conflict("change lacks compensation authority evidence")
-    result_snapshot = store.at(original.result_revision)
     created_targets = frozenset(
         change.target_root for change in original.changes
         if change.before is None
     )
-    current_incoming = _incoming_links_for_targets(snapshot, created_targets)
-    result_incoming = _incoming_links_for_targets(
-        result_snapshot, created_targets
+    current_incoming, result_incoming = _incoming_links_since(
+        store, snapshot, original.result_revision, created_targets
     )
+    held_result: list[Snapshot] = []
+
+    def result_snapshot_() -> Snapshot:
+        if not held_result:
+            held_result.append(store.at(original.result_revision))
+        return held_result[0]
     undone_images: dict[str, Cell] | None = None
 
     def created_by_an_undone_change(referrer: str) -> bool:
@@ -1216,7 +1369,7 @@ def undo_last_change(
                 continue
             if view_state_cell is not None and (
                 view_state_cell(snapshot, change.target_root)
-                or view_state_cell(result_snapshot, change.target_root)
+                or view_state_cell(result_snapshot_(), change.target_root)
             ):
                 # Selection and focus are rewritten by untracked gestures
                 # between tracked ones; undo returns them to the recorded
@@ -1250,9 +1403,9 @@ def undo_last_change(
                 if view_state_cell is None
                 or not view_state_cell(snapshot, referrer)
             }
+            # Cheapest proofs first; reading undone changes' images is last.
             if lost or not all(
-                created_by_an_undone_change(referrer)
-                or a_receipt_of_this_history(referrer)
+                a_receipt_of_this_history(referrer)
                 or (
                     reconciled_referrer is not None
                     and reconciled_referrer(
@@ -1260,6 +1413,7 @@ def undo_last_change(
                         created_targets,
                     )
                 )
+                or created_by_an_undone_change(referrer)
                 for referrer, _position in gained
             ):
                 raise Conflict(
@@ -1297,12 +1451,16 @@ def redo_last_change(
     signed_authority_cell: Callable[[Snapshot, str], bool] | None = None,
 ) -> ChangeCommit:
     snapshot = store.snapshot()
-    state = history_state(snapshot, protocol, history_root, history=store.at)
+    state, known_transactions = _history_state_and_transactions(
+        snapshot, protocol, history_root, history=store.at
+    )
     if state.redo_root is None:
         raise Conflict("nothing to redo")
-    original = read_change_transaction(
-        snapshot, protocol, state.redo_root, history=store.at
-    )
+    original = known_transactions.get(state.redo_root)
+    if getattr(original, "changes", None) is None:
+        original = read_change_transaction(
+            snapshot, protocol, state.redo_root, history=store.at
+        )
     _require_transaction_context(
         original, actor_root=actor_root, session_root=session_root
     )

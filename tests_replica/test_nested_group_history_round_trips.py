@@ -290,3 +290,111 @@ def test_founder_undo_and_redo_never_touch_a_member_view(tmp_path):
             assert member_state() == held
     finally:
         store.close()
+
+
+def test_a_signed_authority_cell_outside_the_reconciler_shapes_is_not_exempt():
+    """nested-undo v3 (2): drift on signed authority material is left to the
+    reconciler only for its own view grants -- current signature, the
+    generation the broker recorded, issued by this view, read-only, and a
+    reconciler shape. Another signed relationship (a membership) or a
+    superseded generation is not exempt: undo compensates or refuses."""
+    import nodelang.universal_application as application_module
+    from nodelang.cell_identity import (
+        grant_authority_relationship,
+        read_authority_relationship,
+    )
+
+    store, registry = build_universal_application(resolve_map_path())
+    group = _two_cards_grouped(store, registry)
+    authority = registry.authorization
+    identity = authority.identity_protocol
+    broker = authority.relationship_broker
+    admin = _founder(registry)
+    view_session = registry.view_sessions[admin]
+    exempt = application_module._signed_relationship_material_cell(
+        registry, view_session
+    )
+    snapshot = store.snapshot()
+    grant_root = application_module._active_projection_grant_roots(
+        snapshot, registry, view_session, group
+    )[0]
+    grant = read_authority_relationship(snapshot, identity, grant_root)
+    assert exempt(snapshot, grant.changed_at_root)
+    membership = grant_authority_relationship(
+        store, identity, broker, broker.mint_from_trusted_administrator(admin),
+        relationship_id="test:foreign-membership:" + group,
+        source_root=group,
+        target_root=authority.tenant_root,
+        kind="membership",
+        tenant_root=authority.tenant_root,
+        administrator_root=admin,
+        reason="a signed relationship of another shape",
+    )
+    snapshot = store.snapshot()
+    foreign = read_authority_relationship(snapshot, identity, membership)
+    assert not exempt(snapshot, foreign.changed_at_root)
+    broker.record_generation(grant_root, 2)
+    assert not exempt(snapshot, grant.changed_at_root)
+
+
+def _reconstructions(store, action):
+    cls = type(store)
+    original_at = cls.at
+    calls = []
+
+    def counted(self, revision):
+        if self is store and revision != self.revision:
+            calls.append(revision)
+        return original_at(self, revision)
+
+    cls.at = counted
+    try:
+        action()
+    finally:
+        cls.at = original_at
+    return len(calls)
+
+
+def test_undo_and_redo_cost_does_not_grow_with_history(tmp_path):
+    """nested-undo v3 (1): after the first undo, an undo or redo rebuilds a
+    bounded number of historical snapshots -- the same at 12 and at 40
+    gestures -- instead of re-validating the whole history every time."""
+    from nodelang.universal_application import (
+        instantiate_universal_definition,
+    )
+
+    counts = {}
+    for groups in (3, 10):
+        path = tmp_path / ("h%d.sqlite3" % groups)
+        store, registry = build_universal_application(
+            resolve_map_path(), CellStore(path), key_provider=_provider()
+        )
+        try:
+            definitions = registry.standard_library.definition_roots
+            cards = [
+                instantiate_universal_definition(
+                    store, registry, definitions[0],
+                    x=400.0 + 280 * (i % 10), y=1400.0 + 200 * (i // 10),
+                )[0]
+                for i in range(2 * groups)
+            ]
+            for i in range(groups):
+                pair = (cards[2 * i], cards[2 * i + 1])
+                set_universal_selection(store, registry, pair, focus_root=pair[1])
+                root, _ = group_universal_selection(
+                    store, registry, title="g%d" % i
+                )
+                ungroup_universal_composition(store, registry, root)
+            undo_universal_change(store, registry)
+            counts[groups] = (
+                _reconstructions(
+                    store, lambda: undo_universal_change(store, registry)
+                ),
+                _reconstructions(
+                    store, lambda: redo_universal_change(store, registry)
+                ),
+            )
+        finally:
+            store.close()
+    assert counts[3] == counts[10], counts
+    assert max(max(pair) for pair in counts.values()) <= 8, counts

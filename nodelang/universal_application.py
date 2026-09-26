@@ -52059,17 +52059,30 @@ def _signed_grant_incidence(
     return reconciled
 
 
-def _signed_relationship_material_cell(registry: UniversalApplicationRegistry):
-    """A Cell of a signed authority relationship whose CURRENT signed
-    material verifies (digest + signature). Signed authority is never
-    compensated by replaying bytes -- a later signed change (a revocation,
-    a re-grant) is the reconciler's; the change-history module already
-    exempts relationships under ``app:authority-relationship:`` this way.
+def _signed_relationship_material_cell(
+    registry: UniversalApplicationRegistry,
+    view_session: ApplicationViewSession,
+):
+    """A Cell of one of the grant reconciler's OWN signed view grants.
+
+    Signed authority is never compensated by replaying bytes: a later
+    signed change of such a grant (a revocation, a re-grant) is the
+    reconciler's, and undo/redo leave it for the reconciler. Only exactly
+    that holds here -- the Cell is signed material of a relationship whose
+    current signature verifies AND whose generation is the one the broker
+    last recorded, issued by this view's subject, in this tenant, read-only,
+    and of one of the two shapes the reconciler issues:
+      * delegation: reader principal -> this view's subject;
+      * audience-binding: -> the application audience, classification scope.
+    Any other drifted authority Cell is refused, never left half-undone.
     """
     authority = registry.authorization
     identity = authority.identity_protocol
+    read_only = (authority.protocol.actions["read"],)
 
     def material(snapshot: Snapshot, cell_id: str) -> bool:
+        from .cell_identity import _relationship_material_cell_ids
+
         for root in {
             cell_id.rpartition(":incidence:")[0],
             cell_id.rpartition(":")[0],
@@ -52077,7 +52090,7 @@ def _signed_relationship_material_cell(registry: UniversalApplicationRegistry):
             if not root.startswith("app:authority:"):
                 continue
             try:
-                relationship, _generation = (
+                relationship, generation = (
                     _verify_signed_relationship_material(
                         snapshot, identity, authority.relationship_broker,
                         root, registered_roots=frozenset((root,)),
@@ -52085,10 +52098,30 @@ def _signed_relationship_material_cell(registry: UniversalApplicationRegistry):
                 )
             except (InvalidCell, RelationshipAuthorityDenied, KeyError):
                 continue
-            from .cell_identity import _relationship_material_cell_ids
-
-            if cell_id in _relationship_material_cell_ids(relationship):
-                return True
+            if cell_id not in _relationship_material_cell_ids(relationship):
+                continue
+            if (
+                not authority.relationship_broker.verify_generation(
+                    root, generation
+                )
+                or relationship.issuer_root != view_session.subject_root
+                or relationship.tenant_root != authority.tenant_root
+                or relationship.action_roots != read_only
+            ):
+                return False
+            if relationship.kind_root == identity.kinds["delegation"]:
+                return (
+                    relationship.source_root
+                    == authority.resource_reader_principal_root
+                    and relationship.target_root == view_session.subject_root
+                )
+            if relationship.kind_root == identity.kinds["audience-binding"]:
+                return (
+                    relationship.target_root == authority.audience_root
+                    and relationship.scope_root
+                    == authority.classification_root
+                )
+            return False
         return False
 
     return material
@@ -52338,7 +52371,9 @@ def undo_universal_change(
         reconciled_referrer=_undo_referrer(registry, view_session, store),
         view_state_cell=_view_selection_cell(registry, view_session, store),
         derive_view_state=_derive_view_selection(registry, view_session),
-        signed_authority_cell=_signed_relationship_material_cell(registry),
+        signed_authority_cell=_signed_relationship_material_cell(
+            registry, view_session
+        ),
     ).revision
     _reconcile_view_projection_grants(
         store, registry, view_session, actor_root, retired_roots
@@ -52373,7 +52408,9 @@ def redo_universal_change(
         operation_root=operation_root,
         view_state_cell=_view_selection_cell(registry, view_session, store),
         derive_view_state=_derive_view_selection(registry, view_session),
-        signed_authority_cell=_signed_relationship_material_cell(registry),
+        signed_authority_cell=_signed_relationship_material_cell(
+            registry, view_session
+        ),
     )
     # Same law as undo: signed authority is compensated by a NEW signed
     # generation, never by replaying old bytes.

@@ -11,9 +11,9 @@
   {
    "module": "param-types",
    "source": "param-types.jsx",
-   "source_sha256": "abac5a6a2a9b1fb4c402053beacf65027801ea01f5c7bf714bbdada21e745c3e",
+   "source_sha256": "ede11dd6487d3404b05ea3914d17394aabd6140829cee198e2457642d39087a8",
    "output": "param-types.js",
-   "output_sha256": "7e1f71ab389f7deaf79f8cddc51e479453c5ce910dfc834da8157fa6633c077a"
+   "output_sha256": "4369ce09b926ff6e9ae332bc101771b82b85a3e80caec065de3861b18b36f207"
   },
   {
    "module": "cockpit-core",
@@ -46,9 +46,9 @@
   {
    "module": "atlas-panels",
    "source": "atlas-panels.jsx",
-   "source_sha256": "cbd0105456d5f1cd6ca99adac3cacb85521a8664bca551a2661a73eaa8ab8972",
+   "source_sha256": "bb1b1ddae5e01fc24e3ee8afa5c19c0faf4c1b191b19f27bccea9a9cf644cd49",
    "output": "atlas-panels.js",
-   "output_sha256": "92a3cadc746766bcf5673e25b48e9ca799c735375711a50b4673bb96385a772a"
+   "output_sha256": "a98a155dc97850c530df5d9c4454765145835cbf9c8f2ed67d27fe8619ca8c92"
   },
   {
    "module": "atlas-side",
@@ -60,9 +60,9 @@
   {
    "module": "atlas-cockpit",
    "source": "atlas-cockpit.jsx",
-   "source_sha256": "515166efe9e65a86520443b78dc49576353b29fa4e9e92fb9e3e667d7f88a968",
+   "source_sha256": "832cf56048ddfbd04998e2df8978e3ce62786efcac7b05de8af3e50216280a3a",
    "output": "atlas-cockpit.js",
-   "output_sha256": "ce2531bfc315fb40cea6c22ef9c9c7b075a57deefbd5485b125a622398455b0e"
+   "output_sha256": "3d62ef69bf4df0948d86377c954130c719a6a41e4b6f47aef284d598b56b71ed"
   }
  ]
 }

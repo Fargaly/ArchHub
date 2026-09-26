@@ -546,81 +546,9 @@ function AtlasCockpit() {
       w: 2448,
       h: 2348
     };
-    // Attention is a real seed NODE (importance is a node, not a hardcoded rule) and it is
-    // WIRED. This is a safety-net only — re-mints the node and/or its wires for any saved
-    // state that predates them, so stale localStorage never shows Attention floating loose.
-    if (!data.nodes.some(function (n) {
-      return n.cat === 'attention';
-    })) {
-      var d = data.domains.find(function (x) {
-        return x.key === 'cockpit';
-      }) || data.domains[0];
-      if (d) data = _objectSpread(_objectSpread({}, data), {}, {
-        nodes: [].concat(_toConsumableArray(data.nodes), [{
-          id: 'sys_attention',
-          dom: d.key,
-          cat: 'attention',
-          title: 'Attention',
-          sub: 'ranks what needs the founder now — importance is a node, not a hardcoded rule (its params are the weights)',
-          status: 'live',
-          params: [{
-            k: 'weight.blocked',
-            v: '3'
-          }, {
-            k: 'weight.gap',
-            v: '2'
-          }, {
-            k: 'weight.agent',
-            v: '1'
-          }, {
-            k: 'gap.threshold',
-            v: '4'
-          }],
-          evidence_ref: 'self:right-panel/activity',
-          x: d.x + 320,
-          y: d.y + 72
-        }])
-      });
-    }
-    if (data.nodes.some(function (n) {
-      return n.id === 'sys_attention';
-    }) && !data.wires.some(function (w) {
-      return w.a === 'sys_attention' || w.b === 'sys_attention';
-    })) {
-      var has = function has(id) {
-        return data.nodes.some(function (n) {
-          return n.id === id;
-        });
-      };
-      var inbound = [['cockpit_agent_loop', 'agent activity → weight.agent'], ['cockpit_live_metrics', 'metric gaps → weight.gap'], ['cockpit_audit_log', 'recent events to rank'], ['connectors_self_heal', 'heal/blocked signals → weight.blocked'], ['connectors_health_daemon', 'fleet health → blocked signal'], ['brain_daemon', 'brain activity to surface']];
-      var outbound = [['cockpit_command_bar', 'ranked "what matters now" surfaces here'], ['cockpit_gate', 'high-rank items gate the founder view']];
-      var add = [];
-      inbound.forEach(function (_ref4) {
-        var _ref5 = _slicedToArray(_ref4, 2),
-          s = _ref5[0],
-          why = _ref5[1];
-        if (has(s)) add.push({
-          a: s,
-          b: 'sys_attention',
-          why: why,
-          dom: 'cockpit'
-        });
-      });
-      outbound.forEach(function (_ref6) {
-        var _ref7 = _slicedToArray(_ref6, 2),
-          t = _ref7[0],
-          why = _ref7[1];
-        if (has(t)) add.push({
-          a: 'sys_attention',
-          b: t,
-          why: why,
-          dom: 'cockpit'
-        });
-      });
-      if (add.length) data = _objectSpread(_objectSpread({}, data), {}, {
-        wires: [].concat(_toConsumableArray(data.wires), add)
-      });
-    }
+    // The map draws the graph's nodes and wires only. An Attention node and its wires used
+    // to be minted here when the push lacked them: a node the graph does not hold. Ranking
+    // reads an Attention node's weights when the graph has one, else its defaults.
     // The layout grid is structural, not user data: adopt it from the seed if a saved state
     // predates it, so domain drags snap and the off-cell test works on existing layouts.
     if (!data.grid && window.ATLAS_MAP && window.ATLAS_MAP.grid) data = _objectSpread(_objectSpread({}, data), {}, {
@@ -1241,13 +1169,13 @@ function AtlasCockpit() {
           var a = keys[i],
             b = keys[j];
           var c0 = cost();
-          var _ref8 = [placed[b], placed[a]];
-          placed[a] = _ref8[0];
-          placed[b] = _ref8[1];
+          var _ref4 = [placed[b], placed[a]];
+          placed[a] = _ref4[0];
+          placed[b] = _ref4[1];
           if (cost() >= c0) {
-            var _ref9 = [placed[b], placed[a]];
-            placed[a] = _ref9[0];
-            placed[b] = _ref9[1];
+            var _ref5 = [placed[b], placed[a]];
+            placed[a] = _ref5[0];
+            placed[b] = _ref5[1];
           } else imp = true;
         }
         if (!imp) break;
@@ -1307,10 +1235,10 @@ function AtlasCockpit() {
       m.nodes.forEach(function (n) {
         (byDom[n.dom] = byDom[n.dom] || []).push(n);
       });
-      Object.entries(byDom).forEach(function (_ref0) {
-        var _ref1 = _slicedToArray(_ref0, 2),
-          key = _ref1[0],
-          ns = _ref1[1];
+      Object.entries(byDom).forEach(function (_ref6) {
+        var _ref7 = _slicedToArray(_ref6, 2),
+          key = _ref7[0],
+          ns = _ref7[1];
         var d = byKey[key];
         if (!d) {
           ns.forEach(function (n) {
@@ -1669,39 +1597,13 @@ function AtlasCockpit() {
     flash('Re-running ' + node.title + ' in ArchHub (variant of run #' + fromRun.n + ')');
     runNode(id);
   };
+  // A watcher is a graph node placed in ArchHub (Watch cards), not a map-only card.
   var addWatcher = function addWatcher(id) {
     var node = M.nodes.find(function (n) {
       return n.id === id;
     });
     if (!node) return;
-    var wid = 'watch_' + Date.now().toString(36);
-    setM(function (m) {
-      return _objectSpread(_objectSpread({}, m), {}, {
-        nodes: [].concat(_toConsumableArray(m.nodes), [{
-          id: wid,
-          dom: node.dom,
-          cat: 'watch',
-          title: 'Watch · ' + node.title.slice(0, 14),
-          sub: 'live result of ' + node.title,
-          status: 'live',
-          params: [],
-          evidence_ref: '',
-          x: node.x + 180,
-          y: node.y + 30
-        }]),
-        wires: [].concat(_toConsumableArray(m.wires), [{
-          a: id,
-          b: wid,
-          why: 'streams its latest result to this watcher',
-          kind: 'data'
-        }])
-      });
-    });
-    flash('Watcher added → wired');
-    setSel({
-      domain: null,
-      nodes: new Set([wid])
-    });
+    flash('Place a Watch card after ' + node.title + ' in ArchHub Studio; the map shows it once the graph holds it.');
   };
   var patchDomain = function patchDomain(key, patch) {
     return setM(function (m) {
@@ -1814,6 +1716,9 @@ function AtlasCockpit() {
     });
   };
   // ── graph logic: wire / unwire / freeze / duplicate, via ports + right-click ──
+  // Wires are graph relations drawn in ArchHub Studio (/api/universal/connect on its
+  // sockets). The map used to add a local wire, or an invented Adapter node, that no
+  // graph held; it adds neither now and says where the wire is made.
   var connectNodes = function connectNodes(a, b) {
     if (a === b) return;
     var na = M.nodes.find(function (n) {
@@ -1829,71 +1734,7 @@ function AtlasCockpit() {
       flash('Already wired');
       return;
     }
-    var ta = window.typeOf ? window.typeOf(na) : 'any';
-    var tb = window.typeOf ? window.typeOf(nb) : 'any';
-    var ok = window.archCanConnect ? window.archCanConnect(ta, tb) : true;
-    if (ok) {
-      setM(function (m) {
-        return _objectSpread(_objectSpread({}, m), {}, {
-          wires: [].concat(_toConsumableArray(m.wires), [{
-            a: a,
-            b: b,
-            why: "carries ".concat(ta),
-            kind: 'flow',
-            t: ta
-          }])
-        });
-      });
-      flash(ta === tb ? "Wired \xB7 ".concat(ta) : "Wired \xB7 ".concat(ta, " \u2192 ").concat(tb, " (any bridges)"));
-    } else {
-      // types differ — the app grammar inserts an ADAPTER that translates ta → tb
-      var id = 'adp_' + Date.now().toString(36);
-      var mx = Math.round((na.x + nb.x) / 2),
-        my = Math.round((na.y + nb.y) / 2);
-      setM(function (m) {
-        return _objectSpread(_objectSpread({}, m), {}, {
-          nodes: [].concat(_toConsumableArray(m.nodes), [{
-            id: id,
-            dom: na.dom,
-            cat: 'adapter',
-            title: "".concat(ta, " \u21C4 ").concat(tb),
-            sub: 'type translation',
-            status: 'live',
-            params: [{
-              k: 'from',
-              v: ta
-            }, {
-              k: 'to',
-              v: tb
-            }, {
-              k: 'on_fail',
-              v: 'coerce'
-            }],
-            evidence_ref: '',
-            x: mx,
-            y: my
-          }]),
-          wires: [].concat(_toConsumableArray(m.wires), [{
-            a: a,
-            b: id,
-            why: "emits ".concat(ta),
-            kind: 'flow',
-            t: ta
-          }, {
-            a: id,
-            b: b,
-            why: "translated to ".concat(tb),
-            kind: 'flow',
-            t: tb
-          }])
-        });
-      });
-      setSel({
-        domain: null,
-        nodes: new Set([id])
-      });
-      flash("\u2717 ".concat(ta, " \u2192 ").concat(tb, " can't connect \u2014 inserted Adapter"));
-    }
+    flash('Wire ' + na.title + ' to ' + nb.title + ' in ArchHub Studio; the map shows only the wires the graph holds.');
   };
   var disconnectWire = function disconnectWire(a, b) {
     setM(function (m) {
@@ -2752,7 +2593,7 @@ function AtlasCockpit() {
     var a = M.nodes.find(function (n) {
       return n.cat === 'attention';
     });
-    if (a) inspectNode(a.id);
+    if (a) inspectNode(a.id);else flash('The graph holds no Attention node; ranking uses its default weights.');
   };
 
   // ── INSPECT panel (left, selection-aware) ──
@@ -3173,10 +3014,10 @@ function AtlasCockpit() {
       overflow: 'hidden',
       fontFamily: HB.mono
     }
-  }, [['NODES', total], ['DOMAINS', M.domains.length], ['WIRES', M.wires.length], ['SHEET', 'GA-01'], ['DRAWN', 'FOUNDER']].map(function (_ref10, i) {
-    var _ref11 = _slicedToArray(_ref10, 2),
-      k = _ref11[0],
-      v = _ref11[1];
+  }, [['NODES', total], ['DOMAINS', M.domains.length], ['WIRES', M.wires.length], ['SHEET', 'GA-01'], ['DRAWN', 'FOUNDER']].map(function (_ref8, i) {
+    var _ref9 = _slicedToArray(_ref8, 2),
+      k = _ref9[0],
+      v = _ref9[1];
     return /*#__PURE__*/React.createElement("div", {
       key: k,
       style: {
@@ -3366,10 +3207,10 @@ function AtlasCockpit() {
     style: {
       color: HB.inkSoft
     }
-  }, "Group")), /*#__PURE__*/React.createElement(PanelLabel, null, "LAYERS"), [['wires', 'Wires'], ['params', 'Parameters'], ['labels', 'Category labels']].map(function (_ref12) {
-    var _ref13 = _slicedToArray(_ref12, 2),
-      k = _ref13[0],
-      l = _ref13[1];
+  }, "Group")), /*#__PURE__*/React.createElement(PanelLabel, null, "LAYERS"), [['wires', 'Wires'], ['params', 'Parameters'], ['labels', 'Category labels']].map(function (_ref0) {
+    var _ref1 = _slicedToArray(_ref0, 2),
+      k = _ref1[0],
+      l = _ref1[1];
     return /*#__PURE__*/React.createElement(ToggleRow, {
       key: k,
       label: l,
@@ -4331,12 +4172,12 @@ var A_RAIL = [{
     r: "3"
   }))
 }];
-var ARailIcon = function ARailIcon(_ref14) {
-  var active = _ref14.active,
-    brand = _ref14.brand,
-    onClick = _ref14.onClick,
-    title = _ref14.title,
-    children = _ref14.children;
+var ARailIcon = function ARailIcon(_ref10) {
+  var active = _ref10.active,
+    brand = _ref10.brand,
+    onClick = _ref10.onClick,
+    title = _ref10.title,
+    children = _ref10.children;
   var lit = active || brand;
   return /*#__PURE__*/React.createElement("button", {
     onClick: onClick,
@@ -4373,11 +4214,11 @@ var ARailIcon = function ARailIcon(_ref14) {
     }
   }), children);
 };
-var AtlasIconRail = function AtlasIconRail(_ref15) {
-  var panel = _ref15.panel,
-    setPanel = _ref15.setPanel,
-    onFrameAll = _ref15.onFrameAll,
-    onTidy = _ref15.onTidy;
+var AtlasIconRail = function AtlasIconRail(_ref11) {
+  var panel = _ref11.panel,
+    setPanel = _ref11.setPanel,
+    onFrameAll = _ref11.onFrameAll,
+    onTidy = _ref11.onTidy;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: HB.paper,
@@ -4456,9 +4297,9 @@ var AtlasIconRail = function AtlasIconRail(_ref15) {
     d: "M13 17h8"
   }))));
 };
-var PanelLabel = function PanelLabel(_ref16) {
-  var children = _ref16.children,
-    right = _ref16.right;
+var PanelLabel = function PanelLabel(_ref12) {
+  var children = _ref12.children,
+    right = _ref12.right;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -4532,11 +4373,11 @@ var visRow = function visRow(on) {
     opacity: on ? 1 : 0.7
   };
 };
-var MiniBtn = function MiniBtn(_ref17) {
-  var children = _ref17.children,
-    onClick = _ref17.onClick,
-    on = _ref17.on,
-    icon = _ref17.icon;
+var MiniBtn = function MiniBtn(_ref13) {
+  var children = _ref13.children,
+    onClick = _ref13.onClick,
+    on = _ref13.on,
+    icon = _ref13.icon;
   return /*#__PURE__*/React.createElement("button", {
     onClick: onClick,
     style: {
@@ -4559,10 +4400,10 @@ var MiniBtn = function MiniBtn(_ref17) {
     size: 12
   }), children);
 };
-var ToggleRow = function ToggleRow(_ref18) {
-  var label = _ref18.label,
-    on = _ref18.on,
-    onClick = _ref18.onClick;
+var ToggleRow = function ToggleRow(_ref14) {
+  var label = _ref14.label,
+    on = _ref14.on,
+    onClick = _ref14.onClick;
   return /*#__PURE__*/React.createElement("button", {
     onClick: onClick,
     style: {
@@ -4600,10 +4441,10 @@ var ToggleRow = function ToggleRow(_ref18) {
     }
   })), label);
 };
-var DarkBtn = function DarkBtn(_ref19) {
-  var children = _ref19.children,
-    onClick = _ref19.onClick,
-    icon = _ref19.icon;
+var DarkBtn = function DarkBtn(_ref15) {
+  var children = _ref15.children,
+    onClick = _ref15.onClick,
+    icon = _ref15.icon;
   return /*#__PURE__*/React.createElement("button", {
     onClick: onClick,
     style: {
@@ -4626,18 +4467,18 @@ var DarkBtn = function DarkBtn(_ref19) {
 };
 
 /* right-click contextual menu (node · domain · field · wire) */
-function ContextMenu(_ref20) {
-  var ctx = _ref20.ctx,
-    node = _ref20.node,
-    domain = _ref20.domain,
-    field = _ref20.field,
-    openNodes = _ref20.openNodes,
-    selCount = _ref20.selCount,
-    nodeDomGrouped = _ref20.nodeDomGrouped,
-    nodeField = _ref20.nodeField,
-    domField = _ref20.domField,
-    actions = _ref20.actions,
-    onClose = _ref20.onClose;
+function ContextMenu(_ref16) {
+  var ctx = _ref16.ctx,
+    node = _ref16.node,
+    domain = _ref16.domain,
+    field = _ref16.field,
+    openNodes = _ref16.openNodes,
+    selCount = _ref16.selCount,
+    nodeDomGrouped = _ref16.nodeDomGrouped,
+    nodeField = _ref16.nodeField,
+    domField = _ref16.domField,
+    actions = _ref16.actions,
+    onClose = _ref16.onClose;
   React.useEffect(function () {
     var h = function h() {
       return onClose();
@@ -4841,12 +4682,12 @@ function ContextMenu(_ref20) {
 }
 
 /* delete-with-warning */
-function ConfirmModal(_ref21) {
-  var count = _ref21.count,
-    names = _ref21.names,
-    wires = _ref21.wires,
-    onCancel = _ref21.onCancel,
-    onConfirm = _ref21.onConfirm;
+function ConfirmModal(_ref17) {
+  var count = _ref17.count,
+    names = _ref17.names,
+    wires = _ref17.wires,
+    onCancel = _ref17.onCancel,
+    onConfirm = _ref17.onConfirm;
   return /*#__PURE__*/React.createElement("div", {
     onClick: onCancel,
     style: {

@@ -1512,17 +1512,38 @@ function StemParams(_ref13) {
   var promoted = new Set((ports.ins || []).map(function (x) {
     return x.id;
   }));
+  // A refused write is shown on the panel, never swallowed.
+  var _React$useState9 = React.useState(''),
+    _React$useState0 = _slicedToArray(_React$useState9, 2),
+    writeError = _React$useState0[0],
+    setWriteError = _React$useState0[1];
+  // The map shows a value cut to 48 characters; editing starts from the whole value
+  // (p.full), so saving never writes the cut copy back over the graph.
+  var fullValue = function fullValue(p) {
+    return p.full !== undefined ? p.full : p.v;
+  };
   var setParam = function setParam(i, patch) {
+    var held = params[i];
+    if (patch.v !== undefined && held && held.editable === false) {
+      setWriteError(held.k + ' is a file location; it stays on the machine and is edited in the app.');
+      return;
+    }
+    var next = patch.v !== undefined && held && held.full !== undefined ? _objectSpread(_objectSpread({}, patch), {}, {
+      full: patch.v
+    }) : patch;
     patchNode(node.id, {
       params: params.map(function (p, j) {
-        return j === i ? _objectSpread(_objectSpread({}, p), patch) : p;
+        return j === i ? _objectSpread(_objectSpread({}, p), next) : p;
       })
     });
     // A live-graph parameter commits through the governed write; the
     // local patch above keeps the panel instant either way.
-    var held = params[i];
     if (patch.v !== undefined && held && held.rel && window.ARCHHUB_SET_PROP) {
-      window.ARCHHUB_SET_PROP(held.rel, String(patch.v))["catch"](function () {});
+      window.ARCHHUB_SET_PROP(held.rel, String(patch.v)).then(function () {
+        return setWriteError('');
+      })["catch"](function (e) {
+        return setWriteError('Not saved: ' + held.k + ' — ' + (e && e.message || String(e)));
+      });
     }
   };
   var delParam = function delParam(i) {
@@ -1716,7 +1737,8 @@ function StemParams(_ref13) {
     }
     if (t === 'number') return /*#__PURE__*/React.createElement("input", {
       type: "number",
-      value: p.v,
+      value: fullValue(p),
+      readOnly: p.editable === false,
       onChange: function onChange(e) {
         return setParam(i, {
           v: e.target.value
@@ -1745,7 +1767,8 @@ function StemParams(_ref13) {
       }
     });
     if (t === 'trigger') return /*#__PURE__*/React.createElement("input", {
-      value: p.v,
+      value: fullValue(p),
+      readOnly: p.editable === false,
       onChange: function onChange(e) {
         return setParam(i, {
           v: e.target.value
@@ -1756,7 +1779,9 @@ function StemParams(_ref13) {
       placeholder: "on save \xB7 cron\u2026"
     });
     return /*#__PURE__*/React.createElement("input", {
-      value: p.v,
+      value: fullValue(p),
+      readOnly: p.editable === false,
+      title: p.editable === false ? 'A file location stays on the machine' : undefined,
       onChange: function onChange(e) {
         return setParam(i, {
           v: e.target.value
@@ -1768,7 +1793,15 @@ function StemParams(_ref13) {
   };
   return /*#__PURE__*/React.createElement("div", {
     style: wrap
-  }, params.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, writeError && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10.5,
+      color: HB.red,
+      padding: '6px 8px'
+    }
+  }, writeError), params.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: HB.serif,
       fontStyle: 'italic',
@@ -1872,10 +1905,10 @@ function NodeInspector(_ref16) {
     _onRun = _ref16.onRun,
     _onVariant = _ref16.onVariant,
     onWatch = _ref16.onWatch;
-  var _React$useState9 = React.useState('control'),
-    _React$useState0 = _slicedToArray(_React$useState9, 2),
-    tab = _React$useState0[0],
-    setTab = _React$useState0[1];
+  var _React$useState1 = React.useState('control'),
+    _React$useState10 = _slicedToArray(_React$useState1, 2),
+    tab = _React$useState10[0],
+    setTab = _React$useState10[1];
   var RT = window.RT;
   var outs = M.wires.filter(function (w) {
     return w.a === node.id;
@@ -2123,7 +2156,16 @@ function NodeInspector(_ref16) {
     return /*#__PURE__*/React.createElement("option", {
       key: c
     }, c);
-  })))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  })))), /*#__PURE__*/React.createElement("div", null, node.status_text ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10.5,
+      color: HB.inkSoft,
+      marginBottom: 6,
+      whiteSpace: 'pre-wrap'
+    },
+    title: "What the last Run answered"
+  }, "LAST RUN \xB7 ", node.status_text) : null, /*#__PURE__*/React.createElement("div", {
     style: insLabel
   }, "STATUS \xB7 THE LIVE ROADMAP"), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2807,14 +2849,14 @@ function NameModal(_ref23) {
     colors = _ref23.colors,
     onSave = _ref23.onSave,
     onClose = _ref23.onClose;
-  var _React$useState1 = React.useState(''),
-    _React$useState10 = _slicedToArray(_React$useState1, 2),
-    name = _React$useState10[0],
-    setName = _React$useState10[1];
-  var _React$useState11 = React.useState(colors ? colors[0] : null),
+  var _React$useState11 = React.useState(''),
     _React$useState12 = _slicedToArray(_React$useState11, 2),
-    col = _React$useState12[0],
-    setCol = _React$useState12[1];
+    name = _React$useState12[0],
+    setName = _React$useState12[1];
+  var _React$useState13 = React.useState(colors ? colors[0] : null),
+    _React$useState14 = _slicedToArray(_React$useState13, 2),
+    col = _React$useState14[0],
+    setCol = _React$useState14[1];
   var ref = React.useRef(null);
   React.useEffect(function () {
     ref.current && ref.current.focus();
@@ -3286,7 +3328,7 @@ function MultiFieldPanel(_ref26) {
   }, "Clear")));
 }
 
-// Wire parameters come from the shared type registry (window.WIRE_PARAMS) — the SAME
+// Wire parameters are the server's one list (window.WIRE_PARAMS, set by cockpit.html from the node library) -- the SAME
 // definition the app's inspector uses, so a connection means one thing in both graphs.
 var WIRE_PARAM_DEFS = function WIRE_PARAM_DEFS() {
   return (window.WIRE_PARAMS || []).map(function (p) {
@@ -3392,7 +3434,15 @@ function WirePanel(_ref27) {
       flexDirection: 'column',
       borderTop: "1px solid ".concat(HB.lineSoft)
     }
-  }, WIRE_PARAM_DEFS().map(function (p) {
+  }, WIRE_PARAM_DEFS().length === 0 && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    style: {
+      fontFamily: HB.mono,
+      fontSize: 10.5,
+      color: HB.red,
+      padding: '8px 2px'
+    }
+  }, 'Wire parameters could not be loaded: ' + (window.WIRE_PARAMS_ERROR || 'the list has not arrived from the server')), WIRE_PARAM_DEFS().map(function (p) {
     var val = wp[p.k] === undefined ? p.v : wp[p.k];
     var changed = String(val) !== String(p.v);
     return /*#__PURE__*/React.createElement("div", {

@@ -134,66 +134,15 @@
     });
   };
 
-  // The parameters a real graph engine gives a CONNECTION. A wire is a node, so it is governed
-  // like one — and it must mean the same thing in the cockpit as in Studio, hence: defined once.
-  //   lacing   — Dynamo list lacing: how two lists of different length are paired.
-  //   tree     — Grasshopper data-tree ops.
-  //   condition/on_fail — the rule, and what downstream gets when the rule stops it.
-  //   throttle — rate limit for a wire fed by a live host.
-  var WIRE_PARAMS = [{
-    k: 'enabled',
-    label: 'Enabled',
-    type: 'toggle',
-    def: true,
-    help: 'Mute the connection without deleting it — downstream sees nothing.'
-  }, {
-    k: 'lacing',
-    label: 'Lacing',
-    type: 'menu',
-    def: 'shortest',
-    opts: ['shortest', 'longest', 'cross product'],
-    help: 'How two lists of different length are paired: shortest stops at the short one, longest repeats the last item, cross product pairs every combination.'
-  }, {
-    k: 'tree',
-    label: 'Data tree',
-    type: 'menu',
-    def: 'none',
-    opts: ['none', 'flatten', 'graft', 'simplify'],
-    help: 'Restructure on the way through — flatten to one list, graft each item into its own branch, simplify removes empty levels.'
-  }, {
-    k: 'condition',
-    label: 'Condition',
-    type: 'text',
-    def: '',
-    page: 'Rules',
-    help: 'The wire only carries when this holds. Empty means always.'
-  }, {
-    k: 'on_fail',
-    label: 'On block',
-    type: 'menu',
-    def: 'block',
-    opts: ['block', 'pass last', 'pass empty'],
-    page: 'Rules',
-    help: 'What downstream receives when the condition blocks or the source errors.'
-  }, {
-    k: 'throttle_ms',
-    label: 'Throttle',
-    type: 'number',
-    def: 0,
-    unit: 'ms',
-    min: 0,
-    max: 2000,
-    step: 50,
-    hard: [0, 10000],
-    page: 'Rules',
-    help: 'Minimum gap between deliveries — for a wire fed by a live host.'
-  }];
+  // The parameters a connection carries are NOT declared here: the server holds the one list
+  // (universal_pipeline.WIRE_PARAMETER_SPECS) and serves it with the node library; studio.html and
+  // cockpit.html set window.WIRE_PARAMS from it. The run applies every row it lists.
+
   Object.assign(window, {
     PM_TYPES: PM_TYPES,
     PM_WIRE: PM_WIRE,
     PM_ALIAS: PM_ALIAS,
     pmType: pmType,
-    Socket: Socket,
-    WIRE_PARAMS: WIRE_PARAMS
+    Socket: Socket
   });
 })();

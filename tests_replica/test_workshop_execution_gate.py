@@ -287,6 +287,40 @@ def test_capture_admits_a_file_under_a_directory_the_container_lists(memory):
     assert server.universal_store.revision == before
 
 
+def _link_directory(link, target):
+    """A directory junction on Windows (no privilege needed), a symlink elsewhere."""
+    import os
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
+def test_capture_refuses_a_junction_under_a_listed_directory_into_another_area(memory):
+    # Follow-up to 7488a5b: the name matched a listed folder while the bytes lived elsewhere.
+    server, descriptor, provider = memory
+    handoff = "70.HANDOFFS/archhub-integrated-repair-20260909"
+    work = _work(server, "court:junction", allowed=[handoff])
+    a, sa = _agent(descriptor, provider, "gate-junction-a")
+    _assign(server, "app:workshop-assignment:gate-junction", work, sa)
+    root = server.universal_workspace_root
+    (root / "20.CLIENTS/secret").mkdir(parents=True, exist_ok=True)
+    (root / "20.CLIENTS/secret/brief.md").write_text("client bytes", encoding="utf-8")
+    (root / handoff / "notes").mkdir(parents=True, exist_ok=True)
+    (root / handoff / "notes/plain.md").write_text("handoff bytes", encoding="utf-8")
+    _link_directory(root / handoff / "clients", root / "20.CLIENTS/secret")
+    before = server.universal_store.revision
+    with pytest.raises(MachineTransportError, match="outside the Work's CDE container"):
+        _post(a, "research", [work], [], "junction-research", capture=handoff + "/clients/brief.md")
+    assert server.universal_store.revision == before
+    captured = _captured(_post(a, "research", [work], [], "plain-research",
+                               capture=handoff + "/notes/plain.md"))
+    record = app._workshop_source_record(
+        server.universal_store.snapshot(), server.universal_registry, captured)
+    assert record["locator"] == handoff + "/notes/plain.md"
+
+
 def test_another_works_data_is_not_research_evidence(memory):
     server, descriptor, provider = memory
     work, other = _work(server, "court:evidence"), _work(server, "court:evidence-other")

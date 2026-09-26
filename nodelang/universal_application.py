@@ -34434,6 +34434,11 @@ def capture_universal_workshop_file_source(
     target = (root / locator).resolve()
     if target != root and root not in target.parents:
         raise AuthorizationDenied("source capture path escapes the workspace")
+    # A junction or link under a listed folder may land elsewhere in the
+    # workspace; the resolved file must still sit inside the container.
+    if not founder and not cde_container_path_admits(
+            allowed, target.relative_to(root).as_posix()):
+        raise AuthorizationDenied("source capture path is outside the Work's CDE container")
     if not target.is_file():
         raise InvalidCell("source capture path is not a file")
     if target.stat().st_size > _WORKSHOP_SOURCE_MAX_BYTES:

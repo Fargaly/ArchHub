@@ -281,6 +281,7 @@ from .cell_cde_authority import (
     CdeWriteAuthorityProtocol,
     authorize_cde_container_write,
     bootstrap_cde_write_authority_protocol,
+    cde_container_path_admits,
     ensure_store_cde_storage,
     project_cde_write_authority_protocol,
 )
@@ -34427,7 +34428,7 @@ def capture_universal_workshop_file_source(
             raise AuthorizationDenied("source capture requires the Work's CDE container")
         container = read_value_graph(snapshot, registry.value_graph_protocol, targets[0])
         allowed = container.get("allowed_paths") if isinstance(container, Mapping) else None
-        if not isinstance(allowed, (list, tuple)) or locator not in allowed:
+        if not cde_container_path_admits(allowed, locator):
             raise AuthorizationDenied("source capture path is outside the Work's CDE container")
     root = Path(workspace_root).resolve()
     target = (root / locator).resolve()

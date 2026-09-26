@@ -82,23 +82,23 @@ def memory(tmp_path, monkeypatch):
         server.close()
 
 
-def _container(key):
+def _container(key, allowed=None):
     return {
         "container_id": "GM.nodes.cde-authority", "source_requirement": key,
         "domain": "nodes", "tier": "T1", "lifecycle_state": "WIP", "suitability_status": "S0",
-        "revision": "P01", "owner": "founder", "checker": "court", "allowed_paths": [TARGET],
+        "revision": "P01", "owner": "founder", "checker": "court", "allowed_paths": list(allowed or [TARGET]),
         "gate_kind": "pytest",
         "gate_spec": {"path": "10.PRODUCT/13.NODE-LANGUAGE/tests_replica/test_cell_cde_authority.py"},
         "write_grants": [{"path": TARGET, "scope": "exact", "operations": ["apply_patch"]}],
     }
 
 
-def _work(server, key):
+def _work(server, key, allowed=None):
     with commit_intent.declare(commit_intent.USER_ACTION, actor="court", reason="create Work"):
         root, _wire, _revision = create_universal_governed_work(
             server.universal_store, server.universal_registry, title="Gate " + key,
             description="Execution gate court", priority=100, external_key=key,
-            structured_references={"cde-container": _container(key)}, x=320, y=240)
+            structured_references={"cde-container": _container(key, allowed)}, x=320, y=240)
     return root
 
 
@@ -259,6 +259,31 @@ def test_capture_reads_only_the_works_cde_paths(memory):
         _post(a, "research", [work], [], "outside-research", capture="private.txt")
     with pytest.raises(MachineTransportError, match="outside the Work's CDE container"):
         _post(a, "research", [work], [], "escape-research", capture="../escape.txt")
+    assert server.universal_store.revision == before
+
+
+def test_capture_admits_a_file_under_a_directory_the_container_lists(memory):
+    # Regression 07a1364: live containers list directories; exact match refused every capture.
+    server, descriptor, provider = memory
+    handoff = "70.HANDOFFS/archhub-integrated-repair-20260909"
+    work = _work(server, "court:directory", allowed=["10.PRODUCT/13.NODE-LANGUAGE", handoff])
+    a, sa = _agent(descriptor, provider, "gate-directory-a")
+    _assign(server, "app:workshop-assignment:gate-directory", work, sa)
+    root = server.universal_workspace_root
+    for relative in (handoff + "/notes/brief.md", handoff + "-evil/x"):
+        (root / relative).parent.mkdir(parents=True, exist_ok=True)
+        (root / relative).write_text("court source " + relative, encoding="utf-8")
+    captured = _captured(_post(a, "research", [work], [], "directory-research",
+                               capture=handoff + "/notes/brief.md"))
+    record = app._workshop_source_record(
+        server.universal_store.snapshot(), server.universal_registry, captured)
+    assert record["locator"] == handoff + "/notes/brief.md"
+    before = server.universal_store.revision
+    with pytest.raises(MachineTransportError, match="outside the Work's CDE container"):
+        _post(a, "research", [work], [], "sibling-research", capture=handoff + "-evil/x")
+    with pytest.raises(MachineTransportError, match="outside the Work's CDE container"):
+        _post(a, "research", [work], [], "traversal-research",
+              capture=handoff + "/../archhub-integrated-repair-20260909-evil/x")
     assert server.universal_store.revision == before
 
 

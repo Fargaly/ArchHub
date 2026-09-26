@@ -337,6 +337,30 @@ def _grant_path(value: object) -> str:
     return path
 
 
+def cde_container_path_admits(allowed_paths: object, path: object) -> bool:
+    """Whether a container's allowed_paths name path, as CDE write grants do.
+
+    path and each entry normalise like a subtree grant (relative, under a
+    governed root, no empty, "." or ".." part, backslashes as "/"); path is
+    admitted when it equals an entry or lies under one. Invalid entries admit
+    nothing.
+    """
+    if not isinstance(allowed_paths, (list, tuple)):
+        return False
+    try:
+        requested_path = _path(path)
+    except InvalidCell:
+        return False
+    for entry in allowed_paths:
+        try:
+            grant_path = _grant_path(entry)
+        except InvalidCell:
+            continue
+        if requested_path == grant_path or requested_path.startswith(grant_path + "/"):
+            return True
+    return False
+
+
 def authorize_cde_container_write(
     container: object,
     *,

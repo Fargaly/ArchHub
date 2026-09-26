@@ -717,13 +717,6 @@ def build_archhub_application(store=None):
     models = build_models_domain(store)
     connectors = build_connectors_domain(store, connectors=[
         {
-            'key': 'brain-mcp', 'title': 'Brain MCP',
-            'capabilities': ['read', 'governed-effect'],
-            'endpoint': {'transport': 'http', 'address': 'http://127.0.0.1:8473/mcp',
-                         'enabled': True, 'timeout_ms': 8000},
-            'configuration': {'protocol': 'mcp', 'scope': 'personal'},
-        },
-        {
             'key': 'node-runtime', 'title': 'Node runtime',
             'capabilities': ['graph-read', 'graph-edit', 'projection'],
             'endpoint': {'transport': 'http', 'address': 'http://127.0.0.1:8482',
@@ -762,7 +755,7 @@ def build_archhub_application(store=None):
     session_catalog = create_session_catalog(
         store, lifecycle_policy=lifecycle_policy)
     policy = build_desktop_launch_policy(store)
-    brain_url = _param(store, 'Brain MCP endpoint', 'http://127.0.0.1:8473/mcp')
+    brain_url = _param(store, 'Brain MCP endpoint', 'app-brain:')  # in-process application Brain
     brain_owner = _param(store, 'Brain owner', 'founder')
     brain_args = _param(store, 'Compliance report arguments', {'owner_user': 'founder'})
     brain_report_source = store.add(
@@ -1101,7 +1094,7 @@ def build_archhub_application(store=None):
                          target_port='product_tree'),
         connect_resource(store, resources, 'grand-map-authority', grand['session'],
                          target_port='map_authority'),
-        connect_resource(store, resources, 'brain-daemon', brain,
+        connect_resource(store, resources, 'application-brain', brain,
                          target_port='brain_transport'),
         connect_resource(store, resources, 'application-runtime', cloud_runtime['session'],
                          target_port='local_runtime'),

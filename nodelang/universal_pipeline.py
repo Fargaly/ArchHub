@@ -1421,28 +1421,24 @@ def project_atlas_map(store, registry, *, authentication_context=None):
                 "y": session_y + 60 + (spot // 3) * 96,
             })
     # The founder's brain facts live INSIDE the Brain & Memory domain --
-    # brain, cockpit, grand map: one model. Daemon down = domain shown
-    # without facts, honestly, never a crash.
+    # brain, cockpit, grand map: one model. No application Brain bound =
+    # domain shown without facts, honestly, never a crash.
     brain_domain = next(
         (d for d in domains if "brain" in d["title"].casefold()), None
     )
     if brain_domain is not None:
         try:
-            from .pipeline_engines import _brain_call
-            # Twelve cards want twelve facts. Asking with no limit fetched
-            # the whole store (54,076 rows, 88 s on the founder's brain) on
-            # every map projection, and four such calls at once left
-            # brain.health waiting behind them.
-            listing = str(_brain_call("brain.list_facts", {"limit": 12}))
-            facts = [
-                line.strip() for line in listing.splitlines() if line.strip()
-            ][:12]
+            from .app_brain import list_facts
+            # Twelve cards want twelve facts: one page of the application's
+            # Brain, read from this graph (no daemon, nothing dialed).
+            listing = list_facts(limit=12)
+            facts = [fact["name"] for folder in listing["folders"] for fact in folder["facts"]][:12]
             for spot, fact in enumerate(facts):
                 nodes.append({
                     "id": "brain-fact:%d" % spot,
                     "dom": brain_domain["key"], "cat": "ai",
                     "title": fact[:58] or "fact",
-                    "sub": "brain fact · live from :8473",
+                    "sub": "brain fact · in this graph",
                     "status": "live", "params": [],
                     "x": brain_domain["x"] + 40 + (spot % 2) * 260,
                     "y": brain_domain["y"] + 60 + (spot // 2) * 90,

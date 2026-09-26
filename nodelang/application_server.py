@@ -5681,6 +5681,10 @@ class ApplicationServer:
             )
         self.universal_store = universal_store
         self.universal_registry = universal_registry
+        if universal_store is not None and universal_registry is not None:
+            # The application's own Brain answers from this graph (app_brain).
+            from . import app_brain
+            app_brain.bind(universal_store, universal_registry)
         # Engine out/in sockets placed before 2026-09-24 carry a read-only
         # role that refuses every new wire. Every boot releases them; once
         # none is left this reads the application root and commits nothing.
@@ -5932,6 +5936,22 @@ class ApplicationServer:
                         self.close_connection = True
                         return
                     remaining -= len(chunk)
+
+            def _brain_route_call(self, owner, binding, tool, arguments):
+                """Run one Brain tool for an admitted owner request.
+
+                The call runs under the caller's live binding and every write
+                commit is attributed to the caller. The Brain's own result is
+                returned, so "no such fact" is never reported as done.
+                """
+                import json as _j
+
+                from .pipeline_engines import BrainSilent, _brain_call
+                try:
+                    with owner.universal_registry.authorization.broker.live_context(binding.context):
+                        return _j.loads(_brain_call(tool, arguments, actor=binding.subject_root))
+                except BrainSilent as silent:
+                    return {'ok': False, 'error': str(silent)[:200]}
 
             def _brain_owner_admitted(self, owner, binding):
                 """The Brain routes admit what POST /api/universal/terminal admits.
@@ -8202,27 +8222,25 @@ class ApplicationServer:
                             elif self.path == '/api/universal/brain-forget':
                                 if not self._brain_owner_admitted(owner, binding):
                                     return
-                                from .pipeline_engines import _brain_call
                                 fact_id = str(body.get('id') or '').strip()
                                 if not fact_id:
                                     self._json(200, {'ok': False, 'error': 'no fact id'})
                                     return
-                                # Soft delete: the daemon keeps the row, recoverable.
-                                _brain_call('brain.delete_fact', {'fragment_id': fact_id})
-                                self._json(200, {'ok': True})
+                                # Soft delete: forgotten, kept in the graph's history.
+                                self._json(200, self._brain_route_call(
+                                    owner, binding, 'brain.delete_fact', {'fragment_id': fact_id}))
                                 return
                             elif self.path == '/api/universal/brain-edit':
                                 if not self._brain_owner_admitted(owner, binding):
                                     return
-                                from .pipeline_engines import _brain_call
                                 fact_id = str(body.get('id') or '').strip()
                                 said = str(body.get('text') or '').strip()
                                 if not fact_id or not said:
                                     self._json(200, {'ok': False, 'error': 'need a fact id and text'})
                                     return
                                 # In place: the old text is replaced, never duplicated.
-                                _brain_call('brain.edit_fact', {'fragment_id': fact_id, 'text': said})
-                                self._json(200, {'ok': True})
+                                self._json(200, self._brain_route_call(
+                                    owner, binding, 'brain.edit_fact', {'fragment_id': fact_id, 'text': said}))
                                 return
                             elif self.path in ('/api/universal/graph-create', '/api/universal/graph-open'):
                                 from .universal_graphs import create_graph, open_graph
@@ -8257,7 +8275,6 @@ class ApplicationServer:
                                 import hashlib as _h
 
                                 from .cloud_session import signed_in_cloud_account
-                                from .pipeline_engines import _brain_call
                                 said = str(body.get('text') or '').strip()
                                 if not said:
                                     self._json(200, {
@@ -8266,7 +8283,7 @@ class ApplicationServer:
                                     })
                                     return
                                 rememberer = signed_in_cloud_account() or 'local'
-                                _brain_call('brain.write', {'ops': [{
+                                remembered = self._brain_route_call(owner, binding, 'brain.write', {'ops': [{
                                     'op': 'add',
                                     'fragment': {
                                         'id': _h.sha256(
@@ -8283,7 +8300,7 @@ class ApplicationServer:
                                         },
                                     },
                                 }]})
-                                self._json(200, {'ok': True})
+                                self._json(200, remembered)
                                 return
                             elif self.path == '/api/universal/retract':
                                 from .universal_pipeline import (
@@ -17926,6 +17943,8 @@ class ApplicationServer:
         Preparing that pair for a later startup is explicit: it adds a second
         physical copy and owner-prefix verification within the recovery budget.
         """
+        from . import app_brain
+        app_brain.unbind(getattr(self, 'universal_store', None))
         if recovery_directory is not None:
             from .application_recovery_close import preflight_recovery_close
             preflight_recovery_close(self, recovery_directory,

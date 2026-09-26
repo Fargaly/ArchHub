@@ -27,8 +27,6 @@ $selectedInputs = @(
     'requirements.txt', 'installer', 'packaging/windows/Test-SourcePortability.ps1',
     'package.json', 'packaging/compile_studio.cjs',
     'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'bridges', 'archhub.ico',
-    'personal_brain/__init__.py', 'personal_brain/hook_coverage.py',
-    'personal_brain/installer.py', 'personal_brain/ambient_policy.py',
     'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
     'packaging/windows/licenses/ArchHub-components-MIT.txt'
 )
@@ -114,8 +112,6 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
             'packaging/windows/licenses/ArchHub-components-MIT.txt',
             'app/secrets_store.py', 'app/credential_lock.py', 'app/__init__.py', 'archhub.ico',
-            'personal_brain/__init__.py', 'personal_brain/hook_coverage.py',
-            'personal_brain/installer.py', 'personal_brain/ambient_policy.py',
             'bridges/rhino/archhub_mcp.py', 'bridges/blender/archhub_mcp/__init__.py',
             'bridges/sources/max_mcp/max_mcp_startup.py',
             'nodelang/session_link/vendor/LICENSE', 'nodelang/session_link/vendor/PROVENANCE.md',
@@ -235,8 +231,6 @@ function Read-CandidateManifest([string]$Path) {
         'selected/nodelang/studio/node-registry.jsx', 'selected/nodelang/studio/brain-model.jsx',
         'selected/nodelang/studio/studio-workshop.jsx', 'selected/nodelang/studio/studio-lm.jsx', 'selected/nodelang/studio/mount.jsx',
         'selected/nodelang/__init__.py',
-        'selected/personal_brain/__init__.py', 'selected/personal_brain/hook_coverage.py',
-        'selected/personal_brain/installer.py', 'selected/personal_brain/ambient_policy.py',
         'selected/bridges/rhino/archhub_mcp.py', 'selected/bridges/blender/archhub_mcp/__init__.py',
         'selected/archhub.ico', 'selected/app/secrets_store.py', 'selected/app/credential_lock.py', 'selected/app/__init__.py',
         'selected/packaging/windows/licenses/ArchHub-components-MIT.txt'
@@ -552,7 +546,6 @@ $shippedCode = @(
     (Join-Path $selectedRoot 'nodelang'),
     (Join-Path $selectedRoot 'launch_archhub_test.py'),
     (Join-Path $selectedRoot 'colleague_setup.py'),
-    (Join-Path $selectedRoot 'personal_brain'),
     (Join-Path $selectedRoot 'app/secrets_store.py'),
     (Join-Path $selectedRoot 'app/credential_lock.py'),
     (Join-Path $selectedRoot 'bridges/rhino/archhub_mcp.py'),

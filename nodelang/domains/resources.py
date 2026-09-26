@@ -54,18 +54,12 @@ DEFAULT_RESOURCES = (
         "ports": ({"id": "graph", "direction": "out", "logical_type": "urn:archhub:node-graph"},),
     },
     {
-        "id": "brain-daemon", "title": "Brain daemon",
+        "id": "application-brain", "title": "Application Brain",
         "resource_type": "urn:archhub:resource:coordination-service",
-        "locator": "http://127.0.0.1:8473/mcp", "privacy_tier": "T1 INTERNAL",
-        "lifecycle": "DEPLOYED", "schema_ref": "urn:archhub:schema:mcp",
-        "schema_version": "2025-03-26", "read_enabled": True, "write_enabled": True,
-        "founder_only": True, "probe": {
-            "mode": "resource", "timeout": 2.0, "method": "POST", "status": 200,
-            "headers": {"Accept": "application/json, text/event-stream"},
-            "json": {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                     "params": {"name": "brain.health", "arguments": {}}},
-            "contains": "\"result\"",
-        },
+        "locator": "authority://application-brain", "privacy_tier": "T1 INTERNAL",
+        "lifecycle": "DEPLOYED", "schema_ref": "urn:archhub:schema:brain-memory",
+        "schema_version": "1", "read_enabled": True, "write_enabled": True,
+        "founder_only": True, "probe": {"mode": "resource"},
         "ports": (
             {"id": "memory", "direction": "out", "logical_type": "urn:archhub:brain:record"},
             {"id": "governed-work", "direction": "out", "logical_type": "urn:archhub:work-leaf"},

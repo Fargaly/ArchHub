@@ -182,16 +182,6 @@ def revit_build_walls(params: Mapping[str, object],
 
 
 
-BRAIN_ENDPOINT = "http://127.0.0.1:8473/mcp"
-# Measured on the founder's machine, idle: brain.health answers in 1.3 s and
-# brain.context in 8.2 s (it searches the whole store). A 6 s budget turned a
-# working card into "the daemon did not answer", and the old 15 s single-call
-# timeout ran out whenever anything else was asking the brain at the same time.
-# The budget is the whole exchange, so a card says something either way.
-BRAIN_BUDGET_SECONDS = 30.0
-BRAIN_PROTOCOL_VERSION = "2025-06-18"
-
-
 class BrainSilent(Exception):
     """The brain gave us no usable answer inside the budget.
 
@@ -200,143 +190,25 @@ class BrainSilent(Exception):
     """
 
 
-def _brain_session_id(response: object) -> str:
-    """The session id a stateful server hands back on initialize, or "".
+def _brain_call(tool: str, arguments: Mapping[str, object], *, budget: float | None = None,
+                actor: str | None = None) -> str:
+    """One call to the application's own Brain, answered from the graph.
 
-    The founder's daemon runs stateless (mcp_core.build_asgi_app issues no
-    session id and requires no prior initialize), so an absent header is
-    normal here and must not be read as a failure.
+    The personal-brain daemon on 127.0.0.1:8473 is retired; ``app_brain`` serves
+    the same tool names from the graph memory the port wrote into. Nothing is
+    dialed and there is no fallback: with no application bound in this process
+    the card says so. ``budget`` is kept for callers; a graph read has none.
     """
-    headers = getattr(response, "headers", None)
-    getter = getattr(headers, "get", None)
-    if getter is None:
-        return ""
-    return str(getter("mcp-session-id") or "").strip()
-
-
-def _brain_first_frame(response: object) -> dict:
-    """The first JSON-RPC object on the wire: an SSE data frame or a body.
-
-    Streamable HTTP answers as text/event-stream and the server may hold the
-    stream open after answering, so we stop at the first frame. Reading to
-    EOF is what made these two cards sit out the whole timeout and land
-    "timed out".
-    """
-    spare = []
-    for chunk in response:
-        line = (chunk.decode("utf-8", "replace")
-                if isinstance(chunk, bytes) else str(chunk))
-        stripped = line.strip()
-        if stripped.startswith("data:"):
-            return json.loads(stripped[5:].strip())
-        spare.append(line)
-    text = "".join(spare).strip()
-    if not text:
-        raise BrainSilent("the brain answered with an empty body")
-    return json.loads(text)
-
-
-def _brain_why(failure: Exception) -> str:
-    """One honest line naming what the transport actually did."""
-    import socket
-    import urllib.error
-
-    reason = getattr(failure, "reason", failure)
-    if isinstance(failure, (socket.timeout, TimeoutError)) or isinstance(
-            reason, (socket.timeout, TimeoutError)):
-        return ("the daemon did not answer inside %.0fs -- it is up but busy"
-                % BRAIN_BUDGET_SECONDS)
-    if isinstance(reason, ConnectionRefusedError):
-        return "no brain daemon is listening on 127.0.0.1:8473"
-    if isinstance(failure, urllib.error.HTTPError):
-        return "the brain answered HTTP %s" % failure.code
-    return "the brain is unreachable: %s" % (reason,)
-
-
-def _brain_post(body: dict, deadline: float, session: str,
-                *, expect_answer: bool = True):
-    """One POST to the brain endpoint, inside the shared deadline."""
-    import time
-    import urllib.request
-
-    remaining = deadline - time.monotonic()
-    if remaining <= 0.0:
-        raise BrainSilent(
-            "the daemon did not answer inside %.0fs -- it is up but busy"
-            % BRAIN_BUDGET_SECONDS)
-    headers = {
-        "Content-Type": "application/json",
-        # Streamable HTTP: the server picks JSON or SSE from this pair.
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": BRAIN_PROTOCOL_VERSION,
-    }
-    if session:
-        headers["Mcp-Session-Id"] = session
-    request = urllib.request.Request(
-        BRAIN_ENDPOINT, data=json.dumps(body).encode("utf-8"), headers=headers)
+    from . import app_brain
     try:
-        with urllib.request.urlopen(request, timeout=remaining) as response:
-            if not expect_answer:
-                return {}, ""
-            return _brain_first_frame(response), _brain_session_id(response)
-    except BrainSilent:
-        raise
-    except Exception as failure:  # transport, not the brain's own refusal
-        raise BrainSilent(_brain_why(failure)) from failure
-
-
-def _brain_handshake(deadline: float) -> str:
-    """initialize, then the initialized notification; the session id back."""
-    payload, session = _brain_post({
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {
-            "protocolVersion": BRAIN_PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "archhub-canvas", "version": "1"},
-        },
-    }, deadline, "")
-    if payload.get("error"):
-        raise BrainSilent("the brain refused the handshake: %s"
-                          % (payload["error"] or {}).get("message"))
-    # The protocol has the client send this before its first request; a
-    # stateless server answers 202 and ignores it, so no answer is read.
-    _brain_post({"jsonrpc": "2.0", "method": "notifications/initialized"},
-                deadline, session, expect_answer=False)
-    return session
-
-
-def _brain_call(tool: str, arguments: Mapping[str, object], *, budget: float | None = None) -> str:
-    """Handshake, then one tools/call against the live brain daemon.
-
-    ``budget`` narrows the shared deadline for a caller a person is waiting on.
-    """
-    import time
-
-    deadline = time.monotonic() + min(BRAIN_BUDGET_SECONDS, float(budget or BRAIN_BUDGET_SECONDS))
-    # This daemon is stateless (mcp_core.build_asgi_app: "tools/call needs no
-    # prior initialize, no session id is read or issued"), so the handshake is
-    # a courtesy, not a requirement. It must never eat the budget the real call
-    # needs: a slow initialize used to leave nothing for the question itself.
-    session = ""
-    try:
-        session = _brain_handshake(min(deadline, time.monotonic() + 3.0))
-    except BrainSilent:
-        session = ""
-    payload, _ = _brain_post({
-        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": tool, "arguments": dict(arguments)},
-    }, deadline, session)
-    if payload.get("error"):
-        raise BrainSilent("the brain refused %s: %s" % (
-            tool, (payload["error"] or {}).get("message")))
-    content = (payload.get("result") or {}).get("content") or []
-    texts = [item.get("text", "") for item in content
-             if item.get("type") == "text"]
-    return chr(10).join(texts)
+        answer = app_brain.call(tool, dict(arguments), actor=actor)
+    except app_brain.BrainUnavailable as refusal:
+        raise BrainSilent(str(refusal)) from refusal
+    return answer if isinstance(answer, str) else json.dumps(answer)
 
 
 def brain_recall(params: Mapping[str, object], feeds: Mapping[str, object]):
-    """Ask the live brain for context on a prompt -- the founder's memory."""
+    """What the application's Brain holds that matches a prompt -- the founder's memory."""
     prompt = str(feeds.get("in") or params.get("prompt") or "").strip()
     if not prompt:
         raise ValueError("set the prompt parameter or wire text in")
@@ -344,8 +216,13 @@ def brain_recall(params: Mapping[str, object], feeds: Mapping[str, object]):
         answer = str(_brain_call("brain.context", {"prompt": prompt}))
     except BrainSilent as silence:
         return {"out": ""}, "no recall: %s" % silence
-    lines = [line for line in answer.splitlines() if line.strip()]
-    return {"out": answer}, (
+    try:
+        facts = json.loads(answer).get("facts") or []
+    except (ValueError, AttributeError):
+        facts = []
+    lines = ["- " + str(fact.get("text") or "").strip() for fact in facts
+             if isinstance(fact, Mapping) and str(fact.get("text") or "").strip()]
+    return {"out": "\n".join(lines)}, (
         "%d context line(s) for %r" % (len(lines), prompt[:32])
     )
 

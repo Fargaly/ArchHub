@@ -98,11 +98,6 @@ Source: "..\app\secrets_store.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\credential_lock.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\app\__init__.py"; DestDir: "{app}\app"; Flags: ignoreversion
 Source: "..\packaging\windows\licenses\ArchHub-components-MIT.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
-; Read-only physical observer closure; no Brain server or background launcher.
-Source: "..\personal_brain\__init__.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
-Source: "..\personal_brain\hook_coverage.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
-Source: "..\personal_brain\installer.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
-Source: "..\personal_brain\ambient_policy.py"; DestDir: "{app}\personal_brain"; Flags: ignoreversion
 Source: "..\bridges\rhino\archhub_mcp.py"; DestDir: "{app}\bridges\rhino"; Flags: ignoreversion
 Source: "..\bridges\blender\archhub_mcp\__init__.py"; DestDir: "{app}\bridges\blender\archhub_mcp"; Flags: ignoreversion
 Source: "..\bridges\sources\max_mcp\max_mcp_startup.py"; DestDir: "{app}\bridges\max"; Flags: ignoreversion
@@ -134,6 +129,15 @@ Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.py"
 Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.pyc"
 Type: files; Name: "{app}\nodelang\cell_baboom_connector_execution.pyo"
 Type: files; Name: "{app}\nodelang\__pycache__\cell_baboom_connector_execution.*.pyc"
+; The retired personal Brain: its hook observer package and the supervisor
+; starter. An upgrade must not keep running either (retire-12-BC).
+Type: files; Name: "{app}\personal_brain\__init__.py"
+Type: files; Name: "{app}\personal_brain\hook_coverage.py"
+Type: files; Name: "{app}\personal_brain\installer.py"
+Type: files; Name: "{app}\personal_brain\ambient_policy.py"
+Type: files; Name: "{app}\personal_brain\__pycache__\*.pyc"
+Type: files; Name: "{app}\nodelang\brain_supervisor_start.py"
+Type: files; Name: "{app}\nodelang\__pycache__\brain_supervisor_start.*.pyc"
 ; The wheelhouse is this build's alone; an older build's wheels never mix in.
 Type: files; Name: "{app}\wheelhouse\*.whl"
 

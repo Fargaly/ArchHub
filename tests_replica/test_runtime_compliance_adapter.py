@@ -10,12 +10,8 @@ from nodelang.runtime_compliance_adapter import (
 
 
 def _install_observer(monkeypatch, observation):
-    package = ModuleType("personal_brain")
-    package.__path__ = []
-    module = ModuleType("personal_brain.hook_coverage")
-    module.observe_runtime_compliance = lambda _runtime: observation
-    monkeypatch.setitem(sys.modules, "personal_brain", package)
-    monkeypatch.setitem(sys.modules, "personal_brain.hook_coverage", module)
+    import nodelang.runtime_hook_observer as observer
+    monkeypatch.setattr(observer, "observe_runtime_compliance", lambda _runtime: observation)
 
 
 def test_physical_adapter_projects_exact_checks_without_granting_authority(

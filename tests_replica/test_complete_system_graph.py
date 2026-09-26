@@ -63,7 +63,7 @@ def test_required_cross_domain_connections_are_authoritative_relations():
         (reg["cockpit_domain"]["surface"], reg["cockpit"]),
         (reg["cockpit_domain"]["founder_verdict"],
          reg["resources"]["resources"]["governance-standard"]["authority_signal"]),
-        (reg["resources"]["resources"]["brain-daemon"]["adapter"], reg["brain"]),
+        (reg["resources"]["resources"]["application-brain"]["adapter"], reg["brain"]),
         (reg["resources"]["resources"]["identity-database"]["adapter"],
          reg["users"]["session"]),
         (reg["resources"]["resources"]["website-publication"]["adapter"],

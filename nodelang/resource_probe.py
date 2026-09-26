@@ -59,6 +59,14 @@ def run_resource_probe(spec):
     if not locator:
         return _result(False, locator, "resource locator is missing")
 
+    if locator == "authority://application-brain":
+        from . import app_brain
+        try:
+            facts = app_brain.health()["facts"]
+        except app_brain.BrainUnavailable as refusal:
+            return _result(False, locator, str(refusal))
+        return _result(True, locator, "application Brain holds %d fact(s)" % facts)
+
     alias = _resolve_alias(locator)
     if alias is not None:
         exists = alias.exists()

@@ -26,7 +26,7 @@ ROUTES = {
 def brain(monkeypatch):
     asked = []
 
-    def fake(tool, arguments, *, budget=None):
+    def fake(tool, arguments, **_kwargs):
         asked.append(tool)
         if tool == "brain.list_facts":
             return json.dumps({"ok": True, "folders": []})
@@ -78,3 +78,24 @@ def test_the_route_table_asks_execute_for_every_brain_route():
     source = __import__("pathlib").Path(app.__file__).read_text(encoding="utf-8")
     for path in ROUTES:
         assert '("POST", "%s", "execute")' % path in source, path
+
+def test_the_routes_return_the_application_brains_own_result(server, monkeypatch):
+    """A2: no {'ok': True} for a fact that does not exist; every write is the caller's."""
+    from nodelang import app_brain, commit_intent
+    actors = []
+    real_declare = commit_intent.declare
+
+    def recording(intent, *, actor, reason, work=None):
+        actors.append(actor)
+        return real_declare(intent, actor=actor, reason=reason, work=work)
+    monkeypatch.setattr(app_brain.commit_intent, "declare", recording)
+    missing = call(server, "/api/universal/brain-forget", {"id": "no-such-fact"})
+    assert missing == {"ok": False, "error": "no such fact"}
+    assert call(server, "/api/universal/brain-edit", {"id": "no-such-fact", "text": "x"})["ok"] is False
+    assert call(server, "/api/universal/brain-remember", {"text": "Doors are 900 mm"}) == {"ok": True, "written": 1}
+    import hashlib
+    fact = hashlib.sha256(b"Doors are 900 mm").hexdigest()
+    assert call(server, "/api/universal/brain-edit", {"id": fact, "text": "Doors are 1000 mm"})["edited"] is True
+    assert call(server, "/api/universal/brain-forget", {"id": fact}) == {"ok": True, "id": fact}
+    owner = server.universal_registry.authorization.subject_root
+    assert actors and set(actors) == {owner}, actors

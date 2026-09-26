@@ -668,25 +668,6 @@ else:
         print("  runtime    : could not announce (%s)" % _refusal, flush=True)
 
 
-def _ensure_brain():
-    # Founder 2026-09-23: the Brain stopped answering on 09-21 and nothing
-    # started it again. Ask once per start, off the boot path. Only the
-    # existing supervisor is started; a Brain is never stopped, and the
-    # ambient suspension marker is read, never released.
-    try:
-        from nodelang.brain_supervisor_start import ensure_brain_supervisor
-        outcome = ensure_brain_supervisor()
-    except Exception as refusal:
-        outcome = {"action": "not started", "reason": type(refusal).__name__}
-    print("  brain      : %s (%s)%s" % (outcome["action"], outcome["reason"],
-          "; ambient services stay paused by the suspension marker"
-          if outcome.get("ambient_suspended") else ""), flush=True)
-
-
-if _announced_active is not None:
-    # A verification run never starts the machine's Brain.
-    _threading.Thread(target=_ensure_brain, name="archhub-brain-start", daemon=True).start()
-
 def _initialize_startup_pipeline(owner, *, first_boot):
     """Seed a new graph only; opening an application never invokes its effects."""
     if not first_boot:

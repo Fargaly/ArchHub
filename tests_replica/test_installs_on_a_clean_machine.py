@@ -331,58 +331,19 @@ def _free_port() -> int:
     return port
 
 
-# The Brain check moved out of the launcher (326b657, 2026-09-23): the
-# launcher asks nodelang.brain_supervisor_start once per start, and that
-# module only starts the existing supervisor -- it never stops, kills or
-# replaces a Brain, so the old launcher watchdog courts have no subject.
-# The probe courts follow the check to its owner.
+# The personal Brain is retired (founder 2026-09-15/16; WORKSPACE-STANDARD :490):
+# the launcher starts no Brain and nodelang.brain_supervisor_start is gone, so the
+# brain_answers probe courts have no subject (tests_replica/
+# test_the_launcher_starts_no_brain.py pins the launcher side).
 
-def _brain_answers():
-    from nodelang.brain_supervisor_start import brain_answers
-    return brain_answers
-
-
-def test_the_brain_check_rejects_a_listener_that_is_not_the_brain():
-    answers = _brain_answers()
-    stranger = _OneAnswerListener(b'{"status":"ok","service":"something else"}')
-    try:
-        assert answers(stranger.port, 2.0) is False, (
-            "an open port that answers in plain HTTP was taken for the brain; "
-            "ArchHub would treat a stranger as its memory"
-        )
-    finally:
-        stranger.close()
-
-
-def test_the_brain_check_accepts_an_answer_in_mcp():
-    answers = _brain_answers()
-    brain = _OneAnswerListener(
-        b'{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text",'
-        b'"text":"{\\"ok\\": true}"}]}}'
-    )
-    try:
-        assert answers(brain.port, 2.0) is True
-    finally:
-        brain.close()
-
-
-def test_the_brain_check_says_no_when_nothing_is_listening():
-    answers = _brain_answers()
-    assert answers(_free_port(), 1.0) is False
-
-
-def test_the_launcher_starts_the_brain_only_through_its_supervisor():
-    """No launcher watchdog stops or replaces a Brain any more."""
+def test_the_launcher_neither_watches_nor_starts_a_brain():
+    """No launcher watchdog stops or replaces a Brain, and none starts one."""
     source = LAUNCHER.read_text(encoding="utf-8")
     tree = ast.parse(source, str(LAUNCHER))
     names = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
     assert not names & {"_brain_answers", "_port_held", "_watch_brain",
-                        "_replace_a_wedged_brain"}, sorted(names)
-    ensure = ast.get_source_segment(source, next(
-        n for n in tree.body
-        if isinstance(n, ast.FunctionDef) and n.name == "_ensure_brain"))
-    assert "ensure_brain_supervisor" in ensure
-    assert "taskkill" not in ensure
+                        "_replace_a_wedged_brain", "_ensure_brain"}, sorted(names)
+    assert "brain_supervisor_start" not in source
 
 
 def test_the_tray_click_uses_the_windows_foreground_dance():

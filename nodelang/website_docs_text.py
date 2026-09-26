@@ -149,11 +149,7 @@ The brain is ArchHub's memory: facts and skills learned from your work. This pag
 
 ## What runs today
 
-The installer does not install a brain. ArchHub looks for a brain service on this machine at `127.0.0.1:8473`. When one is running, ArchHub answers questions from the brain first and then from the model, and BABOOM shows how many facts the brain holds. When none is running, features that need it report that no brain is listening.
-
-The brain service keeps its memory in `%APPDATA%\\ArchHub\\brain\\brain.db`.
-
-A new brain built into the ArchHub graph is in progress and is not in use in this build.
+ArchHub has no separate brain service. The brain is part of the application: its facts and skills live in the ArchHub graph on this machine, next to your work. The earlier brain service, which listened on this machine and kept its own database, is retired; its facts, skills and setup notes are carried into the graph once, and nothing listens for it any more.
 
 ## Skills
 
@@ -165,7 +161,7 @@ When cloud sync is on, ArchHub keeps a copy of your brain on our servers so it c
 
 How that works in this build:
 
-- There is no separate sync switch. Sync runs while you are signed in and the brain service is running. Signing out stops it.
+- Sync ran through the retired brain service, so it does not run in this build. The rules below describe how it works when it returns.
 - Your personal facts and skills upload to your own space on the ArchHub cloud. Entries shared with a firm go to a shared copy that every member of that firm reads.
 - Before upload, recognised keys inside an entry are replaced with `<redacted-secret>` and the rest of the entry uploads. An entry that is still a bare key is dropped. The cloud refuses them too. Recognised formats include keys that start with `sk-`, `sk_live_`, `AKIA` or `AIza`, GitHub and Slack tokens, and web tokens that start with `eyJ`.
 - Deleting your cloud brain removes your personal copy. Shared firm copies stay, because other members rely on them.
@@ -174,11 +170,10 @@ How that works in this build:
 
 Sharing is designed so nothing arrives unreviewed. Items from a peer wait in quarantine until you admit or reject them. A group has one owner, who issues join codes that work once. Only the owner of a fact can share it, and only as a redacted version.
 
-In this build these features are not reachable from the app window. The brain service offers firm creation and invites through its tool interface. Public community sharing is not open.
+In this build these features are not reachable from the app window, and public community sharing is not open.
 
 ## Not working in this build
 
-- Setup does not install the brain service.
 - There is no screen for browsing your facts, and the Brain and Team tabs in Settings show "not available".
 - Skills cannot be created or promoted from the app.
 - There is no button in the app to delete your cloud brain, and deleting it does not yet revoke your sign-in tokens.

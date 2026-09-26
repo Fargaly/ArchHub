@@ -17,7 +17,10 @@ from typing import Any
 
 
 NODE_LANG_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MCP_URL = os.environ.get("BRAIN_DAEMON_URL", "http://127.0.0.1:8473/mcp")
+# The application's own Brain, answered in-process by nodelang.app_brain.
+# The retired personal-brain daemon on 127.0.0.1:8473 is never dialed.
+APP_BRAIN = "app-brain:"
+DEFAULT_MCP_URL = APP_BRAIN
 WATCHDOG_TASK_NAME = "ArchHub-Governed-Agent-Watchdog"
 
 
@@ -71,6 +74,10 @@ def _parse_mcp_body(raw: bytes) -> dict[str, Any]:
 
 
 def _mcp_tool(name: str, args: dict[str, Any], *, url: str, timeout: float) -> dict[str, Any]:
+    if str(url).startswith(APP_BRAIN):
+        from . import app_brain
+        answer = app_brain.call(name, dict(args))
+        return answer if isinstance(answer, dict) else {"text": answer}
     body = json.dumps({
         "jsonrpc": "2.0",
         "id": 1,
@@ -145,20 +152,20 @@ def _hook_clients(report: dict[str, Any]) -> dict[str, str]:
 
 
 def _probe_hook_coverage(check: str, spec: dict[str, Any]) -> dict[str, Any]:
-    try:
-        report = _brain_report(spec)
-    except Exception as ex:
-        return _result(check, False, "hook coverage unreadable: %s: %s" % (type(ex).__name__, ex))
-    hook = report.get("hook_coverage") if isinstance(report, dict) else {}
-    status = str((hook or {}).get("status") or "missing").lower()
-    clients = _hook_clients(report)
-    return _result(
-        check,
-        status == "green",
-        "hook coverage status: %s" % status,
-        status=status,
-        clients=clients,
-    )
+    """Each agent client's own hook config, read by the native observer.
+
+    Green when every client that is present runs the landed governance gates
+    (nodelang.runtime_hook_observer); the retired Brain's report is not asked.
+    """
+    from .runtime_hook_observer import observe_runtime_compliance
+    clients = {}
+    for runtime in spec.get("runtimes") or ("claude", "codex", "gemini", "opencode", "antigravity"):
+        observed = observe_runtime_compliance(str(runtime))
+        if observed["checks"].get("runtime-detected"):
+            clients[observed["client"]] = observed["status"]
+    status = "green" if clients and all(v == "green" for v in clients.values()) else ("missing" if not clients else "red")
+    return _result(check, status == "green", "hook coverage status: %s" % status,
+                   status=status, clients=dict(sorted(clients.items())))
 
 
 def _read_status_report(spec: dict[str, Any]) -> dict[str, Any]:

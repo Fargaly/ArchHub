@@ -309,11 +309,13 @@ async function serve(binding){
             const recipient=target();
             // Applies only to this NEW message. Existing pending/held guards
             // remain in sendAndWait; no receipt or recipient mode is changed.
-            const delivery=await peer.sendAndWait(recipient.socket,r.text,{timeoutMs:0,permissionMode:senderMode});
+            const kind=r.kind??'request';if(!['request','report','followup'].includes(kind))throw new Error('Invalid message kind; not sent');
+            const delivery=await peer.sendAndWait(recipient.socket,r.text,{timeoutMs:0,permissionMode:senderMode,kind,...(kind==='followup'?{followupOf:r.followupOf}:{})});
             const messageId=delivery.msgId;
             sent++;log('submitted',{messageId,direction:'codex-to-claude'});
-            result={messageId,status:peer.readDelivery(messageId)?.status||'sent_unconfirmed',note:'Native delivery status is not an agent reply; query delivery with this exact ID'};
+            result={messageId,kind,...(kind==='followup'?{followupOf:r.followupOf}:{}),status:peer.readDelivery(messageId)?.status||'sent_unconfirmed',note:'Native delivery status is not an agent reply; query delivery with this exact ID'};
           }}
+        else if(r.operation==='settle'){if(typeof r.messageId!=='string'||!r.messageId)throw new Error('Exact message ID required');result=peer.settle(r.messageId,r.as,{targetSocket:target().socket});log('settled',{messageId:r.messageId,as:r.as});}
         else if(r.operation==='disconnect'){attachments.clear();result={disconnected:b.id};setTimeout(()=>{peer.stop();server.close();fs.rmSync(runtime,{force:true});process.exit(0);},100);}
         else throw new Error('Unknown operation');socket.end(JSON.stringify({ok:true,result})+'\n');
       }catch(e){socket.end(JSON.stringify({ok:false,error:e.message})+'\n');}
@@ -380,7 +382,11 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
    result=await rpc(matches[0],{operation:'delivery',messageId:argv[2]});
  }
- else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
+ else if(cmd==='settle'){
+   const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
+   result=await rpc(matches[0],{operation:'settle',messageId:argv[2],as:option('as')});
+ }
+ else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} ),...(cmd==='send'&&option('kind')?{kind:option('kind')}:{}),...(cmd==='send'&&option('followup-of')?{followupOf:option('followup-of')}:{})});}
  else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','disconnect CONNECTION_ID','forget CONNECTION_ID (offline only)','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}

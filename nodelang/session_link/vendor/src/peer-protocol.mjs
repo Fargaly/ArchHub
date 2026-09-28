@@ -369,6 +369,11 @@ export class PeerEndpoint {
     this.messageSequence = 0;
     this.requestQueues = new Map();
     this.unconfirmedReplies = new Map();
+    this.activeFollowups = new Map();
+    this.reportsInFlight = new Map();
+    // Sockets that have ever received a report/follow-up: sticky explicit mode,
+    // where only inReplyTo or a leading [re:<id>] marker resolves a request.
+    this.explicitSockets = new Set();
     this.started = false;
     this.peerToken = null;
     this.permissionMode = process.env.CLAUDE_BRIDGE_PERMISSION_MODE;
@@ -505,9 +510,16 @@ export class PeerEndpoint {
                 fromSocket: decodePeerAddress(frame.from),
               };
               const pending = this.pendingMessages.get(frame.orig_msg_id);
+              const noReply = this.sentMessages.get(frame.orig_msg_id);
               if (pending?.targetSocket === receipt.fromSocket) {
                 this.deliveryReceipts.set(frame.orig_msg_id, receipt);
                 if (["refused", "denied", "expired", "dropped"].includes(receipt.status)) this.#removePendingReply(receipt.fromSocket, frame.orig_msg_id);
+              } else if (!pending && ["report", "followup"].includes(noReply?.kind) && noReply.targetSocket === receipt.fromSocket) {
+                // Report/follow-up receipt: recorded for readDelivery only; no
+                // pending reply is created and the original request is untouched.
+                this.deliveryReceipts.set(frame.orig_msg_id, receipt);
+                if (noReply.kind === "followup" && ["refused", "denied", "expired", "dropped"].includes(receipt.status)
+                  && this.activeFollowups.get(noReply.followupOf) === frame.orig_msg_id) this.activeFollowups.delete(noReply.followupOf);
               }
             }
             continue;
@@ -529,7 +541,23 @@ export class PeerEndpoint {
     this.activityRevision += 1;
     const record = { ...message, receivedAt: Date.now(), sequence: ++this.messageSequence };
     this.inbox.push(record);
-    const key = record.inReplyTo ?? [...this.pendingMessages].find(([, entry]) => entry.targetSocket === record.fromSocket)?.[0];
+    let key = record.inReplyTo;
+    if (!key) {
+      const candidates = [...this.pendingMessages].filter(([, entry]) => entry.targetSocket === record.fromSocket);
+      const marker = typeof record.text === "string" ? /^\[re:([^\]\s]+)\]/.exec(record.text) : null;
+      const noReply = marker && this.sentMessages.get(marker[1]);
+      if (marker && candidates.some(([id]) => id === marker[1])) key = marker[1];
+      else if (marker && ["report", "followup"].includes(noReply?.kind) && noReply.targetSocket === record.fromSocket) {
+        // Informational answer to a report/follow-up: attached there, clears nothing.
+        (noReply.informational ??= []).push({ msgId: record.msgId ?? null, text: record.text, receivedAt: record.receivedAt });
+        record.informationalFor = marker[1];
+      } else if (marker || this.explicitSockets.has(record.fromSocket)) {
+        // Unknown/resolved marker, or an uncited message on an explicit-mode
+        // socket: never guessed onto a request. Kept in the inbox for listeners.
+        record.unattributed = true;
+        this.log(`unattributed message from ${record.fromSocket}${candidates.length ? `; pending ${candidates.map(([id]) => id).join(", ")} kept` : ""}`);
+      } else if (candidates.length) key = candidates[0][0];
+    }
     const pending = this.pendingMessages.get(key);
     const receipt = this.deliveryReceipts.get(key);
     const gated = receipt && ["held", "rejected", "denied"].includes(receipt.status);
@@ -657,7 +685,25 @@ export class PeerEndpoint {
     return frame.msg_id;
   }
 
-  async sendAndWait(targetSocket, text, { timeoutMs = 120000, priority = "next", transcriptSession, beforeSend, permissionMode = this.permissionMode, replyThreadId, senderReview, senderApprovalPolicy, recipient, accountContext } = {}) {
+  async sendAndWait(targetSocket, text, { timeoutMs = 120000, priority = "next", transcriptSession, beforeSend, permissionMode = this.permissionMode, replyThreadId, senderReview, senderApprovalPolicy, recipient, accountContext, kind = "request", followupOf } = {}) {
+    if (!["request", "report", "followup"].includes(kind)) throw new Error("Invalid message kind; not sent");
+    if (kind === "followup" && (typeof followupOf !== "string" || !followupOf)) throw new Error("A follow-up needs the exact original message id; not sent");
+    if (kind !== "followup" && followupOf !== undefined) throw new Error("followupOf applies only to kind followup; not sent");
+    if (kind !== "request") {
+      // Reports and follow-ups expect no reply: they never enter pendingMessages
+      // or unconfirmedReplies, and they return without waiting.
+      if (kind === "report") {
+        // Rate bound: at most one report per socket in flight (queued or sending).
+        if (this.reportsInFlight.get(targetSocket)) {
+          const error = new Error(`an earlier report to ${targetSocket} is still in flight; this report was not sent`);
+          error.code = "PEER_REPORT_IN_FLIGHT";
+          throw error;
+        }
+        this.reportsInFlight.set(targetSocket, true);
+      }
+      try { return await this.#sendNoReply(targetSocket, text, { kind, followupOf, priority, beforeSend, permissionMode, replyThreadId, senderReview, senderApprovalPolicy, recipient, accountContext }); }
+      finally { if (kind === "report") this.reportsInFlight.delete(targetSocket); }
+    }
     const previous = this.requestQueues.get(targetSocket) ?? Promise.resolve();
     const pending = previous.catch(() => {}).then(async () => {
       await beforeSend?.();
@@ -681,7 +727,8 @@ export class PeerEndpoint {
         this.responsePoll.unref();
       }
       try {
-        const sentId = await this.send(targetSocket, text, { priority, msgId, permissionMode, beforeSend });
+        const body = this.explicitSockets.has(targetSocket) ? `[Session Link request ${msgId}. Start your answer with [re:${msgId}].]\n${text}` : text;
+        const sentId = await this.send(targetSocket, body, { priority, msgId, permissionMode, beforeSend });
         if (sentId !== msgId) {
           const pendingMessage = this.pendingMessages.get(msgId);
           const earlyReply = this.sentMessages.get(msgId)?.reply;
@@ -717,10 +764,80 @@ export class PeerEndpoint {
     }
   }
 
+  /**
+   * Informational report or status-only follow-up. Never creates a pending
+   * reply. A follow-up names a message that is still pending to the same
+   * socket, carries its id, never repeats its text or effect, and at most one
+   * follow-up per original id is outstanding until that original resolves.
+   */
+  async #sendNoReply(targetSocket, text, { kind, followupOf, priority, beforeSend, permissionMode, replyThreadId, senderReview, senderApprovalPolicy, recipient, accountContext }) {
+    let claimed = false;
+    const previous = this.requestQueues.get(targetSocket) ?? Promise.resolve();
+    const run = previous.catch(() => {}).then(async () => {
+      await beforeSend?.();
+      let body;
+      if (kind === "followup") {
+        if (this.pendingMessages.get(followupOf)?.targetSocket !== targetSocket) {
+          const error = new Error(`message ${followupOf} is not pending to ${targetSocket}; a follow-up must name a pending original. Not sent.`);
+          error.code = "PEER_FOLLOWUP_NO_PENDING_ORIGINAL";
+          throw error;
+        }
+        if (this.activeFollowups.has(followupOf)) {
+          const error = new Error(`a follow-up to ${followupOf} is already outstanding (${this.activeFollowups.get(followupOf)}); this follow-up was not sent`);
+          error.code = "PEER_FOLLOWUP_DUPLICATE";
+          throw error;
+        }
+        body = `[Session Link status follow-up to message ${followupOf}. Status only: do not repeat or re-run the original action. Start your answer to the original with [re:${followupOf}].]\n${text}`;
+      } else {
+        body = `[Session Link informational report. No reply expected; start any answer to an earlier request with [re:<its message id>].]\n${text}`;
+      }
+      const msgId = crypto.randomUUID();
+      if (kind === "followup") { this.activeFollowups.set(followupOf, msgId); claimed = true; }
+      this.explicitSockets.add(targetSocket);
+      this.sentMessages.set(msgId, { targetSocket, sentAt: Date.now(), kind, ...(kind === "followup" ? { followupOf } : {}), replyThreadId, permissionMode, senderApprovalPolicy, ...(senderReview ? { senderReview: { ...senderReview } } : {}), ...(recipient ? { recipient: { ...recipient } } : {}), ...(accountContext ? { accountContext: Object.freeze({ ...accountContext }) } : {}) });
+      try {
+        const sentId = await this.send(targetSocket, body, { priority, msgId, permissionMode, beforeSend });
+        if (sentId !== msgId) {
+          this.sentMessages.set(sentId, this.sentMessages.get(msgId));
+          this.sentMessages.delete(msgId);
+          if (claimed) this.activeFollowups.set(followupOf, sentId);
+        }
+        const delivery = this.deliveryReceipts.get(sentId);
+        return { msgId: sentId, reply: null, kind, ...(kind === "followup" ? { followupOf } : {}), ...(delivery?.fromSocket === targetSocket ? { delivery } : {}) };
+      } catch (err) {
+        const sent = this.sentMessages.get(msgId);
+        if (sent) { sent.error = err.message; if (!err.deliveryUncertain) sent.failed = true; }
+        if (claimed && !err.deliveryUncertain && this.activeFollowups.get(followupOf) === msgId) this.activeFollowups.delete(followupOf);
+        err.msgId = msgId;
+        throw err;
+      }
+    });
+    this.requestQueues.set(targetSocket, run);
+    try { return await run; }
+    finally { if (this.requestQueues.get(targetSocket) === run) this.requestQueues.delete(targetSocket); }
+  }
+
+  /**
+   * Explicit operator settlement of one pending request (answered out of band
+   * or abandoned). Never guessed, never replays, and logged.
+   */
+  settle(msgId, as, { targetSocket } = {}) {
+    if (!["answered", "abandoned"].includes(as)) throw new Error("settle needs --as answered|abandoned");
+    const pending = this.pendingMessages.get(msgId);
+    const sent = this.sentMessages.get(msgId);
+    if (!pending || !sent) throw new Error(`message ${msgId} is not pending; nothing settled`);
+    if (typeof targetSocket !== "string" || pending.targetSocket !== targetSocket) throw new Error(`message ${msgId} is not pending on this connection; nothing settled`);
+    sent.settled = { as, at: Date.now() };
+    this.log(`settled ${msgId} as ${as}`);
+    this.#removePendingReply(pending.targetSocket, msgId);
+    return { msgId, settled: as };
+  }
+
   #removePendingReply(fromSocket, msgId) {
     const key = msgId ?? [...this.pendingMessages].find(([, entry]) => entry.targetSocket === fromSocket)?.[0];
     if (!key || this.pendingMessages.get(key)?.targetSocket !== fromSocket) return;
     this.pendingMessages.delete(key);
+    this.activeFollowups.delete(key);
     const pending = this.unconfirmedReplies.get(fromSocket) ?? 0;
     if (pending > 1) this.unconfirmedReplies.set(fromSocket, pending - 1);
     else this.unconfirmedReplies.delete(fromSocket);
@@ -736,6 +853,7 @@ export class PeerEndpoint {
       && record.fromSocket === fromSocket
       && (!expectsTranscript || (record.source === "transcript" && record.inReplyTo === msgId))
       && (!record.inReplyTo || !msgId || record.inReplyTo === msgId)
+      && !record.unattributed && !record.informationalFor
       && (afterSequence === null ? record.receivedAt >= since : record.sequence > afterSequence);
     const existing = this.inbox.find(matches);
     if (existing) return Promise.resolve(existing);
@@ -777,7 +895,7 @@ export class PeerEndpoint {
     const session = sent.transcriptSession;
     return {
       msgId,
-      status: gated ? delivery.status : sent.reply ? "reply_received" : sent.failed ? "send_failed" : delivery?.status ?? "sent_unconfirmed",
+      status: gated ? delivery.status : sent.reply ? "reply_received" : sent.settled ? `settled_${sent.settled.as}` : sent.failed ? "send_failed" : delivery?.status ?? "sent_unconfirmed",
       reason: delivery?.reason ?? sent.error ?? null,
       sentAt: sent.sentAt,
       sessionId: session?.sessionId ?? null,
@@ -800,7 +918,8 @@ export class PeerEndpoint {
     if (this.connections.size) return "Peer socket connections are still open";
     if (this.requestQueues.size || this.pendingMessages.size || this.unconfirmedReplies.size) return "Claude messages still have pending or unconfirmed delivery";
     for (const [id, sent] of this.sentMessages) {
-      if (!sent.reply && !sent.failed && !["refused", "denied", "expired", "dropped"].includes(this.deliveryReceipts.get(id)?.status)) {
+      if (!sent.reply && !sent.failed && !sent.settled && !["refused", "denied", "expired", "dropped"].includes(this.deliveryReceipts.get(id)?.status)
+        && !(["report", "followup"].includes(sent.kind) && this.deliveryReceipts.get(id)?.status === "delivered")) {
         return "A Claude delivery outcome remains unconfirmed";
       }
     }
@@ -831,7 +950,7 @@ export class PeerEndpoint {
     const reason = this.reloadReason();
     if (reason || this.started && !this.reloadPaused) throw new Error(reason ?? "Quiesce the peer endpoint before exporting state");
     return cloneReloadState({ name: this.name, messageSequence: this.messageSequence, inbox: this.inbox,
-      sentMessages: [...this.sentMessages], deliveryReceipts: [...this.deliveryReceipts] });
+      sentMessages: [...this.sentMessages], deliveryReceipts: [...this.deliveryReceipts], explicitSockets: [...this.explicitSockets] });
   }
 
   restoreReloadState(input) {
@@ -849,6 +968,8 @@ export class PeerEndpoint {
       return restored;
     };
     const sentMessages = restoreMap(state.sentMessages);
+    if (state.explicitSockets !== undefined && (!Array.isArray(state.explicitSockets) || state.explicitSockets.some((socket) => typeof socket !== "string" || !socket))) throw new Error("Invalid peer reload state");
+    const explicitSockets = new Set(state.explicitSockets ?? []);
     const deliveryReceipts = restoreMap(state.deliveryReceipts);
     for (const record of state.inbox) {
       if (!record || typeof record.text !== "string" || !Number.isSafeInteger(record.sequence) || record.sequence < 1
@@ -857,7 +978,8 @@ export class PeerEndpoint {
     for (const [id, sent] of sentMessages) {
       if (typeof sent.targetSocket !== "string" || !sent.targetSocket || !Number.isFinite(sent.sentAt)
         || sent.reply && (typeof sent.reply.text !== "string" || sent.reply.inReplyTo !== id)
-        || !sent.reply && !sent.failed && !["refused", "denied", "expired", "dropped"].includes(deliveryReceipts.get(id)?.status)) {
+        || !sent.reply && !sent.failed && !sent.settled && !["refused", "denied", "expired", "dropped"].includes(deliveryReceipts.get(id)?.status)
+          && !(["report", "followup"].includes(sent.kind) && deliveryReceipts.get(id)?.status === "delivered")) {
         throw new Error("Invalid or unconfirmed Claude delivery reload record");
       }
     }
@@ -866,6 +988,7 @@ export class PeerEndpoint {
     this.inbox = state.inbox;
     this.sentMessages = sentMessages;
     this.deliveryReceipts = deliveryReceipts;
+    this.explicitSockets = explicitSockets;
   }
 
   #removeRegistration() {

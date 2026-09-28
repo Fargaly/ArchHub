@@ -242,15 +242,17 @@ def build_server(*, session=None, workshop_task: str | None = None):
 
         Read-only through the installed application: no host is opened and no
         operation runs. Each operation row says whether a real court proved it
-        or names the dependency that keeps it unavailable. Host operations run
-        only as graph nodes inside admitted Work (coordination.run_workshop_task);
-        this server offers no raw host execution.
+        or names the dependency that keeps it unavailable. Host execution tools
+        (revit_execute_csharp, max_execute_maxscript, ...) run only while this
+        session holds a claimed Work (native_host_tools).
         """
         with control.bound_client() as client:
             return client.request("GET", "/api/universal/hosts", {})
 
     from .native_workshop_tools import register_artifact_tools
     register_artifact_tools(server, control)
+    from .native_host_tools import register_host_tools
+    register_host_tools(server, control)
     return server
 
 

@@ -37,6 +37,81 @@ _REPARSE_POINT = 0x400
 _lstat = os.lstat
 
 
+# Development-era ArchHub entries, recognised only by name AND exact launch
+# shape. The brain name counts only at its retired loopback URL; the host
+# server only when its one argument is the retired source file, matched on
+# whole path segments (case-insensitive, either separator); the coordination
+# entry only in its "-m nodelang.clean_coordination_mcp" development launch.
+DEAD_BRAIN_PORTS = (8473,)
+_BRAIN_NAME = "brain"
+_BRAIN_HOSTS = ("127.0.0.1", "localhost")
+_RETIRED_HOST_SERVER = ("10.product", "12.production", "payload", "bridge", "server.py")
+_RETIRED_COORDINATION_ARGS = ["-m", "nodelang.clean_coordination_mcp"]
+
+
+def _path_segments(value) -> tuple:
+    return tuple(part.casefold() for part in str(value).replace("\\", "/").split("/") if part)
+
+
+def _retired_brain(entry) -> bool:
+    from urllib.parse import urlsplit
+    try:
+        url = urlsplit(str(entry.get("url") or ""))
+        return (url.scheme == "http" and url.hostname in _BRAIN_HOSTS
+                and url.port in DEAD_BRAIN_PORTS and url.path.rstrip("/") == "/mcp"
+                and not url.query and not url.fragment and not entry.get("command"))
+    except ValueError:
+        return False
+
+
+def _retired_host_server(entry) -> bool:
+    args = entry.get("args")
+    if type(args) is not list or len(args) != 1 or entry.get("url"):
+        return False
+    segments = _path_segments(args[0])
+    return segments[-len(_RETIRED_HOST_SERVER):] == _RETIRED_HOST_SERVER
+
+
+def _retired_coordination(entry) -> bool:
+    return entry.get("args") == _RETIRED_COORDINATION_ARGS and not entry.get("url")
+
+
+_RETIRED_SHAPES = {
+    "archhub-hosts": (_retired_host_server,
+                      "development-era host server from the retired 12.PRODUCTION source, not shipped"),
+    "archhub-agent-coordination": (_retired_coordination,
+                                   "development-era coordination launch; the shipped server is %s" % SERVER_NAME),
+}
+
+
+def stale_entries(servers) -> dict:
+    """Existing MCP entries an install or repair removes, with the reason for each.
+
+    Only a verified ArchHub development-era entry: its known name AND its exact
+    retired launch shape. Any other entry, on any port or path, is kept.
+    """
+    stale = {}
+    for name, entry in (servers.items() if isinstance(servers, dict) else ()):
+        shape = _RETIRED_SHAPES.get(name)
+        if shape is not None and isinstance(entry, dict) and shape[0](entry):
+            stale[name] = shape[1]
+    return stale
+
+
+def confirm_entries(servers) -> dict:
+    """Entries to show the person and remove only on their word, with the reason.
+
+    ArchHub's retired brain entry was only a URL (http://127.0.0.1:8473/mcp),
+    which a person's own server of the same name could also carry: it cannot be
+    told apart, so it is asked about, never removed automatically.
+    """
+    entry = servers.get(_BRAIN_NAME) if isinstance(servers, dict) else None
+    if isinstance(entry, dict) and _retired_brain(entry):
+        return {_BRAIN_NAME: "matches ArchHub's retired personal brain (127.0.0.1:8473), which no "
+                             "longer runs; remove it only if it is not your own server"}
+    return {}
+
+
 class RegistrationRefused(ValueError):
     """A path a truthful entry needs is absent, redirected or of the wrong type."""
 
@@ -240,11 +315,14 @@ def register_claude_code(install_root, state_root, *, consent, environment=None,
 
 
 __all__ = [
+    "DEAD_BRAIN_PORTS",
     "LEGACY_NAMES",
     "LOADER",
     "RegistrationRefused",
+    "confirm_entries",
     "find_claude_code",
     "managed_entry",
     "readiness",
     "register_claude_code",
+    "stale_entries",
 ]

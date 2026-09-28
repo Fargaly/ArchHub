@@ -30442,6 +30442,8 @@ def create_universal_governed_work(
         raise InvalidCell("governed work contains an unknown structured interface")
     if set(references) & set(structured_references):
         raise InvalidCell("governed work interface has two competing sources")
+    from .existing_workshop_project_revision import validate_work_hosts
+    validate_work_hosts(structured_references.get("requirements"))
     snapshot = store.snapshot()
     if any(
         type(root) is not str or not root or root not in snapshot.cells

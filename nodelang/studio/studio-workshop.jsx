@@ -56,6 +56,35 @@ const ConversationArchiveNotice = ({ root }) => {
 
 // ═══════════════════════════════ LIVE SEAM ═══════════════════════════════
 // Work review and Canvas share the authenticated view's durable graph selection.
+// Programs this task may use: saved as requirements.hosts through the existing
+// Work creation and configuration paths. None is ever chosen by default.
+const WORKSHOP_PROGRAMS = [{id:'revit', label:'Revit'}, {id:'acad', label:'AutoCAD'},
+  {id:'max', label:'3ds Max'}, {id:'rhino', label:'Rhino'}, {id:'blender', label:'Blender'}];
+const WorkshopPrograms = {
+  LIST:WORKSHOP_PROGRAMS,
+  from:requirements => WORKSHOP_PROGRAMS.map(program => program.id)
+    .filter(id => Array.isArray(requirements?.hosts) && requirements.hosts.includes(id)),
+  // The next requirements object with only the programs replaced, or null when nothing changes.
+  change:(requirements, selected) => {
+    const next = WORKSHOP_PROGRAMS.map(program => program.id).filter(id => selected.includes(id));
+    if (JSON.stringify(next) === JSON.stringify(WorkshopPrograms.from(requirements)) &&
+        (next.length || !Array.isArray(requirements?.hosts))) return null;
+    const out = {...(requirements || {})};
+    if (next.length) out.hosts = next; else delete out.hosts;
+    return out;
+  },
+};
+window.WorkshopPrograms = WorkshopPrograms;
+const ProgramChoices = ({selected, onChange, disabled}) =>
+  <fieldset disabled={disabled} style={{border:0, margin:'10px 0', padding:0, minWidth:0}}>
+    <legend>Programs this task may use</legend>
+    {WORKSHOP_PROGRAMS.map(program => <label key={program.id} style={{display:'inline-block', marginRight:12}}>
+      <input type="checkbox" aria-label={'Program ' + program.label} checked={selected.includes(program.id)}
+        onChange={event => onChange(event.target.checked ? [...selected, program.id] :
+          selected.filter(id => id !== program.id))}/>{' '}{program.label}</label>)}
+    <p style={{fontSize:11, color:W.inkSoft, margin:'4px 0 0'}}>
+      An agent on this task can run commands only in the programs ticked here. Nothing is ticked until you tick it.</p>
+  </fieldset>;
 const workshopSelectionId = value => typeof value === 'string' && value.length > 0 && value.length <= 1024;
 const workshopWorkSelectionIdentity = (state, root) => {
   const canvas = state?.canvas, projected = state?.topology?.canvas || canvas;
@@ -768,6 +797,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       purpose:prior?.purpose || 'general',
       allowedPaths:Array.isArray(cde?.allowed_paths) ? cde.allowed_paths.join('\n') : '',
       reviewers:Array.isArray(requirements?.artifact_reviewers) ? requirements.artifact_reviewers.join('\n') : '',
+      programs:WorkshopPrograms.from(requirements),
       publicInputs:inputs?.data_class === 'public-text',
       result:prior?.result || null, submission:null, uncertain:false, checked:false, refreshPending:false};
   };
@@ -782,11 +812,14 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       fields['cde-container'] = entry('cde-container', {...(cde || {}), allowed_paths:paths});
     }
     const currentReviewers = Array.isArray(requirements?.artifact_reviewers) ? requirements.artifact_reviewers : [];
+    let nextRequirements = null;
     if (JSON.stringify(reviewers) !== JSON.stringify(currentReviewers)) {
-      const next = {...(requirements || {})};
-      if (reviewers.length) next.artifact_reviewers = reviewers; else delete next.artifact_reviewers;
-      fields.requirements = entry('requirements', next);
+      nextRequirements = {...(requirements || {})};
+      if (reviewers.length) nextRequirements.artifact_reviewers = reviewers; else delete nextRequirements.artifact_reviewers;
     }
+    const withPrograms = WorkshopPrograms.change(nextRequirements || requirements, edit.programs);
+    if (withPrograms) nextRequirements = withPrograms;
+    if (nextRequirements) fields.requirements = entry('requirements', nextRequirements);
     if (edit.publicInputs !== (inputs?.data_class === 'public-text')) {
       const next = {...(inputs || {})};
       if (edit.publicInputs) next.data_class = 'public-text'; else delete next.data_class;
@@ -805,6 +838,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
       return {...edit, fields, draft:draft || null, purpose:draft?.purpose || 'general',
         allowedPaths:(cde?.allowed_paths || []).join('\n'),
         reviewers:(requirements?.artifact_reviewers || []).join('\n'),
+        programs:WorkshopPrograms.from(requirements),
         publicInputs:fields.inputs.value?.data_class === 'public-text', result:null};
     });
   };
@@ -1119,7 +1153,7 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
         return;
       }
       const node = projectedWorkNodes.find(row => row.id === descriptor.root);
-      const result = await authority.createProjectWork(descriptor.root, {...repair, content:sourceFile.content,
+      const result = await authority.createProjectWork(descriptor.root, {...repair, hosts:repair.programs || [], content:sourceFile.content,
         x:Number.isFinite(node?.x) ? node.x + 280 : 200, y:Number.isFinite(node?.y) ? node.y : 200});
       if (mounted.current) {
         setSourceFile(null); setRepair({title:'', description:'', criterion:'', verification:'', path:'', model:'nex-agi/nex-n2.5-pro:free'});
@@ -1470,6 +1504,8 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
               <p style={{fontSize:11, color:W.inkSoft}}>{repair.runtime === 'claude' ?
                 'Uses the installed Claude account. The Work stores a 12-turn, 768 MiB process budget and a 180-second turn timeout. Review and approval are required before a model turn.' :
                 'Use an explicit :free model or openrouter/free. This choice is saved with the Work; there is no automatic fallback.'}</p>
+              {!revisionBase && <ProgramChoices selected={repair.programs || []} disabled={busy}
+                onChange={programs => setRepair(value => ({...value, programs}))}/>}
               <label style={{display:'block', margin:'10px 0'}}>One source file · UTF-8 · up to 64 KiB
                 <input aria-label="Repair source file" type="file" disabled={busy} onChange={selectSourceFile}
                   style={{display:'block', width:'100%', marginTop:4}}/>
@@ -1611,6 +1647,9 @@ const WorkshopView = ({ state, descriptor, target, setTarget, setMode, setFocusI
                     onChange={event => setConfigEditor(value => ({...value, reviewers:event.target.value, result:null}))}
                     style={{display:'block', width:'100%', minHeight:48, marginTop:4}}/>
                 </label>
+                <ProgramChoices selected={configEditor.programs}
+                  disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
+                  onChange={programs => setConfigEditor(value => ({...value, programs, result:null}))}/>
                 <label style={{display:'block', margin:'10px 0'}}><input type="checkbox" checked={configEditor.publicInputs}
                   disabled={busy || !configEditor.editable || !!configEditor.submission || configEditor.refreshPending}
                   onChange={event => setConfigEditor(value => ({...value, publicInputs:event.target.checked, result:null}))}/>

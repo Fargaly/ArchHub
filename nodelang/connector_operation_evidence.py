@@ -48,6 +48,8 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "skills.read": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
     "skills.thinking_chain": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
     "max.exec": {"unavailable": "3ds Max running with the MaxMCP startup script loaded; setup places the script only when the build carries its custody review, and courts do not launch hosts"},
+    "max.info": {"unavailable": "3ds Max running with the MaxMCP startup script loaded; setup places the script only when the build carries its custody review, and courts do not launch hosts"},
+    "max.python": {"unavailable": "3ds Max running with the MaxMCP startup script loaded; setup places the script only when the build carries its custody review, and courts do not launch hosts"},
     "rhino.exec": {"unavailable": "Rhino 8 running the ArchHub bridge script on :9879; courts do not launch hosts on this machine"},
     "blender.exec": {"unavailable": "Blender running the ArchHub add-on on :9876; courts do not launch hosts on this machine"},
     "office.read": {"unavailable": _OFFICE},
@@ -100,7 +102,8 @@ EVIDENCE: dict[str, dict[str, str]] = {
 
 # Which connector row (probe_connectors id) an operation needs, when it needs one.
 _CONNECTOR = {
-    "max.exec": "max", "rhino.exec": "rhino", "blender.exec": "blender",
+    "max.exec": "max", "max.info": "max", "max.python": "max",
+    "rhino.exec": "rhino", "blender.exec": "blender",
     "outlook.inbox": "outlook", "library.draft_email": "outlook",
     "notion.search": "notion", "dropbox.list": "dropbox",
     "outlook.graph.inbox": "outlook-new", "outlook.graph.status": "outlook-new",

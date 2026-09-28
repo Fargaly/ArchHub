@@ -894,6 +894,40 @@ result = rows;
 """,
 }
 
+def broker_sessions(service: str) -> list[dict]:
+    """Live sessions of one broker, each by its own identity.
+
+    Revit is only a session that names its Revit version (as _session_for
+    reads it); AutoCAD only one that answers as acad-mcp. MaxMCP and anything
+    else in the shared port range is neither, and is never sent their code.
+    """
+    if service == "revit":
+        return [row for row in live_sessions()
+                if row.get("revit_version") and row.get("service") in (None, "", "revit-mcp")]
+    if service == "acad":
+        return [row for row in live_sessions() if row.get("service") == "acad-mcp"]
+    raise ValueError("unknown broker service")
+
+
+def broker_call(service: str, route: str, body: Mapping[str, object] | None = None,
+                *, port: int | None = None, timeout: float = _PING_TIMEOUT) -> dict:
+    """One signed call to the one live Revit ("revit") or AutoCAD ("acad") broker.
+
+    More than one live session of that identity needs ``port``; none is refused.
+    """
+    rows = [row for row in broker_sessions(service) if port is None or row["port"] == port]
+    name = "AutoCAD" if service == "acad" else "Revit"
+    if not rows:
+        raise RevitUnreachable("no %s session answers%s" % (
+            name, "" if port is None else " on :%d" % port))
+    if len(rows) > 1:
+        raise RevitUnreachable("%d %s sessions answer (ports %s); name one with port" % (
+            len(rows), name, ", ".join(str(row["port"]) for row in rows)))
+    answer = _call(rows[0]["port"], route, body, timeout=timeout)
+    return {"ok": answer.get("status") == "ok", "port": rows[0]["port"],
+            "document": rows[0].get("document"), **answer}
+
+
 def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     """Carry out one declared Revit operation against a live session."""
     sessions = live_sessions()
@@ -919,5 +953,5 @@ def invoke(op_id: str, arguments: Mapping[str, object]) -> dict:
     }
 
 
-__all__ = ["BROKER_PORTS", "REVIT_ADDIN_ABSENT", "RevitUnreachable", "invoke",
+__all__ = ["BROKER_PORTS", "REVIT_ADDIN_ABSENT", "RevitUnreachable", "broker_call", "broker_sessions", "invoke",
            "live_sessions", "revit_addin_years"]

@@ -1,10 +1,11 @@
 """Connect a person's own assistants to the installed ArchHub MCP server, on consent.
 
 One server, the installed native owner (nodelang/native_agent_mcp.py, entry
-name SERVER_NAME). It carries the Work, Workshop and host tools, including
-``hosts.status``; host operations themselves run only as graph nodes inside
-admitted Work. Settings -> Hosts shows each client's state and writes an entry
-only after the person presses Connect for that client.
+name SERVER_NAME). It carries the Work, Workshop and host tools (``hosts.status``
+and the host tools of native_host_tools; host effects need a claimed Work).
+Settings -> Hosts shows each client's state and writes an entry only after the
+person presses Connect for that client. ``mcp_server_spec`` is what any
+installer writes and removes for a client.
 
 * Claude Code: through its own command (client_mcp_installation, unchanged).
 * Codex: one ``[mcp_servers.SERVER_NAME]`` table appended to
@@ -31,6 +32,8 @@ from .client_mcp_installation import (
     managed_entry,
     readiness as claude_readiness,
     register_claude_code,
+    confirm_entries,
+    stale_entries,
 )
 from .native_workshop_profile import SERVER_NAME
 
@@ -52,6 +55,26 @@ def codex_entry(install_root, state_root) -> dict:
     env = dict(entry["env"], ARCHHUB_COORDINATION_VENDOR="codex")
     return {"command": entry["command"], "args": list(entry["args"]),
             "env_vars": ["CODEX_THREAD_ID"], "env": env}
+
+
+def mcp_server_spec(client: str, *, existing=None, environment=None) -> dict:
+    """What an installer writes and removes for one client; reads nothing, writes nothing.
+
+    ``add`` holds exactly one entry, the shipped native owner of this install.
+    ``remove`` names the existing entries (``existing`` is the client's current
+    server table) that are verified ArchHub development-era entries; ``ask``
+    names those to remove only on the person's word. Each carries its reason.
+    """
+    env = os.environ if environment is None else environment
+    root, state = install_roots(env)
+    if client == "claude-code":
+        entry = managed_entry(root, state)
+    elif client == "codex":
+        entry = codex_entry(root, state)
+    else:
+        raise ValueError("no MCP server spec for %r" % client)
+    return {"client": client, "server_name": SERVER_NAME, "add": {SERVER_NAME: entry},
+            "remove": stale_entries(existing or {}), "ask": confirm_entries(existing or {})}
 
 
 def _codex_config(env) -> Path | None:
@@ -182,5 +205,5 @@ def register(client: str, *, consent, environment=None) -> dict:
     return opencode_readiness(root, state, env)
 
 
-__all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "readiness",
-           "register", "register_codex"]
+__all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "mcp_server_spec",
+           "readiness", "register", "register_codex"]

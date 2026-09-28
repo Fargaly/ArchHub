@@ -590,6 +590,22 @@ def _validate_configured_gate(court, gate, scope_roots):
         court._target(raw, scope_roots)
 
 
+# The programs a task may drive through the native host tools, saved as
+# requirements.hosts on the Work's existing requirements interface.
+WORK_PROGRAMS = {"revit": "Revit", "acad": "AutoCAD", "max": "3ds Max", "rhino": "Rhino", "blender": "Blender"}
+
+
+def validate_work_hosts(requirements):
+    """Refuse a requirements.hosts that is not a list of known programs, each once."""
+    if type(requirements) is not dict or "hosts" not in requirements:
+        return
+    hosts = requirements["hosts"]
+    if (type(hosts) is not list or any(type(host) is not str or host not in WORK_PROGRAMS for host in hosts)
+            or len(set(hosts)) != len(hosts)):
+        raise InvalidCell("Programs this task may use must be chosen from Revit, AutoCAD, 3ds Max, "
+                          "Rhino and Blender, each once")
+
+
 def validate_work_configuration(snapshot, registry, work, *, purpose, current, proposed, workspace_root, context):
     """Validate the complete configuration that would result; nothing is written or run.
 
@@ -606,6 +622,7 @@ def validate_work_configuration(snapshot, registry, work, *, purpose, current, p
     if any(type(value) is not dict for value in proposed.values()):
         raise InvalidCell("A configured Work field must be a structured object")
     final = {**current, **proposed}
+    validate_work_hosts(final.get("requirements"))
     court = ArtifactVerificationCourt(workspace_root)
     try:
         cde = final.get("cde-container")

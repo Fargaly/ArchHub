@@ -1422,8 +1422,12 @@
           fail('Native project work is not yet available in this conversation.');
         }
         const {title, description, criterion, verification, path, content, x, y,
-          model = 'nex-agi/nex-n2.5-pro:free', runtime = 'openrouter'} = details || {};
+          model = 'nex-agi/nex-n2.5-pro:free', runtime = 'openrouter', hosts = []} = details || {};
         if (!['openrouter', 'claude'].includes(runtime)) fail('Choose an available repair runtime.');
+        if (!Array.isArray(hosts) || new Set(hosts).size !== hosts.length ||
+            hosts.some(host => !['revit', 'acad', 'max', 'rhino', 'blender'].includes(host))) {
+          fail('Choose the programs this task may use from Revit, AutoCAD, 3ds Max, Rhino and Blender.');
+        }
         if ([title, description, criterion, verification].some(value => !text(value) || !value.trim()) ||
             title.length > 160 || description.length > 12000 || criterion.length > 4000 || verification.length > 4000) {
           fail('Enter a title, requested change, acceptance criterion, and verification method.');
@@ -1446,7 +1450,7 @@
         const sha256 = await hash(content);
         if (!/^[a-f0-9]{64}$/.test(sha256)) fail('The source file hash could not be computed.');
         const key = JSON.stringify([stamp.epoch, stamp.graph, stamp.scope, root, title, description,
-          criterion, verification, path, sha256, x, y, selectedModel, runtime]);
+          criterion, verification, path, sha256, x, y, selectedModel, runtime, hosts]);
         if (!current(stamp, root)) fail('The Workshop changed before Work creation.');
         if (creations.has(key)) return creations.get(key);
         const artifactId = uuid();
@@ -1464,7 +1468,7 @@
             result = await post('/api/universal/work', {title:title.trim(), description:description.trim(),
               workshop_root:root, workshop_scope:stamp.scope, revision:projection.revision,
               x, y, projection:false, structured_references:{requirements:{acceptance_criteria:[{
-                criterion:criterion.trim(), verification:verification.trim()}]}, inputs:{model:selectedModel,
+                criterion:criterion.trim(), verification:verification.trim()}], ...(hosts.length ? {hosts} : {})}, inputs:{model:selectedModel,
                 data_class:'public-text', artifact_name:artifactId + '.patch', files:[{path, content, sha256}],
                 ...(runtime === 'claude' ? {runtime:'claude', limits:{max_turns:12, max_processes:8,
                   max_input_bytes:262144, max_output_bytes:4194304, max_event_bytes:1048576,

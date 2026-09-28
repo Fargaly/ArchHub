@@ -97,6 +97,19 @@ def _bridge_call(url: str, body: Mapping[str, object] | None = None, timeout: fl
     return answer
 
 
+# The development host server waited 240 s for a host's answer. A graph node
+# keeps the 20 s default; an explicit caller may ask for more, never past this.
+EXEC_WAIT_LIMIT = 240.0
+
+
+def _exec_wait(params: Mapping[str, object]) -> float:
+    try:
+        asked = float(params.get("timeout_s") or 20.0)
+    except (TypeError, ValueError):
+        asked = 20.0
+    return max(1.0, min(asked, EXEC_WAIT_LIMIT))
+
+
 def _max_endpoint(timeout: float = 1.5) -> str | None:
     """The base URL of the MaxMCP that answers with its own identity, or None."""
     for port in MAX_PORTS:
@@ -370,7 +383,32 @@ def max_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
         return {"out": _http(base + "/ping", timeout=8)}, "MaxMCP answers"
     # MaxMCP reads the MAXScript from "script" (max_mcp_startup.py _run_kind).
     try:
-        return {"out": _bridge_call(base + "/exec_maxscript", {"script": code})}, "ran in 3ds Max"
+        return {"out": _bridge_call(base + "/exec_maxscript", {"script": code}, timeout=_exec_wait(params))}, "ran in 3ds Max"
+    except BridgeRefused as refused:
+        return _honest("3ds Max: %s" % refused)
+
+
+def max_info(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Scene info from the open 3ds Max through MaxMCP."""
+    base = _max_endpoint()
+    if base is None:
+        return _honest("no MaxMCP answers as max-mcp on 48886-48899 (open Max with MaxMCP loaded)")
+    try:
+        return {"out": _bridge_call(base + "/info")}, "3ds Max scene"
+    except BridgeRefused as refused:
+        return _honest("3ds Max: %s" % refused)
+
+
+def max_python(params: Mapping[str, object], feeds: Mapping[str, object]):
+    """Python (pymxs, rt) in the open 3ds Max scene through MaxMCP /exec."""
+    code = str(params.get("code") or "")
+    base = _max_endpoint()
+    if base is None:
+        return _honest("no MaxMCP answers as max-mcp on 48886-48899 (open Max with MaxMCP loaded)")
+    if not code:
+        return _honest("no Python code to run in 3ds Max")
+    try:
+        return {"out": _bridge_call(base + "/exec", {"code": code}, timeout=_exec_wait(params))}, "ran in 3ds Max"
     except BridgeRefused as refused:
         return _honest("3ds Max: %s" % refused)
 
@@ -383,7 +421,7 @@ def rhino_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
     if not code:
         return {"out": {"ok": True, "bridge": RHINO_URL}}, "Rhino bridge answers"
     try:
-        return {"out": _bridge_call(RHINO_URL + "/execute", {"code": code})}, "ran in Rhino"
+        return {"out": _bridge_call(RHINO_URL + "/execute", {"code": code}, timeout=_exec_wait(params))}, "ran in Rhino"
     except BridgeRefused as refused:
         return _honest("Rhino: %s" % refused)
 
@@ -396,7 +434,7 @@ def blender_exec(params: Mapping[str, object], feeds: Mapping[str, object]):
     if not code:
         return {"out": _http(BLENDER_URL + "/ping", timeout=8)}, "Blender add-on answers"
     try:
-        return {"out": _bridge_call(BLENDER_URL + "/execute", {"code": code})}, "ran in Blender"
+        return {"out": _bridge_call(BLENDER_URL + "/execute", {"code": code}, timeout=_exec_wait(params))}, "ran in Blender"
     except BridgeRefused as refused:
         return _honest("Blender: %s" % refused)
 
@@ -487,7 +525,7 @@ from .outlook_imap import inbox as _imap_inbox, status as _imap_status, message 
 
 
 ENGINES = {
-    "max.exec": max_exec, "rhino.exec": rhino_exec, "blender.exec": blender_exec,
+    "max.exec": max_exec, "max.info": max_info, "max.python": max_python, "rhino.exec": rhino_exec, "blender.exec": blender_exec,
     "office.read": office_read, "outlook.inbox": outlook_inbox, "notion.search": notion_search,
     "dropbox.list": dropbox_list, "connector.rows": connector_rows,
     "outlook.graph.inbox": _graph_inbox, "outlook.graph.status": _graph_status,

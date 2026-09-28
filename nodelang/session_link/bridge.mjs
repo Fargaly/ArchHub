@@ -15,7 +15,7 @@ const root=stateDir(),dir=path.join(root,'connections');
 fs.mkdirSync(dir,{recursive:true});
 const argv=process.argv.slice(2),cmd=argv[0]||'help';
 const option=n=>{const i=argv.indexOf('--'+n);return i<0?undefined:argv[i+1];};
-const idFor=(a,b)=>crypto.createHash('sha256').update(a+'|'+b).digest('hex').slice(0,16);
+export const idFor=(a,b)=>crypto.createHash('sha256').update(a+'|'+b).digest('hex').slice(0,16);
 const read=p=>JSON.parse(fs.readFileSync(p,'utf8'));
 const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
 const configs=()=>fs.readdirSync(dir).filter(f=>f.endsWith('.runtime.json')).sort((a,b)=>fs.statSync(path.join(dir,b)).mtimeMs-fs.statSync(path.join(dir,a)).mtimeMs).map(f=>{try{return read(path.join(dir,f));}catch{return null;}}).filter(Boolean);
@@ -27,6 +27,41 @@ function tailTitle(s){
 }
 const claudes=()=>listClaudeSessions().map(s=>({id:s.sessionId,title:tailTitle(s),cwd:s.cwd,pid:s.pid,socket:s.socket,app:'claude'}));
 function exact(rows,needle,app){const hits=rows.filter(s=>s.id===needle||s.selector===needle||s.title===needle);if(hits.length!==1)throw new Error(`${app}: expected exactly one session for ${JSON.stringify(needle)}, found ${hits.length}; use list and exact ID or process-qualified selector`);return hits[0];}
+// A reused or fresh durable link must be exactly the one requested: the same
+// connection, remote session, destination task and workspaces, and the sender
+// mode that both the saved binding and the running bridge report. Anything
+// else is refused before a message is sent; nothing is replaced or downgraded.
+function mismatch(detail){
+ const e=new Error(`Existing Session Link connection does not match this request (${detail}); nothing sent. Disconnect that exact connection before reconnecting.`);
+ e.code='SESSION_LINK_MISMATCH';return e;
+}
+function verifyLink({id,app,c,x,status,saved,requestedMode}){
+ if(!saved)throw mismatch('no saved binding');
+ if(saved.id!==id)throw mismatch('connection id');
+ if((saved.claude?.app||'claude')!==app||saved.claude?.id!==c.id)throw mismatch('remote session');
+ if(saved.codex?.id!==x.id)throw mismatch('destination task');
+ if((c.cwd!==undefined&&saved.claude?.cwd!==c.cwd)||(x.cwd!==undefined&&saved.codex?.cwd!==x.cwd))throw mismatch('workspace');
+ if(!['prompting','bypass'].includes(saved.permissionMode))throw mismatch('saved sender mode');
+ if(requestedMode&&requestedMode!==saved.permissionMode)throw mismatch('sender mode');
+ if(!status||status.id!==id)throw mismatch('running connection id');
+ if((status.remoteApp||'claude')!==app||status.remoteId!==c.id)throw mismatch('running remote session');
+ if(status.codex!==x.id)throw mismatch('running destination task');
+ if(status.permissionMode===undefined){
+  const e=new Error('This connection was made by an older version of Session Link. Reconnect it once (disconnect, then connect) and try again.');
+  e.code='SESSION_LINK_MISMATCH';throw e;
+ }
+ if(status.permissionMode!==saved.permissionMode)throw mismatch('running sender mode');
+ if(typeof status.peer!=='string'||!status.peer)throw mismatch('running peer');
+ return status;
+}
+// App-tool failures are reported as plain reasons; transport addresses stay private.
+const publicReason=e=>{
+ let s=String(e?.message||e||'unknown error');
+ const live=process.env.CODEX_APP_TOOLS_PIPE_PATH;
+ if(live)s=s.split(live).join('[app pipe]');
+ // Either slash style, and names that contain spaces: the rest of the line goes.
+ return s.replace(/[\\/]{2}[.?][\\/]pipe[\\/][^\r\n'"`]*/gi,'[app pipe]').slice(0,300);
+};
 async function rpc(config,request,{onDispatch=()=>{},timeoutMs=25000}={}){
   if(!alive(config.pid))throw new Error('Session Link offline; request not dispatched. Resume the exact saved connection.');
   let token;
@@ -75,7 +110,10 @@ export async function catalog({apps,onProgress}={}){
     catch(e){adapter={status:'unavailable',reason:String(e?.message||'Codex attachment status unavailable')};}
     const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex,adapterStatus:{...extra.adapterStatus,codex:adapter}};
   }
-  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){const r=decode(await nativeCall('list_threads',{limit:50}));return {...await discoverExtra({apps}),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex'}))};}
+  if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){let r;
+    try{r=decode(await nativeCall('list_threads',{limit:50}));}
+    catch(e){const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex:[],adapterStatus:{...extra.adapterStatus,codex:{status:'unavailable',reason:'Codex app tools could not list tasks: '+publicReason(e)}}};}
+    return {...await discoverExtra({apps}),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex'}))};}
   // Outside a Codex task only a live bridge holds the app pipe. An empty Codex
   // list must say why, so callers never read "no bridge" as "no live task".
   let reason='No live Session Link bridge holds Codex app context; run connect or resume --current once from a Codex Desktop task';
@@ -112,7 +150,8 @@ export async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
   if(request.permissionMode&&!['prompting','bypass'].includes(request.permissionMode))throw new Error('Permission mode must be prompting or bypass');
   const all=observedCatalog||await catalog(),app=request.app||'claude',c=exact(all[app]||[],request.claude,app),x=exact(all.codex,request.codex,'Codex');
   const id=idFor(c.id,x.id),runtime=path.join(dir,id+'.runtime.json'),binding=path.join(dir,id+'.binding.json');
-  if(fs.existsSync(runtime)){const old=read(runtime);if(request.permissionMode&&fs.existsSync(binding)&&read(binding).permissionMode!==request.permissionMode)throw new Error('Existing connection has a different sender permission mode; connect does not change it. Reconcile pending delivery before explicit reconnect.');try{return await rpc(old,{operation:'status'});}catch{if(alive(old.pid))throw new Error('Existing bridge process is unreachable; stop it before reconnecting');}}
+  if(fs.existsSync(runtime)){const old=read(runtime);if(request.permissionMode&&fs.existsSync(binding)&&read(binding).permissionMode!==request.permissionMode){const e=new Error('Existing connection has a different sender permission mode; connect does not change it. Reconcile pending delivery before explicit reconnect; nothing sent.');e.code='SESSION_LINK_MISMATCH';throw e;}let status;try{status=await rpc(old,{operation:'status'});}catch{if(alive(old.pid))throw new Error('Existing bridge process is unreachable; stop it before reconnecting');}
+    if(status)return verifyLink({id,app,c,x,status,saved:fs.existsSync(binding)?read(binding):null,requestedMode:request.permissionMode});}
   if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID){
     for(const config of configs().filter(c=>alive(c.pid))){return await rpc(config,{operation:'connect',claude:c.selector||c.id,codex:x.id,app},{onDispatch:()=>onSpawn(null)});}
     throw new Error('Connect from a Codex task once to establish the local app transport');
@@ -122,7 +161,8 @@ export async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
   const child=spawn(process.execPath,[fileURLToPath(import.meta.url),'serve',binding],{detached:true,windowsHide:true,stdio:['ignore','ignore',stderr],env:process.env});
   if(child.pid)onSpawn(child.pid);
   child.on('error',()=>{});child.unref();fs.closeSync(stderr);
-  for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,100));if(fs.existsSync(runtime)){try{return await rpc(read(runtime),{operation:'status'});}catch{}}}
+  for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,100));if(fs.existsSync(runtime)){let status;try{status=await rpc(read(runtime),{operation:'status'});}catch{}
+    if(status)return verifyLink({id,app,c,x,status,saved:read(binding),requestedMode:request.permissionMode||'prompting'});}}
   throw new Error('Bridge startup unconfirmed; inspect connection stderr before retrying');
 }
 async function resume(id,{discover}={}){
@@ -191,7 +231,7 @@ async function serve(binding){
     await nativeCall('send_message_to_thread',{threadId:b.codex.id,prompt:`[From Claude Code: ${b.claude.title}; session ${b.claude.id}; link ${b.id}; message ${record.msgId}]\n${record.text}`},b.executor);
     forwarded++;lastError=null;log('delivered',{messageId:record.msgId,direction:'claude-to-codex'});
   }catch(e){lastError=e.message;log('error',{error:lastError});}});});
-  const state=()=>({id:b.id,pid:process.pid,remoteApp:b.claude.app||'claude',remoteId:b.claude.id,remoteTitle:b.claude.title,claude:b.claude.id,claudeTitle:b.claude.title,codex:b.codex.id,codexTitle:b.codex.title,peer:peer.name,sent,forwarded,lastError,claudeOnline:b.claude.app==='claude'?claudes().some(s=>s.id===b.claude.id):undefined});
+  const state=()=>({id:b.id,pid:process.pid,remoteApp:b.claude.app||'claude',remoteId:b.claude.id,remoteTitle:b.claude.title,claude:b.claude.id,claudeTitle:b.claude.title,codex:b.codex.id,codexTitle:b.codex.title,peer:peer.name,permissionMode:peer.permissionMode,sent,forwarded,lastError,claudeOnline:b.claude.app==='claude'?claudes().some(s=>s.id===b.claude.id):undefined});
   const server=net.createServer(socket=>{
     let buffer='',handled=false;socket.setEncoding('utf8');socket.setTimeout(30000,()=>socket.destroy());socket.on('error',()=>{});
     socket.on('data',async chunk=>{if(handled)return;buffer+=chunk;if(buffer.length>70000){socket.destroy();return;}if(!buffer.includes('\n'))return;handled=true;
@@ -313,7 +353,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
    result=await rpc(matches[0],{operation:'delivery',messageId:argv[2]});
  }
- else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
+ else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
  else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','disconnect CONNECTION_ID','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}

@@ -140,3 +140,29 @@ for(const shell of ['powershell.exe','pwsh.exe'])test('S8 '+shell+' -File with r
  assert.equal(Buffer.compare(Buffer.from(received[0].text,'utf8'),Buffer.from(text,'utf8')),0);
  noSentinels(tag);
 });
+test('S9 oversize stdin is refused before the writer closes it',async()=>{
+ received.length=0;
+ const r=await new Promise(resolve=>{
+  const child=spawn(process.execPath,[path.join(lib,'bridge.mjs'),'send',CONNECTION,'--stdin'],{env,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let err='',done=false;child.stderr.setEncoding('utf8');child.stderr.on('data',c=>err+=c);
+  const timer=setTimeout(()=>{if(!done){done=true;child.kill();resolve({code:'timeout',err});}},5000);
+  child.on('close',code=>{if(done)return;done=true;clearTimeout(timer);child.stdin.destroy();resolve({code,err});});
+  child.stdin.on('error',()=>{});
+  child.stdin.write('x'.repeat(40000));
+ });
+ assert.notEqual(r.code,'timeout','waited for stdin to close');
+ assert.equal(r.code,1);assert.match(r.err,/1-32000 characters/);assert.equal(received.length,0);
+});
+test('S10 a stdin that stays open under the limit is refused after the idle period',async()=>{
+ received.length=0;
+ const r=await new Promise(resolve=>{
+  const child=spawn(process.execPath,[path.join(lib,'bridge.mjs'),'send',CONNECTION,'--stdin'],{env:{...env,SESSION_LINK_STDIN_IDLE_MS:'1500'},windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let err='',done=false;child.stderr.setEncoding('utf8');child.stderr.on('data',c=>err+=c);
+  const timer=setTimeout(()=>{if(!done){done=true;child.kill();resolve({code:'timeout',err});}},6000);
+  child.on('close',code=>{if(done)return;done=true;clearTimeout(timer);child.stdin.destroy();resolve({code,err});});
+  child.stdin.on('error',()=>{});
+  child.stdin.write('partial message, writer never closes');
+ });
+ assert.notEqual(r.code,'timeout','waited for stdin to close');
+ assert.equal(r.code,1);assert.match(r.err,/No stdin data for 2 seconds and stdin was not closed; not sent/);assert.equal(received.length,0);
+});

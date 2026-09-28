@@ -31,6 +31,8 @@ const PING='01a07b65-f0c4-7040-a218-d703384679a0',CALLER='01a0cafe-0000-7000-800
 // Row shape: Codex 26.924 app.asar list_threads builder (schemaVersion 4;
 // rows {id,kind:'codex',projectId,hostId,status,cwd,updatedAt,title,summary,isUnread};
 // status {type:'active',activeFlags}).
+const linkId=(a,b)=>crypto.createHash('sha256').update(a+'|'+b).digest('hex').slice(0,16);
+const attested=peer=>({id:linkId(CLAUDE,CALLER),remoteApp:'claude',remoteId:CLAUDE,codex:CALLER,permissionMode:'prompting',peer});
 const row=(id,title)=>({id,kind:'codex',projectId:null,hostId:null,status:{type:'active',activeFlags:[]},cwd:'C:/fixture',updatedAt:1790000000000,title,summary:null,isUnread:false});
 
 // Mock of the Codex Desktop dynamic app tools pipe. Request contract from
@@ -118,7 +120,7 @@ test('C4 a Codex task asking Claude gets a durable reply peer on the persistent 
  fs.writeFileSync(entry,JSON.stringify({pid:process.ppid,sessionId:CLAUDE,cwd:'C:/fixture',name:'Claude fixture',messagingSocketPath:pipe('cc-msg-fixture'),startedAt:Date.now()}));
  const original=PeerEndpoint.prototype.sendAndWait,sent=[],links=[];
  PeerEndpoint.prototype.sendAndWait=async function(socket,text){sent.push({socket,text});return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
- const connectLink=async(request,{observedCatalog})=>{links.push({request,observedCatalog});return {id:'d4d4d4d4d4d4d4d4',peer:'codex-01a0cafe-d4d4'};};
+ const connectLink=async(request,{observedCatalog})=>{links.push({request,observedCatalog});return attested('codex-01a0cafe-d4d4');};
  try{
   const result=await inCodexTask(app,()=>ask('claude',CLAUDE,'hello Claude','prompting',{connectLink}));
   assert.equal(links.length,1);
@@ -128,7 +130,7 @@ test('C4 a Codex task asking Claude gets a durable reply peer on the persistent 
   assert.equal(sent.length,1);
   assert.match(sent[0].text,/use native SendMessage to peer codex-01a0cafe-d4d4 /);
   assert.equal(result.text,'ack');
-  assert.deepEqual(result.durable_reply,{connection:'d4d4d4d4d4d4d4d4',peer:'codex-01a0cafe-d4d4'});
+  assert.deepEqual(result.durable_reply,{connection:linkId(CLAUDE,CALLER),peer:'codex-01a0cafe-d4d4'});
  }finally{PeerEndpoint.prototype.sendAndWait=original;fs.rmSync(entry,{force:true});await app.close();}
 });
 test('C5 a one-off bypass ask never creates a bypass durable link',async()=>{
@@ -137,7 +139,7 @@ test('C5 a one-off bypass ask never creates a bypass durable link',async()=>{
  fs.writeFileSync(entry,JSON.stringify({pid:process.ppid,sessionId:CLAUDE,cwd:'C:/fixture',name:'Claude fixture',messagingSocketPath:pipe('cc-msg-fixture'),startedAt:Date.now()}));
  const original=PeerEndpoint.prototype.sendAndWait,modes=[],links=[];
  PeerEndpoint.prototype.sendAndWait=async function(socket,text,options){modes.push(options.permissionMode);return {msgId:'m1',delivery:null,reply:{msgId:'r1',text:'ack'}};};
- const connectLink=async request=>{links.push(request);return {id:'d5d5d5d5d5d5d5d5',peer:'codex-01a0cafe-d5d5'};};
+ const connectLink=async request=>{links.push(request);return attested('codex-01a0cafe-d5d5');};
  try{
   await inCodexTask(app,()=>ask('claude',CLAUDE,'one-off','bypass',{connectLink}));
   assert.equal(links.length,1);

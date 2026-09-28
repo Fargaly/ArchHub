@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {PeerEndpoint,listClaudeSessions,publicDeliveryReceipt} from './vendor/src/peer-protocol.mjs';
 import {sendExtra} from './extra-apps.mjs';
 import {postCodex} from './native.mjs';
-import {catalog,connect} from './bridge.mjs';
+import {catalog,connect,idFor} from './bridge.mjs';
 import {stateDir,readMessage} from './paths.mjs';
 import {modelFromArgs,validateModel} from './opencode-model.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
@@ -22,12 +22,17 @@ const validate=text=>{if(typeof text!=='string'||!text.trim()||text.length>32000
 // link is always 'prompting': a per-request sender mode never outlives its request.
 export async function durableReply(target,{connectLink=connect}={}){
  if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)return null;
+ const codex=process.env.CODEX_THREAD_ID;let link;
  try{
   const observedCatalog=await catalog({apps:['claude','codex']});
-  const link=await connectLink({app:'claude',claude:target.id,codex:process.env.CODEX_THREAD_ID,permissionMode:'prompting'},{observedCatalog});
-  if(typeof link?.peer!=='string'||!link.peer)throw new Error('Persistent link returned no peer');
-  return {connection:link.id,peer:link.peer};
- }catch(e){return {error:e.message};}
+  link=await connectLink({app:'claude',claude:target.id,codex,permissionMode:'prompting'},{observedCatalog});
+ }catch(e){if(e?.code==='SESSION_LINK_MISMATCH')throw e;return {error:e.message};}
+ // Advertise only the exact prompting link for this pair, as the bridge attests it.
+ if(link?.id!==idFor(target.id,codex)||(link.remoteApp||'claude')!=='claude'||link.remoteId!==target.id||link.codex!==codex||
+    link.permissionMode!=='prompting'||typeof link.peer!=='string'||!link.peer){
+  const e=new Error('Durable Session Link is not the exact prompting link for this request; nothing sent');e.code='SESSION_LINK_MISMATCH';throw e;
+ }
+ return {connection:link.id,peer:link.peer};
 }
 export async function ask(app,session,text,permissionMode='prompting',{expected,onDispatch=()=>{},model,connectLink}={}){
  validate(text);
@@ -91,5 +96,5 @@ async function answer(id,text){
  return await new Promise((resolve,reject)=>{const s=net.connect(r.control);let data='';s.setEncoding('utf8');s.setTimeout(10000,()=>{s.destroy();reject(new Error('Answer timeout; delivery uncertain'));});s.on('error',reject);s.on('connect',()=>s.write(JSON.stringify({token,session:process.env.CODEX_THREAD_ID,text})+'\n'));s.on('data',c=>{data+=c;if(data.includes('\n')){s.destroy();try{const v=JSON.parse(data);v.ok?resolve({delivered:true}):reject(new Error(v.error));}catch(e){reject(e);}}});});
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- try{const model=modelFromArgs(args);const text=validate(readMessage(args));if(args[0]==='answer'&&model)throw new Error('Answer cannot select a model');const result=args[0]==='answer'?await answer(args[1],text):await ask(opt('app'),opt('session'),text,opt('permission-mode'),{model});console.log(JSON.stringify(result,null,2));if(result.status==='model_selection_failed')process.exitCode=1;}catch(e){console.error(e.message);process.exitCode=1;}
+ try{const model=modelFromArgs(args);const text=validate(await readMessage(args));if(args[0]==='answer'&&model)throw new Error('Answer cannot select a model');const result=args[0]==='answer'?await answer(args[1],text):await ask(opt('app'),opt('session'),text,opt('permission-mode'),{model});console.log(JSON.stringify(result,null,2));if(result.status==='model_selection_failed')process.exitCode=1;}catch(e){console.error(e.message);process.exitCode=1;}
 }

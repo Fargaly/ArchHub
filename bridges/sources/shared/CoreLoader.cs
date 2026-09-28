@@ -44,6 +44,14 @@ namespace ArchHub.Shared
         private AssemblyLoadContext _alc;
 #endif
         private object _coreInstance;
+
+        /// <summary>
+        /// The verified dependency bytes of the Core loaded last from a reviewed
+        /// closure (null otherwise). The shim's AppDomain resolver serves these
+        /// before any path, so a dependency is loaded from the bytes that were
+        /// hashed (shared/ReviewedCore.cs), never re-read from disk.
+        /// </summary>
+        public static IDictionary<string, byte[]> VerifiedDependencies { get; private set; }
         private MethodInfo _stopMethod;
         private Action<string> _log;
 
@@ -66,27 +74,40 @@ namespace ArchHub.Shared
         ///   submit(fn) → Task&lt;string&gt; ; fn receives the live host
         ///   handle (UIApplication for Revit) on the UI thread.
         /// </param>
+        /// <param name="verified">
+        ///   From ReviewedCore.VerifyAndRead: the exact bytes that were hashed,
+        ///   keyed by assembly simple name. When given (every /reload), Core and
+        ///   its dependencies are loaded from these bytes, never from a path.
+        /// </param>
         public int Load(string corePath,
                         Func<Func<object, string>, Task<string>> submit,
                         IDictionary<string, string> hostInfo,
                         Action<string> coreLog,
-                        Action<string> reloadTrigger)
+                        Action<string> reloadTrigger,
+                        IDictionary<string, byte[]> verified = null)
         {
-            if (!File.Exists(corePath))
+            byte[] coreBytes = null;
+            if (verified != null
+                && !verified.TryGetValue(Path.GetFileNameWithoutExtension(corePath), out coreBytes))
+                throw new InvalidOperationException("Verified closure does not contain Core: " + corePath);
+            if (verified == null && !File.Exists(corePath))
                 throw new FileNotFoundException("Core DLL missing", corePath);
 
             // Stop + unload any in-flight Core first.
             UnloadInternal();
+            VerifiedDependencies = verified;
 
             Assembly asm;
 #if NET8_0_OR_GREATER
             _alc = new AssemblyLoadContext(
                 "ArchHubCore-" + Guid.NewGuid().ToString("N"),
                 isCollectible: true);
-            _alc.Resolving += (ctx, name) => AlcResolving(ctx, name, corePath);
-            asm = _alc.LoadFromAssemblyPath(corePath);
+            _alc.Resolving += (ctx, name) => AlcResolving(ctx, name, corePath, verified);
+            asm = coreBytes != null
+                ? _alc.LoadFromStream(new MemoryStream(coreBytes))
+                : _alc.LoadFromAssemblyPath(corePath);
 #else
-            asm = Assembly.LoadFrom(corePath);
+            asm = coreBytes != null ? Assembly.Load(coreBytes) : Assembly.LoadFrom(corePath);
 #endif
 
             // Find the *.CoreEntry type by NAME (not by interface — see
@@ -143,10 +164,18 @@ namespace ArchHub.Shared
         /// (everything goes through delegates + BCL types).
         /// </summary>
         private Assembly AlcResolving(AssemblyLoadContext ctx,
-                                      AssemblyName name, string corePath)
+                                      AssemblyName name, string corePath,
+                                      IDictionary<string, byte[]> verified)
         {
             try
             {
+                // A reviewed reload: only the hashed bytes, never the folder.
+                if (verified != null)
+                {
+                    return verified.TryGetValue(name.Name, out var bytes)
+                        ? ctx.LoadFromStream(new MemoryStream(bytes))
+                        : null;
+                }
                 var dir = Path.GetDirectoryName(corePath);
                 if (string.IsNullOrEmpty(dir)) return null;
                 var candidate = Path.Combine(dir, name.Name + ".dll");

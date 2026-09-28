@@ -68,9 +68,12 @@ namespace RevitMCP
             return Result.Succeeded;
         }
 
-        private void LoadCoreInto(string corePath)
+        private void LoadCoreInto(string corePath, IDictionary<string, byte[]> verified = null)
         {
-            var sha = CoreLoader.Sha256OfFile(corePath);
+            // A reviewed reload reports the digest of the bytes actually loaded.
+            var sha = verified != null
+                ? ReviewedCore.Sha256OfBytes(verified[Path.GetFileNameWithoutExtension(corePath)])
+                : CoreLoader.Sha256OfFile(corePath);
             var hostInfo = new Dictionary<string, string>
             {
                 ["host_family"]  = "revit",
@@ -87,14 +90,17 @@ namespace RevitMCP
                 {
                     // The shim performs the load, so it checks too: only the
                     // installed Core matching its reviewed pin (ReviewedCore.cs).
-                    if (!ReviewedCore.Verify(newPath, _installedCorePath, out var why))
+                    // Core and every dependency are read once, hashed, and
+                    // loaded from those same bytes (never re-read from disk).
+                    var verified = ReviewedCore.VerifyAndRead(newPath, _installedCorePath, out var why);
+                    if (verified == null)
                     {
                         Log("Hot-reload refused: " + why);
                         return;
                     }
                     Log("Hot-reload triggered → " + newPath);
                     _loader.Unload();
-                    LoadCoreInto(newPath);
+                    LoadCoreInto(newPath, verified);
                 }
                 catch (Exception ex) { Log("Reload failed: " + ex); }
             };
@@ -103,7 +109,7 @@ namespace RevitMCP
             // we hand the live UIApplication on the UI thread.
             Func<Func<object, string>, Task<string>> submit = fn => _handler.SubmitAsync(fn);
 
-            _loader.Load(corePath, submit, hostInfo, Log, reloadTrigger);
+            _loader.Load(corePath, submit, hostInfo, Log, reloadTrigger, verified);
         }
 
         private static void InstallAssemblyResolver()
@@ -121,6 +127,11 @@ namespace RevitMCP
             try
             {
                 var requested = new AssemblyName(args.Name);
+                // After a reviewed reload, Core's dependencies come from the
+                // bytes that were hashed, before any path is probed.
+                var verified = CoreLoader.VerifiedDependencies;
+                if (verified != null && verified.TryGetValue(requested.Name, out var hashed))
+                    return Assembly.Load(hashed);
                 var addinDir = Path.GetDirectoryName(typeof(RevitMCPApp).Assembly.Location);
                 if (string.IsNullOrEmpty(addinDir)) return null;
                 var candidate = Path.Combine(addinDir, requested.Name + ".dll");

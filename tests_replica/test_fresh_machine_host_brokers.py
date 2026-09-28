@@ -505,7 +505,8 @@ def test_both_sides_of_revit_reload_go_through_the_reviewed_core_gate():
     assert reload.index("ReviewedCore.Verify") < reload.index("trigger(pathCapture)")
     shim = (sources / "revit_mcp" / "RevitMCPApp.cs").read_text(encoding="utf-8")
     trigger = shim[shim.index("Action<string> reloadTrigger"):shim.index("Func<Func<object, string>, Task<string>> submit")]
-    assert "ReviewedCore.Verify(newPath, _installedCorePath, out var why)" in trigger
+    # The shim verifies and reads in one step (VerifyAndRead), then loads those bytes.
+    assert "ReviewedCore.VerifyAndRead(newPath, _installedCorePath, out var why)" in trigger
     assert trigger.index("ReviewedCore.Verify") < trigger.index("_loader.Unload()")
     for project in ("revit_mcp/RevitMCP.csproj", "revit_mcp_core/RevitMCPCore.csproj"):
         assert '<Compile Include="..\\shared\\ReviewedCore.cs"' in (sources / project).read_text(encoding="utf-8"), project
@@ -526,3 +527,89 @@ def test_the_autocad_api_package_is_pinned_exactly_per_year():
                     "2024": "24.3.0", "2025": "25.0.2", "2026": "25.1.1", "2027": "26.0.0"}
     assert 'Version="[$(AcadPackageVersion)]"' in project
     assert "No exact AutoCAD.NET pin for AutoCAD $(AcadYear)" in project
+
+# ------------------------------------------- reload loads the verified bytes --
+
+def _compile_verified_read(tmp_path):
+    import os
+    csc = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe")
+    if not os.path.isfile(csc):
+        pytest.skip("no .NET Framework csc on this machine")
+    harness = tmp_path / "Harness2.cs"
+    harness.write_text(
+        "using System; using System.IO; using ArchHub.Shared;\n"
+        "class H { static int Main(string[] a) { string why;\n"
+        "  var m = ReviewedCore.VerifyAndRead(a[0], a[1], out why);\n"
+        "  if (m == null) { Console.WriteLine(\"REFUSED: \" + why); return 1; }\n"
+        "  File.WriteAllBytes(a[1], new byte[] { 1, 2, 3 });\n"  # the path changes after the check
+        "  Console.WriteLine(\"ACCEPTED \" + m.Count + \" \" + ReviewedCore.Sha256OfBytes(m[\"RevitMCPCore\"])"
+        " + \" \" + ReviewedCore.Sha256OfBytes(m[\"System.Text.Json\"])); return 0; } }\n")
+    exe = tmp_path / "verified_read.exe"
+    built = subprocess.run([csc, "/nologo", "/out:" + str(exe), str(harness),
+                            str(ROOT / "bridges" / "sources" / "shared" / "ReviewedCore.cs")],
+                           capture_output=True, text=True, timeout=120)
+    assert built.returncode == 0, built.stdout + built.stderr
+    return exe
+
+
+def test_reload_hands_the_loader_the_bytes_it_hashed_and_pins_every_dependency(tmp_path):
+    exe = _compile_verified_read(tmp_path)
+    install = tmp_path / "bridges" / "revit" / "2025"
+    install.mkdir(parents=True)
+    bodies = {"RevitMCP.dll": b"MZ shim", "RevitMCPCore.dll": b"MZ reviewed core", "System.Text.Json.dll": b"MZ json"}
+
+    def lay_out():
+        for name, body in bodies.items():
+            (install / name).write_bytes(body)
+        rows = [{"path": "bridges/revit/2025/" + name, "size": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+                for name, body in bodies.items()]
+        (install / "host-artifacts.json").write_text(json.dumps(
+            {"schema": "archhub-host-artifacts/v1", "host": "revit", "host_version": "2025", "files": rows,
+             "activation": {"eligibility": "reviewed-authenticated-broker", "review_sha256": "b" * 64}}, indent=4),
+            encoding="utf-8")
+
+    core = install / "RevitMCPCore.dll"
+
+    def run():
+        result = subprocess.run([str(exe), str(core), str(core)], capture_output=True, text=True, timeout=60)
+        return result.returncode, result.stdout.strip()
+
+    lay_out()
+    code, out = run()
+    assert code == 0, out
+    # The returned Core bytes are the reviewed ones although the file changed after the check.
+    assert out == "ACCEPTED 2 %s %s" % (hashlib.sha256(b"MZ reviewed core").hexdigest(),
+                                         hashlib.sha256(b"MZ json").hexdigest())
+    lay_out()
+    (install / "System.Text.Json.dll").write_bytes(b"MZ swapped dependency")
+    code, out = run()
+    assert code == 1 and "System.Text.Json.dll differs from its reviewed pin" in out, out
+    lay_out()
+    (install / "Evil.dll").write_bytes(b"MZ unpinned")
+    code, out = run()
+    assert code == 1 and "unpinned DLL beside Core: Evil.dll" in out, out
+    (install / "Evil.dll").unlink()
+    (install / "System.Text.Json.dll").unlink()
+    code, out = run()
+    assert code == 1 and "System.Text.Json.dll" in out, out
+
+
+def test_the_loader_never_rereads_a_verified_core_or_dependency_from_disk():
+    sources = ROOT / "bridges" / "sources"
+    loader = (sources / "shared" / "CoreLoader.cs").read_text(encoding="utf-8")
+    assert "IDictionary<string, byte[]> verified" in loader
+    load = loader[loader.index("public int Load("):loader.index("// Find the *.CoreEntry type")]
+    assert "_alc.LoadFromStream(new MemoryStream(coreBytes))" in load
+    assert "Assembly.Load(coreBytes)" in load
+    resolving = loader[loader.index("private Assembly AlcResolving"):loader.index("public void Unload()")]
+    assert resolving.index("if (verified != null)") < resolving.index("LoadFromAssemblyPath")
+    assert "ctx.LoadFromStream(new MemoryStream(bytes))" in resolving
+    shim = (sources / "revit_mcp" / "RevitMCPApp.cs").read_text(encoding="utf-8")
+    trigger = shim[shim.index("Action<string> reloadTrigger"):shim.index("Func<Func<object, string>, Task<string>> submit")]
+    assert "ReviewedCore.VerifyAndRead(newPath, _installedCorePath, out var why)" in trigger
+    assert "LoadCoreInto(newPath, verified)" in trigger
+    resolver = shim[shim.index("private static Assembly AddinDirResolver"):]
+    assert resolver.index("CoreLoader.VerifiedDependencies") < resolver.index("Assembly.LoadFrom(candidate)")
+    core = (sources / "revit_mcp_core" / "RevitMCPCore.cs").read_text(encoding="utf-8")
+    # Loaded from bytes, Core has no Location; scripts reference the installed, verified file.
+    assert "string.IsNullOrEmpty(typeof(ScriptContext).Assembly.Location) ? _corePath" in core

@@ -311,7 +311,10 @@ namespace RevitMCPCore
             var extraRefs = new[] {
                 Path.Combine(revitDllDir, "RevitAPI.dll"),
                 Path.Combine(revitDllDir, "RevitAPIUI.dll"),
-                typeof(ScriptContext).Assembly.Location,
+                // Loaded from verified bytes (reviewed /reload), Core has no
+                // Location; scripts reference the installed file those bytes matched.
+                string.IsNullOrEmpty(typeof(ScriptContext).Assembly.Location) ? _corePath
+                    : typeof(ScriptContext).Assembly.Location,
             };
             // Filter out other RevitMCPCore* assemblies — after a /reload the
             // previous Core ALC may still be live in the domain (collectible

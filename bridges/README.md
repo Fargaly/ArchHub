@@ -99,7 +99,9 @@ infers one.
 
 In a running Revit, `/reload` loads only the installed `RevitMCPCore.dll` and only
 when its SHA-256 equals the pin in the reviewed `host-artifacts.json` beside it
-(`sources/shared/ReviewedCore.cs`, checked by Core and again by the shim).
+(`sources/shared/ReviewedCore.cs`, checked by Core and again by the shim). Every
+other DLL in that folder must be pinned there and match, and the shim loads
+Core and its dependencies from the exact bytes it hashed, never re-reading a path.
 
 The v1 legacy sweep still keeps `payload\` while any Revit registration loads
 from it; the new registration loads from `bridges\revit\`, never `payload\`.

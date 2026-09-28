@@ -217,6 +217,17 @@ def classification(snapshot, *, session_root, fragment_id):
     return _classification(snapshot, acting_owner(snapshot, session_root), fragment_id)
 
 
+def classification_record(snapshot, *, session_root, fragment_id):
+    """The synced classification fragment (value, origin, clock), or None.
+
+    For a transport that must carry the classification with the memory, so that
+    every replica of the owner reaches the same ceiling.
+    """
+    owner_root = acting_owner(snapshot, session_root)
+    _memory(snapshot, owner_root, fragment_id)
+    return held(snapshot, _classification_root(entry_root(owner_root, fragment_id)))
+
+
 def lake_key_for(ceiling):
     """Which data key seals a class. The key follows the ceiling, not the author."""
     if ceiling == COMMUNITY:

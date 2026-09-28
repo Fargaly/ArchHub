@@ -34351,10 +34351,46 @@ def _require_workshop_execution_gate(
         evidence_admitted=source_evidence,
     )
     if not gate.allowed:
-        raise AuthorizationDenied(
-            "claimed Workshop Work lacks the required plan and source-backed research; "
-            "plan it in the Workshop (again, if its plan was archived) before any effect"
-        )
+        missing = set(gate.missing_category_roots)
+        unsourced = set(gate.missing_evidence_category_roots) - missing
+        raise AuthorizationDenied(workshop_execution_gate_refusal(
+            work_root,
+            plan=gate_categories[0] in missing,
+            research=gate_categories[1] in missing,
+            research_source=gate_categories[1] in unsourced,
+        ))
+
+
+def workshop_execution_gate_refusal(work_root, *, plan, research, research_source):
+    """The refusal names each missing part and the exact entry that adds it.
+
+    Rule 16 (research before the plan): an agent that is refused must be able
+    to fix it from the message alone -- which part is missing and the
+    /api/universal/workshop entry that adds it for this exact Work.
+    """
+    common = ('"refs": ["%s"], "evidence": [], "recipients": [], "reply_to": null, '
+              '"idempotency_key": "<unique>", "created_at": "<ISO time>"' % work_root)
+    fixes = []
+    if plan:
+        fixes.append(
+            'add a plan entry to the Work: POST /api/universal/workshop {"category": "plan", '
+            '"text": "<ordered steps, files touched, proof per step>", %s}' % common)
+    if research:
+        fixes.append(
+            'add a prior-art entry to the Work plan: POST /api/universal/workshop '
+            '{"category": "research", "text": "prior art: <what already exists, where you '
+            'looked, reuse / extend / build-new and why>", %s, "capture": {"path": '
+            '"<workspace file you read>"}}' % common)
+    if research_source:
+        fixes.append(
+            'the prior-art (research) entry cites no captured source: post it again with '
+            '"capture": {"path": "<workspace file you read>"}, or run a read-* connector '
+            'for this Work')
+    missing = [name for name, gone in (("plan", plan), ("prior-art research", research),
+                                       ("research source", research_source)) if gone]
+    return ("claimed Workshop Work lacks the required plan and source-backed research "
+            "(missing: %s). %s. Plan it in the Workshop (again, if its plan was archived) "
+            "before any effect" % (", ".join(missing) or "plan", "; ".join(fixes)))
 
 
 def _connector_provider_reads(

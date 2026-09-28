@@ -235,7 +235,7 @@ def test_shared_workshop_assignments_are_atomic_and_gate_claims(tmp_path):
         # ...but no effect is admitted until the coordinate-phase gate holds:
         # the CDE write admission of the claimed Work is refused, writing nothing.
         before_refusal = server.universal_store.revision
-        with pytest.raises(Exception, match="plan and source-backed research"):
+        with pytest.raises(Exception, match=r"missing: plan, prior-art research\)"):
             universal_application_module.authorize_universal_cde_write(
                 server.universal_store, server.universal_registry,
                 agent_session_root=session_a, operation="apply_patch",
@@ -263,6 +263,16 @@ def test_shared_workshop_assignments_are_atomic_and_gate_claims(tmp_path):
             "created_at": "2026-07-21T10:00:00+00:00",
         })
         assert server.universal_store.revision == before_plan + 1
+        # Rule 16: with the plan in place, the refusal names exactly what is still
+        # missing -- the prior-art research and its captured source -- and how to add it.
+        with pytest.raises(Exception) as only_plan:
+            universal_application_module._require_workshop_execution_gate(
+                server.universal_store.snapshot(), server.universal_registry,
+                work_root=work_root)
+        said = str(only_plan.value)
+        assert "missing: prior-art research" in said and "missing: plan" not in said
+        assert '"category": "research"' in said and '"capture": {"path"' in said
+        assert work_root in said
         # The research cites an actual capture (the owner read a workspace file
         # and minted its source record); the Grand Map root alone is structure.
         from nodelang import commit_intent

@@ -109,7 +109,7 @@ function Test-CandidateInput([string]$Source, [string]$Path) {
             'launch_archhub_test.py', 'colleague_setup.py', 'requirements.txt',
             'package.json', 'packaging/compile_studio.cjs',
             'installer/ArchHub.iss', 'installer/ArchHub.bat', 'installer/ArchHub.vbs',
-            'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss',
+            'installer/legacy_sweep.iss', 'installer/legacy_v1_files.iss', 'installer/host_file_staging.iss',
             'installer/build_release.ps1', 'packaging/windows/Test-SourcePortability.ps1',
             'packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',
             'packaging/windows/licenses/ArchHub-components-MIT.txt',
@@ -203,7 +203,7 @@ function Read-CandidateManifest([string]$Path) {
     $required = @(
         'selected/launch_archhub_test.py', 'selected/colleague_setup.py', 'selected/requirements.txt',
         'selected/installer/ArchHub.iss', 'selected/installer/ArchHub.bat', 'selected/installer/ArchHub.vbs',
-        'selected/installer/legacy_sweep.iss', 'selected/installer/legacy_v1_files.iss',
+        'selected/installer/legacy_sweep.iss', 'selected/installer/legacy_v1_files.iss', 'selected/installer/host_file_staging.iss',
         'selected/installer/build_release.ps1', 'selected/packaging/windows/Test-SourcePortability.ps1',
         'selected/package.json', 'selected/packaging/compile_studio.cjs',
         'selected/packaging/windows/licenses/Node-v24.13.0-LICENSE.txt',

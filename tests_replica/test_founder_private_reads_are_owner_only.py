@@ -9,6 +9,8 @@ only (the 8316782 pattern for the Brain routes); an unbound pipe read of any
 of them is refused before the lock, and non-private reads still answer.
 """
 import threading
+import json
+from pathlib import Path
 
 import pytest
 
@@ -132,3 +134,64 @@ def test_a_bound_baboom_session_still_reads_canvas_and_work(enrolled):
     work = baboom.request("GET", "/api/universal/work", {}, response_timeout_seconds=60)
     assert canvas["agent_session"] == work["agent_session"] == baboom.agent_session_root
     assert server.universal_store.revision == revision
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_open_hosts_never_discloses_dropbox_profile_path(served, monkeypatch, present):
+    from nodelang import host_brokers, outlook_graph, pipeline_engines
+    private_path = Path("C:/Users/private-owner-marker/Dropbox")
+    monkeypatch.setattr(host_brokers, "_dropbox_root", lambda: private_path if present else None)
+    monkeypatch.setattr(host_brokers, "_max_endpoint", lambda: None)
+    monkeypatch.setattr(host_brokers, "_max_plugin_installed", lambda: False)
+    monkeypatch.setattr(host_brokers, "_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(host_brokers, "_running", lambda *args: False)
+    monkeypatch.setattr(host_brokers, "_installed", lambda *args: False)
+    monkeypatch.setattr(host_brokers, "_com_alive", lambda *args: False)
+    monkeypatch.setattr(host_brokers, "_notion_token", lambda: "")
+    monkeypatch.setattr(outlook_graph, "invoke", lambda *args: {"ok": False, "state": "unavailable"})
+    monkeypatch.setattr(pipeline_engines, "probe_connectors", host_brokers.probe_host_rows)
+    server, client = served
+    revision = server.universal_store.revision
+    answer = client.request("GET", "/api/universal/hosts", {}, response_timeout_seconds=60)
+    assert "private-owner-marker" not in json.dumps(answer), answer
+    row = next(row for row in answer["connectors"] if row["id"] == "dropbox")
+    assert row == {"id": "dropbox", "name": "Dropbox", "drive": "dropbox.list",
+                   "state": "connected" if present else "absent",
+                   "detail": "Dropbox folder present" if present else "no Dropbox folder in this profile"}
+    assert server.universal_store.revision == revision
+
+
+def _private_model_catalogue(server, monkeypatch, unavailable=False):
+    from nodelang import cloud_relay, model_catalogue
+    monkeypatch.setattr(server, "_read_agent_model", lambda: "private-owner-model-marker")
+    monkeypatch.setattr(server, "_default_agent_model", lambda: ("public-default", "fixture"))
+    monkeypatch.setattr(cloud_relay, "load_cloud_session", lambda *args: None)
+    def held(*args):
+        if unavailable:
+            raise RuntimeError("fixture catalogue offline")
+        return {}
+    monkeypatch.setattr(model_catalogue, "held_model_groups", held)
+    monkeypatch.setattr(model_catalogue, "groups_with_routes", lambda *args: {
+        "ok": True, "groups": [], "count": 0, "live": False})
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_open_models_withholds_selection_but_owner_keeps_it(served, monkeypatch, unavailable):
+    server, client = served
+    _private_model_catalogue(server, monkeypatch, unavailable)
+    revision = server.universal_store.revision
+    owner = server.dispatch_universal_machine_route({
+        "method": "GET", "path": "/api/universal/models", "body": {}})
+    answer = client.request("GET", "/api/universal/models", {}, response_timeout_seconds=60)
+    assert owner["selected_route"] == "private-owner-model-marker"
+    assert "private-owner-model-marker" not in json.dumps(answer), answer
+    assert answer == {**owner, "selected_route": ""}
+    assert server.universal_store.revision == revision
+
+
+def test_bound_non_owner_models_also_withholds_selection(enrolled, monkeypatch):
+    server, client = enrolled
+    _private_model_catalogue(server, monkeypatch)
+    answer = client.request("GET", "/api/universal/models", {}, response_timeout_seconds=60)
+    assert "private-owner-model-marker" not in json.dumps(answer), answer
+    assert answer["selected_route"] == ""

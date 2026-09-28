@@ -12451,6 +12451,8 @@ class ApplicationServer:
             read_guard()
             result = self._project_model_discovery(path)
             read_guard()
+            if path == "/api/universal/models" and not direct:
+                result = {**result, "selected_route": ""}
             return result
         if method == "GET" and path == "/api/universal/canvas":
             if body:

@@ -293,7 +293,7 @@ def probe_host_rows() -> list[dict]:
     dropbox = _dropbox_root()
     rows.append({"id": "dropbox", "name": "Dropbox", "drive": "dropbox.list",
                  "state": "connected" if dropbox else "absent",
-                 "detail": str(dropbox) if dropbox else "no Dropbox folder in this profile"})
+                 "detail": "Dropbox folder present" if dropbox else "no Dropbox folder in this profile"})
     return rows
 
 

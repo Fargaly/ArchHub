@@ -146,10 +146,10 @@ test("Shortcuts lists only keys that have a handler, and they act", async () => 
   try {
     const sheet = await s.tab("Shortcuts");
     const keys = [...sheet.querySelectorAll("kbd")].map(k => k.textContent);
-    for (const unbound of ["⌘K", "⌘N", "⌘↵", "⌥B", "⌘⇧S", "⌘M", "⌥R"]) {
+    for (const unbound of ["⌘N", "⌘↵", "⌥B", "⌘⇧S", "⌘M", "⌥R"]) {
       assert.equal(keys.includes(unbound), false, unbound + " has no handler in this build");
     }
-    assert.ok(keys.includes("⌘,") && keys.includes("⌘/"));
+    assert.ok(keys.includes("⌘,") && keys.includes("⌘/") && keys.includes("⌘K"), "⌘K opens the library (User-Agency)");
     const before = !!s.doc.querySelector("[title=\"Settings\"]") && [...s.doc.querySelectorAll("button")].some(b => b.firstElementChild?.textContent === "Theme");
     assert.equal(before, true);
     s.flush(() => s.win.dispatchEvent(new s.win.KeyboardEvent("keydown", {key:",", ctrlKey:true, bubbles:true})));

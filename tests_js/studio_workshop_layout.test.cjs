@@ -26,14 +26,15 @@ function modeHarness() {
 }
 const rooms = [{root:'child-a', label:'Child', is_general:false}, {root:'general-a', label:'General', is_general:true}];
 
-test('Workshop is Chat with the held room, else the general room, else the first; no room marks the segment unavailable', () => {
+test('the switch is Chat and Canvas; a Workshop room is Chat with the held room, else the general room, else the first', () => {
   const {segments, choose} = modeHarness();
   const labels = view => segments(view).map(row => `${row.label}${row.active ? '*' : ''}${row.disabled || row.unavailable ? '!' : ''}`).join(' ');
-  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms}), 'Chat* Workshop Canvas');
-  assert.equal(labels({mode:'chat', conversationRoot:'child-a', workshops:rooms}), 'Chat Workshop* Canvas');
-  assert.equal(labels({mode:'canvas', conversationRoot:'child-a', workshops:rooms}), 'Chat Workshop Canvas*');
-  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:[]}), 'Chat* Workshop! Canvas');
-  assert.equal(segments({mode:'chat', conversationRoot:'', workshops:[]})[1].title, 'No Workshop conversation in this scope');
+  // Design studio-lm.jsx:1182 and WORKSHOP-DESIGN-BRIEF.md: a Conversation / Canvas switch. The Workshop is
+  // reached from Chat's Workshop button, a node's rail and the Conversations menu, not a third segment.
+  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:rooms}), 'Chat* Canvas');
+  assert.equal(labels({mode:'chat', conversationRoot:'child-a', workshops:rooms}), 'Chat* Canvas');
+  assert.equal(labels({mode:'canvas', conversationRoot:'child-a', workshops:rooms}), 'Chat Canvas*');
+  assert.equal(labels({mode:'chat', conversationRoot:'', workshops:[]}), 'Chat* Canvas');
   const calls = [];
   const view = (mode, conversationRoot, workshops = rooms) => ({mode, conversationRoot, workshops,
     setMode:value => calls.push(['mode', value]), setConversationRoot:value => calls.push(['root', value])});

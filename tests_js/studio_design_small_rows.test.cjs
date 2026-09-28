@@ -175,13 +175,14 @@ test('canvas menu: the design rows in order with their shortcuts; rows without a
     let menu = studio.doc.querySelector('[role="menu"][aria-label="Canvas actions"]');
     assert.ok(menu, 'right-click opens the canvas menu');
     assert.deepEqual([...menu.children].map(child => child.tagName === 'BUTTON' ? child.children[1].textContent : '-'),
-      ['Add node\u2026', 'Paste', '-', 'Fit graph to view', 'Zoom to 100%', '-', 'Snap to grid', 'Auto-layout', '-', 'Reset positions', 'Clear all nodes'],
-      'the design rows (design studio-lm.jsx:1526-1537)');
+      ['Add node\u2026', 'Paste', '-', 'Fit graph to view', 'Zoom to 100%', '-', 'Snap to grid', 'Auto-layout', '-', 'Undo', 'Redo', 'Clear all nodes'],
+      'the design rows (design studio-lm.jsx:1526-1537); the positions-only Reset is the graph Undo / Redo now');
     assert.deepEqual([...menu.querySelectorAll('kbd')].map(key => key.textContent),
-      ['\u2318L', '\u2318V', '\u23180', '\u23181', '\u2318\u21e7L', '\u2318\u21e7R'], 'the design shortcuts');
+      ['\u2318L', '\u2318V', '\u23180', '\u23181', '\u2318\u21e7L', '\u2318Z', '\u2318\u21e7Z'], 'the design shortcuts');
     const items = [...menu.querySelectorAll('button[role^="menuitem"]')];
     const disabled = items.filter(item => item.disabled);
-    for (const label of ['Paste', 'Clear all nodes', 'Reset positions']) {
+    // Clear all is live where the retract route exists (studio_canvas_design_menus M5); this fixture has none.
+    for (const label of ['Paste', 'Clear all nodes', 'Undo', 'Redo']) {
       assert.ok(disabled.some(item => item.getAttribute('aria-label') === label), label + ' has no action here and is disabled');
     }
     for (const item of disabled) {
@@ -209,9 +210,10 @@ test('canvas menu: the design rows in order with their shortcuts; rows without a
     const nodeMenu = studio.doc.querySelector('[role="menu"][aria-label="Node actions"]');
     assert.ok(nodeMenu, 'right-click on a card opens its node menu');
     const nodeRows = [...nodeMenu.querySelectorAll('button[role="menuitem"]')];
-    assert.deepEqual(nodeRows.map(item => item.getAttribute('aria-label')), ['Select direct neighbours', 'Select connected group',
+    assert.deepEqual(nodeRows.map(item => item.getAttribute('aria-label')), ['Run graph', 'Add watcher', 'Open pipeline',
+      'Freeze node', 'Duplicate', 'Disconnect all wires', 'Delete node', 'Select direct neighbours', 'Select connected group',
       'Select all nodes', 'Clear selection', 'Fit selection', 'Auto-layout selection', 'Refresh canvas'],
-      'the selection, fit and refresh actions the design canvas menu has no row for');
+      'the design node actions (atlas-cockpit.jsx ContextMenu), then the selection, fit and refresh actions');
     assert.equal(nodeRows.find(item => item.getAttribute('aria-label') === 'Clear selection').disabled, false, 'the right-clicked card is selected');
   } finally { studio.close(); }
 });

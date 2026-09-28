@@ -199,6 +199,22 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       }
       return projection;
     };
+    // Undo / Redo: the canvas's own history controls (app:control:canvas:undo|redo, capability
+    // history), executed through the Interaction lease the server issues for them
+    // (ensure_universal_history_interactions -> POST /api/universal/interaction ->
+    // submit_universal_history_interaction -> undo_universal_change / redo_universal_change).
+    window.ARCHHUB_HISTORY = async operation => {
+      const projection = await jget('/api/universal/canvas');
+      const control = (projection.configuration?.design_system?.control_catalog?.controls || [])
+        .find(row => row.activation?.arguments?.operation === operation && row.applicable === true);
+      if (!control) throw new Error(operation === 'redo' ? 'Nothing to redo.' : 'Nothing to undo.');
+      const matches = (projection.interaction_projection?.bindings || []).filter(row => row.control === control.owner);
+      if (matches.length !== 1) throw new Error('Refresh the canvas, then try again.');
+      // History changes topology, so the route requires the receipt acknowledgement mode the lease names.
+      return jpost('/api/universal/interaction', {interaction:matches[0].interaction, control:control.owner,
+        event:matches[0].event, revision:projection.revision,
+        projection_mode:matches[0].acknowledgement_mode || 'receipt-v1'});
+    };
     // The first edit of a connection parameter the wire has never held
     // declares it on the wire's own root; after that it is an ordinary
     // property and set-property carries it.
@@ -381,13 +397,15 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
       const ins = [], outs = [];
       for (const p of (n.ports || [])) {
         if (p.side === 'target') {
-          ins.push({...p, label:p.name || '', t:p.value_type || 'any'});
+          ins.push({...p, label:p.name || '', t:p.type || p.value_type || 'any'});
         } else if (p.side === 'source') {
-          outs.push({...p, label:p.name || '', t:p.value_type || 'any'});
+          outs.push({...p, label:p.name || '', t:p.type || p.value_type || 'any'});
         }
       }
       nodes.push({
         id:n.id, cat:CATS(engine), title:n.label || n.id, sub:engine || 'Graph node',
+        // The engine lets the node menu's Duplicate place the same card; openable lets it open the node.
+        engine, openable: n.openable === true,
         x:Number.isFinite(n.x) ? n.x : 200, y:Number.isFinite(n.y) ? n.y : 200,
         w:210, h:Math.max(110, 54 + Math.max(ins.length, outs.length) * 19),
         ins, outs, messages:[], live:true,

@@ -1,10 +1,10 @@
-/* Court (fix 1): Workshop opens, or says why (founder report 2026-09-23: "the Workshop does not
-   open ... I click here and nothing opens"). The compiled Studio is mounted in an in-memory DOM
-   over the owner snapshot shape studio-existing-workshop.js publishes (canvas.unavailable is the
-   owner reason from workshop_scope.unavailable). The header switch is the design's Chat / Canvas
-   (UI audit 2026-09-28), so the Workshop opens from Chat's Workshop button. Clicking it with no
-   room must draw that reason as visible text, never a silent no-op; with a room the same click opens it.
-   No application, provider, network or graph file is touched. */const test = require('node:test');
+/* UI audit 2026-09-28 (work/ui-audit 08-back-navigation, 13-ctrl-k): the Studio is the whole window.
+     P1  Alt+Left, Alt+Right and the Back / Forward keys are refused by the page (the launcher also
+         empties the history behind /studio; tests_replica/test_studio_window_is_one_page.py);
+     P2  the mouse's Back / Forward buttons (3, 4) are refused;
+     P3  Ctrl+K opens the node library (User-Agency mandate), and Esc closes it;
+     P4  the Studio opens on Chat with the design's two-segment switch, Chat and Canvas. */
+const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -58,34 +58,48 @@ async function mountStudio({workshops = [], unavailable, models} = {}) {
   const close = () => { try { flush(() => win.__studioRoot.unmount()); } finally { dom.window.close(); } };
   return {doc, win, flush, segment, spoken, close, inWorkshop};
 }
-test('Workshop with no room answers the click with the owner reason as visible text; with a room it opens', async () => {
-  const reason = 'This account has no read access to the Workshop.';
-  const refused = await mountStudio({workshops:[], unavailable:reason});
-  try {
-    const workshop = refused.segment('Workshop');
-    assert.ok(workshop, 'Chat offers the Workshop button');
-    assert.equal(refused.spoken().includes(reason), false, 'nothing is claimed before the click');
-    refused.flush(() => workshop.click());
-    assert.ok(refused.spoken().includes(reason), 'the click draws why, got: ' + JSON.stringify(refused.spoken()));
-    assert.equal(workshop.disabled, false, 'Workshop stays clickable so it can answer');
-    assert.equal(workshop.getAttribute('aria-disabled'), 'true', 'and states that no room is available');
-    assert.match(workshop.style.border, /dashed/, 'drawn dashed, never alpha');
-    assert.equal(refused.segment('Chat').getAttribute('aria-pressed'), 'true', 'no conversation was opened');
-  } finally { refused.close(); }
 
-  const silent = await mountStudio({workshops:[]});
+test('P1/P2: Back keys and mouse Back / Forward buttons never navigate the Studio away', async () => {
+  const studio = await mountStudio();
   try {
-    silent.flush(() => silent.segment('Workshop').click());
-    assert.ok(silent.spoken().includes('No Workshop conversation in this scope'),
-      'without an owner reason the click still says why, got: ' + JSON.stringify(silent.spoken()));
-  } finally { silent.close(); }
+    for (const init of [{key:'ArrowLeft', altKey:true}, {key:'ArrowRight', altKey:true}, {key:'BrowserBack'}, {key:'BrowserForward'}]) {
+      const event = new studio.win.KeyboardEvent('keydown', {...init, bubbles:true, cancelable:true});
+      studio.flush(() => studio.doc.body.dispatchEvent(event));
+      assert.equal(event.defaultPrevented, true, JSON.stringify(init) + ' is refused');
+    }
+    const plain = new studio.win.KeyboardEvent('keydown', {key:'ArrowLeft', bubbles:true, cancelable:true});
+    studio.flush(() => studio.doc.body.dispatchEvent(plain));
+    assert.equal(plain.defaultPrevented, false, 'a plain arrow key is left alone');
+    for (const button of [3, 4]) {
+      for (const type of ['mousedown', 'mouseup', 'auxclick']) {
+        const event = new studio.win.MouseEvent(type, {button, bubbles:true, cancelable:true});
+        studio.doc.body.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, true, type + ' of mouse button ' + button + ' is refused');
+      }
+    }
+  } finally { studio.close(); }
+});
 
-  const open = await mountStudio({workshops:[{root:'room-a', label:'Wall conversion', is_general:false}]});
+test('P3: Ctrl+K opens the node library; Esc closes it', async () => {
+  const studio = await mountStudio();
   try {
-    assert.equal(open.inWorkshop(), false, 'the Studio opens on plain Chat');
-    open.flush(() => open.segment('Workshop').click());
-    assert.equal(open.inWorkshop(), true, 'the room opens as the Workshop conversation');
-    assert.equal(open.segment('Chat').getAttribute('aria-pressed'), 'true', 'a Workshop room is a Chat conversation');
-    assert.equal(open.spoken().includes('No Workshop conversation'), false, 'no refusal is drawn beside an open room');
-  } finally { open.close(); }
+    const library = () => [...studio.doc.querySelectorAll('span')].find(node => node.textContent === 'Node library');
+    assert.equal(library(), undefined, 'closed at start');
+    const event = new studio.win.KeyboardEvent('keydown', {key:'k', ctrlKey:true, bubbles:true, cancelable:true});
+    studio.flush(() => studio.win.dispatchEvent(event));
+    assert.equal(event.defaultPrevented, true, 'Ctrl+K is answered');
+    assert.ok(library(), 'Ctrl+K draws the node library');
+    studio.flush(() => studio.win.dispatchEvent(new studio.win.KeyboardEvent('keydown', {key:'Escape', bubbles:true})));
+    assert.equal(library(), undefined, 'Esc closes it again');
+  } finally { studio.close(); }
+});
+
+test('P4: the Studio opens on Chat, with Chat and Canvas only', async () => {
+  const studio = await mountStudio({workshops:[{root:'general-a', label:'Workshop', is_general:true}]});
+  try {
+    const segments = [...studio.doc.querySelectorAll('button[aria-pressed]')].map(button =>
+      button.textContent.trim() + (button.getAttribute('aria-pressed') === 'true' ? '*' : ''));
+    assert.deepEqual(segments, ['Chat*', 'Canvas']);
+    assert.ok(studio.doc.querySelector('button[aria-label="Open the Workshop"]'), 'plain Chat, with the Workshop one click away');
+  } finally { studio.close(); }
 });

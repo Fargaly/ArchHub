@@ -743,6 +743,11 @@ def _ensure_wire_parameters(store, registry, wire_root: str):
 # The founder's first canvas. Every entry carries a "seed" marker: that,
 # not the title, is what a re-seed matches on, and the shipped sample
 # inputs are what make the flagship chain answer on first open.
+# Placement is a grid of 320 x 260 cells (a card is 210 wide and at most ~200
+# tall with its rows), so no two cards overlap and the wired chain reads left
+# to right on one row. The points apply only to cards a seed CREATES: an
+# adopted card keeps the place it already has, so an existing graph is never
+# moved by this table.
 _SEED = (
     ("Sketch Lines", 240.0, 200.0, {
         "seed": "sketch-lines",
@@ -751,47 +756,47 @@ _SEED = (
         "mm_per_pixel": "10",
         "threshold": "60", "min_length": "40", "max_gap": "8",
     }),
-    ("CAD Lines", 240.0, 380.0, {
+    ("CAD Lines", 240.0, 460.0, {
         "seed": "cad-lines",
         "engine": "cad.read_lines",
         "file_path": sample_input("sample-plan.dxf"), "layer": "",
     }),
-    ("Line Watcher", 560.0, 290.0, {
+    ("Line Watcher", 560.0, 200.0, {
         "seed": "line-watcher", "engine": "lines.watch",
     }),
-    ("Revit Walls", 880.0, 290.0, {
+    ("Revit Walls", 880.0, 200.0, {
         "seed": "revit-walls",
         "engine": "revit.build_walls",
         "level": "", "height_mm": "3000", "session": "",
     }),
-    ("Revit Sessions", 880.0, 470.0, {
+    ("Revit Sessions", 880.0, 460.0, {
         "seed": "revit-sessions", "engine": "revit.sessions",
     }),
-    ("Brain Recall", 240.0, 560.0, {
+    ("Brain Recall", 240.0, 720.0, {
         "seed": "brain-recall",
         "engine": "brain.recall", "prompt": "ArchHub product state",
     }),
-    ("Brain Facts", 560.0, 560.0, {
+    ("Brain Facts", 560.0, 720.0, {
         "seed": "brain-facts", "engine": "brain.facts",
     }),
-    ("BABOOM Status", 880.0, 560.0, {
+    ("BABOOM Status", 880.0, 720.0, {
         "seed": "baboom-status", "engine": "baboom.status",
     }),
-    ("BABOOM Presence", 1200.0, 560.0, {
+    ("BABOOM Presence", 1200.0, 720.0, {
         "seed": "baboom-presence", "engine": "baboom.presence",
     }),
-    ("Skills Library", 240.0, 740.0, {
+    ("Skills Library", 240.0, 980.0, {
         "seed": "skills-library",
         "engine": "skills.catalogue", "match": "",
     }),
-    ("Thinking Chain", 560.0, 740.0, {
+    ("Thinking Chain", 560.0, 980.0, {
         "seed": "thinking-chain",
         "engine": "skills.thinking_chain", "topic": "",
     }),
     # Named for what it does, not for the domain it reads: the grand map
     # already publishes a domain titled "Connectors", and a title match
     # against it is exactly how this card lost its engine.
-    ("Connector Status", 880.0, 740.0, {
+    ("Connector Status", 880.0, 980.0, {
         "seed": "connector-status",
         "engine": "connector.status", "connector": "",
     }),

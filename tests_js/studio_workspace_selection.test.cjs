@@ -159,10 +159,12 @@ test('projection hooks subscribe before rereading a publication missed after ren
   }
 });
 
-test('initial admitted Workshop opens after asynchronous discovery', () => {
+test('the Studio opens on plain Chat after asynchronous discovery, never inside a Workshop room', () => {
   const render = harness();
   render(null);
-  assert.equal(render(projection()).view.conversationRoot, 'general-a');
+  const view = render(projection()).view;
+  assert.equal(view.conversationRoot, '');
+  assert.equal(view.mode, 'chat');
 });
 test('explicit Chat survives later projection refreshes', () => {
   const render = harness();
@@ -171,6 +173,7 @@ test('explicit Chat survives later projection refreshes', () => {
 });
 test('Canvas keeps the selected Workshop and returns to it', () => {
   const render = harness();
+  render(projection()).update({conversationRoot:'general-a'});
   render(projection()).update({mode:'canvas'});
   const canvas = render(projection());
   assert.equal(canvas.view.mode, 'canvas');
@@ -182,15 +185,15 @@ test('new authenticated owner cannot inherit another owners conversation target'
   const render = harness();
   render(projection()).update({conversationRoot:'child-a',target:'agent-a'});
   const changed = render(projection('owner-b')).view;
-  assert.equal(changed.conversationRoot, 'general-a');
+  assert.equal(changed.conversationRoot, '');
   assert.equal(changed.target, '');
 });
-test('removed conversation falls back to admitted general with an explanation', () => {
+test('removed conversation falls back to plain Chat with an explanation', () => {
   const render = harness();
   render(projection()).update({conversationRoot:'child-a',target:'agent-a'});
   const next = projection(); next.workshops.pop();
   const result = render(next).view;
-  assert.equal(result.conversationRoot, 'general-a');
+  assert.equal(result.conversationRoot, '');
   assert.equal(result.target, '');
   assert.match(result.notice, /no longer available/i);
 });
@@ -218,7 +221,7 @@ test('partial discovery cannot select a room before authenticated identity arriv
   before.update({conversationRoot:'child-a',target:'agent-a'});
   const ready = render(projection()).view;
   assert.equal(ready.pending, false);
-  assert.equal(ready.conversationRoot, 'general-a');
+  assert.equal(ready.conversationRoot, '');
   assert.equal(ready.target, '');
 });
 test('direct signed canvas projection uses its authenticated owner and view', () => {
@@ -230,7 +233,7 @@ test('direct signed canvas projection uses its authenticated owner and view', ()
   render(signed).update({conversationRoot:'child-a',target:'agent-a'});
   signed.canvas.authorization = {...signed.canvas.authorization,subject:'owner-b'};
   const next = render(signed).view;
-  assert.equal(next.conversationRoot, 'general-a');
+  assert.equal(next.conversationRoot, '');
   assert.equal(next.target, '');
 });
 test('mixed topology and Workshop scope wait for a coherent projection', () => {

@@ -103,12 +103,13 @@ const openCanvas = studio => {
   assert.ok(studio.doc.querySelector('.lm-node[data-node-id="work-a"]'), 'the canvas draws the projected Work node');
 };
 
-test('header: the design row ends at save as skill; three-segment switch, New session after the tabs, a model chip that draws only what it holds, unbound actions dashed', async () => {
+test('header: the design row ends at save as skill; two-segment switch, New session after the tabs, a model chip that draws only what it holds, unbound actions dashed', async () => {
   const studio = await mountStudio();
   try {
     const segmented = segmentedControl(studio);
-    assert.deepEqual([...segmented.children].map(child => child.textContent.trim()), ['Chat', 'Workshop', 'Canvas'],
-      'the segmented control holds only Chat, Workshop and Canvas (design studio-lm.jsx:1132-1144)');
+    assert.deepEqual([...segmented.children].map(child => child.textContent.trim()), ['Chat', 'Canvas'],
+      'the segmented control holds only Chat and Canvas (design studio-lm.jsx:1182)');
+    assert.equal([...segmented.children][0].getAttribute('aria-pressed'), 'true', 'the Studio opens on Chat');
     const header = segmented.parentElement;
     assert.equal(header.querySelector('[aria-label="Conversations"]') === null, true,
       'Chat draws the design row: no conversation menu beside the switch (design studio-lm.jsx:1099-1150)');
@@ -157,12 +158,13 @@ test('header: the design row ends at save as skill; three-segment switch, New se
 
   const empty = await mountStudio({workshops:[]});
   try {
-    const workshop = [...segmentedControl(empty).children].find(child => child.textContent.trim() === 'Workshop');
+    // The Workshop is opened from Chat's Workshop button (the switch is the design's Chat / Canvas).
+    const workshop = empty.doc.querySelector('button[aria-label="Open the Workshop"]');
     // Founder 2026-09-23: no silent Workshop. No room marks it unavailable; the click says why.
     assert.equal(workshop.disabled, false, 'Workshop stays clickable so it can say why');
     assert.equal(workshop.getAttribute('aria-disabled'), 'true', 'no room in scope marks Workshop unavailable');
-    assert.equal(workshop.style.opacity, '', 'the unavailable segment carries no alpha');
-    assert.match(workshop.style.outline, /dashed/, 'the unavailable segment is dashed');
+    assert.equal(workshop.style.opacity, '', 'the unavailable button carries no alpha');
+    assert.match(workshop.style.border, /dashed/, 'the unavailable button is dashed');
   } finally { empty.close(); }
 });
 

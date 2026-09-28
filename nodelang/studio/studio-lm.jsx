@@ -275,6 +275,9 @@ const _SEED_GRAPH = {
 const LM_LIBRARY = window.AH_LIBRARY || [];
 
 // ──────────────────────── ROOT ────────────────────────
+// Alt+Left / Alt+Right and the keyboard's Back / Forward keys ask the page to navigate away.
+const studioLeavesPage = e => e.key === 'BrowserBack' || e.key === 'BrowserForward' ||
+  (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
 const StudioLM = () => {
   React.useSyncExternalStore(window.ArchHubTheme.subscribe, window.ArchHubTheme.getEpoch);
   useCatalogueVersion();
@@ -381,9 +384,9 @@ const StudioLM = () => {
     (!workshopState.topology?.canvas || (workshopState.topology.canvas.application_root === workshopState.canvas.graph_id &&
       workshopState.topology.canvas.scope?.current === workshopState.canvas.root)));
   const availableWorkshops = workspaceReady ? workshopState.workshops : [];
-  const generalWorkshops = availableWorkshops.filter(row => row.is_general === true && row.root);
-  const defaultWorkspaceView = {mode:'chat', conversationRoot:generalWorkshops.length === 1 ?
-    generalWorkshops[0].root : '', target:'', notice:'', scope:viewScope, pending:false};
+  // The Studio opens on plain Chat, the design's default (design studio-lm.jsx:962). A Workshop
+  // room is opened from Chat's Workshop button, a node's rail or the Conversations menu.
+  const defaultWorkspaceView = {mode:'chat', conversationRoot:'', target:'', notice:'', scope:viewScope, pending:false};
   const resolveWorkspaceView = previous => {
     if (!workspaceReady) return {mode:previous?.mode || 'chat', conversationRoot:'', target:'', pending:true,
       notice:workshopState?.error || workshopState?.topology?.error || 'Loading your workspace…'};
@@ -506,16 +509,26 @@ const StudioLM = () => {
   const openSettings = (v) => { if (v) setDocsOpen(false); setSettingsOpen(v); };
   const openDocs = (v) => { if (v) setSettingsOpen(false); setDocsOpen(v); };
 
-  // ⌘/ docs · ⌘, settings — the keys the Shortcuts sheet documents
+  // ⌘/ docs · ⌘, settings · ⌘K library — the keys the Shortcuts sheet documents
   React.useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape') { setDocsOpen(false); setSettingsOpen(false); return; }
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === '/') { e.preventDefault(); setDocsOpen(o => { if (!o) setSettingsOpen(false); return !o; }); }
-      else if (e.key === ',') { e.preventDefault(); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); }
+      // The Studio is the whole window: Back and Forward keys never leave it.
+      if (studioLeavesPage(e)) { e.preventDefault(); return; }
+      if (e.key === 'Escape') { setDocsOpen(false); setSettingsOpen(false); setLibraryOpen(false); return; }
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const key = String(e.key).toLowerCase();
+      if (key === '/') { e.preventDefault(); setDocsOpen(o => { if (!o) setSettingsOpen(false); return !o; }); }
+      else if (key === ',') { e.preventDefault(); setSettingsOpen(o => { if (!o) setDocsOpen(false); return !o; }); }
+      else if (key === 'k' && !e.shiftKey) { e.preventDefault(); setLibraryOpen(true); }
     };
+    // The mouse's Back and Forward buttons (3 and 4) are the same request.
+    const onButton = (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    for (const type of ['mousedown', 'mouseup', 'auxclick']) window.addEventListener(type, onButton);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      for (const type of ['mousedown', 'mouseup', 'auxclick']) window.removeEventListener(type, onButton);
+    };
   }, []);
 
   return (
@@ -781,6 +794,10 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
   const library = useStudioProjection()?.library || LM_LIBRARY;
   const [q, setQ] = React.useState('');
   const [openCats, setOpenCats] = React.useState(() => Object.fromEntries(library.map(group => [group.cat, true])));
+  const addRef = React.useRef(addNodeFromLibrary);
+  addRef.current = addNodeFromLibrary;
+  const addFromLibrary = React.useCallback(item => addRef.current(item), []);
+  const toggleCat = React.useCallback(cat => setOpenCats(o => ({ ...o, [cat]: !o[cat] })), []);
   return (
     <div style={{ display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <div style={{ padding:'12px 12px 10px', display:'flex', alignItems:'center', gap:LM.sp.sm }}>
@@ -812,6 +829,18 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
             {'The node library could not be loaded: ' + window.AH_LIBRARY_ERROR}
           </div>
         )}
+        <NodeLibraryGroups library={library} q={q} openCats={openCats} onToggle={toggleCat} onAdd={addFromLibrary}/>
+      </div>
+
+      <AccountChip account={account} onOpen={onAccount}/>
+    </div>
+  );
+};
+
+// The 232 library cards re-rendered on every owner publish (canvas-perf). They depend only on the
+// library, the search and which sections are open, so they are memoized on exactly those.
+const NodeLibraryGroups = React.memo(({ library, q, openCats, onToggle, onAdd }) => (
+  <>
         {library.map(group => {
           const c = studioCategory(group.cat);
           const items = q ? group.items.filter(i => (i.title + ' ' + i.sub).toLowerCase().includes(q.toLowerCase())) : group.items;
@@ -819,7 +848,7 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
           const open = q ? true : !!openCats[group.cat];
           return (
             <div key={group.cat} style={{ marginBottom:LM.sp.xs }}>
-              <button onClick={() => setOpenCats(o => ({ ...o, [group.cat]: !o[group.cat] }))} style={{
+              <button onClick={() => onToggle(group.cat)} style={{
                 width:'100%', display:'flex', alignItems:'center', gap:7, padding:'5px 7px',
                 background:'transparent', border:0, borderRadius:4, cursor:'pointer',
                 color:LM.inkSoft, fontFamily:LM.mono, fontSize:9.5, letterSpacing:'0.14em',
@@ -834,18 +863,14 @@ const NodesPanel = ({ addNodeFromLibrary, account, onAccount }) => {
               </button>
               {open && (
                 <div style={{ display:'flex', flexDirection:'column', gap:1, paddingLeft:6 }}>
-                  {items.map(it => <NodeLibItem key={it.id} it={it} cat={c} onAdd={() => addNodeFromLibrary({ ...it, cat:group.cat })}/>)}
+                  {items.map(it => <NodeLibItem key={it.id} it={it} cat={c} onAdd={() => onAdd({ ...it, cat:group.cat })}/>)}
                 </div>
               )}
             </div>
           );
         })}
-      </div>
-
-      <AccountChip account={account} onOpen={onAccount}/>
-    </div>
-  );
-};
+  </>
+));
 
 const NodeLibItem = ({ it, cat, onAdd }) => {
   const [h, setH] = React.useState(false);
@@ -1273,7 +1298,7 @@ const Workspace = ({ session, model, openTabs, setOpenId, closeTab, setPickerOpe
           onLeave={() => updateView({conversationRoot:'', mode:'chat', target:''})}
           sel={wsSel} setSel={setWsSel} externalRail/> : <>
           <ChatView session={session} model={model} setMode={setMode} onPickModel={() => setPickerOpen(true)}
-            workshopRoom={workshopModeRoom(workshops, '')}
+            workshopRoom={workshopModeRoom(workshops, '')} workshopUnavailable={workshopState?.canvas?.unavailable || ''}
             openWorkshop={root => updateView({conversationRoot:root, mode:'chat', target:''})}/>
           <InferenceInspector model={model} setPickerOpen={setPickerOpen}/>
         </>
@@ -1357,7 +1382,10 @@ const chatConnectors = () => (window.ARCHHUB_LIVE?.connectors || []).map(c => ({
 }));
 
 // ─── Calm chat view (default) — restores original Studio's generous rhythm ───
-const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel }) => {
+const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, onPickModel, workshopUnavailable = '' }) => {
+  // The Workshop is opened from here (it is not a header segment). Without a room the click answers
+  // with the owner's reason as visible text, never a silent no-op (founder report 2026-09-23).
+  const [workshopRefusal, setWorkshopRefusal] = React.useState('');
   const {me, answerer} = chatPeople(model);
   const routed = !!modelRoute(model);
   const conv = LM_GRAPH.nodes.find(n => n.cat === 'ai')
@@ -1463,15 +1491,20 @@ const ChatView = ({ session, model, setMode, workshopRoom = '', openWorkshop, on
             <div style={{ display:'flex', alignItems:'center', gap:6 }}>
               <Chip mono>@ skill</Chip>
               <Chip>＋ sketch</Chip>
-              <button type="button" disabled={!workshopRoom || !openWorkshop}
-                onClick={() => workshopRoom && openWorkshop && openWorkshop(workshopRoom)}
-                title={workshopRoom ? undefined : 'No Workshop conversation in this scope'} style={{
+              <button type="button" aria-label="Open the Workshop" aria-disabled={workshopRoom && openWorkshop ? undefined : 'true'}
+                onClick={() => {
+                  if (workshopRoom && openWorkshop) { setWorkshopRefusal(''); openWorkshop(workshopRoom); }
+                  else setWorkshopRefusal(workshopUnavailableText(workshopUnavailable));
+                }}
+                title={workshopRoom ? 'Open the Workshop conversation' : workshopUnavailableText(workshopUnavailable)} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background: workshopRoom ? LM.accentDim : 'transparent',
                 border: workshopRoom ? `1px solid ${LM.accentSoft}` : `1px dashed ${LM.line}`, borderRadius:LM.rad.sm,
                 color: workshopRoom ? LM.accent : LM.inkMuted, fontFamily:LM.mono, fontSize:10.5, letterSpacing:'0.04em',
                 cursor: workshopRoom ? 'pointer' : 'default',
               }}>◆ workshop</button>
+              {workshopRefusal && <span role="alert" style={{fontSize:11, color:LM.ink, maxWidth:260, overflow:'hidden',
+                textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={workshopRefusal}>{workshopRefusal}</span>}
               <button onClick={() => setMode('canvas')} style={{
                 display:'inline-flex', alignItems:'center', gap:5, padding:'3px 9px',
                 background:'transparent', border:`1px solid ${LM.line}`, borderRadius:LM.rad.sm,
@@ -1917,8 +1950,8 @@ const WorkshopConversationMenu = ({workshops, conversationRoot, setConversationR
   </div>;
 };
 
-// ── Chat · Workshop · Canvas (design studio-lm.jsx:270-272, 1136-1143). "Workshop" is not a
-// fourth mode here: it is Chat with a conversation root from the real Workshop scope
+// ── Chat · Canvas (design studio-lm.jsx:1182; WORKSHOP-DESIGN-BRIEF.md: "Conversation / Canvas view
+// switch"). The Workshop is not a segment: it is Chat with a conversation root from the real Workshop scope
 // (window.ARCHHUB_EXISTING_WORKSHOP.getSnapshot().workshops, fed by canvas.workshop_scope).
 // The segment selects the held room, else the general room, else the first; Chat clears the
 // root; no room in scope disables the segment and says so. Nothing about agents, tasks or
@@ -1930,11 +1963,10 @@ const workshopUnavailableText = reason => (typeof reason === 'string' && reason.
   'No Workshop conversation in this scope';
 // Workshop is never disabled into silence: without a room the click answers with that reason.
 const workshopModeSegments = ({mode, conversationRoot = '', workshops = [], unavailable = ''}) => {
-  const room = workshopModeRoom(workshops, conversationRoot);
-  const active = mode === 'chat' ? (conversationRoot ? 'workshop' : 'chat') : mode;
-  return [['chat', 'Chat'], ['workshop', 'Workshop'], ['canvas', 'Canvas']].map(([key, label]) => ({
-    key, label, active:active === key, disabled:false, unavailable:key === 'workshop' && !room,
-    title:key === 'workshop' && !room ? workshopUnavailableText(unavailable) : undefined,
+  const active = mode === 'chat' ? 'chat' : mode;
+  return [['chat', 'Chat'], ['canvas', 'Canvas']].map(([key, label]) => ({
+    key, label, active:active === key, disabled:false, unavailable:false,
+    title:key === 'chat' && conversationRoot ? 'Back to the chat' : undefined,
   }));
 };
 const chooseWorkshopMode = (key, {mode, conversationRoot = '', workshops = [], setMode, setConversationRoot,
@@ -2148,6 +2180,49 @@ const SOCKET_R = 5;
 const socketY = (i) => SOCKET_TOP + i * SOCKET_STEP;
 // Snap to grid (design CanvasMenu) uses the dot grid's own 20-unit pitch.
 const CANVAS_GRID = 20;
+// What an Undo or Redo changed, in plain words, read from the canvas before and after it.
+const canvasHistoryToast = (operation, before, after) => {
+  const verb = operation === 'redo' ? 'Redid' : 'Undid';
+  const titles = graph => new Map((graph?.nodes || []).map(node => [node.id, node.title || node.id]));
+  const was = titles(before), now = titles(after);
+  const back = [...now.keys()].filter(id => !was.has(id)).map(id => now.get(id));
+  const gone = [...was.keys()].filter(id => !now.has(id)).map(id => was.get(id));
+  const name = list => '\u2018' + list[0] + '\u2019' + (list.length > 1 ? ' and ' + (list.length - 1) + ' more' : '');
+  // Undo that brings a card back took back its deletion; one that removes a card took back its creation.
+  if (back.length) return verb + ': ' + (operation === 'redo' ? 'added ' : 'deleted ') + name(back);
+  if (gone.length) return verb + ': ' + (operation === 'redo' ? 'deleted ' : 'added ') + name(gone);
+  const wires = (after?.wires || []).length - (before?.wires || []).length;
+  if (wires) return verb + ': ' + ((wires > 0) === (operation === 'redo') ? 'connected ' : 'removed ') +
+    Math.abs(wires) + ' wire' + (Math.abs(wires) === 1 ? '' : 's');
+  const moved = (after?.nodes || []).filter(node => { const held = (before?.nodes || []).find(row => row.id === node.id);
+    return held && (held.x !== node.x || held.y !== node.y); }).length;
+  if (moved) return verb + ': moved ' + moved + ' node' + (moved === 1 ? '' : 's');
+  return verb + ' the last change';
+};
+// Wheel zoom: never below 30% (cards stay readable), and one wheel notch is a gentle, even step.
+const CANVAS_ZOOM_MIN = 0.3, CANVAS_ZOOM_MAX = 2;
+const canvasClampZoom = value => Math.max(CANVAS_ZOOM_MIN, Math.min(CANVAS_ZOOM_MAX, value));
+const canvasWheelZoom = (zoom, deltaY) => canvasClampZoom(+(zoom * Math.exp(-deltaY * 0.001)).toFixed(3));
+// The pan and zoom a canvas scope was left at. Switching to Chat unmounts the canvas; coming
+// back reads the view from here instead of resetting it.
+const CANVAS_VIEWS = new Map();
+const readCanvasView = scope => CANVAS_VIEWS.get(scope) || {pan:{x:14, y:12}, zoom:0.66};
+// Dimming (design README "the rest dim"): only while something on the canvas is focused or
+// selected. Nothing focused dims nothing; a focused wire keeps both of its ends lit.
+const canvasDimmedIds = (nodeIds, wires, focusId, selectedIds = []) => {
+  const lit = new Set(selectedIds.filter(id => nodeIds.includes(id)));
+  if (nodeIds.includes(focusId)) {
+    lit.add(focusId);
+    for (const wire of wires) {
+      if (wire.from?.[0] === focusId) lit.add(wire.to?.[0]);
+      if (wire.to?.[0] === focusId) lit.add(wire.from?.[0]);
+    }
+  }
+  const focusWire = wires.find((wire, i) => (wire.id && wire.id === focusId) || 'wire:' + i === focusId);
+  if (focusWire) { lit.add(focusWire.from?.[0]); lit.add(focusWire.to?.[0]); }
+  if (!lit.size) return new Set();
+  return new Set(nodeIds.filter(id => !lit.has(id)));
+};
 const ARRANGE_ALL_PINNED = 'Every chosen card was placed by hand. Arrange leaves hand-placed cards where they are.';
 
 const canvasConnectedNodeIds = (nodeIds, wires, seeds, whole) => {
@@ -2346,7 +2421,6 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const [layoutBusy, setLayoutBusy] = React.useState(false);
   const [layoutError, setLayoutError] = React.useState('');
   const [layoutNeedsRefresh, setLayoutNeedsRefresh] = React.useState(false);
-  const [undoLayout, setUndoLayout] = React.useState(null);
   const [burstPending, setBurstPending] = React.useState(false);
   const revision = authorityState?.canvas?.revision;
   const scopeStillCurrent = () => alive.current && mountedScope.current === scopeKey &&
@@ -2435,14 +2509,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       if (authority) await authority.moveMany(changes, expectedRevision, expectedPositions, placement);
       else await normal.moveTopologyNodes(changes, expectedRevision, expectedPositions, placement);
       if (!scopeStillCurrent()) return false;
-      // Undo moves the cards back the way they were moved: undoing Arrange must not pin them.
-      setUndoLayout(remember ? {before:Object.fromEntries(entries.map(([id]) => [id, before[id]])), after:changes, placement} : null);
       // Confirmed, and nothing else is owed: there is no unwritten movement left to report.
       if (!burstRef.current && !queuedSave.current) writeCanvasLayoutTrace(scopeKey, null);
       return true;
     } catch (error) {
       if (scopeStillCurrent()) {
-        restore(); setUndoLayout(null); queuedSave.current = null; pendingArrange.current = null;
+        restore(); queuedSave.current = null; pendingArrange.current = null;
         burstRef.current = null; clearLayoutBurstTimer(); setBurstPending(false);
         // A refused save used to lock every later save behind a manual refresh.
         // Refresh once here instead; the next drag starts from the reconciled canvas.
@@ -2528,8 +2600,15 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     };
   }, []);
 
-  const [pan, setPan] = React.useState({ x: 14, y: 12 });
-  const [zoom, setZoom] = React.useState(0.66);
+  const [pan, setPan] = React.useState(() => readCanvasView(scopeKey).pan);
+  const [zoom, setZoom] = React.useState(() => readCanvasView(scopeKey).zoom);
+  React.useEffect(() => { CANVAS_VIEWS.set(scopeKey, {pan, zoom}); }, [scopeKey, pan, zoom]);
+  const [menuNotice, setMenuNotice] = React.useState('');
+  // What the person picked on this canvas (a node or a wire), held here so the dim follows the click at
+  // once without waiting on the owner. Nothing picked -- including a selection restored at start -- dims nothing.
+  const [pickedId, setPickedId] = React.useState(null);
+  const [confirming, setConfirming] = React.useState(null); // {kind:'node'|'clear', ids, title, wires}
+  const [menuBusy, setMenuBusy] = React.useState(false);
   const [ctxMenu, setCtxMenu] = React.useState(null);
   const closeContextMenu = () => {
     setCtxMenu(null);
@@ -2552,18 +2631,26 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   };
 
   const onCanvasMouseDown = (e) => {
+    // Middle-drag pans from anywhere on the canvas, over cards too.
+    if (e.button === 1) {
+      if (e.target.closest('[data-no-pan]')) return;
+      e.preventDefault();
+      dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
+      return;
+    }
     if (e.button !== 0) return;
     if (e.target.closest('[data-no-pan]')) return;
     if (e.target.closest('.lm-node')) return;
     suppressNodeClick.current = false;
     if (ctxMenu) { e.preventDefault(); closeContextMenu(); }
-    if (!e.shiftKey) setSelectedIds([]);
+    if (!e.shiftKey) { setSelectedIds([]); setPickedId(null); }
     dragRef.current = { mode:'pan', sx:e.clientX, sy:e.clientY, px:pan.x, py:pan.y };
   };
 
-  const openContextMenu = (e, nodeId = null) => {
+  const openContextMenu = (e, nodeId = null, wireId = null) => {
     e.preventDefault();
     e.stopPropagation();
+    setMenuNotice('');
     const rect = wrapRef.current.getBoundingClientRect();
     // Clamp so the menu never spills past the canvas edges (menu ≈ 220×350).
     const MENU_W = 220, MENU_H = Math.min(350, rect.height - 16);
@@ -2573,7 +2660,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const rx = (keyboard ? anchor.left + 16 : e.clientX) - rect.left;
     const ry = (keyboard ? anchor.top + 24 : e.clientY) - rect.top;
     setCtxMenu({
-      nodeId, opener, maxHeight:MENU_H,
+      nodeId, wireId, opener, maxHeight:MENU_H,
       x: Math.max(8, Math.min(rx, rect.width  - MENU_W - 8)),
       y: Math.max(8, Math.min(ry, rect.height - MENU_H - 8)),
     });
@@ -2584,16 +2671,42 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   const onNodeContextMenu = id => e => {
     if (e.target.isContentEditable || e.target.closest('input,textarea,select,[role="textbox"]')) return;
     if (!selected.has(id)) setSelectedIds([id]);
-    setFocusId(id); openContextMenu(e, id);
+    setPickedId(id); setFocusId(id); openContextMenu(e, id);
   };
   const isContextKey = e => e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
+  // Arrow keys move the selection one grid step (Shift: one unit); the move saves like a drag.
+  const nudgeSelection = (dx, dy) => {
+    const ids = [...selected].filter(id => positions[id]);
+    if (!ids.length) return false;
+    if (!canSaveLayout || layoutNeedsRefresh || !scopeStillCurrent()) {
+      setLayoutError(!canSaveLayout ? 'This connection cannot save node positions.' : 'Refresh the canvas first.');
+      return true;
+    }
+    const before = Object.fromEntries(ids.map(id => [id, {...positions[id]}]));
+    const next = Object.fromEntries(ids.map(id => [id, {x:positions[id].x + dx, y:positions[id].y + dy}]));
+    setPositions(held => ({...held, ...next}));
+    armLayoutRef.current({next, before, revision});
+    return true;
+  };
+  const ARROWS = {ArrowLeft:[-1, 0], ArrowRight:[1, 0], ArrowUp:[0, -1], ArrowDown:[0, 1]};
   const onCanvasKeyDown = e => {
     if (e.target === e.currentTarget && isContextKey(e)) { openContextMenu(e); return; }
+    const inField = e.target.closest('input,textarea,select,[contenteditable="true"],[role="menu"]');
+    if (!inField && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (ARROWS[e.key]) {
+        const step = e.shiftKey ? 1 : CANVAS_GRID;
+        if (nudgeSelection(ARROWS[e.key][0] * step, ARROWS[e.key][1] * step)) e.preventDefault();
+        return;
+      }
+      if (!e.shiftKey && String(e.key).toLowerCase() === 'f') {
+        e.preventDefault(); fitIds(selected.size ? [...selected] : allNodes.map(node => node.id)); return;
+      }
+    }
     // The shortcuts the canvas menu names (design CanvasMenu), while focus is on the canvas and not in a field.
     if (!(e.metaKey || e.ctrlKey) || e.altKey || e.target.closest('input,textarea,select,[contenteditable="true"]')) return;
     const combo = (e.shiftKey ? 'shift+' : '') + String(e.key).toLowerCase();
     if (combo === 'a') { e.preventDefault(); setSelectedIds(allNodes.map(node => node.id)); return; }
-    const item = canvasMenuItems.find(row => row.keys === combo);
+    const item = canvasMenuItems.find(row => row.keys === (combo === 'y' ? 'shift+z' : combo));
     if (!item) return;
     e.preventDefault();
     if (!item.disabled && typeof item.action === 'function') item.action();
@@ -2606,7 +2719,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     if (e?.target.closest('button,input,textarea,select,a,[contenteditable="true"]')) return;
     if (e?.shiftKey) setSelectedIds(ids => ids.includes(id) ? ids.filter(root => root !== id) : [...ids, id]);
     else if (!selected.has(id)) setSelectedIds([id]);
-    setFocusId(id);
+    setPickedId(id); setFocusId(id);
   };
 
   const onNodeDragStart = (id) => (e) => {
@@ -2682,8 +2795,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const rect = wrapRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const delta = -e.deltaY * 0.0015;
-    const next = Math.max(0.01, Math.min(2, +(zoom * (1 + delta)).toFixed(3)));
+    const next = canvasWheelZoom(zoom, e.deltaY);
     if (next === zoom) return;
     setPan(p => ({ x: mx - (mx - p.x) * (next / zoom), y: my - (my - p.y) * (next / zoom) }));
     setZoom(next);
@@ -2717,11 +2829,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   );
 
   const focusWireIdx = authorityState ? graph.wires.findIndex(w => w.id === focusId) : (String(focusId).indexOf('wire:') === 0 ? +String(focusId).slice(5) : -1);
-  const connectedIds = new Set([focusId]);
-  graph.wires.forEach(w => {
-    if (w.from[0] === focusId) connectedIds.add(w.to[0]);
-    if (w.to[0]   === focusId) connectedIds.add(w.from[0]);
-  });
+  const dimmedIds = pickedId ? canvasDimmedIds(allNodes.map(node => node.id), graph.wires, pickedId, [...selected]) : new Set();
 
   const unresolvedWires = [];
   const wires = graph.wires.map((w, i) => {
@@ -2753,6 +2861,23 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
   }).filter(Boolean);
 
   const toggleExpanded = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
+  // One set of handlers per card for the canvas's life. Each calls the CURRENT closure through a ref,
+  // so a memoized card that did not re-render still acts on today's selection and positions.
+  const latest = React.useRef(null);
+  latest.current = {toggleExpanded, onNodeDragStart, onNodeFocus, onNodeContextMenu, onNodeKeyDown, useSocket,
+    open:id => authority && authority.open(id).catch(() => {})};
+  const handlerCache = React.useRef(new Map());
+  const cardHandlers = id => {
+    let held = handlerCache.current.get(id);
+    if (!held) {
+      held = {toggle:() => latest.current.toggleExpanded(id), drag:e => latest.current.onNodeDragStart(id)(e),
+        focus:e => latest.current.onNodeFocus(id)(e), menu:e => latest.current.onNodeContextMenu(id)(e),
+        key:e => latest.current.onNodeKeyDown(id)(e), socket:(port, side) => latest.current.useSocket(id, port, side),
+        open:() => latest.current.open(id)};
+      handlerCache.current.set(id, held);
+    }
+    return held;
+  };
   const measureCards = () => {
     if (document.fonts?.status === 'loading') {
       setLayoutError('Fonts are loading; try again in a moment.'); return null;
@@ -2902,14 +3027,33 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     const next = canvasArrangePositions(movable, positions, sizes, allNodes.map(node => node.id), graph.wires, arrangeFrameOf);
     await savePositions(next, before, expectedRevision, true, false, 'arrange');
   };
-  const undoAvailable = !!undoLayout && Object.entries(undoLayout.after).every(([id, point]) =>
-    allNodes.some(node => node.id === id && node.x === point.x && node.y === point.y) &&
-    positions[id]?.x === point.x && positions[id]?.y === point.y);
-  const undoPositions = () => {
-    if (flushLayoutBurst()) {
-      setLayoutError('Saving the moved nodes first. Try Reset positions again.'); return;
-    }
-    if (undoAvailable && !blocked) savePositions(undoLayout.before, undoLayout.after, revision, false, false, undoLayout.placement || null);
+  // Undo / Redo are the graph's own history (07a1364), not a positions-only reset: every recorded change on
+  // this canvas -- a move, an Arrange, a new card, a wire, a value -- is taken back by the same route.
+  const history = authorityState?.canvas?.action_history;
+  const canUndo = authority ? typeof authority.undo === 'function' :
+    typeof window.ARCHHUB_HISTORY === 'function' && history?.can_undo === true;
+  const canRedo = !authority && typeof window.ARCHHUB_HISTORY === 'function' && history?.can_redo === true;
+  const undoWhy = typeof window.ARCHHUB_HISTORY !== 'function' && !authority?.undo ? 'Undo is not available in this connection' : 'Nothing to undo';
+  const redoWhy = authority ? 'Redo is not available on this canvas' : typeof window.ARCHHUB_HISTORY !== 'function' ?
+    'Redo is not available in this connection' : 'Nothing to redo';
+  const runHistory = operation => {
+    if (operation === 'undo' ? !canUndo : !canRedo) { setLayoutError(operation === 'undo' ? undoWhy : redoWhy); return; }
+    if (flushLayoutBurst()) { setLayoutError('Saving the moved nodes first. Try again in a moment.'); return; }
+    const read = () => (authority ? authority.getSnapshot() : normal?.getSnapshot()?.topology)?.graph || {nodes:[], wires:[]};
+    menuTask(async () => {
+      const before = read();
+      try {
+        if (authority) await authority.undo(); else await window.ARCHHUB_HISTORY(operation);
+      } catch (error) {
+        // The history refuses to take back a change a later change depends on; say that in plain words.
+        if (/gained references|lost references|Conflict/i.test(String(error?.message || ''))) {
+          throw new Error((operation === 'redo' ? 'Redo' : 'Undo') + ' stopped: a later change depends on this one, so it cannot be taken back here.');
+        }
+        throw error;
+      }
+      if (authority) await authority.load(); else if (normal) await normal.refreshTopologyCanvas();
+      return canvasHistoryToast(operation, before, read());
+    });
   };
   const refreshCanvas = async () => {
     if (!scopeStillCurrent() || saving.current || authorityState?.pending) return;
@@ -2917,7 +3061,7 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
       if (authority) await authority.load();
       else if (normal) await normal.refreshTopologyCanvas();
       else return;
-      if (scopeStillCurrent()) { setLayoutError(''); setWireError(''); setLayoutNeedsRefresh(false); setUndoLayout(null); }
+      if (scopeStillCurrent()) { setLayoutError(''); setWireError(''); setLayoutNeedsRefresh(false); }
     } catch (error) { if (scopeStillCurrent()) setLayoutError(error.message || 'The canvas could not be refreshed.'); }
   };
   const allIds = allNodes.map(node => node.id);
@@ -2935,16 +3079,78 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     }
     return [...held.values()];
   })();
+  // The routes the menus call. Each one already exists: the inspector's Delete (ARCHHUB_RETRACT ->
+  // /api/universal/retract), its connection Delete (disconnectTopology / authority.remove), Rerun (ARCHHUB_RUN ->
+  // /api/universal/run-graph), the library's placement (ARCHHUB_NODE_CREATE -> /api/universal/node-create) and
+  // the scope opening that double-click and sessions use (authority.open / ARCHHUB_SCOPE_OPEN).
+  const cutWire = authority ? root => authority.remove(root) : normal?.disconnectTopology ? root => normal.disconnectTopology(root) : null;
+  const removeNode = typeof window.ARCHHUB_RETRACT === 'function' ? root => window.ARCHHUB_RETRACT(root) : null;
+  const menuTask = async (task, done) => {
+    if (menuBusy) return;
+    setMenuBusy(true); setMenuNotice(''); setLayoutError('');
+    try {
+      // The right-click that opened the menu also told the owner what was picked. The transport refuses a
+      // second write while that one is out, so the action waits for it (at most ten seconds) instead.
+      for (let i = 0; i < 100 && transportBusy(); i += 1) await new Promise(done => setTimeout(done, 100));
+      const said = await task(); if (scopeStillCurrent()) setMenuNotice(said || done || '');
+    }
+    catch (error) { if (scopeStillCurrent()) setLayoutError(error?.message || 'The action was refused.'); }
+    finally { if (alive.current) setMenuBusy(false); }
+  };
+  const menuRun = () => menuTask(async () => {
+    const result = await window.ARCHHUB_RUN();
+    if (!result || result.ok === false) throw new Error(result?.error || 'The graph run failed.');
+    const waiting = Object.keys(result.pending || {}).length;
+    return 'The graph ran' + (waiting ? '; ' + waiting + ' node(s) did not finish' : '') + '.';
+  });
+  const menuDisconnect = roots => menuTask(async () => {
+    let cut = 0;
+    for (const root of roots.filter(Boolean)) { await cutWire(root); cut += 1; }
+    return cut === 1 ? 'The wire was removed.' : cut + ' wires were removed.';
+  });
+  const menuDuplicate = node => menuTask(async () => {
+    const params = Object.fromEntries((node.params || []).filter(row => row.k && row.k !== 'seed').map(row => [row.k, row.v ?? '']));
+    const at = positions[node.id] || node;
+    const created = await window.ARCHHUB_NODE_CREATE({title:(node.title || node.engine) + ' copy', engine:node.engine,
+      x:at.x + 40, y:at.y + 40, params});
+    if (created && created.ok === false) throw new Error(created.error || 'The copy was refused.');
+    window.location.reload();
+    return 'Copy placed.';
+  });
+  const menuOpenInside = node => menuTask(async () => {
+    if (authority) { await authority.open(node.id); return ''; }
+    await window.ARCHHUB_SCOPE_OPEN([...openScope.trail.map(step => step.root).filter(Boolean), node.id]);
+    window.location.reload();
+    return '';
+  });
+  const askClearAll = () => setConfirming({kind:'clear', ids:[...allIds], title:allIds.length + ' nodes', wires:graph.wires.length});
+  const confirmRemoval = () => {
+    const held = confirming;
+    setConfirming(null);
+    if (!held) return;
+    menuTask(async () => {
+      let removed = 0;
+      try {
+        for (const root of held.ids) { await removeNode(root); removed += 1; }
+      } catch (error) {
+        throw new Error((removed ? removed + ' of ' + held.ids.length + ' nodes were removed, then: ' : '') +
+          (error?.message || 'Removal was refused.'));
+      }
+      window.location.reload();
+      return removed === 1 ? 'The node was deleted.' : removed + ' nodes were deleted.';
+    });
+  };
   const menuHasSeed = !!ctxMenu?.nodeId || selected.size > 0 || allIds.includes(focusId);
   // Each action names why it is disabled; CanvasMenu shows that reason as the item title.
   const busyWhy = layoutBusy || authorityState?.pending ? 'Wait for the canvas to finish saving' : 'Refresh the canvas first';
+  const menuWhyBusy = menuBusy ? 'Wait for the current action to finish' : busyWhy;
   const noNodesWhy = 'This canvas has no nodes', noSelectionWhy = 'Nothing is selected', noSeedWhy = 'Select or right-click a node first';
   const layoutWhy = fallback => blocked ? busyWhy : !canSaveLayout ? 'This connection cannot save node positions' : fallback;
   // The design's canvas menu, row for row (design studio-lm.jsx:1520-1573). Each row runs the application's own
   // action; a row this build has no action for is drawn disabled and says why.
   const canvasMenuItems = [
     {i:'＋', t:'Add node…', k:'⌘L', keys:'l', action:() => setLibraryOpen(true), disabled:blocked, why:busyWhy},
-    {i:'⎘', t:'Paste', k:'⌘V', disabled:true, why:'Pasting nodes is not available in this build'},
+    {i:'⎘', t:'Paste', k:'⌘V', disabled:true, why:'Copying and pasting nodes is not available in this build'},
     {sep:true},
     {i:'⌴', t:'Fit graph to view', k:'⌘0', keys:'0', action:() => fitIds(allIds), disabled:!allIds.length, why:noNodesWhy},
     {i:'⊜', t:'Zoom to 100%', k:'⌘1', keys:'1', action:() => setZoom(1)},
@@ -2953,14 +3159,41 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     {i:'⧉', t:'Auto-layout', k:'⌘⇧L', keys:'shift+l', action:() => arrangeIds(selected.size ? [...selected] : allIds),
       disabled:layoutNeedsRefresh || !canSaveLayout || !allIds.length, why:layoutWhy(noNodesWhy)},
     {sep:true},
-    {i:'↻', t:'Reset positions', k:'⌘⇧R', keys:'shift+r', action:undoPositions, disabled:blocked || !undoAvailable,
-      why:blocked ? busyWhy : 'No layout change to reset'},
-    {i:'✕', t:'Clear all nodes', danger:true, disabled:true,
-      why:'Clearing the whole canvas is not available here; delete a node from its inspector'},
+    {i:'↶', t:'Undo', k:'⌘Z', keys:'z', action:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo,
+      why:blocked || menuBusy ? menuWhyBusy : undoWhy},
+    {i:'↷', t:'Redo', k:'⌘⇧Z', keys:'shift+z', action:() => runHistory('redo'), disabled:blocked || menuBusy || !canRedo,
+      why:blocked || menuBusy ? menuWhyBusy : redoWhy},
+    {i:'✕', t:'Clear all nodes', danger:true, action:() => askClearAll(),
+      disabled:!allIds.length || !removeNode || menuBusy || blocked,
+      why:!allIds.length ? noNodesWhy : !removeNode ? 'Removing nodes is not available in this connection' : busyWhy},
   ];
-  // A node's own menu (right-click or Shift+F10 on a card) holds the selection, fit and refresh actions that have no
-  // row in the design's canvas menu. A connection is deleted from its inspector; the inspector's Rerun runs the graph.
+  // A node's own menu (right-click or Shift+F10 on a card): the design's node actions first (atlas-cockpit.jsx
+  // ContextMenu, node branch), each through the application's existing route, then the selection, fit and
+  // refresh actions this build adds. An action with no route here is dashed and says why.
+  const menuNode = allNodes.find(node => node.id === ctxMenu?.nodeId) || null;
+  const menuNodeWires = menuNode ? graph.wires.filter(wire => wire.id && (wire.from?.[0] === menuNode.id || wire.to?.[0] === menuNode.id)) : [];
+  const openScope = authorityState?.canvas?.scope;
+  const canOpenInside = !!menuNode?.openable && (authority ? true :
+    typeof window.ARCHHUB_SCOPE_OPEN === 'function' && Array.isArray(openScope?.trail) && openScope.trail.length > 0);
+  const canDuplicate = !authority && !!menuNode?.engine && typeof window.ARCHHUB_NODE_CREATE === 'function';
   const nodeMenuItems = [
+    {i:'▶', t:'Run graph', action:() => menuRun(), disabled:typeof window.ARCHHUB_RUN !== 'function' || menuBusy,
+      why:menuBusy ? menuWhyBusy : 'Running is not available in this connection'},
+    {i:'◉', t:'Add watcher', disabled:true, why:'Watchers are not available in this build'},
+    {i:'▤', t:'Open pipeline', action:() => menuOpenInside(menuNode), disabled:!canOpenInside,
+      why:menuNode && !menuNode.openable ? 'This node has nothing inside to open' : 'Opening a node is not available in this connection'},
+    {sep:true},
+    {i:'❄', t:'Freeze node', disabled:true, why:'Freezing a node is not available in this build'},
+    {i:'⧉', t:'Duplicate', action:() => menuDuplicate(menuNode), disabled:!canDuplicate || menuBusy,
+      why:menuBusy ? menuWhyBusy : authority ? 'Duplicate is not available on this canvas' : 'This node has no engine to copy'},
+    {i:'⌁', t:'Disconnect all wires', action:() => menuDisconnect(menuNodeWires.map(wire => wire.id)),
+      disabled:!menuNodeWires.length || !cutWire || menuBusy || layoutNeedsRefresh,
+      why:!menuNodeWires.length ? 'This node has no wires' : !cutWire ? 'Removing wires is not available in this connection' : menuWhyBusy},
+    {sep:true},
+    {i:'✕', t:'Delete node…', danger:true, action:() => menuNode && setConfirming({kind:'node', ids:[menuNode.id],
+      title:menuNode.title || menuNode.id, wires:menuNodeWires.length}),
+      disabled:!removeNode || menuBusy || layoutNeedsRefresh, why:!removeNode ? 'Removing nodes is not available in this connection' : menuWhyBusy},
+    {sep:true},
     {i:'⇄', t:'Select direct neighbours', action:() => selectConnected(false), disabled:!menuHasSeed, why:noSeedWhy},
     {i:'⧉', t:'Select connected group', action:() => selectConnected(true), disabled:!menuHasSeed, why:noSeedWhy},
     {i:'▣', t:'Select all nodes', k:'⌘A', action:() => setSelectedIds(allIds), disabled:!allIds.length, why:noNodesWhy},
@@ -2972,6 +3205,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
     {sep:true},
     {i:'↻', t:'Refresh canvas', action:refreshCanvas, disabled:layoutBusy || !!authorityState?.pending || (!authority && !normal),
       why:!authority && !normal ? 'Refresh is not available in this connection' : 'Wait for the canvas to finish saving'},
+  ];
+  // A wire's own menu (design ContextMenu wire branch): one action, through the existing unwire route.
+  const wireMenuItems = [
+    {i:'✕', t:'Cut this wire', danger:true, action:() => menuDisconnect([ctxMenu?.wireId]),
+      disabled:!ctxMenu?.wireId || !cutWire || menuBusy || layoutNeedsRefresh,
+      why:!cutWire ? 'Removing wires is not available in this connection' : menuWhyBusy},
   ];
 
   return (
@@ -2989,16 +3228,17 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         gridColumn:'1', gridRow:'2', position:'relative', overflow:'hidden',
         background:LM.bgCanvas,
         backgroundImage:`radial-gradient(${LM.lineHair} 1px, transparent 1px)`,
+        // The dot grid is fixed: shifting it on every pan repainted the whole canvas (canvas-perf).
         backgroundSize:`${20*zoom}px ${20*zoom}px`,
-        backgroundPosition:`${pan.x}px ${pan.y}px`,
         cursor: dragRef.current?.mode === 'pan' ? 'grabbing' : 'grab',
         userSelect: dragRef.current ? 'none' : 'auto',
         outline: dropTarget ? `1px dashed ${LM.accent}66` : undefined,
         outlineOffset:-1,
       }}>
       <div style={{
-        position:'absolute', left:pan.x, top:pan.y,
-        transform:`scale(${zoom})`, transformOrigin:'0 0',
+        // One composited layer: pan and zoom are a single transform, never left/top (canvas-perf).
+        position:'absolute', left:0, top:0, willChange:'transform',
+        transform:`translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`, transformOrigin:'0 0',
       }}>
         {canvasFrames.map(frame => (
           <div key={frame.key} data-canvas-frame={frame.key} aria-hidden="true" style={{
@@ -3013,12 +3253,6 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
           </div>
         ))}
         <svg width="2400" height="1400" style={{ position:'absolute', left:0, top:0, pointerEvents:'none', overflow:'visible' }} className="lm-wires">
-          <defs>
-            <filter id="lm-wire-glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="1.5" result="b"/>
-              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-          </defs>
           {wires.map(w => {
             const dx = Math.max(40, Math.abs(w.x2 - w.x1) * 0.5);
             const d = `M${w.x1},${w.y1} C${w.x1+dx},${w.y1} ${w.x2-dx},${w.y2} ${w.x2},${w.y2}`;
@@ -3028,12 +3262,17 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
             return (
               <g key={w.i}>
                 <path d={d} stroke="transparent" strokeWidth={14} fill="none"
-                  onClick={(e) => { e.stopPropagation(); setFocusId(authorityState ? graph.wires[w.i].id : 'wire:' + w.i); }}
+                  onClick={(e) => { e.stopPropagation(); const root = authorityState ? graph.wires[w.i].id : 'wire:' + w.i; setPickedId(root); setFocusId(root); }}
+                  onContextMenu={(e) => {
+                    const root = authorityState ? graph.wires[w.i].id : 'wire:' + w.i;
+                    setPickedId(root); setFocusId(root);
+                    openContextMenu(e, null, graph.wires[w.i].id || null);
+                  }}
+                  data-wire-id={graph.wires[w.i].id || undefined}
                   style={{ pointerEvents: 'stroke', cursor: 'pointer' }}>
-                  <title>Open this connection</title>
+                  <title>Open this connection · right-click for actions</title>
                 </path>
-                {w.selected && <path d={d} stroke={LM.accent} strokeWidth={strokeW + 5} fill="none" opacity={0.22} strokeLinecap="round"/>}
-                <path d={d} stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} filter={w.focused ? "url(#lm-wire-glow)" : undefined} style={{ pointerEvents: 'none' }}/>
+                <path d={d} stroke={w.selected ? LM.accent : color} strokeWidth={strokeW} fill="none" opacity={op} style={{ pointerEvents: 'none' }}/>
                 {w.animated && (
                   <path d={d} stroke={color} strokeWidth={strokeW} fill="none" strokeDasharray="6 10" style={{ animation:'lmDash 0.9s linear infinite' }}/>
                 )}
@@ -3044,20 +3283,21 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
 
         {allNodes.map(n => {
           const pos = positions[n.id] || { x: n.x, y: n.y };
+          const on = cardHandlers(n.id);
           return (
-            <NodeRenderer
+            <MemoNodeRenderer
               key={n.id}
-              n={{ ...n, x: pos.x, y: pos.y }}
+              n={n} x={pos.x} y={pos.y}
               focused={selected.has(n.id) || n.id === focusId}
-              dimmed={!selected.has(n.id) && !connectedIds.has(n.id) && focusId !== n.id && !n._user}
+              dimmed={dimmedIds.has(n.id) && !n._user}
               expanded={!!expanded[n.id]}
-              onToggleExpand={() => toggleExpanded(n.id)}
-              onDragStart={onNodeDragStart(n.id)}
-              onFocus={onNodeFocus(n.id)}
-              onContextMenu={onNodeContextMenu(n.id)}
-              onKeyDown={onNodeKeyDown(n.id)}
-              onSocket={(port, side) => useSocket(n.id, port, side)}
-              onOpen={n.openable && authority ? () => authority.open(n.id).catch(() => {}) : undefined}
+              onToggleExpand={on.toggle}
+              onDragStart={on.drag}
+              onFocus={on.focus}
+              onContextMenu={on.menu}
+              onKeyDown={on.key}
+              onSocket={on.socket}
+              onOpen={n.openable && authority ? on.open : undefined}
             />
           );
         })}
@@ -3087,12 +3327,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         {showingSystem ? 'My canvas' : 'System view'}</button>}
       {/* Below the minimap (MiniMap: right 14, top 14, 96 tall), never over it. The design canvas draws no status chip:
           only a save in flight, a refusal or a half-made wire draws one. Refresh is also in a node's own menu. */}
-      {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout) &&
+      {(layoutError || authorityState?.error || wireError || layoutBusy || burstPending || authorityState?.pending || wireStart || unwrittenLayout || menuBusy || menuNotice) &&
       <div data-no-pan style={{position:'absolute', top:118, right:14, zIndex:5,
         display:'flex', gap:8, alignItems:'center', maxWidth:'55%', background:LM.bgPanel, padding:'6px 10px', borderRadius:6}}>
         <span role={authorityState?.error || wireError || layoutError ? 'alert' : 'status'} style={{fontSize:12,
           color:authorityState?.error || wireError || layoutError ? LM.err : LM.inkSoft, overflowWrap:'anywhere'}}>
-          {layoutError || authorityState?.error || wireError || (layoutBusy || burstPending ? 'Saving positions…' :
+          {layoutError || authorityState?.error || wireError || (menuBusy ? 'Working…' : menuNotice ? menuNotice : layoutBusy || burstPending ? 'Saving positions…' :
             authorityState?.pending ? 'Saving…' : unwrittenLayout ?
               'Positions moved in the last session were never confirmed (' +
               Object.keys(unwrittenLayout.next).length + '). Move them again to save them.' :
@@ -3113,10 +3353,12 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         }}>＋ DROP TO ADD NODE</div>
       )}
 
-      <CanvasToolbar zoom={zoom} setZoom={(updater) => {
+      <CanvasToolbar undo={{run:() => runHistory('undo'), disabled:blocked || menuBusy || !canUndo, why:undoWhy}}
+        redo={{run:() => runHistory('redo'), disabled:blocked || menuBusy || !canRedo, why:redoWhy}}
+        zoom={zoom} setZoom={(updater) => {
         setZoom(z => {
           const next = typeof updater === 'function' ? updater(z) : updater;
-          return Math.max(0.01, Math.min(2, next));
+          return canvasClampZoom(next);
         });
       }} onFit={() => fitIds(selected.size ? [...selected] : allIds)}
         fitLabel={selected.size ? 'Fit selection' : 'Fit all nodes'} setLibraryOpen={setLibraryOpen}/>
@@ -3124,8 +3366,19 @@ const NodeCanvas = ({ focusId, setFocusId, setLibraryOpen, userNodes = [], addNo
         node={allNodes.find(n => n.id === focusId && n.live && nodeModelRow(n))}/>
       <MiniMap pan={pan} zoom={zoom} positions={positions} allNodes={allNodes}/>
       {ctxMenu && <CanvasMenu x={ctxMenu.x} y={ctxMenu.y} maxHeight={ctxMenu.maxHeight}
-        opener={ctxMenu.opener} items={ctxMenu.nodeId ? nodeMenuItems : canvasMenuItems}
-        label={ctxMenu.nodeId ? 'Node actions' : 'Canvas actions'} onClose={closeContextMenu}/>}
+        opener={ctxMenu.opener} items={ctxMenu.nodeId ? nodeMenuItems : ctxMenu.wireId ? wireMenuItems : canvasMenuItems}
+        label={ctxMenu.nodeId ? 'Node actions' : ctxMenu.wireId ? 'Wire actions' : 'Canvas actions'} onClose={closeContextMenu}/>}
+      {confirming && <div data-no-pan role="alertdialog" aria-label="Confirm delete" style={{position:'absolute', left:'50%',
+        top:64, transform:'translateX(-50%)', zIndex:40, display:'flex', gap:10, alignItems:'center', maxWidth:'80%',
+        background:LM.bgPanel, border:`1px solid ${LM.err}`, borderRadius:LM.rad.md, padding:'8px 12px'}}>
+        <span style={{fontSize:12.5, color:LM.ink}}>
+          {confirming.kind === 'clear'
+            ? 'Delete all ' + confirming.title + ' on this canvas and their wires? This cannot be undone here.'
+            : 'Delete \u201c' + confirming.title + '\u201d' + (confirming.wires ? ' and its ' + confirming.wires + ' wire' + (confirming.wires === 1 ? '' : 's') : '') + '? This cannot be undone here.'}
+        </span>
+        <button autoFocus onClick={() => setConfirming(null)} style={toolBtn()}>Cancel</button>
+        <button onClick={confirmRemoval} style={{...toolBtn(), color:LM.err}}>Delete</button>
+      </div>}
       <CanvasHint/>
     </div>
   );
@@ -3223,7 +3476,9 @@ const CanvasMenu = ({ x, y, maxHeight, opener, items, label, onClose }) => {
 };
 
 // ─── nodes dispatcher ───
-const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown }) => {
+const NodeRenderer = ({ n: held, x = held.x, y = held.y, focused, dimmed, expanded, onToggleExpand, onDragStart, onFocus, onSocket, onOpen, onContextMenu, onKeyDown }) => {
+  const n = held.x === x && held.y === y ? held : {...held, x, y};
+  if (typeof window !== 'undefined' && window.__archhubCardRenders) window.__archhubCardRenders[held.id] = (window.__archhubCardRenders[held.id] || 0) + 1;
   const cat = studioCategory(n.cat);
   // AI nodes can expand horizontally for full conversation + search
   const w = (n.cat === 'ai' && expanded) ? Math.max(520, n.w) : n.w;
@@ -3286,6 +3541,10 @@ const NodeRenderer = ({ n, focused, dimmed, expanded, onToggleExpand, onDragStar
   );
 };
 
+// A card re-renders only when what it draws changed: its node record, its place, or its focus, dim and
+// expansion. Its handlers are stable (NodeCanvas cardHandlers), so a drag re-renders the moving card only.
+const MemoNodeRenderer = React.memo(NodeRenderer, (a, b) => a.n === b.n && a.x === b.x && a.y === b.y &&
+  a.focused === b.focused && a.dimmed === b.dimmed && a.expanded === b.expanded && !!a.onOpen === !!b.onOpen);
 const NodeStateDot = ({ s }) => {
   const col = s === 'running' ? LM.accent : s === 'queued' ? LM.inkMuted : LM.ok;
   return (
@@ -3820,18 +4079,24 @@ const StagePreview = () => (
 );
 
 // ─── canvas toolbar (TOP-LEFT) ───
-const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, setLibraryOpen }) => (
+const CanvasToolbar = ({ zoom, setZoom, onFit, fitLabel, setLibraryOpen, undo, redo }) => (
   <div data-no-pan style={{
     position:'absolute', left:14, top:14, display:'flex', gap:LM.sp.xs,
     background:LM.bgPanel, border:`1px solid ${LM.line}`, borderRadius:7, padding:LM.sp.xs,
     boxShadow:'0 4px 12px rgba(0,0,0,.3)',
   }}>
     <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(2, +(z + 0.1).toFixed(2))); }} title="Zoom in" aria-label="Zoom in" style={toolBtn()}>+</button>
-    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.01, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={toolBtn()}>−</button>
+    <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(2))); }} title="Zoom out" aria-label="Zoom out" style={toolBtn()}>−</button>
     <div style={{ ...toolBtn(), width:48, color:LM.ink, background:LM.bg, fontFamily:LM.mono, fontSize:10, cursor:'default' }}>
       {Math.round(zoom * 100)}%
     </div>
     <button onClick={(e) => { e.stopPropagation(); onFit(); }} title={fitLabel} aria-label={fitLabel} style={toolBtn()}>{'\u27f2'}</button>
+    <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
+    {[['Undo', '\u21b6', undo], ['Redo', '\u21b7', redo]].filter(([, , held]) => held).map(([label, icon, held]) => (
+      <button key={label} disabled={held.disabled} onClick={(e) => { e.stopPropagation(); held.run(); }}
+        title={held.disabled ? held.why : label} aria-label={label}
+        style={{...toolBtn(), cursor:held.disabled ? 'default' : 'pointer', color:held.disabled ? LM.inkMuted : LM.inkSoft}}>{icon}</button>
+    ))}
     <div style={{ width:1, background:LM.line, margin:'0 2px' }}/>
     <button onClick={(e) => { e.stopPropagation(); setLibraryOpen(true); }} title="Add node" aria-label="Add node" style={{
       padding:'0 10px', height:22, border:0, background:'transparent', cursor:'pointer',
@@ -5169,9 +5434,10 @@ const SettingsTheme = () => {
   </div>;
 };
 // Only keys that have a handler in this build (the design sheet listed thirteen; seven had none).
-// Global: StudioLM keydown (Escape, Ctrl/Cmd+, and Ctrl/Cmd+/). Canvas: onCanvasKeyDown, which runs
+// Global: StudioLM keydown (Escape, Ctrl/Cmd+, Ctrl/Cmd+/ and Ctrl/Cmd+K). Canvas: onCanvasKeyDown, which runs
 // select-all and the canvas menu rows whose keys are declared in canvasMenuItems.
 const STUDIO_SHORTCUTS = [
+  ['Open the node library', '⌘K'],
   ['Toggle settings',       '⌘,'],
   ['Open documentation',    '⌘/'],
   ['Close settings or docs', 'Esc'],
@@ -5180,7 +5446,11 @@ const STUDIO_SHORTCUTS = [
   ['Fit graph to view',     '⌘0'],
   ['Zoom to 100%',          '⌘1'],
   ['Auto-layout',           '⌘⇧L'],
-  ['Reset positions',       '⌘⇧R'],
+  ['Undo',                  '⌘Z'],
+  ['Redo',                  '⌘⇧Z'],
+  ['Fit selection or all',  'F'],
+  ['Move selected nodes',   '← ↑ → ↓'],
+  ['Pan the canvas',        'Middle-drag'],
 ];
 const SettingsShortcuts = () => (
   <div>

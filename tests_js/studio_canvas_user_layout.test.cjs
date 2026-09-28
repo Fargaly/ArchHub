@@ -195,7 +195,7 @@ test('T1: Arrange writes with placement arrange and never sends a hand-placed ca
   } finally { await view.close(); }
 });
 
-test('undoing Arrange moves the cards back as an arrange, so none of them is pinned', async () => {
+test('the old positions-only reset is gone: Ctrl+Shift+R writes nothing (Undo is the graph history now)', async () => {
   const view = await mount();
   try {
     await view.arrange();
@@ -204,9 +204,7 @@ test('undoing Arrange moves the cards back as an arrange, so none of them is pin
     await view.draw();
     await view.undo();
     await view.settle(20);
-    assert.equal(view.saves.length, 2, 'chip: ' + view.chip());
-    assert.equal(view.saves[1].placement, 'arrange', 'the undo of an Arrange is not a hand move');
-    assert.deepEqual(Object.keys(view.saves[1].positions).sort(), Object.keys(view.saves[0].positions).sort());
+    assert.equal(view.saves.length, 1, 'no second positions write: ' + view.chip());
   } finally { await view.close(); }
 });
 

@@ -292,11 +292,13 @@ test('the shipped source arms a burst on mouseup and never writes from the drag 
   assert.match(text, /return \(\) => \{ flushRef\.current\(true\); alive\.current = false;/,
     'leaving the canvas forces the flush, so a burst behind an in-flight save is not dropped');
 });
-test('one undo of a burst lands on the pre-burst layout', async () => {
+// A burst is ONE recorded gesture, so one graph Undo (Ctrl+Z, the canvas history route) takes the
+// whole burst back (tests_replica/test_canvas_undo_redo_uses_graph_history.py). The positions-only
+// reset (Ctrl+Shift+R) is gone and writes nothing.
+test('a burst is one write, and the old positions-only reset writes nothing', async () => {
   const wait = coalesceWindow();
   const view = await mount();
   try {
-    const started = {one:view.point('one'), two:view.point('two')};
     await view.drag('one', 40, 40);
     await view.drag('two', 80, 0);
     await view.drag('one', 160, 160);
@@ -305,9 +307,7 @@ test('one undo of a burst lands on the pre-burst layout', async () => {
     await view.draw();
     await view.reset();
     await view.settle(wait * 2);
-    assert.equal(view.saves.length, 2, 'the undo is its own act');
-    assert.deepEqual(view.saves[1].positions.one, started.one, 'one is back where the burst started');
-    assert.deepEqual(view.saves[1].positions.two, started.two, 'two is back where the burst started');
+    assert.equal(view.saves.length, 1, 'no positions-only undo write');
   } finally { await view.close(); }
 });
 

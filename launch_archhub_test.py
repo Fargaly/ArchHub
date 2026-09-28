@@ -774,6 +774,9 @@ window.resize(1480, 920)
 window.setMinimumSize(960, 640)
 view = QWebEngineView(window)
 window.setCentralWidget(view)
+from nodelang.studio_window import forget_pages_behind_studio, lock_studio_navigation
+# One page lives in this window: no native Back/Reload menu, and nothing behind the Studio.
+lock_studio_navigation(view)
 from nodelang.studio_downloads import install_studio_downloads
 
 
@@ -820,6 +823,9 @@ def _to_studio(ok):
         _booted["done"] = True
         view.load(QUrl(server.public_url + "/studio"))
     elif ok and view.url().path().startswith("/studio"):
+        # The bootstrap document at / (and any earlier Studio load) is forgotten:
+        # Back, Alt+Left and the mouse's Back button cannot leave the Studio.
+        forget_pages_behind_studio(view)
         _acknowledge_update_surface()
 view.loadFinished.connect(_to_studio)
 # The studio's Browse buttons open THIS window's native file dialog; the

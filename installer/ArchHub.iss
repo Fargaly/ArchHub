@@ -142,6 +142,10 @@ Type: files; Name: "{app}\nodelang\__pycache__\brain_supervisor_start.*.pyc"
 ; The wheelhouse is this build's alone; an older build's wheels never mix in.
 Type: files; Name: "{app}\wheelhouse\*.whl"
 
+[UninstallDelete]
+; Host files set aside while a host had them loaded (host_file_staging.iss).
+Type: filesandordirs; Name: "{app}\.retired-host-files"
+
 [Icons]
 Name: "{group}\ArchHub"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\archhub.ico"
 Name: "{group}\Uninstall ArchHub"; Filename: "{uninstallexe}"
@@ -156,6 +160,8 @@ Filename: "{app}\{#AppExe}"; Description: "Open ArchHub now (the first open inst
 #include "legacy_sweep.iss"
 
 #include "host_registrations.iss"
+
+#include "host_file_staging.iss"
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
@@ -285,6 +291,8 @@ begin
   begin
     { v1.x left its whole code tree beside this one; sweep it once, guarded. }
     SweepLegacyV1(ExpandConstant('{app}'));
+    { A running Revit/AutoCAD/3ds Max holds its broker: set it aside, never abort. }
+    RetireLockedHostFiles(ExpandConstant('{app}'), '{#BuildId}');
     ReadyPath := ExpandConstant('{app}\.archhub-ready');
     if FileExists(ReadyPath) then
       if (not LoadStringFromFile(ReadyPath, ReadyIdentity)) or
@@ -293,6 +301,8 @@ begin
           RaiseException('The previous ArchHub setup marker could not be reset. Close ArchHub and retry setup.');
   end;
   { The installed build's identity, read by setup and the quiet updater. }
+  if CurStep = ssPostInstall then
+    HostFilesInstalled();
   if CurStep = ssPostInstall then
     if not SaveStringToFile(ExpandConstant('{app}\BUILD_ID'), '{#BuildId}', False) then
       RaiseException('The ArchHub build identity could not be saved. Run setup again.');
@@ -387,6 +397,12 @@ begin
   if not Result then
     SuppressibleMsgBox('Python was installed but could not be found afterwards. Install Python 3.11 or newer from python.org, then run this setup again.',
       mbCriticalError, MB_OK, IDOK);
+end;
+
+procedure DeinitializeSetup();
+begin
+  { An unfinished setup puts back every host file it set aside. }
+  RestoreRetiredHostFiles();
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

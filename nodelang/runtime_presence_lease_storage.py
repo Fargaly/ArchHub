@@ -33,6 +33,9 @@ OPERATIONAL_RECORD_KINDS = frozenset({
     "steward-signal",
     "authorization-receipt",
     "compliance-event",
+    # What a deliberation ledger entry carries. The entry stays the graph-held
+    # decision; the payload is keyed by that entry's idempotency digest.
+    "deliberation-payload",
 })
 _OPERATIONAL_RECORD_LIMIT = 10_000
 _OPERATIONAL_EVENT_LIMIT = 4_096

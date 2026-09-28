@@ -55,7 +55,9 @@ from .cell_deliberation import (
     append_deliberation_value_entry,
     evaluate_deliberation_gate,
     _recent_entries_from_validated_space,
+    prepare_deliberation_entry,
     read_authorized_deliberation_entries,
+    read_deliberation_entry,
     read_deliberation_space,
 )
 from .cell_value_graph import read_value_graph
@@ -495,6 +497,35 @@ def _native_hook_receipt_idempotency_key(actor_root, caller_key):
     basis = json.dumps([actor_root, caller_key], ensure_ascii=True,
                        separators=(",", ":")).encode("utf-8")
     return "native-hook-receipt:v1:" + hashlib.sha256(basis).hexdigest()
+
+
+# SPEC 3.3 (founder, 2026-09-22): what a deliberation entry carries is a
+# bounded indexed record, not a ValueGraph. Measured 2026-09-28: 2,661,115 of
+# 6,708,218 head Cells were deliberation payload trees, and the head keeps
+# every Cell it is given. The identity is the one the payload root always had.
+_DELIBERATION_PAYLOAD_RECORD_KIND = "deliberation-payload"
+# The one graph-held node every record-carrying entry references. The entry
+# itself states that it carried a payload, so a retired record reads as
+# expired (SPEC 3.6), never as an entry that carried nothing.
+_DELIBERATION_PAYLOAD_RECORD_STORE = Cell(
+    "app:deliberation-record-store:v1", NULL_CELL_ID, NULL_CELL_ID,
+    b"deliberation payloads are indexed records",
+)
+
+
+def _deliberation_payload_record_root(space_root, idempotency_key):
+    return "app:deliberation-payload:" + hashlib.sha256(
+        (space_root + "\0" + idempotency_key).encode("utf-8")
+    ).hexdigest()
+
+
+def _canonical_deliberation_payload(value):
+    """One spelling per JSON value: true, 1 and 1.0 stay three values."""
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=True, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise InvalidCell("deliberation payload is not canonical JSON") from exc
 
 
 def _bounded_machine_deliberation_payload(payload):
@@ -8850,6 +8881,100 @@ class ApplicationServer:
             storage = ensure_store_lease_storage(self.universal_store)
         return storage
 
+    @with_relation_projection_scope
+    def _append_deliberation_payload_record(
+        self, records, *, space_root, actor_root, category_root, summary,
+        payload, idempotency_key, created_at, authentication_context,
+    ):
+        """Append one ledger entry whose payload is an indexed record.
+
+        The entry -- actor, category, summary, time, authority -- stays the
+        graph-held decision and adds the same bounded composition whatever it
+        carries. The payload is written first, bound to the entry's identity
+        and keyed by its idempotency digest, so no committed entry points at a
+        payload that failed to land. While no committed entry references it, a
+        record left by a failed commit takes the retry's value; once one does,
+        only that exact value replays.
+        """
+        registry = self.universal_registry
+        protocol = registry.deliberation_protocol
+        authorization = registry.authorization
+        record_root = _deliberation_payload_record_root(space_root, idempotency_key)
+        store_node = _DELIBERATION_PAYLOAD_RECORD_STORE
+        with self.mutation_lock:
+            snapshot = self.universal_store.snapshot()
+            present = snapshot.cells.get(store_node.id)
+            if present is not None and present != store_node:
+                raise InvalidCell("deliberation record store identity drifted")
+            prepared = prepare_deliberation_entry(
+                snapshot,
+                protocol,
+                lookup_store=self.universal_store,
+                reference_roots=(store_node.id,),
+                pending_root_ids=() if present is not None else (store_node.id,),
+                space_root=space_root,
+                actor_root=actor_root,
+                category_root=category_root,
+                content=summary,
+                idempotency_key=idempotency_key,
+                created_at=created_at,
+                authorization_protocol=authorization.protocol,
+                authentication_broker=authorization.broker,
+                authentication_context=authentication_context,
+            )
+            carried = {
+                "space": space_root,
+                "category": category_root,
+                "entry": prepared.root_id,
+                "value": payload,
+            }
+            held = records.get_record(_DELIBERATION_PAYLOAD_RECORD_KIND, record_root)
+            same = (
+                held is not None
+                and held["owner_root"] == actor_root
+                and _canonical_deliberation_payload(held["payload"])
+                == _canonical_deliberation_payload(carried)
+            )
+            if prepared.existing_entry is not None:
+                if held is None:
+                    raise InvalidCell(
+                        "deliberation payload record has expired; its idempotency "
+                        "identity can no longer be verified"
+                    )
+                if not same:
+                    raise InvalidCell(
+                        "deliberation idempotency identity was reused for another value"
+                    )
+                return prepared.existing_entry, record_root, snapshot.revision
+            if not same:
+                with commit_intent.operational("receipt"):
+                    records.put_record(
+                        _DELIBERATION_PAYLOAD_RECORD_KIND,
+                        record_root,
+                        owner_root=actor_root,
+                        state="recorded",
+                        payload=carried,
+                        authority_revision=snapshot.revision,
+                        updated_at=time.time(),
+                        create_only=held is None,
+                        expected_generation=(
+                            None if held is None else held["generation"]
+                        ),
+                        retire_states=("recorded",),
+                    )
+            revision = self.universal_store.commit(
+                snapshot.revision,
+                create=(
+                    *prepared.create,
+                    *(() if present is not None else (store_node,)),
+                ),
+                replace=prepared.replace,
+            )
+            entry = read_deliberation_entry(
+                self.universal_store.snapshot(), protocol, prepared.root_id
+            )
+            return entry, record_root, revision
+
     def _runtime_owner_evidence_record(self, phase: str) -> dict:
         parameters, content = self._runtime_owner_attestation_inputs(phase)
         broker = self.universal_registry.attestation_broker
@@ -13363,11 +13488,39 @@ class ApplicationServer:
                         entry for entry in entries
                         if entry.category_root == category_root
                     )
+                records = self._ownership_record_storage()
                 projected = []
                 for entry in entries[-limit:]:
                     payload = None
                     payload_truncated = False
-                    if len(entry.reference_roots) == 1:
+                    payload_expired = False
+                    if tuple(entry.reference_roots) == (
+                        _DELIBERATION_PAYLOAD_RECORD_STORE.id,
+                    ):
+                        held = None if records is None else records.get_record(
+                            _DELIBERATION_PAYLOAD_RECORD_KIND,
+                            _deliberation_payload_record_root(
+                                space_root, entry.idempotency_key
+                            ),
+                        )
+                        carried = None if held is None else held["payload"]
+                        if (
+                            carried is not None
+                            and held["owner_root"] == entry.actor_root
+                            and carried.get("entry") == entry.root_id
+                            and carried.get("space") == space_root
+                            and carried.get("category") == entry.category_root
+                        ):
+                            payload, payload_truncated = (
+                                _bounded_machine_deliberation_payload(
+                                    carried.get("value")
+                                )
+                            )
+                        else:
+                            # The entry says it carried a payload; its record
+                            # is gone. Say so -- never an empty success.
+                            payload_expired = True
+                    elif len(entry.reference_roots) == 1:
                         try:
                             payload = read_value_graph(
                                 snapshot,
@@ -13392,6 +13545,8 @@ class ApplicationServer:
                     }
                     if payload_truncated:
                         item["payload_truncated"] = True
+                    if payload_expired:
+                        item["payload_expired"] = True
                     projected.append(item)
                 return _validated_machine_deliberation_response({
                     "ok": True,
@@ -15893,10 +16048,39 @@ class ApplicationServer:
                     datetime.now(timezone.utc).isoformat()
                     if created_at is None else created_at
                 )
-                digest = hashlib.sha256(
-                    (space_root + "\0" + idempotency_key).encode("utf-8")
-                ).hexdigest()
-                payload_root = "app:deliberation-payload:" + digest
+                payload_root = _deliberation_payload_record_root(
+                    space_root, idempotency_key
+                )
+                records = self._ownership_record_storage()
+                # A key first written as a ValueGraph keeps that path, so its
+                # replays match exactly as before; so does a shared-writer
+                # store, which has no instance record table.
+                if (
+                    records is not None
+                    and payload_root not in self.universal_store.snapshot().cells
+                ):
+                    entry, committed_payload_root, revision = (
+                        self._append_deliberation_payload_record(
+                            records,
+                            space_root=space_root,
+                            actor_root=actor_root,
+                            category_root=category_root,
+                            summary=summary.strip(),
+                            payload=body["payload"],
+                            idempotency_key=idempotency_key,
+                            created_at=created,
+                            authentication_context=entry_context,
+                        )
+                    )
+                    return {
+                        "ok": True,
+                        "space": space_root,
+                        "root": entry.root_id,
+                        "category_root": entry.category_root,
+                        "payload_root": committed_payload_root,
+                        "sequence": entry.sequence,
+                        "revision": revision,
+                    }
                 entry, committed_payload_root, revision = (
                     append_deliberation_value_entry(
                         self.universal_store,

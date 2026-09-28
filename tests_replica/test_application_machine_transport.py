@@ -1534,7 +1534,7 @@ def test_machine_cde_permit_is_derived_from_claimed_work_not_caller_authority(
         server.close()
 
 
-def test_generic_deliberation_route_writes_an_openable_cell_payload(tmp_path):
+def test_generic_deliberation_route_keeps_its_payload_out_of_the_graph(tmp_path):
     descriptor_path = tmp_path / "brain-control-ledger.json"
     provider = MemorySigningKeyProvider(
         "archhub.local.universal-runtime-pipe", b"l" * 32
@@ -1565,11 +1565,16 @@ def test_generic_deliberation_route_writes_an_openable_cell_payload(tmp_path):
         })
         assert created["space"] == ledger
         assert created["category_root"] == category
-        assert read_value_graph(
-            server.universal_store.snapshot(),
-            server.universal_registry.value_graph_protocol,
-            created["payload_root"],
-        ) == payload
+        # SPEC 3.3: the entry is the graph-held decision; what it carries is
+        # an indexed record under the payload root, never a ValueGraph.
+        assert created["payload_root"] not in server.universal_store.snapshot().cells
+        record = server._ownership_record_storage().get_record(
+            "deliberation-payload", created["payload_root"]
+        )
+        assert record["payload"] == {
+            "space": ledger, "category": category,
+            "entry": created["root"], "value": payload,
+        }
 
         listed = client.request("GET", "/api/universal/deliberation", {
             "space": ledger,
@@ -1580,7 +1585,7 @@ def test_generic_deliberation_route_writes_an_openable_cell_payload(tmp_path):
             "actor": server.universal_registry.authorization.subject_root,
             "category_root": category,
             "summary": "Compliance court completed.",
-            "reference_roots": [created["payload_root"]],
+            "reference_roots": ["app:deliberation-record-store:v1"],
             "payload": payload,
             "created_at": "2026-07-21T12:00:00+00:00",
             "sequence": 1,
@@ -1627,20 +1632,17 @@ def test_deliberation_category_filter_precedes_payload_projection(
             "idempotency_key": "court:category-filter:run-report",
             "created_at": "2026-08-01T00:00:01+00:00",
         })
-        original_read = application_server_module.read_value_graph
+        records = server._ownership_record_storage()
+        original_read = records.get_record
 
-        def read_only_the_selected_payload(snapshot, protocol, root_id):
+        def read_only_the_selected_payload(kind, root_id):
             if root_id == foreign["payload_root"]:
                 raise AssertionError(
                     "a foreign deliberation category expanded its payload"
                 )
-            return original_read(snapshot, protocol, root_id)
+            return original_read(kind, root_id)
 
-        monkeypatch.setattr(
-            application_server_module,
-            "read_value_graph",
-            read_only_the_selected_payload,
-        )
+        monkeypatch.setattr(records, "get_record", read_only_the_selected_payload)
 
         listed = client.request("GET", "/api/universal/deliberation", {
             "space": ledger,
@@ -1683,20 +1685,20 @@ def test_deliberation_read_bounds_one_large_payload_without_losing_identity(
             "idempotency_key": "court:bounded-run-report",
             "created_at": "2026-08-02T00:00:00+00:00",
         })
-        original_read = application_server_module.read_value_graph
+        records = server._ownership_record_storage()
+        original_read = records.get_record
 
-        def large_report(snapshot, protocol, root_id):
+        def large_report(kind, root_id):
+            held = original_read(kind, root_id)
             if root_id == created["payload_root"]:
-                return {
+                held = {**held, "payload": {**held["payload"], "value": {
                     "owner_user": "founder",
                     "leaf_id": "leaf-1",
                     "report": {"details": "x" * 400_000},
-                }
-            return original_read(snapshot, protocol, root_id)
+                }}}
+            return held
 
-        monkeypatch.setattr(
-            application_server_module, "read_value_graph", large_report
-        )
+        monkeypatch.setattr(records, "get_record", large_report)
 
         listed = client.request("GET", "/api/universal/deliberation", {
             "space": ledger,

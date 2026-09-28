@@ -180,3 +180,13 @@ def test_a_reply_that_lands_mid_turn_answers_the_request(tmp_path):
         case = tmp_path / queued['type']
         case.mkdir()
         assert _stop(case, entries, 5000) is None, queued['type']
+
+
+def test_a_host_injected_reply_named_only_in_its_tag_answers_the_request(tmp_path):
+    """The real shape: origin carries only from=local_; the sender's name is in the tag."""
+    reply = {'type': 'user', 'timestamp': _at(100),
+             'origin': {'kind': 'peer', 'from': PLANNER, 'hostInjected': True, 'fromMode': 'bypass'},
+             'message': {'content': 'Another Claude session sent a message:\n<cross-session-message from="'
+                         + PLANNER + '" name="Next steps planning">\nACCEPT\n</cross-session-message>'}}
+    entries = _send(0, ASK, to='Next steps planning [03f8c1]') + [reply, _prompt(105, 'task-notification')]
+    assert _stop(tmp_path, entries, 5000) is None

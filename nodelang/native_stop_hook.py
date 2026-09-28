@@ -342,7 +342,7 @@ _NAME_REF = re.compile(r'\s*\[[0-9a-f]{4,}\]$')
 # A reply that lands mid-turn is queued, not prompted: an attachment (queued_command)
 # or a queue-operation whose text carries the cross-session tag with the sender forms.
 _QUEUED_TAG = re.compile(r'<\\?~?cross-session-message\b([^>]*)>')
-_TAG_ATTR = re.compile(r'\b(from|from-session|from-name)="([^"]*)"')
+_TAG_ATTR = re.compile(r'\b(from|from-session|from-name|name)="([^"]*)"')
 
 
 def _timestamp(value):
@@ -407,11 +407,18 @@ def _queued_replies(entry):
     if type(origin) is dict and origin.get('kind') == 'peer':
         found.append((origin.get('from'), origin.get('name'), origin.get('fromSession')))
     for text in (attachment.get('prompt'), entry.get('content')):
-        if type(text) is str:
-            for tag in _QUEUED_TAG.findall(text[:65536]):
-                attrs = dict(_TAG_ATTR.findall(tag))
-                found.append((attrs.get('from'), attrs.get('from-name'), attrs.get('from-session')))
+        found.extend(_tag_forms(text))
     return found
+
+
+def _tag_forms(text):
+    """Sender forms in cross-session tags; host-injected replies name the sender as name=."""
+    forms = []
+    if type(text) is str:
+        for tag in _QUEUED_TAG.findall(text[:65536]):
+            attrs = dict(_TAG_ATTR.findall(tag))
+            forms.append((attrs.get('from'), attrs.get('from-name') or attrs.get('name'), attrs.get('from-session')))
+    return forms
 
 
 def followup_items(entries, now):
@@ -458,6 +465,11 @@ def followup_items(entries, now):
                 forms = (origin.get('from'), origin.get('name'), origin.get('fromSession'))
                 link(*forms)
                 replies.append((forms, moment))
+                # A host-injected reply carries only from=local_ in its origin; its
+                # tag in the prompt text also names the sender.
+                for tagged in _tag_forms(content):
+                    link(*tagged)
+                    replies.append((tagged, moment))
             if origin.get('kind') in ('human', 'peer', 'task-notification'):
                 last_prompt = origin['kind']
     heard = {}

@@ -166,3 +166,17 @@ def test_a_reply_from_another_session_does_not_answer(tmp_path):
                + [_prompt(100, 'peer', **{'from': 'local_71743447-6dd5-4050-bc4f-d228f7a1d91e'}),
                   _prompt(105, 'task-notification')])
     assert _stop(tmp_path, entries, 5000)['decision'] == 'block'
+
+
+def test_a_reply_that_lands_mid_turn_answers_the_request(tmp_path):
+    """Replies arriving mid-turn are queued: an attachment (queued_command) and a
+    queue-operation, with the sender only inside the cross-session tag."""
+    tag = ('<cross-session-message from="uds:%5C%5C.%5Cpipe%5CLOCAL%5Ccc-msg-7312d2f56e7c841f44ea5dfad68c1c31" '
+           'from-session="' + PLANNER + '" from-name="Next steps planning" from-mode="bypass">\nACCEPT')
+    for queued in ({'type': 'attachment', 'timestamp': _at(100),
+                    'attachment': {'type': 'queued_command', 'prompt': tag, 'commandMode': 'prompt'}},
+                   {'type': 'queue-operation', 'operation': 'enqueue', 'timestamp': _at(100), 'content': tag}):
+        entries = _send(0, ASK, to='Next steps planning [03f8c1]') + [queued, _prompt(105, 'task-notification')]
+        case = tmp_path / queued['type']
+        case.mkdir()
+        assert _stop(case, entries, 5000) is None, queued['type']

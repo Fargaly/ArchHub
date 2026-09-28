@@ -339,6 +339,10 @@ _LOCAL_AGENT = re.compile(r'^a[0-9a-f]{16}$')
 _SESSION_KEY = re.compile(r'cc-msg-[0-9a-f]{32}|local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
                           re.IGNORECASE)
 _NAME_REF = re.compile(r'\s*\[[0-9a-f]{4,}\]$')
+# A reply that lands mid-turn is queued, not prompted: an attachment (queued_command)
+# or a queue-operation whose text carries the cross-session tag with the sender forms.
+_QUEUED_TAG = re.compile(r'<\\?~?cross-session-message\b([^>]*)>')
+_TAG_ATTR = re.compile(r'\b(from|from-session|from-name)="([^"]*)"')
 
 
 def _timestamp(value):
@@ -395,6 +399,21 @@ def _peer_key(value):
     return found.group(0).casefold() if found else _NAME_REF.sub('', address)
 
 
+def _queued_replies(entry):
+    """The sender forms of peer replies that arrived mid-turn and were queued."""
+    attachment = entry.get('attachment') if type(entry.get('attachment')) is dict else {}
+    found = []
+    origin = attachment.get('origin')
+    if type(origin) is dict and origin.get('kind') == 'peer':
+        found.append((origin.get('from'), origin.get('name'), origin.get('fromSession')))
+    for text in (attachment.get('prompt'), entry.get('content')):
+        if type(text) is str:
+            for tag in _QUEUED_TAG.findall(text[:65536]):
+                attrs = dict(_TAG_ATTR.findall(tag))
+                found.append((attrs.get('from'), attrs.get('from-name'), attrs.get('from-session')))
+    return found
+
+
 def followup_items(entries, now):
     """Overdue requests this session sent, and whether the founder is waiting on this turn."""
     pending, sent, replies, last_prompt, alias = {}, [], [], None, {}
@@ -421,6 +440,10 @@ def followup_items(entries, now):
                     to, message = request.get('to'), request.get('message')
                     if type(to) is str and type(message) is str and _asks_reply(to, message):
                         pending[block.get('id')] = (to, moment)
+        elif entry.get('type') in ('attachment', 'queue-operation'):
+            for forms in _queued_replies(entry):
+                link(*forms)
+                replies.append((forms, moment))
         elif entry.get('type') == 'user':
             for block in content if isinstance(content, list) else ():
                 if type(block) is dict and block.get('type') == 'tool_result' and block.get('tool_use_id') in pending:
@@ -563,7 +586,7 @@ def _verdict_path(fingerprint, directory=None):
         if not base or not Path(base).is_absolute():
             raise RuntimeError('Stop verdict location is unavailable')
         directory = Path(base) / 'ArchHub' / 'runtime-context' / 'native-stop-verdict'
-    if type(fingerprint) is not str or len(fingerprint) != 64:
+    if type(fingerprint) is not str or len(fingerprint) != 64 or not set(fingerprint) <= set('0123456789abcdef'):
         raise ValueError('Stop verdict needs its session fingerprint')
     return Path(directory) / (fingerprint + '.json')
 

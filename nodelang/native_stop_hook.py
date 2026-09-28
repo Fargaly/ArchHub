@@ -3,10 +3,12 @@
 The shell owns no graph client or enrollment. A Windows credential grants only
 this local Stop observation; the full Agent Session capability stays in MCP.
 """
+from datetime import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sys
 import threading
@@ -307,11 +309,207 @@ def query_stop(payload, *, vendor='claude-code', vault=None, environment=None):
     return result[0] if result else unavailable
 
 
+# Automatic follow-up (founder order 2026-09-28): an agent that asked another
+# agent for a reply may not end a turn while that reply is overdue. This reads
+# only the session's own transcript and a small per-session guard file. It
+# never sends, retries or replays anything: it tells the agent to send the next
+# numbered follow-up itself.
+FOLLOWUP_DUE_SECONDS = 600
+_FOLLOWUP_WINDOW_SECONDS = 24 * 3600
+_FOLLOWUP_TAIL_BYTES = 4 * 1024 * 1024
+_ASKS_REPLY = re.compile(r'\?|\b(reply|respond|answer|confirm)\b', re.IGNORECASE)
+_NO_REPLY = re.compile(r"\bno (reply|response|answer)\b|\bno need to (reply|respond|answer)\b"
+                       r"|\b(reply|response|answer) not needed\b|\bdo not (reply|respond)\b"
+                       r"|\bdon't (reply|respond)\b|\bfyi\b", re.IGNORECASE)
+_LOCAL_AGENT = re.compile(r'^a[0-9a-f]{16}$')
+
+
+def _timestamp(value):
+    if type(value) is not str:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return None
+
+
+def _address(value):
+    from urllib.parse import unquote
+    return unquote(value.strip()).casefold() if type(value) is str and value.strip() else None
+
+
+def _asks_reply(to, message):
+    """Only explicit requests count; FYIs, no-reply notes and in-process agents do not."""
+    if _address(to) in (None, 'main') or _LOCAL_AGENT.match(to.strip()):
+        return False
+    return bool(_ASKS_REPLY.search(message)) and not _NO_REPLY.search(message)
+
+
+def _tool_result(content):
+    if isinstance(content, list):
+        content = ''.join(part.get('text', '') for part in content if type(part) is dict)
+    try:
+        value = json.loads(content) if type(content) is str else None
+    except ValueError:
+        return {}
+    return value if type(value) is dict else {}
+
+
+def _transcript_tail(path, limit=_FOLLOWUP_TAIL_BYTES):
+    with open(path, 'rb') as stream:
+        stream.seek(0, os.SEEK_END)
+        start = max(0, stream.tell() - limit)
+        stream.seek(start)
+        lines = stream.read(limit).split(b'\n')
+    for raw in (lines[1:] if start else lines):
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        if type(entry) is dict and not entry.get('isSidechain'):
+            yield entry
+
+
+def followup_items(entries, now):
+    """Overdue requests this session sent, and whether the founder is waiting on this turn."""
+    pending, sent, heard, last_prompt = {}, [], {}, None
+    for entry in entries:
+        moment = _timestamp(entry.get('timestamp'))
+        content = (entry.get('message') or {}).get('content')
+        if moment is None:
+            continue
+        if entry.get('type') == 'assistant' and isinstance(content, list):
+            for block in content:
+                if type(block) is dict and block.get('type') == 'tool_use' and block.get('name') == 'SendMessage':
+                    request = block.get('input') or {}
+                    to, message = request.get('to'), request.get('message')
+                    if type(to) is str and type(message) is str and _asks_reply(to, message):
+                        pending[block.get('id')] = (to, moment)
+        elif entry.get('type') == 'user':
+            for block in content if isinstance(content, list) else ():
+                if type(block) is dict and block.get('type') == 'tool_result' and block.get('tool_use_id') in pending:
+                    to, sent_at = pending.pop(block['tool_use_id'])
+                    result = _tool_result(block.get('content'))
+                    if result.get('success') is True:
+                        reference = result.get('msg_id') or result.get('message_id')
+                        sent.append((to, sent_at, reference if type(reference) is str else ''))
+            origin = entry.get('origin') or {}
+            if origin.get('kind') == 'peer':
+                for name in (origin.get('from'), origin.get('name'), origin.get('fromSession')):
+                    if _address(name):
+                        heard[_address(name)] = max(heard.get(_address(name), 0), moment)
+            if origin.get('kind') in ('human', 'peer', 'task-notification'):
+                last_prompt = origin['kind']
+    open_requests = {}
+    for to, sent_at, message_id in sent:
+        if heard.get(_address(to), 0) < sent_at:
+            open_requests.setdefault(_address(to), []).append((sent_at, message_id, to))
+    items = []
+    for key, requests in sorted(open_requests.items()):
+        latest, message_id, to = max(requests)
+        if now - latest >= FOLLOWUP_DUE_SECONDS and now - min(requests)[0] <= _FOLLOWUP_WINDOW_SECONDS:
+            # Cross-session sends may return no id; name the request by peer and send time.
+            reference = message_id or '%s @ %s' % (to, time.strftime('%H:%MZ', time.gmtime(latest)))
+            items.append({'key': key + '|' + repr(latest), 'to': to, 'message_id': reference,
+                          'count': len(requests), 'minutes': int((now - latest) // 60)})
+    return items, last_prompt == 'human'
+
+
+def _followup_state_path(session_id, directory=None):
+    if directory is None:
+        base = os.environ.get('LOCALAPPDATA')
+        if not base or not Path(base).is_absolute():
+            raise RuntimeError('Follow-up guard location is unavailable')
+        directory = Path(base) / 'ArchHub' / 'runtime-context' / 'native-stop-followup'
+    return Path(directory) / (hashlib.sha256(str(session_id).encode()).hexdigest() + '.json')
+
+
+def _load_guard(path):
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw) if len(raw) <= 65536 else {}
+    except (OSError, ValueError):
+        value = {}
+    return value if type(value) is dict else {}
+
+
+def _save_guard(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.' + secrets.token_hex(8) + '.tmp')
+    try:
+        temporary.write_text(json.dumps(value), encoding='utf-8')
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def followup_decision(payload, *, now=None, guard_directory=None):
+    """At most one block per overdue item per window, never twice in a row, never on a founder turn."""
+    path, session = payload.get('transcript_path'), payload.get('session_id')
+    if type(path) is not str or type(session) is not str or not Path(path).is_file():
+        return None
+    now = time.time() if now is None else now
+    items, founder_turn = followup_items(_transcript_tail(path), now)
+    guard_path = _followup_state_path(session, guard_directory)
+    guard = _load_guard(guard_path)
+    marks = {key: dict(value) for key, value in guard.items()
+             if key in {item['key'] for item in items} and type(value) is dict}
+    decision = None
+    if payload.get('stop_hook_active') is True or founder_turn:
+        fresh = [item for item in items if item['key'] not in marks]
+        for item in items:
+            mark = marks.setdefault(item['key'], {'at': now, 'last': 'queued'})
+            if mark.get('last') == 'block':
+                mark['last'] = 'pass'
+        if founder_turn and fresh:
+            decision = {'systemMessage': 'Follow-up queued (founder turn, not blocked): ' + '; '.join(
+                '%s re %s' % (item['to'], item['message_id']) for item in fresh)}
+    else:
+        due = []
+        for item in items:
+            mark = marks.get(item['key'])
+            if mark is None or mark.get('last') == 'queued' or (
+                    mark.get('last') == 'pass' and now - mark.get('at', 0) >= FOLLOWUP_DUE_SECONDS):
+                due.append(item)
+                marks[item['key']] = {'at': now, 'last': 'block'}
+            elif mark.get('last') == 'block':
+                mark['last'] = 'pass'
+        if due:
+            lines = ['FOLLOW-UP DUE before this turn ends (founder order: agents chase every unanswered request).']
+            for item in due:
+                lines.append('- %s: %d unanswered request(s), last sent %d min ago (msg %s). Send FOLLOW-UP #%d re %s '
+                             'restating the one question. Re-resolve the address with ListAgents; on the 2nd '
+                             'silence use another live channel; on the 3rd escalate to the coordinator.' % (
+                                 item['to'], item['count'], item['minutes'], item['message_id'],
+                                 item['count'], item['message_id']))
+            lines.append('Send numbered follow-ups only; never resend an effect. This block fires once per item.')
+            decision = {'decision': 'block', 'reason': '\n'.join(lines)}
+    if marks != guard:
+        _save_guard(guard_path, marks)
+    return decision
+
+
+def _merge_followup(result, followup):
+    if not followup:
+        return result
+    merged = dict(result or {})
+    if 'decision' in followup:
+        if merged.get('decision') == 'block':
+            merged['reason'] = merged['reason'] + '\n\n' + followup['reason']
+        else:
+            merged.update(decision='block', reason=followup['reason'])
+    elif 'systemMessage' in followup:
+        merged['systemMessage'] = ((merged['systemMessage'] + ' ') if merged.get('systemMessage') else '') \
+            + followup['systemMessage']
+    return merged
+
+
 def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--vendor',default='claude-code')
     args=parser.parse_args()
+    payload=None
     try:
         raw=sys.stdin.buffer.read(65537)
         if len(raw)>65536:
@@ -320,6 +518,11 @@ def main():
         result=query_stop(payload,vendor=args.vendor)
     except Exception:
         result=_ending_turn(UNAVAILABLE)
+    if type(payload) is dict:
+        try:
+            result=_merge_followup(result,followup_decision(payload))
+        except Exception:
+            pass
     sys.stdout.write(json.dumps(result))
     return 0
 

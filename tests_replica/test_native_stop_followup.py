@@ -21,9 +21,11 @@ def _at(seconds):
     return datetime.fromtimestamp(T0 + seconds, timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
-def _send(seconds, message, *, to=PEER, tool='toolu_%d', success=True, with_id=True):
+def _send(seconds, message, *, to=PEER, tool='toolu_%d', success=True, with_id=True, note=None):
     tool_id = tool % seconds
     result = {'success': success, **({'msg_id': 'm-%d' % seconds} if with_id else {})}
+    if note:
+        result['message'] = note
     return [
         {'type': 'assistant', 'timestamp': _at(seconds), 'message': {'content': [
             {'type': 'tool_use', 'id': tool_id, 'name': 'SendMessage', 'input': {'to': to, 'message': message}}]}},
@@ -134,3 +136,33 @@ def test_the_reblock_cadence_counts_from_the_pass_not_the_block(tmp_path):
     assert _stop(tmp_path, entries, 700)['decision'] == 'block'
     assert _stop(tmp_path, entries, 1350) is None
     assert _stop(tmp_path, entries, 1351) is None
+
+
+PLANNER = 'local_13707d55-6e39-4640-b8a8-727974f4382f'
+PIPE = r'uds:\\.\pipe\LOCAL\cc-msg-7312d2f56e7c841f44ea5dfad68c1c31'
+
+
+def test_a_reply_under_another_address_of_the_same_session_answers_the_request(tmp_path):
+    """Sent to the ListAgents name with its [ref]; answered by a host-injected entry that
+    carries only the local_ id the send result named."""
+    delivered = 'delivered to session %s' % PLANNER
+    entries = (_send(0, ASK, to='Next steps planning [03f8c1]', note=delivered)
+               + [{'type': 'user', 'timestamp': _at(100), 'message': {'content': 'ok'},
+                   'origin': {'kind': 'peer', 'from': PLANNER, 'hostInjected': True}},
+                  _prompt(105, 'task-notification')])
+    assert _stop(tmp_path, entries, 5000) is None
+
+
+def test_the_pipe_address_and_its_escaped_form_are_one_session(tmp_path):
+    entries = (_send(0, ASK, to=PIPE)
+               + [_prompt(100, 'peer', **{'from': 'uds:%5C%5C.%5Cpipe%5CLOCAL%5Ccc-msg-7312d2f56e7c841f44ea5dfad68c1c31'}),
+                  _prompt(105, 'task-notification')])
+    assert _stop(tmp_path, entries, 5000) is None
+
+
+def test_a_reply_from_another_session_does_not_answer(tmp_path):
+    delivered = 'delivered to session %s' % PLANNER
+    entries = (_send(0, ASK, to='Next steps planning [03f8c1]', note=delivered)
+               + [_prompt(100, 'peer', **{'from': 'local_71743447-6dd5-4050-bc4f-d228f7a1d91e'}),
+                  _prompt(105, 'task-notification')])
+    assert _stop(tmp_path, entries, 5000)['decision'] == 'block'

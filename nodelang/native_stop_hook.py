@@ -322,6 +322,11 @@ _NO_REPLY = re.compile(r"\bno (reply|response|answer)\b|\bno need to (reply|resp
                        r"|\b(reply|response|answer) not needed\b|\bdo not (reply|respond)\b"
                        r"|\bdon't (reply|respond)\b|\bfyi\b", re.IGNORECASE)
 _LOCAL_AGENT = re.compile(r'^a[0-9a-f]{16}$')
+# One session answers under several addresses: its pipe (cc-msg-<id>), its local_<uuid>
+# and its name, which ListAgents may suffix with a [ref]. Every form is folded to one key.
+_SESSION_KEY = re.compile(r'cc-msg-[0-9a-f]{32}|local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+                          re.IGNORECASE)
+_NAME_REF = re.compile(r'\s*\[[0-9a-f]{4,}\]$')
 
 
 def _timestamp(value):
@@ -370,9 +375,28 @@ def _transcript_tail(path, limit=_FOLLOWUP_TAIL_BYTES):
             yield entry
 
 
+def _peer_key(value):
+    address = _address(value)
+    if address is None:
+        return None
+    found = _SESSION_KEY.search(address)
+    return found.group(0).casefold() if found else _NAME_REF.sub('', address)
+
+
 def followup_items(entries, now):
     """Overdue requests this session sent, and whether the founder is waiting on this turn."""
-    pending, sent, heard, last_prompt = {}, [], {}, None
+    pending, sent, replies, last_prompt, alias = {}, [], [], None, {}
+
+    def root(key):
+        while alias.get(key, key) != key:
+            key = alias[key]
+        return key
+
+    def link(*values):
+        keys = {root(key) for key in map(_peer_key, values) if key}
+        for key in keys:
+            alias[key] = min(keys)  # the smallest key names the session, so it stays stable
+
     for entry in entries:
         moment = _timestamp(entry.get('timestamp'))
         content = (entry.get('message') or {}).get('content')
@@ -393,17 +417,23 @@ def followup_items(entries, now):
                     if result.get('success') is True:
                         reference = result.get('msg_id') or result.get('message_id')
                         sent.append((to, sent_at, reference if type(reference) is str else ''))
+                        link(to, *_SESSION_KEY.findall(json.dumps(result)))
             origin = entry.get('origin') or {}
             if origin.get('kind') == 'peer':
-                for name in (origin.get('from'), origin.get('name'), origin.get('fromSession')):
-                    if _address(name):
-                        heard[_address(name)] = max(heard.get(_address(name), 0), moment)
+                forms = (origin.get('from'), origin.get('name'), origin.get('fromSession'))
+                link(*forms)
+                replies.append((forms, moment))
             if origin.get('kind') in ('human', 'peer', 'task-notification'):
                 last_prompt = origin['kind']
+    heard = {}
+    for forms, moment in replies:
+        for key in {root(key) for key in map(_peer_key, forms) if key}:
+            heard[key] = max(heard.get(key, 0), moment)
     open_requests = {}
     for to, sent_at, message_id in sent:
-        if heard.get(_address(to), 0) < sent_at:
-            open_requests.setdefault(_address(to), []).append((sent_at, message_id, to))
+        key = root(_peer_key(to))
+        if heard.get(key, 0) < sent_at:
+            open_requests.setdefault(key, []).append((sent_at, message_id, to))
     items = []
     for key, requests in sorted(open_requests.items()):
         latest, message_id, to = max(requests)

@@ -26,6 +26,13 @@ def canonical_runtime(vendor):
     name=vendor.casefold()
     if name in ('claude', 'claude-code', 'claude-code.exe', 'claude-code.cmd'):
         return 'claude'
+    # Codex Stop and Gemini AfterAgent speak the same wire: input session_id,
+    # transcript_path, stop_hook_active; output decision=block+reason or
+    # systemMessage (codex.exe stop.command.output; gemini-cli AfterAgentHookOutput).
+    if name in ('codex', 'codex.exe', 'codex-cli'):
+        return 'codex'
+    if name in ('gemini', 'gemini-cli', 'antigravity'):
+        return 'gemini'
     raise ValueError('Unsupported native Stop runtime')
 
 
@@ -163,6 +170,11 @@ class NativeStopHost:
         if type(request['stop_hook_active']) is not bool:
             raise ValueError('Invalid native Stop continuation marker')
         value=self._observe()
+        if value != UNAVAILABLE:
+            try:
+                _remember_verdict(self.fingerprint, value)
+            except Exception:
+                pass
         if value == UNAVAILABLE or (request['stop_hook_active'] and value and value==self.last_gate):
             value=_ending_turn(value)
         else:
@@ -534,6 +546,50 @@ def _merge_followup(result, followup):
     return merged
 
 
+# No idle turn end (founder order 2026-09-28): the Work authority answers only while
+# the session holds its lease, and an idle session loses it (900 s) or its app
+# restarts. Then this hook used to let the turn end with open Work. The host now
+# records every verdict it really observed; with the authority unreachable, a
+# recorded open-Work block holds the turn end once, with the way back.
+NO_IDLE_WINDOW_SECONDS = 24 * 3600
+NO_IDLE_REASON = (' The Work authority cannot be reached now (lease expired or app restarted): '
+                  'run native_owner_status, then native_owner_rebind with the exact owners it reports, '
+                  'and continue this Work. Do not end the turn idle with Work open.')
+
+
+def _verdict_path(fingerprint, directory=None):
+    if directory is None:
+        base = os.environ.get('LOCALAPPDATA')
+        if not base or not Path(base).is_absolute():
+            raise RuntimeError('Stop verdict location is unavailable')
+        directory = Path(base) / 'ArchHub' / 'runtime-context' / 'native-stop-verdict'
+    if type(fingerprint) is not str or len(fingerprint) != 64:
+        raise ValueError('Stop verdict needs its session fingerprint')
+    return Path(directory) / (fingerprint + '.json')
+
+
+def _remember_verdict(fingerprint, value, *, now=None, directory=None):
+    """The last verdict the Work authority really gave this session: block or clear."""
+    if value and not (set(value) == {'decision', 'reason'} and value['decision'] == 'block'):
+        return
+    record = {'at': time.time() if now is None else now, 'verdict': dict(value)}
+    _save_guard(_verdict_path(fingerprint, directory), record)
+
+
+def no_idle_decision(payload, vendor, *, now=None, directory=None):
+    """Hold one turn end on recorded open Work while the authority is unreachable."""
+    if payload.get('stop_hook_active') is True:
+        return None
+    fingerprint = _fingerprint(canonical_runtime(vendor), payload.get('session_id'))
+    record = _load_guard(_verdict_path(fingerprint, directory))
+    verdict, at = record.get('verdict'), record.get('at')
+    now = time.time() if now is None else now
+    if (type(verdict) is not dict or verdict.get('decision') != 'block' or type(verdict.get('reason')) is not str
+            or type(at) not in (int, float) or not 0 <= now - at <= NO_IDLE_WINDOW_SECONDS):
+        return None
+    return {'decision': 'block', 'reason': verdict['reason'][:4000] + NO_IDLE_REASON}
+
+
 def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
@@ -548,6 +604,11 @@ def main():
         result=query_stop(payload,vendor=args.vendor)
     except Exception:
         result=_ending_turn(UNAVAILABLE)
+    if type(payload) is dict and result==_ending_turn(UNAVAILABLE):
+        try:
+            result=no_idle_decision(payload,args.vendor) or result
+        except Exception:
+            pass
     if type(payload) is dict:
         try:
             result=_merge_followup(result,followup_decision(payload))

@@ -70,14 +70,19 @@ export async function catalog({apps,onProgress}={}){
   if(apps && !apps.includes('codex'))return {...await discoverExtra({apps}),
     claude:apps.includes('claude')?claudes():[],codex:[]};
   if(hasAttachment()){
-    let codex=[];let status='unavailable';
-    try{const r=await attachmentCall('attachment-status');codex=[r.recipient];status='attached';}catch{}
-    const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex,adapterStatus:{...extra.adapterStatus,codex:{status}}};
+    let codex=[],adapter;
+    try{const r=await attachmentCall('attachment-status');codex=[r.recipient];adapter={status:'attached'};}
+    catch(e){adapter={status:'unavailable',reason:String(e?.message||'Codex attachment status unavailable')};}
+    const extra=await discoverExtra({apps});return {...extra,claude:claudes(),codex,adapterStatus:{...extra.adapterStatus,codex:adapter}};
   }
   if(process.env.CODEX_APP_TOOLS_PIPE_PATH&&process.env.CODEX_THREAD_ID){const r=decode(await nativeCall('list_threads',{limit:50}));return {...await discoverExtra({apps}),claude:claudes(),codex:[...(r.pinnedThreads||[]),...(r.threads||[])].filter(t=>t.kind==='codex').map(t=>({id:t.id,title:t.title,cwd:t.cwd,app:'codex'}))};}
-  if(process.env.SESSION_LINK_PRODUCT_WORKER==='1')return {...await discoverExtra({apps}),claude:claudes(),codex:[]};
-  for(const config of configs().filter(c=>alive(c.pid))){try{return await rpc(config,{operation:'list'});}catch{}}
-  return {...await discoverExtra({apps}),claude:claudes(),codex:[]};
+  // Outside a Codex task only a live bridge holds the app pipe. An empty Codex
+  // list must say why, so callers never read "no bridge" as "no live task".
+  let reason='No live Session Link bridge holds Codex app context; run connect or resume --current once from a Codex Desktop task';
+  if(process.env.SESSION_LINK_PRODUCT_WORKER==='1')reason='Admitted native Codex app context unavailable';
+  else for(const config of configs().filter(c=>alive(c.pid))){try{return await rpc(config,{operation:'list'});}catch(e){reason=`Live bridge ${config.id} could not list Codex tasks: ${e.message}`;}}
+  const extra=await discoverExtra({apps});
+  return {...extra,claude:claudes(),codex:[],adapterStatus:{...extra.adapterStatus,codex:{status:'unavailable',reason}}};
 }
 // Scoped read-only discovery for startup. Never enumerate unrelated providers.
 async function resumeCatalog(bindings){
@@ -103,7 +108,7 @@ async function resumeCatalog(bindings){
  const extra=apps.some(app=>app!=='claude')?await discoverExtra({apps:apps.filter(app=>app!=='claude')}):{};
  return {...extra,codex,...(apps.includes('claude')?{claude:listClaudeSessions().map(s=>({id:s.sessionId,cwd:s.cwd,app:'claude'}))}:{})};
 }
-async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
+export async function connect(request,{onSpawn=()=>{},observedCatalog}={}){
   if(request.permissionMode&&!['prompting','bypass'].includes(request.permissionMode))throw new Error('Permission mode must be prompting or bypass');
   const all=observedCatalog||await catalog(),app=request.app||'claude',c=exact(all[app]||[],request.claude,app),x=exact(all.codex,request.codex,'Codex');
   const id=idFor(c.id,x.id),runtime=path.join(dir,id+'.runtime.json'),binding=path.join(dir,id+'.binding.json');

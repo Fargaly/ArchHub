@@ -139,7 +139,7 @@ def test_a_bound_baboom_session_still_reads_canvas_and_work(enrolled):
 @pytest.mark.parametrize("present", [True, False])
 def test_open_hosts_never_discloses_dropbox_profile_path(served, monkeypatch, present):
     from nodelang import host_brokers, outlook_graph, pipeline_engines
-    private_path = Path("C:/Users/private-owner-marker/Dropbox")
+    private_path = Path("D:/private-owner-marker/Dropbox")
     monkeypatch.setattr(host_brokers, "_dropbox_root", lambda: private_path if present else None)
     monkeypatch.setattr(host_brokers, "_max_endpoint", lambda: None)
     monkeypatch.setattr(host_brokers, "_max_plugin_installed", lambda: False)

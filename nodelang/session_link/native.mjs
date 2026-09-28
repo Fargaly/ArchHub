@@ -43,7 +43,10 @@ export function nativeCall(tool,args,threadId=process.env.CODEX_THREAD_ID){
     const timer=setTimeout(()=>finish(new Error('Native request timed out; delivery uncertain; do not resend automatically')),20000);
     socket.on('error',e=>finish(e));
     socket.on('connect',()=>{
-      const body=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{arguments:args,callId:'claude-link-'+crypto.randomUUID(),namespace:'codex_app',threadId,tool,turnId:'claude-link-'+crypto.randomUUID()}}));
+      // Codex 26.924 validates tools/call params strictly and requires callerSource
+      // ('codex'|'chatgpt'); the bundled codex-app-tools server sends 'codex' for a
+      // Codex task. Without it the app answers -32602 "Invalid app tool request".
+      const body=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{arguments:args,callerSource:'codex',callId:'claude-link-'+crypto.randomUUID(),namespace:'codex_app',threadId,tool,turnId:'claude-link-'+crypto.randomUUID()}}));
       const header=Buffer.alloc(4);header.writeUInt32LE(body.length);socket.write(Buffer.concat([header,body]));
     });
     socket.on('data',chunk=>{

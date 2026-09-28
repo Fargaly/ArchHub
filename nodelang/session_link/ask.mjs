@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {PeerEndpoint,listClaudeSessions,publicDeliveryReceipt} from './vendor/src/peer-protocol.mjs';
 import {sendExtra} from './extra-apps.mjs';
 import {postCodex} from './native.mjs';
-import {catalog} from './bridge.mjs';
+import {catalog,connect} from './bridge.mjs';
 import {stateDir} from './paths.mjs';
 import {modelFromArgs,validateModel} from './opencode-model.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
@@ -16,7 +16,20 @@ const args=process.argv.slice(2),opt=n=>{const i=args.indexOf('--'+n);return i<0
 const validate=text=>{if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Text must contain 1–32000 characters');return text;};
 // Any shell-capable agent can use this request/reply interface. It neither
 // starts a second model session nor writes into another terminal's stdin.
-export async function ask(app,session,text,permissionMode='prompting',{expected,onDispatch=()=>{},model}={}){
+// A Codex task asking Claude gets a durable reply address: the persistent
+// bridge peer, which forwards any later SendMessage into this Codex task. The
+// one-shot request pipe below still carries the synchronous reply. The durable
+// link is always 'prompting': a per-request sender mode never outlives its request.
+export async function durableReply(target,{connectLink=connect}={}){
+ if(!process.env.CODEX_APP_TOOLS_PIPE_PATH||!process.env.CODEX_THREAD_ID)return null;
+ try{
+  const observedCatalog=await catalog({apps:['claude','codex']});
+  const link=await connectLink({app:'claude',claude:target.id,codex:process.env.CODEX_THREAD_ID,permissionMode:'prompting'},{observedCatalog});
+  if(typeof link?.peer!=='string'||!link.peer)throw new Error('Persistent link returned no peer');
+  return {connection:link.id,peer:link.peer};
+ }catch(e){return {error:e.message};}
+}
+export async function ask(app,session,text,permissionMode='prompting',{expected,onDispatch=()=>{},model,connectLink}={}){
  validate(text);
  validateModel(model);
  if(model!==undefined && app!=='opencode')throw new Error('Explicit model selection is OpenCode-only; not sent');
@@ -24,7 +37,11 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
  if(!['prompting','bypass'].includes(permissionMode))throw new Error('Invalid sender permission mode');
  const all=await catalog({apps:[app]});
  const matches=(all[app]||[]).filter(s=>s.id===session||s.selector===session||s.title===session);
- if(matches.length!==1)throw new Error('Target must resolve to exactly one live session; use its exact ID');
+ if(matches.length!==1){
+  const down=all.adapterStatus?.[app];
+  if(app==='codex'&&!matches.length&&down?.status==='unavailable')throw new Error('Codex tasks unavailable: '+(down.reason||'no reason reported'));
+  throw new Error('Target must resolve to exactly one live session; use its exact ID');
+ }
  const target=matches[0];
  if(expected){for(const field of ['app','id','pid','port','socket','cwd','runtimeId'])if(expected[field]!==target[field])throw new Error('Recipient binding changed before dispatch: '+field);}
  if(app!=='claude'&&app!=='codex')return await sendExtra(target,text,{onDispatch,model});
@@ -52,12 +69,14 @@ export async function ask(app,session,text,permissionMode='prompting',{expected,
   if(app==='codex')timer=setTimeout(()=>rejectReply(new Error('No reply confirmed in 180 seconds. The prompt may have arrived; do not resend automatically.')),180000);
   if(app==='claude'){
    const live=listClaudeSessions().find(s=>s.sessionId===target.id);if(!live)throw new Error('Claude went offline before send');
-   const outcome=await peer.sendAndWait(live.socket,`[Session Link request ${id}. Reply using native SendMessage to peer ${peer.name}. The requesting agent is waiting for the reply. Respect your existing execution permissions.]\n${text}`,{timeoutMs:180000,permissionMode,beforeSend:onDispatch});
-   const delivery=outcome.delivery;
+   const durable=await durableReply(target,{connectLink});
+   const later=durable?.peer?` If you reply after this request closes, or to follow up later, use native SendMessage to peer ${durable.peer} (Session Link connection ${durable.connection}); it delivers into the requesting Codex task.`:'';
+   const outcome=await peer.sendAndWait(live.socket,`[Session Link request ${id}. Reply using native SendMessage to peer ${peer.name}. The requesting agent is waiting for the reply.${later} Respect your existing execution permissions.]\n${text}`,{timeoutMs:180000,permissionMode,beforeSend:onDispatch});
+   const delivery=outcome.delivery,route=durable?{durable_reply:durable}:{};
    if(delivery && ['held','refused','rejected','denied','expired','dropped'].includes(delivery.status))
-    return {status:'held',id:outcome.msgId,...publicDeliveryReceipt(delivery)};
-   if(!outcome.reply)throw new Error('No reply confirmed in 180 seconds; delivery remains uncertain; do not resend');
-   return {id:outcome.reply.msgId,text:outcome.reply.text};
+    return {status:'held',id:outcome.msgId,...publicDeliveryReceipt(delivery),...route};
+   if(!outcome.reply)throw new Error('No reply confirmed in 180 seconds; delivery remains uncertain; do not resend'+(durable?.peer?`; a late reply still reaches this task through peer ${durable.peer}`:''));
+   return {id:outcome.reply.msgId,text:outcome.reply.text,...route};
   }else{
    onDispatch();await postCodex(target.id,`[Session Link request ${id}. An existing terminal agent is waiting. After preparing your response, write it to a UTF-8 file inside your permitted workspace, then run PowerShell: & ${psQuote(path.join(root,'session-link.ps1'))} answer ${id} --state-dir ${psQuote(stateDir())} --file 'ABSOLUTE_RESPONSE_FILE'. This returns your response to the caller. Respect your current permissions.]\n${text}`);
   }

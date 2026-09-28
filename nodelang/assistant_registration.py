@@ -177,15 +177,24 @@ def _claude(install_root, state_root, env) -> dict:
     return dict(report, client="claude-code", state=state)
 
 
+def _gemini_state(hooks, env) -> str:
+    """Gemini CLI has no connection entry here; say only what its folder and hooks show."""
+    profile = env.get("USERPROFILE")
+    if not profile or not (Path(profile) / ".gemini").is_dir():
+        return "not_installed"
+    return "hook_only" if hooks.get("state") == "configured" else "unsupported"
+
+
 def readiness(environment=None) -> dict:
     """Every client's state for this Windows user; reads files only."""
     env = os.environ if environment is None else environment
     root, state = install_roots(env)
-    return {"server_name": SERVER_NAME, "clients": [
-        _claude(root, state, env),
-        codex_readiness(root, state, env),
-        opencode_readiness(root, state, env),
-    ]}
+    clients = [_claude(root, state, env), codex_readiness(root, state, env),
+               opencode_readiness(root, state, env), {"client": "gemini-cli"}]
+    for client in clients:
+        client["hooks"] = hook_readiness(client["client"], environment=env)
+    clients[-1]["state"] = _gemini_state(clients[-1]["hooks"], env)
+    return {"server_name": SERVER_NAME, "clients": clients}
 
 
 def register(client: str, *, consent, environment=None) -> dict:
@@ -207,3 +216,70 @@ def register(client: str, *, consent, environment=None) -> dict:
 
 __all__ = ["CLIENTS", "codex_entry", "codex_readiness", "install_roots", "mcp_server_spec",
            "readiness", "register", "register_codex"]
+
+
+
+def preview_hooks(client, *, environment=None):
+    """Owner-facing preview; disclose neither the full config nor secret backup bytes."""
+    from .session_link_config import (observed_client_hook_binding, plan_client_hook_install,
+                                      SessionLinkConfigRefused)
+    env = os.environ if environment is None else environment
+    root, state = install_roots(env)
+    if not env.get("USERPROFILE"):
+        raise SessionLinkConfigRefused("client home directory is unavailable")
+    home = Path(env["USERPROFILE"])
+    executable, gate = observed_client_hook_binding(client, home=home)
+    plan = plan_client_hook_install(client, home=home, install_root=root,
+                                   python_executable=executable, gate_script=gate)
+    return {"client": client, "plan_digest": plan["plan_digest"], "changed": plan["changed"],
+            "events": plan["managed_events"], "activation": plan["activation"],
+            "description": "Repair ArchHub safety settings while keeping your other settings. "
+                           "Keep an encrypted backup of your current settings. "
+                           "The assistant may still need to approve and load the changes."}
+
+
+def _repair_hooks(client, *, consent, plan_digest, environment=None):
+    from .session_link_config import (observed_client_hook_binding, plan_client_hook_install,
+                                      apply_client_hook_install, SessionLinkConfigRefused)
+    if consent is not True:
+        raise SessionLinkConfigRefused("hook repair requires the reviewed user's consent")
+    env = os.environ if environment is None else environment
+    root, state = install_roots(env)
+    if not env.get("USERPROFILE"):
+        raise SessionLinkConfigRefused("client home directory is unavailable")
+    home = Path(env["USERPROFILE"])
+    executable, gate = observed_client_hook_binding(client, home=home)
+    plan = plan_client_hook_install(client, home=home, install_root=root,
+                                   python_executable=executable, gate_script=gate)
+    if plan["plan_digest"] != plan_digest:
+        raise SessionLinkConfigRefused("settings changed; review the current hook preview")
+    backup_dir = state / "private-client-backups"
+    from .client_mcp_installation import _require_plain
+    _require_plain(backup_dir, "directory", may_be_absent=True)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    result = apply_client_hook_install(plan, expected_digest=plan_digest, backup_dir=backup_dir)
+    return {"client": client, "changed": result["changed"], "state": "configured",
+            "activation_pending": True,
+            "reason": "Settings are saved. We have not yet checked that the assistant is using them."}
+
+
+import threading as _hook_threading
+_HOOK_REPAIR_LOCK = _hook_threading.RLock()
+
+
+def repair_hooks(client, *, consent, plan_digest, environment=None):
+    with _HOOK_REPAIR_LOCK:
+        return _repair_hooks(client, consent=consent, plan_digest=plan_digest, environment=environment)
+
+
+def hook_readiness(client, *, environment=None):
+    from .session_link_config import SessionLinkConfigRefused
+    if client not in ("claude-code", "codex", "gemini-cli"):
+        return {"available": False, "state": "unsupported", "reason": "Manage this assistant through its own connection settings."}
+    try:
+        plan = preview_hooks(client, environment=environment)
+        return {"available": True, "state": "repair_available" if plan["changed"] else "configured",
+                "reason": "Safety settings can be reviewed here. We have not yet checked that the assistant is using them."}
+    except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+        return {"available": False, "state": "install_incomplete",
+                "reason": "The installed safety settings could not be identified. Repair the assistant installation first."}

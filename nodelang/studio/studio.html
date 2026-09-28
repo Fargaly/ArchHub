@@ -342,6 +342,9 @@ window.ARCHHUB_BOOT = /*__ARCHHUB_BOOT__*/ null;
     window.ARCHHUB_ASSISTANTS = {
       read: () => jget('/api/universal/assistant-registration'),
       connect: client => jpost('/api/universal/assistant-registration', {client, consent:true}),
+      previewHooks: client => jpost('/api/universal/assistant-registration', {client, action:'preview-hooks'}),
+      repairHooks: (client, planDigest) => jpost('/api/universal/assistant-registration',
+        {client, action:'repair-hooks', consent:true, plan_digest:planDigest}),
     };
     window.ARCHHUB_LOAD_MEMORY = async () => {
       // Read only when the Brain tab opens; the server gives the brain 4 s and

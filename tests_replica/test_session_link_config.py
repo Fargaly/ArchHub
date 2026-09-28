@@ -167,3 +167,27 @@ def test_governance_lane_folders_render_round_trip_and_refuse_unsafe(install, tm
             slc.render_governance_loader({**spec, "laneFolders": {"ses_A1": bad}}, install_root=root, state_dir=state)
     with pytest.raises(slc.SessionLinkConfigRefused):
         slc.render_governance_loader({**spec, "laneFolders": {"ses_Z9": lane}}, install_root=root, state_dir=state)
+
+
+def test_cli_refuses_a_relative_write_target_without_a_traceback(install, tmp_path, monkeypatch, capsys):
+    root, _ = install
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    monkeypatch.chdir(tmp_path)
+    code = slc.main(["skill", "--install-root", str(root), "--state-dir", str(tmp_path / "state"),
+                     "--write", "SKILL.md", "--backup-dir", str(backups)])
+    assert code == 2
+    assert capsys.readouterr().err.startswith("refused: ")
+    assert not (tmp_path / "SKILL.md").exists() and not list(backups.iterdir())
+
+
+def test_write_refuses_a_hard_linked_target_and_keeps_both_names(tmp_path):
+    """Court: os.replace would split a hard link; the twin must never keep stale bytes."""
+    target, twin, backups = tmp_path / "settings.json", tmp_path / "twin.json", tmp_path / "backups"
+    backups.mkdir()
+    target.write_bytes(b"old\n")
+    os.link(target, twin)
+    with pytest.raises(slc.SessionLinkConfigRefused, match="hard link"):
+        slc.write_with_backup(target, "new\n", backups)
+    assert target.read_bytes() == twin.read_bytes() == b"old\n"
+    assert os.stat(target).st_nlink == 2 and not list(backups.iterdir())

@@ -5635,10 +5635,10 @@ const SettingsAbout = ({ providers, release }) => {
 // Settings > Hosts > Assistants. Each of the person's assistants (Claude Code, Codex, OpenCode)
 // shows whether it carries the ArchHub MCP entry. Connect writes that one client's entry, and only
 // when pressed: the press is the consent. A client that cannot take the entry says why.
-const ASSISTANT_NAMES = { 'claude-code':'Claude Code', codex:'Codex', opencode:'OpenCode' };
+const ASSISTANT_NAMES = { 'claude-code':'Claude Code', codex:'Codex', opencode:'OpenCode', 'gemini-cli':'Gemini CLI' };
 const ASSISTANT_SAID = {
-  registered:'connected', ready_to_register:'not connected', conflict:'a different entry is there; left unchanged',
-  legacy_migration_required:'an old ArchHub entry is there; left unchanged', unsupported:'cannot take an MCP entry',
+  hook_only:'safety settings found; connection not configured', registered:'configured', ready_to_register:'not connected', conflict:'a different entry is there; left unchanged',
+  legacy_migration_required:'an old ArchHub entry is there; left unchanged', unsupported:'connection setup is unavailable',
   not_installed:'not installed', install_incomplete:'this install is incomplete', config_unreadable:'its settings file is unreadable',
   config_location_unverified:'its settings location is unverified', registration_unconfirmed:'the entry was not confirmed',
 };
@@ -5649,33 +5649,83 @@ const SettingsAssistants = () => {
     const api = window.ARCHHUB_ASSISTANTS;
     if (!api) { setHeld({ clients:null, error:'This needs the application connection.' }); return; }
     api.read().then(d => setHeld({ clients:(d && d.clients) || [], error:'' }),
-      e => setHeld({ clients:null, error:(e && e.message) || 'The assistants were not read.' }));
+      e => setHeld({ clients:null, error:'Your assistants could not be read. Try again.' }));
   };
   React.useEffect(read, []);
   const connect = client => {
     if (busy) return;
     setBusy(client);
     window.ARCHHUB_ASSISTANTS.connect(client).then(read,
-      e => setHeld(h => ({ ...h, error:(e && e.message) || 'The entry was not written.' }))).finally(() => setBusy(''));
+      e => setHeld(h => ({ ...h, error:'The connection settings could not be saved.' }))).finally(() => setBusy(''));
   };
+  const [hookPreview, setHookPreview] = React.useState(null);
+  const [hookNotice, setHookNotice] = React.useState('');
+  const previewHooks = client => {
+    if (busy) return;
+    setBusy(client);
+    setHookPreview(null);
+    setHookNotice('');
+    window.ARCHHUB_ASSISTANTS.previewHooks(client).then(
+      d => setHookPreview({...d.result, client}),
+      e => setHeld(h => ({...h, error:'The safety settings could not be reviewed. Try again.'}))
+    ).finally(() => setBusy(''));
+  };
+  const repairHooks = () => {
+    if (busy || !hookPreview) return;
+    const reviewed = hookPreview;
+    setBusy(reviewed.client);
+    window.ARCHHUB_ASSISTANTS.repairHooks(reviewed.client, reviewed.plan_digest).then(d => {
+      setHookPreview(null);
+      setHookNotice(d.result.changed
+        ? 'Safety settings saved. We still need to check that the assistant is using them.'
+        : 'Safety settings already match. We still need to check that the assistant is using them.');
+      read();
+    }, e => {
+      setHookPreview(null);
+      setHeld(h => ({...h, error:'The repair was not applied. Review the current settings and try again.'}));
+    }).finally(() => setBusy(''));
+  };
+
   return (
     <div style={{ background:LM.bg, border:`1px solid ${LM.line}`, borderRadius:LM.rad.lg, overflow:'hidden' }}>
       <div style={{ padding:'10px 14px', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.12em' }}>
-        ASSISTANTS · ARCHHUB TOOLS OVER MCP
+        ASSISTANTS · CONNECTIONS AND SAFETY
+      </div>
+      <div style={{padding:'0 14px 10px', fontSize:11.5, color:LM.inkMuted}}>
+        Saved settings do not prove a live connection. Actions require an assigned task and your approval.
       </div>
       {(held.clients || []).map(c => (
         <div key={c.client} style={{ padding:'10px 14px', display:'flex', alignItems:'center', gap:LM.sp.md, borderTop:`1px solid ${LM.lineSoft}` }}>
           <div style={{ flex:1, minWidth:0, lineHeight:1.3 }}>
-            <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || c.client}</div>
-            <div style={{ fontSize:11.5, color:LM.inkMuted }}>{ASSISTANT_SAID[c.state] || c.state}{c.reason ? ' · ' + c.reason : ''}</div>
+            <div style={{ fontSize:13, fontWeight:500, color:LM.ink }}>{ASSISTANT_NAMES[c.client] || 'Assistant'}</div>
+            <div style={{ fontSize:11.5, color:LM.inkMuted }}>{ASSISTANT_SAID[c.state] || 'Connection status unavailable'}</div>
+            {c.hooks && <div style={{fontSize:11.5, color:LM.inkMuted}}>{c.hooks.state === 'configured' ? 'Safety settings saved; activation not yet checked.' : c.hooks.available ? 'Safety settings are ready for review.' : c.hooks.state === 'unsupported' ? 'Not supported yet' : 'Safety setup needs attention.'}</div>}
           </div>
+          {c.hooks && c.hooks.available && (
+            <button onClick={() => previewHooks(c.client)} disabled={!!busy}
+              title="Review safety settings before applying changes"
+              style={{...smallBtn(), padding:'3px 10px', fontStyle:'normal'}}>
+              Review safety
+            </button>
+          )}
+
           {c.state === 'ready_to_register' && (
             <button onClick={() => connect(c.client)} disabled={!!busy}
-              title={'Adds one ArchHub entry to ' + (ASSISTANT_NAMES[c.client] || c.client) + "'s MCP settings and changes nothing else"}
+              title={'Adds one ArchHub entry to ' + (ASSISTANT_NAMES[c.client] || 'Assistant') + "'s connection settings"}
               style={{ ...smallBtn(), padding:'3px 10px', fontStyle:'normal' }}>{busy === c.client ? 'Connecting…' : 'Connect'}</button>
           )}
         </div>
       ))}
+      {hookPreview && (
+        <div role="region" aria-label="Review assistant safety settings" style={{padding:'12px 14px', borderTop:'1px solid '+LM.lineSoft}}>
+          <div>{ASSISTANT_NAMES[hookPreview.client] || 'Assistant'}: {hookPreview.changed ? 'Repair safety settings' : 'Safety settings already match'}</div>
+          <p>Repair ArchHub safety settings while keeping your other settings and an encrypted backup. The assistant may still need to approve and load the changes.</p>
+          <button onClick={repairHooks} disabled={!!busy || !hookPreview.changed} style={smallBtn()}>Apply reviewed repair</button>
+          <button onClick={() => setHookPreview(null)} disabled={!!busy} style={smallBtn()}>Cancel</button>
+        </div>
+      )}
+      {hookNotice && <div role="status" style={{padding:'10px 14px'}}>{hookNotice}</div>}
+
       {!held.clients && <SettingsEmpty role={held.error ? 'alert' : 'status'}>{held.error || 'Reading your assistants…'}</SettingsEmpty>}
       {held.clients && held.error && <SettingsEmpty role="alert">{held.error}</SettingsEmpty>}
     </div>

@@ -226,28 +226,328 @@ def spec_from_loader(text) -> dict:
                if re.search(key("laneFolders"), text) else {})}
 
 
-def write_with_backup(target, text, backup_dir) -> dict:
-    """Replace one agent file; the prior bytes go to backup_dir first. Keeps CRLF if the file had it."""
+def _require_single_link(target):
+    """A hard-linked file cannot be replaced atomically: its twin would keep the old bytes."""
+    try:
+        links = os.stat(target).st_nlink
+    except FileNotFoundError:
+        return
+    if links > 1:
+        raise SessionLinkConfigRefused(
+            "this settings file is shared with another file (hard link); left unchanged. "
+            "Make it a normal file, then try again")
+
+
+def write_with_backup(target, text, backup_dir, *, expected_digest=None, protect_backup=None) -> dict:
+    """Back up prior bytes, check drift, atomically replace, and verify readback."""
+    import tempfile
+    from .client_mcp_installation import _require_plain
     target, backup_dir = Path(target), Path(backup_dir)
-    if not backup_dir.is_dir():
-        raise SessionLinkConfigRefused("backup directory must exist: %s" % backup_dir)
+    _require_plain(target, "file", may_be_absent=True)
+    _require_single_link(target)
+    _require_plain(backup_dir, "directory")
+    before = target.read_bytes() if target.exists() else None
+    observed = hashlib.sha256(before).hexdigest() if before is not None else "absent"
+    if expected_digest is not None and observed != expected_digest:
+        raise SessionLinkConfigRefused("client settings changed since preview")
+    if before is not None and b"\r\n" in before:
+        text = text.replace("\r\n", "\n").replace("\n", "\r\n")
     data = text.encode("utf-8")
+    if before == data:
+        return {"target": str(target), "changed": False, "backup": None}
     backup = None
-    if target.exists():
-        before = target.read_bytes()
-        if b"\r\n" in before:
-            data = text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
-        if before == data:
-            return {"target": str(target), "changed": False, "backup": None}
-        # Same-named files of different agents share one backup folder.
-        tag = hashlib.sha256(str(target.resolve()).encode("utf-8")).hexdigest()[:8]
-        backup = backup_dir / (target.name + ".bak-" + time.strftime("%Y%m%dT%H%M%S") + "-" + tag)
-        if backup.exists():
-            raise SessionLinkConfigRefused("backup already exists: %s" % backup)
-        shutil.copy2(target, backup)
-    target.write_bytes(data)
-    return {"target": str(target), "changed": True, "backup": str(backup) if backup else None,
+    if before is not None:
+        tag = hashlib.sha256(str(target).encode()).hexdigest()[:12]
+        payload = protect_backup(before) if protect_backup else before
+        with tempfile.NamedTemporaryFile(prefix=target.name + "." + tag + ".",
+                                         suffix=".dpapi" if protect_backup else ".bak",
+                                         dir=backup_dir, delete=False) as saved:
+            backup = Path(saved.name)
+            saved.write(payload)
+            saved.flush()
+            os.fsync(saved.fileno())
+    temporary = None
+    replaced = False
+    try:
+        with tempfile.NamedTemporaryFile(prefix="." + target.name + ".", suffix=".tmp",
+                                         dir=target.parent, delete=False) as staged:
+            temporary = Path(staged.name)
+            staged.write(data)
+            staged.flush()
+            os.fsync(staged.fileno())
+        _require_plain(target, "file", may_be_absent=True)
+        _require_single_link(target)
+        latest = target.read_bytes() if target.exists() else None
+        if latest != before:
+            raise SessionLinkConfigRefused("client settings changed during preparation")
+        os.replace(temporary, target)
+        temporary = None
+        replaced = True
+        if target.read_bytes() != data:
+            raise SessionLinkConfigRefused("client settings readback changed; reconcile before retrying")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        if not replaced and backup is not None:
+            # Nothing was replaced: an orphan backup would only confuse the next restore.
+            backup.unlink(missing_ok=True)
+    return {"target": str(target), "changed": True,
+            "backup": str(backup) if backup else None,
             "sha256": hashlib.sha256(data).hexdigest()}
+
+
+
+# Managed tool hooks only. Lifecycle remains bound to each native launch.
+_HOOK_CLIENTS = {
+    "claude-code": (".claude/settings.json", "claude", "PreToolUse", "PostToolUse", 30),
+    "codex": (".codex/hooks.json", "codex", "PreToolUse", "PostToolUse", 30),
+    "gemini-cli": (".gemini/settings.json", "gemini", "BeforeTool", "AfterTool", 30000),
+}
+
+
+def render_client_hooks(vendor, *, python_executable, gate_script, install_root):
+    """Render only the admitted adapter's tool events; no lifecycle or trust edits."""
+    import subprocess
+    from .client_mcp_installation import _require_plain
+    if vendor not in _HOOK_CLIENTS:
+        raise SessionLinkConfigRefused("unsupported hook client")
+    python, gate = Path(python_executable), Path(gate_script)
+    for path in (python, gate):
+        if any(character in str(path) for character in ["\r","\n","&","|","<",">","^","%","$","`",";","\"","(",")"]):
+            raise SessionLinkConfigRefused("hook path contains shell metacharacters")
+        _require_plain(path, "file")
+    if python.name.casefold() not in ("python.exe", "pythonw.exe", "python", "python3"):
+        raise SessionLinkConfigRefused("hook interpreter is not an admitted Python executable")
+    if gate.name != "agent_scope_gate.py":
+        raise SessionLinkConfigRefused("hook adapter is not the existing scope adapter")
+    _, flag, before, after, timeout = _HOOK_CLIENTS[vendor]
+    # Quoted forward-slash paths survive Claude Code's Git Bash on Windows.
+    quote = lambda value: '"' + str(value).replace("\\", "/") + '"'
+    command = quote(python) + " " + quote(gate) + " --vendor " + flag
+    result = {}
+    for event, label in ((before, "archhub-scope-gate"), (after, "archhub-write-receipt")):
+        hook = {"type": "command", "command": command, "timeout": timeout}
+        group = {"hooks": [hook]}
+        if vendor == "gemini-cli":
+            hook["name"] = label
+            group["matcher"] = ".*"
+        result[event] = [group]
+    return result
+
+
+def _hook_command_parts(hook):
+    """Read a simple command without discarding the user's original path spelling."""
+    if not isinstance(hook, dict) or hook.get("type") != "command":
+        return None
+    command = hook.get("command")
+    if not isinstance(command, str) or any(c in command for c in "\n\r&|><" + chr(96)):
+        return None
+    pattern = r'''"[^"]*"|'[^']*'|[^\s"']+'''
+    found = list(re.finditer(pattern, command))
+    end, tokens = 0, []
+    for match in found:
+        if command[end:match.start()].strip():
+            return None
+        token = match.group()
+        tokens.append(token[1:-1] if token[:1] in ('"', "'") else token)
+        end = match.end()
+    if command[end:].strip() or len(tokens) not in (2, 4):
+        return None
+    python, script = Path(tokens[0]), Path(tokens[1])
+    if not python.is_absolute() or not script.is_absolute():
+        return None
+    if python.name.casefold() not in ("python.exe", "pythonw.exe", "python", "python3"):
+        return None
+    return tokens[0], tokens[1], tuple(tokens[2:])
+
+
+def _hook_command_identity(hook):
+    parts = _hook_command_parts(hook)
+    if parts is None:
+        return None
+    python, script, args = parts
+    return (os.path.normcase(os.path.normpath(python)),
+            os.path.normcase(os.path.normpath(script)), args)
+
+
+def _claude_bash_broken(hook, vendor):
+    """Claude Code runs hooks through Git Bash on Windows, where an unquoted backslash
+    path is an escape sequence (rc 127); such a command is never a working equivalent."""
+    if vendor != "claude-code" or not isinstance(hook, dict):
+        return False
+    command = hook.get("command")
+    if not isinstance(command, str):
+        return False
+    tokens = re.findall(r'''"[^"]*"|'[^']*'|[^\s"']+''', command)
+    return any(token[:1] not in ('"', "'") and "\\" in token for token in tokens)
+
+
+def merge_client_hooks(existing, managed, *, vendor, known_owned_commands):
+    """Leave equivalent commands byte-identical; keep existing groups and matchers."""
+    import copy
+    if type(existing) is not dict or vendor not in _HOOK_CLIENTS:
+        raise SessionLinkConfigRefused("invalid client settings")
+    result = copy.deepcopy(existing)
+    events = result.setdefault("hooks", {})
+    if type(events) is not dict:
+        raise SessionLinkConfigRefused("client hooks are not an object")
+    owned = set(known_owned_commands)
+    for event, additions in managed.items():
+        groups = events.get(event, [])
+        if type(groups) is not list:
+            raise SessionLinkConfigRefused("client hook event is not an array")
+        desired = additions[0]["hooks"][0]
+        identity = _hook_command_identity(desired)
+        for group in groups:
+            if type(group) is not dict or type(group.get("hooks")) is not list:
+                raise SessionLinkConfigRefused("unrecognized hook group")
+        equivalent = any(_hook_command_identity(h) == identity and not _claude_bash_broken(h, vendor)
+                         for g in groups for h in g["hooks"])
+        replaced = False
+        for group in groups:
+            hooks = []
+            for hook in group["hooks"]:
+                current = _hook_command_identity(hook)
+                if current == identity and _claude_bash_broken(hook, vendor):
+                    # Same adapter, spelling broken under Git Bash: rewrite the command only.
+                    hooks.append({**hook, "command": desired["command"]})
+                    replaced = True
+                elif current == identity:
+                    hooks.append(hook)
+                elif current in owned:
+                    if equivalent:
+                        # Retire only the duplicate; preserve the surviving command.
+                        if Path(current[1]).name.casefold() != "pretooluse_validate.py":
+                            hooks.append(hook)
+                    else:
+                        # Preserve matcher, group, timeout and other user metadata.
+                        hooks.append({**hook, "command": desired["command"]})
+                        replaced = True
+                else:
+                    hooks.append(hook)
+            group["hooks"] = hooks
+        if not equivalent and not replaced:
+            groups.extend(copy.deepcopy(additions))
+        events[event] = groups
+    return result
+
+
+def plan_client_hook_install(vendor, *, home, install_root, python_executable, gate_script):
+    """Private plan; callers expose only hook deltas and digest, never raw settings."""
+    from .client_mcp_installation import _require_plain
+    if vendor not in _HOOK_CLIENTS:
+        raise SessionLinkConfigRefused("unsupported hook client")
+    target = Path(home) / _HOOK_CLIENTS[vendor][0]
+    _require_plain(target, "file", may_be_absent=True)
+    if not target.parent.is_dir():
+        raise SessionLinkConfigRefused("client configuration directory is absent")
+    before = target.read_bytes() if target.exists() else None
+    if before is not None and len(before) > 4 * 1024 * 1024:
+        raise SessionLinkConfigRefused("client settings exceed the supported size")
+    try:
+        existing = json.loads(before.decode("utf-8-sig")) if before is not None else {}
+    except (ValueError, UnicodeError):
+        raise SessionLinkConfigRefused("client settings are unreadable") from None
+    managed = render_client_hooks(vendor, python_executable=python_executable,
+                                  gate_script=gate_script, install_root=install_root)
+    gate = Path(gate_script)
+    interpreter = Path(python_executable)
+    # Only the exact configured adapter and its sibling legacy validator.
+    # A different interpreter/binding is not silently removed.
+    owned = []
+    for executable in (interpreter, interpreter.with_name("pythonw.exe")):
+        owned.append((os.path.normcase(os.path.normpath(str(executable))), os.path.normcase(os.path.normpath(str(gate))),
+                      ("--vendor", _HOOK_CLIENTS[vendor][1])))
+        if vendor == "codex":
+            owned.append((os.path.normcase(os.path.normpath(str(executable))),
+                          os.path.normcase(os.path.normpath(str(gate.with_name("pretooluse_validate.py")))), ()))
+    merged = merge_client_hooks(existing, managed, vendor=vendor, known_owned_commands=owned)
+    changed = existing != merged
+    indent = 2  # Keep the file's own indent unit: 2 or 4 spaces, or a tab.
+    found = re.search(rb"\n([ \t]+)\S", before) if before is not None else None
+    if found and found.group(1).startswith(b"\t"):
+        indent = "\t"
+    elif found and len(found.group(1)) == 4:
+        indent = 4
+    text = json.dumps(merged, ensure_ascii=False, indent=indent) + "\n"
+    if before is not None and b"\r\n" in before:
+        text = text.replace("\n", "\r\n")
+    if before is not None and before.startswith(b"\xef\xbb\xbf"):
+        text = "\ufeff" + text
+    after = text.encode("utf-8") if changed else before
+    def digest(data):
+        return hashlib.sha256(data).hexdigest() if data is not None else "absent"
+    before_digest, after_digest = digest(before), digest(after)
+    plan_digest = hashlib.sha256(json.dumps(
+        [vendor, str(target), before_digest, after_digest, str(gate), str(interpreter)],
+        ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+    return {"vendor": vendor, "target": str(target), "before_digest": before_digest,
+            "after_digest": after_digest, "plan_digest": plan_digest, "changed": changed,
+            "text": text, "managed_events": list(managed),
+            "activation": "Settings are saved separately from checking that the assistant is using them."}
+
+
+def apply_client_hook_install(plan, *, expected_digest, backup_dir):
+    """Apply only a server-recomputed private plan, never a browser-supplied plan."""
+    if not isinstance(plan, dict) or plan.get("plan_digest") != expected_digest:
+        raise SessionLinkConfigRefused("hook plan changed; review the current preview")
+    target = Path(plan["target"])
+    if not plan["changed"]:
+        current = hashlib.sha256(target.read_bytes()).hexdigest() if target.exists() else "absent"
+        if current != plan["before_digest"]:
+            raise SessionLinkConfigRefused("client settings changed since preview")
+        return {"changed": False, "activation_pending": True}
+    from .cell_secret_keys import protect_current_user_data
+    result = write_with_backup(
+        target, plan["text"], backup_dir, expected_digest=plan["before_digest"],
+        protect_backup=lambda data: protect_current_user_data(
+            data, purpose="archhub.client-hook-backup/v1"))
+    return {**result, "activation_pending": True}
+
+
+
+def observed_client_hook_binding(vendor, *, home):
+    """Reuse this client's exact existing adapter; absence is not installation proof."""
+    from .runtime_hook_observer import VENDORS, GATES
+    from .client_mcp_installation import _require_plain
+    if vendor not in _HOOK_CLIENTS or vendor not in VENDORS:
+        raise SessionLinkConfigRefused("unsupported hook client")
+    spec = VENDORS[vendor]
+    path = Path(home) / _HOOK_CLIENTS[vendor][0]
+    _require_plain(path, "file")
+    if path.stat().st_size > 4 * 1024 * 1024:
+        raise SessionLinkConfigRefused("client settings exceed the supported size")
+    try:
+        config = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (UnicodeError, ValueError):
+        raise SessionLinkConfigRefused("client settings are unreadable") from None
+    if not isinstance(config, dict) or config.get("disableAllHooks") is True:
+        raise SessionLinkConfigRefused("hooks are disabled or configuration is invalid")
+    events = config.get("hooks", {})
+    if not isinstance(events, dict):
+        raise SessionLinkConfigRefused("client hook configuration is invalid")
+    bindings = {}
+    for event in (*spec["pre"], *spec["post"]):
+        groups = events.get(event, [])
+        if not isinstance(groups, list):
+            raise SessionLinkConfigRefused("client hook event is invalid")
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                raise SessionLinkConfigRefused("client hook group is invalid")
+            for hook in group["hooks"]:
+                identity = _hook_command_identity(hook)
+                if identity is None:
+                    continue
+                executable, script, args = _hook_command_parts(hook)
+                normalized = script.replace("\\", "/").casefold()
+                known = any(normalized.endswith(marker.casefold()) for marker in GATES)
+                if known and Path(script).name.casefold() == "agent_scope_gate.py" and args == ("--vendor", _HOOK_CLIENTS[vendor][1]):
+                    _require_plain(Path(executable), "file")
+                    _require_plain(Path(script), "file")
+                    bindings.setdefault(identity[:2], (executable, script))
+    if len(bindings) != 1:
+        raise SessionLinkConfigRefused("one existing admitted hook binding is required; installed adapter unavailable")
+    return next(iter(bindings.values()))
 
 
 def main(argv=None) -> int:
@@ -267,6 +567,7 @@ def main(argv=None) -> int:
         if name == "governance":
             render.add_argument("--from-loader", required=True)
     args = parser.parse_args(argv)
+    from .client_mcp_installation import RegistrationRefused
     try:
         if args.command == "state-dir":
             print(app_state_dir())
@@ -286,7 +587,7 @@ def main(argv=None) -> int:
                 print(json.dumps(write_with_backup(args.write, text, args.backup_dir), indent=2))
             else:
                 sys.stdout.write(text)
-    except SessionLinkConfigRefused as exc:
+    except (SessionLinkConfigRefused, RegistrationRefused) as exc:
         print("refused: %s" % exc, file=sys.stderr)
         return 2
     return 0

@@ -102,4 +102,35 @@ def test_the_settings_route_is_declared_and_needs_consent():
     server = (ROOT / "nodelang" / "application_server.py").read_text(encoding="utf-8")
     handler = server[server.index("if self.path == '/api/universal/assistant-registration':"):]
     handler = handler[:handler.index("return\n")]
-    assert "body['consent'] is not True" in handler and "authorization.subject_root" in handler
+    assert "authorization.subject_root" in handler
+
+
+from tests_replica.test_settings_terminal_routes import server, call  # noqa: E402
+
+
+def test_the_settings_route_writes_nothing_without_explicit_consent(server, monkeypatch):
+    """Behaviour, not source text: only consent=True reaches either writer (connect or hook repair)."""
+    written = []
+    monkeypatch.setattr(registration, "register", lambda client, **kwargs: written.append(
+        ("register", client, kwargs)) or {"client": client, "state": "registered"})
+    monkeypatch.setattr(registration, "repair_hooks", lambda client, **kwargs: written.append(
+        ("repair", client, kwargs)) or {"changed": True}, raising=False)
+    route = "/api/universal/assistant-registration"
+    repair = {"client": "codex", "action": "repair-hooks", "plan_digest": "reviewed"}
+    for body in ({"client": "codex", "consent": False}, {"client": "codex", "consent": "true"},
+                 {"client": "codex"}, {"client": "codex", "consent": True, "extra": 1},
+                 dict(repair, consent=False), dict(repair, consent="true"), dict(repair),
+                 dict(repair, consent=True, plan_digest=1), dict(repair, consent=True, extra=1)):
+        call(server, route, body, expected=400)
+    assert written == []
+    call(server, route, {"client": "codex", "consent": True})
+    call(server, route, dict(repair, consent=True))
+    assert written == [("register", "codex", {"consent": True}),
+                       ("repair", "codex", {"consent": True, "plan_digest": "reviewed"})]
+
+
+def test_gemini_without_its_folder_is_not_installed(machine):
+    """Court: Settings never claims Gemini safety settings when ~/.gemini is absent."""
+    gemini = next(c for c in registration.readiness(machine.env)["clients"] if c["client"] == "gemini-cli")
+    assert gemini["state"] == "not_installed"
+    assert not (machine.profile / ".gemini").exists()

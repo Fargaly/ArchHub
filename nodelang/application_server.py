@@ -6976,19 +6976,31 @@ class ApplicationServer:
                         ):
                             return
                     if self.path == '/api/universal/assistant-registration':
-                        # The person pressed Connect for ONE assistant in
-                        # Settings; only this instance's own user may write
-                        # its local config. Outside the mutation lock: the
-                        # Claude Code command may take seconds.
-                        body = self._body(max_bytes=1024)
-                        if (type(body) is not dict or set(body) != {'client', 'consent'}
-                                or body['consent'] is not True):
-                            raise InvalidCell('assistant registration needs {client, consent: true}')
+                        body = self._body(max_bytes=4096)
+                        if type(body) is not dict:
+                            raise InvalidCell('assistant registration requires an object')
                         if binding.subject_root != owner.universal_registry.authorization.subject_root:
-                            raise AuthorizationDenied('only this instance\'s own user connects its assistants')
-                        from .assistant_registration import register
-                        self._json(200, {'ok': True, 'result': register(
-                            str(body['client']), consent=True)})
+                            raise AuthorizationDenied('only this instance owner configures its assistants')
+                        from .assistant_registration import register, preview_hooks, repair_hooks
+                        from .session_link_config import SessionLinkConfigRefused
+                        from .client_mcp_installation import RegistrationRefused
+                        action = body.get('action')
+                        try:
+                            if action == 'preview-hooks' and set(body) == {'client', 'action'}:
+                                result = preview_hooks(str(body['client']))
+                            elif (action == 'repair-hooks'
+                                  and set(body) == {'client', 'action', 'consent', 'plan_digest'}
+                                  and body['consent'] is True
+                                  and type(body['plan_digest']) is str):
+                                result = repair_hooks(str(body['client']), consent=True,
+                                                      plan_digest=body['plan_digest'])
+                            elif set(body) == {'client', 'consent'} and body['consent'] is True:
+                                result = register(str(body['client']), consent=True)
+                            else:
+                                raise InvalidCell('invalid assistant configuration action')
+                        except (SessionLinkConfigRefused, RegistrationRefused, OSError, ValueError):
+                            raise InvalidCell('Assistant settings could not be updated. Review the current settings and try again.') from None
+                        self._json(200, {'ok': True, 'result': result})
                         return
                     # A browser POST is a person acting; retention waits for
                     # an idle moment after the last one (reads and polls are GETs).

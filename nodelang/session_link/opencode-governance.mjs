@@ -54,6 +54,8 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
    return dispatch(event);
   });
   let state=workers.get(event.session_id);
+  // An idle check asks a live owner only; it never spawns, enrolls or renews one.
+  if(!state&&event.hook_event_name==='Stop')notDelivered('no live native owner for the idle check');
   if(!state){
    if(workers.size>=4)notDelivered('native owner capacity reached');
    if(!lineages.has(event.session_id)&&lineages.size>=128)notDelivered('native identity retention capacity reached');
@@ -112,6 +114,10 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      state.released=reply;return;
     }
     if(!held){abort('unexpected native reply');return;}
+    if(held.stop&&reply.request_id===held.id&&(reply.error||reply.decision!=='allow')){
+     // A refused or failed idle check reads as "no open Work"; the owner stays usable.
+     clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;held.resolve({allow:true,toolOutput:'{}'});return;
+    }
     if(reply.request_id!==held.id||reply.session_id!==event.session_id||reply.tool_use_id!==held.call||
        reply.error||!['allow','deny'].includes(reply.decision)){abort('native reply identity or outcome unavailable');return;}
     if(!/^app:agent-session:runtime:[a-f0-9]{32}$/.test(reply.agent_session)||
@@ -137,7 +143,11 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
   if(state.cwd!==event.cwd)notDelivered('native session workspace changed');
   if(state.failed||state.pending||state.released||state.closed)notDelivered('native owner unavailable or already active; no duplicate enrollment');
   return new Promise((resolve,reject)=>{
-   state.pending={id,call:event.tool_use_id,resolve,reject,timer:setTimeout(()=>state.abort('native gate timeout'),30000)};
+   const stop=event.hook_event_name==='Stop';
+   // An idle check never fails its owner: past 10 s it reads as "no open Work" and its
+   // late reply is absorbed below; every tool call keeps the 30 s abort.
+   state.pending={id,call:event.tool_use_id,resolve,reject,stop,timer:setTimeout(()=>{
+    if(stop)resolve({allow:true,toolOutput:'{}'});else state.abort('native gate timeout');},stop?10000:30000)};
    state.child.stdin.write(payload);
   });
  };
@@ -195,6 +205,18 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
   promise.then(clear,clear);return promise;
  };
  run.reconcile=reconcile;
+ // session.idle: the Work verdict of this session's LIVE owner, or null. Only a
+ // session configured with selected Work is asked; a failure is null, never a block.
+ run.idle=(session,cwd)=>{
+  const state=workers.get(session);
+  if(!selectedWorks[session]||!state||state.failed||state.pending||state.released||state.closed||state.cwd!==cwd)
+   return Promise.resolve(null);
+  return Promise.resolve().then(()=>run({session_id:session,cwd,tool_use_id:'idle-'+randomUUID(),vendor:'opencode',hook_event_name:'Stop'}))
+   .then(result=>{
+    let verdict=null;try{verdict=JSON.parse(result.toolOutput);}catch(_){}
+    return object(verdict)&&verdict.decision==='block'&&typeof verdict.reason==='string'?verdict:null;
+   },()=>null);
+ };
  run.close=async()=>{
   if(queues.size)fail('native requests remain unresolved');
   for(const state of workers.values())if(state.pending||state.failed)fail('native outcome unresolved');
@@ -237,7 +259,10 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
  const invoke=gateRunner||createNativeGateRunner(gateCommand,gateArgs,{expectedSessions,selectedWorks,sessionLink,laneFolders});
  // Retained for all workspaces in this loaded plugin; never clear on idle/error.
  const pending=new Map();
- return async ({directory})=>{
+ // Sessions re-prompted once for open Work; their next idle passes (OpenCode's
+ // stop_hook_active). Shared across workspaces of this loaded plugin.
+ const nudged=new Set(),checking=new Set();
+ return async ({directory,client})=>{
   if(!path.isAbsolute(directory))fail('native workspace unavailable');
   const identity=input=>{
    if(!input || typeof input.sessionID!=='string'||!/^ses_[A-Za-z0-9]+$/.test(input.sessionID)||
@@ -272,6 +297,23 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     }),
    }}:{}),
    dispose:async()=>{if(pending.size)fail('native receipts remain unresolved');await invoke.close?.();},
+   // No idle turn end with open Work: OpenCode cannot block a stop, so a session that
+   // goes idle with open Work is prompted once to continue; its next idle passes.
+   event:async({event})=>{
+    if(event?.type!=='session.idle'||typeof invoke.idle!=='function')return;
+    const session=event.properties?.sessionID;
+    if(typeof session!=='string'||!/^ses_[A-Za-z0-9]+$/.test(session))return;
+    if(nudged.delete(session)||checking.has(session))return;
+    // Concurrent idles of one session send a single prompt.
+    checking.add(session);
+    try{
+     const verdict=await invoke.idle(session,directory);
+     if(!verdict||!client?.session?.prompt)return;
+     nudged.add(session);
+     await client.session.prompt({path:{id:session},query:{directory},body:{parts:[{type:'text',
+      text:verdict.reason.slice(0,4000)+' (ArchHub: this session still has open Work; continue it. This reminder is sent once per turn.)'}]}});
+    }finally{checking.delete(session);}
+   },
    'tool.execute.before':async(input,output)=>{
     const key=identity(input);
     const read=readTools.has(input.tool);

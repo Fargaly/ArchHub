@@ -37,6 +37,21 @@ def stop_verdict(status, client):
     return {'decision':'block','reason':reason} if blocked else {}
 
 
+def idle_verdict(control):
+    """The Work authority's Stop verdict for an idle session, through its bound owner.
+
+    OpenCode has no blocking Stop; its plugin asks this on session.idle and re-prompts
+    once on a block. An unreachable authority answers {} here: the idle nudge never
+    invents open Work, and never enrolls or renews anything.
+    """
+    try:
+        with control.bound_client() as client:
+            return stop_verdict(client.request('GET', '/api/universal/work',
+                {'projection': 'index'}, response_timeout_seconds=2.0), client)
+    except Exception:
+        return {}
+
+
 def stop_context(control):
     """Observe the existing bound actor's completion gate; never enroll or submit."""
     try:

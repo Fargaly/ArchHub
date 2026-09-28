@@ -40,7 +40,6 @@ def _claude(home, *, pre=True, brain_only=False):
         if pre:
             hooks["PreToolUse"] = _cmd(GATE % "claude")
         hooks["PostToolUse"] = _cmd(GATE % "claude")
-        hooks["SessionStart"] = _cmd(START % "claude")
         hooks["Stop"] = _cmd(STOP)
     settings = {"hooks": hooks}
     if brain_only:
@@ -77,15 +76,14 @@ def test_the_brain_mcp_and_brainwrap_are_not_compliance(monkeypatch, tmp_path):
     result = _court(monkeypatch, tmp_path, "claude-code")
     assert result.passed is False
     assert result.checks["scope-gate"] is False
-    assert result.checks["brain-connected"] is False      # brainwrap session-start is not the app
+    assert "brainwrap" not in json.dumps(result.details.get("note:brain-connected", ""))
 
 
-def test_codex_needs_its_gates_and_start_hook_but_has_no_native_stop(monkeypatch, tmp_path):
+def test_codex_needs_its_gates_and_has_no_native_stop(monkeypatch, tmp_path):
     path = tmp_path / ".codex" / "hooks.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"hooks": {
-        "PreToolUse": _cmd(GATE % "codex"), "PostToolUse": _cmd(GATE % "codex"),
-        "UserPromptSubmit": _cmd(START % "codex")}}), encoding="utf-8")
+        "PreToolUse": _cmd(GATE % "codex"), "PostToolUse": _cmd(GATE % "codex")}}), encoding="utf-8")
     result = _court(monkeypatch, tmp_path, "codex-desktop")
     assert result.passed is True, result.details
     assert "no supported native completion hook" in result.details["note:workshop-authority"]
@@ -124,7 +122,7 @@ def _write(path, data):
 
 def _claude_with(home, pre_matcher, extra=None):
     hooks = {"PreToolUse": [{"matcher": pre_matcher, "hooks": [{"type": "command", "command": GATE % "claude"}]}],
-             "PostToolUse": _cmd(GATE % "claude"), "SessionStart": _cmd(START % "claude"), "Stop": _cmd(STOP)}
+             "PostToolUse": _cmd(GATE % "claude"), "Stop": _cmd(STOP)}
     _write(home / ".claude" / "settings.json", {"hooks": hooks, **(extra or {})})
 
 
@@ -142,6 +140,20 @@ def test_a_gate_blind_to_the_shell_is_reported_partial(tmp_path):
     assert result["notes"]["coverage"].startswith("partial: the gate does not see Bash")
 
 
+def test_no_client_config_binds_the_launch_bound_start_hook(tmp_path):
+    # native_start_hook.py requires the --session, --state-dir, --node, --workspace and --connection
+    # of one launched session and answers {} for any other session: a global SessionStart entry
+    # cannot carry it, so no vendor is judged on one.
+    _claude_with(tmp_path, "Write|Edit|MultiEdit|NotebookEdit|Update")
+    claude = observe_runtime_compliance("claude", home=tmp_path)
+    assert claude["status"] == "green" and claude["checks"]["brain-connected"] is True
+    assert "bound per session at launch" in claude["notes"]["brain-connected"]
+    _write(tmp_path / ".codex" / "hooks.json", {"hooks": {"PreToolUse": _cmd(GATE % "codex"),
+                                                          "PostToolUse": _cmd(GATE % "codex")}})
+    codex = observe_runtime_compliance("codex", home=tmp_path)
+    assert codex["checks"]["brain-connected"] is True and codex["status"] == "green"
+
+
 def test_disable_all_hooks_turns_every_hook_check_off(tmp_path):
     _claude_with(tmp_path, None, {"disableAllHooks": True})
     result = observe_runtime_compliance("claude", home=tmp_path)
@@ -152,19 +164,18 @@ def test_codex_trust_is_by_hook_identity_not_by_position(tmp_path):
     from nodelang.runtime_hook_observer import codex_hook_hash
     hooks_path = tmp_path / ".codex" / "hooks.json"
     pre = {"type": "command", "command": GATE % "codex"}
-    start = {"type": "command", "command": START % "codex"}
-    _write(hooks_path, {"hooks": {"PreToolUse": [{"hooks": [pre]}], "PostToolUse": _cmd(GATE % "codex"),
-                                  "UserPromptSubmit": [{"hooks": [start]}]}})
-    stale = codex_hook_hash("UserPromptSubmit", None, {"command": "python brainwrap.py context"})
+    _write(hooks_path, {"hooks": {"PreToolUse": [{"hooks": [pre]}],
+                                  "PostToolUse": _cmd(GATE % "codex") + _cmd(GATE % "codex")}})
+    stale = codex_hook_hash("PostToolUse", None, {"command": "python brainwrap.py stop"})
     _write(tmp_path / ".codex" / "config.toml",
            "[hooks.state]\n\n[hooks.state.'%s:pre_tool_use:0:0']\ntrusted_hash = \"%s\"\n\n"
-           "[hooks.state.'%s:user_prompt_submit:0:0']\ntrusted_hash = \"%s\"\n"
+           "[hooks.state.'%s:post_tool_use:0:0']\ntrusted_hash = \"%s\"\n"
            % (hooks_path, codex_hook_hash("PreToolUse", None, pre), hooks_path, stale))
     notes = observe_runtime_compliance("codex", home=tmp_path)["notes"]
     assert "trust:pre_tool_use:0:0" not in notes                       # same identity: trusted
-    assert "no trust record" in notes["trust:post_tool_use:0:0"]
+    assert "no trust record" in notes["trust:post_tool_use:1:0"]
     # A stale brainwrap trust at the same position is NOT trust for the new hook.
-    assert "different hook definition" in notes["trust:user_prompt_submit:0:0"]
+    assert "different hook definition" in notes["trust:post_tool_use:0:0"]
 
 
 def test_codex_hook_hash_matches_codex_canonical_form():

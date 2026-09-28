@@ -10,9 +10,10 @@ binds the governance hooks that actually enforce work in this workspace:
                      matcher covers every file-writing tool of the vendor;
 * required-hooks  -- scope-gate, plus the post-tool settle hook (same coverage)
                      where the vendor has a post-tool event;
-* brain-connected -- the session-start hook runs the application's
-                     ``native_start_hook.py`` (the application's own Brain), where
-                     that hook supports the vendor;
+* brain-connected -- no client config can bind the application's
+                     ``native_start_hook.py``: it is bound to one session at launch
+                     (it requires that session's --session/--connection), so the
+                     check is satisfied by config for every vendor and noted;
 * workshop-authority -- the completion hook runs ``native_stop_hook.py`` where
                      that hook supports the vendor;
 * runtime-detected / schema-valid -- the client's config exists and parses.
@@ -54,17 +55,19 @@ STOP_HOOK = "native_stop_hook.py"
 # Per vendor: config file (under the user's home), the key holding its hook
 # events, the pre/post tool events, the vendor flag the gate must carry, the
 # file-writing tools the gate must see, the shell tools (partial when unseen),
-# and the start/stop events where native_start_hook / native_stop_hook support
-# the vendor (native_start_hook: claude, codex; native_stop_hook: claude).
+# and the stop event where native_stop_hook supports the vendor (claude). No vendor has
+# a config start event: native_start_hook.py requires --session, --state-dir, --node,
+# --workspace and --connection of one launched session and answers {} for any other
+# session, so a global SessionStart entry can never carry it.
 VENDORS: dict[str, dict[str, Any]] = {
     "claude-code": {"config": ".claude/settings.json", "root": "hooks", "pre": ("PreToolUse",),
                     "post": ("PostToolUse",), "flag": "--vendor claude",
                     "write_tools": ("Write", "Edit", "MultiEdit", "NotebookEdit"), "shell_tools": ("Bash",),
-                    "start": ("SessionStart",), "stop": ("Stop",)},
+                    "start": None, "stop": ("Stop",)},
     "codex": {"config": ".codex/hooks.json", "root": "hooks", "pre": ("PreToolUse",),
               "post": ("PostToolUse",), "flag": "--vendor codex",
               "write_tools": ("apply_patch",), "shell_tools": ("shell", "exec_command"),
-              "start": ("SessionStart", "UserPromptSubmit"), "stop": None, "trust": ".codex/config.toml"},
+              "start": None, "stop": None, "trust": ".codex/config.toml"},
     "gemini-cli": {"config": ".gemini/settings.json", "root": "hooks", "pre": ("BeforeTool",),
                    "post": ("AfterTool",), "flag": "--vendor gemini",
                    "write_tools": ("write_file", "replace"), "shell_tools": ("run_shell_command",),
@@ -259,7 +262,7 @@ def observe_runtime_compliance(runtime: str, *, home: Optional[Path] = None) -> 
             notes["brain-connected"] = "%s does not run %s" % ("/".join(spec["start"]), START_HOOK)
     else:
         checks["brain-connected"] = True
-        notes["brain-connected"] = "vendor has no supported native start hook"
+        notes["brain-connected"] = "the native start hook is bound per session at launch, never in the global config"
     if spec["stop"]:
         stop = [e for e in _entries(events, spec["stop"]) if STOP_HOOK in e["command"]]
         checks["workshop-authority"] = bool(stop)

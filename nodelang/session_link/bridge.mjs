@@ -19,6 +19,27 @@ export const idFor=(a,b)=>crypto.createHash('sha256').update(a+'|'+b).digest('he
 const read=p=>JSON.parse(fs.readFileSync(p,'utf8'));
 const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
 const configs=()=>fs.readdirSync(dir).filter(f=>f.endsWith('.runtime.json')).sort((a,b)=>fs.statSync(path.join(dir,b)).mtimeMs-fs.statSync(path.join(dir,a)).mtimeMs).map(f=>{try{return read(path.join(dir,f));}catch{return null;}}).filter(Boolean);
+// Saved connection records. A connection is offline when neither its bridge nor
+// a resume of it is running; only then may its records be removed locally.
+const RECORD_SUFFIXES=['.binding.json','.runtime.json','.events.jsonl','.stderr.log','.resume.lock','.resume.lock.reclaim'];
+const savedIds=()=>[...new Set(fs.readdirSync(dir).map(f=>/^([a-f0-9]{16})\.(?:binding\.json|runtime\.json|events\.jsonl|stderr\.log)$/.exec(f)?.[1]).filter(Boolean))];
+function liveOwner(id){
+ for(const [suffix,fields] of [['.runtime.json',['pid']],['.resume.lock',['pid','childPid']]]){
+  const file=path.join(dir,id+suffix);if(!fs.existsSync(file))continue;
+  let record;try{record=read(file);}catch{continue;}
+  for(const field of fields)if(Number.isInteger(record?.[field])&&record[field]>0&&alive(record[field]))return record[field];
+ }
+ return null;
+}
+function forget(id){
+ if(!/^[a-f0-9]{16}$/.test(id||''))throw new Error('Exact connection ID required; nothing removed');
+ const files=RECORD_SUFFIXES.map(s=>path.join(dir,id+s)).filter(f=>fs.existsSync(f));
+ if(!files.length)throw new Error(`No saved connection ${id}; nothing removed`);
+ const owner=liveOwner(id);
+ if(owner)throw new Error(`Connection ${id} is live (process ${owner}); stop it with disconnect ${id}. Nothing removed.`);
+ for(const f of files)fs.rmSync(f,{force:true});
+ return {forgotten:id,removed:files.map(f=>path.basename(f))};
+}
 const decode=r=>{const s=(r.contentItems||[]).filter(x=>x.type==='inputText').map(x=>x.text).join('\n');return JSON.parse(s);};
 function tailTitle(s){
   const folder=s.cwd.replace(/[^a-zA-Z0-9]/g,'-');
@@ -348,13 +369,19 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    }
    result=await connect(request);
  }
- else if(cmd==='status'){result=[];for(const c of configs()){try{result.push(await rpc(c,{operation:'status'}));}catch(e){result.push({id:c.id,status:'offline',error:e.message});}}}
+ else if(cmd==='status'){result=[];const down=[];
+   for(const c of configs()){if(!alive(c.pid)){down.push(c.id);continue;}try{result.push(await rpc(c,{operation:'status'}));}catch(e){result.push({id:c.id,status:'unreachable',error:e.message});}}
+   for(const id of savedIds())if(!down.includes(id)&&!result.some(r=>r.id===id)&&!liveOwner(id))down.push(id);
+   if(down.length)result.push({offline:down.length,ids:down,note:down.length===1?'1 old connection is offline. Remove it with forget.':`${down.length} old connections are offline. Remove them with forget.`});}
+ else if(cmd==='forget')result=forget(argv[1]);
+ else if(cmd==='disconnect'&&/^[a-f0-9]{16}$/.test(argv[1]||'')&&!liveOwner(argv[1])&&RECORD_SUFFIXES.some(s=>fs.existsSync(path.join(dir,argv[1]+s))))
+   result={disconnected:argv[1],offline:true,...forget(argv[1])};
  else if(cmd==='delivery'){
    const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
    result=await rpc(matches[0],{operation:'delivery',messageId:argv[2]});
  }
  else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?await readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
- else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','disconnect CONNECTION_ID','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
+ else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','disconnect CONNECTION_ID','forget CONNECTION_ID (offline only)','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}
 

@@ -351,6 +351,7 @@ from .cell_exclusive_ownership import (
 from . import commit_intent
 from . import runtime_ownership_records as ownership_records
 from .cell_runtime_presence import ensure_store_lease_storage
+from .runtime_presence_lease_storage import OPERATIONAL_RECORD_PAYLOAD_BYTES
 from .cell_identity import (
     grant_authority_relationship,
     verify_authority_relationship,
@@ -517,6 +518,18 @@ def _deliberation_payload_record_root(space_root, idempotency_key):
     return "app:deliberation-payload:" + hashlib.sha256(
         (space_root + "\0" + idempotency_key).encode("utf-8")
     ).hexdigest()
+
+
+def _deliberation_record_names(held, *, actor_root, entry_root, space_root,
+                               category_root):
+    """Whether a payload record belongs to exactly this ledger entry."""
+    carried = held["payload"]
+    return (
+        held["owner_root"] == actor_root
+        and carried.get("entry") == entry_root
+        and carried.get("space") == space_root
+        and carried.get("category") == category_root
+    )
 
 
 def _canonical_deliberation_payload(value):
@@ -8928,18 +8941,34 @@ class ApplicationServer:
                 "entry": prepared.root_id,
                 "value": payload,
             }
+            spelled = _canonical_deliberation_payload(carried)
+            if len(spelled) > OPERATIONAL_RECORD_PAYLOAD_BYTES:
+                # A reader receives at most _MACHINE_DELIBERATION_PAYLOAD_BYTES
+                # of any payload; a larger record only fills the table.
+                raise InvalidCell(
+                    "deliberation payload is %d bytes, over the %d-byte bound; "
+                    "record a summary and a digest, and keep the full report "
+                    "where it is read from"
+                    % (len(spelled), OPERATIONAL_RECORD_PAYLOAD_BYTES)
+                )
             held = records.get_record(_DELIBERATION_PAYLOAD_RECORD_KIND, record_root)
-            same = (
-                held is not None
-                and held["owner_root"] == actor_root
-                and _canonical_deliberation_payload(held["payload"])
-                == _canonical_deliberation_payload(carried)
+            owned = held is not None and _deliberation_record_names(
+                held, actor_root=actor_root, entry_root=prepared.root_id,
+                space_root=space_root, category_root=category_root,
+            )
+            same = owned and (
+                _canonical_deliberation_payload(held["payload"]) == spelled
             )
             if prepared.existing_entry is not None:
                 if held is None:
                     raise InvalidCell(
                         "deliberation payload record has expired; its idempotency "
                         "identity can no longer be verified"
+                    )
+                if not owned:
+                    raise InvalidCell(
+                        "deliberation payload record failed its integrity check: "
+                        "it names another owner, entry, space or category"
                     )
                 if not same:
                     raise InvalidCell(
@@ -13494,6 +13523,7 @@ class ApplicationServer:
                     payload = None
                     payload_truncated = False
                     payload_expired = False
+                    payload_integrity_failed = False
                     if tuple(entry.reference_roots) == (
                         _DELIBERATION_PAYLOAD_RECORD_STORE.id,
                     ):
@@ -13503,23 +13533,24 @@ class ApplicationServer:
                                 space_root, entry.idempotency_key
                             ),
                         )
-                        carried = None if held is None else held["payload"]
-                        if (
-                            carried is not None
-                            and held["owner_root"] == entry.actor_root
-                            and carried.get("entry") == entry.root_id
-                            and carried.get("space") == space_root
-                            and carried.get("category") == entry.category_root
-                        ):
-                            payload, payload_truncated = (
-                                _bounded_machine_deliberation_payload(
-                                    carried.get("value")
-                                )
-                            )
-                        else:
+                        if held is None:
                             # The entry says it carried a payload; its record
                             # is gone. Say so -- never an empty success.
                             payload_expired = True
+                        elif _deliberation_record_names(
+                            held, actor_root=entry.actor_root,
+                            entry_root=entry.root_id, space_root=space_root,
+                            category_root=entry.category_root,
+                        ):
+                            payload, payload_truncated = (
+                                _bounded_machine_deliberation_payload(
+                                    held["payload"].get("value")
+                                )
+                            )
+                        else:
+                            # A record is present under this entry's key but
+                            # names someone else: not expiry, a broken bond.
+                            payload_integrity_failed = True
                     elif len(entry.reference_roots) == 1:
                         try:
                             payload = read_value_graph(
@@ -13547,6 +13578,8 @@ class ApplicationServer:
                         item["payload_truncated"] = True
                     if payload_expired:
                         item["payload_expired"] = True
+                    if payload_integrity_failed:
+                        item["payload_integrity_failed"] = True
                     projected.append(item)
                 return _validated_machine_deliberation_response({
                     "ok": True,

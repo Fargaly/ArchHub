@@ -38,6 +38,8 @@ OPERATIONAL_RECORD_KINDS = frozenset({
     "deliberation-payload",
 })
 _OPERATIONAL_RECORD_LIMIT = 10_000
+# Canonical JSON bytes (sorted keys, ASCII escapes) one record may hold.
+OPERATIONAL_RECORD_PAYLOAD_BYTES = 256 * 1024
 _OPERATIONAL_EVENT_LIMIT = 4_096
 
 
@@ -761,7 +763,7 @@ class RuntimePresenceLeaseStorage:
             )
         except (TypeError, ValueError) as exc:
             raise InvalidCell("operational record payload is not canonical JSON") from exc
-        if len(text) > 256 * 1024:
+        if len(text) > OPERATIONAL_RECORD_PAYLOAD_BYTES:
             raise InvalidCell("operational record payload exceeds its bound")
         return text
 

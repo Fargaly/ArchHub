@@ -313,3 +313,58 @@ def test_an_entry_that_carried_nothing_never_reads_as_expired(either_server):
 
     assert read["payload"] is None
     assert "payload_expired" not in read
+
+
+def _record(server, key):
+    return server._ownership_record_storage().get_record(
+        "deliberation-payload", _payload_root(server, key)
+    )
+
+
+def test_a_payload_over_the_record_bound_is_refused_plainly(either_server):
+    """A reader receives at most 64 KiB of any payload; storing a megabyte
+    only fills the record table. The refusal says what to do instead."""
+    before, revision = _cells(either_server), either_server.universal_store.revision
+
+    with pytest.raises(Exception, match=r"over the \d+-byte bound; record a summary"):
+        _append(either_server, "court:too-large", {"report": "x" * (300 * 1024)})
+
+    assert either_server.universal_store.revision == revision
+    assert _cells(either_server) == before
+    assert _record(either_server, "court:too-large") is None
+
+
+def test_a_payload_inside_the_bound_is_kept_whole(either_server):
+    payload = {"report": "y" * (200 * 1024)}
+    created = _append(either_server, "court:inside-bound", payload)
+
+    assert _record(either_server, "court:inside-bound")["payload"]["value"] == payload
+    # The read projects it; the record keeps every byte.
+    assert _read(either_server, created["root"])["payload_truncated"] is True
+
+
+def test_a_record_naming_another_entry_is_an_integrity_failure_not_expired(either_server):
+    key = "court:integrity"
+    created = _append(either_server, key, {"attempt": 1})
+    held = _record(either_server, key)
+    either_server._ownership_record_storage().put_record(
+        "deliberation-payload",
+        _payload_root(either_server, key),
+        owner_root=held["owner_root"],
+        state="recorded",
+        payload={**held["payload"], "entry": "someone-else"},
+        authority_revision=either_server.universal_store.revision,
+        updated_at=held["updated_at"],
+        expected_generation=held["generation"],
+    )
+
+    read = _read(either_server, created["root"])
+
+    assert read["payload"] is None
+    assert read["payload_integrity_failed"] is True
+    assert "payload_expired" not in read
+    revision = either_server.universal_store.revision
+    with pytest.raises(Exception, match="integrity"):
+        _append(either_server, key, {"attempt": 1})
+    assert either_server.universal_store.revision == revision
+

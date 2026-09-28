@@ -12,8 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-PRODUCT_ROOT = Path(__file__).resolve().parents[2]
-PUBLIC_ROOT = PRODUCT_ROOT / "12.PRODUCTION"
+RETIRED = ("Retired with 12.PRODUCTION (ce8ab49 'Retire 12.PRODUCTION: Brain port, cloud import, founder rules, native compliance observer', 2026-09-26): the personal-brain-mcp sources this court read are no longer part of the product; compliance now means the landed governance hooks (25675e4) and the application's Brain answers from the graph (36e8549).")
 
 from nodelang.cell_legacy_brain_governance import (  # noqa: E402
     ACTIVE_CELL_AUTHORITY,
@@ -69,15 +68,16 @@ def test_brain_governance_contract_is_cells_and_non_promotable():
 
 
 def test_brain_governance_contract_matches_real_sources_and_courts():
+    """The contract still names each legacy channel's source and courts, but
+    those sources were retired with 12.PRODUCTION (see RETIRED). What stays
+    protected: none of them is carried back into this repository, nothing here
+    imports the retired Brain, and every channel keeps its fenced authority."""
     for spec in BRAIN_GOVERNANCE_SPECS:
-        source_path = PUBLIC_ROOT / str(spec["source_path"])
-        assert source_path.is_file(), spec["source_path"]
-        source = source_path.read_text(encoding="utf-8", errors="ignore")
-        assert str(spec["source_symbol"]) in source
-        for tool_name in spec["tool_names"]:
-            assert ('name="%s"' % tool_name) in source
-        for court in spec["required_courts"]:
-            assert (PUBLIC_ROOT / str(court)).is_file(), court
+        assert not (ROOT / str(spec["source_path"])).exists(), (
+            "a retired Brain source came back: %s" % spec["source_path"])
+    for path in list((ROOT / "nodelang").rglob("*.py")) + [ROOT / "launch_archhub_test.py"]:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        assert "import personal_brain" not in text and "from personal_brain" not in text, path.name
 
     by_capability = {
         str(spec["capability"]): spec
@@ -126,95 +126,18 @@ def test_brain_governance_contract_matches_real_sources_and_courts():
     )
 
 
+@pytest.mark.skip(reason=RETIRED)
 def test_public_brain_ledger_routes_cannot_fall_back_to_metadata_or_assemblies():
-    sources = {
-        "compliance": (
-            PUBLIC_ROOT / "personal-brain-mcp/src/personal_brain/compliance_report.py"
-        ).read_text(encoding="utf-8"),
-        "run-report": (
-            PUBLIC_ROOT / "personal-brain-mcp/src/personal_brain/run_report.py"
-        ).read_text(encoding="utf-8"),
-        "hook-coverage": (
-            PUBLIC_ROOT / "personal-brain-mcp/src/personal_brain/hook_coverage.py"
-        ).read_text(encoding="utf-8"),
-        "active-work": (
-            PUBLIC_ROOT / "personal-brain-mcp/src/personal_brain/active_work.py"
-        ).read_text(encoding="utf-8"),
-        "core-values": (
-            PUBLIC_ROOT / "personal-brain-mcp/src/personal_brain/core_values_authority.py"
-        ).read_text(encoding="utf-8"),
-        "universal-work": (
-            PUBLIC_ROOT / "personal-brain-mcp/src/personal_brain/server.py"
-        ).read_text(encoding="utf-8"),
-    }
-    forbidden_by_function = {
-        "append_compliance_event_cell_first": (
-            "assembly_create", "_append_prepared_event",
-            "_sync_control_records_to_cells", "store.update_meta",
-        ),
-        "get_compliance_history_cell_first": ("store.get_meta",),
-        "append_run_report_cell_first": (
-            "assembly_create", "_append_prepared_run_report", "store.update_meta",
-        ),
-        "get_run_reports_cell_first": ("store.get_meta",),
-        "audit_cell_first": (
-            "assembly_create", "_persist_receipt", "store.set_meta",
-            "store.update_meta", "_append_history_event",
-        ),
-        "get_report_cell_first": ("store.get_meta",),
-        "brain_universal_work_status": (
-            "store.get_meta", "migrate_legacy_work", "assembly_create",
-        ),
-        "brain_universal_work_next": (
-            "store.get_meta", "migrate_legacy_work", "assembly_create",
-        ),
-        "brain_universal_work_create": (
-            "store.get_meta", "migrate_legacy_work", "assembly_create",
-        ),
-        "brain_universal_work_transition": (
-            "store.get_meta", "migrate_legacy_work", "assembly_create",
-        ),
-        "brain_universal_work_court": (
-            "store.get_meta", "migrate_legacy_work", "assembly_create",
-        ),
-        "repair_cell_first": (
-            "assembly_create", "_persist_receipt", "store.set_meta",
-            "store.update_meta", "_append_history_event",
-        ),
-        "brain_work_assigned_block": (
-            "migrate_legacy_work", "legacy.get_ledger", "store.get_meta",
-        ),
-        "audit_cell_first": (
-            "_persist_report", "store.set_meta", "store.update_meta",
-        ),
-        "get_report_cell_first": ("store.get_meta",),
-    }
-    for function, forbidden in forbidden_by_function.items():
-        body = next(
-            _function_body(source, function)
-            for source in sources.values()
-            if any(
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name == function
-                for node in ast.walk(ast.parse(source))
-            )
-        )
-        assert all(token not in body for token in forbidden), function
+    """Held the retired personal-brain-mcp ledger routes (compliance, run
+    report, hook coverage, active work, core values, universal work) to
+    Cell-first reads with no metadata or assembly fallback. Those routes left
+    the product with 12.PRODUCTION; the Cell-held contract above stays."""
 
 
+@pytest.mark.skip(reason=RETIRED)
 def test_core_values_public_audit_cannot_fall_back_to_brain_metadata():
-    source = (
-        PUBLIC_ROOT
-        / "personal-brain-mcp/src/personal_brain/core_values_authority.py"
-    ).read_text(encoding="utf-8")
-    for function, forbidden in {
-        "audit_cell_first": (
-            "_persist_report", "store.set_meta", "store.update_meta",
-        ),
-        "get_report_cell_first": ("store.get_meta",),
-    }.items():
-        body = _function_body(source, function)
-        assert all(token not in body for token in forbidden), function
+    """Held the retired personal-brain-mcp core-values audit to Cell-first
+    reads. It left the product with 12.PRODUCTION."""
 
 
 def test_brain_governance_contract_rejects_graph_drift():

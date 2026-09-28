@@ -95,12 +95,19 @@ def test_the_report_names_agents_brain_and_hosts():
     assert compose_baboom_speech(bare) == "One job is running and nothing is stuck."
 
 
-def test_the_launcher_retries_attach_under_its_own_id():
-    """connect() binds the identity before start() can time out; a retry under the same
-    id is refused as already bound and the founder gets no companion for the session."""
-    src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert 'founder-desktop-baboom:retry-%d' in src
-    assert '"already bound" not in text' in src
+def test_the_launcher_retries_attach_under_its_own_id(monkeypatch):
+    """A retry must never bind a second identity: connect() used to bind before
+    start() could time out, and a retry under the same id was refused as already
+    bound, so the founder had no companion. Since 326b657 one host is prepared
+    under one session id and a retry renews that same signed presence. Runs the
+    launcher's real _keep_attaching."""
+    from tests_replica.launcher_functions import run_attach
+
+    prepared, attachment, hosts, _stop = run_attach(monkeypatch, [TimeoutError("busy"), None])
+    assert len(prepared) == 1, "a retry must not prepare (and bind) another host"
+    assert prepared[0]["external_session_id"] == "founder-desktop-baboom"
+    assert attachment.landed == hosts and hosts[0].connects == 2
+    assert not hosts[0].stopped, "the handed-off host keeps running"
 
 
 def test_brain_health_answers_from_the_live_brain_not_a_default():
@@ -117,12 +124,18 @@ def test_brain_health_answers_from_the_live_brain_not_a_default():
 def test_a_transient_open_error_never_sets_the_graph_aside():
     """2026-09-03: a force-stopped predecessor left the WAL closing; the next launch hit
     'disk I/O error', retried once, then quarantined 337 MB of the founder's graph and
-    opened an empty canvas. Transients are retried and then refused, never set aside."""
+    opened an empty canvas. Since b196313 every boot refusal is retried six times and
+    then refused with the graph kept in place: no path sets it aside or replaces it."""
     src = (Path(__file__).resolve().parents[1] / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert 'for _open_attempt in range(6)' in src
-    assert '"disk I/O error", "database is locked", "already owned", "unable to open",' in src
-    assert "the graph is kept in place" in src
-    assert src.index("the graph is kept in place") < src.index("old data kept in")
+    retry = src[src.index("boot_refusal = None"):src.index('print(f"  booted in')]
+    assert "for _open_attempt in range(6):" in retry
+    assert "_release_own_fence(again)" in retry, "each failed attempt clears only our own fence"
+    refused = retry[retry.index("if boot_refusal is not None:"):]
+    assert "the saved graph is KEPT IN PLACE. No replacement graph was created." in refused
+    assert "raise boot_refusal" in refused
+    for set_aside in ("old data kept in", "state_path.rename(", "state_path.replace(",
+                      "shutil.move(state_path", "quarantine"):
+        assert set_aside not in src, set_aside
 
 
 def test_every_utterance_answers_end_to_end_on_a_real_graph():

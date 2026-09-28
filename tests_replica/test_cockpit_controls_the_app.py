@@ -6,6 +6,8 @@ play the cloud and the coordination host so the relay and the agent link are
 proven without a network."""
 from __future__ import annotations
 
+import pytest
+
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -135,19 +137,45 @@ def test_baboom_resolves_an_agent_by_name_to_the_newest_online_session():
     rows = [
         {"session_root": "s:codex:old", "provider": "codex", "runtime": "codex-cli", "status": "offline", "revision": 10},
         {"session_root": "s:codex:new", "provider": "codex", "runtime": "codex-cli", "status": "online", "revision": 40},
-        {"session_root": "s:claude:1", "provider": "anthropic", "runtime": "claude-code", "status": "online", "revision": 30},
+        # native_agent_session.py folds claude-code to the runtime "claude".
+        {"session_root": "s:claude:1", "provider": "anthropic", "runtime": "claude", "status": "online", "revision": 30},
+        # Newer but offline: an alias reaches only an online session.
+        {"session_root": "s:codex:gone", "provider": "codex", "runtime": "codex", "status": "offline", "revision": 90},
     ]
     assert resolve_target("codex", rows)["session_root"] == "s:codex:new"
     assert resolve_target("claude", rows)["session_root"] == "s:claude:1"
     assert resolve_target("s:codex:old", rows)["session_root"] == "s:codex:old"
     assert resolve_target("gemini", rows) is None and resolve_target("", rows) is None
+    # A name is whole, never a fragment: nothing is messaged by a partial word.
+    for fragment in ("cod", "code", "claude-c", "anthro"):
+        assert resolve_target(fragment, rows) is None, fragment
 
 
-def test_the_launcher_starts_the_relay_after_baboom_attaches():
+def test_the_launcher_starts_the_relay_after_baboom_attaches(monkeypatch):
+    """Since 326b657 the relay does not wait for BABOOM: it starts once and
+    resolves the signed attachment per request, so a companion that attaches
+    late is used the moment it lands. Runs the launcher's real cockpit
+    functions."""
+    import threading
+    from types import SimpleNamespace
+
+    from tests_replica.launcher_functions import Stop, load
+
     src = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert src.index("baboom_window.start_projection()") < src.index("start_cloud_relay")
     assert "map_script=lambda: _atlas(server.universal_store, server.universal_registry)" in src
     assert '"  cockpit    :"' in src
+    server = SimpleNamespace(mutation_lock=threading.Lock())
+    ns = load("_cockpit_respond", "_cockpit_execute", _baboom_stop=Stop(),
+              baboom_host=None, _baboom_off_reason=None, server=server)
+    with pytest.raises(RuntimeError, match="BABOOM is not attached; no action was performed"):
+        ns["_cockpit_execute"]("tell codex hello")
+    said = []
+    ns["baboom_host"] = SimpleNamespace(
+        execute_input=lambda utterance: said.append(("execute", utterance)) or "sent",
+        respond_input=lambda utterance: said.append(("respond", utterance)) or "answered")
+    assert ns["_cockpit_execute"]("tell codex hello") == "sent"
+    assert ns["_cockpit_respond"]("status") == "answered"
+    assert said == [("execute", "tell codex hello"), ("respond", "status")]
 
 
 def test_baboom_knows_the_agent_verbs():

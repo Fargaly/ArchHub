@@ -95,6 +95,8 @@ EVIDENCE: dict[str, dict[str, str]] = {
     "library.place_tags": {"unavailable": _REVIT_SCRATCH},
     "library.place_on_sheet": {"unavailable": _REVIT_SCRATCH},
     "library.push_speckle": {"unavailable": "a Speckle server address and a token for it"},
+    "ai.master": {"unavailable": _MODEL},
+    "skill.wrap": {"court": _OWN + "test_skill_engines_read_real_skill_files"},
     "workshop.conversation": {"court": "tests_replica/test_workshop_milestone_one.py::test_workshop_and_agent_definitions_run_from_the_catalogue"},
     "agent.session": {"court": "tests_replica/test_workshop_milestone_one.py::test_workshop_and_agent_definitions_run_from_the_catalogue"},
     "workshop.review": {"court": "tests_replica/test_workshop_milestone_one.py::test_agent_proposed_workflow_is_edited_approved_executed_and_independently_reviewed"},

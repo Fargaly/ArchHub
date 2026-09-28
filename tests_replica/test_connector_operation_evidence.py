@@ -83,6 +83,8 @@ def test_skill_engines_read_real_skill_files(tmp_path, monkeypatch):
     assert isinstance(chain["out"], str) and chain["out"].strip()
     matched, said = PIPELINE_ENGINES["library.match_skill"]({"intent": "prove the skill engines", "count": "5"}, {})
     assert "court-skill" in [row["name"] for row in matched["out"]] and "word overlap" in said
+    wrapped, said = PIPELINE_ENGINES["skill.wrap"]({"name": "court-skill"}, {})
+    assert "Body line." in wrapped["result"] and "court-skill" in said
 
 
 def test_dropbox_list_reads_a_real_folder(tmp_path, monkeypatch):

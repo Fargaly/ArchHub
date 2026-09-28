@@ -13,9 +13,26 @@ import nodelang.application_server as app_server
 
 
 class _Owner:
-    universal_store = object()
-    universal_registry = object()
-    pipeline_effect_engines = {}
+    """The owner surface answer_open_question uses: one planning slot, the
+    authority it rechecks after the unlocked model wait, and the picked model."""
+
+    def __init__(self):
+        import threading
+
+        self.universal_store = object()
+        self.universal_registry = object()
+        self.pipeline_effect_engines = {}
+        self.mutation_lock = threading.Lock()
+        self._composer_planning_slot = threading.BoundedSemaphore(1)
+        self._runtime_handoff_exit = threading.Event()
+        self.universal_checkpoint_guard = None
+        self.rechecked = []
+
+    def require_universal_http_route(self, method, path, **kwargs):
+        self.rechecked.append(path)
+
+    def _read_agent_model(self):
+        return "picked-model"
 
 
 def test_open_question_answers_brain_first_then_model(monkeypatch):
@@ -25,8 +42,10 @@ def test_open_question_answers_brain_first_then_model(monkeypatch):
         seen["recall"] = params["prompt"]
         return ({"out": "fact one\nfact two\n"}, "2 lines")
 
-    def fake_composer(store, registry, prompt, *, model, effect_engines, authentication_context):
-        seen["prompt"] = prompt
+    def fake_composer(store, registry, prompt, *, model, effect_engines, authentication_context,
+                      mutation_lock, revalidate):
+        seen["prompt"], seen["model"] = prompt, model
+        revalidate()
         return {"actions": [], "answer": "We decided on the share, not Azure."}
 
     import nodelang.pipeline_engines as engines
@@ -36,7 +55,11 @@ def test_open_question_answers_brain_first_then_model(monkeypatch):
 
     payload = {"ok": True, "command": {"intent": "open-question", "payload": "q"},
                "response": {"kind": "command-guidance", "summary": "Use a known BABOOM command"}}
-    out = app_server.answer_open_question(_Owner(), "what did we decide about signing?", None, payload)
+    owner = _Owner()
+    out = app_server.answer_open_question(owner, "what did we decide about signing?", None, payload)
+    assert seen["model"] == "picked-model"
+    assert owner.rechecked == ["/api/universal/baboom-command-response"], (
+        "authority is rechecked after the unlocked model wait")
 
     assert seen["recall"] == "what did we decide about signing?", "the brain is asked first"
     assert "fact one" in seen["prompt"] and "Founder says:" in seen["prompt"], "recall is in the model prompt"
@@ -61,9 +84,11 @@ def test_a_dead_brain_costs_the_recall_never_the_answer(monkeypatch):
 def test_the_machine_dispatcher_answers_open_questions_too():
     """The path the shipped companion actually uses must call the same helper,
     and must do so outside the mutation lock."""
-    source = inspect.getsource(app_server.ApplicationServer.dispatch_universal_machine_route)
+    # dispatch_universal_machine_route delegates to the method that holds the routes.
+    source = inspect.getsource(app_server.ApplicationServer._dispatch_universal_machine_route)
     branch = source[source.index('path == "/api/universal/baboom-command-response"'):]
     branch = branch[:branch.index('path == "/api/universal/baboom-command-execute"')]
+    assert "_require_founder_machine_session(request, direct, path)" in branch
     assert "answer_open_question(" in branch, "the dispatcher must answer open questions"
     lock_at = branch.index("with self.mutation_lock:")
     answer_at = branch.index("answer_open_question(")

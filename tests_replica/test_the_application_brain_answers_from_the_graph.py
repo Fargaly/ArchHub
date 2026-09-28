@@ -97,7 +97,32 @@ def test_the_resource_and_governance_probes_ask_the_application_brain(brain, tmp
     assert coverage["ok"] is False and coverage["status"] == "missing"   # no client configs here
 
 
+def _dials_the_retired_brain(source: str) -> bool:
+    """True when code (not a docstring) carries the retired daemon's URL or its setting."""
+    import ast
+
+    tree = ast.parse(source)
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "BRAIN_DAEMON_URL":
+            return True
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in docstrings
+                and ("://127.0.0.1:8473" in node.value or "://localhost:8473" in node.value)):
+            return True
+    return False
+
+
 def test_no_product_code_dials_the_retired_brain_port():
+    """Nothing dials :8473 (36e8549). client_mcp_installation.py may still NAME
+    the retired address, in a docstring and in the warning it shows a person
+    before removing an old registration; naming it is not dialling it."""
+    assert _dials_the_retired_brain('import urllib.request\nurllib.request.urlopen("http://127.0.0.1:8473/mcp")\n')
+    assert _dials_the_retired_brain("BRAIN_DAEMON_URL = 'x'\n")
     for path in list((ROOT / "nodelang").rglob("*.py")) + [ROOT / "launch_archhub_test.py"]:
-        text = path.read_text(encoding="utf-8")
-        assert "http://127.0.0.1:8473" not in text and "BRAIN_DAEMON_URL" not in text, path.name
+        assert not _dials_the_retired_brain(path.read_text(encoding="utf-8")), path.name

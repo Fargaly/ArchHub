@@ -164,7 +164,9 @@ def test_the_window_exposes_its_controller_so_the_receipt_can_be_wired():
     src = (ROOT / "nodelang" / "baboom_native_companion.py").read_text(encoding="utf-8")
     assert "made.controller = controller" in src
     launcher = (ROOT / "launch_archhub_test.py").read_text(encoding="utf-8")
-    assert 'getattr(baboom_window, "controller", None)' in launcher
+    land = launcher[launcher.index("def land(self, host):"):launcher.index("_baboom_attachment = _BaboomAttachment(app)")]
+    assert 'controller = getattr(companion, "controller", None)' in land
+    assert 'controller.watch_geometry(state_dir / "baboom-geometry.log")' in land
 
 
 def test_the_window_repairs_itself_from_what_windows_reports():

@@ -460,7 +460,7 @@ def followup_decision(payload, *, now=None, guard_directory=None):
         for item in items:
             mark = marks.setdefault(item['key'], {'at': now, 'last': 'queued'})
             if mark.get('last') == 'block':
-                mark['last'] = 'pass'
+                mark.update(at=now, last='pass')  # the cadence counts from the pass
         if founder_turn and fresh:
             decision = {'systemMessage': 'Follow-up queued (founder turn, not blocked): ' + '; '.join(
                 '%s re %s' % (item['to'], item['message_id']) for item in fresh)}
@@ -473,7 +473,7 @@ def followup_decision(payload, *, now=None, guard_directory=None):
                 due.append(item)
                 marks[item['key']] = {'at': now, 'last': 'block'}
             elif mark.get('last') == 'block':
-                mark['last'] = 'pass'
+                mark.update(at=now, last='pass')
         if due:
             lines = ['FOLLOW-UP DUE before this turn ends (founder order: agents chase every unanswered request).']
             for item in due:

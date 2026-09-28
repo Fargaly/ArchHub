@@ -128,3 +128,9 @@ def test_main_blocks_an_overdue_followup_even_without_a_native_stop_host(tmp_pat
     result = json.loads(out.getvalue())
     assert result['decision'] == 'block' and 'FOLLOW-UP #1' in result['reason']
     assert 'completion is not declared' in result['systemMessage']
+
+def test_the_reblock_cadence_counts_from_the_pass_not_the_block(tmp_path):
+    entries = _send(0, ASK) + [_prompt(5, 'task-notification')]
+    assert _stop(tmp_path, entries, 700)['decision'] == 'block'
+    assert _stop(tmp_path, entries, 1350) is None
+    assert _stop(tmp_path, entries, 1351) is None

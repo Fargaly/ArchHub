@@ -36,7 +36,7 @@ _MODEL = "a picked model whose provider answers (a court would spend model calls
 EVIDENCE: dict[str, dict[str, str]] = {
     "vision.sketch_lines": {"unavailable": "OpenCV (cv2), which the desktop requirements.txt does not install"},
     "cad.read_lines": {"court": _OWN + "test_cad_read_lines_reads_the_shipped_sample_dxf"},
-    "cad.host_lines": {"unavailable": "a running AutoCAD that loads the ArchHub AutoCAD add-in (acad-mcp); the add-in is built and carried, but no AutoCAD registration owner exists to make AutoCAD load it"},
+    "cad.host_lines": {"unavailable": "a running AutoCAD that loads the ArchHub AutoCAD add-in (acad-mcp); setup registers the add-in (ApplicationPlugins bundle) only after its custody review, and courts do not launch hosts"},
     "lines.watch": {"court": _OWN + "test_lines_watch_passes_real_lines_through"},
     "revit.sessions": {"unavailable": _REVIT_SCRATCH},
     "revit.read": {"unavailable": _REVIT_SCRATCH},

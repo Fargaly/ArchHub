@@ -260,11 +260,11 @@ def probe_host_rows() -> list[dict]:
     rhino_up = _port_open(9879)
     rows.append({"id": "rhino", "name": "Rhino", "drive": "rhino.exec",
                  "state": "connected" if rhino_up else ("running" if _running(("Rhino.exe",)) else ("installed" if _installed((r"C:\Program Files\Rhino 8\System\Rhino.exe", r"C:\Program Files\Rhino 7\System\Rhino.exe")) else "absent")),
-                 "detail": "bridge on :9879" if rhino_up else "in Rhino: run the ArchHub bridge script (payload/rhino) to listen on :9879"})
+                 "detail": "bridge on :9879" if rhino_up else "say \"open Rhino\" in ArchHub to start Rhino with its bridge (listens on :9879)"})
     blender_up = _port_open(9876)
     rows.append({"id": "blender", "name": "Blender", "drive": "blender.exec",
                  "state": "connected" if blender_up else ("running" if _running(("blender.exe",)) else ("installed" if _installed((r"C:\Program Files\Blender Foundation",)) else "absent")),
-                 "detail": "add-on on :9876" if blender_up else "enable the ArchHub Blender add-on (listens on :9876)"})
+                 "detail": "add-on on :9876" if blender_up else "say \"open Blender\" in ArchHub to start Blender with its add-on (listens on :9876)"})
     for host, prog, exe, name in (("excel", "Excel.Application", "EXCEL.EXE", "Excel"), ("word", "Word.Application", "WINWORD.EXE", "Word"), ("powerpoint", "PowerPoint.Application", "POWERPNT.EXE", "PowerPoint")):
         open_now = _com_alive(prog)
         rows.append({"id": host, "name": name, "drive": "office.read",

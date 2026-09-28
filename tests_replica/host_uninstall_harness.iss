@@ -2,7 +2,8 @@
 ; (installer/host_registrations.iss, included by ArchHub.iss) against folders
 ; the court names, then exits without installing anything. Never packaged.
 ;   /revit=<Addins root> /app=<install folder> /max=<3dsMax root>
-;   /shipped=<shipped max_mcp_startup.py> /done=<file written when finished>
+;   /shipped=<shipped max_mcp_startup.py> /acad=<ArchHub.AcadMCP.bundle>
+;   /done=<file written when finished>
 
 [Setup]
 AppName=ArchHub uninstall court
@@ -19,6 +20,8 @@ function InitializeSetup(): Boolean;
 begin
   RemoveOwnRevitRegistrationsIn(ExpandConstant('{param:revit}'), ExpandConstant('{param:app}'));
   RemoveOwnMaxStartupScriptsIn(ExpandConstant('{param:max}'), ExpandConstant('{param:shipped}'));
+  if ExpandConstant('{param:acad}') <> '' then
+    RemoveOwnAutocadBundle(ExpandConstant('{param:acad}'));
   SaveStringToFile(ExpandConstant('{param:done}'), 'ran', False);
   Result := False;
 end;

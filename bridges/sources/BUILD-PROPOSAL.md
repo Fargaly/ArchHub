@@ -109,7 +109,11 @@ checking alone is not a sandbox for arbitrary scripts.
   installed year against the local host API and writes the release manifests;
   setup calls `install_revit_broker` and places the Max script, both only with
   a supplied custody review; uninstall removes only what this install placed.
-- Open: the custody review itself; locked package restore (versions above are
+- Done: the AutoCAD registration owner (`nodelang/autocad_broker_installation.py`,
+  a per-user ApplicationPlugins bundle behind the same review), and a release
+  gate that refuses any shipped year without the review
+  (`nodelang/host_artifact_review.py`, `installer/build_release.ps1`).
+- Open: the custody review itself (a human decision, record format in
+  `bridges/README.md`); locked package restore (versions above are
   still floating on the build machine's NuGet cache); the compiler closure at
-  `bin/csc`; an AutoCAD registration owner; a permitted physical operation on a
-  host a court may drive.
+  `bin/csc`; a permitted physical operation on a host a court may drive.

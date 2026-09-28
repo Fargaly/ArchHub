@@ -40,21 +40,28 @@
   </ItemGroup>
 
   <!-- CI / clean machine: NuGet AutoCAD.NET package — Autodesk's
-       official redistribution of the managed AutoCAD API.
-       Version numbering: ObjectARX major = AcadYear - 2000
-       (AutoCAD 2025 → 25.0.0, 2026 → 26.0.0). -->
+       official redistribution of the managed AutoCAD API. Its versions
+       follow the release series (2025 = R25.0, 2026 = R25.1, 2027 = R26.0),
+       so each year is pinned EXACTLY here (nuget.org AutoCAD.NET listing,
+       2026-09-28); no floating range, no version derived from the year.
+       A year without a pin fails the build instead of guessing. -->
   <PropertyGroup Condition="'$(UseLocalAcadApi)' == 'false'">
-    <AcadObjectArxMajor>$([MSBuild]::Subtract($(AcadYear), 2000))</AcadObjectArxMajor>
-    <AcadPackageVersion Condition="'$(AcadPackageVersion)' == ''">$(AcadObjectArxMajor).0.0</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2020'">23.1.0</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2021'">24.0.0</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2022'">24.1.51000</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2023'">24.2.0</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2024'">24.3.0</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2025'">25.0.2</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2026'">25.1.1</AcadPackageVersion>
+    <AcadPackageVersion Condition="'$(AcadYear)' == '2027'">26.0.0</AcadPackageVersion>
   </PropertyGroup>
-  <ItemGroup Condition="'$(UseLocalAcadApi)' == 'false'">
-    <!-- AutoCAD.NET umbrella allows pre-release transitive deps
-         (Autodesk publishes AutoCAD.NET.Core stable as `25.0.0-V058`
-         pre-release, not vanilla `25.0.0`). The `*-*` suffix tells
-         NuGet to accept the latest pre-release that satisfies the
-         major.minor.patch base, which is what Autodesk ships. -->
+  <Target Name="RequireExactAcadPackagePin" BeforeTargets="CollectPackageReferences;Restore;_GenerateRestoreGraph"
+          Condition="'$(UseLocalAcadApi)' == 'false' And '$(AcadPackageVersion)' == ''">
+    <Error Text="No exact AutoCAD.NET pin for AutoCAD $(AcadYear); add one to AcadMCP.csproj after review." />
+  </Target>
+  <ItemGroup Condition="'$(UseLocalAcadApi)' == 'false' And '$(AcadPackageVersion)' != ''">
     <PackageReference Include="AutoCAD.NET"
-                      Version="$(AcadPackageVersion)-*"
+                      Version="[$(AcadPackageVersion)]"
                       ExcludeAssets="runtime"
                       PrivateAssets="all" />
   </ItemGroup>

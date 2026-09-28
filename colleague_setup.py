@@ -272,8 +272,6 @@ def _setup_host_installations() -> dict[str, list[str]]:
 def _setup_compiler_candidates(root: Path) -> bool:
     """Find files, never execute a compiler or imply language-version validation."""
     candidates = [root / "bin" / "csc" / "csc.exe"]
-    if value := os.environ.get("ARCHHUB_CSC_PATH"):
-        candidates.append(Path(value))
     for key in ("ProgramFiles", "ProgramFiles(x86)"):
         if not (value := os.environ.get(key)):
             continue
@@ -479,6 +477,74 @@ def register_max_startup(root: Path, *, environment=None, detected_years=None) -
     return outcomes
 
 
+def register_autocad_add_ins(root: Path, *, environment=None, install=None,
+                             detected_years=None) -> list[dict]:
+    """Register the packaged AutoCAD add-in for every AutoCAD year found here, when reviewed.
+
+    The installer carries AcadMCP compiled per year (installer/
+    build_host_bridges.ps1) and pinned in HOST_ARTIFACTS.json. For the years
+    both packaged and installed, the registration owner
+    (nodelang/autocad_broker_installation.py) verifies the custody review, the
+    closure and the host API pins, then writes this user's
+    ApplicationPlugins/ArchHub.AcadMCP.bundle. It never touches a bundle it did
+    not place, never needs elevation and never starts AutoCAD.
+    """
+    import json
+    env = os.environ if environment is None else environment
+    if install is None:
+        from nodelang.autocad_broker_installation import install_autocad_broker as install
+    try:
+        index = json.loads((root / "HOST_ARTIFACTS.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    autocad = index.get("autocad") if isinstance(index, dict) else None
+    if not isinstance(autocad, dict) or not autocad:
+        print("  autocad    : this build carries no AutoCAD add-in payload")
+        return []
+    detected = set(_setup_host_installations().get("autocad") or []) if detected_years is None else set(detected_years)
+    outcomes = [{"host_version": year, "status": "host-not-installed"} for year in sorted(autocad) if year not in detected]
+    for row in outcomes:
+        print("  autocad %s : add-in packaged; AutoCAD %s is not installed here" % (row["host_version"], row["host_version"]))
+    selected = {year: autocad[year] for year in sorted(autocad) if year in detected}
+    if selected:
+        results = install(
+            package_root=str(root), rows=selected,
+            program_files=env.get("ProgramFiles", r"C:\Program Files"),
+            user_profile_root=env["USERPROFILE"],
+            user_plugins_root=str(Path(env["APPDATA"]) / "Autodesk" / "ApplicationPlugins"),
+            machine_plugins_root=str(Path(env.get("ProgramData", r"C:\ProgramData")) / "Autodesk" / "ApplicationPlugins"),
+            # launch_archhub_test.py owns this state location (see _launcher_state_root).
+            state_root=str(Path(env.get("ARCHHUB_TEST_STATE_DIR") or Path(env["LOCALAPPDATA"]) / "ArchHub-Test")))
+        for result in results:
+            print("  autocad %s : %s%s" % (result["host_version"], result["status"],
+                                           (" - " + result["reason"]) if result.get("reason") else
+                                           " (restart AutoCAD %s to load it)" % result["host_version"]
+                                           if result.get("registered") else ""))
+        outcomes.extend(results)
+    return outcomes
+
+
+def report_rhino_blender(root: Path, *, detected=None) -> list[dict]:
+    """Say how Rhino and Blender connect: one click from ArchHub, never a copied script.
+
+    Their bridges ship in bridges/rhino and bridges/blender and bind a port only
+    while the host runs them; ArchHub opens the host with its bridge
+    (nodelang/host_brokers.open_host, spoken as "open Rhino" / "open Blender").
+    Nothing is written into a Rhino or Blender profile.
+    """
+    found = _setup_host_installations() if detected is None else detected
+    shipped = {"rhino": ("Rhino", root / "bridges" / "rhino" / "archhub_mcp.py"),
+               "blender": ("Blender", root / "bridges" / "blender" / "archhub_mcp" / "__init__.py")}
+    rows = []
+    for host, (label, script) in shipped.items():
+        for version in found.get(host) or []:
+            status = "one-click-open" if script.is_file() else "bridge-not-shipped"
+            rows.append({"host": host, "version": version, "status": status})
+            print("  %-10s : %s" % ("%s %s" % (host, version),
+                                     'say "open %s" in ArchHub to start it with its bridge' % label
+                                     if status == "one-click-open" else "this build carries no %s bridge" % label))
+    return rows
+
 def _launcher_state_root() -> Path:
     # launch_archhub_test.py owns this location; a court holds the two equal.
     return Path(os.environ.get("ARCHHUB_TEST_STATE_DIR")
@@ -626,6 +692,14 @@ def main():
         register_max_startup(Path(os.path.abspath(__file__)).parent)
     except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
         print("  3ds max    : not placed (%s)" % type(exc).__name__)
+    try:
+        register_autocad_add_ins(Path(os.path.abspath(__file__)).parent)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  autocad    : not registered (%s)" % type(exc).__name__)
+    try:
+        report_rhino_blender(root)
+    except Exception as exc:  # noqa: BLE001 - evidence only; the build must still become ready
+        print("  rhino/blender: not reported (%s)" % type(exc).__name__)
     try:
         if readiness_identity(root) != identity:
             raise ValueError("installed build changed during setup")

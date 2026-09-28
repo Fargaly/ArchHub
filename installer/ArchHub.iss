@@ -39,7 +39,8 @@
 #endif
 ; The authenticated Revit add-in, compiled per Revit year by
 ; installer/build_host_bridges.ps1 (bridges/revit|autocad/<year>/ + HOST_ARTIFACTS.json).
-; Setup registers a year only when its manifest carries the custody review.
+; Setup registers a Revit year, and the AutoCAD bundle, only when the build
+; carries the broker review (build_release.ps1 -BrokerReviewPath).
 #ifndef HostPayloadPath
 #error Build with installer/build_release.ps1: HostPayloadPath is required.
 #endif
@@ -166,6 +167,8 @@ begin
     { Before [Files] removal deletes the shipped script this compares against. }
     RemoveOwnMaxStartupScriptsIn(ExpandConstant('{localappdata}') + '\Autodesk\3dsMax',
                                  ExpandConstant('{app}') + '\bridges\max\max_mcp_startup.py');
+    { Only files this install placed and still byte-identical. }
+    RemoveOwnAutocadBundle(ExpandConstant('{userappdata}') + '\Autodesk\ApplicationPlugins\ArchHub.AcadMCP.bundle');
   end;
 end;
 

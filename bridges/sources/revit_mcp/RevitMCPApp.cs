@@ -21,6 +21,7 @@ namespace RevitMCP
         private RevitEventHandler _handler;
         private ExternalEvent _externalEvent;
         private CoreLoader _loader;
+        private string _installedCorePath;
         private string _revitVersion = "";
         private static bool _resolverInstalled;
         private static readonly object _resolverLock = new object();
@@ -47,6 +48,7 @@ namespace RevitMCP
                     return Result.Failed;
                 }
                 _loader = new CoreLoader(Log);
+                _installedCorePath = corePath;
                 LoadCoreInto(corePath);
                 Log("Shim OnStartup ok; port=" + _loader.BoundPort);
                 return Result.Succeeded;
@@ -83,6 +85,13 @@ namespace RevitMCP
             {
                 try
                 {
+                    // The shim performs the load, so it checks too: only the
+                    // installed Core matching its reviewed pin (ReviewedCore.cs).
+                    if (!ReviewedCore.Verify(newPath, _installedCorePath, out var why))
+                    {
+                        Log("Hot-reload refused: " + why);
+                        return;
+                    }
                     Log("Hot-reload triggered → " + newPath);
                     _loader.Unload();
                     LoadCoreInto(newPath);

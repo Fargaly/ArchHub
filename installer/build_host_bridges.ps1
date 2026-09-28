@@ -24,8 +24,10 @@ param(
 #   revit.<year>   -> bridges/revit/<year>/ + host-artifacts.json, the
 #                     archhub-host-artifacts/v1 manifest setup verifies before
 #                     it registers the add-in for that year;
-#   autocad.<year> -> bridges/autocad/<year>/AcadMCP.dll (+ deps), pinned; no
-#                     registration owner exists yet, so setup registers nothing;
+#   autocad.<year> -> bridges/autocad/<year>/AcadMCP.dll (+ deps), pinned; setup
+#                     copies the verified closure into the user's
+#                     ApplicationPlugins bundle when the review is present
+#                     (nodelang/autocad_broker_installation.py);
 #   max            -> the single startup script shipped at bridges/max/, pinned,
 #                     deployed by setup only when the review is present.
 # A year that is not installed here gets no payload: its host API pins could
@@ -161,8 +163,9 @@ foreach ($year in 2020..2030) {
         host_api  = $hostApi
         framework = $framework
         reviewed  = [bool]$review
-        registration = 'none: no AutoCAD registration owner exists; setup registers nothing'
+        registration = 'user ApplicationPlugins bundle (nodelang/autocad_broker_installation.py)'
     }
+    if ($review) { $index.autocad["$year"].activation = $review }
 }
 
 $maxScript = Join-Path $source 'max_mcp/max_mcp_startup.py'

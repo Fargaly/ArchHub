@@ -12,7 +12,9 @@ param(
     [string]$LocalCandidateManifest,
     [ValidatePattern('^[0-9a-fA-F]{64}$')]
     [string]$LocalCandidateManifestSha256,
-    # Independent custody review of the authenticated Revit add-in source.
+    # The broker review record (archhub-broker-review/v1, nodelang/host_artifact_review.py):
+    # an independent reviewer's decision on this exact bridges/ tree and revision.
+    # Required for a release; a local candidate without it activates no host broker.
     [string]$BrokerReviewPath
 )
 
@@ -466,6 +468,10 @@ if ($isCandidate) {
 } else {
     Assert-TrackedInputs $selectedRoot $selectedInputs
 }
+if (-not $BrokerReviewPath -and -not $isCandidate) {
+    throw 'Release refused: -BrokerReviewPath (archhub-broker-review/v1) is required; without it no host broker activates on a colleague machine.'
+}
+if ($BrokerReviewPath) { $BrokerReviewPath = (Resolve-Path -LiteralPath $BrokerReviewPath).Path }
 
 if (-not $IsccPath) {
     $candidates = @(
@@ -622,15 +628,28 @@ if (@($wheels | Where-Object { $_.Name -match '^(?i:psycopg|boto3|botocore|fasta
 $wheelLines = @($wheels | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)" })
 [IO.File]::WriteAllText((Join-Path $output 'wheelhouse.sha256'), ($wheelLines -join "`n") + "`n", $utf8)
-# The authenticated Revit add-in, built per Revit year installed here from the
-# snapshot's bridges/sources. Its manifests carry activation only with the
-# independent custody review (-BrokerReviewPath); setup refuses them otherwise.
+# The authenticated host brokers, built per Revit / AutoCAD year installed here
+# from the snapshot's bridges/sources. They carry activation only with the
+# broker review record (-BrokerReviewPath); setup refuses them otherwise.
 $hostPayload = Join-Path $output 'hostpayload'
 $revision = (& git -C $snapshot.SelectedCheckout rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'The source revision for the Revit add-in could not be read.' }
+$reviewCheck = Join-Path $selectedRoot 'nodelang/host_artifact_review.py'
 $bridgeArgs = @{ SourceRoot = (Join-Path $selectedRoot 'bridges/sources'); OutputRoot = $hostPayload; SourceRevision = $revision }
 if ($BrokerReviewPath) { $bridgeArgs.BrokerReviewPath = $BrokerReviewPath }
 & (Join-Path $selectedRoot 'installer/build_host_bridges.ps1') @bridgeArgs
+# Release check: the review must decide these exact bridge bytes, and every
+# shipped Revit / AutoCAD year and the Max script must carry it.
+$hostBrokersReviewed = $false
+if ($BrokerReviewPath) {
+    $LASTEXITCODE = 0
+    & $PythonPath -E -s $reviewCheck 'check' --index (Join-Path $hostPayload 'HOST_ARTIFACTS.json') `
+        --review $BrokerReviewPath --revision $revision --bridges (Join-Path $selectedRoot 'bridges')
+    if ($LASTEXITCODE -ne 0) { throw 'Release refused: a shipped host broker is unreviewed or the review does not decide this source.' }
+    $hostBrokersReviewed = $true
+} elseif (-not $candidate) {
+    throw 'Release refused: a shipped host broker is unreviewed.'
+}
 & $compiler "/DBuildId=$BuildId" "/DRequirementsSha256=$requirementsSha" "/DBuildMetadataPath=$buildMetadataPath" "/DNodeRuntimePath=$node" "/DNodeLicensePath=$nodeLicense" "/DWheelhousePath=$wheelhouse" "/DHostPayloadPath=$hostPayload" "/O$output" $installer
 if ($LASTEXITCODE -ne 0) { throw "Selected installer compilation failed with exit code $LASTEXITCODE." }
 if ((Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $nodeRuntimeSha) {
@@ -677,6 +696,7 @@ if ($candidate) {
         asset_bytes = (Get-Item -LiteralPath $assetPath).Length
         installation_boundary = 'Build only. The installer retains the real application AppId, registry and shortcuts. It is not an isolated-install fixture. Installing requires the reviewed activation of the real application.'
         acceptance = 'Exact reviewed source bytes compiled; no installed behavior, public release or product-completion claim.'
+        host_brokers = $(if ($hostBrokersReviewed) { 'reviewed: setup activates them' } else { 'unreviewed: setup activates no host broker' })
     }
     [IO.File]::WriteAllText((Join-Path $output 'candidate.json'), ($metadata | ConvertTo-Json) + "`n", $utf8)
     [IO.File]::WriteAllText((Join-Path $output 'candidate-status.txt'), "COMPILED LOCAL CANDIDATE: build only; installation and runtime acceptance remain open.`n", $utf8)
@@ -701,6 +721,7 @@ $metadata = [ordered]@{
     asset_name = $assetName
     asset_sha256 = $assetSha
     asset_bytes = (Get-Item -LiteralPath $assetPath).Length
+    broker_review_sha256 = (Get-FileHash -LiteralPath $BrokerReviewPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 [IO.File]::WriteAllText((Join-Path $output 'release.json'), ($metadata | ConvertTo-Json) + "`n", $utf8)
 $notes = @(

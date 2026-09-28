@@ -25,6 +25,7 @@
   <ItemGroup>
     <Compile Include="..\shared\ICoreEntryPoint.cs" Link="ICoreEntryPoint.cs"/>
     <Compile Include="..\shared\CoreLoader.cs"      Link="CoreLoader.cs"/>
+    <Compile Include="..\shared\ReviewedCore.cs"    Link="ReviewedCore.cs"/>
   </ItemGroup>
 
   <PropertyGroup>

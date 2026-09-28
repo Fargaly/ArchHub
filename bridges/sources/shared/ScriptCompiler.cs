@@ -62,7 +62,8 @@ namespace ArchHub.Shared
         // ─── csc probe (AgDR-0030) ─────────────────────────────────
         //
         // Probe order (Fork A1 — signed 2026-05-21):
-        //   0. ARCHHUB_CSC_PATH env override.
+        //   (No environment override: a variable any process can set must not
+        //   choose the compiler whose output runs inside the host.)
         //   1. Bundled `%LOCALAPPDATA%\ArchHub\bin\csc\csc.exe`
         //      (Fork B3 — auto_build drops a pinned Roslyn here).
         //   2. VS BuildTools 2022 well-known paths.
@@ -86,8 +87,8 @@ namespace ArchHub.Shared
         private static bool   _probed;
 
         /// <summary>Reset cached probe state — used by callers that
-        /// know the environment changed (e.g. ARCHHUB_CSC_PATH set
-        /// after start, bundled csc just downloaded).</summary>
+        /// know the environment changed (e.g. bundled csc just
+        /// downloaded).</summary>
         public static void ResetProbe()
         {
             lock (_probeLock) { _probed = false; _probedCsc = null;
@@ -119,13 +120,6 @@ namespace ArchHub.Shared
 
         private static (string path, bool needsDotnetExec) _ProbeOnce()
         {
-            // 0. Explicit override — still gated by the langversion check.
-            var env = Environment.GetEnvironmentVariable("ARCHHUB_CSC_PATH");
-            if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
-            {
-                var dx = env.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
-                if (_AcceptsLangVersion73(env, dx)) return (env, dx);
-            }
 
             // 1. Bundled csc — `%LOCALAPPDATA%\ArchHub\bin\csc\csc.exe`.
             //    auto_build downloads a pinned Roslyn here on first run.
@@ -443,7 +437,7 @@ namespace ArchHub.Shared
                          + "(https://aka.ms/vs/17/release/vs_BuildTools.exe).  "
                          + "ArchHub auto-bundles a pinned csc on first connector "
                          + "build at %LOCALAPPDATA%\\ArchHub\\bin\\csc\\csc.exe; "
-                         + "delete that file or set ARCHHUB_CSC_PATH to override.";
+                         + "delete that file to probe again.";
                 return r;
             }
             r.CompilerPath = csc;

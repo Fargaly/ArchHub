@@ -9,10 +9,10 @@ in `nodelang/host_bridge_auth.py` (the one client that calls them),
 | Host | Source | Listens on | Shipped as |
 |---|---|---|---|
 | Revit | `sources/revit_mcp`, `sources/revit_mcp_core`, `sources/shared` | first free of 48884-48899 | compiled per Revit year by `installer/build_host_bridges.ps1`; setup registers it when reviewed |
-| AutoCAD | `sources/acad_mcp`, `sources/shared` | 48884-48899 (answers as `acad-mcp`) | compiled per AutoCAD year into `{app}\bridges\autocad\<year>`; **not registered** (see below) |
+| AutoCAD | `sources/acad_mcp`, `sources/shared` | 48884-48899 (answers as `acad-mcp`) | compiled per AutoCAD year into `{app}\bridges\autocad\<year>`; setup copies it into the user's `ApplicationPlugins\ArchHub.AcadMCP.bundle` when reviewed |
 | 3ds Max | `sources/max_mcp/max_mcp_startup.py` | first free of 48886-48899 under `/max-mcp` | copied to `{app}\bridges\max`; setup places it in each installed version's startup folder when reviewed |
-| Rhino 8 | `rhino/archhub_mcp.py` | 9879 | copied to `{app}\bridges\rhino`; "open Rhino" launches Rhino with it |
-| Blender 3.6+ | `blender/archhub_mcp/` | 9876 | copied to `{app}\bridges\blender`; "open Blender" launches Blender with it |
+| Rhino 8 | `rhino/archhub_mcp.py` | 9879 | copied to `{app}\bridges\rhino`; saying "open Rhino" in ArchHub launches Rhino with it (`host_brokers.open_host`); nothing is written into Rhino |
+| Blender 3.6+ | `blender/archhub_mcp/` | 9876 | copied to `{app}\bridges\blender`; saying "open Blender" in ArchHub launches Blender with it; nothing is written into Blender |
 
 Provenance of the .NET and Max sources: `sources/PROVENANCE.md`, licence
 `sources/NOTICE.txt`, remaining build work `sources/BUILD-PROPOSAL.md`.
@@ -57,26 +57,49 @@ in its DPAPI file, which the bridges cannot read: they then refuse (503).
    (2020: net47, 2021-2024: net48, 2025+: net8) and the AutoCAD add-in for every
    AutoCAD year installed there, each against that year's own API assemblies,
    and writes `HOST_ARTIFACTS.json` (Revit manifests, AutoCAD pins, the Max
-   script pin). Pass `-BrokerReviewPath <review file>` with the independent
-   custody review of this source; without it nothing carries activation and
-   setup activates nothing.
+   script pin). A release requires `-BrokerReviewPath <review file>`: the broker
+   review record (below). The release check
+   (`nodelang/host_artifact_review.py check`) then fails the build when the
+   record does not decide this exact `bridges/` tree and revision, or when any
+   shipped Revit or AutoCAD year, or the Max script, lacks its activation. A
+   local candidate built without it says so in `candidate.json` and activates
+   no host broker.
 2. The installer copies `bridges/revit/<year>/`, `bridges/autocad/<year>/`,
    `bridges/max/` and `HOST_ARTIFACTS.json` into the install folder.
 3. On first open, setup (`colleague_setup.py`) registers the Revit add-in for
    each packaged year that is installed (`%APPDATA%\Autodesk\Revit\Addins\<year>\RevitMCP.addin`,
-   through `nodelang/host_broker_installation.py`) and places the Max script in
-   `%LOCALAPPDATA%\Autodesk\3dsMax\<year> - 64bit\ENU\scripts\startup\`. It never
+   through `nodelang/host_broker_installation.py`), places the Max script in
+   `%LOCALAPPDATA%\Autodesk\3dsMax\<year> - 64bit\ENU\scripts\startup\`, and
+   writes `%APPDATA%\Autodesk\ApplicationPlugins\ArchHub.AcadMCP.bundle`
+   (PackageContents.xml, one ComponentEntry per AutoCAD series, the verified
+   closure in `Contents\<year>\`, through `nodelang/autocad_broker_installation.py`). It never
    overwrites a different registration or script, never needs administrator
    rights and never starts a host. Restart the host to load it.
 4. Uninstall (`installer/host_registrations.iss`) deletes only a `RevitMCP.addin`
    whose assembly lies in this install's `bridges\revit\`, and only a Max
-   startup script byte-identical to the one this install shipped.
+   startup script byte-identical to the one this install shipped, and only the
+   AutoCAD bundle files listed in its `archhub-bundle.sha256` that still match.
 
-AutoCAD registration is not built: AutoCAD loads .NET add-ins through an
-`ApplicationPlugins\<name>.bundle\PackageContents.xml` per product series, and
-no reviewed owner for writing that bundle exists yet (the Revit equivalent is
-`nodelang/host_broker_installation.py`). Until one does, the compiled add-in is
-carried but AutoCAD does not load it.
+### The broker review record
+
+Every broker runs code it is sent, so its activation is one human decision:
+a reviewer who is not the builder reads the exact `bridges/` tree of the
+release revision and writes (UTF-8 JSON):
+
+```json
+{"schema": "archhub-broker-review/v1", "source_revision": "<40-hex revision>",
+ "bridges_tree_sha256": "<python nodelang/host_artifact_review.py digest bridges>",
+ "reviewer": "<name>", "decision": "approve-activation",
+ "hosts": ["revit", "autocad", "max"]}
+```
+
+Its SHA-256 becomes every shipped entry's `activation.review_sha256`. Any
+change to `bridges/` or the revision voids it; nothing in the build writes or
+infers one.
+
+In a running Revit, `/reload` loads only the installed `RevitMCPCore.dll` and only
+when its SHA-256 equals the pin in the reviewed `host-artifacts.json` beside it
+(`sources/shared/ReviewedCore.cs`, checked by Core and again by the shim).
 
 The v1 legacy sweep still keeps `payload\` while any Revit registration loads
 from it; the new registration loads from `bridges\revit\`, never `payload\`.

@@ -429,8 +429,10 @@ namespace RevitMCPCore
             catch (Exception ex) { return JsonError("Bad JSON: " + ex.Message); }
             if (string.IsNullOrEmpty(newCorePath))
                 return JsonError("Missing 'core_path' in body.");
-            if (!File.Exists(newCorePath))
-                return JsonError("core_path not found: " + newCorePath);
+            // Only the installed Core, byte-identical to its reviewed pin
+            // (shared/ReviewedCore.cs); any other path or bytes refuse.
+            if (!ReviewedCore.Verify(newCorePath, _corePath, out var why))
+                return JsonError("reload refused: " + why);
             if (ReloadTriggerForShim == null)
                 return JsonError("No reload trigger wired (shim too old?)");
 

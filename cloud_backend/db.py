@@ -3019,21 +3019,24 @@ def claim_agent_task(task_id: str, claimed_by: str):
     return dict(r) if r else None
 
 
-def claim_next_agent_task(*, claimed_by: str,
-                          kinds: tuple = ("app", "app-execute"),
-                          creators=None):
+# Passed as `creators` only where every account's task may be claimed on purpose.
+ALL_CREATORS = object()
+
+
+def claim_next_agent_task(*, claimed_by: str, creators,
+                          kinds: tuple = ("app", "app-execute")):
     """Atomically claim the OLDEST queued task whose kind is in `kinds`.
     This is how the founder's running application drains the cockpit: it asks
     for the next instruction addressed to it. None when nothing is queued.
 
-    `creators`, when given, limits the claim to tasks those accounts queued
+    `creators` is required: the accounts whose queued tasks may be claimed
     (compared lower-cased), so the founder's desktop never runs an instruction
     another account queued. An empty set claims nothing (fail closed)."""
     now = int(time.time())
     kinds = tuple(str(k) for k in kinds) or ("app",)
     marks = ",".join("?" for _ in kinds)
     where, args = "status='queued' AND kind IN (%s)" % marks, kinds
-    if creators is not None:
+    if creators is not ALL_CREATORS:
         owners = tuple(sorted({str(c).strip().lower() for c in creators if str(c).strip()}))
         if not owners:
             return None

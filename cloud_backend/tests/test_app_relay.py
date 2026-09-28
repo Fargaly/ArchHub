@@ -39,11 +39,13 @@ def _play_the_app(client, token, answer, delay=0.3):
         # The app's relay speaks to the SAME queue the routes expose (the routes
         # are proven on their own below); the sync TestClient cannot serve a
         # second request while the command request is still blocking in it.
+        import config
         import db
         task = None
         for _ in range(25):                      # the app polls; so does this
             time.sleep(delay)
-            task = db.claim_next_agent_task(claimed_by="archhub-app")
+            task = db.claim_next_agent_task(claimed_by="archhub-app",
+                                            creators=config.founder_emails())
             if task:
                 break
         seen["task"] = task

@@ -199,3 +199,14 @@ def test_the_cockpit_serves_the_wire_list_the_app_pushed(client):
     asset = client.get("/founder/map-assets/map-data.js", headers=auth).text
     assert "window.WIRE_PARAMS = " + json.dumps(rows) + ";" in asset
     assert 'window.WIRE_PARAMS_ERROR = "";' in asset
+
+
+def test_a_claim_names_whose_tasks_it_may_take():
+    """No default: omitting creators is an error, never every account's tasks."""
+    import db
+    stranger = db.enqueue_agent_task(directive="x", created_by=STRANGER, kind="app")
+    with pytest.raises(TypeError):
+        db.claim_next_agent_task(claimed_by="archhub-app")
+    assert db.claim_next_agent_task(claimed_by="archhub-app", creators=[]) is None
+    assert db.claim_next_agent_task(claimed_by="archhub-app",
+                                    creators=db.ALL_CREATORS)["id"] == stranger["id"]

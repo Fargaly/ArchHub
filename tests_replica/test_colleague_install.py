@@ -261,6 +261,7 @@ def test_ready_environment_does_not_reinstall(tmp_path, monkeypatch, isolated_us
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: [])
     def forbidden(*args, **kwargs):
         raise AssertionError("ready environment must not reinstall")
     monkeypatch.setattr(colleague_setup.subprocess, "run", forbidden)
@@ -276,6 +277,7 @@ def test_upgrade_reapplies_constraints_and_records_new_build(
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     (tmp_path / "BUILD_ID").write_text("new-build")
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: [])
     calls = []
     def run(args, **kwargs):
         calls.append(args)
@@ -356,6 +358,7 @@ def test_main_records_the_consent_receipt_only_inside_this_court(
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: [])
     _forbid_registration(monkeypatch, "a ready environment must not reinstall or register")
     seen = []
     real_state_root = colleague_setup._launcher_state_root
@@ -395,6 +398,7 @@ def test_setup_refuses_registration_on_a_redirected_install_root(
     colleague_setup._write_ready(real_root, colleague_setup.readiness_identity(real_root))
     monkeypatch.setattr(colleague_setup, "__file__", str(linked / "colleague_setup.py"))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: [])
     _forbid_registration(monkeypatch, "a refused registration must run nothing")
     assert colleague_setup.main() == 0
     assert ("path is redirected: %s" % linked) in capsys.readouterr().out
@@ -430,6 +434,7 @@ def test_interrupted_consent_prompt_leaves_the_offer_open(
     monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
     colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
     monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: [])
     _forbid_registration(monkeypatch, "an unanswered offer must register nothing")
     def interrupted(_prompt):
         raise interruption
@@ -444,3 +449,55 @@ def test_interrupted_consent_prompt_leaves_the_offer_open(
     receipt = json.loads((isolated_user_state / "assistant-integration.json")
                          .read_text(encoding="utf-8"))
     assert receipt["choice"] == "not_asked" and receipt["result"] == "ready_to_register"
+
+
+def _court_venv(root):
+    """A real owned interpreter: verify_imports must start it, not this process."""
+    import subprocess
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(root / ".venv")],
+                   check=True)
+    return root / ".venv" / "Lib" / "site-packages"
+
+
+def test_import_check_sees_a_package_only_a_new_process_can_import(tmp_path, monkeypatch):
+    """pywin32 is wired by a .pth file, read only when an interpreter starts:
+    the first open refused a build the second open accepted. The check runs
+    in a fresh child of the owned interpreter, so a just-installed .pth
+    package is ready, while this process still cannot import it."""
+    probe = "archhub_court_late_probe"
+    package = tmp_path / "pkgs" / probe
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    site_packages = _court_venv(tmp_path)
+    (site_packages / "court_late.pth").write_text(str(tmp_path / "pkgs"))
+    monkeypatch.setattr(colleague_setup, "PACKAGES", (("court", probe),))
+    assert not colleague_setup._has(probe)
+    assert colleague_setup.verify_imports(tmp_path) == []
+
+
+def test_import_check_still_refuses_a_genuinely_missing_package(tmp_path, monkeypatch):
+    _court_venv(tmp_path)
+    monkeypatch.setattr(colleague_setup, "PACKAGES",
+                        (("court", "json"), ("court", "archhub_court_missing_probe")))
+    assert colleague_setup.verify_imports(tmp_path) == ["archhub_court_missing_probe"]
+
+
+def test_import_check_counts_an_unstartable_interpreter_as_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(colleague_setup, "PACKAGES", (("court", "json"),))
+    assert colleague_setup.verify_imports(tmp_path) == ["json"]
+
+
+def test_unimportable_package_refuses_in_plain_words(
+        tmp_path, monkeypatch, capsys, isolated_user_state):
+    _private_environment(tmp_path, monkeypatch)
+    (tmp_path / "launch_archhub_test.py").write_text("")
+    monkeypatch.setattr(colleague_setup, "__file__", str(tmp_path / "colleague_setup.py"))
+    colleague_setup._write_ready(tmp_path, colleague_setup.readiness_identity(tmp_path))
+    monkeypatch.setattr(colleague_setup, "_has", lambda module: True)
+    monkeypatch.setattr(colleague_setup, "verify_imports", lambda root: ["mcp"])
+    _forbid_registration(monkeypatch, "an unready build must register nothing")
+    assert colleague_setup.main() == 4
+    out = capsys.readouterr().out
+    assert "ArchHub is finishing setup" in out
+    assert "cannot be imported" not in out
+    assert "REFUSED: ArchHub could not finish setup. Missing: mcp" in out

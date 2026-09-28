@@ -635,6 +635,37 @@ def _assistant_integration(root: Path, identity: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def verify_imports(root: Path) -> list[str]:
+    """Import every required probe in a fresh child of the owned interpreter.
+
+    Returns the probes that do not import there; an empty list means ready.
+    The child starts after install, so .pth wiring (pywin32) is in effect.
+    Any child failure other than a clean report counts every probe missing.
+    """
+    probes = [probe for _pip_name, probe in PACKAGES
+              if probe not in ("ezdxf", "numpy")]  # optional engines
+    script = ("import importlib, sys\n"
+              "bad = []\n"
+              "for name in sys.argv[1:]:\n"
+              "    try:\n"
+              "        importlib.import_module(name)\n"
+              "    except Exception:\n"
+              "        bad.append(name)\n"
+              "print(' '.join(bad))\n"
+              "raise SystemExit(3 if bad else 0)\n")
+    python = environment_path(root) / "Scripts/python.exe"
+    try:
+        result = subprocess.run([str(python), "-E", "-s", "-c", script, *probes],
+                                env=clean_environment(), capture_output=True,
+                                text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return probes
+    if result.returncode == 0:
+        return []
+    reported = [name for name in result.stdout.split() if name in probes]
+    return reported if result.returncode == 3 and reported else probes
+
+
 def main():
     print("ArchHub setup")
     print("  python     :", sys.version.split()[0])
@@ -673,15 +704,17 @@ def main():
             return result.returncode
     else:
         print("  packages   : already present")
-    # Prove the boot imports resolve NOW, in this interpreter, so a failure
-    # is a sentence on this screen rather than a window that never opens.
-    for _pip_name, probe in PACKAGES:
-        if probe in ("ezdxf", "numpy"):
-            continue  # optional engine; the app reports it as absent
-        if not _has(probe):
-            print("  REFUSED: %s installed but cannot be imported." % probe)
-            print("  send this window text to your ArchHub administrator.")
-            return 4
+    # Prove the boot imports resolve in a NEW process of the environment's
+    # Python, as the application will start. pywin32 (and anything else
+    # wired through a .pth file) only becomes importable in a fresh
+    # interpreter, so checking in this process failed every first open.
+    print("  checking   : ArchHub is finishing setup...")
+    unresolved = verify_imports(root)
+    if unresolved:
+        print("  REFUSED: ArchHub could not finish setup. Missing: %s"
+              % ", ".join(unresolved))
+        print("  send this window text to your ArchHub administrator.")
+        return 4
     print_host_installation_readiness(root)
     try:
         # As opened, not resolved: registration refuses a redirected install path.

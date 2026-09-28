@@ -16,6 +16,7 @@ from .baboom_companion_placement import (
     place_baboom_companion,
 )
 from .baboom_native_host import BaboomNativeSnapshot
+from .baboom_speech import compose_baboom_speech
 from .baboom_visual_assets import BaboomSpriteAtlas
 
 
@@ -61,63 +62,6 @@ def baboom_compact_message_size(message: str) -> tuple[int, int]:
         6 + lines * _COMPACT_MESSAGE_LINE_HEIGHT,
     )
     return (_COMPACT_MESSAGE_WIDTH, min(height, _COMPACT_MESSAGE_MAX_HEIGHT))
-
-
-def baboom_actionable_report_text(report: object) -> str:
-    """Format the released founder-local briefing without a second read path.
-
-    The frame validator has already established the report's strict schema and
-    revision. This is presentation only: it neither infers state from text nor
-    persists a local briefing.
-    """
-    if not isinstance(report, dict):
-        raise ValueError("BABOOM native report is invalid")
-    data = report.get("data")
-    if not isinstance(data, dict):
-        raise ValueError("BABOOM native report is invalid")
-    lens = data.get("context") if isinstance(data.get("context"), dict) else {}
-    work = data.get("governed_work")
-    workshop = data.get("workshop")
-    attention = data.get("attention")
-    if not (
-        isinstance(work, dict)
-        and isinstance(workshop, dict)
-        and isinstance(attention, dict)
-    ):
-        raise ValueError("BABOOM native report is invalid")
-    active = work.get("active")
-    entries = workshop.get("count")
-    blocked = attention.get("blocked_obligations")
-    if type(active) is not int or type(entries) is not int or type(blocked) is not int:
-        raise ValueError("BABOOM native report is invalid")
-    parts = [
-        f"Work: {active} active.",
-        f"Workshop: {entries} entries.",
-        f"Attention: {blocked} blocked.",
-    ]
-    items = work.get("items")
-    if isinstance(items, list) and items and isinstance(items[0], dict):
-        state = items[0].get("state")
-        title = items[0].get("title")
-        if isinstance(state, str) and isinstance(title, str) and title:
-            parts.append(f"Next {state}: {title}")
-    # What the founder asked the companion to tell him: who is working on
-    # what, whether the brain answers, which hosts are down. Absent keys
-    # (an older server) leave the report as it was.
-    agents = lens.get("agents") if isinstance(lens.get("agents"), dict) else {}
-    for row in (agents.get("working") or [])[:2]:
-        if isinstance(row, dict) and row.get("title"):
-            parts.append(f"{row.get('agent') or 'Agent'} on: {row['title']}")
-    brain = lens.get("brain") if isinstance(lens.get("brain"), dict) else {}
-    if brain.get("ok") is True:
-        parts.append(f"Brain: {int(brain.get('facts') or 0)} facts.")
-    elif brain.get("ok") is False:
-        parts.append("Brain: not answering.")
-    hosts = lens.get("hosts") if isinstance(lens.get("hosts"), dict) else {}
-    down = [str(name) for name in (hosts.get("down") or [])]
-    if down:
-        parts.append("Hosts down: " + ", ".join(down) + ".")
-    return " ".join(parts)
 
 
 def baboom_sprite_source(
@@ -178,12 +122,14 @@ def project_baboom_native_visual_frame(
     animation_tick: int = 0,
     sprite_size: tuple[int, int] = (144, 156),
     message_size: tuple[int, int] | None = None,
+    greeting_hour: int | None = None,
 ) -> BaboomNativeVisualFrame:
     """Build one compact, transparent, non-authoritative native render frame.
 
     ``animation_tick`` is supplied by the renderer's monotonic clock. It is not
     persisted and has no effect on graph meaning. A report is removed whenever
     the placement adapter cannot keep it clear of declared active-work bounds.
+    ``greeting_hour`` lets the renderer open with a time-of-day greeting.
     """
     if (
         type(snapshot) is not BaboomNativeSnapshot
@@ -216,7 +162,13 @@ def project_baboom_native_visual_frame(
     elif report_payload is None:
         raise ValueError("BABOOM actionable directive requires a report")
     else:
-        report = baboom_actionable_report_text(dict(report_payload))
+        data = dict(report_payload).get("data")
+        if not isinstance(data, dict):
+            raise ValueError("BABOOM native report is invalid")
+        # Sentences, never the old "Work: N active. Workshop: N entries."
+        # counter line the founder read as noise (2026-09-28). The graph's
+        # own directive sentence is reused where it names the chosen state.
+        report = compose_baboom_speech(data, directive, hour=greeting_hour)
     source = baboom_sprite_source(
         atlas, motion=motion, animation_tick=animation_tick
     )
@@ -262,7 +214,6 @@ def project_baboom_native_visual_frame(
 
 __all__ = [
     "BaboomNativeVisualFrame",
-    "baboom_actionable_report_text",
     "baboom_compact_message_size",
     "baboom_sprite_source",
     "project_baboom_native_visual_frame",

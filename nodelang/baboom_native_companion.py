@@ -37,6 +37,7 @@ from .baboom_native_voice import (
     BaboomVoiceError,
     BaboomVoiceInput,
 )
+from .baboom_speech import compose_baboom_speech, plain_count, plain_title
 from .baboom_visual_assets import BaboomSpriteAtlas
 
 
@@ -209,6 +210,12 @@ _BABOOM_ACT_PROGRESS = {
 }
 
 
+_WORK_STATE_SAID = {
+    "open": "ready to claim", "claimed": "in progress",
+    "blocked": "stuck", "review": "waiting for your review",
+}
+
+
 def compact_baboom_response_report(response: Mapping[str, object]) -> str:
     """Render the useful founder-safe detail from one graph command response.
 
@@ -224,62 +231,61 @@ def compact_baboom_response_report(response: Mapping[str, object]) -> str:
 
     kind = response.get("kind")
     report = fallback
+    # Sentences, not "Label: N." counters (founder, 2026-09-28).
     if kind == "workshop-report":
-        count = data.get("count")
         entries = data.get("entries")
-        if type(count) is int and isinstance(entries, list) and entries:
-            latest = entries[-1]
-            if isinstance(latest, Mapping):
-                entry_kind = latest.get("kind")
-                entry_text = latest.get("text")
-                if isinstance(entry_kind, str) and isinstance(entry_text, str):
-                    report = f"Workshop: {count} entries. {entry_kind}: {entry_text}"
+        if isinstance(entries, list) and entries and isinstance(entries[-1], Mapping):
+            entry_kind = entries[-1].get("kind")
+            entry_text = entries[-1].get("text")
+            if isinstance(entry_kind, str) and isinstance(entry_text, str):
+                text = " ".join(entry_text.split()).rstrip(" .")
+                if entries[-1].get("protected") or text.startswith("[") or not text:
+                    report = "The latest %s in the Workshop is protected." % entry_kind
+                else:
+                    report = "The latest %s in the Workshop reads: %s." % (entry_kind, text)
     elif kind == "governed-work-report":
         active = data.get("active")
         items = data.get("items")
-        if type(active) is int and isinstance(items, list) and items:
-            next_item = items[0]
-            if isinstance(next_item, Mapping):
-                state = next_item.get("state")
-                title = next_item.get("title")
-                model_state = next_item.get("model_state")
-                if isinstance(state, str) and isinstance(title, str):
-                    suffix = f"; model {model_state}" if isinstance(model_state, str) and model_state else ""
-                    report = f"Work: {active} active. {state}: {title}{suffix}"
-        elif type(active) is int:
-            report = f"Work: {active} active."
+        if type(active) is int:
+            report = "%s %s active." % (
+                plain_count(active, True), "job is" if active == 1 else "jobs are")
+            if isinstance(items, list) and items and isinstance(items[0], Mapping):
+                state = items[0].get("state")
+                title = plain_title(items[0].get("title"))
+                model_state = items[0].get("model_state")
+                if isinstance(state, str) and title:
+                    phrase = _WORK_STATE_SAID.get(state.casefold(), state)
+                    report += " The next one is %s: %s." % (phrase, title)
+                    if isinstance(model_state, str) and model_state:
+                        report += " Its model is %s." % model_state
     elif kind == "model-council-report":
         reviewed = data.get("reviewed_providers")
         admitted = data.get("admitted_providers")
         state = data.get("state")
         next_provider = data.get("next_provider")
         if isinstance(reviewed, list) and isinstance(admitted, list) and isinstance(state, str):
-            report = f"Council: {len(reviewed)}/{len(admitted)} reviewed; {state.replace('-', ' ')}."
+            report = "%s of %s models %s reviewed; %s." % (
+                plain_count(len(reviewed), True), plain_count(len(admitted)),
+                "has" if len(reviewed) == 1 else "have", state.replace("-", " "))
             if isinstance(next_provider, str) and next_provider:
-                report += f" Next: {next_provider}."
+                report += " %s is next." % (next_provider[:1].upper() + next_provider[1:])
     elif kind == "attention-briefing":
         focus = data.get("focus")
         blocked = data.get("blocked_obligations")
         if isinstance(focus, Mapping) and type(blocked) is int:
             label = focus.get("label")
             if isinstance(label, str):
-                report = f"Focus: {label}. {blocked} blocked attention item(s)."
+                said = ["Your focus is %s." % label.rstrip(" .")] if label.strip() else []
+                said.append(
+                    "%s %s your attention." % (
+                        plain_count(blocked, True), "hold needs" if blocked == 1 else "holds need")
+                    if blocked else "Nothing is on hold.")
+                report = " ".join(said)
     elif kind == "steward-briefing":
-        work = data.get("governed_work")
-        workshop = data.get("workshop")
-        attention = data.get("attention")
-        if isinstance(work, Mapping) and isinstance(workshop, Mapping) and isinstance(attention, Mapping):
-            active = work.get("active")
-            entries = workshop.get("count")
-            blocked = attention.get("blocked_obligations")
-            if type(active) is int and type(entries) is int and type(blocked) is int:
-                report = f"Work: {active} active. Workshop: {entries} entries. Attention: {blocked} blocked."
-                items = work.get("items")
-                if isinstance(items, list) and items and isinstance(items[0], Mapping):
-                    state = items[0].get("state")
-                    title = items[0].get("title")
-                    if isinstance(state, str) and isinstance(title, str):
-                        report += f" Next {state}: {title}."
+        try:
+            report = compose_baboom_speech(data)
+        except ValueError:
+            pass
 
     compact = " ".join(report.split())
     return compact if compact else "BABOOM has no report yet."
@@ -363,6 +369,16 @@ class BaboomNativeCompanionController:
             raise ValueError("BABOOM occupied bounds provider returned invalid data")
         return occupied
 
+    def _greeting_hour(self, directive) -> int | None:
+        """Greet once per session: on the first thing BABOOM says, until it changes."""
+        if not directive.get("action"):
+            return None
+        said = (directive.get("fingerprint"), directive.get("compact_message"))
+        greeted = getattr(self, "_greeted", None)
+        if greeted is None:
+            greeted = self._greeted = (said, time.localtime().tm_hour)
+        return greeted[1] if greeted[0] == said else None
+
     def next_frame(self, screen: Rect) -> BaboomNativeVisualFrame | None:
         """Project one host snapshot without polling, writing, or moving Work."""
         snapshot = self._host.latest_snapshot
@@ -381,12 +397,14 @@ class BaboomNativeCompanionController:
         # only a floating line of text was left). A silent host is said on
         # the face; the sprite stays.
         self.host_silent_seconds = max(0.0, time.time() - float(snapshot.frame_expires_at))
+        greeting_hour = self._greeting_hour(snapshot.directive)
         frame = project_baboom_native_visual_frame(
             snapshot,
             self._atlas,
             screen=screen,
             occupied=self._occupied_rectangles(),
             animation_tick=self._animation_tick,
+            greeting_hour=greeting_hour,
         )
         if self.host_silent_seconds > _FRAME_GRACE_SECONDS:
             frame = replace(frame, brain_state="unknown", action="", action_label="")
@@ -459,6 +477,7 @@ class BaboomNativeCompanionController:
             screen=screen,
             occupied=(),
             animation_tick=self._animation_tick,
+            greeting_hour=greeting_hour,
         )
         self._pinned_layout = settled.layout
         self._pinned_screen = screen
@@ -572,66 +591,65 @@ QMenu::right-arrow { width: 9px; height: 9px; margin-right: 9px; }
 """
 
 
+def _silence_said(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    span = "under a minute" if minutes < 1 else "%d minute%s" % (minutes, "" if minutes == 1 else "s")
+    return "I haven't heard from ArchHub in %s; live state is unavailable." % span
+
+
 def baboom_face_line(context: Mapping[str, object], foreground: tuple[str, str, str] | None) -> tuple[str, str | None]:
-    """One line of live graph state for BABOOM's face, and the offer it carries.
+    """A sentence or two of live graph state for BABOOM's face, and its offer.
 
     The founder said BABOOM did not show that it reflects the graph, and he
     was right: the state was there, in the snapshot, and only a right-click
     revealed it. This is what the companion says when nothing else is being
     said. It is built from the snapshot alone, never invented: a count that
-    is missing is left out, not made up.
+    is missing is left out, not made up. It speaks in whole sentences, not
+    dot-joined fragments (founder, 2026-09-28).
     """
     silent = context.get("host_silent_seconds") if isinstance(context, Mapping) else None
     if isinstance(silent, (int, float)) and silent > _FRAME_GRACE_SECONDS:
-        return ("host silent %dm; live state unavailable" % int(silent // 60), None)
-    parts: list[str] = []
-    # Priority order: what the founder is in front of, then the canvas, the
-    # brain, agents, the current work. The box holds two lines; lower parts
-    # are dropped before higher ones are cut mid-word (which is what the
-    # founder saw: "canvas 11/12 answered · brai").
-    canvas = context.get("canvas") if isinstance(context, Mapping) else None
+        # Never present an old count as live: the silence is all it says.
+        return (_silence_said(silent), None)
+    context = context if isinstance(context, Mapping) else {}
+    said: list[str] = []
+    offer = None
+    # Priority order: what the founder is in front of, then what is wrong,
+    # then who is working, then the canvas. The box holds two lines; lower
+    # sentences are dropped whole, never cut mid-word.
+    if foreground is not None:
+        label, engine, verb = foreground
+        said.append("%s is open \u2014 want me to %s?" % (label, verb[:1].lower() + verb[1:]))
+        offer = "run %s on the graph" % engine
+    brain = context.get("brain")
+    brain = brain if isinstance(brain, Mapping) else {}
+    if brain.get("ok") is False:
+        said.append("The brain is not answering.")
+    attention = context.get("attention")
+    blocked = attention.get("blocked_obligations") if isinstance(attention, Mapping) else None
+    blocked = len(blocked) if isinstance(blocked, (list, tuple)) else blocked
+    if type(blocked) is int and blocked > 0:
+        said.append("%s %s your attention." % (
+            plain_count(blocked, True), "hold needs" if blocked == 1 else "holds need"))
+    agents = context.get("agents")
+    working = agents.get("working") if isinstance(agents, Mapping) else None
+    if isinstance(working, (list, tuple)) and working:
+        said.append("%s %s working." % (
+            plain_count(len(working), True), "agent is" if len(working) == 1 else "agents are"))
+    canvas = context.get("canvas")
     if isinstance(canvas, Mapping) and isinstance(canvas.get("ran"), int):
         answered = canvas.get("answered")
         if isinstance(answered, int):
-            parts.append("canvas %d/%d answered" % (answered, canvas["ran"]))
+            said.append("%s of %s cards answered on the canvas." % (
+                plain_count(answered, True), plain_count(canvas["ran"])))
         else:
-            parts.append("canvas %d ran" % canvas["ran"])
-    brain = context.get("brain") if isinstance(context, Mapping) else None
-    if isinstance(brain, Mapping):
-        if brain.get("ok") and isinstance(brain.get("facts"), int):
-            parts.append("brain %d" % brain["facts"])
-        elif brain.get("ok") is False:
-            parts.append("brain silent")
-    agents = context.get("agents") if isinstance(context, Mapping) else None
-    working = agents.get("working") if isinstance(agents, Mapping) else None
-    if isinstance(working, (list, tuple)) and working:
-        parts.append("%d agent%s working" % (len(working), "" if len(working) == 1 else "s"))
-    work = context.get("work") if isinstance(context, Mapping) else None
-    if isinstance(work, Mapping) and isinstance(work.get("title"), str) and work["title"].strip():
-        parts.append("on: " + work["title"].strip()[:40])
-    attention = context.get("attention") if isinstance(context, Mapping) else None
-    blocked = attention.get("blocked_obligations") if isinstance(attention, Mapping) else None
-    if isinstance(blocked, (list, tuple)) and blocked:
-        parts.append("%d blocked" % len(blocked))
-    offer = None
-    if foreground is not None:
-        label, engine, verb = foreground
-        parts.insert(0, "%s is open: %s?" % (label, verb))
-        offer = "run %s on the graph" % engine
-    silent = context.get("host_silent_seconds") if isinstance(context, Mapping) else None
-    # The companion keeps drawing through a lapsed lease on purpose: hiding
-    # on every lapse read as "keeps appearing and disappearing" on the
-    # founder's desktop. What it must never do is present an hour-old count
-    # as live. The notice went LAST and the truncation below dropped it from
-    # exactly the busy faces that most needed it, so it goes FIRST and the
-    # other parts are what give way (2026-09-07).
-    stale = isinstance(silent, (int, float)) and silent >= 120
-    if stale:
-        parts.insert(0, "host silent %dm" % int(silent // 60))
-    line = " · ".join(parts) if parts else "No application state reported yet"
-    while len(line) > FACE_MAX_CHARS and len(parts) > 1:
-        parts.pop()
-        line = " · ".join(parts)
+            said.append("%s cards ran on the canvas." % plain_count(canvas["ran"], True))
+    if brain.get("ok") is True:
+        said.append("The brain is answering.")
+    line = " ".join(said) if said else "I'm watching the graph."
+    while len(line) > FACE_MAX_CHARS and len(said) > 1:
+        said.pop()
+        line = " ".join(said)
     return (line, offer)
 
 

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_the_face_is_built_from_the_snapshot_never_invented():
     line, offer = companion.baboom_face_line({}, None)
-    assert line == "watching the graph" and offer is None
+    assert line == "I'm watching the graph." and offer is None
     context = {
         "canvas": {"ran": 12, "answered": 9},
         "brain": {"ok": True, "facts": 2312},
@@ -28,30 +28,30 @@ def test_the_face_is_built_from_the_snapshot_never_invented():
         "attention": {"blocked_obligations": []},
     }
     line, offer = companion.baboom_face_line(context, None)
-    assert "canvas 9/12 answered" in line
-    assert "brain 2312" in line
-    assert "2 agents working" in line
+    assert "Nine of 12 cards answered on the canvas." in line
+    assert "Two agents are working." in line
+    assert "2312" not in line, "a brain-facts counter is noise, not news"
     assert "blocked" not in line and offer is None
     # The box holds two lines. Lower-priority parts are dropped whole rather
     # than cut mid-word: the founder saw "canvas 11/12 answered - brai".
     assert len(line) <= companion.FACE_MAX_CHARS, line
-    assert not line.endswith(("-", chr(183), " "))
+    assert line.endswith((".", "?")) and chr(183) not in line
 
     short = dict(context, work=None, agents={"working": []})
     line, _ = companion.baboom_face_line(short, None)
-    assert "canvas 9/12 answered" in line and "brain 2312" in line
+    assert line == "Nine of 12 cards answered on the canvas. The brain is answering."
     assert "agents working" not in line, "an idle fleet is not news"
 
 
 def test_a_silent_brain_and_blocked_work_are_said_plainly():
     line, _ = companion.baboom_face_line(
         {"brain": {"ok": False}, "attention": {"blocked_obligations": ["x", "y"]}}, None)
-    assert "brain silent" in line and "2 blocked" in line
+    assert line == "The brain is not answering. Two holds need your attention."
 
 
 def test_the_app_in_front_becomes_an_offer_the_graph_can_run():
     line, offer = companion.baboom_face_line({}, ("Revit", "revit.read", "read the walls"))
-    assert line.startswith("Revit is open: read the walls?"), (
+    assert line.startswith("Revit is open \u2014 want me to read the walls?"), (
         "the app in front is the most useful thing on the face: %s" % line)
     assert offer == "run revit.read on the graph"
     # every foreground host maps to an engine the app really has
@@ -111,17 +111,16 @@ def test_a_long_state_is_trimmed_not_cut_mid_word():
     }
     line, offer = companion.baboom_face_line(context, ("Revit", "revit.read", "read the walls"))
     assert len(line) <= companion.FACE_MAX_CHARS, "%d chars: %s" % (len(line), line)
-    assert line.startswith("Revit is open: read the walls?")
+    assert line.startswith("Revit is open \u2014 want me to read the walls?")
     assert offer == "run revit.read on the graph"
-    for part in line.split(" " + chr(183) + " "):
-        assert part.strip() == part and part, line
+    assert chr(183) not in line and line.endswith((".", "?")), line
 
 
 def test_a_silent_host_is_said_on_the_face_and_never_hides_the_companion():
     """It used to vanish after ten minutes of host silence, which the founder
     read as 'appears and disappears'. Presence first: say it, do not go."""
     line, _ = companion.baboom_face_line({"host_silent_seconds": 400.0}, None)
-    assert "host silent 6m" in line
+    assert line == "I haven't heard from ArchHub in 6 minutes; live state is unavailable."
     src = inspect.getsource(companion)
     frame = src[src.index("def next_frame"):src.index("def next_sprite_source")] if "def next_sprite_source" in src else src[src.index("def next_frame"):]
     assert "_FRAME_SILENCE_SECONDS" not in frame, "a stale lease must not hide the sprite"

@@ -67,7 +67,7 @@ def test_native_companion_compacts_founder_safe_graph_detail_without_a_second_st
         },
     })
 
-    assert report == "Council: 2/5 reviewed; peer review in progress. Next: gemini."
+    assert report == "Two of five models have reviewed; peer review in progress. Gemini is next."
 
 
 class _Transport:
@@ -577,7 +577,7 @@ def test_native_companion_says_it_is_stale_rather_than_lie(tmp_path):
     quiet, _offer = baboom_face_line(
         {"host_silent_seconds": controller.host_silent_seconds}, None
     )
-    assert "host silent 60m" in quiet
+    assert "haven't heard from ArchHub in 60 minutes" in quiet
     crowded_context = {
         "host_silent_seconds": controller.host_silent_seconds,
         "work": {"open": 9, "blocked": 4, "review": 7},
@@ -586,6 +586,6 @@ def test_native_companion_says_it_is_stale_rather_than_lie(tmp_path):
     }
     crowded, _ = baboom_face_line(crowded_context, None)
     assert len(crowded) <= FACE_MAX_CHARS
-    assert "host silent" in crowded, (
+    assert "haven't heard" in crowded, (
         "a busy face dropped the staleness notice: %r" % crowded
     )

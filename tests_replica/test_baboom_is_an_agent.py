@@ -71,7 +71,7 @@ def test_the_lens_names_agents_brain_and_hosts():
 
 
 def test_the_report_names_agents_brain_and_hosts():
-    from nodelang.baboom_native_visual import baboom_actionable_report_text
+    from nodelang.baboom_speech import compose_baboom_speech
     report = {"data": {
         "governed_work": {"active": 1, "items": [{"state": "claimed", "title": "Wire BABOOM"}]},
         "workshop": {"count": 0},
@@ -82,15 +82,17 @@ def test_the_report_names_agents_brain_and_hosts():
             "hosts": {"down": ["revit"]},
         },
     }}
-    text = baboom_actionable_report_text(report)
-    assert "claude on: Wire BABOOM" in text
-    assert "Brain: 2298 facts." in text
-    assert "Hosts down: revit." in text
-    dead = {"data": {**report["data"], "context": {"brain": {"ok": False, "facts": 0}}}}
-    assert "Brain: not answering." in baboom_actionable_report_text(dead)
-    # An older server without a lens leaves the report exactly as it was.
-    bare = {"data": {k: v for k, v in report["data"].items() if k != "context"}}
-    assert baboom_actionable_report_text(bare) == "Work: 1 active. Workshop: 0 entries. Attention: 0 blocked. Next claimed: Wire BABOOM"
+    # Sentences, not counters (founder, 2026-09-28): the host that is down
+    # leads with its offer; the agent is named when nothing else waits.
+    text = compose_baboom_speech(report["data"])
+    assert text == "One job is running and nothing is stuck. Revit is offline \u2014 want me to check it?"
+    up = {**report["data"], "context": {**report["data"]["context"], "hosts": {"down": []}}}
+    assert compose_baboom_speech(up).endswith("Claude is working on: wire BABOOM.")
+    dead = {**report["data"], "context": {"brain": {"ok": False, "facts": 0}}}
+    assert "The brain is not answering" in compose_baboom_speech(dead)
+    # An older server without a lens still gets a sentence.
+    bare = {k: v for k, v in report["data"].items() if k != "context"}
+    assert compose_baboom_speech(bare) == "One job is running and nothing is stuck."
 
 
 def test_the_launcher_retries_attach_under_its_own_id():

@@ -126,7 +126,9 @@ def test_native_visual_expands_a_simple_box_for_a_long_graph_report():
     assert (frame.layout.message.width, frame.layout.message.height) == (
         baboom_compact_message_size(frame.report)
     )
-    assert frame.layout.message.height > 64
+    # The composer keeps the bubble short; the box geometry itself still
+    # grows for a long text, so nothing it is handed can be clipped.
+    assert baboom_compact_message_size(message)[1] > 64
 
 
 def test_native_visual_frame_uses_one_same_revision_actionable_report():
@@ -135,8 +137,8 @@ def test_native_visual_frame_uses_one_same_revision_actionable_report():
     )
 
     assert frame.report == (
-        "Work: 1 active. Workshop: 2 entries. Attention: 0 blocked. "
-        "Next review: Review the native-frame contract"
+        "One job is running and nothing is stuck. "
+        "One job is waiting for your review \u2014 want to open it?"
     )
     assert frame.layout.message is not None
 

@@ -15,15 +15,18 @@ from .native_workshop_tools import WORKSHOP_TASK_TOOL_NAMES
 
 
 class OpenCodeWorkshopTools:
+    TOOL = 'archhub_work'
+    OPERATIONS = WORKSHOP_TASK_TOOL_NAMES
+
     def __init__(self, owner, selected_work):
         self.owner = owner
         self.server = attach_workshop_tools(owner, selected_work)
         self.calls = {}
 
-    @staticmethod
-    def _arguments(value):
+    @classmethod
+    def _arguments(cls, value):
         if (type(value) is not dict or set(value) != {'operation', 'arguments'}
-                or value['operation'] not in WORKSHOP_TASK_TOOL_NAMES
+                or value['operation'] not in cls.OPERATIONS
                 or type(value['arguments']) is not dict):
             raise ValueError('Unsupported selected-Work operation or arguments')
         encoded = json.dumps(value, allow_nan=False, ensure_ascii=False)
@@ -34,7 +37,7 @@ class OpenCodeWorkshopTools:
     def dispatch(self, event):
         if (event.get('vendor') != 'opencode'
                 or event.get('session_id') != self.owner._identity.external_session_id
-                or event.get('tool_name') != 'archhub_work'):
+                or event.get('tool_name') != self.TOOL):
             raise ValueError('Selected-Work native identity mismatch')
         call = event.get('tool_use_id')
         if type(call) is not str or not call or len(call) > 256:

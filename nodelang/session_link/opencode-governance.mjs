@@ -8,6 +8,9 @@ const notDelivered = reason => {throw new NativeNotDelivered('ArchHub OpenCode g
 const object = value => value && typeof value==='object' && !Array.isArray(value);
 const readTools = new Set(['read','glob','grep','list','skill']);
 const shellTools = new Set(['bash','powershell']);
+// Tools the native owner itself executes for this exact session: selected Work,
+// and messages to other agents under the owner's own coordination identity.
+const nativeTools = new Set(['archhub_work','archhub_message']);
 // Only these tools' effects are fully accounted by the owner's permit/receipt
 // ledger (reads have none; write/edit hold a permit until receipted).
 const ledgerTools = new Set([...readTools,'write','edit']);
@@ -216,8 +219,8 @@ function normalized(tool,args) {
  if(tool==='skill'&&(Object.keys(args).length!==1||typeof args.name!=='string'||!args.name.trim()||args.name.length>256))fail('native skill arguments unavailable');
  if(tool==='write')return {tool_name:'Write',tool_input:{file_path:args.filePath,content:args.content}};
  if(tool==='edit')return {tool_name:'Edit',tool_input:{file_path:args.filePath,old_string:args.oldString,new_string:args.newString,replace_all:args.replaceAll===true}};
- if(tool==='archhub_work'){
-  if(Object.keys(args).sort().join(',')!=='arguments,operation'||typeof args.operation!=='string'||!object(args.arguments))fail('selected Work arguments unavailable');
+ if(nativeTools.has(tool)){
+  if(Object.keys(args).sort().join(',')!=='arguments,operation'||typeof args.operation!=='string'||!object(args.arguments))fail((tool==='archhub_work'?'selected Work':'agent message')+' arguments unavailable');
   return {tool_name:tool,tool_input:args};
  }
  if(readTools.has(tool))return {tool_name:tool,tool_input:args};
@@ -241,22 +244,33 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
       typeof input.callID!=='string'||!input.callID||input.callID.length>256)fail('native session/call identity unavailable');
    return input.sessionID+'\0'+input.callID;
   };
+  // One execution path for every owner-executed tool: the call must match an
+  // admission this session's before-hook recorded; lost output is never replayed.
+  const nativeExecute=(tool,label)=>async(args,context)=>{
+   const record=[...pending.values()].find(p=>p.session===context.sessionID&&p.stamp===args._archhub_call);
+   const {_archhub_call,...original}=args;
+   if(!record||record.tool!==tool||record.state!=='admitted'||record.args!==stringify(original)||context.directory!==directory)fail(label+' execution has no matching native admission');
+   record.state='executing';
+   try{
+    const result=await invoke({...record.event,hook_event_name:'NativeToolExecute'});
+    if(!result.allow||typeof result.toolOutput!=='string')fail(label+' output unavailable; reconcile before retry');
+    record.state='executed';return result.toolOutput;
+   }catch(error){record.state='uncertain';throw error;}
+  };
+  const nativeArgs=()=>({operation:workToolFactory.schema.string(),arguments:workToolFactory.schema.object({}).passthrough(),_archhub_call:workToolFactory.schema.string().optional()});
   return {
-   ...(workToolFactory?{tool:{archhub_work:workToolFactory({
-    description:'Use this native session’s configured Workshop task. Attachment does not grant execution or file permission.',
-    args:{operation:workToolFactory.schema.string(),arguments:workToolFactory.schema.object({}).passthrough(),_archhub_call:workToolFactory.schema.string().optional()},
-    execute:async(args,context)=>{
-     const record=[...pending.values()].find(p=>p.session===context.sessionID&&p.stamp===args._archhub_call);
-     const {_archhub_call,...original}=args;
-     if(!record||record.tool!=='archhub_work'||record.state!=='admitted'||record.args!==stringify(original)||context.directory!==directory)fail('selected Work execution has no matching native admission');
-     record.state='executing';
-     try{
-      const result=await invoke({...record.event,hook_event_name:'NativeToolExecute'});
-      if(!result.allow||typeof result.toolOutput!=='string')fail('selected Work output unavailable; reconcile before retry');
-      record.state='executed';return result.toolOutput;
-     }catch(error){record.state='uncertain';throw error;}
-    },
-   })}}:{}),
+   ...(workToolFactory?{tool:{
+    archhub_work:workToolFactory({
+     description:'Use this native session’s configured Workshop task. Attachment does not grant execution or file permission.',
+     args:nativeArgs(),execute:nativeExecute('archhub_work','selected Work'),
+    }),
+    // OpenCode starts MCP servers once per app, so a coordination MCP there has no
+    // session identity. Messages go through this session's own native owner instead.
+    archhub_message:workToolFactory({
+     description:'Message other ArchHub agents as this OpenCode session. operation is one of coordination.list_agents, coordination.send_message (target, message, idempotency_key, reply_to?), coordination.read_messages (limit?, before?), coordination.read_message (message_id, sequence), coordination.acknowledge_message (message_id, sequence, idempotency_key); arguments holds its fields. A lost reply is never resent.',
+     args:nativeArgs(),execute:nativeExecute('archhub_message','agent message'),
+    }),
+   }}:{}),
    dispose:async()=>{if(pending.size)fail('native receipts remain unresolved');await invoke.close?.();},
    'tool.execute.before':async(input,output)=>{
     const key=identity(input);
@@ -297,19 +311,19 @@ export function createOpenCodeGovernance({gateCommand,gateArgs,gateRunner,expect
     if(!result.allow){pending.delete(key);fail(result.notDelivered?'native owner released before admission; tool not delivered':
      'prewrite admission denied'+(typeof result.reason==='string'?': '+result.reason:''));}
     record.state='admitted';
-    if(input.tool==='archhub_work'){
+    if(nativeTools.has(input.tool)){
      record.stamp=randomUUID();output.args._archhub_call=record.stamp;
     }
    },
    'tool.execute.after':async(input,_output)=>{
     const key=identity(input),record=pending.get(key);
     const supplied={...input.args};
-    if(record?.tool==='archhub_work'){
-     if(supplied._archhub_call!==record.stamp)fail('selected Work receipt stamp differs');
+    if(nativeTools.has(record?.tool)){
+     if(supplied._archhub_call!==record.stamp)fail((record.tool==='archhub_work'?'selected Work':'agent message')+' receipt stamp differs');
      delete supplied._archhub_call;
     }
-    const skipped=input.tool==='archhub_work'&&record?.state==='admitted';
-    if(!record||(!skipped&&record.state!==(input.tool==='archhub_work'?'executed':'admitted'))||record.tool!==input.tool||record.args!==stringify(supplied)||record.event.cwd!==directory)fail('postwrite identity or arguments differ');
+    const skipped=nativeTools.has(input.tool)&&record?.state==='admitted';
+    if(!record||(!skipped&&record.state!==(nativeTools.has(input.tool)?'executed':'admitted'))||record.tool!==input.tool||record.args!==stringify(supplied)||record.event.cwd!==directory)fail('postwrite identity or arguments differ');
     record.state='settling';
     record.event={...record.event,hook_event_name:'PostToolUse'};
     let result;

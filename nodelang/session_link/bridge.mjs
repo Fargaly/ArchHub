@@ -4,7 +4,7 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {stateDir} from './paths.mjs';
+import {stateDir,readMessage} from './paths.mjs';
 import {PeerEndpoint,listClaudeSessions} from './vendor/src/peer-protocol.mjs';
 import {nativeCall,hasAttachment,attachmentCall} from './native.mjs';
 import {discoverExtra,sendExtra} from './extra-apps.mjs';
@@ -313,8 +313,8 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
    const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Exact connection ID required');
    result=await rpc(matches[0],{operation:'delivery',messageId:argv[2]});
  }
- else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?fs.readFileSync(option('file'),'utf8'):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
- else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE','answer REQUEST_ID --file UTF8_FILE','status','send CONNECTION_ID --file UTF8_FILE','reply CONNECTION_ID --file UTF8_FILE','disconnect CONNECTION_ID','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
+ else if(cmd==='send'||cmd==='reply'||cmd==='disconnect'){const model=modelFromArgs(argv);if(model&&cmd!=='send')throw new Error('Only send can select a model');const matches=configs().filter(c=>c.id===argv[1]);if(matches.length!==1)throw new Error('Use exact connection ID from status');result=await rpc(matches[0],{operation:model?'send-model':cmd,...(model?{model}:{}),text:cmd==='send'||cmd==='reply'?readMessage(argv):undefined,...(cmd==='send'&&option('permission-mode')?{permissionMode:option('permission-mode')}:{} )});}
+ else result={commands:['list','connect --claude|--opencode|--antigravity|--antigravity-ide "title or ID" --codex "title or ID"','ask --app APP --session "title or ID" --file UTF8_FILE|--stdin','answer REQUEST_ID --file UTF8_FILE|--stdin','status','send CONNECTION_ID --file UTF8_FILE|--stdin','reply CONNECTION_ID --file UTF8_FILE|--stdin','disconnect CONNECTION_ID','reconnect --claude ID --codex ID'],apps:['claude','codex','opencode','antigravity','antigravity-ide'],note:'Use session-link.ps1 for ask/answer. Any shell-capable agent can initiate ask and receive its reply. This does not wake arbitrary idle terminals. Check adapterStatus and verify a real reply. Recipient permissions remain active.'};
  if(result!==undefined)console.log(JSON.stringify(result,null,2));
 }catch(e){console.error(e.message);process.exitCode=1;}
 

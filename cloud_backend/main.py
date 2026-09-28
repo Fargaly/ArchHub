@@ -2263,6 +2263,7 @@ def billing_credits_landing() -> HTMLResponse:
 # ── The founder's brain, over MCP, from any machine ──────────────────────
 import json as json_module  # noqa: E402  (this module has no top-level json)
 import brain_mcp  # noqa: E402  (module-local import style of this file)
+from starlette.concurrency import run_in_threadpool  # noqa: E402
 
 
 @app.post("/mcp")
@@ -2297,9 +2298,26 @@ async def brain_over_mcp(req: Request,
             }).encode("utf-8"),
             media_type="application/json",
         )
-    status, body, media = brain_mcp.answer(
+    # In a worker thread: a live host read waits for the founder's app (up to
+    # COCKPIT_APP_RELAY_WAIT_S), and that wait must not hold the event loop.
+    status, body, media = await run_in_threadpool(
+        brain_mcp.answer,
         message,
         resolve_user=lambda: _require_user(authorization),
         open_replica=_brain_read_replica,
+        is_founder=_is_founder_account,
+        host_read=_desktop_host_read,
+        pushed_hosts=founder_cockpit.pushed_hosts,
     )
     return Response(status_code=status, content=body, media_type=media)
+
+
+def _is_founder_account(user: dict) -> bool:
+    return (user.get("email") or "").strip().lower() in config.founder_emails()
+
+
+def _desktop_host_read(user: dict, tool: str, arguments: dict) -> object:
+    """Queue one read for the founder's running application and wait for it."""
+    import app_relay
+    return app_relay.host_read(tool, arguments,
+                               actor=(user.get("email") or "").strip().lower())

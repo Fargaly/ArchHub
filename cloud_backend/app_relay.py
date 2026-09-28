@@ -4,18 +4,21 @@ The cockpit is the map and the map is the graph, and the graph lives in the
 founder's application on his machine. A question about the graph, the agents,
 the hosts, the brain or BABOOM is answered by THAT application, never invented
 by the cloud. The cloud only queues the instruction as an agent task (kind
-``app`` to ask, ``app-execute`` to act) and waits for the application's relay
-thread to claim it and post the answer.
+``app`` to ask, ``app-execute`` to act, ``host-read`` for one read of a host
+tool) and waits for the application's relay thread to claim it and post the
+answer.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Optional
 
 import db
 
-APP_KINDS = ("app", "app-execute")
+HOST_READ = "host-read"
+APP_KINDS = ("app", "app-execute", HOST_READ)
 
 
 def default_wait_seconds() -> float:
@@ -68,3 +71,36 @@ def relay(text: str, *, actor: str, execute: bool = False,
                         "yet. Is ArchHub open and signed in on your machine? "
                         "The answer lands under Agent tasks when it does."
                         % task["id"])}
+
+
+class DeviceOffline(RuntimeError):
+    """No running, signed-in ArchHub app took the read in time."""
+
+
+def host_read(tool: str, arguments: dict, *, actor: str,
+              wait_s: Optional[float] = None) -> object:
+    """One read of the founder's desktop, answered by his running application.
+
+    The cloud carries only {tool, args}; the application runs its own local
+    read function (nodelang/cloud_relay.py host_read, an allowlist) and posts
+    the JSON back. Nothing is invented here: an application that never claims
+    the read is reported offline, and the unclaimed row is closed so a device
+    that comes back later never runs a read its caller already gave up on.
+    """
+    directive = json.dumps({"tool": str(tool), "args": dict(arguments or {})},
+                           sort_keys=True, separators=(",", ":"))
+    task = db.enqueue_agent_task(directive=directive, created_by=actor, kind=HOST_READ)
+    row = wait_for(task["id"], wait_s=wait_s) or task
+    status = str(row.get("status") or "queued")
+    result = str(row.get("result") or "")
+    if status == "done":
+        try:
+            return json.loads(result)
+        except ValueError:
+            raise RuntimeError("your ArchHub app answered with unreadable data") from None
+    if status == "failed":
+        raise RuntimeError("your ArchHub app refused: " + (result or "no reason given"))
+    if db.expire_agent_task(task["id"], "device_offline: no running ArchHub app claimed this read"):
+        raise DeviceOffline("device_offline: ArchHub is not open and signed in on your "
+                            "desktop, so nothing was read")
+    raise TimeoutError("your ArchHub app took this read but has not answered yet")

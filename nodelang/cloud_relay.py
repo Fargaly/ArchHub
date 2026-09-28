@@ -4,8 +4,10 @@ The cockpit (api.archhub.io/founder) is the map, the map is the graph, and the
 graph lives here, in the running application. When the founder types into the
 cockpit's ask bar the cloud queues his instruction; this relay claims it, puts
 it to BABOOM exactly as if he had typed it into the companion, and posts
-BABOOM's answer back. It also re-publishes the live map projection so the
-cockpit keeps showing what the application actually holds.
+BABOOM's answer back. A remote host read (kind host-read, from the cloud's
+/mcp) is answered by this machine's own allowlisted read function instead,
+never BABOOM. It also re-publishes the live map projection so the cockpit
+keeps showing what the application actually holds.
 
 Nothing runs without the founder's cloud session (cloud.json token) and his
 recorded cloud-publish consent; without both the relay is inert.
@@ -29,7 +31,22 @@ DEFAULT_BASE = "https://api.archhub.io"
 # by anyone at the machine, so a base it names outside these is ignored and the
 # one address is used. Every cloud reader goes through pinned_cloud_base().
 PINNED_BASES = ("https://api.archhub.io", "https://archhub-cloud.fly.dev")
-APP_KINDS = ("app", "app-execute")
+HOST_READ = "host-read"
+APP_KINDS = ("app", "app-execute", HOST_READ)
+# What a remote host read may run: the SAME local read functions the host
+# tools use, and nothing that executes, captures or sends. Anything else is
+# refused before a host is touched.
+HOST_READ_TOOLS = frozenset({
+    "hosts.status", "revit.sessions", "connector.rows",
+    "office.read", "outlook.inbox", "dropbox.list",
+})
+OFFICE_READS = frozenset({
+    "excel.list_workbooks", "excel.list_worksheets", "word.list_documents",
+    "word.list_paragraphs", "powerpoint.list_presentations", "powerpoint.list_slides",
+})
+# agent_tasks.result holds 8000 characters; a longer answer becomes a labelled
+# head rather than JSON cut in half.
+RESULT_LIMIT = 7900
 OFFER_KEYS = ("revision", "sha256", "availability", "pricing_visible", "public_label")
 
 
@@ -174,6 +191,54 @@ def render_answer(result: Mapping[str, object]) -> str:
     return text or (kind or "no answer")
 
 
+def host_read(tool: object, arguments: object) -> object:
+    """Answer one remote read with this machine's own read function.
+
+    The cloud sends only {tool, args}. The tool must be on HOST_READ_TOOLS and
+    only the arguments that tool reads are passed on; the rest are dropped.
+    Never BABOOM, never an effect.
+    """
+    if tool not in HOST_READ_TOOLS:
+        raise PermissionError("not a remote read: %r" % (tool,))
+    args = arguments if isinstance(arguments, Mapping) else {}
+    if tool == "hosts.status":
+        from .connector_operation_evidence import host_projection
+        return host_projection()
+    if tool == "revit.sessions":
+        from .clean_revit_adapter import live_sessions
+        return {"ok": True, "sessions": live_sessions()}
+    params: dict[str, object] = {}
+    if tool == "office.read":
+        operation = args.get("operation") or "excel.list_workbooks"
+        if operation not in OFFICE_READS:
+            raise PermissionError("not an office read: %r" % (operation,))
+        params["operation"] = operation
+        if isinstance(args.get("name"), str) and args["name"].strip():
+            params["name"] = args["name"][:200]
+    elif tool == "outlook.inbox":
+        count = args.get("count")
+        params.update(transport="classic",
+                      count=max(1, min(count, 50)) if type(count) is int else 20)
+    elif tool == "dropbox.list":
+        path = args.get("path")
+        params["path"] = path[:300] if isinstance(path, str) else ""
+    from .host_brokers import ENGINES
+    out, label = ENGINES[str(tool)](params, {})
+    answer = dict(out) if isinstance(out, Mapping) else {"out": out}
+    answer.setdefault("ok", True)
+    answer["label"] = str(label)
+    return answer
+
+
+def bounded_json(value: object, limit: int = RESULT_LIMIT) -> str:
+    """The answer as JSON that fits one task row, or a labelled head of it."""
+    text = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+    if len(text) <= limit:
+        return text
+    return json.dumps({"ok": True, "truncated": True, "chars": len(text),
+                       "head": text[: limit // 2 - 200]}, ensure_ascii=False)
+
+
 class CloudRelay:
     """Claim cockpit instructions, answer them through BABOOM, post the answer."""
 
@@ -195,8 +260,11 @@ class CloudRelay:
         session_loader: Optional[Callable[[], Optional[Mapping[str, str]]]] = None,
         session_path: Optional[Path] = None,
         consent: Optional[Callable[[], bool]] = None,
+        host_reader: Optional[Callable[[object, object], object]] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
+        # A remote read runs this: host_read, unless a caller supplies its own.
+        self.host_reader = host_reader or host_read
         self.token = str(token)
         self.respond = respond
         self.execute = execute
@@ -279,6 +347,8 @@ class CloudRelay:
         task = claimed.get("task")
         if not isinstance(task, Mapping) or not task.get("id"):
             return None
+        if task.get("kind") == HOST_READ:
+            return self._answer_host_read(task)
         utterance = str(task.get("directive") or "").strip()
         execute = task.get("kind") == "app-execute"
         handled = None
@@ -304,6 +374,19 @@ class CloudRelay:
                 self.push_map(force=True)
             except Exception as exc:
                 self.last_error = "%s: %s" % (type(exc).__name__, exc)
+        return {"task": str(task["id"]), "ok": ok, "result": text}
+
+    def _answer_host_read(self, task: Mapping[str, object]) -> dict:
+        """A remote read: this machine's allowlisted read function, never BABOOM."""
+        try:
+            request = json.loads(str(task.get("directive") or ""))
+            if not isinstance(request, Mapping):
+                raise ValueError("a host read is {tool, args}")
+            ok, text = True, bounded_json(self.host_reader(request.get("tool"), request.get("args")))
+        except Exception as exc:  # the refusal IS the answer; never a silent drop
+            ok, text = False, "%s: %s" % (type(exc).__name__, exc)
+        self._call(RESULT_PATH % str(task["id"]), {"ok": ok, "result": text[:8000]})
+        self.answered += 1
         return {"task": str(task["id"]), "ok": ok, "result": text}
 
     def push_map(self, *, force: bool = False, min_interval: float = 60.0) -> Optional[dict]:
@@ -400,6 +483,12 @@ class CloudRelay:
             model["control"] = control
             if offer is not None:
                 model["offer"] = offer
+            # The cockpit's Wire panel draws the engine's one list; the cloud keeps no copy.
+            try:
+                from .universal_pipeline import wire_parameter_specs
+                model["wire_params"] = wire_parameter_specs()
+            except Exception:
+                pass
             return json.dumps(model, separators=(",", ":"))
         return body
 
@@ -507,7 +596,7 @@ def start_cloud_relay(
 __all__ = [
     "CloudRelay", "PINNED_BASES", "load_cloud_session", "pinned_cloud_base",
     "published_models_form", "published_offer_form",
-    "render_answer",
+    "render_answer", "host_read", "bounded_json", "HOST_READ_TOOLS",
     "start_cloud_relay",
     "CLAIM_PATH", "RESULT_PATH", "MAP_PATH",
 ]

@@ -6,9 +6,9 @@ rebuilt is a fix the founder never sees.
 
 What they hold to:
 
-  (1) A wire is a node, so it has parameters, and they come from the SHARED type
-      registry: one definition of what a connection means, read by the cockpit
-      and by the inspector in the app.
+  (1) A wire is a node, so it has parameters, and they come from ONE list, the
+      engine's (universal_pipeline.WIRE_PARAMETER_SPECS), served to the cockpit
+      and to the inspector in the app.
   (2) A node parameter draws the typed socket glyph on a 34px row, the shape the
       design specifies, not the old bordered card.
   (3) Nothing fabricates a run: no random duration, no random failure, no canned
@@ -23,6 +23,7 @@ Run: python -m pytest cloud_backend/tests/test_cockpit_tells_the_truth.py -q
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -66,21 +67,28 @@ def registry() -> str:
 
 # -- 1. a wire is a node: it has parameters, from the shared registry ----------
 
-def test_wire_parameters_are_published_on_the_shared_registry(panels: str, registry: str) -> None:
-    """The six connection parameters exist once, in param-types.jsx, for both graphs."""
+def test_wire_parameters_are_served_from_the_one_engine_list(panels: str, registry: str) -> None:
+    """The connection parameters live once, in the engine (WIRE_PARAMETER_SPECS). The
+    cockpit bundles hold no copy; map-data.js sets window.WIRE_PARAMS from the list the
+    founder's application pushed beside its map."""
     assert "window.WIRE_PARAMS" in panels
-    for key in ("enabled", "lacing", "tree", "condition", "on_fail", "throttle_ms"):
-        assert "'%s'" % key in registry, "wire parameter %s is missing" % key
-    for label in ("Lacing", "Data tree", "On block", "Throttle"):
-        assert label in registry, "wire parameter label %s is missing" % label
+    assert "const WIRE_PARAMS = [" not in registry and "'Data tree'" not in registry
+    import founder_cockpit
+    rows = [{"k": "tree", "label": "Data tree", "type": "menu", "def": "none",
+             "opts": ["none", "flatten", "graft", "simplify"]}]
+    served = founder_cockpit._wire_params_script(
+        ('{"nodes": [], "wire_params": %s}' % json.dumps(rows)).encode("utf-8")).decode("utf-8")
+    assert served.startswith("window.WIRE_PARAMS = " + json.dumps(rows) + ";")
+    assert 'window.WIRE_PARAMS_ERROR = "";' in served
 
 
-def test_wire_parameter_options_are_the_engine_vocabulary(registry: str) -> None:
-    """Dynamo lacing and Grasshopper tree ops, spelled as the design spells them."""
-    for option in ("shortest", "longest", "cross product",
-                   "flatten", "graft", "simplify",
-                   "pass last", "pass empty"):
-        assert "'%s'" % option in registry, "option %s is missing" % option
+def test_a_missing_wire_list_says_why() -> None:
+    """No push, or a push without the list: the panel is told why, never shown no rows."""
+    import founder_cockpit
+    for body in (None, b'{"nodes": []}'):
+        served = founder_cockpit._wire_params_script(body).decode("utf-8")
+        assert "window.WIRE_PARAMS = [];" in served
+        assert 'window.WIRE_PARAMS_ERROR = "";' not in served
 
 
 def test_the_wire_inspector_reads_the_registry_not_a_local_copy(panels: str) -> None:

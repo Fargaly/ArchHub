@@ -801,8 +801,11 @@ def api_agent_task_claim(body: Optional[AgentTaskClaimReq] = None,
     import app_relay
     body = body or AgentTaskClaimReq()
     kinds = tuple(k for k in body.kinds if k in app_relay.APP_KINDS) or app_relay.APP_KINDS
+    # Only what the founder's own accounts queued reaches his desktop: the
+    # claim used to take the oldest task of ANY account (review 2026-09-28).
     task = db.claim_next_agent_task(
-        claimed_by=str(body.claimed_by or "archhub-app")[:120], kinds=kinds)
+        claimed_by=str(body.claimed_by or "archhub-app")[:120], kinds=kinds,
+        creators=config.founder_emails())
     return JSONResponse({"ok": True, "task": task})
 
 
@@ -893,6 +896,50 @@ _ASSET_SUFFIXES = frozenset({"js", "jsx", "html", "css", "json", "png", "svg", "
 _MAP_STATE = Path(config.DATA_DIR) / "founder-map.json"
 
 
+def _pushed_model(body: Optional[bytes]) -> Optional[dict]:
+    try:
+        model = json.loads(body.decode("utf-8")) if body is not None else None
+    except Exception:
+        return None
+    return model if isinstance(model, dict) else None
+
+
+def _wire_params_script(body: Optional[bytes]) -> bytes:
+    """window.WIRE_PARAMS for the Wire panel, from the rows the application pushed.
+
+    The one list is the engine's (universal_pipeline.WIRE_PARAMETER_SPECS); the
+    desktop publishes it beside its map (cloud_relay._with_control), so the cloud
+    keeps no copy. Without it the panel says why instead of drawing no rows.
+    """
+    model = _pushed_model(body)
+    rows = model.get("wire_params") if model is not None else None
+    if isinstance(rows, list) and rows and all(
+            isinstance(row, dict) and isinstance(row.get("k"), str) for row in rows):
+        served, error = rows, ""
+    elif body is None:
+        served, error = [], "your ArchHub app has not published its map yet"
+    else:
+        served, error = [], "your ArchHub app has not published its wire parameters yet"
+    return (b"window.WIRE_PARAMS = " + json.dumps(served).encode("utf-8")
+            + b"; window.WIRE_PARAMS_ERROR = " + json.dumps(error).encode("utf-8") + b";")
+
+
+def pushed_hosts() -> dict:
+    """The hosts the founder's application last published, and how old that is.
+
+    hosts.state over MCP answers from here without waking the desktop; the live
+    read is hosts.status. A snapshot of unknown age is never called live.
+    """
+    model = _pushed_model(_MAP_STATE.read_bytes()) if _MAP_STATE.is_file() else None
+    control = model.get("control") if model is not None else None
+    hosts = control.get("hosts") if isinstance(control, dict) else None
+    if not isinstance(hosts, list):
+        return {"ok": False, "hosts": [], "pushed_at": config.map_pushed_at(), "live": False,
+                "reason": "your ArchHub app has not published its hosts yet"}
+    return {"ok": True, "hosts": hosts[:40], "pushed_at": config.map_pushed_at(),
+            "live": config.map_is_fresh()}
+
+
 @router.post("/map-state")
 async def cockpit_map_state(request: Request,
                             _founder: dict = Depends(require_founder)):
@@ -942,12 +989,14 @@ def cockpit_asset(asset: str,
             # it holds only while the push is recent. An old or unknown-age
             # map is still served - it is the real graph - but it is never
             # labelled live.
+            body = _MAP_STATE.read_bytes()
             return Response(
-                b"window.ATLAS_MAP = " + _MAP_STATE.read_bytes()
+                b"window.ATLAS_MAP = " + body
                 + b"; window.ATLAS_MAP_PUSHED_AT = "
                 + json.dumps(config.map_pushed_at()).encode("utf-8")
                 + b"; window.ATLAS_LIVE = "
-                + (b"true" if config.map_is_fresh() else b"false") + b";",
+                + (b"true" if config.map_is_fresh() else b"false") + b"; "
+                + _wire_params_script(body),
                 media_type="text/javascript; charset=utf-8",
             )
         # NO PUSH, SO NO MAP. This fell through to a checked-in, hand-authored
@@ -957,7 +1006,8 @@ def cockpit_asset(asset: str,
         # the real thing (audit, 2026-09-07). ATLAS_LIVE stays false, so the
         # page says so instead of drawing someone else's map.
         return Response(
-            b"window.ATLAS_MAP = null; window.ATLAS_LIVE = false;",
+            b"window.ATLAS_MAP = null; window.ATLAS_LIVE = false; "
+            + _wire_params_script(None),
             media_type="text/javascript; charset=utf-8",
         )
     # The asset name comes off the URL: normalise it, refuse anything that

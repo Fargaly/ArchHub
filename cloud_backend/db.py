@@ -3020,18 +3020,30 @@ def claim_agent_task(task_id: str, claimed_by: str):
 
 
 def claim_next_agent_task(*, claimed_by: str,
-                          kinds: tuple = ("app", "app-execute")):
+                          kinds: tuple = ("app", "app-execute"),
+                          creators=None):
     """Atomically claim the OLDEST queued task whose kind is in `kinds`.
     This is how the founder's running application drains the cockpit: it asks
-    for the next instruction addressed to it. None when nothing is queued."""
+    for the next instruction addressed to it. None when nothing is queued.
+
+    `creators`, when given, limits the claim to tasks those accounts queued
+    (compared lower-cased), so the founder's desktop never runs an instruction
+    another account queued. An empty set claims nothing (fail closed)."""
     now = int(time.time())
     kinds = tuple(str(k) for k in kinds) or ("app",)
     marks = ",".join("?" for _ in kinds)
+    where, args = "status='queued' AND kind IN (%s)" % marks, kinds
+    if creators is not None:
+        owners = tuple(sorted({str(c).strip().lower() for c in creators if str(c).strip()}))
+        if not owners:
+            return None
+        where += " AND LOWER(created_by) IN (%s)" % ",".join("?" for _ in owners)
+        args = kinds + owners
     with connect() as con:
         for _ in range(3):
             r = con.execute(
-                "SELECT id FROM agent_tasks WHERE status='queued' AND kind IN (%s) "
-                "ORDER BY created_at ASC, id ASC LIMIT 1" % marks, kinds).fetchone()
+                "SELECT id FROM agent_tasks WHERE " + where
+                + " ORDER BY created_at ASC, id ASC LIMIT 1", args).fetchone()
             if r is None:
                 return None
             cur = con.execute(
@@ -3054,6 +3066,23 @@ def finish_agent_task(task_id: str, *, ok: bool, result: str):
             "UPDATE agent_tasks SET status=?, finished_at=?, result=? "
             "WHERE id=? AND status IN ('claimed','running')",
             ("done" if ok else "failed", now, str(result or "")[:8000], task_id))
+        if cur.rowcount == 0:
+            return None
+        row = con.execute(
+            "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def expire_agent_task(task_id: str, reason: str):
+    """Close a task nobody claimed, so a device that comes back later never
+    runs work its caller already gave up on. Only a still-queued row changes;
+    None when it was claimed meanwhile (or never existed)."""
+    now = int(time.time())
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE agent_tasks SET status='failed', finished_at=?, result=? "
+            "WHERE id=? AND status='queued'",
+            (now, str(reason or "")[:8000], task_id))
         if cur.rowcount == 0:
             return None
         row = con.execute(

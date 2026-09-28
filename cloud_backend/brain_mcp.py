@@ -66,6 +66,67 @@ TOOLS = [
     },
 ]
 
+# The founder's desktop, read remotely. Only his accounts see or call these
+# (answer(is_founder=...)); everyone else gets the brain tools alone. Reads
+# only: the desktop answers them with the same local functions its own host
+# tools use (nodelang/cloud_relay.py host_read, an allowlist), and nothing that
+# executes, captures a screen or sends is listed here.
+_NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
+OFFICE_READS = (
+    "excel.list_workbooks", "excel.list_worksheets", "word.list_documents",
+    "word.list_paragraphs", "powerpoint.list_presentations", "powerpoint.list_slides",
+)
+HOST_TOOLS = [
+    {"name": "hosts.state", "inputSchema": _NO_ARGS, "description": (
+        "The hosts the founder's ArchHub app last published and how old that "
+        "snapshot is. Does not wake the desktop.")},
+    {"name": "hosts.status", "inputSchema": _NO_ARGS, "description": (
+        "Live: every connector on the founder's desktop and the evidence behind "
+        "each operation. Needs ArchHub open and signed in there.")},
+    {"name": "revit.sessions", "inputSchema": _NO_ARGS, "description": (
+        "Live: the Revit sessions listening on the founder's desktop.")},
+    {"name": "connector.rows", "inputSchema": _NO_ARGS, "description": (
+        "Live: the host and catalogue rows the founder's desktop probes.")},
+    {"name": "office.read", "description": (
+        "Live: what Excel, Word or PowerPoint hold open on the founder's desktop."),
+     "inputSchema": {"type": "object", "properties": {
+         "operation": {"type": "string", "enum": list(OFFICE_READS)},
+         "name": {"type": "string", "maxLength": 200,
+                  "description": "workbook, document or presentation name"},
+     }, "additionalProperties": False}},
+    {"name": "outlook.inbox", "description": (
+        "Live: the newest items in the founder's open Outlook inbox."),
+     "inputSchema": {"type": "object", "properties": {
+         "count": {"type": "integer", "minimum": 1, "maximum": 50},
+     }, "additionalProperties": False}},
+    {"name": "dropbox.list", "description": (
+        "Live: the files in one folder of the founder's Dropbox."),
+     "inputSchema": {"type": "object", "properties": {
+         "path": {"type": "string", "maxLength": 300,
+                  "description": "folder relative to the Dropbox root"},
+     }, "additionalProperties": False}},
+]
+HOST_TOOL_NAMES = frozenset(tool["name"] for tool in HOST_TOOLS)
+
+
+def host_arguments(name: str, arguments: dict) -> dict:
+    """Only the declared arguments travel to the desktop, bounded."""
+    if name == "office.read":
+        operation = arguments.get("operation", OFFICE_READS[0])
+        if operation not in OFFICE_READS:
+            raise ValueError("office.read reads only: %s" % ", ".join(OFFICE_READS))
+        kept = {"operation": operation}
+        if isinstance(arguments.get("name"), str) and arguments["name"].strip():
+            kept["name"] = arguments["name"][:200]
+        return kept
+    if name == "outlook.inbox":
+        count = arguments.get("count")
+        return {"count": max(1, min(count, 50)) if type(count) is int else 20}
+    if name == "dropbox.list":
+        path = arguments.get("path")
+        return {"path": path[:300] if isinstance(path, str) else ""}
+    return {}
+
 
 def text_result(payload: object) -> dict:
     """One tool result in the content shape every MCP client reads."""
@@ -120,6 +181,18 @@ def call_tool(user: dict, replica, name: str, arguments: dict) -> dict:
     raise KeyError(name)
 
 
+def call_host_tool(user: dict, name: str, arguments: dict, *,
+                   host_read, pushed_hosts) -> dict:
+    """One founder read of his desktop: the published snapshot, or live from his app."""
+    if name == "hosts.state":
+        if pushed_hosts is None:
+            raise RuntimeError("this cloud holds no published host snapshot")
+        return text_result(pushed_hosts())
+    if host_read is None:
+        raise RuntimeError("live host reads are not wired on this cloud")
+    return text_result(host_read(user, name, host_arguments(name, arguments)))
+
+
 def sse_block(rpc_id: object, body: dict) -> bytes:
     """One SSE message block: the exact shape the local daemon returns."""
     said = json.dumps({"jsonrpc": "2.0", "id": rpc_id, **body},
@@ -132,11 +205,17 @@ def answer(
     *,
     resolve_user: Callable[[], dict],
     open_replica: Callable[[dict], Any],
+    is_founder: Callable[[dict], bool] = lambda user: False,
+    host_read: Callable[[dict, str, dict], object] | None = None,
+    pushed_hosts: Callable[[], dict] | None = None,
 ) -> tuple[int, bytes, str]:
     """Dispatch one JSON-RPC message. Returns (status, body, media type).
 
     Transport-free on purpose, so the whole protocol is testable without a
     socket: the route only reads the request and writes what this says.
+    The host tools exist only for an account `is_founder` admits; a live one
+    is answered by `host_read(user, tool, arguments)`, hosts.state by
+    `pushed_hosts()`.
     """
     sse = "text/event-stream"
     if not isinstance(message, dict):
@@ -164,7 +243,14 @@ def answer(
             "serverInfo": {"name": "archhub-cloud-brain", "version": "1"},
         }}), sse
     if method == "tools/list":
-        return 200, sse_block(rpc_id, {"result": {"tools": TOOLS}}), sse
+        # Listing stays open; a founder's token adds his desktop's read tools.
+        try:
+            lister = resolve_user()
+        except Exception:
+            lister = None
+        founder = lister is not None and bool(is_founder(lister))
+        return 200, sse_block(rpc_id, {"result": {
+            "tools": (TOOLS + HOST_TOOLS) if founder else TOOLS}}), sse
     if method != "tools/call":
         return 200, sse_block(rpc_id, {
             "error": {"code": -32601, "message": "unsupported method"},
@@ -184,7 +270,13 @@ def answer(
         if isinstance(params.get("arguments"), dict) else {}
     )
     try:
-        result = call_tool(user, open_replica(user), name, arguments)
+        if name in HOST_TOOL_NAMES:
+            if not is_founder(user):
+                raise KeyError(name)  # another account is never told they exist
+            result = call_host_tool(user, name, arguments,
+                                    host_read=host_read, pushed_hosts=pushed_hosts)
+        else:
+            result = call_tool(user, open_replica(user), name, arguments)
     except KeyError:
         return 200, sse_block(rpc_id, {
             "error": {"code": -32602, "message": "unknown tool"},

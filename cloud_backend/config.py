@@ -453,18 +453,27 @@ def _data_dir() -> Path:
 
 DATA_DIR = _data_dir()
 
+# Every deployment secret that has named a founder address: the live app
+# carries FOUNDER_EMAIL and ARCHHUB_FOUNDER_EMAIL, and the retired 12 build read
+# FOUNDER_EMAILS. A gate that read only one of them locked the founder out
+# (every /founder/map-state push returned 403 from 2026-09-13).
+FOUNDER_EMAIL_SECRETS = ("FOUNDER_EMAILS", "FOUNDER_EMAIL", "ARCHHUB_FOUNDER_EMAIL")
+
+
 def founder_emails() -> frozenset:
     """Every address that owns this cockpit, lower-cased and trimmed.
 
-    The ONLY source is the deployment secret FOUNDER_EMAIL (a comma-separated
-    list, so the desktop and cloud-account addresses can both own it). No
-    address lives in code: this repository is public. Unset means no founder,
-    so every founder-only route is refused (fail closed). Read at call time so
-    a deploy can change it without a re-import.
+    The ONLY source is the deployment secrets in FOUNDER_EMAIL_SECRETS, each a
+    comma-separated list, so the desktop and cloud-account addresses can both
+    own it wherever they were set. No address lives in code: this repository
+    is public. None set means no founder, so every founder-only route is
+    refused (fail closed). Read at call time so a deploy can change it without
+    a re-import.
     """
     return frozenset(
         part.strip().lower()
-        for part in (os.environ.get("FOUNDER_EMAIL") or "").split(",")
+        for name in FOUNDER_EMAIL_SECRETS
+        for part in (os.environ.get(name) or "").split(",")
         if part.strip()
     )
 

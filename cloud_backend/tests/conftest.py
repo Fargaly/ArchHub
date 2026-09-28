@@ -30,6 +30,8 @@ def _isolate_db(tmp_path, monkeypatch):
     # The founder list comes only from the FOUNDER_EMAIL secret; tests
     # own two placeholder addresses (tests may override).
     monkeypatch.setenv("FOUNDER_EMAIL", "founder.desktop@example.test,founder@example.test")
+    for other in ("FOUNDER_EMAILS", "ARCHHUB_FOUNDER_EMAIL"):
+        monkeypatch.delenv(other, raising=False)  # a dev box's own secret never joins
     _prefer_cloud_backend_main()
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DATABASE_URL", str(db_path))

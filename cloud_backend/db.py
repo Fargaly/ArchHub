@@ -3267,6 +3267,44 @@ def finish_agent_task(task_id: str, *, ok: bool, result: str):
     return dict(row) if row else None
 
 
+def relay_status(*, now: Optional[int] = None) -> dict:
+    """The relay queue in numbers: how many tasks sit in each status and how
+    long the oldest queued one has waited."""
+    now = int(time.time()) if now is None else int(now)
+    with connect() as con:
+        counts = {row["status"]: int(row["n"]) for row in con.execute(
+            "SELECT status, COUNT(*) AS n FROM agent_tasks GROUP BY status")}
+        oldest = con.execute("SELECT MIN(created_at) FROM agent_tasks "
+                             "WHERE status = 'queued'").fetchone()[0]
+    return {"counts": counts,
+            "oldest_queued_age_s": (now - int(oldest)) if oldest is not None else None}
+
+
+def retry_agent_task(task_id: str):
+    """Put one FAILED task back in the queue, as it was first asked. None when
+    the task is not failed (or does not exist)."""
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE agent_tasks SET status='queued', claimed_by=NULL, claimed_at=NULL, "
+            "finished_at=NULL, result='' WHERE id=? AND status='failed'", (task_id,))
+        if cur.rowcount == 0:
+            return None
+        row = con.execute("SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def drain_agent_tasks(reason: str) -> list[str]:
+    """Close every still-queued task (they fail with the reason), so a device
+    that comes back later runs none of them. Returns the ids closed."""
+    now = int(time.time())
+    with connect() as con:
+        ids = [row[0] for row in con.execute(
+            "SELECT id FROM agent_tasks WHERE status = 'queued'")]
+        con.execute("UPDATE agent_tasks SET status='failed', finished_at=?, result=? "
+                    "WHERE status = 'queued'", (now, str(reason or "")[:8000]))
+    return ids
+
+
 def expire_agent_task(task_id: str, reason: str):
     """Close a task nobody claimed, so a device that comes back later never
     runs work its caller already gave up on. Only a still-queued row changes;

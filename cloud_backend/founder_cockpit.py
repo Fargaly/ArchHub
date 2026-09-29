@@ -985,6 +985,45 @@ def api_browser_code(founder: dict = Depends(require_founder)) -> JSONResponse:
     })
 
 
+@router.get("/api/relay")
+def api_relay(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    """The cloud relay: its queue in each status, the oldest wait, whether the
+    founder's application is publishing, and the latest failures."""
+    status = db.relay_status()
+    failed = [{key: task.get(key) for key in
+               ("id", "kind", "created_by", "created_at", "finished_at", "claimed_by")}
+              | {"directive": str(task.get("directive") or "")[:300],
+                 "result": str(task.get("result") or "")[:300]}
+              for task in db.list_agent_tasks(20, "failed")]
+    return JSONResponse({**status, "failed": failed,
+                         "application": {"pushed_at": config.map_pushed_at(),
+                                         "live": config.map_is_fresh()}})
+
+
+@router.post("/api/relay/tasks/{task_id}/retry")
+def api_relay_retry(task_id: str, founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Put one failed relay task back in the queue."""
+    row = db.retry_agent_task(task_id)
+    if row is None:
+        return JSONResponse({"ok": False, "error": "no failed task with that id"},
+                            status_code=404)
+    _audit(founder, "POST /founder/api/relay/tasks/{id}/retry", "relay.retry",
+           target=task_id, result={"kind": row.get("kind")})
+    return JSONResponse({"ok": True, "task": row})
+
+
+@router.post("/api/relay/drain")
+def api_relay_drain(payload: dict = Body(default={}),
+                    founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Close every queued relay task; none of them runs later."""
+    reason = "drained by the founder: %s" % (
+        str(payload.get("reason") or "").strip() or "no reason given")
+    ids = db.drain_agent_tasks(reason)
+    _audit(founder, "POST /founder/api/relay/drain", "relay.drain",
+           result={"drained": len(ids), "reason": reason})
+    return JSONResponse({"ok": True, "drained": len(ids), "ids": ids})
+
+
 @router.get("/api/agent-tasks")
 def api_agent_tasks(_founder: dict = Depends(require_founder)) -> JSONResponse:
     """The agent task queue the cockpit fills + the app-side loop drains."""

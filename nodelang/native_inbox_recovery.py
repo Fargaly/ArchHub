@@ -233,8 +233,11 @@ def refuse_reconciled_replay(owner, actor, work_root, request_id):
     A fresh, separately admitted operation has its own request identity and is
     allowed even when it writes the same content: equal content is not replay.
     """
-    storage = getattr(owner.universal_registry.cde_write_authority_protocol, "operational_storage", None)
-    if storage is not None and storage.reconciled_operation(actor, work_root, request_id) is not None:
+    from .cell_cde_authority import ensure_store_cde_storage
+    # The same storage settlement records into; never skipped when the protocol has none.
+    protocol = owner.universal_registry.cde_write_authority_protocol
+    storage = getattr(protocol, "operational_storage", None) or ensure_store_cde_storage(owner.universal_store)
+    if storage.reconciled_operation(actor, work_root, request_id) is not None:
         raise AuthorizationDenied(
             "This exact write was reconciled after an uncertain outcome and is not "
             "retried automatically. Start a new write request to make the change again.")

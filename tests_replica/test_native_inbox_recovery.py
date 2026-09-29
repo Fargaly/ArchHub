@@ -544,3 +544,25 @@ def test_a_recovered_reader_is_refused_in_a_conversation_it_is_not_part_of(world
     with pytest.raises(MachineTransportError, match="participant"):
         owner.inbox_reader()._client.request("GET", "/api/universal/deliberation", body)
     assert other.inbox_reader()._client.request("GET", "/api/universal/deliberation", body)["space"] == space
+
+
+def test_a_reconciliation_held_only_on_the_store_storage_is_still_refused():
+    """Replay reads the same storage settlement wrote: protocol storage, else the store's."""
+    from types import SimpleNamespace
+    from nodelang.cell_authorization import AuthorizationDenied
+    from nodelang.native_inbox_recovery import refuse_reconciled_replay
+    actor = "app:agent-session:runtime:" + "a" * 32
+
+    class StoreStorage:
+        is_closed = False
+
+        def reconciled_operation(self, agent, work_root, request_id):
+            held = (actor, "court:work", "court-request-717")
+            return {"permit_root": "court:permit"} if (agent, work_root, request_id) == held else None
+
+    owner = SimpleNamespace(
+        universal_registry=SimpleNamespace(cde_write_authority_protocol=SimpleNamespace(operational_storage=None)),
+        universal_store=SimpleNamespace(_cde_operational_storage=StoreStorage()))
+    with pytest.raises(AuthorizationDenied, match="not retried automatically"):
+        refuse_reconciled_replay(owner, actor, "court:work", "court-request-717")
+    refuse_reconciled_replay(owner, actor, "court:work", "court-request-fresh")

@@ -467,6 +467,10 @@ def _boot_unsampled():
         ),
         **workshop_arguments,
     )
+    # Chat through a signed-in local assistant (model route local-cli/<name>)
+    # runs through this same broker's host process, never a second runner.
+    from nodelang import model_router as _model_router
+    _model_router.bind_local_cli_broker(server.model_execution_broker)
     startup_backup_bytes = _startup_backup_bytes(state_path, server.conversation_content._path)
     if startup_backup_bytes > _STARTUP_BACKUP_MAX_BYTES:
         print("  backup     : skipped at startup (%.0f MiB exceeds the %d MiB startup limit); "

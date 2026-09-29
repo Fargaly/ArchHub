@@ -53,6 +53,9 @@ _FAMILY_PREFIXES = {
     # Direct vendor routes. Not "openai/": that spelling is an OpenRouter id.
     "openai-api/": "openai",
     "google-api/": "google",
+    # A signed-in assistant on this machine answers one chat turn through the
+    # model broker's host process: local-cli/<assistant>[/<model>].
+    "local-cli/": "local-cli",
 }
 _PROVIDER_NAMES = {
     "lmstudio": "LM Studio",
@@ -61,7 +64,103 @@ _PROVIDER_NAMES = {
     "openrouter": "OpenRouter",
     "openai": "OpenAI",
     "google": "Google",
+    "local-cli": "a local assistant",
 }
+# The assistants local-cli/ can chat through, by route name. Not OpenCode: its
+# permissions default to allow (edit, bash, webfetch), and no run flag denies
+# them, so a chat turn could act on the machine (review 2026-09-29).
+LOCAL_CLI_ASSISTANTS = {
+    "claude": "Claude Code",
+    "codex": "Codex",
+    "gemini": "Gemini CLI",
+}
+# Settings rows (SUBSCRIPTION_CLIS) by the local-cli/ name they route through.
+_CLI_ROUTE_NAME = {"claude-code": "claude", "codex": "codex", "gemini-cli": "gemini",
+                   "opencode": "opencode"}
+# Where a chat through each assistant is sent: the picker says so.
+_CLI_VENDOR = {"claude": "Anthropic", "codex": "OpenAI", "gemini": "Google"}
+# What the picker must say besides where the chat goes: only Claude Code can run
+# with every tool off; the others, read-only, can still read files on this computer.
+_CLI_CAUTION = {"claude": "", "codex": "",
+                "gemini": "; it can read files on this computer"}
+# The assistant versions whose chat turn was proven live (no MCP server, no
+# graph write, no command, no file read or write; 2026-09-29). A new version can
+# turn on a tool feature the chat argv does not switch off, so any other
+# installed version is "not verified" until the real courts pass on it. Gemini
+# is refused by Google on the machine it was built on: unproven.
+_CLI_VERIFIED_VERSIONS = {"claude": "2.1.169", "codex": "0.144.5"}
+# Codex REFUSES a chat on any other version (717, 2026-09-29): a new version can
+# turn on a tool feature the chat argv does not switch off -- commands ran in
+# chat turns before every feature was disabled. Claude Code runs with no tools
+# at all in this invocation (--tools "", no MCP server), so another version is
+# disclosed, not refused. Re-verify: run the real local-cli courts
+# (ARCHHUB_REAL_CLI_COURT=1) on the new version, then record it here.
+_CLI_FAIL_CLOSED = frozenset({"codex"})
+_REVERIFY = "re-verify it with the local-cli real courts, then record the version"
+_VERSION_CACHE: dict = {}
+_VERSION_PENDING: set = set()
+# Returned while a version is still being read in the background.
+CHECKING = "checking"
+
+
+def _read_version(executable):
+    import re
+    import subprocess
+    try:
+        said = subprocess.run((str(executable), "--version"), capture_output=True, timeout=5,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        found = re.search(rb"\d+\.\d+\.\d+", said.stdout or b"")
+        return found.group(0).decode("ascii") if found else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def installed_cli_version(executable, *, wait=True):
+    """The x.y.z an assistant reports, read once per (path, modified time).
+
+    wait=False never blocks (the Settings rows read this): a version not yet
+    read starts ONE background read and answers CHECKING until it lands."""
+    try:
+        key = (str(executable), Path(executable).stat().st_mtime)
+    except (OSError, TypeError):
+        return None
+    if key in _VERSION_CACHE:
+        return _VERSION_CACHE[key]
+    if wait:
+        _VERSION_CACHE[key] = _read_version(executable)
+        return _VERSION_CACHE[key]
+    if key not in _VERSION_PENDING:
+        _VERSION_PENDING.add(key)
+
+        def read():
+            try:
+                _VERSION_CACHE[key] = _read_version(executable)
+            finally:
+                _VERSION_PENDING.discard(key)
+        threading.Thread(target=read, name="archhub-cli-version", daemon=True).start()
+    return CHECKING
+
+
+def _unverified_reason(route, version_probe):
+    """'' when this machine's assistant is the version the courts passed on."""
+    tested = _CLI_VERIFIED_VERSIONS.get(route)
+    if tested is None:
+        return "not verified on this machine"
+    installed = version_probe(route)
+    if installed == CHECKING:
+        return "checking its version"
+    if installed != tested:
+        if route in _CLI_FAIL_CLOSED:
+            return ("updated; ArchHub has not verified this version yet, so chat through it is "
+                    "refused (tested on %s, installed %s; %s)" % (tested, installed or "unknown", _REVERIFY))
+        return "not verified on this machine (tested on %s, installed %s)" % (tested, installed or "unknown")
+    return ""
+
+
+def _broker_version(route):
+    broker = _LOCAL_CLI["broker"]
+    executable = broker.local_cli_executable(route) if broker is not None else None
+    return installed_cli_version(executable, wait=False) if executable else None
 # Ordered key discovery, written out per family so the refusal can name the
 # exact thing a person has to set. A colleague on a fresh install had none of
 # these and the composer failed with nothing on screen at all.
@@ -193,7 +292,8 @@ def resolve_model_route(
         return _destination("openrouter", text, cloud_base_url)
     raise ModelRouteRefused(
         "The model route %r names no provider this app can reach: use "
-        "cloud/, openrouter/, openai-api/, google-api/, lmstudio/ or ollama/." % text
+        "cloud/, openrouter/, openai-api/, google-api/, lmstudio/, ollama/ "
+        "or local-cli/." % text
     )
 
 
@@ -210,6 +310,13 @@ def _destination(
         return ModelRoute(family, model, OPENAI_CHAT, "OpenAI", True)
     if family == "google":
         return ModelRoute(family, model, GOOGLE_CHAT, "Google", True)
+    if family == "local-cli":
+        assistant = model.split("/", 1)[0].strip()
+        if assistant not in LOCAL_CLI_ASSISTANTS:
+            raise ModelRouteRefused(
+                "local-cli/ chats through claude, codex or gemini, not %r." % assistant)
+        return ModelRoute(family, model, "local-cli:" + assistant,
+                          LOCAL_CLI_ASSISTANTS[assistant], False)
     from .cloud_relay import pinned_cloud_base  # noqa: PLC0415
 
     base = pinned_cloud_base(cloud_base_url or _default_cloud_base())
@@ -553,7 +660,7 @@ def provider_catalogue() -> list:
 
 
 def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
-                  local_probe=None, cli_probe=None) -> list:
+                  local_probe=None, cli_probe=None, version_probe=None) -> list:
     """What each provider really is on this machine: keyed or not, running or not.
 
     The studio's Providers tab showed invented keys and invented spend, typed
@@ -628,10 +735,23 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
             return find_assistant(executable, environ)
     for row_id, name, executable in SUBSCRIPTION_CLIS:
         found = cli_probe(executable)
+        route = _CLI_ROUTE_NAME[row_id]
+        if found and route not in LOCAL_CLI_ASSISTANTS:
+            # OpenCode: shell, file edits and web fetches default to allowed, so
+            # ArchHub does not send chat through it.
+            rows.append({"id": row_id, "name": name, "state": "installed, not routed",
+                         "source": "installed on this machine; ArchHub does not chat through "
+                                   "it because it can run commands and change files by default",
+                         "sets": ""})
+            continue
+        unverified = _unverified_reason(route, version_probe or _broker_version) if found else ""
         rows.append({"id": row_id, "name": name,
-                     "state": "installed, not routed" if found else "not installed",
-                     "source": ("installed on this machine; chat is not sent through "
-                                "subscription CLIs in this build") if found else
+                     "state": "installed" if found else "not installed",
+                     "source": ("installed on this machine; %schoose local-cli/%s to chat "
+                                "through it: sent to %s through your subscription%s"
+                                % ("%s: %s; " % (name, unverified) if unverified else "",
+                                   route, _CLI_VENDOR[route], _CLI_CAUTION[route]))
+                               if found else
                                "not found on PATH or in its install folder",
                      "sets": ""})
     return rows
@@ -760,6 +880,20 @@ def composer_readiness(route: object, *, environ=None, secrets_loader=None,
         destination = resolve_model_route(text)
     except (ModelRouteRefused, InvalidCell):
         return answer("invalid", text, READINESS_COPY["invalid"], _READINESS_ACTIONS["invalid"])
+    if destination.family == "local-cli":
+        assistant = destination.url.split(":", 1)[1]
+        if _LOCAL_CLI["broker"] is not None and not _LOCAL_CLI["broker"].local_cli_executable(assistant):
+            return answer("unavailable", text,
+                          "%s is not installed on this machine. Install it, or choose another model."
+                          % destination.provider, ["choose_model"])
+        if assistant in _CLI_FAIL_CLOSED:
+            installed = _broker_version(assistant)
+            if installed not in (CHECKING, _CLI_VERIFIED_VERSIONS[assistant]):
+                return answer("unavailable", text,
+                              "%s was updated; ArchHub has not verified this version yet. Choose "
+                              "another model until it is re-verified." % destination.provider,
+                              ["choose_model"])
+        return answer("ready", text, "", [])
     held = families[destination.family]
     return answer(held["state"], text, held["message"], held["actions"])
 
@@ -972,6 +1106,57 @@ def _payload_from_event_stream(raw: bytes, *, require_complete: bool = False) ->
     return {**metadata, "choices": [{"message": {"role": "assistant", "content": "".join(pieces)}, "finish_reason": finish}]}
 
 
+_LOCAL_CLI: dict = {"broker": None}
+
+
+def bind_local_cli_broker(broker) -> None:
+    """The application names the one broker local-cli/ chats run through, and
+    the assistants' versions start being read in the background at once, so
+    the Settings rows never wait on a launched program."""
+    _LOCAL_CLI["broker"] = broker
+    if broker is not None:
+        for route in _CLI_VERIFIED_VERSIONS:
+            executable = broker.local_cli_executable(route)
+            if executable:
+                installed_cli_version(executable, wait=False)
+
+
+def _local_cli_chat(destination, messages, *, timeout, before_dispatch):
+    broker = _LOCAL_CLI["broker"]
+    if broker is None:
+        raise ModelRouteRefused(
+            "Local assistants are not available in this process. Choose another model.",
+            reason_code="provider_unavailable")
+    rows = _checked_messages(messages)
+    if _carries_an_image(rows):
+        raise ModelRouteRefused("A local assistant chat carries text only.")
+    assistant, _, model = destination.model.partition("/")
+    if assistant in _CLI_FAIL_CLOSED:
+        executable = broker.local_cli_executable(assistant)
+        installed = installed_cli_version(executable) if executable else None
+        if executable and installed != _CLI_VERIFIED_VERSIONS[assistant]:
+            raise ModelRouteRefused(
+                "%s was updated; ArchHub has not verified this version yet (tested on %s, "
+                "installed %s). Choose another model until it is re-verified."
+                % (destination.provider, _CLI_VERIFIED_VERSIONS[assistant], installed or "unknown"),
+                reason_code="unverified_version")
+    if before_dispatch is not None:
+        before_dispatch()
+    said = broker.chat(assistant, model.strip(), rows, timeout_seconds=timeout)
+    if not said.get("ok"):
+        if said.get("error_code") == "provider_unavailable":
+            raise ModelRouteRefused(
+                "%s is not installed on this machine. Install it, or choose another model."
+                % destination.provider, reason_code="provider_unavailable")
+        raise ModelRouteRefused(
+            "%s did not answer (%s). Try again, or choose another model."
+            % (destination.provider, said.get("error_code") or "no answer"))
+    return {"ok": True, "text": said["text"], "family": destination.family,
+            "model": destination.model, "actual_model": model.strip() or None,
+            "url": destination.url, "provider": destination.provider,
+            "key_source": "not required", "usage": None, "finish_reason": "stop"}
+
+
 def route_chat(
     route: object,
     messages: object,
@@ -1032,6 +1217,10 @@ def route_chat(
         or destination.family != "openrouter"
     ):
         raise ModelRouteRefused("This reasoning effort requires a supported OpenRouter route.")
+    if destination.family == "local-cli":
+        # No HTTP: one turn through the model broker's host process.
+        return _local_cli_chat(destination, messages, timeout=timeout,
+                               before_dispatch=before_dispatch)
     rows = _checked_messages(messages)
     headers = {"Content-Type": "application/json"}
     key_source = "not required"

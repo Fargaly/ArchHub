@@ -64,8 +64,9 @@ def test_every_configured_provider_has_a_row_and_none_is_invented():
     assert by["anthropic"]["state"] == "key invalid"
     assert by["anthropic"]["source"] == "key invalid, paste a real key in Settings"
     assert by["lmstudio"]["state"] == "running" and by["ollama"]["state"] == "running"
+    # Since local-cli/ (2026-09-29) an installed assistant is a chat route.
     for cli in ("claude-code", "codex", "gemini-cli"):
-        assert by[cli]["state"] == "installed, not routed", cli
+        assert by[cli]["state"] == "installed", cli
     assert by["opencode"]["state"] == "not installed"
     catalogue_ids = {record["id"] for record in model_router.provider_catalogue()}
     assert catalogue_ids <= set(by), catalogue_ids - set(by)

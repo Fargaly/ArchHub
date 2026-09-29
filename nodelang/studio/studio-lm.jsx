@@ -1422,7 +1422,8 @@ const NO_MODEL_STATE = {state:'no_model', route:'', actions:['sign_in', 'choose_
 // The route shown is judged here: the composer pick or the selected node's own model
 // (review 2026-09-28). The provider states and the copy are the server's
 // (model_router.composer_readiness families/messages); only the route's family is read here.
-const ROUTE_FAMILIES = [['cloud/', 'cloud'], ['openrouter/', 'openrouter'], ['lmstudio/', 'lmstudio'], ['ollama/', 'ollama']];
+const ROUTE_FAMILIES = [['cloud/', 'cloud'], ['openrouter/', 'openrouter'], ['lmstudio/', 'lmstudio'], ['ollama/', 'ollama'],
+  ['local-cli/', 'local-cli']];
 // A bare vendor/model:free is OpenRouter's legacy form; a family-prefixed route (lmstudio/x:free)
 // stays in its own family, as model_router._legacy_free_route rules.
 const routeFamily = route => {
@@ -5273,7 +5274,7 @@ const ProviderManage = ({ p, providers, onTab }) => {
       <div style={line}>{p.id === 'cloud'
         ? 'The ArchHub cloud is keyed by the signed-in account' + (p.sets ? ' or by ' + p.sets : '') + '.'
         : p.state === 'running' ? p.name + ' is answering on ' + p.source + '. Its models appear in the model picker.'
-        : p.state === 'installed, not routed' || p.state === 'not installed' ? p.name + ': ' + p.source + '.'
+        : p.state === 'installed' || p.state === 'not installed' ? p.name + ': ' + p.source + '.'
         : p.sets ? 'Set ' + p.sets + ' on this machine, then read the status again.'
         : 'Start ' + p.name + ' on this machine (' + p.source + '), then read the status again.'}</div>
       <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>

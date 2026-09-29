@@ -15,6 +15,7 @@ import math
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -388,6 +389,50 @@ def _parse_review_payload(
     }
 
 
+# Codex features a chat turn never needs (codex features list, 2026-09-29):
+# its shell, browser and computer control, plugins, apps, memories, agents.
+_CODEX_CHAT_FEATURES_OFF = (
+    "shell_tool", "unified_exec", "hooks", "plugins", "memories", "apps", "browser_use",
+    "browser_use_external", "in_app_browser", "computer_use", "multi_agent", "image_generation",
+    "skill_mcp_dependency_install", "tool_suggest", "goals", "code_mode_host", "remote_plugin",
+    "plugin_sharing", "workspace_dependencies",
+)
+
+
+def local_cli_chat_command(assistant: str, executable: str, model: str = "") -> tuple:
+    """The one argv a local-cli chat turn runs: tools off where the assistant can,
+    no session, and none of the person's own configuration -- no MCP servers
+    (ArchHub's own coordination server enrols a session on start), no hooks, no
+    plugins or skills -- so a chat turn runs no command, reads and writes no file,
+    and writes nothing to the graph. Where the machine's managed requirements
+    force Codex hooks on, ArchHub's deny-only scope gate and its read-only Stop
+    hook still run; the Stop hook may keep a small per-session guard file on disk."""
+    with_model = ("--model", model) if model else ()
+    return {
+        "claude": (executable, "-p", "--output-format", "json", "--tools", "",
+                   "--no-session-persistence", "--permission-mode", "plan",
+                   "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands")
+                  + with_model,
+        # --ignore-user-config drops config.toml (its MCP servers); every tool
+        # feature is switched off, so a chat turn runs no command and reads no
+        # file. Hooks stay on where the machine's managed requirements force
+        # them: ArchHub's own deny-only scope gate and the read-only Stop hook.
+        # The empty chat folder is no git repository.
+        "codex": (executable, "exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
+                  "--sandbox", "read-only", "--color", "never")
+                 + tuple(arg for feature in _CODEX_CHAT_FEATURES_OFF for arg in ("--disable", feature))
+                 + (("-m", model) if model else ()) + ("-",),
+        "gemini": (executable, "--prompt", "", "--output-format", "json", "--approval-mode", "plan",
+                   "--allowed-mcp-server-names", "none", "--extensions", "none") + with_model,
+    }[assistant]
+
+
+# How each local assistant's chat answer is unwrapped (_extract_provider_text):
+# claude and gemini print one JSON object; codex prints the text. Not OpenCode:
+# its tools default to allowed and no run flag denies them.
+_CHAT_EXTRACT = {"claude": "claude", "gemini": "gemini", "codex": "gpt"}
+
+
 class ModelExecutionBroker:
     """Translate a graph-released adapter location into one bounded host call."""
 
@@ -434,6 +479,53 @@ class ModelExecutionBroker:
             if resolved:
                 return resolved
         return None
+
+    def local_cli_executable(self, assistant: str) -> str | None:
+        """The program a local-cli/<assistant> chat would run, or None."""
+        return self._executable("local-cli:" + str(assistant))
+
+    def chat(self, assistant: str, model: str, messages, *,
+             timeout_seconds: float | None = None) -> dict[str, object]:
+        """ONE free-text chat turn through a signed-in local assistant.
+
+        Chat mode, not the review format: the messages become one transcript
+        prompt with no JSON contract, and the answer's text comes back as-is.
+        The assistant runs with its tools off where it has that switch, keeps no
+        session, and starts in a fresh EMPTY folder -- never the workspace --
+        so it does not begin inside project or client files. Nothing is stored.
+        """
+        if assistant not in _CHAT_EXTRACT:
+            return {"ok": False, "error_code": "provider_binding_denied"}
+        if model and (len(model.encode("utf-8")) > _MAX_MODEL_BYTES or any(ch.isspace() for ch in model)):
+            return {"ok": False, "error_code": "invalid_invocation"}
+        lines = []
+        for row in messages:
+            content = row.get("content") if isinstance(row, Mapping) else None
+            if type(content) is not str or not content.strip():
+                return {"ok": False, "error_code": "invalid_invocation"}
+            role = str(row.get("role") or "user")
+            lines.append(content.strip() if role == "system" else "%s: %s" % (role.upper(), content.strip()))
+        prompt = ("\n\n".join(lines) + "\n\nASSISTANT:").encode("utf-8")
+        if len(prompt) > _MAX_TASK_BYTES * 4:
+            return {"ok": False, "error_code": "invalid_invocation"}
+        executable = self._executable("local-cli:" + assistant)
+        if not executable:
+            return {"ok": False, "error_code": "provider_unavailable"}
+        command = local_cli_chat_command(assistant, executable, model)
+        timeout = self._timeout_seconds if timeout_seconds is None else min(
+            self._timeout_seconds, max(1.0, float(timeout_seconds)))
+        # A CLI (or a helper it started) can still hold the folder when the turn
+        # ends; the answer stands and the folder is left for the OS temp sweep.
+        with tempfile.TemporaryDirectory(prefix="archhub-chat-", ignore_cleanup_errors=True) as empty:
+            result = self._host.run_process(command, prompt=prompt, cwd=Path(empty),
+                                            timeout_seconds=timeout)
+        raw = result.stdout[:_MAX_OUTPUT_BYTES]
+        if not result.ok:
+            return {"ok": False, "error_code": result.error_code or "provider_failed"}
+        text = _extract_provider_text(_CHAT_EXTRACT[assistant], raw)
+        if not text:
+            return {"ok": False, "error_code": "invalid_model_output"}
+        return {"ok": True, "text": text}
 
     def local_cli_readiness(self) -> dict[str, dict[str, object]]:
         """Discover installed clients without credentials, HTTP, or process launch."""

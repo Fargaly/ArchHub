@@ -26,8 +26,12 @@ def _founders(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("FOUNDER_EMAILS", " %s , %s " % FOUNDERS)
     import config
-    # A founder's POST /founder/map-state writes this file: keep it in the test.
+    import founder_cockpit
+    # A founder's POST /founder/map-state writes the map and its stamp: keep
+    # both in the test (the module holds its own path, taken at import).
     monkeypatch.setattr(config, "FOUNDER_MAP_STATE", tmp_path / "founder-map.json")
+    monkeypatch.setattr(founder_cockpit, "_MAP_STATE", tmp_path / "founder-map.json")
+    monkeypatch.setattr(config, "FOUNDER_MAP_PUSHED_AT", tmp_path / "founder-map.pushed-at.json")
 
 
 @pytest.fixture
@@ -89,8 +93,13 @@ def test_a_signed_in_stranger_is_refused_on_every_founder_route(client, monkeypa
 
 @pytest.mark.parametrize("email", FOUNDERS)
 def test_each_configured_founder_passes_the_gate_on_every_route(client, monkeypatch, email):
+    import pathlib
+    backend = pathlib.Path(__file__).resolve().parents[1]
+    before = sorted(p.name for p in backend.glob("founder-map*.json"))
     token = google_sign_in(client, monkeypatch, email)
     refused = [(method, path, response.status_code) for method, path in _founder_routes()
                for response in [_call(client, method, path, _auth(token))]
                if response.status_code in (401, 403) or _refused(response)]
     assert refused == []
+    # Nothing the walk did reached the working tree.
+    assert sorted(p.name for p in backend.glob("founder-map*.json")) == before

@@ -970,8 +970,8 @@
       },
       async saveProviderKey(provider, key) {
         if (providerSave) fail('Wait for the current key save to finish.');
-        if (provider !== 'openrouter' || typeof key !== 'string' || !key.trim() || key.length > 8192) {
-          fail('Enter a raw OpenRouter API key.');
+        if (!['openrouter', 'openai', 'google', 'anthropic'].includes(provider) || typeof key !== 'string' || !key.trim() || key.length > 8192) {
+          fail('Enter a raw provider API key.');
         }
         // The raw key travels only in this authenticated request; never publish it.
         const operation = (async () => {

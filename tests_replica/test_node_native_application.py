@@ -164,7 +164,8 @@ def test_brain_governance_cde_and_grand_map_share_the_operating_graph(applicatio
     assert all(store.nodes[rid]['kind'] == 'wire' for rid in reg['integration_relations'])
     assert store.nodes[reg['session_catalog']]['kind'] == 'group'
     assert store.nodes[reg['models']['session']]['kind'] == 'session'
-    assert store.pull(reg['selected_model_id']) in ('model-fast', 'model-deep')
+    # No model is invented: with the registry's providers and no model records the decision is no-match.
+    assert store.pull(reg['selected_model_id']) in (None, 'NO MATCH')
     assert reg['models']['session'] in reg['home_cards']
     assert reg['selfext']['session'] in operating['body']['inner']
     assert reg['selfext']['session'] in reg['home_cards']

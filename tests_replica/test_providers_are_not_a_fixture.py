@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_rows_say_keyed_or_no_key_with_the_source():
     rows = model_router.provider_rows(
-        environ={"OPENROUTER_API_KEY": "or-live"},
+        environ={"OPENROUTER_API_KEY": "or-live-" + "x" * 32},
         secrets_loader=lambda name: "",
         cloud_session=None,
         local_probe=lambda host, port: port == 11434,
@@ -33,7 +33,7 @@ def test_rows_say_keyed_or_no_key_with_the_source():
 
 def test_a_key_from_the_secrets_store_names_the_store():
     rows = model_router.provider_rows(
-        environ={}, secrets_loader=lambda name: "k" if name == "openrouter" else "",
+        environ={}, secrets_loader=lambda name: "k" * 40 if name == "openrouter" else "",
         cloud_session=None, local_probe=lambda h, p: False)
     by = {r["id"]: r for r in rows}
     assert by["openrouter"]["state"] == "keyed" and by["openrouter"]["source"] == "secrets store"

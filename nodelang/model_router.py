@@ -41,18 +41,26 @@ OPENROUTER_CHAT = "https://openrouter.ai/api/v1/chat/completions"
 LM_STUDIO_CHAT = "http://127.0.0.1:1234/v1/chat/completions"
 OLLAMA_CHAT = "http://127.0.0.1:11434/api/chat"
 CLOUD_CHAT_PATH = "/v1/chat/completions"
+# The vendors' own chat endpoints, in the same chat-completions shape.
+OPENAI_CHAT = "https://api.openai.com/v1/chat/completions"
+GOOGLE_CHAT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 _FAMILY_PREFIXES = {
     "lmstudio/": "lmstudio",
     "ollama/": "ollama",
     "cloud/": "cloud",
     "openrouter/": "openrouter",
+    # Direct vendor routes. Not "openai/": that spelling is an OpenRouter id.
+    "openai-api/": "openai",
+    "google-api/": "google",
 }
 _PROVIDER_NAMES = {
     "lmstudio": "LM Studio",
     "ollama": "Ollama",
     "cloud": "the ArchHub cloud",
     "openrouter": "OpenRouter",
+    "openai": "OpenAI",
+    "google": "Google",
 }
 # Ordered key discovery, written out per family so the refusal can name the
 # exact thing a person has to set. A colleague on a fresh install had none of
@@ -77,7 +85,37 @@ _KEY_PLAN = {
             "cloud, or set ARCHHUB_CLOUD_TOKEN, then ask again."
         ),
     },
+    "openai": {
+        "variable": "OPENAI_API_KEY",
+        "secret": "openai",
+        "from_cloud_session": False,
+        "missing": (
+            "No OpenAI key on this machine: set OPENAI_API_KEY, or paste an "
+            "OpenAI key in Settings, then ask again."
+        ),
+    },
+    "google": {
+        "variable": "GOOGLE_API_KEY",
+        "secret": "google",
+        "from_cloud_session": False,
+        "missing": (
+            "No Google key on this machine: set GOOGLE_API_KEY, or paste a "
+            "Google key in Settings, then ask again."
+        ),
+    },
 }
+# Providers whose key can be pasted in Settings > Providers.
+KEYED_IN_SETTINGS = ("openrouter", "openai", "google", "anthropic")
+# A stored value shorter than this is a placeholder, not a provider key.
+_PLAUSIBLE_KEY_LENGTH = 20
+KEY_INVALID = "key invalid, paste a real key in Settings"
+# Signed-in subscription CLIs: (row id, name, executable). Not routed here.
+SUBSCRIPTION_CLIS = (
+    ("claude-code", "Claude Code", "claude"),
+    ("codex", "Codex", "codex"),
+    ("gemini-cli", "Gemini CLI", "gemini"),
+    ("opencode", "OpenCode", "opencode"),
+)
 _DISCOVER = object()
 
 
@@ -134,7 +172,7 @@ def resolve_model_route(
         return _destination("openrouter", text, cloud_base_url)
     raise ModelRouteRefused(
         "The model route %r names no provider this app can reach: use "
-        "cloud/, openrouter/, lmstudio/ or ollama/." % text
+        "cloud/, openrouter/, openai-api/, google-api/, lmstudio/ or ollama/." % text
     )
 
 
@@ -147,6 +185,10 @@ def _destination(
         return ModelRoute(family, model, OLLAMA_CHAT, "Ollama", False)
     if family == "openrouter":
         return ModelRoute(family, model, OPENROUTER_CHAT, "OpenRouter", True)
+    if family == "openai":
+        return ModelRoute(family, model, OPENAI_CHAT, "OpenAI", True)
+    if family == "google":
+        return ModelRoute(family, model, GOOGLE_CHAT, "Google", True)
     from .cloud_relay import pinned_cloud_base  # noqa: PLC0415
 
     base = pinned_cloud_base(cloud_base_url or _default_cloud_base())
@@ -370,17 +412,19 @@ def save_provider_key(body, *, before_replace=None):
     if type(body) is not dict or set(body) != {"provider", "key"}:
         raise ProviderCredentialError("invalid_credential")
     key = body["key"]
-    if type(body["provider"]) is not str or body["provider"] != "openrouter" or type(key) is not str or not 1 <= len(key) <= 8192 or (
+    if type(body["provider"]) is not str or body["provider"] not in KEYED_IN_SETTINGS or type(key) is not str or not 1 <= len(key) <= 8192 or (
         not key.isascii() or any(not 33 <= ord(char) <= 126 for char in key)
         or "://" in key or key.lower().startswith("inline:")
     ):
         raise ProviderCredentialError("invalid_credential")
+    provider = body["provider"]
+
     def put(entries):
-        entries["openrouter"] = key
+        entries[provider] = key
         return True
 
     _mutate_protected_entries(put, before_replace=before_replace)
-    return {"ok": True, "provider": "openrouter", "state": "keyed", "source": "secrets store"}
+    return {"ok": True, "provider": provider, "state": "keyed", "source": "secrets store"}
 
 
 def founder_secrets_key(name: str) -> str:
@@ -461,15 +505,42 @@ def discover_key(
     raise ModelRouteRefused(plan["missing"])
 
 
+def _plausible_key(value: str) -> bool:
+    return len(value) >= _PLAUSIBLE_KEY_LENGTH and not any(c.isspace() for c in value)
+
+
+def provider_catalogue() -> list:
+    """The one provider registry the graph and the Providers tab both read.
+
+    The routable families first, then the providers the graph registry admits
+    (cell_model_providers.ADMITTED_PROVIDERS) that have no route here. The
+    generic "local" admission is LM Studio and Ollama, already listed.
+    """
+    from .cell_model_providers import ADMITTED_PROVIDERS
+
+    titles = {"cloud": "ArchHub cloud"}
+    records = [{"id": family, "title": titles.get(family, _PROVIDER_NAMES[family]),
+                "capabilities": ["text"], "local": family in ("lmstudio", "ollama")}
+               for family in ("cloud", "openrouter", "openai", "google", "lmstudio", "ollama")]
+    # "local" is LM Studio and Ollama above; "cli-subscription" is each CLI below.
+    known = {record["id"] for record in records} | {"local", "cli-subscription"}
+    records.extend({"id": name, "title": description, "capabilities": ["text"], "local": False}
+                   for name, description in ADMITTED_PROVIDERS.items() if name not in known)
+    records.extend({"id": row_id, "title": name, "capabilities": ["text"], "local": True}
+                   for row_id, name, _executable in SUBSCRIPTION_CLIS)
+    return records
+
+
 def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
-                  local_probe=None) -> list:
+                  local_probe=None, cli_probe=None) -> list:
     """What each provider really is on this machine: keyed or not, running or not.
 
-    The studio's Providers tab showed 'ant-****e2af  $23.84 this month' and
-    friends: invented keys and invented spend, typed into a fixture. Nothing
-    here is invented. A cloud provider is 'keyed' with the place the key came
-    from, or 'no key'. A local runtime is 'running' or 'not running'. There is
-    no spend figure because nothing on this machine measures one.
+    The studio's Providers tab showed invented keys and invented spend, typed
+    into a fixture. Nothing here is invented. A cloud provider is 'keyed' with
+    the place the key came from, 'no key', or 'key invalid' when the stored
+    value is too short to be a key. A local runtime is 'running' or 'not
+    running'. A subscription CLI is 'installed, not routed' or 'not
+    installed'. There is no spend figure because nothing here measures one.
     """
     rows = []
     labels = {"openrouter": "OpenRouter", "cloud": "ArchHub cloud",
@@ -477,23 +548,33 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
     loader = _secrets_listing_loader() if secrets_loader is None else secrets_loader
     for family, plan in _KEY_PLAN.items():
         try:
-            _key, source = discover_key(
+            key, source = discover_key(
                 family, environ=environ, secrets_loader=loader,
                 cloud_session=cloud_session)
+            state = "keyed" if _plausible_key(str(key)) else "key invalid"
             rows.append({"id": family, "name": labels.get(family, family.title()),
-                         "state": "keyed", "source": source, "sets": plan["variable"]})
+                         "state": state, "source": source if state == "keyed" else KEY_INVALID,
+                         "sets": plan["variable"]})
         except ModelRouteRefused:
             rows.append({"id": family, "name": labels.get(family, family.title()),
                          "state": "no key", "source": "", "sets": plan["variable"]})
     # Providers the graph registry admits (cell_model_providers) whose key
-    # this machine holds. Their keys were stored with no row at all
-    # (2026-09-17). The router has no direct route for them, so the row says
-    # what reaching their models takes on this machine right now.
+    # this machine holds but this build has no route for.
     from .cell_model_providers import ADMITTED_PROVIDERS
     through_openrouter = any(
         row["id"] == "openrouter" and row["state"] == "keyed" for row in rows)
     for name, description in ADMITTED_PROVIDERS.items():
-        if name in _KEY_PLAN or not str(loader(name) or "").strip():
+        if name in _KEY_PLAN or name in ("local", "cli-subscription"):
+            continue
+        stored = str(loader(name) or "").strip()
+        if not stored:
+            rows.append({"id": name, "name": labels.get(name, description),
+                         "state": "no key", "sets": "",
+                         "source": "no key, paste a key in Settings"})
+            continue
+        if not _plausible_key(stored):
+            rows.append({"id": name, "name": labels.get(name, description),
+                         "state": "key invalid", "sets": "", "source": KEY_INVALID})
             continue
         rows.append({"id": name, "name": labels.get(name, description),
                      "state": "keyed, not routed", "sets": "",
@@ -521,6 +602,16 @@ def provider_rows(*, environ=None, secrets_loader=None, cloud_session=None,
         rows.append({"id": family, "name": name,
                      "state": "checking" if answered is None else ("running" if answered else "not running"),
                      "source": "127.0.0.1:%d" % port, "sets": ""})
+    if cli_probe is None:
+        import shutil
+        cli_probe = shutil.which
+    for row_id, name, executable in SUBSCRIPTION_CLIS:
+        found = cli_probe(executable)
+        rows.append({"id": row_id, "name": name,
+                     "state": "installed, not routed" if found else "not installed",
+                     "source": ("installed on this machine; chat is not sent through "
+                                "subscription CLIs in this build") if found else "not found on PATH",
+                     "sets": ""})
     return rows
 
 
@@ -725,6 +816,17 @@ def _body(
             "stream": False,
             "options": {"temperature": temperature, "num_predict": max_tokens},
         }
+    if destination.family == "openai":
+        # Current OpenAI chat models take max_completion_tokens, and the
+        # reasoning families accept only their default temperature.
+        body = {
+            "model": destination.model,
+            "messages": list(messages),
+            "max_completion_tokens": max_tokens,
+        }
+        if destination.model.startswith(("gpt-4", "gpt-3.5")):
+            body["temperature"] = temperature
+        return body
     return {
         "model": destination.model,
         "messages": list(messages),
@@ -1042,6 +1144,8 @@ __all__ = [
     "default_composer_route",
     "discover_key",
     "founder_secrets_key",
+    "provider_catalogue",
+    "provider_rows",
     "resolve_model_route",
     "route_chat",
     "save_provider_key",

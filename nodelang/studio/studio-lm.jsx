@@ -5115,7 +5115,9 @@ const SettingsPermissions = () => (
 // provider is keyed or has no key, a local runtime is running or not. The registry never returns a
 // key, so the key slot is masked and nothing can reveal it, and there is no spend figure because
 // nothing on this machine measures one. The swatch identifies the vendor, as he drew it.
-const BRAND = { openrouter: '#3a6acc', cloud: '#cc785c', ollama: '#1a8a4a', lmstudio: '#4285f4' };
+const BRAND = { openrouter: '#3a6acc', cloud: '#cc785c', ollama: '#1a8a4a', lmstudio: '#4285f4', openai: '#10a37f', google: '#4285f4', anthropic: '#cc785c' };
+// Providers whose key is pasted here (model_router.KEYED_IN_SETTINGS).
+const KEY_LABEL = { openrouter: 'OpenRouter', openai: 'OpenAI', google: 'Google', anthropic: 'Anthropic' };
 
 const SettingsSocialEnrollment = ({transport}) => {
   const form = React.useRef(null), busy = React.useRef(false), alive = React.useRef(true);
@@ -5211,7 +5213,7 @@ const ProviderManage = ({ p, providers, onTab }) => {
     savingRef.current = true; setSaving(true); setErr(''); setSaved('');
     try {
       if (!transport?.saveProviderKey) throw new Error('Provider key saving is unavailable in this connection.');
-      await transport.saveProviderKey('openrouter', keyInput.current.value);
+      await transport.saveProviderKey(p.id, keyInput.current.value);
       if (!mounted.current) return;
       keyInput.current.value = ''; setHasKey(false);
       setSaved('Saved on this machine. Provider connectivity has not been checked.');
@@ -5224,12 +5226,13 @@ const ProviderManage = ({ p, providers, onTab }) => {
   const line = { fontSize:12, color:LM.inkSoft, lineHeight:1.55 };
   const refresh = <button type="button" disabled={saving || providers.loading} onClick={providers.refresh} style={{ ...smallBtn(), padding:'3px 9px' }}>
     {providers.loading ? 'Reading status…' : 'Refresh provider status'}</button>;
-  if (p.id === 'openrouter') {
+  if (KEY_LABEL[p.id]) {
+    const label = KEY_LABEL[p.id];
     const blocked = saving || !hasKey || !transport?.saveProviderKey;
     return (
       <form onSubmit={saveKey} style={box}>
-        <label style={{ display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em' }}>OPENROUTER API KEY
-          <input ref={keyInput} type="password" aria-label="OpenRouter API key" autoComplete="new-password"
+        <label style={{ display:'block', fontFamily:LM.mono, fontSize:9.5, color:LM.inkMuted, letterSpacing:'0.1em' }}>{label.toUpperCase()} API KEY
+          <input ref={keyInput} type="password" aria-label={label + ' API key'} autoComplete="new-password"
             autoCapitalize="none" spellCheck={false} maxLength={8192} disabled={saving || !transport?.saveProviderKey}
             onChange={event => { setHasKey(!!event.target.value.trim()); setSaved(''); }}
             style={{ display:'block', width:'100%', margin:'6px 0 8px', padding:'7px 10px', background:LM.bg,
@@ -5239,7 +5242,7 @@ const ProviderManage = ({ p, providers, onTab }) => {
         <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
           <button type="submit" disabled={blocked}
             style={blocked ? { ...smallBtn(), padding:'3px 9px', borderStyle:'dashed', cursor:'default' } : { ...smallBtn(true), padding:'3px 9px' }}>
-            {saving ? 'Saving key…' : 'Save OpenRouter key'}</button>
+            {saving ? 'Saving key…' : 'Save ' + label + ' key'}</button>
           {refresh}
         </div>
         {saved && <p role="status" style={{ fontSize:12, color:LM.ok, margin:'8px 0 0' }}>{saved}</p>}
@@ -5252,6 +5255,7 @@ const ProviderManage = ({ p, providers, onTab }) => {
       <div style={line}>{p.id === 'cloud'
         ? 'The ArchHub cloud is keyed by the signed-in account' + (p.sets ? ' or by ' + p.sets : '') + '.'
         : p.state === 'running' ? p.name + ' is answering on ' + p.source + '. Its models appear in the model picker.'
+        : p.state === 'installed, not routed' || p.state === 'not installed' ? p.name + ': ' + p.source + '.'
         : p.sets ? 'Set ' + p.sets + ' on this machine, then read the status again.'
         : 'Start ' + p.name + ' on this machine (' + p.source + '), then read the status again.'}</div>
       <div style={{ display:'flex', gap:7, marginTop:9, flexWrap:'wrap' }}>
@@ -5267,7 +5271,8 @@ const SettingsProviders = ({ providers, onTab }) => {
   const [managing, setManaging] = React.useState(null);
   const [social, setSocial] = React.useState(false);
   const tone = (state) => state === 'keyed' ? LM.ok : state === 'running' ? LM.cyan : LM.inkMuted;
-  const off = state => state === 'no key' || state === 'not running';
+  const off = state => state === 'no key' || state === 'not running' || state === 'not installed';
+  const warn = state => state === 'key invalid';
   const keyed = providerKeyed(rows), running = providerRunning(rows);
   return (
   <div>
@@ -5286,16 +5291,17 @@ const SettingsProviders = ({ providers, onTab }) => {
                   {p.state === 'keyed' ? '\u2022'.repeat(12) : p.sets ? '\u2014' : p.source}
                 </span> · {p.state === 'keyed' ? 'key from the ' + p.source
                   : p.state === 'no key' ? 'no key \u00b7 set ' + p.sets
-                  : p.state === 'running' ? 'local runtime' : 'not running'}
+                  : p.state === 'running' ? 'local runtime'
+                  : p.state === 'not running' ? 'not running' : p.source}
               </div>
             </div>
             <span style={{
               fontFamily:LM.mono, fontSize:9, padding:'2px 7px', borderRadius:LM.rad.xs, letterSpacing:'0.1em', textTransform:'uppercase',
               background: off(p.state) ? LM.bgSoft : tone(p.state) + '14',
-              color:       tone(p.state),
+              color:       warn(p.state) ? LM.err : tone(p.state),
             }}>{p.state}</span>
             <button aria-expanded={managing === p.id} onClick={() => setManaging(managing === p.id ? null : p.id)}
-              style={{ ...smallBtn(), padding:'3px 8px' }}>{off(p.state) ? 'connect' : 'manage'}</button>
+              style={{ ...smallBtn(), padding:'3px 8px' }}>{off(p.state) || warn(p.state) ? 'connect' : 'manage'}</button>
           </div>
           {managing === p.id && <ProviderManage p={p} providers={providers} onTab={onTab}/>}
         </div>

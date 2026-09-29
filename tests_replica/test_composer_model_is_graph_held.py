@@ -181,16 +181,18 @@ def test_a_graph_from_an_older_build_takes_the_pick_across_restarts_and_a_clear_
 
 
 def test_admitted_keyed_providers_are_listed_and_never_promise_an_unkeyed_openrouter():
-    held = {"anthropic": "a-key", "google": "g-key", "nvidia": "n-key"}
+    # 2026-09-28: Google has its own route now; Anthropic stays admitted, not routed.
+    held = {"anthropic": "a-key-" + "a" * 30, "google": "g-key-" + "g" * 30, "nvidia": "n-key-" + "n" * 30}
     rows = model_router.provider_rows(environ={}, secrets_loader=lambda name: held.get(name, ""),
         cloud_session=None, local_probe=lambda host, port: False)
     by = {row["id"]: row for row in rows}
     assert by["openrouter"]["state"] == "no key"
-    for name in ("anthropic", "google"):
-        assert by[name]["state"] == "keyed, not routed", by
-        assert "add an OpenRouter key" in by[name]["source"] and "reached through" not in by[name]["source"]
-    assert "openai" not in by and "nvidia" not in by, "only keyed providers the graph registry admits"
-    held["openrouter"] = "r-key"
+    assert by["anthropic"]["state"] == "keyed, not routed", by
+    assert "add an OpenRouter key" in by["anthropic"]["source"] and "reached through" not in by["anthropic"]["source"]
+    assert by["google"]["state"] == "keyed" and by["google"]["source"] == "secrets store"
+    assert by["openai"]["state"] == "no key"
+    assert "nvidia" not in by, "only providers the graph registry admits"
+    held["openrouter"] = "r-key-" + "r" * 30
     by = {row["id"]: row for row in model_router.provider_rows(environ={},
         secrets_loader=lambda name: held.get(name, ""), cloud_session=None, local_probe=lambda host, port: False)}
     assert by["openrouter"]["state"] == "keyed"
@@ -205,7 +207,7 @@ def test_the_provider_listing_opens_the_secrets_store_once(monkeypatch, tmp_path
 
     def load_api_key(name):
         asked.append(name)
-        return {"openrouter": "r-key", "openai": "o-key"}.get(name, "")
+        return {"openrouter": "r-key-" + "r" * 30, "openai": "o-key-" + "o" * 30}.get(name, "")
     store = SimpleNamespace(SECRETS_FILE=str(tmp_path / "absent" / "secrets.dat"), load_api_key=load_api_key)
     monkeypatch.setattr(model_router, "_application_secrets_store", lambda: opened.append(1) or store)
     rows = model_router.provider_rows(environ={}, cloud_session=None, local_probe=lambda host, port: False)
@@ -213,7 +215,6 @@ def test_the_provider_listing_opens_the_secrets_store_once(monkeypatch, tmp_path
     assert len(opened) == 1, "store loads per provider_rows call: %d" % len(opened)
     assert (by["openrouter"]["state"], by["openrouter"]["source"]) == ("keyed", "secrets store")
     assert by["cloud"]["state"] == "no key"
-    assert by["openai"]["state"] == "keyed, not routed"
-    assert "reached through OpenRouter" in by["openai"]["source"]
+    assert (by["openai"]["state"], by["openai"]["source"]) == ("keyed", "secrets store")
     assert "r-key" not in json.dumps(rows) and "o-key" not in json.dumps(rows)
     assert {"openrouter", "archhub-cloud", "openai", "anthropic", "google"} <= set(asked)

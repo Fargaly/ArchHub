@@ -1,9 +1,12 @@
 """The model picker's list, read live -- never a table typed in 2025.
 
-Three sources, each best effort and each honest about what it knows:
+Four sources, each best effort and each honest about what it knows:
   CLOUD  -- what the founder's ArchHub cloud actually serves (/v1/models with
             his own session token); price is the subscription, so no number.
   BYO    -- OpenRouter's public catalogue with its real per-token prices.
+  DIRECT -- OpenAI and Google with this machine's own keys: the cheapest text
+            models that each vendor's own list serves, priced by OpenRouter's
+            catalogue for the same id. Never a typed id.
   LOCAL  -- LM Studio and Ollama on this machine.
 The founder saw "Claude Sonnet 4.5 / Opus 4.1 / GPT-4o" and asked whether that
 was really everything (2026-09-05). It was a hard-coded list.
@@ -24,6 +27,18 @@ from .cloud_relay import SIGN_IN_AGAIN, pinned_cloud_base
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 LM_STUDIO_MODELS = "http://127.0.0.1:1234/v1/models"
 OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
+OPENAI_MODELS = "https://api.openai.com/v1/models"
+GOOGLE_MODELS = "https://generativelanguage.googleapis.com/v1beta/models"
+DIRECT_GROUP = "DIRECT · your keys"
+DIRECT_PER_VENDOR = 3
+# Ids naming a non-chat model (image, audio, speech, search, embeddings) or a
+# Responses-only model; the chat-completions route cannot send to them.
+_NOT_CHAT = ("image", "audio", "tts", "transcribe", "realtime", "live", "embedding",
+             "moderation", "search", "whisper", "sora", "veo", "lyria", "robotics",
+             "computer-use", "deep-research", "banana", "preview", "instruct",
+             "babbage", "davinci")
+# OpenAI serves these only on its Responses API, not chat completions.
+_OPENAI_RESPONSES_ONLY = ("codex", "-pro")
 CLOUD_GROUP = "CLOUD · subscription"
 BYO_GROUP = "BYO · OpenRouter"
 LOCAL_GROUP = "LOCAL · this machine"
@@ -122,7 +137,7 @@ def cloud_models(session: Optional[Mapping[str, str]], *, opener: Callable, time
     return items
 
 
-def openrouter_models(*, opener: Callable, timeout: float) -> list[dict]:
+def openrouter_models(*, opener: Callable, timeout: float, prices: Optional[dict] = None) -> list[dict]:
     data = _get_json(OPENROUTER_MODELS, headers={"Accept": "application/json"}, timeout=timeout, opener=opener)
     items = []
     for row in (data.get("data") if isinstance(data, Mapping) else []) or []:
@@ -131,6 +146,8 @@ def openrouter_models(*, opener: Callable, timeout: float) -> list[dict]:
         route = str(row["id"])
         pricing = row.get("pricing") if isinstance(row.get("pricing"), Mapping) else {}
         prompt, completion = _per_million(pricing.get("prompt")), _per_million(pricing.get("completion"))
+        if prices is not None and prompt is not None and completion is not None:
+            prices[route] = (prompt, completion)
         vendor = _vendor(route)
         items.append({
             "name": str(row.get("name") or route), "route": route, "vendor": vendor, "tag": "BYO",
@@ -163,6 +180,55 @@ def local_models(*, opener: Callable, timeout: float) -> list[dict]:
     return items
 
 
+def _text_chat_id(vendor: str, model_id: str) -> bool:
+    if vendor == "openai" and any(word in model_id for word in _OPENAI_RESPONSES_ONLY):
+        return False
+    return not any(word in model_id for word in _NOT_CHAT)
+
+
+def direct_models(*, opener: Callable, timeout: float, prices: Mapping[str, tuple],
+                  secrets_loader: Optional[Callable[[str], str]] = None,
+                  environ: Optional[Mapping[str, str]] = None) -> list[dict]:
+    """The cheapest text models OpenAI and Google serve to this machine's keys.
+
+    Ids come only from each vendor's own list-models answer; the price is
+    OpenRouter's for the same vendor/id. A vendor with no key gives no rows.
+    """
+    from .model_router import ModelRouteRefused, discover_key
+
+    items: list[dict] = []
+    for vendor, family in (("openai", "openai"), ("google", "google")):
+        try:
+            key, _source = discover_key(family, environ=environ, secrets_loader=secrets_loader)
+        except ModelRouteRefused:
+            continue
+        if vendor == "openai":
+            data = _get_json(OPENAI_MODELS, headers={"Authorization": "Bearer " + key},
+                             timeout=timeout, opener=opener)
+            ids = [str(row.get("id")) for row in (data.get("data") or []) if isinstance(row, Mapping) and row.get("id")]
+        else:
+            data = _get_json(GOOGLE_MODELS + "?pageSize=1000", headers={"x-goog-api-key": key},
+                             timeout=timeout, opener=opener)
+            ids = [str(row.get("name", "")).split("/", 1)[-1] for row in (data.get("models") or [])
+                   if isinstance(row, Mapping) and "generateContent" in (row.get("supportedGenerationMethods") or [])]
+            # Gemma on this endpoint refuses system instructions; chat sends them.
+            ids = [model_id for model_id in ids if model_id.startswith("gemini-")]
+        priced = []
+        for model_id in ids:
+            price = prices.get("%s/%s" % (vendor, model_id))
+            if price is not None and _text_chat_id(vendor, model_id):
+                priced.append((price[0] + price[1], model_id, price))
+        priced.sort()
+        for _total, model_id, (prompt, completion) in priced[:DIRECT_PER_VENDOR]:
+            items.append({
+                "name": model_id, "route": "%s-api/%s" % (family, model_id), "vendor": vendor,
+                "tag": "DIRECT", "ctx": "",
+                "cost": "%s / %s per M" % (_money(prompt), _money(completion)),
+                "col": _VENDOR_COLOURS.get(vendor, "#3a6acc"),
+            })
+    return items
+
+
 def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Optional[Callable] = None,
                       timeout: float = 6.0, now: Optional[float] = None, force: bool = False) -> dict:
     """Groups for the picker, cached ten minutes; every source best effort."""
@@ -177,8 +243,10 @@ def live_model_groups(session: Optional[Mapping[str, str]] = None, *, opener: Op
     errors: dict[str, str] = {}
     notes: dict[str, str] = {}
     groups = []
+    prices: dict = {}
     for name, fn in ((CLOUD_GROUP, lambda: cloud_models(session, opener=opener, timeout=timeout)),
-                     (BYO_GROUP, lambda: openrouter_models(opener=opener, timeout=timeout)),
+                     (BYO_GROUP, lambda: openrouter_models(opener=opener, timeout=timeout, prices=prices)),
+                     (DIRECT_GROUP, lambda: direct_models(opener=opener, timeout=timeout, prices=prices)),
                      (LOCAL_GROUP, lambda: local_models(opener=opener, timeout=timeout))):
         failure = None
         try:
@@ -298,5 +366,5 @@ def reset_cache() -> None:
         _refreshing.clear()
 
 
-__all__ = ["live_model_groups", "held_model_groups", "cloud_models", "openrouter_models",
+__all__ = ["live_model_groups", "held_model_groups", "cloud_models", "openrouter_models", "direct_models",
            "local_models", "routable_route", "groups_with_routes", "reset_cache"]

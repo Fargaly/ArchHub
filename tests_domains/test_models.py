@@ -8,6 +8,49 @@ from nodelang.domains.models import (
     set_selection_parameter,
 )
 
+# Scoring-graph fixture only; the product passes the router registry.
+FIXTURE_PROVIDERS = (
+    {
+        "id": "provider-fast",
+        "title": "Fast provider",
+        "capabilities": ["text", "embedding"],
+        "local": False,
+    },
+    {
+        "id": "provider-deep",
+        "title": "Deep provider",
+        "capabilities": ["text", "vision", "tool-use"],
+        "local": False,
+    },
+)
+
+FIXTURE_MODELS = (
+    {
+        "id": "model-fast",
+        "title": "Fast model",
+        "provider": "provider-fast",
+        "capabilities": ["text", "embedding"],
+        "max_context": 8192,
+        "input_cost": 0.25,
+        "output_cost": 0.50,
+        "latency_ms": 120.0,
+        "quality": 0.72,
+        "enabled": True,
+    },
+    {
+        "id": "model-deep",
+        "title": "Deep model",
+        "provider": "provider-deep",
+        "capabilities": ["text", "vision", "tool-use"],
+        "max_context": 65536,
+        "input_cost": 0.90,
+        "output_cost": 1.80,
+        "latency_ms": 700.0,
+        "quality": 0.94,
+        "enabled": True,
+    },
+)
+
 
 def _wire_pairs(store: Store) -> set[tuple[str, str]]:
     pairs = set()
@@ -22,7 +65,7 @@ def _wire_pairs(store: Store) -> set[tuple[str, str]]:
 
 def test_models_domain_is_one_table_records_groups_params_and_wires():
     store = Store()
-    domain = build_models_domain(store)
+    domain = build_models_domain(store, providers=FIXTURE_PROVIDERS, models=FIXTURE_MODELS)
 
     assert validate_store(store) is True
     assert store.nodes[domain["session"]]["kind"] == "session"
@@ -66,7 +109,7 @@ def test_models_domain_is_one_table_records_groups_params_and_wires():
 
 def test_selection_parameter_edits_change_routing_deterministically():
     store = Store()
-    domain = build_models_domain(store)
+    domain = build_models_domain(store, providers=FIXTURE_PROVIDERS, models=FIXTURE_MODELS)
 
     assert route_model(store, domain)["model_id"] == "model-fast"
 
@@ -84,7 +127,7 @@ def test_selection_parameter_edits_change_routing_deterministically():
 
 def test_weight_and_usage_parameter_edits_recook_scores_and_route():
     store = Store()
-    domain = build_models_domain(store)
+    domain = build_models_domain(store, providers=FIXTURE_PROVIDERS, models=FIXTURE_MODELS)
 
     assert route_model(store, domain)["model_id"] == "model-fast"
     set_selection_parameter(store, domain, "quality_weight", 30.0)
@@ -102,7 +145,7 @@ def test_weight_and_usage_parameter_edits_recook_scores_and_route():
 
 def test_ties_use_declaration_order_and_no_match_is_explicit():
     store = Store()
-    domain = build_models_domain(store)
+    domain = build_models_domain(store, providers=FIXTURE_PROVIDERS, models=FIXTURE_MODELS)
     for name in (
         "quality_weight", "input_cost_weight", "latency_weight",
         "usage_weight", "preference_weight",

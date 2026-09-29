@@ -15,48 +15,6 @@ from typing import Any
 from ..core import Store
 
 
-DEFAULT_PROVIDERS = (
-    {
-        "id": "provider-fast",
-        "title": "Fast provider",
-        "capabilities": ["text", "embedding"],
-        "local": False,
-    },
-    {
-        "id": "provider-deep",
-        "title": "Deep provider",
-        "capabilities": ["text", "vision", "tool-use"],
-        "local": False,
-    },
-)
-
-DEFAULT_MODELS = (
-    {
-        "id": "model-fast",
-        "title": "Fast model",
-        "provider": "provider-fast",
-        "capabilities": ["text", "embedding"],
-        "max_context": 8192,
-        "input_cost": 0.25,
-        "output_cost": 0.50,
-        "latency_ms": 120.0,
-        "quality": 0.72,
-        "enabled": True,
-    },
-    {
-        "id": "model-deep",
-        "title": "Deep model",
-        "provider": "provider-deep",
-        "capabilities": ["text", "vision", "tool-use"],
-        "max_context": 65536,
-        "input_cost": 0.90,
-        "output_cost": 1.80,
-        "latency_ms": 700.0,
-        "quality": 0.94,
-        "enabled": True,
-    },
-)
-
 DEFAULT_POLICY = {
     "required_capability": "text",
     "minimum_context": 1024,
@@ -199,18 +157,21 @@ def _op(
 def build_models_domain(
     store: Store,
     *,
-    providers: Iterable[Mapping[str, Any]] = DEFAULT_PROVIDERS,
-    models: Iterable[Mapping[str, Any]] = DEFAULT_MODELS,
+    providers: Iterable[Mapping[str, Any]],
+    models: Iterable[Mapping[str, Any]] = (),
     policy: Mapping[str, Any] | None = None,
     actor: str = "models-domain",
 ) -> dict[str, Any]:
-    """Build a provider/model catalog plus an open, deterministic score graph."""
+    """Build a provider/model catalog plus an open, deterministic score graph.
+
+    Providers come from the caller (the application passes the router's one
+    registry, model_router.provider_catalogue). No provider or model is
+    invented here; with no model records the routing decision is no-match.
+    """
     provider_records = [_provider_record(raw) for raw in providers]
     model_records = [_model_record(raw) for raw in models]
     if not provider_records:
         raise ValueError("models domain needs at least one provider")
-    if not model_records:
-        raise ValueError("models domain needs at least one model")
 
     provider_ids = [record["id"] for record in provider_records]
     model_ids = [record["id"] for record in model_records]
@@ -546,8 +507,6 @@ def set_model_usage(
 
 
 __all__ = [
-    "DEFAULT_PROVIDERS",
-    "DEFAULT_MODELS",
     "DEFAULT_POLICY",
     "build_models_domain",
     "route_model",

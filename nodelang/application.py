@@ -13,6 +13,7 @@ from .domains.community import build_community_domain
 from .domains.connectors import build_connectors_domain
 from .domains.monetization import build_monetization_domain
 from .domains.models import build_models_domain
+from .model_router import provider_catalogue
 from .domains.orchestration import build_orchestration_domain
 from .domains.resources import (
     bind_resource_authority,
@@ -714,7 +715,7 @@ def build_archhub_application(store=None):
     store = store or Store()
     resolved_map_path = resolve_map_path()
     grand = import_grand_map(store)
-    models = build_models_domain(store)
+    models = build_models_domain(store, providers=provider_catalogue(), models=())
     connectors = build_connectors_domain(store, connectors=[
         {
             'key': 'node-runtime', 'title': 'Node runtime',

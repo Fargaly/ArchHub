@@ -2276,8 +2276,12 @@ def _settle_canvas_content(store, registry, *, authentication_context=None,
     def planned(snapshot):
         """The whole plan at ``snapshot``: the work left, and what is skipped.
 
-        A skip recorded against this exact state is not tried again; it is
-        re-planned only once its holders change (a new digest)."""
+        A duplicate set the user touched in more than one copy is resolved
+        "keep both" once recorded (coordinator decision 2026-09-29): it is
+        never asked about or retried, and it does not hold the run open. A
+        move the graph refused is recorded too and is not retried unchanged;
+        it is re-planned only once its card changes (a new digest), and it
+        does hold the run open ("outstanding")."""
         owned = _owner_properties(snapshot, registry)
         plan = plan_canvas_content(snapshot, registry, owned)
         work = [
@@ -2291,7 +2295,7 @@ def _settle_canvas_content(store, registry, *, authentication_context=None,
         parked = [item for item in work
                   if recorded(work_digest(*item[:4], owned))]
         work = [item for item in work if item not in parked]
-        outstanding = len(plan["skips"]) - len(new_skips) + len(parked)
+        outstanding = len(parked)
         return owned, plan, work, new_skips, outstanding
 
     size = max(1, int(batch_size))
@@ -2517,10 +2521,12 @@ def _settle_canvas_content(store, registry, *, authentication_context=None,
           for skip in latest_skips),
         *({**item, "roots": [item["root"]]} for item in refused.values()),
     ]
-    # Done only when nothing is left behind: no new skip and none recorded
-    # earlier that still stands. That includes a first look that finds
-    # nothing to do at all, so the next open does not plan again.
-    done = not new_skips and not outstanding
+    # Done when nothing is left behind: no move refused now or earlier. A
+    # duplicate set kept "keep both" is resolved, not left behind. That
+    # includes a first look that finds nothing to do at all, so the next
+    # open does not plan again.
+    done = not refused and not outstanding
+    kept_records = [_MIGRATION_SKIP_PREFIX + skip["digest"] for skip in plan["skips"]]
     recorded_now = 0
     record_written = False
     if not dry_run and (new_skips or done):
@@ -2532,8 +2538,10 @@ def _settle_canvas_content(store, registry, *, authentication_context=None,
                 if skip_root in head.cells:
                     continue
                 reason_root = skip_root + ":why"
-                cells.append(Cell(reason_root, NULL_CELL_ID, NULL_CELL_ID, (
-                    "canvas content left in place: %s (%s)"
+                cells.append(Cell(reason_root, NULL_CELL_ID, NULL_CELL_ID, ((
+                    "both copies kept, never retried: %s (%s)"
+                    if skip.get("action") == "keep" else
+                    "canvas content left in place: %s (%s)")
                     % (", ".join(skip["roots"]), skip["why"])).encode("utf-8")))
                 cells.extend(compose_relation_cells((
                     (registry.roles["why"], reason_root),
@@ -2545,12 +2553,15 @@ def _settle_canvas_content(store, registry, *, authentication_context=None,
                 reason_root = CANVAS_CONTENT_MIGRATION_ROOT + ":why"
                 cells.append(Cell(reason_root, NULL_CELL_ID, NULL_CELL_ID, (
                     "canvas content settled in its lenses; %d batch relation(s) "
-                    "name the tombstoned duplicate seed cards" % len(every_batch)
+                    "name the tombstoned duplicate seed cards; %d duplicate set(s) "
+                    "the user touched in more than one copy: both kept"
+                    % (len(every_batch), len(kept_records))
                 ).encode("utf-8")))
                 cells.extend(compose_relation_cells((
                     (registry.roles["why"], reason_root),
                     (registry.roles["scope"], registry.canvas_root),
                     *((member_role, batch) for batch in every_batch),
+                    *((member_role, kept) for kept in kept_records),
                 ), relation_id=CANVAS_CONTENT_MIGRATION_ROOT).cells)
             if not cells:
                 break

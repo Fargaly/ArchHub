@@ -816,6 +816,33 @@ def test_a_graph_holding_a_user_group_is_migrated_and_still_opens():
         store.close()
 
 
+def test_a_set_touched_in_more_than_one_copy_keeps_both_and_the_run_is_done():
+    """Coordinator decision 2026-09-29: a duplicate set the user touched in
+    more than one copy keeps both copies; it is recorded once, never asked
+    about or retried, and does not hold the migration open."""
+    from nodelang.universal_application import _USER_PLACEMENT
+    from nodelang.universal_pipeline import CANVAS_CONTENT_MIGRATION_ROOT
+    store, registry, placed, (copy,) = _graph_with_copies(
+        [("CAD Lines", _seed_properties("cad-lines"))])
+    try:
+        original = placed["cad-lines"]
+        for root in (original, copy):      # both copies placed by hand: still exact copies
+            create_universal_property(store, registry, root, "placed", _USER_PLACEMENT)
+        first = settle_canvas_content(store, registry, batch_size=4, pause=0)
+        snapshot = store.snapshot()
+        kept = [skip for skip in first["skipped"] if set(skip["roots"]) == {original, copy}]
+        assert kept and kept[0]["action"] == "keep", first["skipped"]
+        assert first["done"] is True, first
+        assert CANVAS_CONTENT_MIGRATION_ROOT in snapshot.cells
+        assert {original, copy} <= set(_canvas_roots(snapshot, registry)[0])
+        tombstoned = migration_tombstones(snapshot, registry)
+        assert original not in tombstoned and copy not in tombstoned
+        revision = store.revision
+        again = settle_canvas_content(store, registry, batch_size=4, pause=0)
+        assert again["committed"] is False and store.revision == revision, again
+    finally:
+        store.close()
+
 def test_a_graph_with_nothing_to_move_records_that_it_is_done():
     """A first look that finds nothing to do writes the done record once, so
     the next open does not plan again."""

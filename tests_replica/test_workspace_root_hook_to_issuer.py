@@ -109,3 +109,33 @@ def test_a_same_id_re_registration_before_issue_is_refused_before_any_write(brok
     assert "different registration" in prepared["message"]
     assert not (folder_a / "drawings" / "synthetic.dwg").exists()
     assert not (folder_b / "drawings").exists()
+
+
+@pytest.mark.parametrize("runtime", [(ROOT_GRANT, ("codex",), True)], indirect=True)
+def test_an_unchanged_retry_reuses_its_permit_and_settles_once(broker, runtime):
+    folder = runtime["folder"]
+    (folder / "drawings").mkdir()
+    binding = _binding(broker, folder)
+    first = _prepare(broker, runtime, folder, binding)
+    retry = _prepare(broker, runtime, folder, binding)  # the same invocation, retried
+    assert first["allow"] is True and retry["allow"] is True, (first, retry)
+    (folder / "drawings" / "synthetic.dwg").write_text(CONTENT, encoding="utf-8")
+    settled = broker.settle_signed_write_event(
+        _event(folder, "PostToolUse"), vendor="codex", pending_root=runtime["tmp"] / "pending",
+        transport=_transport(runtime["agent"]))
+    assert settled["code"] == "signed_write_receipted", settled
+
+
+@pytest.mark.parametrize("runtime", [(ROOT_GRANT, ("codex",), True)], indirect=True)
+def test_a_folder_replaced_at_the_same_spelling_refuses_the_cached_permit(broker, runtime):
+    import shutil
+
+    folder = runtime["folder"]
+    (folder / "drawings").mkdir()
+    assert _prepare(broker, runtime, folder, _binding(broker, folder))["allow"] is True
+    shutil.rmtree(folder)  # replaced before the tool ran: same path, a new folder identity
+    folder.mkdir()
+    (folder / "drawings").mkdir()
+    retry = _prepare(broker, runtime, folder, _binding(broker, folder))
+    assert retry["allow"] is False and "different registration" in retry["message"], retry
+    assert not (folder / "drawings" / "synthetic.dwg").exists()

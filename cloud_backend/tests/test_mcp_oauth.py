@@ -17,6 +17,8 @@ import json
 import re
 import secrets
 import threading
+import time
+import types
 import urllib.parse
 
 import pytest
@@ -65,13 +67,23 @@ def _google(monkeypatch, email=FOUNDER):
     return started
 
 
-def _callback(pending):
-    """Google's verified callback, through the real google_auth path: a continue URL, no code."""
+def _callback(browser, pending):
+    """Google's callback for `pending`, arriving in `browser` through the real route."""
     import google_auth
     state = google_auth.encode_state(code_challenge="", redirect="", mcp_grant=pending)
-    back = google_auth.exchange_callback(code="google-code", state=state)
-    assert back.startswith("https://api.archhub.io/oauth/continue")
-    return back.replace("https://api.archhub.io", "")
+    return browser.get("/v1/auth/google/callback", params={"code": "google-code", "state": state})
+
+
+def _continue_path(back):
+    assert back.status_code == 302, back.text
+    location = back.headers["location"]
+    assert location.startswith("https://api.archhub.io/oauth/continue"), location
+    return location.replace("https://api.archhub.io", "")
+
+
+def _continue(browser, pending):
+    """Google's callback and then the continue step, both in `browser`."""
+    return browser.get(_continue_path(_callback(browser, pending)))
 
 
 def _code(client, monkeypatch, client_id, challenge, email=FOUNDER, redirect=REDIRECT):
@@ -81,7 +93,7 @@ def _code(client, monkeypatch, client_id, challenge, email=FOUNDER, redirect=RED
     r = client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"})
     assert r.status_code == 302 and r.headers["location"].startswith("https://accounts.google.com"), r.text
     assert started["mcp_grant"] == pending
-    back = client.get(_callback(pending))
+    back = _continue(client, pending)
     assert back.status_code == 302, back.text
     query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(back.headers["location"]).query))
     assert back.headers["location"].startswith(redirect) and query["state"] == "st-1" and query["iss"] == "https://api.archhub.io"
@@ -245,17 +257,13 @@ def test_P1_a_registered_attacker_never_receives_a_code_without_this_browsers_ap
     assert "attacker.example" in page.text and page.headers["x-frame-options"] == "DENY"
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
     # (b) Skipping consent: a Google callback for an unapproved request yields no code.
-    import google_auth
-    try:
-        denied = founder.get(_callback(pending))
-    except google_auth.GoogleAuthError:
-        denied = None                  # refused at Google's callback already
-    assert denied is None or (denied.status_code == 400 and "code=" not in denied.headers.get("location", ""))
+    denied = _callback(founder, pending)
+    assert denied.status_code == 400 and "location" not in denied.headers
     # (c) The attacker approves in HIS browser and makes the founder finish Google in his:
     pending, csrf, _ = _consent_form(attacker, client_id, challenge, evil)
     assert attacker.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
-    stolen = founder.get(_callback(pending))
-    assert stolen.status_code == 400 and "code=" not in stolen.headers.get("location", "")
+    stolen = _callback(founder, pending)
+    assert stolen.status_code == 400 and "location" not in stolen.headers
     import db
     with db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM oauth_codes").fetchone()[0] == 0
@@ -291,7 +299,8 @@ def test_unfinished_requests_are_capped(client, monkeypatch):
         _consent_form(client, client_id, challenge)
     r = client.get("/oauth/authorize", params={"response_type": "code", "client_id": client_id, "redirect_uri": REDIRECT,
                                                "code_challenge": challenge, "code_challenge_method": "S256"})
-    assert r.status_code == 503
+    assert r.status_code == 200, "a full shared pool makes room instead of refusing"
+    assert _live(client_id) == 2, "the oldest unapproved request made the room"
 
 
 def test_registration_flooding_cannot_lock_out_an_approved_client(client, monkeypatch):
@@ -314,7 +323,7 @@ def test_a_suspended_account_gets_no_code_and_its_tokens_stop_working(client, mo
     _google(monkeypatch)
     pending, csrf, _ = _consent_form(client, client_id, challenge)
     client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"})
-    refused = client.get(_callback(pending))
+    refused = _continue(client, pending)
     assert refused.status_code == 400 and "code=" not in refused.headers.get("location", "")
     assert refused.status_code == 400 and "code=" not in refused.headers.get("location", "")
 
@@ -324,6 +333,12 @@ def _browser():
     from fastapi.testclient import TestClient
     import main
     return TestClient(main.app, raise_server_exceptions=False, follow_redirects=False, base_url="https://testserver")
+
+
+def _live(client_id):
+    import db
+    with db.connect() as con:
+        return con.execute("SELECT COUNT(*) FROM oauth_pending WHERE client_id = ?", (client_id,)).fetchone()[0]
 
 
 def _authorize_params(client_id, challenge, redirect=REDIRECT, **extra):
@@ -361,11 +376,14 @@ def test_F1_a_login_csrf_through_google_still_gives_the_attacker_nothing(monkeyp
     _, challenge = _pkce()
     pending, csrf, _ = _consent_form(attacker, client_id, challenge, evil)
     assert attacker.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
-    back = _callback(pending)                      # lands in the founder's browser
-    assert founder.get(back).status_code == 400
-    for attempt in (back, "/oauth/continue"):      # the attacker's browser, with his cookie
-        r = attacker.get(attempt)
-        assert r.status_code == 400 and "code=" not in r.headers.get("location", "")
+    # The attacker's Google state, finished in the founder's browser (his account).
+    stolen = _callback(founder, pending)
+    assert stolen.status_code == 400 and "location" not in stolen.headers, "no continue value is ever issued"
+    with db.connect() as con:
+        assert tuple(con.execute("SELECT verified_email, continue_hash FROM oauth_pending WHERE id = ?",
+                                 (pending,)).fetchone()) == (None, None), "the founder's identity was not recorded"
+    r = attacker.get("/oauth/continue")            # his browser, his cookie, nothing to present
+    assert r.status_code == 400 and "location" not in r.headers
     with db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM oauth_codes").fetchone()[0] == 0
 
@@ -408,6 +426,7 @@ def test_F4_unfinished_requests_are_capped_per_client_and_per_address(client, mo
     assert client.get("/oauth/authorize", params=_authorize_params(first, challenge)).status_code == 503
     _consent_form(client, second, challenge)       # another client from the same address: 3rd
     assert client.get("/oauth/authorize", params=_authorize_params(second, challenge)).status_code == 503
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
     elsewhere = client.get("/oauth/authorize", params=_authorize_params(second, challenge),
                            headers={"Fly-Client-IP": "203.0.113.9"})
     assert elsewhere.status_code == 200, "one address filling its share never locks out another"
@@ -438,7 +457,7 @@ def test_F6_the_continue_url_carries_no_email_no_request_id_and_works_once_in_th
     _google(monkeypatch)
     pending, csrf, _ = _consent_form(client, client_id, challenge)
     client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"})
-    back = _callback(pending)
+    back = _continue_path(_callback(client, pending))
     query = urllib.parse.parse_qs(urllib.parse.urlsplit(back).query)
     assert list(query) == ["c"], back
     for leak in (FOUNDER, urllib.parse.quote(FOUNDER), pending):
@@ -524,3 +543,674 @@ def test_no_code_token_or_browser_secret_reaches_any_log_stream_or_row(client, m
     for secret in secrets_seen:
         for stream, text in (("rows", dump), ("logging", caplog.text), ("stdout", out), ("stderr", err)):
             assert secret not in text, "%s leaked into %s" % (secret[:12], stream)
+
+
+# -- v3.1: the review of 1abb4fb1 (M1, L1-L4 and the court gaps) --------------
+@pytest.fixture
+def clock(monkeypatch):
+    """oauth_mcp's own clock, moved forward without touching Google's state expiry."""
+    import oauth_mcp
+    now = {"offset": 0}
+    real = time.time
+    monkeypatch.setattr(oauth_mcp, "time", types.SimpleNamespace(time=lambda: real() + now["offset"]))
+    return now
+
+
+def test_L1_a_leaked_state_finished_in_another_browser_records_nothing(monkeypatch):
+    """The victim approves; the attacker finishes Google with the leaked state in HIS
+    browser and HIS account, to link the victim's client to the attacker's account."""
+    import db
+    victim, attacker = _browser(), _browser()
+    client_id = _register(victim)
+    _, challenge = _pkce()
+    _google(monkeypatch, email="attacker@evil.example")
+    pending, csrf, _ = _consent_form(victim, client_id, challenge)
+    assert victim.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    stolen = _callback(attacker, pending)
+    assert stolen.status_code == 400 and "location" not in stolen.headers
+    with db.connect() as con:
+        assert con.execute("SELECT verified_email FROM oauth_pending WHERE id = ?", (pending,)).fetchone()[0] is None
+    _google(monkeypatch, email=FOUNDER)
+    done = _continue(victim, pending)
+    assert done.status_code == 302 and "code=" in done.headers["location"], "the victim still finishes normally"
+    with db.connect() as con:
+        owner = con.execute("SELECT u.email FROM oauth_codes c JOIN users u ON u.id = c.user_id").fetchall()
+    assert [row[0] for row in owner] == [FOUNDER]
+
+
+@pytest.mark.parametrize("bad", ["https://spark.example;x/cb", "https://a.example,b.example/cb",
+                                 "https://spark.example'x/cb", 'https://spark.example"x/cb',
+                                 "https://spark.example:123456/cb", "https://-spark.example/cb"])
+def test_L3_a_redirect_authority_that_could_reach_the_policy_is_refused(client, bad):
+    import db
+    import oauth_mcp
+    assert client.post("/oauth/register", json={"redirect_uris": [bad]}).status_code == 400
+    oauth_mcp._ensure()
+    with db.connect() as con:
+        con.execute("INSERT INTO oauth_clients VALUES (?, ?, ?, ?)", ("mcp_client_old", json.dumps([bad]), "Old", 1))
+    _, challenge = _pkce()
+    r = client.get("/oauth/authorize", params=_authorize_params("mcp_client_old", challenge, bad))
+    assert r.status_code == 400 and "content-security-policy" not in r.headers
+
+
+def test_L3_ordinary_redirects_still_register(client):
+    for good in ("https://spark.example.test/oauth/callback", "https://www.notion.so/oauth/cb?x=1",
+                 "http://127.0.0.1:43120/cb", "http://localhost:8080/cb", "http://[::1]:8080/cb"):
+        assert client.post("/oauth/register", json={"redirect_uris": [good]}).status_code == 201, good
+
+
+def test_L2_approving_ones_own_requests_frees_no_room(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_CLIENT", 2)
+    _google(monkeypatch)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    for _ in range(2):
+        pending, csrf, _ = _consent_form(client, client_id, challenge)
+        assert client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    assert client.get("/oauth/authorize", params=_authorize_params(client_id, challenge)).status_code == 503
+
+
+def test_M1_ipv6_callers_are_counted_per_64(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_ADDRESS", 2)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    for host in ("2001:db8:1:2::1", "2001:db8:1:2::2"):
+        r = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge), headers={"Fly-Client-IP": host})
+        assert r.status_code == 200
+    rotated = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                         headers={"Fly-Client-IP": "2001:db8:1:2:ffff:ffff:ffff:ffff"})
+    assert rotated.status_code == 503, "a new address inside the same /64 is the same caller"
+    other = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                       headers={"Fly-Client-IP": "2001:db8:1:3::1"})
+    assert other.status_code == 200
+
+
+def test_M1_anonymous_floods_never_take_the_room_of_a_client_someone_approved(client, monkeypatch):
+    import oauth_mcp
+    known, _, _, _ = _grant(client, monkeypatch)
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING", 2)
+    spam = _register(client, "https://spam.example/cb")
+    _, challenge = _pkce()
+    assert client.get("/oauth/authorize", params=_authorize_params(known, challenge)).status_code == 200
+    stranger = _browser()
+    for _ in range(3):
+        _consent_form(stranger, spam, challenge, "https://spam.example/cb")
+    assert _live(spam) == 2, "the anonymous pool rotates its own requests"
+    assert _live(known) == 1, "the founder's request is outside the pool and is never rotated out by it"
+
+
+def test_L4_a_client_sent_fly_client_ip_is_ignored_off_fly(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.delenv("FLY_APP_NAME", raising=False)
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_ADDRESS", 2)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    answers = [client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                          headers={"Fly-Client-IP": "198.51.100.%d" % n}).status_code for n in range(1, 4)]
+    assert answers == [200, 200, 503], answers
+
+
+def test_the_consent_cookie_is_host_only_secure_httponly_and_lax(client):
+    import oauth_mcp
+    client_id = _register(client)
+    _, challenge = _pkce()
+    _, _, page = _consent_form(client, client_id, challenge)
+    cookies = [value for key, value in page.headers.multi_items() if key.lower() == "set-cookie"]
+    assert len(cookies) == 1, cookies
+    parts = [part.strip() for part in cookies[0].split(";")]
+    assert parts[0].split("=", 1)[0] == "__Host-archhub_mcp_consent"
+    attrs = {part.split("=", 1)[0].lower(): (part.split("=", 1)[1] if "=" in part else True) for part in parts[1:]}
+    assert attrs.get("secure") is True and attrs.get("httponly") is True, attrs
+    assert str(attrs.get("samesite")).lower() == "lax" and attrs.get("path") == "/" and "domain" not in attrs, attrs
+    assert 0 < int(attrs["max-age"]) <= oauth_mcp.PENDING_TTL
+
+
+def _approved(client, monkeypatch):
+    _google(monkeypatch)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    pending, csrf, _ = _consent_form(client, client_id, challenge)
+    return client_id, pending, csrf
+
+
+def test_an_expired_request_cannot_be_approved(client, monkeypatch, clock):
+    import oauth_mcp
+    _, pending, csrf = _approved(client, monkeypatch)
+    clock["offset"] = oauth_mcp.PENDING_TTL + 1
+    assert client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 400
+
+
+def test_an_expired_request_is_not_verified_by_google(client, monkeypatch, clock):
+    import oauth_mcp
+    _, pending, csrf = _approved(client, monkeypatch)
+    assert client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    clock["offset"] = oauth_mcp.PENDING_TTL + 1
+    back = _callback(client, pending)
+    assert back.status_code == 400 and "location" not in back.headers
+
+
+def test_an_expired_request_cannot_be_continued(client, monkeypatch, clock):
+    import oauth_mcp
+    _, pending, csrf = _approved(client, monkeypatch)
+    assert client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    path = _continue_path(_callback(client, pending))
+    clock["offset"] = oauth_mcp.PENDING_TTL + 1
+    r = client.get(path)
+    assert r.status_code == 400 and "location" not in r.headers
+
+
+def test_an_expired_code_is_refused(client, monkeypatch, clock):
+    import oauth_mcp
+    client_id = _register(client)
+    verifier, challenge = _pkce()
+    code = _code(client, monkeypatch, client_id, challenge)
+    clock["offset"] = oauth_mcp.CODE_TTL + 1
+    r = _token(client, grant_type="authorization_code", code=code, redirect_uri=REDIRECT,
+               client_id=client_id, code_verifier=verifier)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_an_expired_access_token_stops_working(client, monkeypatch, clock):
+    import oauth_mcp
+    _, _, _, answer = _grant(client, monkeypatch)
+    assert _mcp(client, answer["access_token"], "tools/call", {"name": "brain.health", "arguments": {}})[0] == 200
+    clock["offset"] = oauth_mcp.ACCESS_TTL + 1
+    assert _mcp(client, answer["access_token"], "tools/call", {"name": "brain.health", "arguments": {}})[0] == 401
+
+
+def test_an_expired_refresh_token_is_refused(client, monkeypatch, clock):
+    import oauth_mcp
+    client_id, _, _, answer = _grant(client, monkeypatch)
+    clock["offset"] = oauth_mcp.REFRESH_TTL + 1
+    r = _token(client, grant_type="refresh_token", refresh_token=answer["refresh_token"], client_id=client_id)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_the_production_access_log_never_carries_a_one_time_value(capfd):
+    """The real uvicorn access log, as the Dockerfile runs it (--access-log --log-level debug)."""
+    import logging
+    import httpx
+    import uvicorn
+    import main
+    import oauth_mcp
+    server = uvicorn.Server(uvicorn.Config(main.app, host="127.0.0.1", port=0, log_level="debug", access_log=True))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        deadline = time.time() + 30
+        while not server.started and time.time() < deadline:
+            time.sleep(0.05)
+        assert server.started, "uvicorn did not start"
+        port = server.servers[0].sockets[0].getsockname()[1]
+        assert getattr(oauth_mcp, "_ACCESS_FILTER", None) in logging.getLogger("uvicorn.access").filters, \
+            "the redaction survives uvicorn's own logging configuration"
+        values = ["C" + secrets.token_hex(12), "G" + secrets.token_hex(12), "S" + secrets.token_hex(12),
+                  "D" + secrets.token_hex(12)]
+        with httpx.Client(base_url="http://127.0.0.1:%d" % port) as http:
+            http.get("/oauth/continue", params={"c": values[0]})
+            http.get("/v1/auth/google/callback", params={"code": values[1], "state": values[2]})
+            http.get("/oauth/authorize", params={"client_id": "nobody", "state": values[2]})
+            http.get("/auth/return", params={"code": values[3]})
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        logged = "".join(capfd.readouterr())
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+            logging.getLogger(name).handlers.clear()
+    assert "GET /oauth/continue" in logged and "GET /v1/auth/google/callback" in logged, logged[-3000:]
+    assert "GET /auth/return" in logged, logged[-3000:]
+    for value in values:
+        assert value not in logged, "%s reached the access log" % value[:4]
+
+
+# -- v3.2: the review of v3.1 (the reserve, per-client-per-address, courts) ----
+def test_L1_a_forged_cookie_for_the_request_is_refused_at_google_by_the_browser_hash(monkeypatch):
+    """The attacker knows the pending id (it is in the consent form) and sends a cookie
+    naming it with his own secret; only browser_hash in the UPDATE stops him."""
+    import db
+    victim, attacker = _browser(), _browser()
+    client_id = _register(victim)
+    _, challenge = _pkce()
+    _google(monkeypatch, email="attacker@evil.example")
+    pending, csrf, _ = _consent_form(victim, client_id, challenge)
+    assert victim.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    attacker.cookies.set("__Host-archhub_mcp_consent", pending + ".forged-secret")
+    stolen = _callback(attacker, pending)
+    assert stolen.status_code == 400 and "location" not in stolen.headers
+    with db.connect() as con:
+        assert con.execute("SELECT verified_email FROM oauth_pending WHERE id = ?", (pending,)).fetchone()[0] is None
+
+
+def test_the_shared_pool_is_not_entered_by_approving_ones_own_client(client, monkeypatch):
+    """Any Google account can approve its own client; that must not buy reserved room."""
+    import oauth_mcp
+    self_approved, _, _, _ = _grant(client, monkeypatch, email="someone.else@studio.example")
+    founders, _, _, _ = _grant(client, monkeypatch)
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING", 2)
+    _, challenge = _pkce()
+    assert client.get("/oauth/authorize", params=_authorize_params(founders, challenge)).status_code == 200
+    stranger = _browser()
+    for _ in range(3):
+        assert stranger.get("/oauth/authorize", params=_authorize_params(self_approved, challenge)).status_code == 200
+    assert _live(self_approved) == 2, "a self-approved client is in the shared pool and rotates within it"
+    assert _live(founders) == 1
+
+
+def test_a_suspended_founder_account_reserves_nothing(client, monkeypatch):
+    import db
+    import oauth_mcp
+    founders, _, _, _ = _grant(client, monkeypatch)
+    with db.connect() as con:
+        con.execute("UPDATE users SET suspended_at = 1 WHERE email = ?", (FOUNDER,))
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING", 1)
+    _, challenge = _pkce()
+    for _ in range(2):
+        assert client.get("/oauth/authorize", params=_authorize_params(founders, challenge)).status_code == 200
+    assert _live(founders) == 1, "a suspended founder's client is in the shared pool (size 1 here)"
+
+
+def test_a_full_storage_ceiling_ends_even_a_verified_strangers_request_and_says_so(client, monkeypatch):
+    """Outside the founder's lane nothing is protected: finishing Google needs only some
+    Google account. The ended request's person is sent back to their app."""
+    import oauth_mcp
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_ALL", 1)
+    _google(monkeypatch, email="someone.else@studio.example")
+    client_id = _register(client)
+    _, challenge = _pkce()
+    first = _browser()
+    pending, csrf, _ = _consent_form(first, client_id, challenge)
+    assert first.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    back = _continue_path(_callback(first, pending))    # Google verified; the continue step is pending
+    assert _browser().get("/oauth/authorize", params=_authorize_params(client_id, challenge)).status_code == 200
+    ended = first.get(back)
+    assert ended.status_code == 400 and "has ended" in ended.text, "the continue step says the sign-in ended"
+
+
+def test_knowing_a_public_client_id_cannot_lock_that_client_out(client, monkeypatch):
+    """With the shipped constants: one address's share of one client binds first."""
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    assert oauth_mcp.MAX_PENDING_PER_CLIENT < oauth_mcp.MAX_PENDING_PER_ADDRESS, "the per-client share must bind"
+    public = _register(client)
+    _, challenge = _pkce()
+    attacker = {"Fly-Client-IP": "203.0.113.50"}
+    answers = [client.get("/oauth/authorize", params=_authorize_params(public, challenge), headers=attacker).status_code
+               for _ in range(oauth_mcp.MAX_PENDING_PER_CLIENT + 1)]
+    assert answers == [200] * oauth_mcp.MAX_PENDING_PER_CLIENT + [503], answers
+    other = client.get("/oauth/authorize", params=_authorize_params(_register(client), challenge), headers=attacker)
+    assert other.status_code == 200, "the same address still reaches another client"
+    founder = client.get("/oauth/authorize", params=_authorize_params(public, challenge),
+                         headers={"Fly-Client-IP": "198.51.100.20"})
+    assert founder.status_code == 200
+
+
+def test_an_ipv4_mapped_caller_is_the_same_ipv4_caller(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_ADDRESS", 2)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    answers = [client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                          headers={"Fly-Client-IP": host}).status_code
+               for host in ("198.51.100.7", "::ffff:198.51.100.7", "::ffff:c633:6407")]
+    assert answers == [200, 200, 503], answers
+
+
+@pytest.mark.parametrize("bad", ["https://[zz]/cb", "https://[::1/cb", "http://[/cb"])
+def test_a_malformed_authority_is_a_400_not_a_500(client, bad):
+    assert client.post("/oauth/register", json={"redirect_uris": [bad]}).status_code == 400
+
+
+# -- v3.3: the review of v3.2 (the founder's client_id is public) ----------------
+def test_the_founder_still_gets_a_slot_when_his_public_client_id_fills_the_ceiling(client, monkeypatch):
+    """An attacker names the founder's approved client from many /64s until the storage
+    ceiling is full; the founder's own authorize still gets a pending request, the
+    oldest unapproved one is the one that goes, and an approved one is never evicted."""
+    import db
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    founders, _, _, _ = _grant(client, monkeypatch)
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_ALL", 6)
+    _, challenge = _pkce()
+    held = _browser()
+    pending, csrf, _ = _consent_form(held, founders, challenge)
+    assert held.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    attacker = _browser()
+    for n in range(12):                       # the attacker: many /64s in many /48s
+        r = attacker.get("/oauth/authorize", params=_authorize_params(founders, challenge),
+                         headers={"Fly-Client-IP": "2001:db8:%x:%x::1" % (n, n)})
+        assert r.status_code == 200, (n, r.status_code)
+    founder = _browser()
+    mine = founder.get("/oauth/authorize", params=_authorize_params(founders, challenge),
+                       headers={"Fly-Client-IP": "198.51.100.44"})
+    assert mine.status_code == 200 and "Approve" in mine.text, "the founder is never refused by the ceiling"
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM oauth_pending").fetchone()[0] == 6
+        assert con.execute("SELECT approved FROM oauth_pending WHERE id = ?", (pending,)).fetchone()[0] == 1, \
+            "never-approved requests are evicted before an approved one"
+
+
+def test_ipv6_callers_are_also_counted_per_48(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_NETWORK", 3)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    answers = [client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                          headers={"Fly-Client-IP": "2001:db8:7:%x::1" % n}).status_code for n in range(4)]
+    assert answers == [200, 200, 200, 503], "four /64s of one /48 are one network"
+    other = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                       headers={"Fly-Client-IP": "2001:db8:8::1"})
+    assert other.status_code == 200
+
+
+def test_a_pending_table_made_before_the_network_column_is_upgraded(client):
+    import db
+    import oauth_mcp
+    with db.connect() as con:
+        con.execute("DROP TABLE IF EXISTS oauth_pending")
+        con.execute(oauth_mcp.SCHEMA.split("CREATE TABLE IF NOT EXISTS oauth_pending")[1].split(");")[0]
+                    .join(["CREATE TABLE oauth_pending", ")"]).replace("    network        TEXT NOT NULL DEFAULT '-',\n", "")
+                    .replace("    continue_hash  TEXT,\n    lane           TEXT NOT NULL DEFAULT ''\n",
+                             "    continue_hash  TEXT\n"))
+        columns = {row[1] for row in con.execute("PRAGMA table_info(oauth_pending)")}
+        assert "network" not in columns and "lane" not in columns, columns
+    client_id = _register(client)
+    _, challenge = _pkce()
+    assert client.get("/oauth/authorize", params=_authorize_params(client_id, challenge)).status_code == 200
+    with db.connect() as con:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(oauth_pending)")}
+        assert "network" in columns and "lane" in columns, columns
+
+
+# -- v3.4: the review of v3.3 --------------------------------------------------------------
+def test_F1_a_flood_that_approves_its_own_requests_still_leaves_the_founder_a_slot(client, monkeypatch):
+    """Approve needs only the attacker's own cookie and csrf, no sign-in; his approved
+    rows must not become permanent. Only a Google-verified request is kept."""
+    import db
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    _google(monkeypatch)
+    founders, _, _, _ = _grant(client, monkeypatch)
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_ALL", 6)
+    _, challenge = _pkce()
+    verified = _browser()
+    kept, kept_csrf, _ = _consent_form(verified, founders, challenge)
+    assert verified.post("/oauth/consent", data={"pending": kept, "csrf": kept_csrf, "decision": "approve"}).status_code == 302
+    _continue_path(_callback(verified, kept))       # this one Google verified
+    for n in range(12):
+        attacker = _browser()
+        page = attacker.get("/oauth/authorize", params=_authorize_params(founders, challenge),
+                            headers={"Fly-Client-IP": "2001:db8:%x:%x::1" % (n, n)})
+        assert page.status_code == 200, (n, page.status_code)
+        pending = re.search(r'name=pending value="([^"]+)"', page.text).group(1)
+        csrf = re.search(r'name=csrf value="([^"]+)"', page.text).group(1)
+        assert attacker.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"},
+                             headers={"Fly-Client-IP": "2001:db8:%x:%x::1" % (n, n)}).status_code == 302
+    founder = _browser()
+    mine = founder.get("/oauth/authorize", params=_authorize_params(founders, challenge),
+                       headers={"Fly-Client-IP": "198.51.100.44"})
+    assert mine.status_code == 200 and "Approve" in mine.text, "self-approved flood rows are evicted"
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM oauth_pending").fetchone()[0] == 6
+        assert con.execute("SELECT verified_email FROM oauth_pending WHERE id = ?", (kept,)).fetchone()[0] == FOUNDER, \
+            "a Google-verified request survives every eviction"
+
+
+def test_F2_ipv4_callers_are_also_counted_per_24(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_NETWORK", 3)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    answers = [client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                          headers={"Fly-Client-IP": "203.0.113.%d" % n}).status_code for n in range(1, 5)]
+    assert answers == [200, 200, 200, 503], "four addresses of one /24 are one network"
+    other = client.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                       headers={"Fly-Client-IP": "198.51.100.1"})
+    assert other.status_code == 200
+
+
+def test_F3_a_concurrent_first_request_adding_the_network_column_is_not_an_error(client, monkeypatch):
+    """Two first requests after a deploy both see the column missing; the second ALTER
+    finds it present. That must not surface as an error."""
+    import contextlib
+    import db
+    import oauth_mcp
+    oauth_mcp._ensure()                                 # the column exists now
+    real = db.connect
+
+    class Stale:
+        def __init__(self, con):
+            self._con = con
+            self.looked = False
+
+        def execute(self, sql, *args):
+            if sql.startswith("PRAGMA table_info(oauth_pending)") and not self.looked:
+                self.looked = True                      # the first look predates the other ALTER
+                return [row for row in self._con.execute(sql, *args) if row[1] != "network"]
+            return self._con.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._con, name)
+
+    @contextlib.contextmanager
+    def stale():
+        with real() as con:
+            yield Stale(con)
+    monkeypatch.setattr(db, "connect", stale)
+    oauth_mcp._ensure()
+    monkeypatch.setattr(db, "connect", real)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    assert client.get("/oauth/authorize", params=_authorize_params(client_id, challenge)).status_code == 200
+
+
+# -- v3.5: the founder's lane (review of v3.4) ----------------------------------------------
+def _verified_flood(monkeypatch, client_id, challenge, count, emails):
+    """Strangers approve and finish Google with their OWN accounts, never continuing."""
+    import google_auth
+    for n in range(count):
+        email = emails[n % len(emails)]
+        monkeypatch.setattr(google_auth, "verify_id_token",
+                            (lambda e: lambda token: {"email": e, "email_verified": True})(email))
+        stranger = _browser()
+        page = stranger.get("/oauth/authorize", params=_authorize_params(client_id, challenge),
+                            headers={"Fly-Client-IP": "2001:db8:%x:%x::1" % (n, n)})
+        assert page.status_code == 200, (n, page.status_code)
+        pending = re.search(r'name=pending value="([^"]+)"', page.text).group(1)
+        csrf = re.search(r'name=csrf value="([^"]+)"', page.text).group(1)
+        assert stranger.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+        _continue_path(_callback(stranger, pending))
+
+
+def test_a_verified_request_flood_never_locks_the_founder_out(client, monkeypatch):
+    import db
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    founders, _, _, _ = _grant(client, monkeypatch)        # this browser now carries his lane
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_ALL", 6)
+    _, challenge = _pkce()
+    lane = client.get("/oauth/authorize", params=_authorize_params(founders, challenge))
+    assert lane.status_code == 200
+    lane_row = re.search(r'name=pending value="([^"]+)"', lane.text).group(1)
+    _google(monkeypatch)
+    _verified_flood(monkeypatch, founders, challenge, 12, ["x%d@evil.example" % n for n in range(12)])
+    mine = client.get("/oauth/authorize", params=_authorize_params(founders, challenge))
+    assert mine.status_code == 200, "the founder's lane is outside every shared ceiling"
+    stranger_room = _browser().get("/oauth/authorize", params=_authorize_params(founders, challenge),
+                                   headers={"Fly-Client-IP": "198.51.100.44"})
+    assert stranger_room.status_code == 200, "even without his lane he gets a slot: verified strangers are evicted"
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM oauth_pending WHERE lane = ''").fetchone()[0] == 6
+        assert con.execute("SELECT lane FROM oauth_pending WHERE id = ?", (lane_row,)).fetchone()[0] == FOUNDER, \
+            "a request in the founder's lane is never evicted by strangers"
+
+
+def test_a_cgnat_neighbour_filling_the_founders_address_and_network_never_blocks_him(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    founders, _, _, _ = _grant(client, monkeypatch)
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_ADDRESS", 2)
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_NETWORK", 2)
+    _, challenge = _pkce()
+    shared = {"Fly-Client-IP": "100.64.0.9"}                # one carrier-grade NAT address
+    neighbour = _browser()
+    assert [neighbour.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=shared).status_code
+            for _ in range(3)] == [200, 200, 503]
+    assert client.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=shared).status_code == 200
+
+
+def test_one_account_holds_at_most_two_verified_requests(client, monkeypatch):
+    import db
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    _google(monkeypatch)
+    client_id = _register(client)
+    _, challenge = _pkce()
+    _verified_flood(monkeypatch, client_id, challenge, 5, ["one@evil.example"])
+    with db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM oauth_pending WHERE verified_email = ?",
+                           ("one@evil.example",)).fetchone()[0] == oauth_mcp.MAX_VERIFIED_PER_EMAIL
+
+
+def test_the_lane_is_only_for_a_founder_browser_proven_by_a_signed_cookie(client, monkeypatch):
+    import db
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_ADDRESS", 1)
+    _, _, _, _ = _grant(client, monkeypatch, email="someone.else@studio.example")
+    assert "__Host-archhub_mcp_founder" not in client.cookies, "a non-founder sign-in mints no lane"
+    founders, _, _, _ = _grant(client, monkeypatch)
+    lane = client.cookies.get("__Host-archhub_mcp_founder")
+    assert lane, "a completed founder sign-in mints the lane cookie"
+    _, challenge = _pkce()
+    here = {"Fly-Client-IP": "203.0.113.77"}
+    forged = _browser()
+    body, _, mac = lane.partition(".")
+    forged.cookies.set("__Host-archhub_mcp_founder", body + "." + ("0" if mac[0] != "0" else "1") + mac[1:])
+    assert forged.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=here).status_code == 200
+    assert forged.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=here).status_code == 503, \
+        "a tampered lane cookie is an ordinary caller"
+    assert client.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=here).status_code == 200
+    with db.connect() as con:
+        con.execute("UPDATE users SET suspended_at = 1 WHERE email = ?", (FOUNDER,))
+    assert client.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=here).status_code == 503, \
+        "a suspended founder has no lane"
+    monkeypatch.setenv("FOUNDER_EMAIL", "someone.new@example.test")
+    with db.connect() as con:
+        con.execute("UPDATE users SET suspended_at = NULL WHERE email = ?", (FOUNDER,))
+    assert client.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=here).status_code == 503, \
+        "an address no longer configured as founder has no lane"
+
+
+def test_an_ended_sign_in_sends_the_person_back_to_their_app_or_says_so(client, monkeypatch):
+    import oauth_mcp
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_ALL", 1)
+    _google(monkeypatch, email="someone.else@studio.example")
+    client_id = _register(client)
+    _, challenge = _pkce()
+    first = _browser()
+    pending, csrf, _ = _consent_form(first, client_id, challenge)
+    assert first.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    assert _browser().get("/oauth/authorize", params=_authorize_params(client_id, challenge)).status_code == 200
+    back = _callback(first, pending)                     # his request was evicted meanwhile
+    assert back.status_code == 302, back.text
+    query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(back.headers["location"]).query))
+    assert back.headers["location"].startswith(REDIRECT) and query["error"] == "access_denied" and query["state"] == "st-1"
+    unknown = _callback(first, "no-such-request")
+    assert unknown.status_code == 400 and "has ended" in unknown.text and "location" not in unknown.headers
+    assert client.get("/oauth/continue", params={"c": "nothing"}).status_code == 400
+
+
+def test_an_alter_that_fails_for_another_reason_is_still_an_error(client, monkeypatch):
+    import contextlib
+    import sqlite3
+    import db
+    import oauth_mcp
+    real = db.connect
+
+    class Broken:
+        def __init__(self, con):
+            self._con = con
+
+        def execute(self, sql, *args):
+            if sql.startswith("PRAGMA table_info(oauth_pending)"):
+                return [row for row in self._con.execute(sql, *args) if row[1] != "lane"]
+            if sql.startswith("ALTER TABLE oauth_pending ADD COLUMN lane"):
+                raise sqlite3.OperationalError("disk I/O error")
+            return self._con.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._con, name)
+
+    @contextlib.contextmanager
+    def broken():
+        with real() as con:
+            yield Broken(con)
+    monkeypatch.setattr(db, "connect", broken)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+        oauth_mcp._ensure()
+
+
+def test_the_founders_lane_is_bounded_by_his_own_oldest_requests(client, monkeypatch):
+    import db
+    import oauth_mcp
+    founders, _, _, _ = _grant(client, monkeypatch)
+    monkeypatch.setattr(oauth_mcp, "MAX_FOUNDER_LANE", 2)
+    _, challenge = _pkce()
+    rows = []
+    for _ in range(3):
+        page = client.get("/oauth/authorize", params=_authorize_params(founders, challenge))
+        assert page.status_code == 200
+        rows.append(re.search(r'name=pending value="([^"]+)"', page.text).group(1))
+    with db.connect() as con:
+        live = [row[0] for row in con.execute("SELECT id FROM oauth_pending WHERE lane = ?", (FOUNDER,))]
+    assert sorted(live) == sorted(rows[1:]), "the lane holds at most MAX_FOUNDER_LANE; his own oldest goes"
+
+
+def test_the_lane_key_is_domain_separated_from_the_state_secret(client, monkeypatch):
+    """A cookie signed with the raw state secret (or any other use of it) is not a lane."""
+    import base64 as b64
+    import hashlib as hl
+    import hmac as hm
+    import google_auth
+    import oauth_mcp
+    monkeypatch.setenv("FLY_APP_NAME", "archhub-cloud")
+    monkeypatch.setattr(oauth_mcp, "MAX_PENDING_PER_ADDRESS", 1)
+    founders, _, _, _ = _grant(client, monkeypatch)
+    body = b64.urlsafe_b64encode(json.dumps({"e": FOUNDER, "x": int(time.time()) + 3600},
+                                            separators=(",", ":")).encode()).decode().rstrip("=")
+    here = {"Fly-Client-IP": "203.0.113.88"}
+    _, challenge = _pkce()
+    for key in (google_auth._state_secret(), hl.sha256(google_auth._state_secret()).digest()):
+        forged = _browser()
+        forged.cookies.set("__Host-archhub_mcp_founder", body + "." + hm.new(key, body.encode(), hl.sha256).hexdigest())
+        assert forged.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=here).status_code in (200, 503)
+        assert forged.get("/oauth/authorize", params=_authorize_params(founders, challenge), headers=here).status_code == 503, \
+            "a cookie keyed without the lane's own label is an ordinary caller"
+    assert oauth_mcp._lane_key() not in (google_auth._state_secret(), hl.sha256(google_auth._state_secret()).digest())
+
+
+def test_a_stolen_lane_cookie_buys_queue_priority_and_never_a_code_for_the_founder(client, monkeypatch):
+    import db
+    founders, _, _, _ = _grant(client, monkeypatch)
+    lane = client.cookies.get("__Host-archhub_mcp_founder")
+    _, challenge = _pkce()
+    # The founder has a request in flight.
+    pending, csrf, _ = _consent_form(client, founders, challenge)
+    assert client.post("/oauth/consent", data={"pending": pending, "csrf": csrf, "decision": "approve"}).status_code == 302
+    thief = _browser()
+    thief.cookies.set("__Host-archhub_mcp_founder", lane)
+    stolen = _callback(thief, pending)                      # the lane cookie is not the consent cookie
+    assert stolen.status_code == 400 and "location" not in stolen.headers
+    # The thief's own flow works (it is only queue priority) and yields a code for HIS account.
+    _google(monkeypatch, email="thief@evil.example")
+    code = _code(thief, monkeypatch, founders, challenge, email="thief@evil.example")
+    with db.connect() as con:
+        owner = con.execute("SELECT u.email FROM oauth_codes c JOIN users u ON u.id = c.user_id WHERE c.code_hash = ?",
+                            (hashlib.sha256(code.encode()).hexdigest(),)).fetchone()[0]
+    assert owner == "thief@evil.example"

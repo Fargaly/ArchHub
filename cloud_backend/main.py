@@ -454,7 +454,7 @@ def google_start(code_challenge: str = "", redirect: str = "",
 
 
 @app.get("/v1/auth/google/callback")
-def google_callback(code: str = "", state: str = "",
+def google_callback(request: Request, code: str = "", state: str = "",
                     error: str = "") -> RedirectResponse:
     """Step 2: Google redirects here after consent.
 
@@ -474,11 +474,17 @@ def google_callback(code: str = "", state: str = "",
                             detail={"error": "google_consent_failed",
                                     "reason": error})
     try:
-        return_url = google_auth.exchange_callback(code=code, state=state)
+        return_url = google_auth.exchange_callback(
+            code=code, state=state,
+            mcp_consent=request.cookies.get(oauth_mcp.CONSENT_COOKIE, ""))
     except google_auth.GoogleLoginUnconfigured:
         raise HTTPException(status_code=503,
                             detail={"error": "google_login_unconfigured"})
     except google_auth.GoogleAuthError as ex:
+        if ex.code == "invalid_mcp_grant":
+            # An MCP sign-in that ended (expired, evicted, used, other browser):
+            # the person is sent back to their app or told plainly, never bare JSON.
+            return oauth_mcp.ended_response(getattr(ex, "mcp_grant", ""))
         # Log the FULL reason server-side (carries Google's error from
         # _exchange_code_for_tokens); the client gets ONLY the opaque code.
         import logging

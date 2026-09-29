@@ -635,7 +635,7 @@ def _assert_claims(claims: dict, *, now: Optional[int] = None) -> dict:
 # ---------------------------------------------------------------------------
 # Callback orchestration (step 2, top-level)
 # ---------------------------------------------------------------------------
-def exchange_callback(*, code: str, state: str) -> str:
+def exchange_callback(*, code: str, state: str, mcp_consent: str = "") -> str:
     """Top-level callback handler: state → token → verify → user → code.
 
     Returns the {PUBLIC_URL}/auth/return?code=... URL main.py should 302
@@ -673,9 +673,11 @@ def exchange_callback(*, code: str, state: str) -> str:
         # No desktop code and no account token are minted on this path.
         import oauth_mcp
         try:
-            return oauth_mcp.google_verified(str(payload["mcp"]), email)
+            return oauth_mcp.google_verified(str(payload["mcp"]), email, consent_cookie=mcp_consent)
         except ValueError as unknown:
-            raise GoogleAuthError(str(unknown), status=400, code="invalid_mcp_grant")
+            ended = GoogleAuthError(str(unknown), status=400, code="invalid_mcp_grant")
+            ended.mcp_grant = str(payload["mcp"])
+            raise ended
     # 4. Land on the account keyed by email (created on first sign-in,
     #    reused after, so an account made before Google keeps its data),
     #    then mint a one-time code bound to the PKCE challenge so the

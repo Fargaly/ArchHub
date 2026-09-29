@@ -21,8 +21,13 @@ import base64
 import hashlib
 import hmac
 import html
+import ipaddress
 import json
+import logging
+import os
+import re
 import secrets
+import sqlite3
 import time
 import urllib.parse
 from typing import Optional
@@ -43,11 +48,17 @@ PENDING_TTL = 600
 ACCESS_PREFIX = 'ah_mcp_at_'
 REFRESH_PREFIX = 'ah_mcp_rt_'
 MAX_CLIENTS = 10000
-MAX_PENDING = 500
-MAX_PENDING_PER_CLIENT = 20
-MAX_PENDING_PER_ADDRESS = 20
+MAX_PENDING = 500              # live requests of clients the founder has not approved
+MAX_PENDING_ALL = 5000         # every live request: the storage ceiling
+MAX_PENDING_PER_CLIENT = 5     # per client, per caller address
+MAX_PENDING_PER_ADDRESS = 20   # per caller address (an IPv4 address, an IPv6 /64)
+MAX_PENDING_PER_NETWORK = 100  # per caller network (an IPv4 /24, an IPv6 /48)
 MAX_STATE = 512
+MAX_FOUNDER_LANE = 20          # live requests in the founder's own lane, per founder account
+MAX_VERIFIED_PER_EMAIL = 2     # live Google-verified requests per signed-in account
+FOUNDER_LANE_TTL = 180 * 24 * 3600
 CONSENT_COOKIE = '__Host-archhub_mcp_consent'
+FOUNDER_COOKIE = '__Host-archhub_mcp_founder'
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS oauth_clients (
@@ -68,9 +79,17 @@ CREATE TABLE IF NOT EXISTS oauth_pending (
     csrf_hash      TEXT NOT NULL,
     browser_hash   TEXT NOT NULL,
     address        TEXT NOT NULL,
+    network        TEXT NOT NULL DEFAULT '-',
     approved       INTEGER NOT NULL DEFAULT 0,
     verified_email TEXT,
-    continue_hash  TEXT
+    continue_hash  TEXT,
+    lane           TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS oauth_ended (
+    id           TEXT PRIMARY KEY,
+    redirect_uri TEXT NOT NULL,
+    state        TEXT NOT NULL,
+    expires_at   INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS oauth_approvals (
     user_id     TEXT NOT NULL,
@@ -111,6 +130,22 @@ CREATE TABLE IF NOT EXISTS oauth_families (
 def _ensure() -> None:
     with db.connect() as con:
         con.executescript(SCHEMA)
+        # A table made before these columns existed gains them.
+        _add_column(con, 'network', "network TEXT NOT NULL DEFAULT '-'")
+        _add_column(con, 'lane', "lane TEXT NOT NULL DEFAULT ''")
+
+
+def _add_column(con, name: str, ddl: str) -> None:
+    """ALTER once. Two first requests after a deploy may both see the column
+    missing; the second ALTER then fails and finds it present, which is fine.
+    Any other failure is still an error."""
+    if name in {row[1] for row in con.execute('PRAGMA table_info(oauth_pending)')}:
+        return
+    try:
+        con.execute('ALTER TABLE oauth_pending ADD COLUMN ' + ddl)
+    except sqlite3.OperationalError:
+        if name not in {row[1] for row in con.execute('PRAGMA table_info(oauth_pending)')}:
+            raise
 
 
 def _hash(value: str) -> str:
@@ -164,6 +199,9 @@ def authorization_server() -> dict:
 
 
 # -- registration ------------------------------------------------------------
+_AUTHORITY = re.compile(r'(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]{2,45}\])(?::[0-9]{1,5})?')
+
+
 def _redirect_allowed(uri: object) -> bool:
     """Exact https redirects, or a native client's loopback; no wildcard, no fragment."""
     if type(uri) is not str or not uri or len(uri) > 2048 or any(c in uri for c in '*#\\@'):
@@ -173,8 +211,16 @@ def _redirect_allowed(uri: object) -> bool:
     # ever legitimate in a redirect; nor is whitespace or a control character.
     if any(ord(c) <= 0x20 or ord(c) == 0x7f or not c.isascii() for c in uri):
         return False
-    parts = urllib.parse.urlsplit(uri)
-    if parts.username is not None or parts.password is not None:
+    try:
+        parts = urllib.parse.urlsplit(uri)
+        userinfo = parts.username is not None or parts.password is not None
+    except ValueError:                 # e.g. https://[zz]/cb
+        return False
+    if userinfo:
+        return False
+    # The authority is written into the consent page's CSP (form-action), so it is a
+    # bare host[:port] and nothing else: no ; , quotes or anything a policy parses.
+    if not _AUTHORITY.fullmatch(parts.netloc):
         return False
     if parts.scheme == 'https' and parts.hostname:
         return True
@@ -264,26 +310,189 @@ def authorize(request: Request, response_type: str = '', client_id: str = '', re
     # consent POST must carry this cookie, so a pending/csrf pair scraped by someone
     # else is worthless in anyone else's browser.
     pending, csrf, browser = secrets.token_urlsafe(24), secrets.token_urlsafe(24), secrets.token_urlsafe(32)
-    address = _address(request)
+    address, network = _address(request)
+    lane = founder_lane(request)
     with db.connect() as con:
-        con.execute('DELETE FROM oauth_pending WHERE expires_at < ?', (int(time.time()),))
-        for where, args, cap in (('', (), MAX_PENDING), (' AND client_id = ?', (client_id,), MAX_PENDING_PER_CLIENT),
-                                 (' AND address = ?', (address,), MAX_PENDING_PER_ADDRESS)):
-            if con.execute('SELECT COUNT(*) FROM oauth_pending WHERE approved = 0' + where, args).fetchone()[0] >= cap:
+        _end_expired(con)
+        if lane:
+            # The founder's own browser (proven by the signed lane cookie minted when
+            # one of his sign-ins completed): his requests are counted only against
+            # his own lane, never against any shared ceiling or any address, network
+            # or client share, and nothing but his own newer requests ever evicts them.
+            live = con.execute('SELECT COUNT(*) FROM oauth_pending WHERE lane = ?', (lane,)).fetchone()[0]
+            if live >= MAX_FOUNDER_LANE and not _evict_oldest(con, ' WHERE lane = ?', (lane,)):
                 return _error('temporarily_unavailable', 'too many unfinished authorizations; retry shortly', 503)
+            con.execute('INSERT INTO oauth_pending (id, client_id, redirect_uri, code_challenge, state, scope, '
+                        'resource, expires_at, csrf_hash, browser_hash, address, network, lane) '
+                        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        (pending, client_id, redirect_uri, code_challenge, state, SCOPE, mcp_resource(),
+                         int(time.time()) + PENDING_TTL, _hash(csrf), _hash(browser), address, network, lane))
+            page = _consent_page(client, redirect_uri, pending, csrf)
+            page.set_cookie(CONSENT_COOKIE, pending + '.' + browser, max_age=PENDING_TTL, path='/',
+                            secure=True, httponly=True, samesite='lax')
+            return page
+        # Every live request counts, approved or not: approving one's own requests
+        # frees nothing. Only a client the FOUNDER has approved (his Spark, his
+        # Notion) stands outside the shared pool; any other account's approval is
+        # free to obtain and buys nothing. A client's share is counted per caller
+        # address, so knowing a public client_id cannot lock that client out.
+        #
+        # Everyone else shares: the caller's own shares (per client and address,
+        # per address, per network) refuse when full; the shared ceilings never
+        # refuse while any request outside the founder's lane is there to make
+        # room, verified or not: the oldest one goes (never-approved first, then
+        # unverified, then verified). Anyone can file, approve and even finish
+        # Google on requests naming any client, so no such request is protected.
+        known_sql, founders = _founder_approval_sql('?')
+        known = con.execute('SELECT ' + known_sql, (client_id,) + founders).fetchone()[0]
+        own = [(" WHERE lane = '' AND client_id = ? AND address = ?", (client_id, address), MAX_PENDING_PER_CLIENT),
+               (" WHERE lane = '' AND address = ?", (address,), MAX_PENDING_PER_ADDRESS),
+               (" WHERE lane = '' AND network = ?", (network,), MAX_PENDING_PER_NETWORK)]
+        for where, args, cap in own:
+            if con.execute('SELECT COUNT(*) FROM oauth_pending' + where, args).fetchone()[0] >= cap:
+                return _error('temporarily_unavailable', 'too many unfinished authorizations; retry shortly', 503)
+        shared = [(" WHERE lane = ''", (), MAX_PENDING_ALL)]
+        if not known:
+            pool_sql, founders = _founder_approval_sql('oauth_pending.client_id')
+            shared.append((" WHERE lane = '' AND NOT " + pool_sql, founders, MAX_PENDING))
+        for where, args, cap in shared:
+            if con.execute('SELECT COUNT(*) FROM oauth_pending' + where, args).fetchone()[0] >= cap:
+                if not _evict_oldest(con, where, args):
+                    return _error('temporarily_unavailable', 'too many unfinished authorizations; retry shortly', 503)
         con.execute('INSERT INTO oauth_pending (id, client_id, redirect_uri, code_challenge, state, scope, resource, '
-                    'expires_at, csrf_hash, browser_hash, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    'expires_at, csrf_hash, browser_hash, address, network) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     (pending, client_id, redirect_uri, code_challenge, state, SCOPE, mcp_resource(),
-                     int(time.time()) + PENDING_TTL, _hash(csrf), _hash(browser), address))
+                     int(time.time()) + PENDING_TTL, _hash(csrf), _hash(browser), address, network))
     page = _consent_page(client, redirect_uri, pending, csrf)
     page.set_cookie(CONSENT_COOKIE, pending + '.' + browser, max_age=PENDING_TTL, path='/',
                     secure=True, httponly=True, samesite='lax')
     return page
 
 
-def _address(request: Request) -> str:
-    """The caller's address. Fly's edge overwrites Fly-Client-IP, so it cannot be forged there."""
-    return (request.headers.get('fly-client-ip') or (request.client.host if request.client else '') or '-')[:64]
+def _evict_oldest(con, where: str, args: tuple) -> bool:
+    """Make room: end the oldest request `where` selects (never-approved first, then
+    not yet verified, then verified). Clicking Approve needs no sign-in and finishing
+    Google needs only some Google account, so neither buys a stranger's request
+    protection; the founder's are protected by his lane, not by their state. The
+    ended request leaves a tombstone so its person is told, not left hanging."""
+    row = con.execute('SELECT id, redirect_uri, state, expires_at FROM oauth_pending' + where +
+                      ' ORDER BY approved ASC, verified_email IS NOT NULL, expires_at ASC, rowid ASC LIMIT 1',
+                      args).fetchone()
+    if row is None:
+        return False
+    _tombstone(con, row)
+    return con.execute('DELETE FROM oauth_pending WHERE id = ?', (row['id'],)).rowcount == 1
+
+
+def _tombstone(con, row) -> None:
+    con.execute('INSERT OR REPLACE INTO oauth_ended (id, redirect_uri, state, expires_at) VALUES (?, ?, ?, ?)',
+                (row['id'], row['redirect_uri'], row['state'], int(row['expires_at']) + PENDING_TTL))
+
+
+def _end_expired(con) -> None:
+    """Expired requests end with a tombstone; tombstones themselves expire."""
+    now = int(time.time())
+    for row in con.execute('SELECT id, redirect_uri, state, expires_at FROM oauth_pending WHERE expires_at < ?',
+                           (now,)).fetchall():
+        _tombstone(con, row)
+    con.execute('DELETE FROM oauth_pending WHERE expires_at < ?', (now,))
+    con.execute('DELETE FROM oauth_ended WHERE expires_at < ?', (now,))
+
+
+_ENDED_PAGE = ('<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">'
+               '<title>Sign-in ended</title>'
+               '<body style="font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem">'
+               '<h1 style="font-size:1.3rem">This sign-in has ended</h1>'
+               '<p>It expired, was already used, or was started in another browser. Nothing was shared. '
+               'Start again from your app (for example, connect ArchHub again in Spark or Notion).</p></body>')
+
+
+def ended_response(pending_id: str):
+    """What a person sees when their sign-in is gone: back to their app with
+    error=access_denied when the request is known, else a plain explanation."""
+    _ensure()
+    with db.connect() as con:
+        row = con.execute('SELECT * FROM oauth_ended WHERE id = ? AND expires_at >= ?',
+                          (pending_id or '', int(time.time()))).fetchone()
+    if row is not None and _redirect_allowed(row['redirect_uri']):
+        return RedirectResponse(_client_url(row['redirect_uri'], error='access_denied',
+                                            error_description='the sign-in expired; start again',
+                                            state=row['state'], iss=issuer()), status_code=302)
+    return HTMLResponse(_ENDED_PAGE, status_code=400,
+                        headers={**_PAGE_HEADERS, 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'"})
+
+
+# -- the founder's lane ----------------------------------------------------------------------
+def _lane_key() -> bytes:
+    import google_auth
+    return hashlib.sha256(b'archhub-mcp-founder-lane|' + google_auth._state_secret()).digest()
+
+
+def founder_lane_cookie(email: str) -> str:
+    body = base64.urlsafe_b64encode(json.dumps({'e': email, 'x': int(time.time()) + FOUNDER_LANE_TTL},
+                                               separators=(',', ':')).encode()).decode().rstrip('=')
+    return body + '.' + hmac.new(_lane_key(), body.encode(), hashlib.sha256).hexdigest()
+
+
+def founder_lane(request: Request) -> str:
+    """The founder account this browser proved it is, or ''.
+
+    The cookie is minted only when a sign-in Google verified for a founder email
+    completes in this browser, is signed with the server's state secret, and is
+    re-checked on every use against the configured founder emails and suspension.
+    """
+    body, _, mac = request.cookies.get(FOUNDER_COOKIE, '').partition('.')
+    if not body or not hmac.compare_digest(mac, hmac.new(_lane_key(), body.encode(), hashlib.sha256).hexdigest()):
+        return ''
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + '=' * (-len(body) % 4)))
+        email, expires = str(claims['e']).strip().lower(), int(claims['x'])
+    except Exception:
+        return ''
+    if expires < int(time.time()) or email not in config.founder_emails():
+        return ''
+    user = db.get_user_by_email(email)
+    if user is None or user.get('suspended_at'):
+        return ''
+    return email
+
+
+def _founder_approval_sql(client_ref: str) -> tuple:
+    """SQL true when a live founder account approved the client `client_ref` names.
+
+    The founder is config.founder_emails() (the FOUNDER_EMAIL deployment secrets);
+    none configured means no client is reserved.
+    """
+    founders = tuple(sorted(config.founder_emails()))
+    if not founders:
+        return '0', ()
+    return ('EXISTS (SELECT 1 FROM oauth_approvals a JOIN users u ON u.id = a.user_id WHERE a.client_id = %s '
+            'AND u.suspended_at IS NULL AND lower(u.email) IN (%s))' % (client_ref, ','.join('?' * len(founders))),
+            founders)
+
+
+def _address(request: Request) -> tuple:
+    """The caller's (address, network), for the caps.
+
+    Fly-Client-IP is read only when this process runs on Fly (FLY_APP_NAME), where
+    Fly's proxy sets it from the connection and overwrites any value a client sent;
+    anywhere else the header is the caller's own claim and the socket peer is used.
+    IPv6 is counted per /64 (one subscriber) and per /48 (one site); IPv4 per
+    address and per /24. Behind carrier-grade NAT many people share one IPv4
+    address, and so share its 20; that is the price of counting addresses at all.
+    """
+    raw = request.headers.get('fly-client-ip', '') if os.environ.get('FLY_APP_NAME') else ''
+    raw = raw.strip() or (request.client.host if request.client else '')
+    try:
+        ip = ipaddress.ip_address(raw)
+    except ValueError:
+        return '-', '-'
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if ip.version == 6:
+        return (str(ipaddress.ip_network('%s/64' % ip, strict=False)),
+                str(ipaddress.ip_network('%s/48' % ip, strict=False)))
+    return str(ip), str(ipaddress.ip_network('%s/24' % ip, strict=False))
 
 
 def _this_browser(request: Request, pending_id: str) -> str:
@@ -350,19 +559,34 @@ def consent(request: Request, pending: str = Form(''), csrf: str = Form(''), dec
     return RedirectResponse(url, status_code=302)
 
 
-def google_verified(pending_id: str, email: str) -> str:
+def google_verified(pending_id: str, email: str, *, consent_cookie: str) -> str:
     """Google verified `email` for an approved request; record it server-side, once.
+
+    Only in the browser that approved: `consent_cookie` is that browser's cookie as
+    it arrived on Google's callback. A leaked Google `state` finished in another
+    browser (the attacker's account onto the victim's request, or the victim's
+    account onto the attacker's) records nothing.
 
     The continue URL carries one opaque single-use value and nothing else: no email,
     no request id. It is honoured only together with the cookie of the browser that
     approved, and a presentation from any other browser burns the request.
     """
     _ensure()
+    held, _, browser = (consent_cookie or '').partition('.')
+    if not pending_id or held != pending_id or not browser:
+        raise ValueError('this browser did not approve this application')
     secret = secrets.token_urlsafe(32)
     with db.connect() as con:
         taken = con.execute('UPDATE oauth_pending SET verified_email = ?, continue_hash = ? WHERE id = ? '
-                            'AND approved = 1 AND verified_email IS NULL AND expires_at >= ?',
-                            (email, _hash(secret), pending_id or '', int(time.time()))).rowcount
+                            'AND browser_hash = ? AND approved = 1 AND verified_email IS NULL AND expires_at >= ?',
+                            (email, _hash(secret), pending_id, _hash(browser), int(time.time()))).rowcount
+        if taken:
+            # One account holds at most MAX_VERIFIED_PER_EMAIL requests on the continue
+            # step; a newer one ends its oldest, so no account can pile them up.
+            while con.execute('SELECT COUNT(*) FROM oauth_pending WHERE verified_email = ?',
+                              (email,)).fetchone()[0] > MAX_VERIFIED_PER_EMAIL:
+                if not _evict_oldest(con, ' WHERE verified_email = ? AND id != ?', (email, pending_id)):
+                    break
     if not taken:
         raise ValueError('unknown, unapproved, expired or already verified authorization request')
     return issuer() + '/oauth/continue?' + urllib.parse.urlencode({'c': secret})
@@ -371,16 +595,22 @@ def google_verified(pending_id: str, email: str) -> str:
 @router.get('/oauth/continue')
 def continue_authorization(request: Request, c: str = ''):
     try:
-        target = finish_authorization(c, request)
-    except ValueError as refused:
-        return _error('access_denied', str(refused))
+        target, email = finish_authorization(c, request)
+    except ValueError:
+        return ended_response('')
     answer = RedirectResponse(target, status_code=302, headers={'Referrer-Policy': 'no-referrer'})
     answer.delete_cookie(CONSENT_COOKIE, path='/', secure=True, httponly=True, samesite='lax')
+    if email in config.founder_emails():
+        # This browser just completed a founder sign-in Google verified: from now on
+        # its requests use the founder's own lane.
+        answer.set_cookie(FOUNDER_COOKIE, founder_lane_cookie(email), max_age=FOUNDER_LANE_TTL, path='/',
+                          secure=True, httponly=True, samesite='lax')
     return answer
 
 
-def finish_authorization(continue_secret: str, request: Request) -> str:
-    """The browser that approved this client returns from Google; mint its code, once."""
+def finish_authorization(continue_secret: str, request: Request) -> tuple:
+    """The browser that approved this client returns from Google; mint its code, once.
+    Returns (the client redirect carrying the code, the verified email)."""
     _ensure()
     with db.connect() as con:
         row = con.execute('SELECT * FROM oauth_pending WHERE continue_hash = ?',
@@ -409,7 +639,38 @@ def finish_authorization(continue_secret: str, request: Request) -> str:
         con.execute('INSERT INTO oauth_codes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)',
                     (_hash(code), family, grant['client_id'], user['id'], grant['redirect_uri'],
                      grant['code_challenge'], grant['scope'], grant['resource'], int(time.time()) + CODE_TTL))
-    return _client_url(grant['redirect_uri'], code=code, state=grant['state'], iss=issuer())
+    return (_client_url(grant['redirect_uri'], code=code, state=grant['state'], iss=issuer()),
+            str(grant['verified_email']).strip().lower())
+
+
+# -- access log ----------------------------------------------------------------
+_SECRET_QUERY_PATHS = ('/oauth/', '/v1/auth/google/callback', '/auth/return')
+
+
+class _RedactSecretQueries(logging.Filter):
+    """uvicorn's access line carries the full path with its query string; on the
+    OAuth, Google-callback and desktop-return paths that query holds one-time
+    values (?c=, ?code=, ?state=), so the line keeps the path and drops the query."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            path, mark, _ = args[2].partition('?')
+            if mark and path.startswith(_SECRET_QUERY_PATHS):
+                record.args = args[:2] + (path + '?[redacted]',) + args[3:]
+        return True
+
+
+_ACCESS_FILTER = _RedactSecretQueries()
+
+
+def install_access_log_redaction() -> None:
+    access = logging.getLogger('uvicorn.access')
+    if _ACCESS_FILTER not in access.filters:
+        access.addFilter(_ACCESS_FILTER)
+
+
+install_access_log_redaction()
 
 
 # -- tokens ------------------------------------------------------------------

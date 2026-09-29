@@ -12,3 +12,9 @@ archhub_cloud.db
 .pytest_cache/
 .venv/
 venv/
+
+# Private founder graph cockpit (lives in github.com/Fargaly/archhub-cockpit)
+cockpit.py
+cockpit_executor.py
+cockpit_seed.json
+cockpit_real/

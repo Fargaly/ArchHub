@@ -113,6 +113,15 @@ app.include_router(companies.router)
 # route is behind founder_cockpit.require_founder (email == FOUNDER_EMAIL);
 # everyone else (incl. unauthenticated) gets 403. Cloud-backend only — it is
 # NOT part of the desktop user app.
+# The founder's graph cockpit (/founder -> /cockpit-canvas) is private and
+# lives outside this repo; mount it first when present so /founder is the
+# graph, never a crash when absent.
+try:
+    import cockpit  # noqa: E402
+    app.include_router(cockpit.router)
+except Exception as _cockpit_exc:  # pragma: no cover
+    print(f"[main] private graph cockpit not mounted: {_cockpit_exc}")
+
 app.include_router(founder_cockpit.router)
 
 

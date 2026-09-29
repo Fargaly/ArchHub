@@ -292,6 +292,29 @@ CREATE TABLE IF NOT EXISTS community_members (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_community_members_user ON community_members(user_id);
+-- The founder review of the Community Brain (ADGR-0004): one row per version
+-- (hlc) of a community fragment a member contributed. Other members pull a
+-- version only once it is admitted; the contributor always sees their own.
+CREATE TABLE IF NOT EXISTS community_reviews (
+    community_id    TEXT NOT NULL,
+    fragment_id     TEXT NOT NULL,
+    hlc             TEXT NOT NULL,
+    contributor     TEXT NOT NULL,
+    text            TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    submitted_at    INTEGER NOT NULL,
+    decided_by      TEXT,
+    decided_at      INTEGER,
+    PRIMARY KEY (community_id, fragment_id, hlc)
+);
+CREATE INDEX IF NOT EXISTS idx_community_reviews_status ON community_reviews(status);
+-- A member who left a community stays out: sign-in never re-adds them.
+CREATE TABLE IF NOT EXISTS community_optouts (
+    community_id    TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    left_at         INTEGER NOT NULL,
+    PRIMARY KEY (community_id, user_id)
+);
 CREATE INDEX IF NOT EXISTS idx_company_invites_company ON company_invites(company_id);
 CREATE INDEX IF NOT EXISTS idx_company_invites_email ON company_invites(email);
 
@@ -2391,6 +2414,83 @@ def add_community_member(community_id: str, user_id: str, *, role: str, owner_pu
             " VALUES (?, ?, ?, ?, ?)",
             (community_id, user_id, role or "member", owner_pub, int(time.time())),
         )
+
+
+def remove_community_member(community_id: str, user_id: str) -> bool:
+    """Leave a community: the membership that gates its shared replica ends."""
+    with connect() as con:
+        cur = con.execute(
+            "DELETE FROM community_members WHERE community_id = ? AND user_id = ?",
+            (community_id, user_id))
+        return cur.rowcount > 0
+
+
+def record_community_optout(community_id: str, user_id: str) -> None:
+    with connect() as con:
+        con.execute("INSERT OR REPLACE INTO community_optouts (community_id, user_id, left_at)"
+                    " VALUES (?, ?, ?)", (community_id, user_id, int(time.time())))
+
+
+def clear_community_optout(community_id: str, user_id: str) -> None:
+    with connect() as con:
+        con.execute("DELETE FROM community_optouts WHERE community_id = ? AND user_id = ?",
+                    (community_id, user_id))
+
+
+def has_community_optout(community_id: str, user_id: str) -> bool:
+    with connect() as con:
+        return con.execute("SELECT 1 FROM community_optouts WHERE community_id = ? AND user_id = ?",
+                           (community_id, user_id)).fetchone() is not None
+
+
+def contributed_community_versions(community_id: str, user_id: str) -> set:
+    """(fragment_id, hlc) pairs this user pushed, as the cloud recorded the pusher."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT fragment_id, hlc FROM community_reviews WHERE community_id = ? AND contributor = ?",
+            (community_id, user_id)).fetchall()
+    return {(str(r[0]), str(r[1])) for r in rows}
+
+
+def submit_community_version(community_id: str, fragment_id: str, hlc: str, *,
+                             contributor: str, text: str) -> None:
+    """A member contributed this version: it waits for the founder review."""
+    with connect() as con:
+        con.execute(
+            "INSERT OR IGNORE INTO community_reviews"
+            " (community_id, fragment_id, hlc, contributor, text, status, submitted_at)"
+            " VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (community_id, fragment_id, hlc, contributor, text[:4000], int(time.time())))
+
+
+def admitted_community_versions(community_id: str) -> set:
+    """(fragment_id, hlc) pairs the founder review admitted."""
+    with connect() as con:
+        rows = con.execute(
+            "SELECT fragment_id, hlc FROM community_reviews"
+            " WHERE community_id = ? AND status = 'admitted'", (community_id,)).fetchall()
+    return {(str(r[0]), str(r[1])) for r in rows}
+
+
+def pending_community_versions(limit: int = 200) -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT community_id, fragment_id, hlc, contributor, text, submitted_at"
+            " FROM community_reviews WHERE status = 'pending'"
+            " ORDER BY submitted_at, fragment_id LIMIT ?", (int(limit),)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def judge_community_version(community_id: str, fragment_id: str, hlc: str, *,
+                            admit: bool, decided_by: str) -> bool:
+    """Admit or reject one pending version. A judged version is never judged again."""
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE community_reviews SET status = ?, decided_by = ?, decided_at = ?"
+            " WHERE community_id = ? AND fragment_id = ? AND hlc = ? AND status = 'pending'",
+            ("admitted" if admit else "rejected", decided_by, int(time.time()),
+             community_id, fragment_id, hlc))
+        return cur.rowcount > 0
 
 
 def list_community_keys_for_user(user_id: str) -> list[str]:

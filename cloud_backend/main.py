@@ -805,6 +805,19 @@ def _community_keys_for_user(user: dict) -> list[str]:
     return db.list_community_keys_for_user(user["id"])
 
 
+@app.post("/v1/community/leave")
+async def community_leave(req: Request, authorization: str | None = Header(None)) -> dict:
+    """Leave a community: its shared replica is no longer read or written."""
+    user = _require_user(authorization)
+    body = await req.json() if await _has_body(req) else {}
+    cid = str((body or {}).get("community_id") or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail={"error": "community_id is required"})
+    left = db.remove_community_member(cid, user["id"])
+    db.record_community_optout(cid, user["id"])
+    return {"ok": True, "left": left}
+
+
 @app.post("/v1/community/join")
 async def community_join(req: Request,
                          authorization: str | None = Header(None)) -> dict:
@@ -819,6 +832,8 @@ async def community_join(req: Request,
     db.add_community_member(str(payload["community_id"]), user["id"],
                             role=str(payload.get("role") or "member"),
                             owner_pub=str(payload["owner_pub"]))
+    # A verified join-code is the member's own act: it lifts an earlier opt-out.
+    db.clear_community_optout(str(payload["community_id"]), user["id"])
     return {"joined": True, "community_id": str(payload["community_id"]),
             "community_keys": _community_keys_for_user(user)}
 
@@ -908,6 +923,9 @@ async def brain_sync(req: Request,
         merged = replica.export_delta(since_hlc=since_hlc)
     except ValueError as ex:
         raise HTTPException(status_code=400, detail={"error": str(ex)})
+    import community_review
+    community_review.submit_versions(user["id"], delta, merge_result, community_keys)
+    merged = community_review.hold_unreviewed(user["id"], merged)
     return {
         "accepted": merge_result["accepted"],
         "rejected": merge_result["rejected"],
@@ -1017,7 +1035,8 @@ def brain_facts(scope: str | None = None,
     # Fetch up to the cap (export_delta-style union for shared scopes; for the
     # USER-only tiers list_fragments reads the private replica directly).
     if config.brain_can_shared_scope(plan):
-        merged = replica.export_delta(since_hlc="")
+        import community_review
+        merged = community_review.hold_unreviewed(user["id"], replica.export_delta(since_hlc=""))
         rows = [f for f in merged.get("fragments", [])
                 if (f.get("kind") or "fact") == "fact"
                 and not f.get("valid_until")]
@@ -1072,7 +1091,8 @@ def brain_search(q: str = "",
     needle = (q or "").strip().lower()
     replica = _brain_read_replica(user)
     if config.brain_can_shared_scope(plan):
-        merged = replica.export_delta(since_hlc="")
+        import community_review
+        merged = community_review.hold_unreviewed(user["id"], replica.export_delta(since_hlc=""))
         pool = [f for f in merged.get("fragments", [])
                 if (f.get("kind") or "fact") == "fact"
                 and not f.get("valid_until")]
@@ -1120,7 +1140,8 @@ def brain_stats(authorization: str | None = Header(None)) -> dict:
     plan = user.get("plan")
     replica = _brain_read_replica(user)
     if config.brain_can_shared_scope(plan):
-        merged = replica.export_delta(since_hlc="")
+        import community_review
+        merged = community_review.hold_unreviewed(user["id"], replica.export_delta(since_hlc=""))
         facts = [f for f in merged.get("fragments", [])
                  if (f.get("kind") or "fact") == "fact"
                  and not f.get("valid_until")]

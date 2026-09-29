@@ -139,7 +139,8 @@ def text_result(payload: object) -> dict:
 
 def account_facts(replica) -> list:
     """This account's facts, from its own replica read-set."""
-    merged = replica.export_delta(since_hlc="")
+    import community_review
+    merged = community_review.hold_unreviewed(replica.user_id, replica.export_delta(since_hlc=""))
     return [
         fragment for fragment in merged.get("fragments", [])
         if (fragment.get("kind") or "fact") == "fact"

@@ -774,6 +774,34 @@ def api_errors(_founder: dict = Depends(require_founder)) -> JSONResponse:
     return JSONResponse({"errors": recent_errors(50)})
 
 
+# --- Community Brain moderation (ADGR-0004) --------------------------------
+# The founder review of what members share with the Community Brain. Members
+# never pull a version until it is admitted here (community_review.py). This is
+# the one review surface; the Cockpit calls it.
+@router.get("/api/community/pending")
+def api_community_pending(_founder: dict = Depends(require_founder)) -> JSONResponse:
+    import db
+    return JSONResponse({"pending": db.pending_community_versions()})
+
+
+@router.post("/api/community/judge")
+def api_community_judge(payload: dict = Body(default={}),
+                        founder: dict = Depends(require_founder)) -> JSONResponse:
+    import db
+    cid = str(payload.get("community_id") or "").strip()
+    fid = str(payload.get("id") or "").strip()
+    hlc = str(payload.get("hlc") or "").strip()
+    admit = payload.get("admit")
+    if not cid or not fid or not hlc or not isinstance(admit, bool):
+        raise HTTPException(status_code=400, detail="community_id, id, hlc and admit (true/false) are required")
+    judged = db.judge_community_version(cid, fid, hlc, admit=admit, decided_by=founder["id"])
+    _audit(founder, "/founder/api/community/judge", "community.judge", target="%s/%s@%s" % (cid, fid, hlc),
+           result={"admit": admit, "judged": judged}, ok=judged)
+    if not judged:
+        raise HTTPException(status_code=409, detail="no pending version with that id and hlc")
+    return JSONResponse({"ok": True, "status": "admitted" if admit else "rejected"})
+
+
 # --- ACTION routes (real authority) ----------------------------------------
 @router.post("/api/command")
 def api_command(payload: dict = Body(default={}),

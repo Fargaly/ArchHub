@@ -205,6 +205,11 @@ class TestCommunityFanout:
                       extra={"community_id": cid})]},
             "community_keys": [cid],
         })
+        # The founder review admits it (ADGR-0004, test_community_review_gate).
+        import db
+        for item in db.pending_community_versions():
+            db.judge_community_version(item["community_id"], item["fragment_id"], item["hlc"],
+                                       admit=True, decided_by="court")
         # Member B (different user/token) names the same community + pulls.
         rb = client.post("/v1/brain/sync", headers=hb, json={
             "delta": {"fragments": []},

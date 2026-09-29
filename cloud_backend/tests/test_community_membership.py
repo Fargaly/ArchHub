@@ -94,6 +94,12 @@ def test_a_verified_join_code_opens_the_community_for_that_user(client):
     r = client.post("/v1/brain/sync", headers=h1, json={"delta": {"fragments": [_community_fragment("open-house", "hello members")]}})
     assert r.status_code == 200 and r.json()["community_keys"] == ["open-house"], r.text
     assert not r.json()["rejected"], r.json()["rejected"]
+    # Members pull a version once the founder review admits it (ADGR-0004,
+    # test_community_review_gate); membership is what this court is about.
+    import db
+    for item in db.pending_community_versions():
+        db.judge_community_version(item["community_id"], item["fragment_id"], item["hlc"],
+                                   admit=True, decided_by="court")
     r2 = client.post("/v1/brain/sync", headers=h2, json={"delta": {"fragments": []}})
     texts = json.dumps(r2.json().get("merged") or {})
     assert "hello members" in texts

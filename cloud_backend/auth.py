@@ -14,10 +14,23 @@ row so verification at exchange time is self-contained.
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Optional
 
 import db
+
+# Every account joins one Community Brain (founder decision 2026-09-29: auto-join,
+# shared by default). Only what a device releases to the community lake reaches
+# it -- published skills and behaviour patterns; client and firm facts never do
+# (nodelang.cell_brain_governance). An empty ARCHHUB_DEFAULT_COMMUNITY_ID turns
+# the auto-join off.
+DEFAULT_COMMUNITY_ID = "archhub-community"
+DEFAULT_COMMUNITY_OWNER = "archhub-platform"
+
+
+def default_community_id() -> str:
+    return os.environ.get("ARCHHUB_DEFAULT_COMMUNITY_ID", DEFAULT_COMMUNITY_ID).strip()
 
 
 def provision_brain(user_id: str) -> Optional[str]:
@@ -49,6 +62,15 @@ def provision_brain(user_id: str) -> Optional[str]:
         replica = brain_replica.BrainReplica.open(user_id)
         brain_id = replica.user_id   # == user_id (replica dir is keyed on it)
         db.set_user_brain_id(user_id, brain_id)
+        community = default_community_id()
+        if community and not db.has_community_optout(community, user_id):
+            # INSERT OR IGNORE: a returning user keeps the row they have. A member
+            # who left is never re-added by signing in again.
+            db.add_community_member(community, user_id, role="member",
+                                    owner_pub=DEFAULT_COMMUNITY_OWNER)
+        else:
+            # Auto-join turned off: the default membership ends at next sign-in.
+            db.remove_community_member(DEFAULT_COMMUNITY_ID, user_id)
         return brain_id
     except Exception as ex:   # pragma: no cover - defensive, see note above
         import sys

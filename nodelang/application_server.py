@@ -1257,8 +1257,85 @@ class _CleanAuthorityHttpServer:
         self._session_index = None
         self._live_sign_in = None
         self._mutation_lock = threading.RLock()
+        # Workspace roots: re-derive the hooks' signed projection from the
+        # graph at every start, off the start path. Anything but a match
+        # refuses owner changes (republish only) and is shown as a banner.
+        self.workspace_roots_boot = "checking"
+        threading.Thread(
+            target=self._check_workspace_roots,
+            name="archhub-workspace-roots-check",
+            daemon=True,
+        ).start()
         self.httpd = QuietThreadingHTTPServer((host, port), self._make_handler())
         self.thread = None
+
+    def _check_workspace_roots(self):
+        from .workspace_roots_catalogue import (
+            boot_check,
+            find_workspace_root_catalogue,
+        )
+        try:
+            catalogue = find_workspace_root_catalogue(
+                self.clean_authority, caller=self.clean_caller
+            )
+            self.workspace_roots_boot = boot_check(
+                self.clean_authority, catalogue, caller=self.clean_caller
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed check is never a match
+            self.workspace_roots_boot = "unverifiable: " + type(exc).__name__
+
+    def _clean_workspace_roots(self, body):
+        """The owner's Workspaces settings: list, register, unregister, republish.
+
+        The browser session only admits the request. The approval is the
+        owner's key: the projection a change produces is signed (Windows asks
+        the owner) before anything commits -- see owner_change.
+        """
+        import uuid as _uuid
+
+        from .workspace_roots_catalogue import (
+            WorkspaceRootRefused,
+            find_workspace_root_catalogue,
+            install_workspace_root_catalogue,
+            owner_change,
+            roots_view,
+        )
+        if type(body) is not dict:
+            raise WorkspaceRootRefused("workspace-roots request is invalid")
+        request = {key: value for key, value in body.items() if key != "command_id"}
+        action = request.get("action")
+        boot = self.workspace_roots_boot
+        if action in ("register", "unregister") and boot not in ("match", "missing"):
+            raise WorkspaceRootRefused(
+                "the workspace-roots registry does not match the graph (%s); "
+                "republish it before changing roots" % boot
+            )
+        with self._mutation_lock:
+            catalogue = find_workspace_root_catalogue(
+                self.clean_authority, caller=self.clean_caller
+            )
+            if catalogue is None and action in ("register", "unregister", "republish"):
+                catalogue = install_workspace_root_catalogue(
+                    self.clean_authority,
+                    operation_id=str(_uuid.uuid4()),
+                    caller=self.clean_caller,
+                )
+        if catalogue is None:
+            if action != "list" or set(request) != {"action"}:
+                raise WorkspaceRootRefused("workspace-roots request is invalid")
+            view = roots_view(self.clean_authority.store.revision, (), None, boot)
+        else:
+            view = owner_change(
+                self.clean_authority,
+                catalogue,
+                request,
+                caller=self.clean_caller,
+                operation_id=body.get("command_id") or str(_uuid.uuid4()),
+                lock=self._mutation_lock,
+            )
+            if action != "list":
+                self.workspace_roots_boot = view["projection"]
+        return {**view, "boot": self.workspace_roots_boot}
 
     def _clean_sign_in(self):
         """Mint one bounded browser session for an explicit same-origin POST.
@@ -3986,6 +4063,18 @@ class _CleanAuthorityHttpServer:
                             payload = owner._clean_execute_adapter(
                                 binding, body
                             )
+                        self._json(200, {"ok": True, **payload})
+                        return
+                    if self.path == "/api/universal/workspace-roots":
+                        with owner._mutation_lock:
+                            owner._resolve_binding(
+                                self._token(),
+                                csrf_token=csrf_token,
+                                require_csrf=True,
+                            )
+                        # Signing may wait on the owner's prompt, so the
+                        # graph lock is taken inside, never held across it.
+                        payload = owner._clean_workspace_roots(body)
                         self._json(200, {"ok": True, **payload})
                         return
                     if self.path == "/api/universal/focus":

@@ -52,7 +52,7 @@ def test_the_private_key_is_never_exportable():
         _delete_key(name)
 
 
-def test_the_protected_key_cannot_be_created_or_used_silently():
+def test_the_protected_key_cannot_be_created_silently():
     name = "ArchHub-court-" + uuid.uuid4().hex
     store = signing._Store()
     key = signing._HANDLE()

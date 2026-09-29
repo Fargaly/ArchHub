@@ -12,7 +12,7 @@ The extractor emits a list of operations:
 
 `apply_ops` walks the list inside a single transaction, persists each
 op to memory_op_log, and returns the resulting fact_id (or None for
-DELETE/NOOP). The redaction policy gate (`promote_to_shared`) lives
+DELETE/NOOP). The redaction policy gate (the retired `promote_to_shared`) lived
 here too — it's the ONE place that converts private facts into
 visibility='shared_*'.
 
@@ -218,33 +218,3 @@ def apply_ops(*, user_id: str, ops: list,
         "noop":    noop_count,
         "errors":  errors,
     }
-
-
-# ── Promotion: private → collective ─────────────────────────────────
-def promote_to_shared(*, fact_id: int, user_id: str,
-                       access_policy: str = "public",
-                       domain: str = "aec.general",
-                       redaction_policy: str = "transform") -> int:
-    """Promote a private fact to collective_memory after redaction.
-
-    Per ADR-002 §"Privacy + redaction" the `transform` policy is the
-    only acceptable policy for non-private writes. `simple` is rejected.
-    """
-    if redaction_policy != "transform":
-        raise ValueError(
-            "promote_to_shared requires redaction_policy='transform'")
-    src = db.get_memory_fact(fact_id)
-    if not src:
-        raise ValueError(f"fact {fact_id} not found")
-    if src["user_id"] != user_id:
-        raise ValueError("fact not owned by promoter")
-    redacted = redact_text(src["text"], policy="transform")
-    if not redacted:
-        raise ValueError(
-            "redaction stripped all content — fact unsafe to promote")
-    return db.promote_to_collective(
-        fact_id=fact_id, contributing_user_id=user_id,
-        redaction_policy=redaction_policy,
-        access_policy=access_policy, domain=domain,
-        redacted_text=redacted,
-    )

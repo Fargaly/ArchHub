@@ -236,45 +236,6 @@ class TestRedactionAndPromote:
         assert "Bayaty" not in out
         assert "Wall types preferred" in out
 
-    def test_promote_requires_transform_policy(self):
-        import db, memory_writer
-        u, _ = _signed_in_user("rp1")
-        fid = db.insert_memory_fact(user_id=u["id"],
-                                      text="Standard wall pattern")
-        with pytest.raises(ValueError):
-            memory_writer.promote_to_shared(
-                fact_id=fid, user_id=u["id"],
-                redaction_policy="simple",
-            )
-
-    def test_promote_persists_and_redacts(self):
-        import db, memory_writer
-        u, _ = _signed_in_user("rp2")
-        # Fact with a hidden email — must be stripped at promotion.
-        fid = db.insert_memory_fact(
-            user_id=u["id"],
-            text="Standard pattern; question to me@archhub.com\nClient: Acme")
-        cid = memory_writer.promote_to_shared(
-            fact_id=fid, user_id=u["id"],
-            access_policy="public", domain="aec.walls")
-        assert cid > 0
-        listed = db.list_collective_memory(domain="aec.walls")
-        assert any(c["id"] == cid for c in listed)
-        # The stored collective text must not contain the email or client.
-        target = next(c for c in listed if c["id"] == cid)
-        assert "me@archhub.com" not in target["text"]
-        assert "Acme" not in target["text"]
-
-    def test_promote_rejects_cross_user(self):
-        import db, memory_writer
-        u1, _ = _signed_in_user("rp3a")
-        u2, _ = _signed_in_user("rp3b")
-        fid = db.insert_memory_fact(user_id=u1["id"], text="mine")
-        with pytest.raises(ValueError):
-            memory_writer.promote_to_shared(
-                fact_id=fid, user_id=u2["id"],
-            )
-
 
 # ── Heuristic extractor ────────────────────────────────────────────
 class TestExtractor:
@@ -413,14 +374,11 @@ class TestEndpoints:
 class TestAuditLog:
     def test_the_retired_collective_reads_nothing(self, client):
         """The collective browse is retired (410); it reads and logs nothing."""
-        import db, memory_writer
+        import db
         u1, h1 = _signed_in_user("audit1")
         u2, h2 = _signed_in_user("audit2")
-        fid = db.insert_memory_fact(user_id=u1["id"],
-                                      text="Standard dimension policy")
-        memory_writer.promote_to_shared(
-            fact_id=fid, user_id=u1["id"],
-            access_policy="public", domain="aec.dims")
+        db.insert_memory_fact(user_id=u1["id"], text="Standard dimension policy",
+                              visibility="shared_public")
         r = client.get("/v1/memory/collective?domain=aec.dims", headers=h2)
         assert r.status_code == 410
         assert "Standard dimension policy" not in r.text

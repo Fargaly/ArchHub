@@ -1778,8 +1778,8 @@ def insert_memory_fact(*, user_id: str, text: str,
     """Insert a new fact AS A FRAGMENT in the user's replica. Returns the
     global-unique integer fact-id.
 
-    Caller is responsible for asserting non-private writes have gone
-    through the redaction policy (memory_writer.promote_to_shared).
+    A non-private fact is never shared from here: sharing beyond the owner is
+    the reviewed Community Brain only (ADGR-0004).
     """
     if scope not in VALID_SCOPES:
         raise ValueError(f"scope must be one of {VALID_SCOPES}")
@@ -2216,56 +2216,6 @@ def list_memory_ops(*, user_id: str, limit: int = 50) -> list[dict]:
 
 
 # ── Collective memory (community-shared, redacted) ──────────────────
-def promote_to_collective(*, fact_id: int, contributing_user_id: str,
-                            redaction_policy: str = "transform",
-                            access_policy: str = "public",
-                            domain: str = "aec.general",
-                            redacted_text: Optional[str] = None,
-                            ) -> int:
-    """Promote a private fact into the community store.
-
-    Per ADR-002: any non-private write must apply the `transform`
-    redaction policy. Caller passes the already-redacted text (from
-    memory_writer.redact_text); we just persist + audit."""
-    src = get_memory_fact(fact_id)
-    if not src:
-        raise ValueError(f"fact {fact_id} not found")
-    text = (redacted_text or src["text"]).strip()
-    company_id = src.get("company_id")
-    now = int(time.time())
-    with connect() as con:
-        cur = con.execute(
-            "INSERT INTO collective_memory ("
-            " text, domain, contributing_user_id, contributing_company_id,"
-            " source_fact_id, redaction_policy, access_policy,"
-            " confidence, promoted_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (text, domain, contributing_user_id, company_id,
-             fact_id, redaction_policy, access_policy,
-             float(src.get("confidence") or 0.7), now),
-        )
-        return int(cur.lastrowid or 0)
-
-
-def list_collective_memory(*, domain: Optional[str] = None,
-                              limit: int = 50) -> list[dict]:
-    where = []
-    params: list = []
-    if domain:
-        where.append("domain = ?")
-        params.append(domain)
-    sql = "SELECT id, text, domain, redaction_policy, access_policy," \
-          " confidence, upvotes, downvotes, promoted_at" \
-          " FROM collective_memory"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY promoted_at DESC LIMIT ?"
-    params.append(int(limit))
-    with connect() as con:
-        rows = con.execute(sql, tuple(params)).fetchall()
-    return [dict(r) for r in rows]
-
-
 def log_memory_access(*, reader_user_id: str,
                        fact_id: Optional[int] = None,
                        collective_id: Optional[int] = None,

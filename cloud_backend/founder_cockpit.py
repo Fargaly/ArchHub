@@ -782,6 +782,7 @@ def api_user_detail(key: str, _founder: dict = Depends(require_founder)) -> JSON
     user["profile"] = {field: row.get(field) for field in _PROFILE_FIELDS}
     user["stripe_customer"] = bool(row.get("stripe_id"))
     user["period_end"] = row.get("period_end")
+    user["devices"] = db.list_devices(user["id"])
     user["suspended_at"] = row.get("suspended_at")
     user["suspended_reason"] = row.get("suspended_reason")
     user.update(db.user_activity(user["id"]))
@@ -983,6 +984,29 @@ def api_browser_code(founder: dict = Depends(require_founder)) -> JSONResponse:
             config.PUBLIC_URL.rstrip("/"), _urlquote(code, safe=""),
         ),
     })
+
+
+@router.get("/api/devices")
+def api_devices(user: str = "", _founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Signed-in devices, newest heartbeat first; ?user=<email|id> narrows it."""
+    account = _account(user) if user else None
+    if user and account is None:
+        return JSONResponse({"ok": False, "error": "no such user"}, status_code=404)
+    return JSONResponse({"ok": True, "devices": db.list_devices(account["id"] if account else None)})
+
+
+@router.post("/api/devices/{user_key}/{device_id}/disconnect")
+def api_device_disconnect(user_key: str, device_id: str,
+                          founder: dict = Depends(require_founder)) -> JSONResponse:
+    """Disconnect one device: the session it last spoke with stops working."""
+    account = _account(user_key)
+    done = db.disconnect_device(account["id"], device_id) if account else None
+    if done is None:
+        return JSONResponse({"ok": False, "error": "no such device"}, status_code=404)
+    _audit(founder, "POST /founder/api/devices/{user}/{device}/disconnect",
+           "device.disconnect", target="%s/%s" % (account["email"], device_id),
+           result={"sessions_revoked": done["sessions_revoked"]})
+    return JSONResponse({"ok": True, **done})
 
 
 @router.get("/api/relay")

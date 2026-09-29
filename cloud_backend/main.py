@@ -507,6 +507,21 @@ async def logout(req: Request,
     return auth.logout(token=token, all_sessions=all_sessions)
 
 
+class DeviceHeartbeatReq(BaseModel):
+    device_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    name: str = Field(default="", max_length=120)
+
+
+@app.post("/v1/devices/heartbeat")
+def device_heartbeat(body: DeviceHeartbeatReq,
+                     authorization: str | None = Header(None)) -> dict:
+    """A signed-in device says it is alive (the founder cockpit lists it; a
+    disconnect there revokes the session it spoke with)."""
+    user = _require_user(authorization)
+    return {"ok": True, **db.device_heartbeat(user["id"], body.device_id, body.name.strip(),
+                                              _bearer(authorization))}
+
+
 @app.get("/v1/me")
 def me(authorization: str | None = Header(None)) -> dict:
     user = _require_user(authorization)

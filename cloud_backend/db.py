@@ -584,6 +584,20 @@ CREATE TABLE IF NOT EXISTS founder_config (
 -- executes through the cockpit. Every real action (purge, set-plan, toggle,
 -- agent-direction) writes one row BEFORE/AFTER it runs, so the cockpit's
 -- authority is accountable + reviewable. Never deleted from app code.
+-- Signed-in devices (founder cockpit P6b). One row per account and device:
+-- the device's own id, a label, the digest of the session it last spoke with
+-- (never the bearer), and its last heartbeat. Disconnect revokes that session.
+CREATE TABLE IF NOT EXISTS devices (
+    user_id          TEXT NOT NULL,
+    device_id        TEXT NOT NULL,
+    name             TEXT NOT NULL DEFAULT '',
+    token_digest     TEXT NOT NULL,
+    first_seen       INTEGER NOT NULL,
+    last_heartbeat   INTEGER NOT NULL,
+    disconnected_at  INTEGER,
+    PRIMARY KEY (user_id, device_id)
+);
+
 -- Founder cockpit errors, kept across restarts (the in-memory ring was lost
 -- on every deploy). Bounded like the ring: the newest 100 rows are kept.
 CREATE TABLE IF NOT EXISTS cockpit_error_log (
@@ -3265,6 +3279,50 @@ def finish_agent_task(task_id: str, *, ok: bool, result: str):
         row = con.execute(
             "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
     return dict(row) if row else None
+
+
+def device_heartbeat(user_id: str, device_id: str, name: str, token: str) -> dict:
+    """Record that this account's device is alive on this session."""
+    now = int(time.time())
+    digest = token_digest(token)
+    with connect() as con:
+        con.execute(
+            "INSERT INTO devices (user_id, device_id, name, token_digest, first_seen, "
+            "last_heartbeat) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, device_id) DO "
+            "UPDATE SET name = excluded.name, token_digest = excluded.token_digest, "
+            "last_heartbeat = excluded.last_heartbeat, disconnected_at = NULL",
+            (user_id, device_id, name, digest, now, now))
+    return {"device_id": device_id, "last_heartbeat": now}
+
+
+def list_devices(user_id: Optional[str] = None, *, now: Optional[int] = None,
+                 online_s: int = 180) -> list[dict]:
+    """Devices, newest heartbeat first; never the session digest."""
+    now = int(time.time()) if now is None else int(now)
+    where, args = ("WHERE d.user_id = ?", (user_id,)) if user_id else ("", ())
+    with connect() as con:
+        rows = con.execute(
+            "SELECT d.user_id, u.email, d.device_id, d.name, d.first_seen, d.last_heartbeat, "
+            "d.disconnected_at FROM devices d JOIN users u ON u.id = d.user_id %s "
+            "ORDER BY d.last_heartbeat DESC LIMIT 200" % where, args).fetchall()
+    return [{**dict(row), "online": row["disconnected_at"] is None
+             and now - int(row["last_heartbeat"]) <= online_s} for row in rows]
+
+
+def disconnect_device(user_id: str, device_id: str) -> Optional[dict]:
+    """Revoke the session the device last spoke with and mark it disconnected.
+    None for an unknown device."""
+    now = int(time.time())
+    with connect() as con:
+        row = con.execute("SELECT token_digest FROM devices WHERE user_id = ? AND device_id = ?",
+                          (user_id, device_id)).fetchone()
+        if row is None:
+            return None
+        revoked = con.execute("DELETE FROM tokens WHERE token = ? AND user_id = ?",
+                              (row["token_digest"], user_id)).rowcount
+        con.execute("UPDATE devices SET disconnected_at = ? WHERE user_id = ? AND device_id = ?",
+                    (now, user_id, device_id))
+    return {"device_id": device_id, "disconnected_at": now, "sessions_revoked": int(revoked or 0)}
 
 
 def relay_status(*, now: Optional[int] = None) -> dict:

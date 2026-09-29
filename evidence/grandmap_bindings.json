@@ -557,9 +557,13 @@
       ]
     },
     "models_cli_sub": {
-      "why": "a signed-in CLI subscription is an admitted provider registered by reference",
+      "why": "a signed-in CLI subscription is an admitted provider registered by reference; a chat through it is refused for OpenCode, never falls back, and says where it goes and whether its version was proven",
       "tests": [
-        "tests_replica/test_cell_model_providers.py"
+        "tests_replica/test_cell_model_providers.py",
+        "tests_replica/test_chat_through_a_local_assistant.py::test_opencode_is_never_a_chat_route",
+        "tests_replica/test_chat_through_a_local_assistant.py::test_route_chat_refuses_rather_than_falls_back",
+        "tests_replica/test_chat_through_a_local_assistant.py::test_the_picker_row_says_where_the_chat_goes",
+        "tests_replica/test_chat_through_a_local_assistant.py::test_another_assistant_version_is_not_verified"
       ]
     },
     "selfext_intent_ask": {

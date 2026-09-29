@@ -118,6 +118,23 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
      // A refused or failed idle check reads as "no open Work"; the owner stays usable.
      clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;held.resolve({allow:true,toolOutput:'{}'});return;
     }
+    // A reply naming another actor is an identity failure before anything else.
+    if(reply.agent_session!==undefined&&(!state.actor?lineages.get(event.session_id)&&reply.agent_session!==lineages.get(event.session_id)
+       :reply.agent_session!==state.actor)){abort('native graph identity changed');return;}
+    if(reply.request_id===held.id&&reply.session_id===event.session_id&&reply.tool_use_id===held.call&&
+       reply.admitted===false&&reply.decision==='deny'&&typeof reply.error==='string'&&!state.actor&&reply.agent_session===undefined){
+     // Only a never-bound owner proves this frame was not admitted: no permit can
+     // exist, so this is a clean denial with its reason. Every other error keeps
+     // custody (abort) below; an invalid or missing decision is a protocol failure.
+     const why=[reply.error,reply.reason].filter(v=>typeof v==='string'&&v).join(': ');
+     clearTimeout(held.timer);state.pending=null;state.lastCompleted=held.id;
+     if(lineages.get(event.session_id)){
+      // A continuation that never bound is not retried by this worker. Retire it:
+      // its exit is reconciled against the owner's custody before a fresh worker.
+      state.retiring=true;try{state.child.stdin.end();}catch(_){}
+     }
+     held.resolve({allow:false,reason:('native owner could not decide: '+why).slice(0,1024)});return;
+    }
     if(reply.request_id!==held.id||reply.session_id!==event.session_id||reply.tool_use_id!==held.call||
        reply.error||!['allow','deny'].includes(reply.decision)){abort('native reply identity or outcome unavailable');return;}
     if(!/^app:agent-session:runtime:[a-f0-9]{32}$/.test(reply.agent_session)||
@@ -141,6 +158,7 @@ export function createNativeGateRunner(command,args,{expectedSessions={},selecte
    });
   }
   if(state.cwd!==event.cwd)notDelivered('native session workspace changed');
+  if(state.retiring)notDelivered('native owner is retiring after an unreachable application; retry after reconciliation');
   if(state.failed||state.pending||state.released||state.closed)notDelivered('native owner unavailable or already active; no duplicate enrollment');
   return new Promise((resolve,reject)=>{
    const stop=event.hook_event_name==='Stop';

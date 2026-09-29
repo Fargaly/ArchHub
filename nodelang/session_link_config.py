@@ -329,15 +329,22 @@ def installed_stop_hook(install_root):
     return python, script
 
 
+def _render_hook_command(vendor, python, script, flag):
+    """Quoted forward-slash paths survive Claude Code's Git Bash on Windows. Codex runs
+    hook commands through PowerShell, where a leading quoted string is an expression,
+    not a command: the call operator makes any path, spaces included, run."""
+    quote = lambda value: '"' + str(value).replace("\\", "/") + '"'
+    command = quote(python) + " " + quote(script) + " --vendor " + flag
+    return "& " + command if vendor == "codex" else command
+
+
 def render_stop_hook(vendor, *, install_root):
     """One end-of-turn entry for this client, pointing at the installed copy."""
     if vendor not in _STOP_HOOKS:
         raise SessionLinkConfigRefused("unsupported hook client")
     python, script = installed_stop_hook(install_root)
     event, flag, timeout = _STOP_HOOKS[vendor]
-    # Quoted forward-slash paths survive Claude Code's Git Bash on Windows.
-    quote = lambda value: '"' + str(value).replace("\\", "/") + '"'
-    hook = {"type": "command", "command": quote(python) + " " + quote(script) + " --vendor " + flag,
+    hook = {"type": "command", "command": _render_hook_command(vendor, python, script, flag),
             "timeout": timeout}
     if vendor == "gemini-cli":
         hook["name"] = "archhub-end-of-turn-check"
@@ -411,7 +418,7 @@ def merge_stop_hook(existing, managed, *, vendor, install_root, migrate=False):
                         continue  # exactly one end-of-turn check remains
                     placed = True
                     if (role != "ours" or _hook_command_identity(hook) != _hook_command_identity(desired)
-                            or _claude_bash_broken(hook, vendor)):
+                            or _runner_broken(hook, vendor)):
                         # Our own script under another spelling, or a reviewed migration.
                         hook = {**hook, "command": desired["command"]}
                 hooks.append(hook)
@@ -578,9 +585,7 @@ def render_client_hooks(vendor, *, python_executable, gate_script, install_root)
     if gate.name != "agent_scope_gate.py":
         raise SessionLinkConfigRefused("hook adapter is not the existing scope adapter")
     _, flag, before, after, timeout = _HOOK_CLIENTS[vendor]
-    # Quoted forward-slash paths survive Claude Code's Git Bash on Windows.
-    quote = lambda value: '"' + str(value).replace("\\", "/") + '"'
-    command = quote(python) + " " + quote(gate) + " --vendor " + flag
+    command = _render_hook_command(vendor, python, gate, flag)
     result = {}
     for event, label in ((before, "archhub-scope-gate"), (after, "archhub-write-receipt")):
         hook = {"type": "command", "command": command, "timeout": timeout}
@@ -597,6 +602,9 @@ def _hook_command_parts(hook):
     if not isinstance(hook, dict) or hook.get("type") != "command":
         return None
     command = hook.get("command")
+    if isinstance(command, str):
+        # One leading PowerShell call operator (the Codex spelling) names the same command.
+        command = re.sub(r"^\s*&\s+", "", command, count=1)
     if not isinstance(command, str) or any(c in command for c in "\n\r&|><" + chr(96)):
         return None
     pattern = r'''"[^"]*"|'[^']*'|[^\s"']+'''
@@ -636,7 +644,20 @@ def _claude_bash_broken(hook, vendor):
     if not isinstance(command, str):
         return False
     tokens = re.findall(r'''"[^"]*"|'[^']*'|[^\s"']+''', command)
-    return any(token[:1] not in ('"', "'") and "\\" in token for token in tokens)
+    return tokens[:1] == ["&"] or any(token[:1] not in ('"', "'") and "\\" in token for token in tokens)
+
+
+def _codex_powershell_broken(hook, vendor):
+    """Codex runs hooks through PowerShell, where a command that starts with a quoted
+    path is a ParserError; such a command is never a working equivalent."""
+    if vendor != "codex" or not isinstance(hook, dict):
+        return False
+    command = hook.get("command")
+    return isinstance(command, str) and command.lstrip()[:1] in ('"', "'")
+
+
+def _runner_broken(hook, vendor):
+    return _claude_bash_broken(hook, vendor) or _codex_powershell_broken(hook, vendor)
 
 
 def merge_client_hooks(existing, managed, *, vendor, known_owned_commands):
@@ -658,15 +679,15 @@ def merge_client_hooks(existing, managed, *, vendor, known_owned_commands):
         for group in groups:
             if type(group) is not dict or type(group.get("hooks")) is not list:
                 raise SessionLinkConfigRefused("unrecognized hook group")
-        equivalent = any(_hook_command_identity(h) == identity and not _claude_bash_broken(h, vendor)
+        equivalent = any(_hook_command_identity(h) == identity and not _runner_broken(h, vendor)
                          for g in groups for h in g["hooks"])
         replaced = False
         for group in groups:
             hooks = []
             for hook in group["hooks"]:
                 current = _hook_command_identity(hook)
-                if current == identity and _claude_bash_broken(hook, vendor):
-                    # Same adapter, spelling broken under Git Bash: rewrite the command only.
+                if current == identity and _runner_broken(hook, vendor):
+                    # Same adapter, spelling broken under the client's shell: rewrite the command only.
                     hooks.append({**hook, "command": desired["command"]})
                     replaced = True
                 elif current == identity:

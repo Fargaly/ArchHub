@@ -611,6 +611,19 @@ CREATE TABLE IF NOT EXISTS payment_events (
     detail        TEXT NOT NULL DEFAULT ''
 );
 
+-- A founder refund waits for its confirmation here (cockpit P4b): the preview
+-- issues a single-use token (stored as its digest), valid five minutes, bound
+-- to the founder, the payment and the amount.
+CREATE TABLE IF NOT EXISTS refund_confirmations (
+    token_digest   TEXT PRIMARY KEY,
+    founder_id     TEXT NOT NULL,
+    payment_intent TEXT NOT NULL,
+    amount         INTEGER NOT NULL,
+    currency       TEXT NOT NULL,
+    expires_at     INTEGER NOT NULL,
+    used           INTEGER NOT NULL DEFAULT 0
+);
+
 -- Founder cockpit errors, kept across restarts (the in-memory ring was lost
 -- on every deploy). Bounded like the ring: the newest 100 rows are kept.
 CREATE TABLE IF NOT EXISTS cockpit_error_log (
@@ -3100,6 +3113,38 @@ def record_payment_event(*, kind: str, user_id: Optional[str], stripe_object: Op
                     "currency, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (int(time.time()), kind, user_id, stripe_object,
                      int(amount) if amount is not None else None, currency, detail[:500]))
+
+
+def issue_refund_confirmation(*, founder_id: str, payment_intent: str, amount: int,
+                               currency: str, ttl_s: int = 300) -> str:
+    token = "rf_" + secrets.token_urlsafe(24)
+    with connect() as con:
+        con.execute("INSERT INTO refund_confirmations (token_digest, founder_id, payment_intent, "
+                    "amount, currency, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (token_digest(token), founder_id, payment_intent, int(amount), currency,
+                     int(time.time()) + int(ttl_s)))
+    return token
+
+
+def claim_refund_confirmation(token: str, *, founder_id: str) -> Optional[dict]:
+    """Take a live, unused confirmation for this founder, once. None otherwise."""
+    digest = token_digest(token)
+    with connect() as con:
+        taken = con.execute(
+            "UPDATE refund_confirmations SET used = 1 WHERE token_digest = ? AND used = 0 "
+            "AND founder_id = ? AND expires_at > ?", (digest, founder_id, int(time.time()))).rowcount
+        if not taken:
+            return None
+        row = con.execute("SELECT * FROM refund_confirmations WHERE token_digest = ?",
+                          (digest,)).fetchone()
+    return dict(row)
+
+
+def release_refund_confirmation(token: str) -> None:
+    """Stripe refused: the same confirmation (and idempotency key) may be retried."""
+    with connect() as con:
+        con.execute("UPDATE refund_confirmations SET used = 0 WHERE token_digest = ?",
+                    (token_digest(token),))
 
 
 def recent_payment_events(kind: str, limit: int = 50) -> list[dict]:

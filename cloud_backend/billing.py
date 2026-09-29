@@ -339,6 +339,27 @@ def founder_stripe_view() -> dict:
     return view
 
 
+def refund_preview(payment_intent: str) -> dict:
+    """What a refund of this payment would return: amount received and currency."""
+    if not _ensure_stripe():
+        raise RuntimeError("Stripe is not configured on this server")
+    intent = stripe.PaymentIntent.retrieve(payment_intent)
+    return {"payment_intent": intent["id"], "amount_received": int(intent.get("amount_received") or 0),
+            "currency": str(intent.get("currency") or ""), "status": intent.get("status")}
+
+
+def refund_payment(*, payment_intent: str, amount: int, idempotency_key: str, founder: str) -> dict:
+    """Issue one refund. Only the founder cockpit's confirmed route calls this;
+    the cockpit agent never can (cockpit_agent withholds refunds)."""
+    if not _ensure_stripe():
+        raise RuntimeError("Stripe is not configured on this server")
+    refund = stripe.Refund.create(payment_intent=payment_intent, amount=int(amount),
+                                  metadata={"issued_by": founder},
+                                  idempotency_key=idempotency_key)
+    return {"id": refund["id"], "status": refund.get("status"), "amount": refund.get("amount"),
+            "currency": refund.get("currency")}
+
+
 def handle_webhook(*, payload: bytes, signature: str) -> dict:
     """Verify + dispatch a Stripe webhook. Returns a small status dict."""
     if not _ensure_stripe():

@@ -1062,6 +1062,59 @@ def api_stripe(_founder: dict = Depends(require_founder)) -> JSONResponse:
                          "refunds": db.recent_payment_events("refund")})
 
 
+@router.post("/api/stripe/refund")
+def api_stripe_refund(payload: dict = Body(default={}),
+                      founder: dict = Depends(require_founder)) -> JSONResponse:
+    """A refund the founder clicks, in two steps.
+
+    Without confirm_token: a preview of the payment and a single-use token
+    (five minutes, bound to this founder, payment and amount). With it: the
+    refund, sent once under an idempotency key derived from the token, and
+    audited. Nothing else in the cockpit (the agent included) can refund."""
+    import billing
+    actor = (founder.get("email") or "").strip().lower()
+    token = str(payload.get("confirm_token") or "").strip()
+    if not token:
+        intent = str(payload.get("payment_intent") or "").strip()
+        if not intent.startswith("pi_"):
+            return JSONResponse({"ok": False, "error": "payment_intent (pi_...) is required"},
+                                status_code=400)
+        try:
+            preview = billing.refund_preview(intent)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": "Stripe: %s" % type(exc).__name__},
+                                status_code=502)
+        amount = payload.get("amount")
+        amount = preview["amount_received"] if amount in (None, "") else int(amount)
+        if amount <= 0 or amount > preview["amount_received"]:
+            return JSONResponse({"ok": False, "error": "amount must be 1..amount received"},
+                                status_code=400)
+        confirm = db.issue_refund_confirmation(founder_id=founder["id"], payment_intent=intent,
+                                               amount=amount, currency=preview["currency"])
+        _audit(founder, "POST /founder/api/stripe/refund", "stripe.refund.preview",
+               target=intent, result={"amount": amount, "currency": preview["currency"]})
+        return JSONResponse({"ok": True, "needs_confirm": True, "confirm_token": confirm,
+                             "payment_intent": intent, "amount": amount,
+                             "currency": preview["currency"], "expires_in_s": 300})
+    held = db.claim_refund_confirmation(token, founder_id=founder["id"])
+    if held is None:
+        return JSONResponse({"ok": False, "error": "this confirmation is used, expired or not yours"},
+                            status_code=409)
+    key = "archhub-refund-" + held["token_digest"][:40]
+    try:
+        refund = billing.refund_payment(payment_intent=held["payment_intent"], amount=held["amount"],
+                                        idempotency_key=key, founder=actor)
+    except Exception as exc:
+        db.release_refund_confirmation(token)
+        _audit(founder, "POST /founder/api/stripe/refund", "stripe.refund",
+               target=held["payment_intent"], result={"error": type(exc).__name__}, ok=False)
+        return JSONResponse({"ok": False, "error": "Stripe: %s" % type(exc).__name__},
+                            status_code=502)
+    _audit(founder, "POST /founder/api/stripe/refund", "stripe.refund",
+           target=held["payment_intent"], result=refund)
+    return JSONResponse({"ok": True, "refund": refund})
+
+
 @router.get("/api/relay")
 def api_relay(_founder: dict = Depends(require_founder)) -> JSONResponse:
     """The cloud relay: its queue in each status, the oldest wait, whether the

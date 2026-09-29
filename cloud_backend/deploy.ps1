@@ -30,7 +30,7 @@ function Done($msg) { Write-Host "    OK $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Host "    !! $msg" -ForegroundColor Yellow }
 
 # ----- 0. The one address must already answer ------------------------------
-# fly.toml sets PUBLIC_URL = https://api.archhub.io, so every magic link,
+# fly.toml sets PUBLIC_URL = https://api.archhub.io, so every company invite,
 # Google return and cockpit claim this deploy builds points there. Refuse to
 # deploy unless that address answers /healthz with 200 over TLS on a live
 # certificate (no certificate bypass here, on purpose).

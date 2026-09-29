@@ -270,7 +270,7 @@ async def invite_member(company_id: str, req: InviteReq,
         f"{config.PUBLIC_URL.rstrip('/')}/invite?token={invite['token']}"
     )
     try:
-        await email_sender.send_magic_link(to=str(req.email), link=link)
+        await email_sender.send_company_invite(to=str(req.email), link=link)
     except Exception as ex:  # noqa: BLE001
         print(f"[companies] invite email failed: {ex}", flush=True)
     return {

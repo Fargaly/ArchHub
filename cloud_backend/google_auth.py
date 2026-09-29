@@ -1,12 +1,11 @@
-"""Sign in with Google (OAuth2 / OpenID Connect) — ADDITIVE auth path.
+"""Sign in with Google (OAuth2 / OpenID Connect): the one human sign-in.
 
-This module is the server-side half of "Sign in with Google". It is
-DELIBERATELY additive: it reuses the SAME user + code + token machinery
-as the magic-link/PKCE flow (db.get_or_create_user → db.issue_code →
-the existing /v1/auth/exchange path), so a user who signs in with Google
-converges on the EXACT SAME account (keyed by email) as one who used a
-magic-link. Nothing in auth.py / the exchange contract / /auth/return
-changes.
+This module is the server-side half of "Sign in with Google", the only
+way a person signs in to ArchHub (founder 2026-09-28: one source, no
+magic link). It uses the user + code + token machinery
+(db.get_or_create_user → db.issue_code → /v1/auth/exchange), so a Google
+sign-in lands on the account keyed by its email: an account created
+before Google was the only sign-in keeps all its data.
 
 Flow (two routes in main.py drive this):
 
@@ -26,8 +25,8 @@ Flow (two routes in main.py drive this):
             email → db.get_or_create_user(email)
                   → db.issue_code(user_id, state.code_challenge)
          and hands main.py the one-time `code` to 302 the browser to
-         {PUBLIC_URL}/auth/return?code=... — the SAME return surface the
-         magic-link uses. The desktop loopback catches it and runs the
+         {PUBLIC_URL}/auth/return?code=... The desktop loopback catches
+         it and runs the
          normal exchange with its PKCE verifier.
 
 Security contract:
@@ -183,8 +182,8 @@ def encode_state(*, code_challenge: str, redirect: str,
     bytes makes tampering or forging detectable in verify (constant-time
     compared), so the app_state riding INSIDE the payload is tamper-proof:
     it is only ever trusted after decode_state's signature check passes.
-    `app_state` is OPTIONAL (defaults "") so the magic-link / no-client-
-    state path is unchanged -- a missing `as` simply decodes back to ""."""
+    `app_state` is OPTIONAL (defaults "") so a sign-in begun in the
+    browser (no client state) works -- a missing `as` decodes to ""."""
     now = int(now if now is not None else time.time())
     payload = {
         "cc": code_challenge or "",
@@ -638,8 +637,7 @@ def exchange_callback(*, code: str, state: str) -> str:
     the browser to. The minted one-time `code` is bound to the PKCE
     `code_challenge` carried in the (verified) state, so the desktop's
     EXISTING /v1/auth/exchange (with its PKCE verifier) finishes the
-    sign-in — Google sign-in converges on the same account + token path
-    as the magic-link.
+    sign-in on the account keyed by the verified email.
 
     Raises GoogleLoginUnconfigured (→503) when disabled, GoogleAuthError
     (→400/401) on any state / exchange / verification failure. NEVER
@@ -657,32 +655,39 @@ def exchange_callback(*, code: str, state: str) -> str:
     # The desktop client's own CSRF token, recovered from the now-VERIFIED
     # signed payload (decode_state already checked the HMAC + expiry). It is
     # echoed back UNCHANGED on the final loopback redirect so the client's
-    # _CallbackHandler.expected_state check passes. Empty for the magic-link
-    # / no-client-state path (the `as` key is then absent).
+    # _CallbackHandler.expected_state check passes. Empty for a sign-in
+    # begun in the browser (the `as` key is then absent).
     app_state = payload.get("as") or ""
     # 2. Exchange Google's code for tokens (client secret used here only).
     tokens = _exchange_code_for_tokens(code)
     # 3. Verify the id_token (iss/aud/exp/email_verified + signature).
     claims = verify_id_token(tokens["id_token"])
     email = (claims.get("email") or "").strip().lower()
-    # 4. Converge on the SAME account keyed by email, then mint a
-    #    one-time code bound to the PKCE challenge — REUSING the exact
-    #    machinery the magic-link uses so the desktop finishes through
-    #    the unchanged /v1/auth/exchange path.
+    # 4. Land on the account keyed by email (created on first sign-in,
+    #    reused after, so an account made before Google keeps its data),
+    #    then mint a one-time code bound to the PKCE challenge so the
+    #    desktop finishes through /v1/auth/exchange.
     user = db.get_or_create_user(email)
+    # The display name comes from Google's verified id_token (the OIDC
+    # `name` claim), written only when the account has none yet so a
+    # name the user set is never overwritten.
+    name = claims.get("name")
+    name = name.strip()[:200] if isinstance(name, str) else ""
+    if name and not str(user.get("full_name") or "").strip():
+        db.update_user_profile(user["id"], full_name=name)
     one_time_code = db.issue_code(user["id"], code_challenge)
     # 5. Build the return URL. If the desktop supplied a loopback
     #    redirect, forward through /auth/return so its existing
     #    redirect-forwarding (main.auth_return) bounces to the loopback
-    #    with ?code=... — identical to the magic-link path. Otherwise
-    #    land on the plain browser /auth/return finisher.
+    #    with ?code=... Otherwise land on the plain browser
+    #    /auth/return finisher.
     return_params = {"code": one_time_code}
     if desktop_redirect:
         return_params["redirect"] = desktop_redirect
     # Echo the client's CSRF token so /auth/return forwards it to the
     # loopback as `state=<app_state>` -- satisfying the desktop's
     # expected_state check (the SECOND CSRF layer, client <-> loopback).
-    # Omitted when absent so the magic-link path is byte-for-byte unchanged.
+    # Omitted when absent (a sign-in begun in the browser).
     if app_state:
         return_params["state"] = app_state
     return (

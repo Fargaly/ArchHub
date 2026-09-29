@@ -48,7 +48,7 @@ def _sign(priv, zip_bytes: bytes) -> str:
 
 @pytest.fixture
 def author_token():
-    """Create a user + token bypassing the magic-link flow."""
+    """Create a user + token directly (no sign-in round-trip)."""
     import db
     u = db.get_or_create_user("author@studio.com")
     return u, db.issue_token(u["id"])

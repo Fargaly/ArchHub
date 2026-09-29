@@ -253,7 +253,6 @@ function CloudSignIn({ email, onSignedIn }) {
       {phase === 'idle' && (
         <div style={{ display: 'flex', gap: 8 }}>
           {button('Continue with Google', 'google', true)}
-          {button('Email me a sign-in link', 'magic', false)}
         </div>
       )}
       {err && <div style={{ fontFamily: AC.mono, fontSize: 10.5, color: AC.err, marginTop: 6 }}>{err}</div>}

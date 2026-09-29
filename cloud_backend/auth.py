@@ -1,61 +1,23 @@
-"""Auth helpers — magic-link register + PKCE code-exchange.
+"""Auth helpers: the PKCE code exchange that finishes a Google sign-in.
 
-Flow:
-  1. POST /v1/auth/register  { email }
-     → server creates/loads user
-     → emails the user a one-time `code` (5 min TTL) wrapped in a
-        sign-in URL. The user clicks → desktop ArchHub catches the
-        redirect on localhost and POSTs /v1/auth/exchange.
-  2. POST /v1/auth/exchange  { code, code_verifier }
-     → server checks the PKCE challenge stored alongside the code,
+Google (google_auth.py) is the only human sign-in. Its callback mints a
+one-time `code` bound to the caller's PKCE challenge; then:
+
+  POST /v1/auth/exchange  { code, code_verifier }
+     -> server checks the PKCE challenge stored alongside the code,
         deletes the code, issues a bearer token.
-     → returns { token, expires_at, plan }
+     -> returns { token, expires_at, plan }
 
-The desktop client generates the PKCE pair itself, sends the
-challenge as part of the sign-in URL the user opens. The challenge
-gets stored on the code row so verification at exchange time is
-self-contained.
+The desktop client generates the PKCE pair itself and sends the
+challenge to /v1/auth/google/start. The challenge is stored on the code
+row so verification at exchange time is self-contained.
 """
 from __future__ import annotations
 
 import time
-import urllib.parse
 from typing import Optional
 
-import config
 import db
-import email_sender
-
-
-async def register_via_email(*, email: str, code_challenge: str,
-                              redirect: str = "") -> bool:
-    """Create / load the user and email them a sign-in link.
-    Returns True on accepted email.
-
-    A brand-new account also gets the one-time welcome email (roadmap
-    #P2 onboarding sequence) — detected BEFORE get_or_create_user
-    creates the row, sent best-effort so it can never break sign-in."""
-    is_new_user = db.get_user_by_email(email) is None
-    user = db.get_or_create_user(email)
-    code = db.issue_code(user["id"], code_challenge)
-    # Build the sign-in link the user clicks. Loops back to their
-    # desktop app via the redirect (loopback URL) the client sent.
-    # If no redirect was provided (e.g. someone testing in a
-    # browser), point them at the public dashboard.
-    link_params = {"code": code}
-    if redirect:
-        link_params["redirect"] = redirect
-    link = (
-        f"{config.PUBLIC_URL.rstrip('/')}/auth/return?"
-        + urllib.parse.urlencode(link_params)
-    )
-    ok = await email_sender.send_magic_link(to=email, link=link)
-    if is_new_user:
-        try:
-            await email_sender.send_welcome_email(to=email)
-        except Exception:
-            pass   # welcome is best-effort — never fails the sign-in
-    return ok
 
 
 def provision_brain(user_id: str) -> Optional[str]:

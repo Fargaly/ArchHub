@@ -605,7 +605,7 @@ def _page_specs(offer_display=OFFER_DEFAULT_DISPLAY, releases=()):
             "Sign in from the desktop app",
             "Your ArchHub identity is your email account, not your machine. You sign in from the app, which opens your browser on the ArchHub cloud sign-in page.",
             (
-                ("01", "Email link or Google", "Choose an email link or Google in your browser. A one-time code returns to the app that started the sign-in and is exchanged for a session using PKCE.", "BROWSER SIGN-IN"),
+                ("01", "Continue with Google", "Continue with Google in your browser. A one-time code returns to the app that started the sign-in and is exchanged for a session using PKCE.", "BROWSER SIGN-IN"),
                 ("02", "An account, not a device", "Your account is your email address, and what the app opens for you is set on that account, so a new machine signs in to the same account.", "EMAIL IS THE IDENTITY"),
                 ("03", "No password on this site", "This website shows no sign-in form and keeps no session. Download the app and sign in from there.", "SIGN IN IN THE APP"),
             ),

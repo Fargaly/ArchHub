@@ -1,7 +1,7 @@
 """Sign in to the cloud from the desktop: email account, never a machine.
 
-The app opens the founder's browser on the cloud's own sign-in (a magic link
-to the email, or Google), the cloud sends a one-time code back to a loopback
+The app opens the browser on Google sign-in (the only human sign-in, founder
+2026-09-28), the cloud sends a one-time code back to a loopback
 server this module holds for that one attempt, the code is exchanged for a
 bearer token with PKCE (RFC 7636), and the session lands in
 %APPDATA%/ArchHub/brain/cloud.json - the one record the relay, the brain's
@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from .cloud_relay import DEFAULT_BASE, SIGN_IN_AGAIN as _SIGN_IN_AGAIN, pinned_cloud_base
 
 WAIT_SECONDS = 300.0
-METHODS = ("google", "magic")
+METHODS = ("google",)
 _DONE_PAGE = (
     "<h1>You are signed in</h1>"
     "<p>You can close this tab and return to ArchHub.</p>"
@@ -121,14 +121,8 @@ class _Callback(BaseHTTPRequestHandler):
         code = (query.get("code") or [""])[0]
         state = (query.get("state") or [""])[0]
         expected = getattr(self.server, "expected_state", "")
-        # The cloud echoes the desktop's state on the Google path, but its
-        # mailed link carries none and /auth/return forwards the fixed
-        # marker "archhub" (cloud_backend/main.py, fwd_state). The magic path
-        # accepts that marker: the one-time code is still bound to this
-        # attempt's PKCE verifier, so a code landed here by anyone else
-        # cannot be exchanged.
-        marker_ok = getattr(self.server, "accepts_marker", False) and state == "archhub"
-        if state != expected and not marker_ok:
+        # The cloud echoes this attempt's own state through Google.
+        if not expected or state != expected:
             self._html(400, "<h1>Sign-in failed</h1><p>Security state mismatch. Retry from ArchHub.</p>")
             return
         if not code:
@@ -187,10 +181,6 @@ class SignIn:
             self._state.update(patch)
 
     def auth_url(self, *, challenge: str, state: str, redirect: str) -> str:
-        if self.method == "magic":
-            query = urlencode({"challenge": challenge, "state": state,
-                               "redirect": redirect, "client": "desktop"})
-            return f"{self.base_url}/signin?{query}"
         query = urlencode({"code_challenge": challenge, "redirect": redirect,
                            "state": state, "client": "desktop"})
         status, payload = self._http("GET", f"{self.base_url}/v1/auth/google/start?{query}")
@@ -209,7 +199,6 @@ class SignIn:
             self._set(phase="failed", error=f"no loopback port: {failed}")
             return
         server.expected_state = state
-        server.accepts_marker = self.method == "magic"
         server.received_code = None
         server.timeout = 0.5
         redirect = f"http://127.0.0.1:{server.server_port}/cb"

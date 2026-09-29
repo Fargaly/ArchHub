@@ -1,7 +1,7 @@
 """User-profile fields — tests for the ALTER columns + DAO helpers.
 
 Covers:
-  1. Register endpoint stores profile fields when present
+  1. Google sign-in writes the display name from the id_token
   2. update_user_profile only writes whitelisted fields (no SQL through
      unknown keys)
   3. get_user_with_profile returns the joined row including new cols
@@ -14,12 +14,7 @@ import secrets
 
 import pytest
 
-
-def _pkce_pair():
-    verifier = secrets.token_urlsafe(48)
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return verifier, challenge
+from tests.google_signin import google_sign_in
 
 
 @pytest.fixture
@@ -29,50 +24,28 @@ def client():
     return TestClient(main.app)
 
 
-class TestRegisterWithProfile:
-    def test_register_writes_profile_fields(self, client, monkeypatch):
-        async def fake_send(**kw):
-            return True
-        import email_sender, db
-        monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
-        _, challenge = _pkce_pair()
-        r = client.post("/v1/auth/register", json={
-            "email": "prof@studio.com",
-            "code_challenge": challenge,
-            "full_name": "Ada Architect",
-            "firm_name": "Ada Studio",
-            "aec_role": "Architect",
-            "aec_discipline": "Architectural",
-            "firm_size": "2-10",
-            "country": "GB",
-            "signup_source": "twitter",
-            "landing_variant": "B",
-        })
-        assert r.status_code == 202
+class TestDisplayNameFromGoogle:
+    """The display name comes from Google's verified id_token (`name`)."""
+
+    def test_new_account_takes_the_google_name(self, client, monkeypatch):
+        import db
+        google_sign_in(client, monkeypatch, "prof@studio.com",
+                       name="Ada Architect")
         u = db.get_user_by_email("prof@studio.com")
         assert u["full_name"] == "Ada Architect"
-        assert u["firm_name"] == "Ada Studio"
-        assert u["aec_role"] == "Architect"
-        assert u["aec_discipline"] == "Architectural"
-        assert u["firm_size"] == "2-10"
-        assert u["country"] == "GB"
-        assert u["signup_source"] == "twitter"
-        assert u["landing_variant"] == "B"
 
-    def test_register_without_profile_still_works(self, client, monkeypatch):
-        """Magic-link sign-in must not require profile fields."""
-        async def fake_send(**kw):
-            return True
-        import email_sender, db
-        monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
-        _, challenge = _pkce_pair()
-        r = client.post("/v1/auth/register", json={
-            "email": "bare@studio.com",
-            "code_challenge": challenge,
-        })
-        assert r.status_code == 202
+    def test_a_name_already_set_is_kept(self, client, monkeypatch):
+        import db
+        u = db.get_or_create_user("named@studio.com")
+        db.update_user_profile(u["id"], full_name="Chosen Name")
+        google_sign_in(client, monkeypatch, "named@studio.com",
+                       name="Google Name")
+        assert db.get_user(u["id"])["full_name"] == "Chosen Name"
+
+    def test_no_name_claim_leaves_it_unset(self, client, monkeypatch):
+        import db
+        google_sign_in(client, monkeypatch, "bare@studio.com")
         u = db.get_user_by_email("bare@studio.com")
-        assert u is not None
         assert u["full_name"] is None
         assert u["firm_name"] is None
 

@@ -1,4 +1,4 @@
-"""Auth/registration security hardening — real behavior tests.
+"""Auth security hardening — real behavior tests.
 
 One test (or cluster) per confirmed gap, asserting the ACTUAL security
 property, not just that code imports:
@@ -11,7 +11,7 @@ property, not just that code imports:
   Gap 4  env-prod-fails-loud — ENV=production + a missing key → startup raises
                               naming the key; /healthz design preserved.
   Gap 5  email-fail-loud   — ENV=production + no RESEND_API_KEY → send returns
-                              False (→ /register 502), never a silent 202.
+                              False, never a silent success.
 
 Gap 6 (stop committing the live DB) is a git-tracking change, not a runtime
 behavior — verified out-of-band (see the task report); nothing to assert here.
@@ -25,6 +25,8 @@ import secrets
 import time
 
 import pytest
+
+from tests.google_signin import google_code
 
 
 # ---------------------------------------------------------------------------
@@ -44,13 +46,6 @@ def _pkce_pair():
     return verifier, challenge
 
 
-def _stub_email(monkeypatch):
-    async def fake_send(**kw):
-        return True
-    import email_sender
-    monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
-
-
 def _code_for(user_id: str) -> str:
     import db
     with db.connect() as con:
@@ -64,12 +59,9 @@ def _code_for(user_id: str) -> str:
 
 def _register_and_token(client, monkeypatch, email):
     """Full register→exchange via the PKCE (desktop) path. Returns token."""
-    _stub_email(monkeypatch)
     import db
     verifier, challenge = _pkce_pair()
-    r = client.post("/v1/auth/register",
-                    json={"email": email, "code_challenge": challenge})
-    assert r.status_code == 202
+    google_code(client, monkeypatch, email, challenge=challenge)
     u = db.get_user_by_email(email)
     code = _code_for(u["id"])
     r2 = client.post("/v1/auth/exchange",
@@ -97,7 +89,7 @@ class TestTokenExpiry:
         with db.connect() as con:
             row = con.execute(
                 "SELECT expires_at FROM tokens WHERE token = ?",
-                (token,)).fetchone()
+                (db.token_digest(token),)).fetchone()
         assert row["expires_at"] is not None
         # ~90 days out (allow a few seconds of test drift).
         assert row["expires_at"] >= before + db.TOKEN_TTL_SECONDS - 5
@@ -119,7 +111,7 @@ class TestTokenExpiry:
         with db.connect() as con:
             con.execute(
                 "UPDATE tokens SET expires_at = ? WHERE token = ?",
-                (int(time.time()) - 1, token))
+                (int(time.time()) - 1, db.token_digest(token)))
         assert db.user_for_token(token) is None
 
     def test_expired_token_401_on_me(self, client, monkeypatch):
@@ -133,7 +125,7 @@ class TestTokenExpiry:
         # Push expiry into the past → must now 401.
         with db.connect() as con:
             con.execute("UPDATE tokens SET expires_at = ? WHERE token = ?",
-                        (int(time.time()) - 10, token))
+                        (int(time.time()) - 10, db.token_digest(token)))
         dead = client.get("/v1/me",
                           headers={"Authorization": f"Bearer {token}"})
         assert dead.status_code == 401
@@ -149,7 +141,7 @@ class TestTokenExpiry:
         with db.connect() as con:
             con.execute(
                 "UPDATE tokens SET expires_at = NULL, created_at = ? "
-                "WHERE token = ?", (created, token))
+                "WHERE token = ?", (created, db.token_digest(token)))
         # Defensive: a NULL-expiry row must not authenticate.
         assert db.user_for_token(token) is None
         # Re-running the migration backfills it.
@@ -157,18 +149,15 @@ class TestTokenExpiry:
         with db.connect() as con:
             row = con.execute(
                 "SELECT expires_at FROM tokens WHERE token = ?",
-                (token,)).fetchone()
+                (db.token_digest(token),)).fetchone()
         assert row["expires_at"] == created + db.TOKEN_TTL_SECONDS
 
     def test_client_expiry_matches_server_ttl(self, client, monkeypatch):
         """auth payload's expires_at agrees with the server-enforced TTL —
         no drift between client cache and server gate."""
         import db
-        _stub_email(monkeypatch)
         verifier, challenge = _pkce_pair()
-        client.post("/v1/auth/register",
-                    json={"email": "exp-agree@studio.com",
-                          "code_challenge": challenge})
+        google_code(client, monkeypatch, "exp-agree@studio.com", challenge=challenge)
         u = db.get_user_by_email("exp-agree@studio.com")
         code = _code_for(u["id"])
         now = int(time.time())
@@ -284,11 +273,8 @@ class TestPkceEnforcement:
             self, client, monkeypatch):
         """End-to-end: a challenged code + empty verifier → 400, no token."""
         import db
-        _stub_email(monkeypatch)
         _, challenge = _pkce_pair()
-        client.post("/v1/auth/register",
-                    json={"email": "pkce-ep@studio.com",
-                          "code_challenge": challenge})
+        google_code(client, monkeypatch, "pkce-ep@studio.com", challenge=challenge)
         u = db.get_user_by_email("pkce-ep@studio.com")
         code = _code_for(u["id"])
         r = client.post("/v1/auth/exchange",
@@ -300,11 +286,8 @@ class TestPkceEnforcement:
         """A supplied-but-too-short verifier is rejected (restored
         min_length floor) before even hitting the code lookup."""
         import db
-        _stub_email(monkeypatch)
         _, challenge = _pkce_pair()
-        client.post("/v1/auth/register",
-                    json={"email": "pkce-short@studio.com",
-                          "code_challenge": challenge})
+        google_code(client, monkeypatch, "pkce-short@studio.com", challenge=challenge)
         u = db.get_user_by_email("pkce-short@studio.com")
         code = _code_for(u["id"])
         r = client.post("/v1/auth/exchange",
@@ -312,22 +295,18 @@ class TestPkceEnforcement:
         assert r.status_code == 422
 
     def test_browser_direct_empty_challenge_still_works_dao(self):
-        """The deliberately-preserved magic-link floor: a code issued with
-        an EMPTY challenge consumes fine with an empty verifier."""
+        """The browser-direct floor: a code issued with an EMPTY challenge
+        consumes fine with an empty verifier."""
         import db
         u = db.get_or_create_user("browser-direct@studio.com")
         code = db.issue_code(u["id"], "")   # browser-direct: no PKCE
         assert db.consume_code(code, "") == u["id"]
 
     def test_browser_direct_exchange_endpoint_works(self, client, monkeypatch):
-        """End-to-end browser-direct: register with empty challenge, then
-        exchange with empty verifier → 200 + token."""
+        """End-to-end browser-direct: Google sign-in begun in a browser (empty
+        challenge), then exchange with empty verifier → 200 + token."""
         import db
-        _stub_email(monkeypatch)
-        r = client.post("/v1/auth/register",
-                        json={"email": "browser-ep@studio.com",
-                              "code_challenge": ""})
-        assert r.status_code == 202
+        google_code(client, monkeypatch, "browser-ep@studio.com", challenge="")
         u = db.get_user_by_email("browser-ep@studio.com")
         code = _code_for(u["id"])
         ex = client.post("/v1/auth/exchange",
@@ -423,7 +402,7 @@ class TestProductionReadinessGate:
 
 
 # ===========================================================================
-# Gap 5 — Magic-link delivery fails loud in production
+# Gap 5 — Email delivery fails loud in production
 # ===========================================================================
 class TestEmailFailsLoud:
     def test_dev_no_key_logs_and_returns_true(self, monkeypatch, capsys):
@@ -457,21 +436,3 @@ class TestEmailFailsLoud:
         assert ok is False
         out = capsys.readouterr().out
         assert "ABORTED" in out
-
-    def test_register_502_when_email_undeliverable_in_prod(
-            self, client, monkeypatch):
-        """End-to-end: ENV=production + no key → /register is NOT a silent
-        202; the False from _send becomes a 502 email_send_failed."""
-        import importlib
-        import config
-        import email_sender
-        monkeypatch.setenv("ENV", "production")
-        importlib.reload(config)
-        importlib.reload(email_sender)
-        monkeypatch.setattr(config, "RESEND_API_KEY", "")
-        _, challenge = _pkce_pair()
-        r = client.post("/v1/auth/register",
-                        json={"email": "undeliv@studio.com",
-                              "code_challenge": challenge})
-        assert r.status_code == 502
-        assert r.json()["detail"] == "email_send_failed"

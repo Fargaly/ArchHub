@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from tests.google_signin import google_code
 from fastapi.testclient import TestClient
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -65,13 +67,6 @@ def _pkce_pair():
     return verifier, challenge
 
 
-def _stub_email(monkeypatch):
-    async def fake_send(**kw):
-        return True
-    import email_sender
-    monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
-
-
 def _code_for(user_id: str) -> str:
     import db
     with db.connect() as con:
@@ -86,12 +81,9 @@ def _code_for(user_id: str) -> str:
 def _register_and_exchange(client, monkeypatch, email):
     """Full register→exchange via the PKCE (desktop) path. Returns
     (user_row_before_exchange_id, token, exchange_payload)."""
-    _stub_email(monkeypatch)
     import db
     verifier, challenge = _pkce_pair()
-    r = client.post("/v1/auth/register",
-                    json={"email": email, "code_challenge": challenge})
-    assert r.status_code == 202, r.text
+    google_code(client, monkeypatch, email, challenge=challenge)
     u = db.get_user_by_email(email)
     code = _code_for(u["id"])
     r2 = client.post("/v1/auth/exchange",
@@ -184,13 +176,11 @@ class TestProvisionAtLogin:
         """A second login for the same email re-opens the existing replica
         without erroring or minting a second directory; brain_id stays put."""
         import db
-        _stub_email(monkeypatch)
         verifier, challenge = _pkce_pair()
         email = "prov-return@studio.com"
 
         # First login.
-        client.post("/v1/auth/register",
-                    json={"email": email, "code_challenge": challenge})
+        google_code(client, monkeypatch, email, challenge=challenge)
         uid = db.get_user_by_email(email)["id"]
         code1 = _code_for(uid)
         client.post("/v1/auth/exchange",
@@ -199,8 +189,7 @@ class TestProvisionAtLogin:
         assert (replicas_root / uid).exists()
 
         # Second login (returning user).
-        client.post("/v1/auth/register",
-                    json={"email": email, "code_challenge": challenge})
+        google_code(client, monkeypatch, email, challenge=challenge)
         code2 = _code_for(uid)
         r2 = client.post("/v1/auth/exchange",
                          json={"code": code2, "code_verifier": verifier})
@@ -253,11 +242,9 @@ class TestProvisionIsLoadBearing:
         # replica created, brain_id never stamped at exchange time.
         monkeypatch.setattr(auth, "provision_brain", lambda user_id: None)
 
-        _stub_email(monkeypatch)
         verifier, challenge = _pkce_pair()
         email = "prov-red@studio.com"
-        client.post("/v1/auth/register",
-                    json={"email": email, "code_challenge": challenge})
+        google_code(client, monkeypatch, email, challenge=challenge)
         uid = db.get_user_by_email(email)["id"]
         # Defensive: clear any brain_id the get_or_create path might carry
         # (it doesn't set one, but make the precondition explicit).

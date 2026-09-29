@@ -223,9 +223,9 @@ def test_brain_portal_page_serves_html(client):
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert "Your ArchHub brain" in r.text
-    # mirrors /dashboard's PKCE flow (same auth, no parallel system)
-    assert "/v1/auth/register" in r.text
-    assert "/v1/auth/exchange" in r.text
+    # the one Google button (same sign-in as /dashboard, no email form)
+    assert "/v1/auth/google/start" in r.text
+    assert "/v1/auth/register" not in r.text
     # reads the new endpoints
     assert "/v1/brain/stats" in r.text
     assert "/v1/brain/facts" in r.text

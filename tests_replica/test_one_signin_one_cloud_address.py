@@ -361,7 +361,7 @@ def test_d_a_forged_cloud_json_sends_nothing_off_the_pinned_hosts(tmp_path, monk
     # /v1/me, cockpit link, sign-in and sign-out
     cloud_signin.session_summary(path)
     cloud_signin.cockpit_link(path)
-    assert cloud_signin.SignIn("magic", base_url="https://evil.example", path=path).base_url == "https://api.archhub.io"
+    assert cloud_signin.SignIn("google", base_url="https://evil.example", path=path).base_url == "https://api.archhub.io"
     cloud_signin.sign_out(path, wait=True)
 
     reached = {url.split("/", 3)[2] for url, _auth in sent}

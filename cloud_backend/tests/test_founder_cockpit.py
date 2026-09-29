@@ -15,6 +15,8 @@ import hashlib
 
 import pytest
 
+from tests.google_signin import google_sign_in
+
 
 FOUNDER_EMAIL = "founder@archhub-cockpit-test.com"
 
@@ -36,33 +38,9 @@ def client(monkeypatch):
     return TestClient(main.app, raise_server_exceptions=False)
 
 
-def _pkce_pair():
-    import secrets
-    verifier = secrets.token_urlsafe(48)
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return verifier, challenge
-
-
 def _sign_in(client, monkeypatch, email) -> str:
-    """Register + exchange the magic-link flow and return a bearer token."""
-    async def fake_send(**kw):
-        return True
-    import email_sender, db
-    monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
-    verifier, challenge = _pkce_pair()
-    r = client.post("/v1/auth/register",
-                    json={"email": email, "code_challenge": challenge})
-    assert r.status_code == 202, r.text
-    u = db.get_user_by_email(email)
-    assert u is not None
-    with db.connect() as con:
-        row = con.execute(
-            "SELECT code FROM codes WHERE user_id = ?", (u["id"],)).fetchone()
-    r2 = client.post("/v1/auth/exchange",
-                     json={"code": row["code"], "code_verifier": verifier})
-    assert r2.status_code == 200, r2.text
-    return r2.json()["token"]
+    """Sign in with Google (the only sign-in) and return a bearer token."""
+    return google_sign_in(client, monkeypatch, email)
 
 
 def _auth(token):

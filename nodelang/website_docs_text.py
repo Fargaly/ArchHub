@@ -47,7 +47,7 @@ Closing the ArchHub window hides it to the system tray. ArchHub keeps running un
 You can use the canvas without signing in. Signing in connects your email account to the ArchHub cloud.
 
 1. Click sign in in the status strip, or open Settings and go to Account.
-2. Choose Continue with Google or Email me a sign-in link.
+2. Choose Continue with Google.
 3. Finish in the browser window that opens. The dialog updates by itself and shows "signed in" with your email. If you do not finish within five minutes, the attempt times out and you can start again.
 
 The Account page has the details.
@@ -190,8 +190,8 @@ An ArchHub account is an email address, not a machine. Sign in on another comput
 ## Sign in
 
 1. In the app, click sign in in the status strip, or open Settings and go to Account.
-2. Choose Continue with Google or Email me a sign-in link.
-3. Your browser opens on the ArchHub sign-in page. Finish there. The app waits for up to five minutes and updates by itself. When it is done, the app shows "signed in" with your email and the browser tab says "You are signed in".
+2. Choose Continue with Google.
+3. Your browser opens on Google sign-in. Finish there. The app waits for up to five minutes and updates by itself. When it is done, the app shows "signed in" with your email and the browser tab says "You are signed in".
 
 The app listens on a temporary local address for a one-time code from the cloud and exchanges it for a session using PKCE. The session is saved on this machine in `%APPDATA%\\ArchHub\\brain\\cloud.json`.
 

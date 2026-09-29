@@ -41,7 +41,7 @@ GRAND_MAP_CLOUD_SERVICES = (
     {
         "id": "cloud_auth", "title": "Authentication service", "role": "identity",
         "endpoint": {"transport": "https", "address": "/v1/auth", "enabled": True, "timeout_ms": 8000},
-        "configuration": {"magic_link_ttl_seconds": 300, "verification": "jwks-rs256", "scope": "cloud-routes"},
+        "configuration": {"method": "google", "code_ttl_seconds": 300, "verification": "jwks-rs256", "scope": "cloud-routes"},
     },
     {
         "id": "cloud_llm_proxy", "title": "Model proxy", "role": "proxy",
@@ -71,7 +71,7 @@ GRAND_MAP_CLOUD_SERVICES = (
     {
         "id": "cloud_email_sender", "title": "Transactional email", "role": "messaging",
         "endpoint": {"transport": "https", "address": "email://transactional", "enabled": True, "timeout_ms": 10000},
-        "configuration": {"templates": ["magic-link", "welcome"], "failure_mode": "explicit-error", "from_domain": "archhub.io"},
+        "configuration": {"templates": ["company-invite"], "failure_mode": "explicit-error", "from_domain": "archhub.io"},
     },
     {
         "id": "cloud_dns", "title": "DNS and mail routing", "role": "routing",

@@ -1,8 +1,7 @@
 """Companies / multi-seat — end-to-end HTTP tests via FastAPI TestClient.
 
-Mirrors the pattern in test_endpoints.py: get a bearer token via the
-magic-link/PKCE flow (with the email send stubbed), then exercise the
-/v1/companies/* endpoints.
+Bearer tokens are issued directly (db.issue_token) for users keyed by
+email, then the /v1/companies/* endpoints are exercised.
 
 Covers the eight contract points called out in the spec:
   1. Authed user creates a company → 200, owner membership row exists
@@ -144,14 +143,14 @@ class TestListMine:
 # 3. Invites
 # ---------------------------------------------------------------------------
 def _send_calls_recorder(monkeypatch):
-    """Patch email_sender.send_magic_link and return a list that gets
+    """Patch email_sender.send_company_invite and return a list that gets
     populated with each call's kwargs."""
     calls: list[dict] = []
     async def fake_send(**kw):
         calls.append(kw)
         return True
     import email_sender
-    monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
+    monkeypatch.setattr(email_sender, "send_company_invite", fake_send)
     return calls
 
 

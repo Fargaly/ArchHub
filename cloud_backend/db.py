@@ -2,7 +2,7 @@
 
 Schema matches docs/BACKEND_SPEC.md:
   users     — one row per signed-up email
-  codes     — magic-link one-time codes (5 min TTL)
+  codes     — one-time sign-in codes minted by Google sign-in (5 min TTL)
   tokens    — bearer tokens issued after exchange
   usage_log — one row per chat turn for billing audit
 
@@ -17,6 +17,7 @@ of req/sec on a single instance.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import sqlite3
@@ -207,7 +208,7 @@ CREATE TABLE IF NOT EXISTS codes (
 );
 
 CREATE TABLE IF NOT EXISTS tokens (
-    token         TEXT PRIMARY KEY,
+    token         TEXT PRIMARY KEY,   -- token_digest(bearer), never the bearer
     user_id       TEXT NOT NULL,
     created_at    INTEGER NOT NULL,
     last_used_at  INTEGER,
@@ -738,6 +739,16 @@ def init_schema() -> None:
             "WHERE expires_at IS NULL",
             (TOKEN_TTL_SECONDS,),
         )
+        # Bearer tokens are kept only as their SHA-256 digest. Rows written
+        # before that held the raw "ah_live_..." value; replace each with its
+        # digest in place, so every session keeps working and nobody is
+        # signed out. Idempotent: a digest row never starts with "ah_live_".
+        legacy = con.execute(
+            "SELECT token FROM tokens WHERE substr(token, 1, 8) = 'ah_live_'"
+        ).fetchall()
+        for row in legacy:
+            con.execute("UPDATE tokens SET token = ? WHERE token = ?",
+                        (token_digest(row["token"]), row["token"]))
         # Model C backfill: re-derive each workspace's cached
         # credit_balance from the live (non-expired) credit_grants so the
         # denormalised column can never disagree with the grant ledger
@@ -843,33 +854,6 @@ PROFILE_FIELDS = frozenset({
     "signup_source",
     "landing_variant",
 })
-
-
-def user_profile_is_empty(user_id: str) -> bool:
-    """Has this account never had a profile written onto it?
-
-    The signal that separates "the row this unauthenticated call just
-    created" from "somebody's established account". True only when every
-    whitelisted profile column is still unset.
-    """
-    columns = [name for name in PROFILE_FIELDS]
-    if not columns:
-        return True
-    try:
-        with connect() as con:
-            row = con.execute(
-                "SELECT %s FROM users WHERE id = ?"
-                % ", ".join('"%s"' % name for name in columns),
-                (str(user_id),),
-            ).fetchone()
-    except Exception:
-        return False
-    if row is None:
-        return True
-    return all(
-        row[name] is None or str(row[name]).strip() == ""
-        for name in columns
-    )
 
 
 def update_user_profile(user_id: str, **fields) -> None:
@@ -1301,12 +1285,11 @@ def consume_code(code: str, code_verifier: str) -> Optional[str]:
        redeemed without proving possession of the matching verifier.
 
     2. Browser-direct flow — `code_challenge` is EMPTY. The user signs in
-       from a browser with no desktop client to hold a PKCE secret. Here
-       the magic-link code itself is the only secret: one-time-use,
-       5-min TTL, delivered only to the email owner's inbox. This is the
-       classic magic-link security floor and is intentionally preserved;
-       an empty verifier is expected and accepted ONLY because no
-       challenge was ever issued for this code.
+       with Google from a browser with no desktop client to hold a PKCE
+       secret (or the founder spends a cockpit claim code). Here the code
+       itself is the only secret: one-time-use, 5-min TTL, minted only
+       after a verified Google sign-in. An empty verifier is expected and
+       accepted ONLY because no challenge was ever issued for this code.
     """
     with connect() as con:
         r = con.execute(
@@ -1344,6 +1327,14 @@ def consume_code(code: str, code_verifier: str) -> Optional[str]:
         return user_id
 
 
+def token_digest(token: str) -> str:
+    """What the tokens table keeps for a bearer token: its SHA-256 digest.
+
+    The raw token is handed to the client once, at issue, and never stored,
+    so a copy of the database holds no usable session."""
+    return "sha256:" + hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+
 def issue_token(user_id: str, *,
                  ttl_seconds: int = TOKEN_TTL_SECONDS) -> str:
     token = "ah_live_" + secrets.token_urlsafe(32)
@@ -1353,7 +1344,7 @@ def issue_token(user_id: str, *,
         con.execute(
             "INSERT INTO tokens (token, user_id, created_at, expires_at)"
             " VALUES (?, ?, ?, ?)",
-            (token, user_id, now, expires_at),
+            (token_digest(token), user_id, now, expires_at),
         )
     return token
 
@@ -1369,19 +1360,20 @@ def user_for_token(token: str) -> Optional[dict]:
     the only gate.
     """
     now = int(time.time())
+    digest = token_digest(token)
     with connect() as con:
         r = con.execute(
             "SELECT u.* FROM tokens t JOIN users u ON t.user_id = u.id"
             " WHERE t.token = ?"
             "   AND t.expires_at IS NOT NULL AND t.expires_at > ?",
-            (token, now),
+            (digest, now),
         ).fetchone()
         if r is None:
             return None
         # Touch last_used_at for token-rotation analytics.
         con.execute(
             "UPDATE tokens SET last_used_at = ? WHERE token = ?",
-            (now, token),
+            (now, digest),
         )
         return dict(r)
 
@@ -1393,7 +1385,8 @@ def delete_token(token: str) -> bool:
     user_for_token(token) returns None → the token is dead.
     """
     with connect() as con:
-        cur = con.execute("DELETE FROM tokens WHERE token = ?", (token,))
+        cur = con.execute("DELETE FROM tokens WHERE token = ?",
+                          (token_digest(token),))
         return int(cur.rowcount or 0) > 0
 
 

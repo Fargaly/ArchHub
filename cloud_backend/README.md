@@ -17,7 +17,8 @@ private repo and reference it via `docs/BACKEND_SPEC.md`.
 7 endpoints (mirrors `docs/BACKEND_SPEC.md`):
 
 ```
-POST /v1/auth/register      magic-link send
+GET  /v1/auth/google/start  Google consent URL (the one sign-in)
+GET  /v1/auth/google/callback  Google returns here; mints a one-time code
 POST /v1/auth/exchange      PKCE code → bearer token
 GET  /v1/me                 plan + remaining quota
 POST /v1/chat/completions   OpenAI-compatible proxy with quota
@@ -29,8 +30,8 @@ POST /v1/webhooks/stripe    subscription lifecycle events
 Plus three convenience routes:
 
 ```
-GET  /signin                browser landing page for desktop PKCE
-GET  /auth/return           magic-link click → desktop loopback redirect
+GET  /signin                one "Continue with Google" button
+GET  /auth/return           Google return → desktop loopback / browser finisher
 GET  /healthz               liveness for Fly.io / Cloud Run
 POST /v1/brain/sync         per-user brain replica delta push (Track D §5)
 DELETE /v1/brain/sync       GDPR right-to-erasure for the replica
@@ -60,9 +61,10 @@ uvicorn main:app --reload --port 8000
 ```
 
 With no Stripe / Resend keys the billing endpoints return 503 and
-the magic-link logs to stdout instead of emailing — that's fine for
-end-to-end smoke testing the desktop client's sign-in flow against
-a local backend (override `ARCHHUB_CLOUD_BASE_URL=http://localhost:8000`
+company invites log to stdout instead of emailing. Sign-in needs
+GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET (without them the
+Google routes return 503) to smoke test the desktop client's sign-in
+against a local backend (override `ARCHHUB_CLOUD_BASE_URL=http://localhost:8000`
 in the client's env to point it here).
 
 ---
@@ -129,7 +131,7 @@ restart for a fresh DB. Add Alembic later if/when you outgrow that.
 
 ## What's NOT included
 
-- Email templates beyond plain magic-link.
+- Email templates beyond the company invite.
 - Per-firm SSO (Firm tier promises SAML/OIDC — wire it via [WorkOS]
   in v1.1).
 - A dashboard page. Subscribers manage their plan via the Stripe
@@ -164,7 +166,7 @@ Stripe revenue.
 
 - All API endpoints HTTPS-only (Fly.io enforces).
 - Bearer tokens are 256-bit URL-safe random; never in URLs.
-- PKCE protects against intercepted magic-link codes.
+- PKCE protects against intercepted sign-in codes.
 - Webhooks verify Stripe signatures via `stripe.Webhook.construct_event`.
 - No user-supplied provider keys ever stored — keys live in env on
   the server.

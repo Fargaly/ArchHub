@@ -166,7 +166,7 @@ def test_google_signin_end_to_end_yields_token_for_email_user(
     ret_qs = urllib.parse.parse_qs(loc.query)
     one_time_code = ret_qs["code"][0]
     assert one_time_code
-    # desktop loopback redirect forwarded through (magic-link parity).
+    # desktop loopback redirect forwarded through (desktop loopback).
     assert ret_qs.get("redirect") == [desktop_redirect]
     # the monkeypatched exchange actually received Google's code + id_token.
     assert patched_google["exchanged_code"] == google_code
@@ -206,12 +206,12 @@ def test_google_signin_end_to_end_yields_token_for_email_user(
 # Convergence: Google sign-in lands on the SAME row a prior EMAIL sign-in made.
 # ---------------------------------------------------------------------------
 def test_google_converges_on_preexisting_email_user(client, patched_google):
-    """If the user already exists (created via the email/magic-link path),
+    """If the user already exists (created before Google sign-in),
     Google sign-in must reuse that exact row — not mint a duplicate."""
     import db
 
     # Pre-create the user as the email path would (get_or_create_user is the
-    # shared keying primitive register_via_email uses).
+    # shared keying primitive: accounts are keyed by email).
     pre = db.get_or_create_user(EMAIL)
     pre_id = pre["id"]
 

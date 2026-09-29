@@ -1,7 +1,8 @@
 """ArchHub Cloud backend — FastAPI app.
 
 Endpoints (matches docs/BACKEND_SPEC.md):
-  POST /v1/auth/register
+  GET  /v1/auth/google/start    (the one human sign-in: Google)
+  GET  /v1/auth/google/callback
   POST /v1/auth/exchange
   GET  /v1/me
   POST /v1/chat/completions
@@ -9,13 +10,13 @@ Endpoints (matches docs/BACKEND_SPEC.md):
   GET  /v1/billing/portal
   POST /v1/webhooks/stripe
   GET  /healthz                 (Fly.io health check)
-  GET  /signin                  (server-rendered redirect page for the
-                                  PKCE flow desktop initiates)
+  GET  /signin                  (one "Continue with Google" button)
 
 Auth model: bearer token in `Authorization: Bearer <token>`. Tokens
-are minted by /v1/auth/exchange after the user clicks their
-magic-link. The client-side PKCE pair binds the desktop instance to
-the auth-code lookup.
+are minted by /v1/auth/exchange after the user signs in with Google.
+The client-side PKCE pair binds the desktop instance to the auth-code
+lookup. Google is the only human sign-in; email sign-in was removed
+(founder 2026-09-28: one source, no magic link).
 
 Run locally:
     pip install -r requirements.txt
@@ -37,7 +38,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     HTMLResponse, RedirectResponse, JSONResponse, Response,
 )
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import auth
 import billing
@@ -130,6 +132,25 @@ async def _record_http_exc(request: Request, exc: HTTPException):
     return await http_exception_handler(request, exc)
 
 
+# The email sign-in route is gone (founder 2026-09-28: Google only). A
+# desktop install that still offers it gets a 404 that says so plainly
+# instead of a bare "Not Found".
+_REMOVED_SIGN_IN = {
+    "/v1/auth/register": "Email sign-in was removed; use Continue with Google.",
+}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _removed_sign_in_reads_plainly(request: Request,
+                                         exc: StarletteHTTPException):
+    from fastapi.exception_handlers import http_exception_handler
+    removed = _REMOVED_SIGN_IN.get(str(request.url.path))
+    if removed and exc.status_code in (404, 405):
+        return JSONResponse(status_code=404, content={
+            "error": "email_signin_removed", "detail": removed})
+    return await http_exception_handler(request, exc)
+
+
 @app.exception_handler(Exception)
 async def _record_unhandled_exc(request: Request, exc: Exception):
     founder_cockpit.record_error(
@@ -142,25 +163,6 @@ async def _record_unhandled_exc(request: Request, exc: Exception):
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
-class RegisterReq(BaseModel):
-    email: EmailStr
-    # Allow empty challenge for browser-direct flows (see
-    # db.consume_code 2026-05-24 — code-only auth, no PKCE).
-    # Desktop client still sends a real 20+ char challenge.
-    code_challenge: str = Field(default="", max_length=200)
-    redirect: str = ""
-    # Optional customer-profile fields captured by the landing form.
-    # All optional — magic-link sign-in still works without them.
-    full_name: str | None = None
-    firm_name: str | None = None
-    aec_role: str | None = None
-    aec_discipline: str | None = None
-    firm_size: str | None = None
-    country: str | None = None
-    signup_source: str | None = None
-    landing_variant: str | None = None
-
-
 class ExchangeReq(BaseModel):
     code: str = Field(min_length=10, max_length=200)
     # PKCE verifier. For a code issued WITH a non-empty challenge
@@ -168,8 +170,9 @@ class ExchangeReq(BaseModel):
     # main enforces a real min_length on that path (see `exchange`
     # below) so a challenged code can't be redeemed with an empty
     # verifier. Browser-direct codes are issued with an EMPTY challenge
-    # (magic-link is the one-time, 5-min secret); those legitimately
-    # pass an empty verifier, so the field default stays "".
+    # (a Google sign-in begun in the browser, no desktop PKCE pair; the
+    # one-time, 5-min code is the secret); those legitimately pass an
+    # empty verifier, so the field default stays "".
     code_verifier: str = Field(default="", max_length=200)
 
 
@@ -293,7 +296,7 @@ def _website_return_origin(redirect: str) -> str:
 
     This is the cross-domain counterpart of `_is_loopback_redirect`: it lets
     /auth/return bounce the one-time code back to the marketing site
-    (archhub.io) so a magic-link click / Google sign-in finishes signed-in
+    (archhub.io) so a Google sign-in finishes signed-in
     ON the website. It is NOT an open redirect — the origin must EXACTLY
     match an entry in the fixed allowlist (scheme + host + optional port),
     so an attacker host, a protocol-relative "//evil.com", a non-https
@@ -351,44 +354,6 @@ def readyz() -> dict:
     return readiness.capability_report()
 
 
-@app.post("/v1/auth/register", status_code=202)
-async def register(req: RegisterReq) -> dict:
-    """Trigger the magic-link email + capture the PKCE challenge.
-
-    Optional profile fields on the request body (full_name, firm_name,
-    aec_role, …) are written to the users table before the email goes
-    out so marketing has attribution data even if the user never clicks
-    the magic-link.
-    """
-    ok = await auth.register_via_email(
-        email=req.email,
-        code_challenge=req.code_challenge,
-        redirect=req.redirect,
-    )
-    if not ok:
-        raise HTTPException(status_code=502,
-                             detail="email_send_failed")
-    # User row was created inside register_via_email — write profile
-    # fields onto it. db.update_user_profile drops unknown keys so
-    # this is safe to call with the full request dict.
-    # This endpoint is unauthenticated by design -- it only mails a magic
-    # link -- so the profile fields on the request are an ANONYMOUS claim
-    # about whoever owns that address. Writing them onto an existing row
-    # let a stranger rewrite a real account's name, firm and role by
-    # posting their email. Only a row this call actually created may be
-    # filled in; an established account keeps what it has until its owner
-    # signs in and edits it.
-    user = db.get_user_by_email(str(req.email))
-    if user is not None and not db.user_profile_is_empty(user["id"]):
-        return {"status": "accepted"}
-    if user is not None:
-        profile = req.model_dump(exclude={"email", "code_challenge",
-                                          "redirect"}, exclude_none=True)
-        if profile:
-            db.update_user_profile(user["id"], **profile)
-    return {"status": "accepted"}
-
-
 # PKCE verifiers are 43-128 chars of unreserved-charset entropy
 # (RFC 7636 §4.1). The desktop client sends a 32-byte urlsafe verifier
 # (~43 chars). We re-impose this floor — lost when ExchangeReq.code_verifier
@@ -416,11 +381,11 @@ def exchange(req: ExchangeReq) -> dict:
     return payload
 
 
-# ── Sign in with Google (OAuth2 / OpenID Connect) — ADDITIVE ──────────
-# Two routes that bolt Google sign-in onto the EXISTING user + code +
-# token machinery. They reuse db.get_or_create_user + db.issue_code +
-# /auth/return so a Google sign-in converges on the SAME account (keyed
-# by email) and finishes through the UNCHANGED /v1/auth/exchange path.
+# ── Sign in with Google (OAuth2 / OpenID Connect): THE human sign-in ──────────
+# Two routes on the user + code + token machinery. They use
+# db.get_or_create_user + db.issue_code + /auth/return so a Google
+# sign-in lands on the account keyed by its email (accounts made before
+# Google keep their data) and finishes through /v1/auth/exchange.
 #
 # Disabled-when-unconfigured: with the OAuth vars unset (the CURRENT
 # deployment) both routes return a clean 503 {error:
@@ -432,7 +397,7 @@ def google_start(code_challenge: str = "", redirect: str = "",
                  state: str = "") -> dict:
     """Step 1: hand the desktop client the Google consent URL.
 
-    The desktop generates a PKCE pair (same as the magic-link path) and
+    The desktop generates a PKCE pair and
     passes its `code_challenge` + optional loopback `redirect` (its own
     `http://127.0.0.1:<port>/cb` return server). Both are packed into a
     signed, opaque state and returned as {auth_url}; the client opens it
@@ -444,8 +409,8 @@ def google_start(code_challenge: str = "", redirect: str = "",
     plain browser /auth/return finisher exactly as before. `state` is the
     desktop client's own CSRF token (its loopback set it as
     expected_state); it is packed INTO the signed state and echoed back to
-    the loopback on the final redirect. Optional -- the browser/magic-link
-    path sends none and is unaffected.
+    the loopback on the final redirect. Optional -- a sign-in begun in the
+    browser sends none.
 
     Open-redirect guard: a SUPPLIED redirect must be EITHER a loopback
     (127.0.0.1 / localhost / ::1) http(s) URL — the desktop client's own
@@ -485,8 +450,8 @@ def google_callback(code: str = "", state: str = "",
     Verifies the signed state (CSRF), exchanges the Google `code` for an
     id_token, VERIFIES it (iss/aud/exp/email_verified + signature), then
     mints a one-time code bound to the state's PKCE challenge and 302s to
-    {PUBLIC_URL}/auth/return?code=... — the SAME surface the magic-link
-    uses, so the desktop loopback finishes via /v1/auth/exchange.
+    {PUBLIC_URL}/auth/return?code=..., so the desktop loopback finishes
+    via /v1/auth/exchange.
 
     503 when unconfigured; 400/401 on any state/exchange/verification
     failure (an unverified or wrong-aud token NEVER yields a code).
@@ -1396,126 +1361,110 @@ async def stripe_webhook(req: Request) -> dict:
 # ---------------------------------------------------------------------------
 # Browser-facing convenience routes
 # ---------------------------------------------------------------------------
+
+# One sign-in button for every cloud page (/signin, /invite, /dashboard,
+# /brain). It asks /v1/auth/google/start for the consent URL; after Google
+# the plain /auth/return finisher stores the session and sends the browser
+# back to the page that started (archhub_after_signin, same-origin paths
+# only). A desktop that opened /signin with its PKCE challenge + loopback
+# gets them threaded through, so it finishes on its own loopback.
+_GOOGLE_SIGNIN_JS = """
+function sessionToken() {
+  try { return localStorage.getItem('archhub_session_token') || ''; }
+  catch (e) { return ''; }
+}
+function forgetSession() {
+  try { localStorage.removeItem('archhub_session_token'); } catch (e) {}
+}
+async function continueWithGoogle(desktop) {
+  const out = document.getElementById('out');
+  const btn = document.getElementById('google');
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening Google...'; }
+  const q = new URLSearchParams();
+  if (desktop && desktop.challenge) q.set('code_challenge', desktop.challenge);
+  if (desktop && desktop.redirect) q.set('redirect', desktop.redirect);
+  if (desktop && desktop.state) q.set('state', desktop.state);
+  if (!(desktop && desktop.redirect)) {
+    try { localStorage.setItem('archhub_after_signin',
+            location.pathname + location.search); } catch (e) {}
+  }
+  try {
+    const r = await fetch('/v1/auth/google/start?' + q.toString());
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.auth_url) { location.href = d.auth_url; return false; }
+    out.innerHTML = '<div class="err">Google sign-in is unavailable right '
+      + 'now. Try again in a minute.</div>';
+  } catch (e) {
+    out.innerHTML = '<div class="err">Network error: ' + e + '</div>';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Continue with Google'; }
+  return false;
+}
+"""
+
 @app.get("/signin", response_class=HTMLResponse)
 def signin_landing(challenge: str = "", redirect: str = "",
                     state: str = "", client: str = "") -> HTMLResponse:
-    """Server-rendered page the desktop client opens when starting
-    PKCE. Asks the user for an email + POSTs /v1/auth/register so
-    the magic-link goes out."""
-    safe_redirect = redirect.replace('"', "")
-    safe_challenge = challenge.replace('"', "")
-    safe_state = state.replace('"', "")
-    html = f"""<!doctype html><html><head><title>Sign in — ArchHub</title>
+    """The cloud's sign-in page: one "Continue with Google" button.
+
+    A desktop that deep-links here with ?challenge=...&redirect=<loopback>
+    &state=... has them threaded into /v1/auth/google/start, so the code
+    comes back to its own loopback (older desktop installs opened this page
+    for email sign-in; they now finish through Google). A plain browser
+    visit signs in on this domain via /auth/return."""
+    import json as _json
+    desktop = _json.dumps({"challenge": challenge[:200],
+                           "redirect": redirect[:500],
+                           "state": state[:200]}).replace("<", "\\u003c")
+    html = """<!doctype html><html><head><title>Sign in - ArchHub</title>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
 <style>
-  :root {{ --bg:#0f0f12; --raised:#1d1d22; --ink:#ece8e0;
-           --soft:#9b938a; --line:#26262d; --accent:#d97757; }}
-  body {{ margin:0; padding:60px 24px; background:var(--bg);
-          color:var(--ink); font-family:system-ui,-apple-system,
-          'Segoe UI',sans-serif; }}
-  .card {{ max-width:480px; margin:0 auto; padding:36px;
-           background:var(--raised); border:1px solid var(--line);
-           border-radius:14px; }}
-  h1 {{ margin:0 0 8px; font-family:Georgia,serif; font-style:italic;
-        font-size:30px; letter-spacing:-0.02em; }}
-  p {{ color:var(--soft); line-height:1.55; font-size:14px; }}
-  input {{ width:100%; padding:14px 16px; border-radius:10px;
-           border:1px solid var(--line); background:var(--bg);
-           color:var(--ink); font-size:15px; margin-top:18px;
-           box-sizing:border-box; }}
-  input:focus {{ outline:none; border-color:var(--accent); }}
-  button {{ width:100%; padding:14px; margin-top:14px;
-            background:var(--accent); color:white; border:none;
-            border-radius:10px; font-size:15px; font-weight:500;
-            cursor:pointer; }}
-  button:hover {{ background:#a04832; }}
-  .ok {{ margin-top:18px; padding:14px; background:rgba(126,193,142,0.1);
-         border:1px solid #7ec18e; border-radius:10px; color:#7ec18e; }}
-  .err {{ margin-top:18px; padding:14px; background:rgba(229,178,90,0.1);
-          border:1px solid #e5b25a; border-radius:10px; color:#e5b25a; }}
+  :root { --bg:#0f0f12; --raised:#1d1d22; --ink:#ece8e0;
+          --soft:#9b938a; --line:#26262d; --accent:#d97757; }
+  body { margin:0; padding:60px 24px; background:var(--bg);
+         color:var(--ink); font-family:system-ui,-apple-system,
+         'Segoe UI',sans-serif; }
+  .card { max-width:480px; margin:0 auto; padding:36px;
+          background:var(--raised); border:1px solid var(--line);
+          border-radius:14px; }
+  h1 { margin:0 0 8px; font-family:Georgia,serif; font-style:italic;
+       font-size:30px; letter-spacing:-0.02em; }
+  p { color:var(--soft); line-height:1.55; font-size:14px; }
+  button { width:100%; padding:14px; margin-top:14px;
+           background:var(--accent); color:white; border:none;
+           border-radius:10px; font-size:15px; font-weight:500;
+           cursor:pointer; }
+  button:hover { background:#a04832; }
+  button:disabled { opacity:0.5; cursor:default; }
+  .err { margin-top:18px; padding:14px; background:rgba(229,178,90,0.1);
+         border:1px solid #e5b25a; border-radius:10px; color:#e5b25a; }
 </style></head><body>
 <div class='card'>
   <h1>Sign in to ArchHub Cloud</h1>
-  <p>Enter your email. We'll send a magic-link — click it and
-     ArchHub on your desktop signs you in automatically.</p>
-  <form id='f' onsubmit='return submitEmail(event)'>
-    <input id='email' type='email' placeholder='you@studio.com'
-            required autofocus>
-    <button type='submit' id='b'>Email me the sign-in link</button>
-  </form>
+  <p>Sign in with the Google account for your email. Your ArchHub
+     account is that email address.</p>
+  <button type='button' id='google'
+          onclick='return continueWithGoogle(DESKTOP)'>Continue with Google</button>
   <div id='out'></div>
 </div>
 <script>
-// Server-injected PKCE — set when desktop client deep-links here with
-// ?challenge=...&redirect=loopback. For direct browser visits these
-// are empty and we use the browser-direct flow (magic-link is the
-// secret, no PKCE — fine because the code is one-time, 5-min TTL,
-// and only delivered to the email-owner's inbox). See db.consume_code
-// for the server-side gate.
-let challenge = "{safe_challenge}";
-let redirect = "{safe_redirect}";
-const state = "{safe_state}";
-
-async function submitEmail(ev) {{
-  ev.preventDefault();
-  const email = document.getElementById('email').value.trim();
-  const btn = document.getElementById('b');
-  const out = document.getElementById('out');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  try {{
-    // Browser-direct mode: leave challenge empty + default redirect
-    // to /auth/return so the magic-link lands back on this domain.
-    // No need to stash anything in sessionStorage — the magic-link
-    // works from any browser the user opens it in.
-    if (!challenge && !redirect) {{
-      redirect = window.location.origin + '/auth/return';
-    }}
-    const r = await fetch('/v1/auth/register', {{
-      method:'POST',
-      headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{ email, code_challenge: challenge,
-                              redirect: redirect }}),
-    }});
-    if (r.ok) {{
-      out.innerHTML = '<div class="ok">Check your inbox at <b>'
-        + email + '</b>. Click the link to finish signing in.</div>';
-    }} else {{
-      const d = await r.json().catch(()=>({{detail:'unknown'}}));
-      let msg = d.detail;
-      // pydantic 422 detail is an array of objects — render nicely
-      if (Array.isArray(msg)) {{
-        msg = msg.map(e => (e.loc||[]).join('.') + ': ' + (e.msg||e.type)).join(' · ');
-      }} else if (typeof msg === 'object') {{
-        msg = JSON.stringify(msg);
-      }}
-      out.innerHTML = '<div class="err">Sign-up failed: '
-        + (msg||'unknown error') + '</div>';
-      btn.disabled = false;
-      btn.textContent = 'Email me the sign-in link';
-    }}
-  }} catch(e) {{
-    out.innerHTML = '<div class="err">Network error: ' + e + '</div>';
-    btn.disabled = false;
-    btn.textContent = 'Email me the sign-in link';
-  }}
-  return false;
-}}
+const DESKTOP = __DESKTOP__;
+""" + _GOOGLE_SIGNIN_JS + """
 </script></body></html>"""
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=html.replace("__DESKTOP__", desktop))
 
 
 @app.get("/auth/return", response_model=None)
 def auth_return(code: str = "", redirect: str = "",
                 state: str = "") -> HTMLResponse | RedirectResponse:
-    """Lands here from the magic-link email (and from the Google
-    callback). The one-time `code` is forwarded to wherever sign-in
-    began:
+    """Lands here from the Google callback. The one-time `code` is
+    forwarded to wherever sign-in began:
 
       * A WEBSITE origin (archhub.io / archhub-web.fly.dev) — 302 to
         {origin}/signin?code=... so auth.js on the website finishes the
         exchange and the user lands signed-in ON the website. This is
-        the cross-domain fix (founder 2026-06-22): magic-link click OR
-        Google consent both converge here and bounce home.
+        the cross-domain fix (founder 2026-06-22): Google consent
+        converges here and bounces home.
       * A desktop LOOPBACK URL (http://127.0.0.1:<port>/cb) — 302 with
         ?code=... so the desktop's loopback server catches it.
       * No redirect — the plain browser finisher below exchanges the
@@ -1545,12 +1494,10 @@ def auth_return(code: str = "", redirect: str = "",
         #    pinned to the loopback allowlist), so the raw user redirect string
         #    never reaches the Location header (open-redirect / CodeQL safe).
         #
-        # Forward the desktop loopback's expected CSRF token. The Google
-        # flow passes the client's own `state` (recovered from the signed
-        # state in exchange_callback) so the loopback's expected_state
-        # check passes. The magic-link path sends no `state`, so we keep
-        # the historical "archhub" default -- byte-for-byte unchanged.
-        fwd_state = state or "archhub"
+        # Forward the desktop loopback's expected CSRF token: the client's
+        # own `state`, recovered from the signed state in exchange_callback,
+        # so the loopback's expected_state check passes.
+        fwd_state = state
         loopback_url = _loopback_return_url(redirect, code=code, state=fwd_state)
         if not loopback_url:
             raise HTTPException(status_code=400,
@@ -1577,22 +1524,20 @@ def auth_return(code: str = "", redirect: str = "",
 </style></head><body>
 <div class='card' id='card'>
   <h1>Signing you in…</h1>
-  <p>Hold on while we exchange your magic-link code for a session.</p>
+  <p>Hold on while we finish your Google sign-in.</p>
   <div id='out'></div>
 </div>
 <script>
-// Browser-direct exchange. The magic-link landed here in ANY browser —
-// no per-browser verifier needed. Server already validated the code
-// row has empty code_challenge (issued by /signin in browser mode)
-// and consumes the code without PKCE.
+// Browser-direct exchange. A Google sign-in begun in this browser
+// carries no PKCE pair: the code row has an empty code_challenge and
+// the one-time code is consumed without a verifier.
 const code = "{safe_code}";
 (async function() {{
   const card = document.getElementById('card');
   const out = document.getElementById('out');
   if (!code) {{
     card.querySelector('h1').textContent = 'Missing code';
-    out.innerHTML = '<div class="err">No code in URL. Use the link from '
-      + 'your sign-in email.</div>'
+    out.innerHTML = '<div class="err">No sign-in code in the address.</div>'
       + '<a class="btn" href="/signin">Back to sign-in</a>';
     return;
   }}
@@ -1613,6 +1558,14 @@ const code = "{safe_code}";
     const j = await r.json();
     const token = j.token || j.access_token || '';
     localStorage.setItem('archhub_session_token', token);
+    // Back to the page that started the sign-in (same-origin paths only).
+    let back = '';
+    try {{ back = localStorage.getItem('archhub_after_signin') || '';
+          localStorage.removeItem('archhub_after_signin'); }} catch (e) {{}}
+    if (back.charAt(0) === '/' && back.charAt(1) !== '/'
+        && back.indexOf(':') < 0) {{
+      location.replace(back); return;
+    }}
     card.querySelector('h1').textContent = "You're signed in.";
     out.innerHTML = '<div class="ok">Plan: <b>' + (j.plan||'trial') + '</b>. '
       + 'Session token stored locally.</div>'
@@ -1631,11 +1584,10 @@ def invite_landing(token: str = "") -> HTMLResponse:
     """Invite acceptance page (roadmap #P0). A teammate clicks the
     invite email's {PUBLIC_URL}/invite?token=... link and lands here.
 
-    Self-contained — all client-side JS, no new API. It runs the
-    existing magic-link PKCE flow (register → /auth/return → exchange)
-    then POSTs /v1/companies/invites/accept with the bearer. On return
-    from the magic-link the URL carries ?code=... and the JS finishes
-    automatically."""
+    Self-contained client-side JS, no new API. Sign-in is the one Google
+    button (/v1/auth/google/start -> /auth/return, which stores the session
+    and comes back here); the page then POSTs /v1/companies/invites/accept
+    with the bearer."""
     safe_token = "".join(c for c in token if c.isalnum() or c in "-_")
     html = f"""<!doctype html><html><head><title>Accept invite — ArchHub</title>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
@@ -1651,11 +1603,6 @@ def invite_landing(token: str = "") -> HTMLResponse:
   h1 {{ margin:0 0 8px; font-family:Georgia,serif; font-style:italic;
         font-size:30px; letter-spacing:-0.02em; }}
   p {{ color:var(--soft); line-height:1.55; font-size:14px; }}
-  input {{ width:100%; padding:14px 16px; border-radius:10px;
-           border:1px solid var(--line); background:var(--bg);
-           color:var(--ink); font-size:15px; margin-top:18px;
-           box-sizing:border-box; }}
-  input:focus {{ outline:none; border-color:var(--accent); }}
   button {{ width:100%; padding:14px; margin-top:14px;
             background:var(--accent); color:white; border:none;
             border-radius:10px; font-size:15px; font-weight:500;
@@ -1669,84 +1616,33 @@ def invite_landing(token: str = "") -> HTMLResponse:
 </style></head><body>
 <div class='card'>
   <h1>Join your team on ArchHub</h1>
-  <p id='lead'>You've been invited to a company workspace. Sign in with
-     your email to accept — we'll send a one-time magic-link.</p>
-  <form id='f' onsubmit='return submitEmail(event)'>
-    <input id='email' type='email' placeholder='you@studio.com'
-            required autofocus>
-    <button type='submit' id='b'>Email me the sign-in link</button>
-  </form>
+  <p id='lead'>You've been invited to a company workspace. Continue
+     with Google on the email address the invite was sent to, and the
+     invite is accepted.</p>
+  <button type='button' id='google' onclick='return continueWithGoogle()'>Continue with Google</button>
   <div id='out'></div>
 </div>
 <script>
 const INVITE = "{safe_token}";
-const b64url = (buf) => btoa(String.fromCharCode.apply(null,
-  new Uint8Array(buf))).replace(/\\+/g,'-').replace(/\\//g,'_')
-  .replace(/=+$/,'');
-async function pkce() {{
-  const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
-  const h = await crypto.subtle.digest('SHA-256',
-    new TextEncoder().encode(v));
-  return {{ verifier:v, challenge:b64url(h) }};
-}}
+{_GOOGLE_SIGNIN_JS}
 function show(cls, msg) {{
   document.getElementById('out').innerHTML =
     '<div class="' + cls + '">' + msg + '</div>';
 }}
-async function submitEmail(ev) {{
-  ev.preventDefault();
-  if (!INVITE) {{ show('err','This invite link is missing its token.');
-                  return false; }}
-  const email = document.getElementById('email').value.trim();
-  const btn = document.getElementById('b');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  try {{
-    const p = await pkce();
-    sessionStorage.setItem('archhub_pkce_verifier', p.verifier);
-    const r = await fetch('/v1/auth/register', {{
-      method:'POST', headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{ email, code_challenge:p.challenge,
-        redirect:'/invite?token=' + encodeURIComponent(INVITE) }}),
-    }});
-    if (r.ok) {{
-      show('ok','Check your inbox — click the magic-link and your '
-        + 'invite is accepted automatically.');
-    }} else {{
-      const d = await r.json().catch(() => ({{detail:'unknown'}}));
-      show('err','Could not send the link: ' + (d.detail||'error'));
-      btn.disabled = false;
-      btn.textContent = 'Email me the sign-in link';
-    }}
-  }} catch(e) {{
-    show('err','Network error: ' + e);
-    btn.disabled = false;
-    btn.textContent = 'Email me the sign-in link';
-  }}
-  return false;
+function signInAgain(msg) {{
+  forgetSession();
+  document.getElementById('google').style.display = '';
+  show('err', msg);
 }}
 async function completeAccept() {{
-  const code = new URLSearchParams(location.search).get('code');
-  if (!code) return;
-  document.getElementById('f').style.display = 'none';
+  if (!INVITE) {{ show('err','This invite link is missing its token.');
+                  return; }}
+  const tok = sessionToken();
+  if (!tok) return;
+  document.getElementById('google').style.display = 'none';
   document.getElementById('lead').textContent =
     'Finishing up — accepting your invite…';
-  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
-  if (!verifier) {{
-    show('err','Sign-in session was lost. Re-open the invite link '
-      + 'from your email.');
-    return;
-  }}
   try {{
-    const ex = await fetch('/v1/auth/exchange', {{
-      method:'POST', headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{ code, code_verifier:verifier }}),
-    }});
-    if (!ex.ok) {{
-      show('err','Sign-in failed — the magic-link may have expired. '
-        + 'Re-open the invite link.');
-      return;
-    }}
-    const tok = (await ex.json()).token;
     const ac = await fetch('/v1/companies/invites/accept', {{
       method:'POST',
       headers:{{'Content-Type':'application/json',
@@ -1758,15 +1654,19 @@ async function completeAccept() {{
       show('ok','You have joined the team as <b>'
         + (d.role||'member') + '</b>. Open ArchHub on your desktop — '
         + 'your shared workspace is ready.');
+    }} else if (ac.status === 401) {{
+      signInAgain('Your session ended. Continue with Google again.');
     }} else {{
       const d = await ac.json().catch(() => ({{detail:'unknown'}}));
+      if (d.detail === 'invite_email_mismatch') {{
+        signInAgain('This invite was sent to a different email address. '
+          + 'Continue with Google on that address.');
+        return;
+      }}
       const msg = {{
         invite_not_found:'This invite no longer exists.',
         invite_already_used:'This invite was already accepted.',
         invite_expired:'This invite has expired — ask for a new one.',
-        invite_email_mismatch:'This invite was sent to a different '
-          + 'email address. Sign in with the exact address it was '
-          + 'sent to, then re-open the invite link.',
       }};
       show('err', msg[d.detail] || ('Could not accept the invite: '
         + (d.detail||'error')));
@@ -1774,7 +1674,6 @@ async function completeAccept() {{
   }} catch(e) {{
     show('err','Network error: ' + e);
   }}
-  sessionStorage.removeItem('archhub_pkce_verifier');
 }}
 completeAccept();
 </script></body></html>"""
@@ -1787,8 +1686,8 @@ def dashboard_landing() -> HTMLResponse:
     their account — plan, message quota — plus every company they
     belong to and, for the active one, the team roster.
 
-    Self-contained, like /invite: client-side magic-link PKCE
-    (register → /auth/return → exchange), then it reads the existing
+    Self-contained, like /invite: the one Google button signs in (the
+    session comes back through /auth/return), then it reads the existing
     /v1/me + /v1/companies endpoints with the bearer and renders. No
     new API."""
     html = """<!doctype html><html><head>
@@ -1819,10 +1718,6 @@ def dashboard_landing() -> HTMLResponse:
           font-size:11px; background:var(--accent); color:#fff;
           letter-spacing:0.04em; }
   .pill.muted { background:var(--line); color:var(--soft); }
-  input { width:100%; padding:13px 15px; border-radius:10px;
-          border:1px solid var(--line); background:var(--bg);
-          color:var(--ink); font-size:15px; margin-top:16px;
-          box-sizing:border-box; }
   button { width:100%; padding:13px; margin-top:12px;
            background:var(--accent); color:#fff; border:none;
            border-radius:10px; font-size:15px; font-weight:500;
@@ -1834,26 +1729,13 @@ def dashboard_landing() -> HTMLResponse:
 </style></head><body>
 <div class='wrap'>
   <h1>Your ArchHub account</h1>
-  <p class='lead' id='lead'>Sign in with your email — we'll send a
-     magic-link.</p>
-  <form id='f' onsubmit='return submitEmail(event)'>
-    <input id='email' type='email' placeholder='you@studio.com'
-            required autofocus>
-    <button type='submit' id='b'>Email me the sign-in link</button>
-  </form>
+  <p class='lead' id='lead'>Sign in to see your account.</p>
+  <button type='button' id='google' onclick='return continueWithGoogle()'>Continue with Google</button>
   <div id='out'></div>
   <div id='dash'></div>
 </div>
 <script>
-const b64url = (buf) => btoa(String.fromCharCode.apply(null,
-  new Uint8Array(buf))).replace(/\\+/g,'-').replace(/\\//g,'_')
-  .replace(/=+$/,'');
-async function pkce() {
-  const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
-  const h = await crypto.subtle.digest('SHA-256',
-    new TextEncoder().encode(v));
-  return { verifier:v, challenge:b64url(h) };
-}
+""" + _GOOGLE_SIGNIN_JS + """
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -1861,34 +1743,6 @@ function esc(s) {
 function showErr(msg) {
   document.getElementById('out').innerHTML =
     '<div class="err">' + esc(msg) + '</div>';
-}
-async function submitEmail(ev) {
-  ev.preventDefault();
-  const email = document.getElementById('email').value.trim();
-  const btn = document.getElementById('b');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  try {
-    const p = await pkce();
-    sessionStorage.setItem('archhub_pkce_verifier', p.verifier);
-    const r = await fetch('/v1/auth/register', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ email, code_challenge:p.challenge,
-        redirect:'/dashboard' }),
-    });
-    if (r.ok) {
-      document.getElementById('out').innerHTML =
-        '<div class="err" style="background:rgba(126,193,142,0.1);'
-        + 'border-color:#7ec18e;color:#7ec18e;">Check your inbox — '
-        + 'click the magic-link to open your dashboard.</div>';
-    } else {
-      showErr('Could not send the link.');
-      btn.disabled = false; btn.textContent = 'Email me the sign-in link';
-    }
-  } catch(e) {
-    showErr('Network error: ' + e);
-    btn.disabled = false; btn.textContent = 'Email me the sign-in link';
-  }
-  return false;
 }
 function card(title, rows) {
   return '<div class="card"><h2>' + esc(title) + '</h2>'
@@ -1938,28 +1792,22 @@ async function loadDashboard(token) {
   }
 }
 async function init() {
-  const code = new URLSearchParams(location.search).get('code');
-  if (!code) return;
-  document.getElementById('f').style.display = 'none';
+  const tok = sessionToken();
+  if (!tok) return;
+  document.getElementById('google').style.display = 'none';
   document.getElementById('lead').textContent = 'Loading your account…';
-  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
-  if (!verifier) {
-    showErr('Sign-in session lost — reload /dashboard to retry.');
+  const probe = await fetch('/v1/me', {headers:{'Authorization':'Bearer ' + tok}})
+    .catch(() => null);
+  if (!probe || probe.status === 401) {
+    forgetSession();
+    document.getElementById('google').style.display = '';
+    document.getElementById('lead').textContent =
+      'Your session ended. Continue with Google to sign in again.';
     return;
   }
-  try {
-    const ex = await fetch('/v1/auth/exchange', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ code, code_verifier:verifier }),
-    });
-    if (!ex.ok) { showErr('Sign-in failed — the link may have expired.');
-                  return; }
-    const tok = (await ex.json()).token;
-    sessionStorage.removeItem('archhub_pkce_verifier');
-    document.getElementById('lead').textContent =
-      'Signed in. Here is your account.';
-    await loadDashboard(tok);
-  } catch(e) { showErr('Network error: ' + e); }
+  document.getElementById('lead').textContent =
+    'Signed in. Here is your account.';
+  await loadDashboard(tok);
 }
 init();
 </script></body></html>"""
@@ -1972,8 +1820,8 @@ def brain_portal() -> HTMLResponse:
     brain (the per-user replica /v1/brain/sync writes), searchable, with their
     tier badge + caps.
 
-    Self-contained, mirroring /dashboard: client-side magic-link PKCE
-    (register → /auth/return → exchange), then reads the EXISTING /v1/me +
+    Self-contained, mirroring /dashboard: the one Google button signs in
+    (session back through /auth/return), then reads the EXISTING /v1/me +
     the new /v1/brain/stats + /v1/brain/facts + /v1/brain/search with the
     bearer and renders. No new auth, no new store — same-origin /v1 API."""
     html = """<!doctype html><html><head>
@@ -2033,26 +1881,13 @@ def brain_portal() -> HTMLResponse:
 </style></head><body>
 <div class='wrap'>
   <h1>Your ArchHub brain</h1>
-  <p class='lead' id='lead'>Sign in with your email — we'll send a
-     magic-link to open your synced knowledge.</p>
-  <form id='f' onsubmit='return submitEmail(event)'>
-    <input id='email' type='email' placeholder='you@studio.com'
-            required autofocus>
-    <button type='submit' id='b'>Email me the sign-in link</button>
-  </form>
+  <p class='lead' id='lead'>Sign in to open your synced knowledge.</p>
+  <button type='button' id='google' onclick='return continueWithGoogle()'>Continue with Google</button>
   <div id='out'></div>
   <div id='portal'></div>
 </div>
 <script>
-const b64url = (buf) => btoa(String.fromCharCode.apply(null,
-  new Uint8Array(buf))).replace(/\\+/g,'-').replace(/\\//g,'_')
-  .replace(/=+$/,'');
-async function pkce() {
-  const v = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
-  const h = await crypto.subtle.digest('SHA-256',
-    new TextEncoder().encode(v));
-  return { verifier:v, challenge:b64url(h) };
-}
+""" + _GOOGLE_SIGNIN_JS + """
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -2060,34 +1895,6 @@ function esc(s) {
 function showErr(msg) {
   document.getElementById('out').innerHTML =
     '<div class="err">' + esc(msg) + '</div>';
-}
-async function submitEmail(ev) {
-  ev.preventDefault();
-  const email = document.getElementById('email').value.trim();
-  const btn = document.getElementById('b');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  try {
-    const p = await pkce();
-    sessionStorage.setItem('archhub_pkce_verifier', p.verifier);
-    const r = await fetch('/v1/auth/register', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ email, code_challenge:p.challenge,
-        redirect:'/brain' }),
-    });
-    if (r.ok) {
-      document.getElementById('out').innerHTML =
-        '<div class="err" style="background:rgba(126,193,142,0.1);'
-        + 'border-color:#7ec18e;color:#7ec18e;">Check your inbox — '
-        + 'click the magic-link to open your brain.</div>';
-    } else {
-      showErr('Could not send the link.');
-      btn.disabled = false; btn.textContent = 'Email me the sign-in link';
-    }
-  } catch(e) {
-    showErr('Network error: ' + e);
-    btn.disabled = false; btn.textContent = 'Email me the sign-in link';
-  }
-  return false;
 }
 let TOKEN = null;
 function factCard(f) {
@@ -2170,28 +1977,22 @@ async function loadPortal(token) {
   }
 }
 async function init() {
-  const code = new URLSearchParams(location.search).get('code');
-  if (!code) return;
-  document.getElementById('f').style.display = 'none';
+  const tok = sessionToken();
+  if (!tok) return;
+  document.getElementById('google').style.display = 'none';
   document.getElementById('lead').textContent = 'Loading your brain…';
-  const verifier = sessionStorage.getItem('archhub_pkce_verifier');
-  if (!verifier) {
-    showErr('Sign-in session lost — reload /brain to retry.');
+  const probe = await fetch('/v1/me', {headers:{'Authorization':'Bearer ' + tok}})
+    .catch(() => null);
+  if (!probe || probe.status === 401) {
+    forgetSession();
+    document.getElementById('google').style.display = '';
+    document.getElementById('lead').textContent =
+      'Your session ended. Continue with Google to sign in again.';
     return;
   }
-  try {
-    const ex = await fetch('/v1/auth/exchange', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ code, code_verifier:verifier }),
-    });
-    if (!ex.ok) { showErr('Sign-in failed — the link may have expired.');
-                  return; }
-    const tok = (await ex.json()).token;
-    sessionStorage.removeItem('archhub_pkce_verifier');
-    document.getElementById('lead').textContent =
-      'Signed in. Here is your synced knowledge.';
-    await loadPortal(tok);
-  } catch(e) { showErr('Network error: ' + e); }
+  document.getElementById('lead').textContent =
+    'Signed in. Here is your synced knowledge.';
+  await loadPortal(tok);
 }
 init();
 </script></body></html>"""

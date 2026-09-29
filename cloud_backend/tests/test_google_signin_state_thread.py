@@ -21,7 +21,7 @@ These tests assert (additively, without weakening any existing check):
       encode_state -> decode_state as `app_state`;
   (b) exchange_callback includes `state=<app_state>` in the returned
       /auth/return URL when the (verified) signed state carried one;
-  (c) a signed state WITHOUT app_state still works (magic-link compat) and the
+  (c) a signed state WITHOUT app_state still works (sign-in begun in the browser) and the
       return URL omits `state` - i.e. the change is purely additive.
 
 It reuses the SAME monkeypatched-Google + real-_assert_claims pattern as the
@@ -150,7 +150,7 @@ class TestAppStateRoundTrips:
         assert "as" not in qs
 
     def test_app_state_default_empty_and_omitted_from_payload(self, google_env):
-        """No app_state supplied -> decode_state reports "" (magic-link compat).
+        """No app_state supplied -> decode_state reports "" (sign-in begun in the browser).
         Backward-compat: an OLD state (no `as` key) also decodes to "".
         """
         import google_auth
@@ -229,15 +229,15 @@ class TestCallbackEchoesAppState:
 
 
 # ===========================================================================
-# (c) magic-link compat: no app_state -> return URL omits state (additive)
+# (c) browser-begun sign-in: no app_state -> return URL omits state (additive)
 # ===========================================================================
-class TestNoAppStateMagicLinkCompat:
+class TestNoAppStateBrowserSignIn:
     def test_callback_without_app_state_omits_state_in_return_url(
             self, google_env, patched_google):
         """A signed state WITHOUT app_state (the pre-fix shape / a Google flow
         where the client sent no state) still works and the /auth/return URL
         does NOT add a `state` param - proving the change is additive and the
-        magic-link finisher behaviour is unchanged."""
+        browser finisher behaviour is unchanged."""
         import google_auth
         signed = google_auth.encode_state(
             code_challenge="cc", redirect="http://127.0.0.1:7/cb")

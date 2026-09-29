@@ -10,7 +10,7 @@ property MUST hold:
   (3) expired id_token                     → REJECTED
   (4) callback with missing/forged/mismatched state → REJECTED (CSRF)
   (5) client SECRET never in any client-facing response or start auth_url
-  (6) the existing magic-link + exchange flow STILL works unchanged
+  (6) email sign-in is gone; Google reuses an existing account by email
 
 These are written to FAIL if the implementation regresses (e.g. trusts an
 unverified email, skips aud check, accepts a forged state, leaks secret).
@@ -462,95 +462,25 @@ class TestSecretNeverLeaks:
 
 
 # ===========================================================================
-# (6) the magic-link + exchange flow STILL works unchanged
+# (6) email sign-in is gone; Google lands on the existing account by email
 # ===========================================================================
-class TestMagicLinkStillWorks:
-    def _stub_email(self, monkeypatch):
-        async def fake_send(**kw):
-            return True
-        import email_sender
-        monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
-        monkeypatch.setattr(email_sender, "send_welcome_email", fake_send)
-
-    def _code_for(self, user_id):
-        import db
-        with db.connect() as con:
-            row = con.execute(
-                "SELECT code FROM codes WHERE user_id = ? "
-                "ORDER BY rowid DESC LIMIT 1", (user_id,)).fetchone()
-        return row["code"]
-
-    def test_pkce_register_exchange_end_to_end(self, client, monkeypatch):
-        """Desktop PKCE path: register → exchange → bearer token works,
-        with Google login NOT configured (proves independence)."""
-        self._stub_email(monkeypatch)
-        import db
-        verifier, challenge = _pkce_pair()
+class TestGoogleIsTheOnlySignIn:
+    def test_email_sign_in_route_is_gone(self, client):
         r = client.post("/v1/auth/register",
-                        json={"email": "magic-pkce@studio.com",
-                              "code_challenge": challenge})
-        assert r.status_code == 202
-        u = db.get_user_by_email("magic-pkce@studio.com")
-        code = self._code_for(u["id"])
-        ex = client.post("/v1/auth/exchange",
-                         json={"code": code, "code_verifier": verifier})
-        assert ex.status_code == 200
-        body = ex.json()
-        assert body["token"].startswith("ah_live_")
-        assert "plan" in body and "expires_at" in body
-        # The token actually authenticates.
-        me = client.get("/v1/me",
-                        headers={"Authorization": f"Bearer {body['token']}"})
-        assert me.status_code == 200
-        assert me.json()["email"] == "magic-pkce@studio.com"
+                        json={"email": "gone@studio.com",
+                              "code_challenge": "x" * 43})
+        assert r.status_code == 404
+        assert r.json()["detail"] == (
+            "Email sign-in was removed; use Continue with Google.")
 
-    def test_browser_direct_empty_challenge_still_works(
-            self, client, monkeypatch):
-        self._stub_email(monkeypatch)
-        import db
-        r = client.post("/v1/auth/register",
-                        json={"email": "magic-browser@studio.com",
-                              "code_challenge": ""})
-        assert r.status_code == 202
-        u = db.get_user_by_email("magic-browser@studio.com")
-        code = self._code_for(u["id"])
-        ex = client.post("/v1/auth/exchange",
-                         json={"code": code, "code_verifier": ""})
-        assert ex.status_code == 200
-        assert ex.json()["token"].startswith("ah_live_")
-
-    def test_pkce_still_enforced_wrong_verifier(self, client, monkeypatch):
-        """The PKCE protection on the magic-link path is intact: a challenged
-        code cannot be exchanged with the wrong verifier."""
-        self._stub_email(monkeypatch)
-        import db
-        verifier, challenge = _pkce_pair()
-        client.post("/v1/auth/register",
-                    json={"email": "magic-pkce2@studio.com",
-                          "code_challenge": challenge})
-        u = db.get_user_by_email("magic-pkce2@studio.com")
-        code = self._code_for(u["id"])
-        wrong = secrets.token_urlsafe(48)
-        ex = client.post("/v1/auth/exchange",
-                         json={"code": code, "code_verifier": wrong})
-        assert ex.status_code == 400
-        assert "token" not in ex.json()
-
-    def test_google_and_magiclink_converge_same_account(
+    def test_google_lands_on_the_existing_account(
             self, client, google_enabled, monkeypatch):
-        """A Google sign-in for an email that already registered via
-        magic-link converges on the SAME user row (keyed by email) — the
-        additive contract."""
-        self._stub_email(monkeypatch)
+        """An account made before Google was the only sign-in (keyed by
+        email) is the account Google signs in to: same id, and the session
+        it already held keeps working."""
         import db
-        # First: magic-link register creates the account.
-        _, challenge = _pkce_pair()
-        client.post("/v1/auth/register",
-                    json={"email": "converge@studio.com",
-                          "code_challenge": challenge})
-        u1 = db.get_user_by_email("converge@studio.com")
-        assert u1 is not None
-        # Now: a valid Google sign-in for the same email.
+        u1 = db.get_or_create_user("converge@studio.com")
+        earlier = db.issue_token(u1["id"])
         _install_fake_google(
             monkeypatch,
             token_payload={"id_token": "fake.jwt.token"},
@@ -561,6 +491,7 @@ class TestMagicLinkStillWorks:
         assert r.status_code == 302
         u2 = db.get_user_by_email("converge@studio.com")
         assert u2["id"] == u1["id"], "Google login forked a new account!"
+        assert db.user_for_token(earlier)["id"] == u1["id"]
 
 
 # ===========================================================================

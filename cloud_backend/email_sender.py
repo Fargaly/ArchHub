@@ -1,13 +1,14 @@
 """Thin wrapper around Resend for transactional email.
 
 Falls back to stdout-logging when RESEND_API_KEY is unset (local dev
-+ smoke tests). Production deploys MUST set the key; otherwise the
-"check your inbox" magic-link UX fails silently.
++ smoke tests). Production deploys MUST set the key; otherwise company
+invites fail silently.
 
 Templates:
-  send_magic_link    — the sign-in link (5-min TTL)
-  send_welcome_email — onboarding first-touch, sent once when a new
-                       account is created (roadmap #P2)
+  send_company_invite — the link to a company invite. It is not a
+                        sign-in: accepting needs a Google session on the
+                        invited address (founder 2026-09-28: Google is
+                        the only sign-in, no magic link).
 """
 from __future__ import annotations
 
@@ -24,9 +25,8 @@ async def _send(*, to: str, subject: str, text: str, html: str) -> bool:
 
     Delivery-key handling (gap 5, 2026-05-31):
       - PRODUCTION (ENV=production) with no RESEND_API_KEY → return FALSE.
-        The caller (auth.register_via_email → /register) turns a False
-        into a 502 email_send_failed instead of a silent 202. We never
-        pretend an email was sent in prod when no provider is wired.
+        We never pretend an email was sent in prod when no provider is
+        wired.
         (The startup gate in config.assert_production_ready already
         refuses to boot in this state — this is belt-and-suspenders for
         any path that reaches send with the key unset.)
@@ -91,66 +91,24 @@ def _wrap(body_html: str) -> str:
     )
 
 
-async def send_magic_link(*, to: str, link: str) -> bool:
-    """Send the sign-in link. Returns True on accepted."""
-    subject = "Your ArchHub sign-in link"
+async def send_company_invite(*, to: str, link: str) -> bool:
+    """Send a company invite link. Returns True on accepted."""
+    subject = "You're invited to a team on ArchHub"
     text = (
-        f"Click this link to sign in to ArchHub Cloud:\n\n"
+        f"You've been invited to a company workspace on ArchHub.\n\n"
         f"{link}\n\n"
-        f"Link expires in 5 minutes. If you didn't request this, "
-        f"ignore the email."
+        f"Open the link and continue with Google on this email address "
+        f"to accept. If you weren't expecting this, ignore the email."
     )
     html = _wrap(
-        "<p style=\"font-size:15px;line-height:1.55;\">Click the button "
-        "below to sign in to ArchHub Cloud:</p>"
+        "<p style=\"font-size:15px;line-height:1.55;\">You've been "
+        "invited to a company workspace on ArchHub.</p>"
         f"<p><a href=\"{link}\" style=\"display:inline-block;"
         "background:#d97757;color:#ffffff;text-decoration:none;"
         "padding:12px 22px;border-radius:8px;font-size:15px;"
-        "font-weight:500;\">Sign in to ArchHub</a></p>"
-        "<p style=\"color:#9b938a;font-size:12px;\">Link expires in 5 "
-        "minutes. If you didn't request this, ignore the email.</p>"
-    )
-    return await _send(to=to, subject=subject, text=text, html=html)
-
-
-async def send_welcome_email(*, to: str) -> bool:
-    """Onboarding first-touch — sent once when a new account is
-    created. Roadmap #P2 welcome sequence."""
-    subject = "Welcome to ArchHub"
-    text = (
-        "Welcome to ArchHub.\n\n"
-        "ArchHub drives your AEC stack — Revit, AutoCAD, Rhino, 3ds "
-        "Max, Blender, Speckle, Excel, Outlook — from one chat.\n\n"
-        "Getting started:\n"
-        "  1. Open ArchHub on your desktop.\n"
-        "  2. Wire a host node into an AI conversation and ask it "
-        "about your model.\n"
-        "  3. Save what works as a Skill — reusable and shareable.\n\n"
-        "Browse the in-app Marketplace for ready-made Skills, or build "
-        "your own custom nodes with AI.\n\n"
-        "Questions? Reply to this email.\n\n"
-        "— The ArchHub team"
-    )
-    html = _wrap(
-        "<p style=\"font-size:17px;font-weight:600;margin:0 0 4px;\">"
-        "Welcome to ArchHub.</p>"
-        "<p style=\"font-size:15px;line-height:1.55;color:#5e5750;\">"
-        "ArchHub drives your AEC stack — Revit, AutoCAD, Rhino, "
-        "3ds Max, Blender, Speckle, Excel, Outlook — from one "
-        "chat.</p>"
-        "<p style=\"font-size:14px;font-weight:600;margin:20px 0 6px;\">"
-        "Getting started</p>"
-        "<ol style=\"font-size:14px;line-height:1.7;color:#5e5750;"
-        "padding-left:20px;margin:0;\">"
-        "<li>Open ArchHub on your desktop.</li>"
-        "<li>Wire a host node into an AI conversation and ask it about "
-        "your model.</li>"
-        "<li>Save what works as a Skill — reusable and shareable."
-        "</li></ol>"
-        "<p style=\"font-size:14px;line-height:1.55;color:#5e5750;"
-        "margin-top:18px;\">Browse the in-app Marketplace for "
-        "ready-made Skills, or build your own custom nodes with AI.</p>"
-        "<p style=\"font-size:13px;color:#9b938a;\">Questions? Just "
-        "reply to this email.</p>"
+        "font-weight:500;\">Open the invite</a></p>"
+        "<p style=\"color:#9b938a;font-size:12px;\">Continue with Google "
+        "on this email address to accept. If you weren't expecting this, "
+        "ignore the email.</p>"
     )
     return await _send(to=to, subject=subject, text=text, html=html)

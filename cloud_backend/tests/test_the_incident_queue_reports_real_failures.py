@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.google_signin import google_sign_in
+
 FOUNDER_EMAIL = "founder@archhub-incident-proof.com"
 COMPILED = Path(__file__).resolve().parents[1] / "cockpit_assets" / "compiled"
 
@@ -45,23 +47,7 @@ def client():
 
 
 def _sign_in(client, monkeypatch, email):
-    import secrets
-    import db
-    import email_sender
-
-    async def fake_send(**_kw):
-        return True
-
-    monkeypatch.setattr(email_sender, "send_magic_link", fake_send)
-    verifier = secrets.token_urlsafe(48)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    assert client.post("/v1/auth/register", json={"email": email, "code_challenge": challenge}).status_code == 202
-    user = db.get_user_by_email(email)
-    with db.connect() as con:
-        code = con.execute("SELECT code FROM codes WHERE user_id = ?", (user["id"],)).fetchone()["code"]
-    answer = client.post("/v1/auth/exchange", json={"code": code, "code_verifier": verifier})
-    assert answer.status_code == 200, answer.text
-    return {"Authorization": "Bearer " + answer.json()["token"]}
+    return {"Authorization": "Bearer " + google_sign_in(client, monkeypatch, email)}
 
 
 def test_a_refused_instruction_and_a_server_error_reach_the_incident_queue(client, monkeypatch):

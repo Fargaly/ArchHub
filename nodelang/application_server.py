@@ -8163,7 +8163,7 @@ class ApplicationServer:
                                 method = str(body.get('method') or 'google')
                                 if method not in METHODS:
                                     raise InvalidCell(
-                                        'sign-in method must be google or magic')
+                                        'sign-in method must be google')
                                 self._json(200, {'ok': True, **begin(method)})
                                 return
                             elif self.path == '/api/universal/cloud-signout':

@@ -22,7 +22,7 @@ Required for production:
   ANTHROPIC_API_KEY            — sk-ant-... (server's own; used in `hosted` AI mode)
   OPENAI_API_KEY           — sk-... (server's own)
   GOOGLE_API_KEY           — AIza... (server's own)
-  RESEND_API_KEY           — re_... (magic-link email sender)
+  RESEND_API_KEY           — re_... (company-invite email sender)
   FROM_EMAIL               — noreply@<your-domain> (default: noreply@archhub.io)
   PUBLIC_URL               — https://<your-host> (default: https://api.archhub.io, the one cloud address)
   DESKTOP_REDIRECT_BASE    — http://127.0.0.1   (clients only ever use loopback)
@@ -283,8 +283,8 @@ def openrouter_free_models(key: str = "", base_url: str = "",
     return result
 
 RESEND_API_KEY = _req("RESEND_API_KEY", "")
-# PUBLIC_URL is the one cloud address. Every link the cloud builds (magic
-# link, Google return, cockpit claim) starts here, so the Fly host name
+# PUBLIC_URL is the one cloud address. Every link the cloud builds (Google
+# return, company invite, cockpit claim) starts here, so the Fly host name
 # is never handed to a person (founder 2026-09-24: "how many domains?").
 PUBLIC_URL     = _req("PUBLIC_URL", "https://api.archhub.io")
 # FROM_EMAIL — Resend will reject sends from unverified domains. Fly's
@@ -323,14 +323,14 @@ def google_login_enabled() -> bool:
 
     Single source of truth for the disabled-when-unconfigured contract:
     google_auth + main's routes gate on this, so an unset id OR secret
-    keeps Sign in with Google fully dark (503) without touching any other
-    flow. Magic-link / PKCE are entirely independent of this."""
+    keeps Sign in with Google dark (503). Google is the only human
+    sign-in, so with it dark nobody can sign in."""
     return bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
 
 
 # ── Cross-domain website sign-in return (founder, 2026-06-22) ─────────
 # The marketing site (archhub.io) signs users in by bouncing auth through
-# THIS cloud backend (magic-link + Google both finish on a cloud route).
+# THIS cloud backend (Google sign-in finishes on a cloud route).
 # To land the user back ON archhub.io signed-in, /auth/return must be
 # allowed to 302 the one-time code to the WEBSITE origin — not only to the
 # desktop's loopback. This is the FIXED allowlist of website origins it may
@@ -1250,7 +1250,7 @@ def _missing_required_keys() -> list[str]:
     demand the set that the live provider actually uses — never both.
     """
     # Auth + email: the registration/sign-in path cannot function without
-    # these. RESEND_API_KEY gates magic-link delivery (gap 5); the LLM
+    # these. RESEND_API_KEY gates company-invite delivery (gap 5); the LLM
     # proxy keys back /v1/chat for paid tiers.
     required = {
         "ANTHROPIC_API_KEY": ANTHROPIC_API_KEY,
